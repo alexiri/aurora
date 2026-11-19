@@ -253,6 +253,53 @@ fn connect_method_rules_reject_each_invalid_case() {
             METHODS.replace("description: Acts as you.", "description: \"  \""),
             "method_text_invalid",
         ),
+        // (P5-POLISH-3, C-1031) The package text for people has limits.
+        (
+            "summary over 100 characters",
+            METHODS.replace(
+                "about: { id: svc, name: Service }",
+                &format!("about: {{ id: svc, name: Service, summary: \"{}\" }}", "x".repeat(101)),
+            ),
+            "about_text_invalid",
+        ),
+        (
+            "blank first_prompt",
+            METHODS.replace(
+                "about: { id: svc, name: Service }",
+                "about: { id: svc, name: Service, first_prompt: \"  \" }",
+            ),
+            "about_text_invalid",
+        ),
+        (
+            "more than twelve permission hints",
+            METHODS.replace(
+                "        recommended: true\n",
+                &format!(
+                    "        recommended: true\n        access_levels:\n          - {{ id: read, label: Read only, permission_hints: [{}] }}\n",
+                    (0..13).map(|i| format!("\"H{i}\"")).collect::<Vec<_>>().join(", ")
+                ),
+            ),
+            "permission_hints_invalid",
+        ),
+        (
+            "a permission hint over 60 characters",
+            METHODS.replace(
+                "        recommended: true\n",
+                &format!(
+                    "        recommended: true\n        access_levels:\n          - {{ id: read, label: Read only, permission_hints: [\"{}\"] }}\n",
+                    "x".repeat(61)
+                ),
+            ),
+            "permission_hints_invalid",
+        ),
+        (
+            "a token method's access level that is neither read nor write",
+            METHODS.replace(
+                "        recommended: true\n",
+                "        recommended: true\n        access_levels:\n          - { id: admin, label: Admin, permission_hints: [\"A\"] }\n",
+            ),
+            "access_level_unknown",
+        ),
         (
             "unknown oauth client in a method token",
             METHODS.replace(

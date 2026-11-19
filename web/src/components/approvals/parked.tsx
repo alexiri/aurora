@@ -6,11 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { useApprovalLimits } from "@/lib/api/policy";
 import type { Approval } from "@/lib/api/approvals";
 
-type Tone = "accent" | "neutral" | "pending" | "danger";
+type Tone = "accent" | "neutral" | "danger";
 
 /** "Parked": the agent was refused at once and has stopped waiting. Held approvals show no chip. */
 export function ParkedChip() {
-  return <Badge tone="pending">Parked</Badge>;
+  return <Badge>Parked</Badge>;
 }
 
 /** Minutes of the resume window, rounded up, for the sentences below. */

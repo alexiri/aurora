@@ -31,7 +31,7 @@ export function LoginView() {
     <AuthCard title="Sign in">
       {hasDev ? (
         <Notice>
-          <Badge tone="pending">Development</Badge> The development sign-in is enabled. It signs
+          <Badge>Development</Badge> The development sign-in is enabled. It signs
           in without a password and must never be exposed.
         </Notice>
       ) : null}

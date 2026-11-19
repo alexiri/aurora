@@ -63,6 +63,9 @@ impl PlatformTool for Search {
     fn name(&self) -> &'static str {
         "conversation_search"
     }
+    fn family(&self) -> &'static str {
+        "conversations"
+    }
     fn description(&self, _: &ToolContext) -> String {
         format!(
             "Search what was said in your earlier conversations (messages and file names), newest first. \
@@ -198,6 +201,9 @@ struct ReadArgs {
 impl PlatformTool for Read {
     fn name(&self) -> &'static str {
         "conversation_read"
+    }
+    fn family(&self) -> &'static str {
+        "conversations"
     }
     fn description(&self, _: &ToolContext) -> String {
         format!(

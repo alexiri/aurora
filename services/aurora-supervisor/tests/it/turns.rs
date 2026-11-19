@@ -556,3 +556,86 @@ async fn purges_in_the_home_sync_run_before_the_sandbox_accepts_a_turn() {
     c.deliver(TURN, "hello", "auc_t").await;
     assert_eq!(c.next_of("turn.result").await["status"], "done");
 }
+
+impl Conn {
+    /// A complete generation whose rendered instruction file carries `brief`.
+    async fn sync_brief(&mut self, generation: u64, brief: &str) {
+        let parts = [
+            (
+                "render_inputs",
+                json!([{"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}}, {"brief": brief}]),
+            ),
+            ("tools", json!([{"name": "send_file", "exposure": "core"}])),
+            ("manifest", json!([])),
+            ("final", json!([])),
+        ];
+        for (i, (kind, entries)) in parts.iter().enumerate() {
+            self.send(
+                "home.sync",
+                json!({"generation": generation, "part_index": i, "part_count": 4,
+                       "part": {"kind": kind, "entries": entries}}),
+            )
+            .await;
+        }
+        self.next_of("home.synced").await;
+    }
+}
+
+/// (P5-GUIDE-7, C-654) A sync that changes the rendered instruction files (or the core
+/// descriptors) releases the idle sessions, so the next turn starts a fresh harness session; a
+/// sync that changes nothing leaves them. The fake harness rewrites its session marker on every
+/// session start, which is what is observed here.
+#[tokio::test]
+async fn a_changed_catalogue_releases_idle_sessions_and_an_unchanged_one_does_not() {
+    let (gw, _) = stub_gateway().await;
+    let (r, mut c) = start(gw).await;
+    let sref = format!("fake-{CONV}");
+    c.sync_brief(1, "first").await;
+    c.deliver(TURN, "hello", "auc_t").await;
+    assert_eq!(c.next_of("turn.result").await["status"], "done");
+    assert!(marker(&r.dir, &sref).exists());
+
+    // The same render again: the idle session is kept (no new session start).
+    std::fs::remove_file(marker(&r.dir, &sref)).unwrap();
+    c.sync_brief(2, "first").await;
+    let t2 = "00000000-0000-0000-0000-0000000000a2";
+    c.deliver(t2, "again", "auc_t").await;
+    assert_eq!(c.next_of("turn.result").await["status"], "done");
+    assert!(!marker(&r.dir, &sref).exists(), "session reused");
+
+    // A changed instruction file: released, the next turn starts fresh.
+    c.sync_brief(3, "second").await;
+    let t3 = "00000000-0000-0000-0000-0000000000a3";
+    c.deliver(t3, "fresh", "auc_t").await;
+    assert_eq!(c.next_of("turn.result").await["status"], "done");
+    assert!(
+        marker(&r.dir, &sref).exists(),
+        "a fresh session was started"
+    );
+}
+
+/// (P5-GUIDE-7, C-654) A session with a turn running is never released by a catalogue change.
+#[tokio::test]
+async fn a_changed_catalogue_never_releases_a_running_turn() {
+    let (gw, _) = stub_gateway().await;
+    let (r, mut c) = start(gw).await;
+    let sref = format!("fake-{CONV}");
+    c.sync_brief(1, "first").await;
+    c.deliver(TURN, "[[say: a]] [[sleep: 1s]] [[say: b]]", "auc_t")
+        .await;
+    c.next_of("turn.event").await;
+    c.sync_brief(2, "second").await;
+    assert_eq!(
+        c.next_of("turn.result").await["status"],
+        "done",
+        "the running turn finished"
+    );
+    std::fs::remove_file(marker(&r.dir, &sref)).unwrap();
+    let t2 = "00000000-0000-0000-0000-0000000000a2";
+    c.deliver(t2, "next", "auc_t").await;
+    assert_eq!(c.next_of("turn.result").await["status"], "done");
+    assert!(
+        !marker(&r.dir, &sref).exists(),
+        "the session that had the turn running was kept"
+    );
+}

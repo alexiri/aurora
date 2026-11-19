@@ -71,7 +71,7 @@ export function OrgDetailView({ orgId }: { orgId: string }) {
           <span className="flex flex-wrap items-center gap-2">
             {o.name}
             {o.frozen ? <Badge tone="danger">Frozen</Badge> : null}
-            {o.ownerless ? <Badge tone="pending">No owner</Badge> : null}
+            {o.ownerless ? <Badge>No owner</Badge> : null}
           </span>
         }
         description={

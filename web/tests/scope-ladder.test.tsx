@@ -28,9 +28,9 @@ describe("ScopeLadder (C-963)", () => {
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
     expect(within(rows[0]!).getByText("Set by Administration")).toBeInTheDocument();
-    expect(within(rows[0]!).getByText("An Aurora administrator can set this up.")).toBeInTheDocument();
+    expect(within(rows[0]!).getByText(/An Aurora administrator can set this up\./)).toBeInTheDocument();
     expect(within(rows[1]!).getByText("Set by your organization")).toBeInTheDocument();
-    expect(within(rows[1]!).getByText("Ask Ada Lovelace or Alan Turing (organization owners and admins).")).toBeInTheDocument();
+    expect(within(rows[1]!).getByText(/Ask Ada Lovelace or Alan Turing\./)).toBeInTheDocument();
     expect(screen.getByText("Workspace controls")).toBeInTheDocument();
   });
 

@@ -6,6 +6,9 @@ const KIB: usize = 1024;
 const MIB: usize = 1024 * KIB;
 
 pub const GATEWAY_RESOLVE_CACHE_TTL: Duration = Duration::from_secs(60);
+/// (FIX-180, D-395) A proxied request whose body delivers no byte for this long is answered `408
+/// request_body_timeout` and its connection closed. An idle limit, not a total one.
+pub const GATEWAY_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
 /// (RFE-011a) lower bound of a per-rule / per-grant `approval_timeout_secs`.
 pub const APPROVAL_TIMEOUT_MIN: Duration = Duration::from_secs(60);
@@ -407,6 +410,23 @@ pub const AGENT_GUIDE_FILE_MAX: usize = 64 * KIB;
 pub const AGENT_GUIDE_APP_MAX: usize = 256 * KIB;
 /// Reference files and recipes projected into one agent's home (P5-GUIDE-2).
 pub const AGENT_GUIDE_SYNC_MAX: usize = 2 * 1024 * KIB;
+/// (P5-GUIDE-6, `docs/24 §8`) Operations in one operations file.
+pub const AGENT_OPERATIONS_MAX: usize = 2_000;
+/// One operations file (UTF-8 bytes).
+pub const AGENT_OPERATIONS_FILE_MAX: usize = 512 * KIB;
+/// The rendered `api.json` of one app and agent.
+pub const AGENT_API_JSON_MAX: usize = 512 * KIB;
+/// `aurora-agent` stdout preview, in bytes.
+pub const AGENT_CLI_PREVIEW_MAX: usize = 2_000;
+/// (P5-GUIDE-7, D-297) Platform tools the MCP bridge lists in `on_demand` mode: the registry's
+/// core tools plus the supervisor's local core tools. A bigger set is a spec change.
+pub const PLATFORM_TOOLS_CORE_MAX: usize = 8;
+/// Pages `aurora-agent call --all` follows by default.
+pub const AGENT_CLI_PAGES_DEFAULT: u32 = 20;
+/// Most pages `--max-pages` may ask for.
+pub const AGENT_CLI_PAGES_MAX: u32 = 200;
+/// Most bytes `aurora-agent call` saves or prints for one response.
+pub const AGENT_CLI_SAVE_MAX: usize = 64 * 1024 * KIB;
 pub const AVATAR_MAX: usize = 512 * KIB;
 pub const SSE_KEEPALIVE: Duration = Duration::from_secs(15);
 pub const LONG_POLL_MAX: Duration = Duration::from_secs(30);

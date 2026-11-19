@@ -187,7 +187,7 @@ export function RetryStart({
 export function QueuedRow({ text, onSendNow }: { text: string; onSendNow: () => void }) {
   return (
     <div className="flex min-h-11 items-center gap-2 rounded-control border border-dashed border-line-strong px-2.5 py-1 text-sm">
-      <Badge tone="pending">Queued</Badge>
+      <Badge>Queued</Badge>
       <span className="min-w-0 flex-1 truncate text-ink-2" title={text}>
         Queued follow-up: {text}
       </span>

@@ -43,6 +43,12 @@ pub struct ConnectionRow {
     /// (`ok` | `rejected` | `unreachable` | `unexpected`).
     pub last_check_at: Option<DateTime<Utc>>,
     pub last_check_result: Option<String>,
+    /// (P5-POLISH-3, C-1033) What an agent's real calls showed (the gateway), and what Test said, apart.
+    pub last_ok_at: Option<DateTime<Utc>>,
+    pub last_error_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub last_test_at: Option<DateTime<Utc>>,
+    pub last_test_result: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -51,7 +57,7 @@ const SELECT: &str = "SELECT c.id, c.org_id, c.workspace_id, c.app_id, c.package
     c.label, c.status, c.status_reason, c.scopes, c.requested_scopes, c.metadata, c.tenant_host, c.oauth_client_id, \
     c.connect_method, c.access, c.limit_level, c.instance_id, ai.host AS instance_host, ai.base_path AS instance_base_path, ai.label AS instance_label, \
     c.credentials_expires_at, c.connected_by, u.display_name AS connected_by_name, c.last_used_at, \
-    c.last_check_at, c.last_check_result, c.created_at, c.updated_at FROM app_connections c LEFT JOIN users u ON u.id = c.connected_by \
+    c.last_check_at, c.last_check_result, c.last_ok_at, c.last_error_at, c.last_error, c.last_test_at, c.last_test_result, c.created_at, c.updated_at FROM app_connections c LEFT JOIN users u ON u.id = c.connected_by \
     LEFT JOIN app_instances ai ON ai.id = c.instance_id";
 
 pub async fn get<'e, E: PgExecutor<'e>>(
@@ -317,15 +323,16 @@ pub async fn set_limit<'e, E: PgExecutor<'e>>(
         > 0)
 }
 
-/// (P5-UX-14, C-943) Stores the result of Test: `ok` | `rejected` | `unreachable` | `unexpected`.
-/// A churn-style write: `updated_at` is untouched.
+/// (P5-UX-14, C-943; P5-POLISH-3, C-1033) Stores the result of Test: `ok` | `rejected` | `unreachable` |
+/// `unexpected`, in `last_test_*` only (what real use showed is the gateway's). A churn-style write:
+/// `updated_at` is untouched.
 pub async fn set_check<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
     result: &str,
 ) -> Result<(), DbError> {
     sqlx::query(
-        "UPDATE app_connections SET last_check_at = now(), last_check_result = $2 WHERE id = $1",
+        "UPDATE app_connections SET last_test_at = now(), last_test_result = $2 WHERE id = $1",
     )
     .bind(id)
     .bind(result)
@@ -362,7 +369,8 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
          limit_level = CASE WHEN workspace_id IS NULL THEN COALESCE($17, limit_level) END, \
          status_reason = CASE WHEN status IN ('reauth_required','orphaned') THEN NULL ELSE status_reason END, \
          status = CASE WHEN status IN ('reauth_required','orphaned') THEN 'active' ELSE status END, \
-         reauth_required_at = NULL, last_check_at = NULL, last_check_result = NULL, updated_at = now() \
+         reauth_required_at = NULL, last_check_at = NULL, last_check_result = NULL, last_ok_at = NULL, \
+         last_error_at = NULL, last_error = NULL, last_test_at = NULL, last_test_result = NULL, updated_at = now() \
          WHERE id = $1 AND credentials_version = $2 AND instance_id IS NOT DISTINCT FROM $13",
     )
     .bind(n.id)
@@ -416,6 +424,25 @@ pub async fn org_app_available<'e, E: PgExecutor<'e>>(
     .fetch_optional(exec)
     .await?
     .unwrap_or(false))
+}
+
+/// (P5-POLISH-3, C-1029) `(package_id, client_key, instance_id)` of every enabled OAuth client usable from
+/// a scope (workspace, organization, instance), in one query: the set [`usable_clients`] answers from, for
+/// all packages at once (the catalogue's readiness, one pass instead of one query per method).
+pub async fn usable_client_keys<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    workspace: Option<Uuid>,
+) -> Result<Vec<(String, String, Option<Uuid>)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT DISTINCT c.package_id, c.client_key, c.instance_id \
+         FROM app_oauth_clients c WHERE c.enabled \
+         AND ((c.org_id IS NULL) OR (c.org_id = $1 AND (c.workspace_id IS NULL OR c.workspace_id = $2)))",
+    )
+    .bind(org)
+    .bind(workspace)
+    .fetch_all(exec)
+    .await?)
 }
 
 /// Enabled OAuth clients usable from a scope, most specific first

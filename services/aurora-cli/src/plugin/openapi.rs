@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
+mod ops;
+
 const METHODS: [&str; 8] = [
     "get", "put", "post", "delete", "options", "head", "patch", "trace",
 ];
@@ -33,6 +35,9 @@ pub(crate) struct Field {
     pub required: bool,
     pub ty: String,
     pub description: String,
+    /// (C-656) Scalar `enum` values and `default` of the schema, for `operations.json` only.
+    pub values: Option<Vec<Value>>,
+    pub default: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +52,13 @@ pub(crate) struct Operation {
     pub body: Vec<Field>,
     /// Lower snake case, unique within the model.
     pub tool_id: String,
+    /// (C-656) Request body of any declared kind (`application/json`, form, multipart) with its
+    /// top-level fields; `body` above stays the JSON-only view the reference files print.
+    pub op_body: Option<(String, Vec<Field>)>,
+    /// (C-656) JSON path of the list in the success response.
+    pub items: Option<String>,
+    /// (C-656) The success response declares a `Link` header.
+    pub link_header: bool,
 }
 
 #[derive(Debug)]
@@ -172,7 +184,10 @@ fn fields_of_schema(root: &Value, schema: &Value, depth: usize, out: &mut Vec<Fi
         .unwrap_or_default();
     if let Some(props) = s.get("properties").and_then(Value::as_object) {
         for (name, p) in props {
+            let (values, default) = ops::enum_default(root, Some(p));
             out.push(Field {
+                values,
+                default,
                 name: text(name, 64),
                 loc: "body".into(),
                 required: required.contains(name.as_str()),
@@ -200,7 +215,10 @@ fn param_fields(root: &Value, list: Option<&Value>) -> Result<Vec<Field>> {
         ) else {
             continue;
         };
+        let (values, default) = ops::enum_default(root, p.get("schema"));
         out.push(Field {
+            values,
+            default,
             name: text(name, 64),
             loc: text(loc, 12),
             required: loc == "path" || p.get("required").and_then(Value::as_bool) == Some(true),
@@ -235,6 +253,70 @@ fn body_fields(root: &Value, op: &Value) -> Result<Vec<Field>> {
         fields_of_schema(root, schema, 0, &mut out);
     }
     Ok(out)
+}
+
+/// (C-656) The request body of any declared kind with its top-level fields: JSON first, then a
+/// form, then multipart.
+fn any_body(root: &Value, op: &Value) -> Result<Option<(String, Vec<Field>)>> {
+    let Some(rb) = op.get("requestBody") else {
+        return Ok(None);
+    };
+    let rb = resolve(root, rb)?;
+    let Some(content) = rb.get("content").and_then(Value::as_object) else {
+        return Ok(None);
+    };
+    let json = content.get("application/json").or_else(|| {
+        content
+            .iter()
+            .find(|(k, _)| k.ends_with("+json"))
+            .map(|(_, v)| v)
+    });
+    let (ct, media) = if let Some(m) = json {
+        ("application/json", m)
+    } else if let Some(m) = content.get("application/x-www-form-urlencoded") {
+        ("application/x-www-form-urlencoded", m)
+    } else if let Some(m) = content.get("multipart/form-data") {
+        ("multipart/form-data", m)
+    } else {
+        return Ok(None);
+    };
+    let mut out = Vec::new();
+    if let Some(schema) = media.get("schema") {
+        fields_of_schema(root, schema, 0, &mut out);
+    }
+    Ok(Some((ct.to_owned(), out)))
+}
+
+/// The first `2xx` response (`200` preferred), resolved.
+fn success_response<'a>(root: &'a Value, op: &'a Value) -> Option<&'a Value> {
+    let responses = op.get("responses")?.as_object()?;
+    let pick = responses.get("200").or_else(|| {
+        responses
+            .iter()
+            .filter(|(k, _)| k.starts_with('2'))
+            .min_by_key(|(k, _)| (*k).clone())
+            .map(|(_, v)| v)
+    })?;
+    resolve(root, pick).ok()
+}
+
+fn success_items(root: &Value, op: &Value) -> Option<String> {
+    let r = success_response(root, op)?;
+    let content = r.get("content")?.as_object()?;
+    let media = content.get("application/json").or_else(|| {
+        content
+            .iter()
+            .find(|(k, _)| k.ends_with("+json"))
+            .map(|(_, v)| v)
+    })?;
+    ops::items_path(root, media.get("schema")?)
+}
+
+fn success_has_link(root: &Value, op: &Value) -> bool {
+    success_response(root, op)
+        .and_then(|r| r.get("headers"))
+        .and_then(Value::as_object)
+        .is_some_and(|h| h.keys().any(|k| k.eq_ignore_ascii_case("link")))
 }
 
 /// `(host, base path)` of the first server: `https://api.example.com/v1/` → `api.example.com`, `/v1`.
@@ -373,6 +455,9 @@ pub(crate) fn parse(doc: &str, host_override: Option<&str>) -> Result<Model> {
                 params,
                 body: body_fields(&root, op)?,
                 tool_id: String::new(),
+                op_body: any_body(&root, op)?,
+                items: success_items(&root, op),
+                link_header: success_has_link(&root, op),
             });
         }
     }
@@ -692,6 +777,7 @@ fn clear_generated(dir: &Path) -> Result<()> {
         let n = e.file_name().to_string_lossy().into_owned();
         let generated = n.starts_with("ops-")
             || n == "operations.md"
+            || n == "operations.json"
             || (n.starts_with("operations-") && n.ends_with(".md"));
         if generated && e.path().is_file() {
             std::fs::remove_file(e.path())
@@ -715,7 +801,12 @@ pub fn import(file: &Path, app: &str, host: Option<&str>, dir: &Path) -> Result<
     for (name, _, content) in &files {
         std::fs::write(out_dir.join(name), content).with_context(|| format!("writing {name}"))?;
     }
-    for n in &notes {
+    // (C-656) The fourth output: the operations file `aurora-agent` reads through `api.json`.
+    let (operations, op_notes) = ops::generate(&model);
+    if let Some(json) = &operations {
+        std::fs::write(out_dir.join("operations.json"), json).context("writing operations.json")?;
+    }
+    for n in notes.iter().chain(&op_notes) {
         eprintln!("import-openapi: {n}");
     }
     eprintln!(
@@ -730,8 +821,12 @@ pub fn import(file: &Path, app: &str, host: Option<&str>, dir: &Path) -> Result<
         );
     }
     let mut out = String::from(
-        "# Add under apps[].agent in plugin.yaml (summary is required with a guide):\nguide:\n",
+        "# Add under apps[].agent in plugin.yaml (summary is required with a guide):\n",
     );
+    if operations.is_some() {
+        out.push_str("operations: operations.json\n");
+    }
+    out.push_str("guide:\n");
     for (name, title, _) in &files {
         let _ = writeln!(
             out,

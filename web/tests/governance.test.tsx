@@ -131,7 +131,7 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     mockFetch(routes());
     wrap(<OrgAiModels org={{ ...ORG, my_role: "member" }} />);
     expect(await screen.findByText("Anthropic")).toBeTruthy();
-    expect(screen.getAllByText("enforced by instance").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Set by Administration").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect((screen.getByLabelText("Allowed models") as HTMLTextAreaElement).disabled).toBe(true);
   });

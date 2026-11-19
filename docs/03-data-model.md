@@ -40,6 +40,7 @@ MUST implement it exactly; any change starts here.
 | default_org_id | uuid null FK→organizations (set null) | |
 | last_login_at | timestamptz null | churn column |
 | approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails (phase 2, RFE-011a; `PATCH /v1/me { approval_email }`) |
+| admin_attention_email_enabled | bool not null default true | (FIX-167 Part B, C-1024) per-user opt-out of the e-mail about new administration decisions; used for instance admins only (`PATCH /v1/me { admin_attention_email }`) |
 | idp_admin_source | text null | (phase 4, P4-IDP-1, D-139) `idp:<provider>:<value>` when the claim sync granted `is_instance_admin`; `null` for a manual, e-mail-list or `bootstrap-admin` flag (those are never revoked by the sync) |
 
 ### `user_idp_roles`
@@ -351,7 +352,12 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | created_by | uuid null FK→users (set null) | |
 | last_used_at | timestamptz null | churn column (gateway, ≤1 write/min/secret) |
 | last_check_at | timestamptz null | (phase 5, P5-UX-14, D-335, D-350, C-944) when the account's health was last recorded: by Test (C-943) or by the gateway from real use (C-985) |
-| last_check_result | text null CHECK in (`ok`,`rejected`,`unreachable`,`unexpected`) | what was recorded then; `not_testable` is answered but never stored. Informational: it never changes what an agent may do |
+| last_check_result | text null CHECK in (`ok`,`rejected`,`unreachable`,`unexpected`) | what was recorded then; `not_testable` is answered but never stored. Informational: it never changes what an agent may do. (P5-POLISH-3, C-1033) No longer written: backfilled into the columns below by migration `20261201000254`, kept until a later cleanup |
+| last_ok_at | timestamptz null | (phase 5, P5-POLISH-3, D-383, C-1033) the last 2xx/3xx answer to an **agent** call through this account, written by the gateway (at most once a minute per account); backfilled from `last_check_at` where `last_check_result = 'ok'` |
+| last_error_at | timestamptz null | the last failed agent call the gateway attributes to the account (a 401/403 answer); the state is `failing` while it is newer than `last_ok_at` |
+| last_error | text null CHECK in (`rejected`,`unreachable`,`unexpected`,`expired`) | why; backfilled from a non-`ok` `last_check_result` |
+| last_test_at | timestamptz null | the last **Test** (C-943); never written by the gateway's use path |
+| last_test_result | text null CHECK in (`ok`,`rejected`,`unreachable`,`unexpected`) | what Test said; shown as "Test passed … ago", never as the account working |
 
 ### `app_connections`
 | Column | Type | Notes |
@@ -382,7 +388,12 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | reauth_required_at | timestamptz null | set by gateway on `invalid_grant` |
 | last_used_at | timestamptz null | churn column |
 | last_check_at | timestamptz null | (phase 5, P5-UX-14, D-335, D-350, C-944) when the account's health was last recorded: by Test (C-943) or by the gateway from real use (C-985) |
-| last_check_result | text null CHECK in (`ok`,`rejected`,`unreachable`,`unexpected`) | what was recorded then; informational, never changes `status` or what an agent may do |
+| last_check_result | text null CHECK in (`ok`,`rejected`,`unreachable`,`unexpected`) | what was recorded then; informational, never changes `status` or what an agent may do. (P5-POLISH-3, C-1033) No longer written: backfilled into the columns below by migration `20261201000254`, kept until a later cleanup |
+| last_ok_at | timestamptz null | (phase 5, P5-POLISH-3, D-383, C-1033) the last 2xx/3xx answer to an **agent** call through this account, written by the gateway (at most once a minute per account); backfilled from `last_check_at` where `last_check_result = 'ok'` |
+| last_error_at | timestamptz null | the last failed agent call the gateway attributes to the account (a 401/403 answer); the state is `failing` while it is newer than `last_ok_at` |
+| last_error | text null CHECK in (`rejected`,`unreachable`,`unexpected`,`expired`) | why; backfilled from a non-`ok` `last_check_result` |
+| last_test_at | timestamptz null | the last **Test** (C-943); never written by the gateway's use path |
+| last_test_result | text null CHECK in (`ok`,`rejected`,`unreachable`,`unexpected`) | what Test said; shown as "Test passed … ago", never as the account working |
 | limit_level | text null CHECK in (`read`,`ask`,`act`) | (phase 5, P5-UX-11, D-353, C-990) the limit of an organization's account: no agent's access may exceed it. Set only for organization scope (`workspace_id IS NULL`), null otherwise; migration `20261201000251_app_connections_limit_level.sql` fills it from `access` (`read` → `read`, `write` → `act`). `access` stays in step (`read` for `read`, `write` otherwise) and keeps being what the gateway enforces |
 | index | (org_id, workspace_id, app_id) | |
 
@@ -657,6 +668,18 @@ The gateway database role's column-level `SELECT (id, status, gateway_instance_i
 | user_id | uuid FK→users (cascade) | pk part |
 | workspace_id | uuid FK→workspaces (cascade) | pk part; the workspace whose approvals the connection watches |
 | last_seen_at | timestamptz not null | churn column; live when within `APPROVAL_WATCHER_TTL`; index (workspace_id, last_seen_at) |
+
+### `admin_attention_notices`
+(FIX-167 Part B, D-370, C-1023) One row per (decision item, instance admin): the claim that makes the e-mail and the Web Push of a new item happen once. Written in the transaction of the state change that creates the item (`connectors/plane.rs` registration, `plugins/ingest.rs` and `plugins/registry.rs` for package holds, `addon_sources` for a changed key), with `ON CONFLICT DO NOTHING`, so a replay inserts nothing. Rows are inserted only for active (not disabled) instance admins at that moment.
+| Column | Type | Notes |
+|---|---|---|
+| kind | text CHECK in (`connector_approval`,`package_approval`,`addon_key_changed`,`host_claim_conflict`) | pk part; the informational kinds of `GET /v1/admin/attention` never get a row |
+| subject_id | text | pk part: the connector id (text), or the package row / addon source uuid as text |
+| subject_version | text | pk part: the manifest digest of a connector, the version of a package, the new key fingerprint of a source; a new one is a new subject |
+| user_id | uuid FK→users (cascade) | pk part |
+| title, detail | text not null | the fixed sentences of `14 §Needs your attention` (names and versions only); the e-mail and the title-bearing push read them |
+| mailed_at, pushed_at | timestamptz null | claimed (`now()`) by the e-mail sweeper and the push loop with `FOR UPDATE SKIP LOCKED`, then sent; a null half is open work |
+| index | (created_at) where `mailed_at IS NULL OR pushed_at IS NULL` | the sweepers' work set; rows older than 30 days are pruned hourly |
 
 ### `approval_notifications`
 (phase 2, RFE-011a) One row per (approval, decider) e-mail claim.
@@ -2139,16 +2162,7 @@ rollout of the API and the terminator; `15 §SSH access`). The gateway database 
 #### `conversations.kind` (phase 5, P4-EVAL-2, C-860; migration `20261201000240`)
 `conversations.kind` CHECK gained `eval` (external_ref `eval:<run_id>:<position>`; the unique `(agent_id, kind, external_ref)` index is unchanged). The same migration adds `eval_read_only` to `request_log.decision` (§request_log). A turn of an `eval` conversation gets a `context` gateway credential whose `capabilities` hold `eval_read_only` (set at mint from the conversation's kind); the gateway refuses every write made with it (C-868).
 
-#### `app_connections` and `secrets`: real use and tests apart (phase 5, P5-POLISH-3, D-383, C-1033; migration `20261201000254`)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| last_ok_at | timestamptz null | the last 2xx/3xx answer to an **agent** call through this account, written by the gateway (at most once a minute); backfilled from `last_check_at` where `last_check_result = 'ok'` | 5 (P5-POLISH-3) |
-| last_error_at | timestamptz null | the last failed agent call the gateway attributes to the account | 5 (P5-POLISH-3) |
-| last_error | text null | `rejected` \| `unreachable` \| `unexpected` \| `expired` (CHECK); backfilled from a non-`ok` `last_check_result` | 5 (P5-POLISH-3) |
-| last_test_at | timestamptz null | the last **Test** (C-943); never written by the gateway's use path | 5 (P5-POLISH-3) |
-| last_test_result | text null | `ok` \| `rejected` \| `unreachable` \| `unexpected` (CHECK) | 5 (P5-POLISH-3) |
-
-`last_check_at` and `last_check_result` stay (no longer written) until a later cleanup migration. Both tables get the same five columns.
+(Landed, P5-POLISH-3, D-383, C-1033: the five columns `last_ok_at`, `last_error_at`, `last_error`, `last_test_at`, `last_test_result` are in the `secrets` and `app_connections` sections above, migration `20261201000254_account_use_and_tests.sql`. The gateway writes `last_ok_at` / `last_error_at` / `last_error` for agent calls only, at most once a minute per account and outcome; the Test route writes only `last_test_*`; `last_check_at` and `last_check_result` were backfilled into the use columns (`ok` → `last_ok_at`, otherwise `last_error_at`/`last_error`) and are no longer written, kept until a later cleanup migration. The gateway role's column grant is `UPDATE (…, last_ok_at, last_error_at, last_error)`, never `last_test_*`.)
 
 #### `app_setup_requests`, `app_setup_request_askers` (phase 5, P5-POLISH-4, D-386, C-1030, SEC-135; migration `20261201000255`)
 | Planned table.column | Type | Notes | Phase |

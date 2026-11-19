@@ -132,6 +132,10 @@ pub struct AgentEntry {
     pub instructions: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guide: Vec<GuideFile>,
+    /// (P5-GUIDE-6, C-641) Absent without an operations file: the fragment is then byte-identical
+    /// to the one of earlier versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operations: Option<OperationsRef>,
     #[serde(default)]
     pub env: Vec<crate::manifest::EnvVar>,
     #[serde(default)]
@@ -140,8 +144,23 @@ pub struct AgentEntry {
     pub default_blocklist: Vec<String>,
 }
 
-/// Digests of the guide files of one package: `(app_id, file)` → `(sha256 hex, size)`.
+/// Digests of the guide files of one package: `(app_id, file)` → `(sha256 hex, size)`. The
+/// operations file (P5-GUIDE-6) is one more entry, plus `(app_id, OPERATIONS_COUNT_KEY)` →
+/// `("", operations count)`; that key is not a legal file name, so it cannot clash.
 pub type GuideDigests = BTreeMap<(String, String), (String, u64)>;
+
+/// Key of the operations count in [`GuideDigests`].
+pub const OPERATIONS_COUNT_KEY: &str = "operations.count";
+
+/// (P5-GUIDE-6, C-641) The operations file of an app in the snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperationsRef {
+    pub file: String,
+    pub sha256: String,
+    pub size: u64,
+    pub count: u64,
+}
 
 /// Compute [`GuideDigests`] from a package archive, as `hooks_digest` is computed (C-641).
 #[must_use]
@@ -149,6 +168,18 @@ pub fn guide_digests(manifest: &Manifest, pkg: &crate::Package) -> GuideDigests 
     let mut out = GuideDigests::new();
     for a in &manifest.apps {
         let Some(ag) = &a.agent else { continue };
+        if let Some(f) = &ag.operations
+            && let Some(b) = pkg.file(&format!("agent/{}/{}", a.about.id, f))
+        {
+            out.insert(
+                (a.about.id.clone(), f.clone()),
+                (hex(&Sha256::digest(b)), b.len() as u64),
+            );
+            out.insert(
+                (a.about.id.clone(), OPERATIONS_COUNT_KEY.to_owned()),
+                (String::new(), crate::operations::count(b) as u64),
+            );
+        }
         for g in &ag.guide {
             if let Some(b) = pkg.file(&format!("agent/{}/{}", a.about.id, g.file)) {
                 out.insert(
@@ -187,10 +218,29 @@ fn agent_entry(
             size,
         });
     }
+    let operations = match &ag.operations {
+        None => None,
+        Some(f) => {
+            let get = |k: &str| digests.and_then(|d| d.get(&(app_id.to_owned(), k.to_owned())));
+            let (sha256, size) = get(f)
+                .cloned()
+                .ok_or_else(|| CompileError::GuideFileMissing {
+                    app_id: app_id.to_owned(),
+                    file: f.clone(),
+                })?;
+            Some(OperationsRef {
+                file: f.clone(),
+                sha256,
+                size,
+                count: get(OPERATIONS_COUNT_KEY).map_or(0, |(_, n)| *n),
+            })
+        }
+    };
     Ok(AgentEntry {
         summary: ag.summary.clone(),
         instructions: ag.instructions.clone(),
         guide,
+        operations,
         env: ag.env.clone(),
         stubs: ag.stubs.clone(),
         default_blocklist: ag.default_blocklist.clone(),

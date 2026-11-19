@@ -402,6 +402,25 @@ fn the_shipped_builtin_packages_compile_without_a_host_claim_decision() {
         // each listed file must exist next to the manifest (size and digest of the real bytes).
         let mut digests = aurora_registry::snapshot::GuideDigests::new();
         for a in &m.apps {
+            // (P5-GUIDE-6) The operations file is one more entry, with its operation count.
+            if let Some(f) = a.agent.as_ref().and_then(|ag| ag.operations.as_ref()) {
+                let path = p
+                    .parent()
+                    .unwrap()
+                    .join(format!("agent/{}/{f}", a.about.id));
+                let b = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                digests.insert(
+                    (a.about.id.clone(), f.clone()),
+                    (format!("{:064x}", b.len()), b.len() as u64),
+                );
+                digests.insert(
+                    (
+                        a.about.id.clone(),
+                        aurora_registry::snapshot::OPERATIONS_COUNT_KEY.to_owned(),
+                    ),
+                    (String::new(), aurora_registry::operations::count(&b) as u64),
+                );
+            }
             for g in a.agent.iter().flat_map(|ag| &ag.guide) {
                 let f = p
                     .parent()

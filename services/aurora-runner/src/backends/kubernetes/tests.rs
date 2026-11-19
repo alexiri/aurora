@@ -116,10 +116,11 @@ fn pod_hardening_fields() {
     assert_eq!(psc.run_as_group, Some(1000));
     assert_eq!(psc.fs_group, Some(1000));
     assert_eq!(psc.run_as_non_root, Some(true));
-    assert_eq!(
-        psc.seccomp_profile.as_ref().unwrap().type_,
-        "RuntimeDefault"
-    );
+    // D-394 / SEC-137: the pod and the container carry the Localhost profile that denies ptrace.
+    let want = crate::backends::SANDBOX_SECCOMP_LOCALHOST;
+    let pod_prof = psc.seccomp_profile.as_ref().unwrap();
+    assert_eq!(pod_prof.type_, "Localhost");
+    assert_eq!(pod_prof.localhost_profile.as_deref(), Some(want));
 
     assert_eq!(spec.containers.len(), 1);
     let c = &spec.containers[0];
@@ -135,7 +136,9 @@ fn pod_hardening_fields() {
         Some(vec!["ALL".to_owned()])
     );
     assert!(sc.capabilities.as_ref().unwrap().add.is_none());
-    assert_eq!(sc.seccomp_profile.as_ref().unwrap().type_, "RuntimeDefault");
+    let c_prof = sc.seccomp_profile.as_ref().unwrap();
+    assert_eq!(c_prof.type_, "Localhost");
+    assert_eq!(c_prof.localhost_profile.as_deref(), Some(want));
 
     // No host access of any kind.
     assert_ne!(spec.host_network, Some(true));

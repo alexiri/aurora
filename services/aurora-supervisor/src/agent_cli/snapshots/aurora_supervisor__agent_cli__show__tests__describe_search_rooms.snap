@@ -1,0 +1,14 @@
+---
+source: services/aurora-supervisor/src/agent_cli/show.rs
+expression: "describe(d, \"search_rooms\").unwrap()"
+---
+indico search_rooms (package operation)
+GET https://indico.example.test/rooms/api/rooms/search
+summary: Rooms free in a building for a time slot
+tool: search_rooms
+access (advisory): A: allowed
+parameters:
+  building (query, string, required) — Building number
+  repeat_frequency (query, string, required) one of NEVER|DAY default NEVER
+items at: $
+example: aurora-agent call indico search_rooms building=<string> repeat_frequency=NEVER

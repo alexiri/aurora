@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
+import { LockPill } from "@/components/ui/lock-pill";
 import { inputClass } from "@/components/ui/field";
 import { useMe } from "@/lib/api/queries";
 import { adminRoutes } from "@/lib/routes";
@@ -15,13 +15,11 @@ import { cn } from "@/lib/utils";
 export function Locked({ setting }: { setting?: string }) {
   const me = useMe();
   const badge = (
-    <Badge className="ml-2 align-middle normal-case tracking-normal" title="Set by the instance operator">
-      enforced by instance
-    </Badge>
+    <LockPill owner="Set by Administration" className="ml-2 align-middle" />
   );
   if (!setting || me.data?.user.is_instance_admin !== true) return badge;
   return (
-    <Link href={adminRoutes.governanceSetting(setting)} className="no-underline" aria-label={`Enforced by instance: open the ${setting} setting`}>
+    <Link href={adminRoutes.governanceSetting(setting)} className="no-underline" aria-label={`Set by Administration: open the ${setting} setting`}>
       {badge}
     </Link>
   );

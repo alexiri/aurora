@@ -62,14 +62,14 @@ export function mergeNeeds(
 
 export interface DecisionBadge {
   label: "Allow" | "Held" | "Deny" | "Failed";
-  tone: "accent" | "pending" | "danger";
+  tone: "accent" | "neutral" | "danger";
 }
 
 /** The rail's badge for a request-log row: an `error_code` reads Failed; allow/approved Allow; an expired hold Held; the rest Deny. */
 export function decisionBadge(row: Pick<RequestLogEntry, "decision" | "error_code">): DecisionBadge {
   if (row.error_code || row.decision === "error") return { label: "Failed", tone: "danger" };
   if (row.decision === "allow" || row.decision === "approved") return { label: "Allow", tone: "accent" };
-  if (row.decision === "approval_expired") return { label: "Held", tone: "pending" };
+  if (row.decision === "approval_expired") return { label: "Held", tone: "neutral" };
   return { label: "Deny", tone: "danger" };
 }
 
@@ -78,7 +78,7 @@ export const hasProblem = (rows: readonly Pick<RequestLogEntry, "decision" | "er
   rows.some((r) => decisionBadge(r).tone === "danger");
 
 export interface SandboxLook {
-  tone: "neutral" | "accent" | "pending" | "danger";
+  tone: "neutral" | "accent" | "danger";
   label: string;
   /** The sanitised failure reason, as the header pill's tooltip (FIX-025). */
   title?: string;
@@ -87,7 +87,7 @@ export interface SandboxLook {
 /** The sandbox state's label, tone and failure tooltip, shared by the header pill, the rail and the sheet. */
 export function sandboxLook(sb: Pick<SandboxView, "state" | "failure_message" | "failure_code">): SandboxLook {
   const s = sb.state;
-  const tone = s === "running" ? "accent" : s === "failed" ? "danger" : s === "starting" || s === "stopping" ? "pending" : "neutral";
+  const tone = s === "running" ? "accent" : s === "failed" ? "danger" : "neutral";
   const title =
     s === "failed" && (sb.failure_message || sb.failure_code)
       ? `${sb.failure_message ?? ""}${sb.failure_code ? ` (${sb.failure_code})` : ""}`.trim()

@@ -692,6 +692,8 @@ impl ProcessManager {
                 name: name.to_owned(),
                 description: Some(description.to_owned()),
                 input_schema,
+                family: Some("processes".to_owned()),
+                exposure: Some(aurora_protocol::tools::Exposure::OnDemand),
             }
         };
         vec![

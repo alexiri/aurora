@@ -88,7 +88,7 @@ function AppSetupView({
         description={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>{d.description}</span>
-            <Badge tone={s.available ? "accent" : "pending"}>
+            <Badge tone={s.available ? "accent" : "neutral"}>
               {s.available ? `Available in ${orgName}` : `Not available in ${orgName}`}
             </Badge>
           </span>

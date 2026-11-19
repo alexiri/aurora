@@ -1111,6 +1111,11 @@ guides keep working.
 
 **Administration entry and level** (C-962):
 - **Administration** is a labelled link at the foot of the sidebar and in the account menu.
+- (FIX-167 Part B, D-370, C-1022) For instance admins the entry carries the **count of items that need
+  attention** as a `Badge` (`pending` tone, "3" with the visually hidden text "need your attention"), in
+  the sidebar and in the account menu. The count is `GET /v1/admin/attention`'s item count, fetched on
+  load, on window focus and every 5 minutes. A failed fetch, or no item, shows no badge and never an
+  error. Nobody else fetches it.
 - The org switcher lists organizations only; "All organizations" is gone.
 - Every page header carries a level badge: **Administration**, **<org>** or **<org> › <workspace>**.
 - An instance admin acting in an org sees the org's pages exactly as its owner would.
@@ -1956,7 +1961,9 @@ operator docs — because the gateway refuses every credential of such an organi
 
 The Connectors page lists every connector as a card: icon and name, **Managed** or
 **Self-hosted** badge, status chip (`Waiting for the connector host` / `Running` /
-`Error` with the host's message / `Needs approval` / `Disabled`), the number of integrations,
+`Error` with the host's message / `Needs approval` / `Disabled`; (FIX-167, D-369) a connector whose
+widened update waits shows `Running` **and** a second chip, **Update waiting for approval**, and its card
+and detail view show the manifest diff with the existing **Approve manifest** step), the number of integrations,
 and for managed ones the hosts reporting it. The primary action is **Add connector**:
 1. **Choose a type**: cards from `GET /v1/admin/connector-types` (icon, name, publisher,
    version, short description from the setup guide; types already added are shown as added).
@@ -2387,6 +2394,23 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   - The editor toolbar wraps; tab bars show no stray scrollbar; labels never double "(optional)"; help
     links are text, never raw URLs.
   - The admin landing never flashes "You are not in an organization yet".
+- **Administration › Overview** opens, in both modes, with **Needs your attention** (FIX-167 Part B, D-370,
+  C-1022; none of it when `GET /v1/admin/attention` has no item, is loading or failed). It is a
+  `pending`-toned panel like **Needs you** below. Each item shows its **title**, its **detail**, "Since
+  <date>" and one button to its `href`: **Review** (a decision) or **Open** (information). Decisions come
+  first, oldest first. The sentences are fixed and filled with names and versions only:
+  | Kind | Title | Detail |
+  |---|---|---|
+  | `connector_approval`, first registration | "<name> needs your approval" | "This connector registered for the first time and does nothing until you approve it." |
+  | `connector_approval`, update | "<name> <version> is waiting for approval" | "It keeps running at the level you approved; only what is new waits. It adds: <reasons>." |
+  | `package_approval` | "<name> <version> needs your approval" | by reason: `first_install` "A new app package. Review what it asks for before it is switched on."; `addon_update` "An update from an add-on source. Review it before it is switched on."; `permissions_widened` "It asks for more than the approved version. The approved version keeps running."; `publisher_changed` "Its publisher differs from the approved version."; `builtin_id_reserved` "It uses the id of a built-in app package."; `version_downgrade` "It is older than the approved version."; `breaks_connections` "Switching it on would make some connections sign in again. The approved version keeps running."; `converts_grants` "Switching it on would convert some agents' full access grants to custom ones. The approved version keeps running." |
+  | `addon_key_changed` | "<source>: signing key changed" | "The source now signs with a different key. Nothing from it is ingested until you confirm the new key." |
+  | `host_claim_conflict` | "<name> <version> conflicts with another app package" | "Two app packages claim the same host. One of them waits until you choose which wins." |
+  | `connector_down` | "<name> is not running" | "Its connector host reports an error." or "No connector host has reported it for more than 90 seconds." |
+  | `ownerless_org` | "The organization <slug> has no owner" | "Its <n> active member(s) cannot use the gateway until someone is made an owner." |
+
+  The ownerless-organization banner (FIX-050) stays. Built from the shared `Card`-less panel pattern,
+  tokens only: both themes, no horizontal scroll at 390 px, axe clean.
 - **Administration › Overview** is the setup checklist until setup is complete, then a health page built
   from the same facts:
   - runners, the gateway and AI endpoints;
@@ -2559,7 +2583,9 @@ workspaces' conversations; limits by repository or project inside an account.
   and the sanitized title, `tag = approval id` (no duplicates), and clicking it
   focuses the tab at the Approvals page. This is **not** Web Push: it needs an open
   tab. Account also has the "E-mail me approvals
-  nobody is watching" switch (`approval_email`).
+  nobody is watching" switch (`approval_email`). (FIX-167 Part B, C-1024) Instance admins also see
+  "E-mail me when something needs my decision in Administration" (`admin_attention_email`, default on);
+  the device's Web Push opt-in below decides the push for that item.
 - **Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-134, SEC-75, SEC-76)**: shown only when `GET /v1/push/config`
   says `available` (the operator set `push.enabled`). **Account → Notifications** gets a
   **"Notify this device when an approval needs me, even when Aurora is closed"** card built from the

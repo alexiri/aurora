@@ -737,7 +737,7 @@ registry**. Every adapter's launcher registers the process it starts for a conve
 pid, conversation, `/proc` start time) and the entry goes when that process exits, so a recycled pid never matches. The
 request is served only when that harness's conversation equals the request's `session`; any other outcome (no
 harness above the caller, another conversation's harness, a vanished or recycled pid) answers `session_not_caller`
-with one fixed text that names no conversation, bumps a refusal counter, and logs no arguments. `session` stays on the wire
+with one fixed text that names no conversation, bumps a refusal counter, and logs no arguments. The check cannot be defeated by tracing the harness: the sandbox's seccomp profile refuses `ptrace` and `process_vm_readv/writev` to every process in it (D-394, SEC-137), and no adapter, the terminal or the language servers need them. `session` stays on the wire
 as a cross-check; it is never corrected. The turn is still checked as before: a harness that runs while its
 conversation has no turn gets `no_active_turn`. The MCP bridge and `aurora-agent` run from the harness's shell pass; a web-terminal
 or SSH shell, a `process_start` child (a child of the supervisor, not of the harness), another conversation's harness

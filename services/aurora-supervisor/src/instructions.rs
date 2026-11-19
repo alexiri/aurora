@@ -86,6 +86,87 @@ pub struct RenderInputs {
     pub approval_parking: bool,
     /// (C-884) Absent unless a role resolves or a subagent role is set.
     pub models: Option<ModelsInfo>,
+    /// (P5-GUIDE-7, C-654) Absent from an older API: the bridge then lists everything.
+    pub platform_tools: Option<PlatformToolsInfo>,
+}
+
+/// (P5-GUIDE-7, C-654) `render_inputs.platform_tools`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlatformToolsInfo {
+    /// `on_demand` or `all`.
+    pub mode: String,
+    /// The on-demand families of the available tools, in registry order.
+    pub families: Vec<ToolFamily>,
+}
+
+impl Default for PlatformToolsInfo {
+    fn default() -> Self {
+        Self {
+            mode: "all".into(),
+            families: Vec::new(),
+        }
+    }
+}
+
+impl PlatformToolsInfo {
+    /// The bridge lists only the core tools (and the index fragment is rendered) when the mode is
+    /// `on_demand` **and** the sandbox has `aurora-agent` (C-654): an older image never loses tools.
+    #[must_use]
+    pub fn on_demand(this: Option<&Self>, agent_cli: bool) -> bool {
+        agent_cli && this.is_some_and(|p| p.mode == "on_demand")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ToolFamily {
+    pub name: String,
+    pub purpose: String,
+    pub tools: Vec<String>,
+}
+
+/// (P5-GUIDE-7, C-654) The *platform tools* fragment of `24 §10b`: a fixed paragraph, then one
+/// line per family with its verbs (the tool names without the family prefix). The supervisor's own
+/// `process_*` tools join as the `processes` family.
+fn platform_tools_fragment(p: &PlatformToolsInfo) -> String {
+    let mut o = String::from(
+        "## Platform tools\n\nBesides the tools you see, Aurora gives you these, which you call from \
+your sandbox: `aurora-agent search <words>` finds one, `aurora-agent describe aurora <name>` shows \
+its arguments, `aurora-agent call aurora <name> key=value …` runs it and prints the result.\n\n",
+    );
+    let local = ToolFamily {
+        name: "processes".into(),
+        purpose: "long-running commands that outlive a turn".into(),
+        tools: crate::process::ProcessManager::local_descriptors()
+            .into_iter()
+            .map(|d| d.name)
+            .collect(),
+    };
+    for f in p.families.iter().chain(std::iter::once(&local)) {
+        if f.tools.is_empty() {
+            continue;
+        }
+        let verbs: Vec<&str> = f
+            .tools
+            .iter()
+            .map(|t| {
+                let stripped = t
+                    .strip_prefix(f.name.trim_end_matches('s'))
+                    .and_then(|r| r.strip_prefix('_'));
+                stripped.unwrap_or(t.as_str())
+            })
+            .collect();
+        let _ = writeln!(
+            o,
+            "- {} ({}): {}",
+            inline(&f.name, NAME_MAX),
+            inline(&verbs.join(", "), 200),
+            inline(&f.purpose, 200)
+        );
+    }
+    o.push('\n');
+    o
 }
 
 impl Default for RenderInputs {
@@ -101,6 +182,7 @@ impl Default for RenderInputs {
             timezone: None,
             approval_parking: false,
             models: None,
+            platform_tools: None,
         }
     }
 }
@@ -386,6 +468,14 @@ again.\n\n",
         o.push('\n');
     }
 
+    if let Some(p) = i
+        .platform_tools
+        .as_ref()
+        .filter(|p| PlatformToolsInfo::on_demand(Some(p), agent_cli))
+    {
+        o.push_str(&platform_tools_fragment(p));
+    }
+
     o.push_str("## Memory\n\n");
     o.push_str(
         "Your memories live in the platform; `memory/` is a projection. Save, search and delete \
@@ -500,6 +590,7 @@ mod tests {
             timezone: Some("Europe/Berlin".into()),
             approval_parking: false,
             models: None,
+            platform_tools: None,
         }
     }
 
@@ -564,6 +655,68 @@ mod tests {
         assert!(r.contains("- Ledger (`ledger`, 2 accounts): Projects, issues and git.\n"));
         assert!(r.contains("- Indico (`indico`, 1 account)\n"), "{r}");
         insta::assert_snapshot!(r);
+    }
+
+    fn tool_families() -> PlatformToolsInfo {
+        let fam = |n: &str, p: &str, t: &[&str]| ToolFamily {
+            name: n.into(),
+            purpose: p.into(),
+            tools: t.iter().map(|s| (*s).to_owned()).collect(),
+        };
+        PlatformToolsInfo {
+            mode: "on_demand".into(),
+            families: vec![
+                fam(
+                    "memory",
+                    "what you remember between conversations",
+                    &["memory_save", "memory_get", "memory_list", "memory_search"],
+                ),
+                fam(
+                    "schedules",
+                    "recurring and one-off runs of your own",
+                    &["schedule_create", "schedule_list"],
+                ),
+                // A family whose tools are all unavailable arrives empty-less: omitted.
+                fam("webhooks", "inbound webhooks", &[]),
+            ],
+        }
+    }
+
+    /// (P5-GUIDE-7, `24 §10b`) The *platform tools* fragment: on in `on_demand` with the command,
+    /// absent in mode `all`, absent without the command (an older image), absent from an older API.
+    #[test]
+    fn platform_tools_fragment_snapshots_for_both_modes() {
+        let mut i = sample();
+        i.platform_tools = Some(tool_families());
+        let on = render_with(&i, true);
+        assert!(on.contains("## Platform tools"));
+        assert!(on.contains("- memory (save, get, list, search): what you remember"));
+        assert!(on.contains("- schedules (create, list): "));
+        assert!(
+            on.contains("- processes ("),
+            "the supervisor's local family joins"
+        );
+        assert!(
+            !on.contains("- webhooks"),
+            "a family without tools is omitted"
+        );
+        insta::assert_snapshot!("platform_tools_on_demand", on);
+
+        i.platform_tools.as_mut().unwrap().mode = "all".into();
+        let all = render_with(&i, true);
+        assert!(!all.contains("Platform tools"), "{all}");
+        insta::assert_snapshot!("platform_tools_all", all);
+
+        // No command in the sandbox, or no inputs from an older API: nothing is hidden, nothing said.
+        i.platform_tools.as_mut().unwrap().mode = "on_demand".into();
+        assert!(!render_with(&i, false).contains("Platform tools"));
+        i.platform_tools = None;
+        assert!(!render_with(&i, true).contains("Platform tools"));
+
+        // The measured size of the fragment (chars / 4, P5-GUIDE-7's report).
+        let frag = platform_tools_fragment(&tool_families());
+        eprintln!("platform tools fragment: {} chars", frag.chars().count());
+        assert!(frag.chars().count() < 2_000, "{}", frag.chars().count());
     }
 
     /// With the 23 built-in apps and long notes the fragment stays small: the notes are not in it.

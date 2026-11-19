@@ -1,0 +1,13 @@
+---
+source: services/aurora-supervisor/src/agent_cli/preview.rs
+expression: "render(&sum(&[]), &body)"
+---
+HTTP 200 · application/json · 1234 bytes · 2 pages
+saved: /tmp/aurora-agent/demo-list-20260101T000000Z.json
+more pages: no
+keys:
+  items (array) [2 items]
+  meta (object) {1 keys}
+  name (string) "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  ok (boolean) true
+  total (number) 3

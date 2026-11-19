@@ -216,7 +216,7 @@ function Members({ g, orgId }: { g: Group; orgId: string }) {
                     <div className="text-xs text-muted">{m.user.email}</div>
                   </Td>
                   <Td>
-                    <Badge tone={m.status === "active" ? "accent" : "pending"}>{m.status}</Badge>
+                    <Badge tone={m.status === "active" ? "accent" : "neutral"}>{m.status}</Badge>
                     {m.status === "suspended" ? (
                       <div className="text-xs text-muted">Suspended members derive no access.</div>
                     ) : null}

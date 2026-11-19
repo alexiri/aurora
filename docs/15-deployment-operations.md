@@ -510,6 +510,7 @@ Files: `deploy/dev/kind-dev.sh` (driven by `just kind-up | kind-dev | kind-statu
 |-------------------|-------------|
 | `edge` (Caddy, 4000) | chart Ingress (`ingress.className: nginx`) behind ingress-nginx; one URL `http://localhost:4000`, same `/v1/*` → api, `/` → web rule, guarded by `scripts/guards/edge-routes.sh` |
 | `postgres`, `migrate`, `api`, `gateway`, `hookhost`, `web` | the same components as chart Deployments; `postgres.enabled` (evaluation StatefulSet), the migrate pre-install/upgrade hook |
+| (`kind` nodes carry the sandbox seccomp profile) | the chart's `sandboxes.seccomp.install` DaemonSet (namespace `aurora-seccomp`, Pod Security `privileged`) copies `files/sandbox-seccomp.json` to `/var/lib/kubelet/seccomp/aurora/` on every sandbox node (D-394, SEC-137) |
 | `setup.sh` secrets and gateway CA | the chart's `secrets` and `gateway-ca` hooks |
 | `runner` (profile `hosted`, podman socket) | `runner` with the Kubernetes backend: sandboxes are Pods in `aurora-sandboxes`, enforced by NetworkPolicies (so SEC-02/SEC-09 are exercised the way production runs them) |
 | `connector-fake` (profile) | `values-connector-fake.yaml`: a chart `connectors` entry; `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` from the generated token |
@@ -675,6 +676,10 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   (warning) and for `gateway.resolve_cache_ttl_secs` (critical: cache is running out,
   new requests are being refused); page on `state="down"`. Kubernetes probes use
   plain `/readyz`; use `?strict=true` only in monitoring, never as a readiness probe.
+  **(FIX-180, D-395)** A sandbox whose request body stops arriving for 60 s is answered `408
+  request_body_timeout` and its connection closed (`aurora_gateway_request_body_timeout_total`,
+  one request-log row each); a few are normal (killed uploads), a sustained rate points at a
+  broken client or network path. The 60 s is not configurable.
   **(FIX-102)** The chart's probes are `httpGet`: readiness `/readyz`, liveness `/healthz`, on the port that
   serves the ops router (api 4101, gateway 4103, hookhost 4104, runner 4106, connector host 4192, relay 4193),
   so an API replica without its database, or a gateway reporting `down`, leaves rotation. The web workload and

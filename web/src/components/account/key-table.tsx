@@ -20,7 +20,7 @@ function keyStatus(k: ApiKey): string {
   return "Active";
 }
 
-const statusTone = { Active: "accent", Revoked: "danger", Expired: "pending" } as const;
+const statusTone = { Active: "accent", Revoked: "danger", Expired: "neutral" } as const;
 
 /** List of API keys with a confirmed revoke action. */
 export function KeyTable({

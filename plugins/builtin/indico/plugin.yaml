@@ -1,6 +1,6 @@
 package:
   id: indico
-  version: 1.3.0
+  version: 1.4.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -23,6 +23,8 @@ apps:
       id: indico
       name: Indico
       description: Search and read events and meetings, book rooms and manage favorites on your Indico server
+      summary: Events, meetings and room booking on your Indico server.
+      first_prompt: "Which events are coming up in my favorite categories?"
       category: productivity
       api_docs: https://docs.getindico.io/en/stable/http-api/
       connect_note:
@@ -39,6 +41,10 @@ apps:
         kind: fields
         label: Personal API token
         description: "A token you create on your Indico profile. It does not tell Aurora which scopes it has, so you say which ones you gave it."
+        # The scopes to tick on Indico's token page (docs.getindico.io/en/stable/http-api/access/#api-token-authentication).
+        access_levels:
+          - { id: read, label: Read only, permission_hints: ["read:user", "read:legacy_api", "read:everything"] }
+          - { id: write, label: Read and write, permission_hints: ["read:user", "read:legacy_api", "write:legacy_api", "read:everything"] }
         fields:
           - name: access_token
             label: Personal API token
@@ -256,6 +262,7 @@ apps:
         time and person before booking; never retry a booking. If a scope is missing, say which
         one; never guess availability. Endpoints under /rooms/api/ are internal to Indico and may
         change: on a 404 or an unexpected shape, say so.
+      operations: operations.json
       guide:
         - { file: book-free-room.md, title: "Find a free room and book it", kind: recipe }
         - { file: find-category-events.md, title: "Find the events of a category in a date range", kind: recipe }

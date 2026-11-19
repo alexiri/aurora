@@ -182,6 +182,7 @@ async fn the_folder_matches_the_render_inputs_and_the_manifest() {
     assert_eq!(
         names,
         [
+            ".aurora/apps/gdemo_app/api.json",
             ".aurora/apps/gdemo_app/api.md",
             ".aurora/apps/gdemo_app/data.json",
             ".aurora/apps/gdemo_app/guide.md",
@@ -317,7 +318,7 @@ async fn grant_changes_move_the_generation_and_the_folder() {
         .await
         .unwrap();
     assert!(generation(&h, w.agent).await > g);
-    assert_eq!(folder(&parts(&h, w.agent).await).len(), 5);
+    assert_eq!(folder(&parts(&h, w.agent).await).len(), 6);
 
     // A new package version (changed reference file) is the next generation with the new bytes.
     let before = generation(&h, w.agent).await;
@@ -402,6 +403,7 @@ async fn the_budget_keeps_generated_files_and_drops_reference_files() {
     assert_eq!(
         names,
         [
+            ".aurora/apps/gdemo_app/api.json",
             ".aurora/apps/gdemo_app/guide.md",
             ".aurora/apps/gdemo_app/tools.md"
         ]
@@ -416,9 +418,9 @@ async fn the_budget_keeps_generated_files_and_drops_reference_files() {
             .filter(|m| m.starts_with(".aurora/apps/"))
             .all(|m| f.contains_key(m))
     );
-    // The default budget sends all five and does not count.
+    // The default budget sends all six and does not count.
     let before = counter_value(series);
-    assert_eq!(folder(&parts(&h, w.agent).await).len(), 5);
+    assert_eq!(folder(&parts(&h, w.agent).await).len(), 6);
     assert_eq!(counter_value(series), before);
 }
 
@@ -586,6 +588,85 @@ impl RawGet for Harness {
             .collect();
         (parts.status.as_u16(), hs, bytes)
     }
+}
+
+const OPERATIONS_JSON: &[u8] = br#"{
+  "format": "aurora.operations/1",
+  "operations": [
+    { "id": "list_things", "method": "GET", "path": "/things", "summary": "All the things",
+      "params": [ { "name": "page", "in": "query", "type": "integer" } ],
+      "pagination": { "style": "page_param", "param": "page", "start": 1 },
+      "items": "$.things", "tool": "list_things" },
+    { "id": "create_thing", "method": "POST", "path": "/things", "summary": "Create a thing",
+      "body": { "content_type": "application/json", "fields": [ { "name": "name", "required": true, "type": "string" } ] },
+      "tool": "create_thing" }
+  ]
+}
+"#;
+
+/// (P5-GUIDE-6, C-652) An app with an operations file gets `api.json` in its folder: valid JSON of
+/// the format, the operations mapped to the catalogue tools by the gateway's matcher, the account
+/// with its host-derived `base_url`, listed in the manifest and named in `guide.md`; the operations
+/// file itself is not projected; no credential reference is in it; an app without an operations
+/// file has no `api.json`.
+#[tokio::test]
+async fn api_json_is_projected_beside_the_guide() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let y = yaml("Things, lists and creating them.", "Be careful.").replace(
+        "      guide:\n",
+        "      operations: operations.json\n      guide:\n",
+    );
+    let mut fs = files();
+    fs.push(("agent/gdemo_app/operations.json", OPERATIONS_JSON));
+    let v = a.upload_with(&y, &fs).await;
+    assert_eq!(v["status"], "pending_approval", "{}", v["violations"]);
+    let (s, p) = a.act(&v["id"], "approve").await;
+    assert_eq!(s, 200, "{p}");
+    let org = h.org().await;
+    let ws = h.workspace(org).await;
+    let agent = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, effort, brief) VALUES ($1,$2,$3,'ada','Ada','hosted','fake','medium','')")
+        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let conn = Uuid::now_v7();
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'gdemo_app','gdemo','1.0.0','work account','active',$4)")
+        .bind(conn).bind(org).bind(ws).bind(CREDENTIAL_REF).execute(h.pool()).await.unwrap();
+    sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')")
+        .bind(Uuid::now_v7()).bind(ws).bind(agent).bind(conn).execute(h.pool()).await.unwrap();
+
+    let p = parts(&h, agent).await;
+    let f = folder(&p);
+    assert!(
+        !f.keys().any(|k| k.ends_with("/operations.json")),
+        "the operations file is not projected: {:?}",
+        f.keys().collect::<Vec<_>>()
+    );
+    let path = format!("{ROOT}/api.json");
+    assert!(manifest(&p).contains(&path), "api.json is in the manifest");
+    let api: Value = serde_json::from_str(&f[&path]).expect("api.json is JSON");
+    assert_eq!(api["format"], "aurora.app-api/1", "{api}");
+    assert_eq!(api["app"]["id"], "gdemo_app");
+    let ops = api["operations"].as_array().expect("operations");
+    let find = |id: &str| {
+        ops.iter()
+            .find(|o| o["id"] == id)
+            .unwrap_or_else(|| panic!("{id} missing: {api}"))
+    };
+    assert_eq!(find("list_things")["tool"], "list_things");
+    assert_eq!(find("create_thing")["tool"], "create_thing");
+    assert_eq!(api["accounts"][0]["connection_id"], conn.to_string());
+    assert_eq!(api["accounts"][0]["grant"], "full");
+    assert_eq!(api["operations"][0]["access"]["A"], "allowed");
+    // A static app has no stored host: its only host is the account's base URL.
+    assert_eq!(
+        api["accounts"][0]["base_url"], "https://api.gdemo.example",
+        "{api}"
+    );
+    assert!(f[&format!("{ROOT}/guide.md")].contains("api.json"));
+    // SEC-117 again: the credential reference is nowhere in the file.
+    assert!(!f[&path].contains(CREDENTIAL_REF));
+    // (An app without operations has no `api.json`: the folder listing of
+    // `the_folder_matches_the_render_inputs_and_the_manifest` names every file.)
 }
 
 /// Best-effort audit rows land shortly after the request.

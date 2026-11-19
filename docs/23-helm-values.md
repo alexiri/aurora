@@ -411,6 +411,9 @@ Vault; the sandboxes namespace gains nothing. The generic per-service keys (`rep
 | `sandboxes.namespace` | DNS label | `aurora-sandboxes` | namespace of all sandbox Pods (rendered into `runner.k8s.namespace`) | naming conventions |
 | `sandboxes.create` | bool | `true` | chart creates the namespace, labelled with the PSA labels `pod-security.kubernetes.io/{enforce,audit,warn}: restricted` | the namespace exists already |
 | `sandboxes.quota.pods` / `.requestsCpu` / `.requestsMemory` / `.limitsCpu` / `.limitsMemory` / `.pvcs` / `.storage` | quantities | `50` / `50` / `100Gi` / `100` / `200Gi` / `100` / `1Ti` | ResourceQuota of the sandboxes namespace (all sandboxes together) | sized to `runner.max_sandboxes` × sandbox size ([runners §Sizing](operator/runners.md#sizing)) |
+| `sandboxes.seccomp.install` | bool | `true` | DaemonSet that copies the sandbox seccomp profile (runtime default minus `ptrace`, `process_vm_readv/writev`; D-394, SEC-137) into the kubelet's seccomp directory on the sandbox nodes (`runner.k8s.nodeSelector`/`tolerations`) | you provide `<hostDir>/aurora/sandbox-seccomp.json` on every sandbox node yourself; without it no sandbox pod starts ([runners §Sandbox seccomp profile](operator/runners.md)) |
+| `sandboxes.seccomp.namespace` | DNS label | `aurora-seccomp` | namespace of that DaemonSet, created with Pod Security `privileged` (it writes a hostPath) | naming conventions |
+| `sandboxes.seccomp.hostDir` | path | `/var/lib/kubelet/seccomp` | the kubelet's seccomp directory on the node | a kubelet with a different `--root-dir` |
 | `sandboxes.limitRange.defaultRequest` / `.default` / `.max` | CPU/mem maps | `250m/512Mi` / `1/2Gi` / `8/16Gi` | LimitRange defaults and maxima **per sandbox pod** (a sandbox that fits only under `max` needs `runner.sandbox_*` lowered) | smaller sandboxes |
 
 ## NetworkPolicy

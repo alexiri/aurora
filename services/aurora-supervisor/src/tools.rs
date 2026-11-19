@@ -184,6 +184,9 @@ fn send_file_descriptor() -> ToolDescriptor {
         input_schema: json!({"type":"object","additionalProperties":false,"required":["path"],"properties":{
             "path":{"type":"string","description":"File inside the workspace (absolute, or relative to it)"},
             "caption":{"type":"string","maxLength":limits::ATTACH_CAPTION_MAX}}}),
+        // (P5-GUIDE-7, C-654) Core: delivering a result is a proactive act no search would prompt.
+        family: Some("files".to_owned()),
+        exposure: Some(aurora_protocol::tools::Exposure::Core),
     }
 }
 

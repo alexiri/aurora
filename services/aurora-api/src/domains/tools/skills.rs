@@ -116,6 +116,9 @@ impl PlatformTool for List {
     fn name(&self) -> &'static str {
         "skill_list"
     }
+    fn family(&self) -> &'static str {
+        "skills"
+    }
     fn description(&self, _: &ToolContext) -> String {
         "List the skills you receive (your own, your workspace's and the organization's; the \
          workspace and organization ones are read-only for you) with their tier and the tiers \
@@ -185,6 +188,9 @@ impl PlatformTool for Get {
     fn name(&self) -> &'static str {
         "skill_get"
     }
+    fn family(&self) -> &'static str {
+        "skills"
+    }
     fn description(&self, _: &ToolContext) -> String {
         "Read a skill from the set you receive (agent > workspace > organization): body and \
          file list, or one text file when `path` is given."
@@ -246,6 +252,9 @@ impl PlatformTool for Create {
     fn name(&self) -> &'static str {
         "skill_create"
     }
+    fn family(&self) -> &'static str {
+        "skills"
+    }
     fn description(&self, _: &ToolContext) -> String {
         format!(
             "Create one of your own skills: a reusable instruction bundle projected into your \
@@ -305,6 +314,9 @@ impl PlatformTool for Update {
     fn name(&self) -> &'static str {
         "skill_update"
     }
+    fn family(&self) -> &'static str {
+        "skills"
+    }
     fn description(&self, _: &ToolContext) -> String {
         "Update the description, body or enabled flag of one of your own skills.".into()
     }
@@ -343,6 +355,9 @@ struct Delete;
 impl PlatformTool for Delete {
     fn name(&self) -> &'static str {
         "skill_delete"
+    }
+    fn family(&self) -> &'static str {
+        "skills"
     }
     fn description(&self, _: &ToolContext) -> String {
         "Delete one of your own skills and its files.".into()

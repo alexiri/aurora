@@ -19,6 +19,8 @@ interface Opts {
   always?: string[];
   health?: Account["health"]["state"];
   detail?: string | null;
+  /** (C-1033) Why a `failing` account failed. */
+  error?: string;
   given?: boolean | null;
   website?: boolean;
 }
@@ -32,7 +34,7 @@ function acct(app: string, o: Opts = {}): Account {
     app: o.kind === "website" || o.kind === "ai_key" || o.website ? null : { app_id: app.toLowerCase(), name: app, custom_only: false },
     scope: "workspace",
     levels: ["read", "ask", "act"],
-    health: { state: o.health ?? "ok", detail: o.detail ?? null },
+    health: { state: o.health ?? "working", detail: o.detail ?? null, last_error: o.error ?? null },
     agents: [
       {
         agent: { id: ME, name: "Daneel", handle: "daneel" },
@@ -131,7 +133,7 @@ describe("the agent's summary: a table of conditions", () => {
     },
     {
       when: "a refused token and an unreachable host",
-      accounts: [acct("GitHub", { health: "rejected", detail: "token" }), acct("Postgres", { health: "unreachable", detail: "db.example.org" })],
+      accounts: [acct("GitHub", { health: "failing", error: "rejected", detail: "token" }), acct("Postgres", { health: "failing", error: "unreachable", detail: "db.example.org" })],
       says: [
         "Daneel can't use GitHub right now: it no longer accepts this token.",
         "It can't use Postgres right now: it could not be reached (db.example.org).",

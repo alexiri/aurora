@@ -1,6 +1,6 @@
 package:
   id: gitlab
-  version: 1.3.0
+  version: 1.4.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -23,6 +23,8 @@ apps:
       id: gitlab
       name: GitLab
       description: Work with projects, issues, merge requests, pipelines and repository files on gitlab.com or a self-managed GitLab
+      summary: Projects, issues, merge requests and pipelines on GitLab.
+      first_prompt: "Which merge requests are open in my projects?"
       category: development
       api_docs: https://docs.gitlab.com/api/rest/
       api_spec: https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/api/openapi/openapi_v2.yaml
@@ -45,6 +47,10 @@ apps:
         kind: fields
         label: Personal access token
         description: "A token you create in GitLab (User settings, Access tokens). Pick the narrowest scopes and an expiry date; a project or group access token limits the reach to one project or group."
+        # The scopes to tick on GitLab's token form (docs.gitlab.com/security/tokens/access_token_scopes/).
+        access_levels:
+          - { id: read, label: Read only, permission_hints: [read_api, read_repository] }
+          - { id: write, label: Read and write, permission_hints: [api, write_repository] }
         fields:
           - name: access_token
             label: Access token
@@ -255,6 +261,7 @@ apps:
         never ask for or write a token, and never send a request for one GitLab connection to
         another host. Address a project by its numeric id or by its full path with slashes encoded
         as %2F. Send request bodies as JSON so approvals can show what a change does.
+      operations: operations.json
       guide:
         - { file: pipeline-failed.md, title: "Find why a pipeline failed and retry it", kind: recipe }
         - { file: api-conventions.md, title: "REST API v4 conventions: addressing, pagination, errors" }

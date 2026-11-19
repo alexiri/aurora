@@ -73,7 +73,7 @@ function AddonList({ addons }: { addons: AddonEntry[] }) {
               <li key={v.version} className="flex flex-wrap items-center gap-1 text-xs">
                 <code className="rounded-control bg-subtle px-1.5 py-0.5 font-mono">{v.version}</code>
                 {v.installed_version === v.version ? <Badge tone="accent">Installed</Badge> : null}
-                {v.update_available ? <Badge tone="pending">Update available</Badge> : null}
+                {v.update_available ? <Badge>Update available</Badge> : null}
                 {!v.ingestable ? (
                   <Badge tone="neutral">{`Needs a newer Aurora${v.min_core ? ` (${v.min_core})` : ""}`}</Badge>
                 ) : null}

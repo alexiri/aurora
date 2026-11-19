@@ -88,7 +88,7 @@ describe("SettingsSectionFields (C-971)", () => {
       },
     });
     wrap(<GovernanceFields part="internet" />);
-    await screen.findByText("Internet access", { selector: "legend" });
+    await screen.findByRole("heading", { name: "Internet access" });
     // Only the egress keys are on this page.
     expect(document.getElementById("governance.egress.minimum_posture")).toBeTruthy();
     expect(document.getElementById("byo.enabled")).toBeNull();
@@ -108,7 +108,7 @@ describe("SettingsSectionFields (C-971)", () => {
   it("takes a plain `keys` subset with its own title", async () => {
     mockFetch({ "GET /v1/admin/settings/governance": () => json(200, governance()) });
     wrap(<SettingsSectionFields section="governance" keys={["byo.enabled"]} title="BYO switch" />);
-    await screen.findByText("BYO switch", { selector: "legend" });
+    await screen.findByRole("heading", { name: "BYO switch" });
     expect(document.getElementById("byo.enabled")).toBeTruthy();
     expect(document.getElementById("governance.egress.minimum_posture")).toBeNull();
   });

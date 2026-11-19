@@ -4,13 +4,12 @@ import type { HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-label font-semibold uppercase leading-4 tracking-label",
+  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-label font-medium leading-4",
   {
     variants: {
       tone: {
         neutral: "bg-subtle text-ink-2",
         accent: "bg-accent-soft text-accent-ink",
-        pending: "bg-pending-soft text-pending-ink",
         danger: "bg-danger-soft text-danger-ink",
       },
     },
@@ -18,7 +17,10 @@ const badgeVariants = cva(
   },
 );
 
-/** A pill that always carries text, so meaning never depends on colour alone. */
+/**
+ * A pill that always carries text, so meaning never depends on colour alone. Sentence case in every tone. There is no
+ * amber tone: amber is `AttentionChip` (something needs the viewer, with an action beside it); ownership is `LockPill`.
+ */
 export function Badge({
   tone,
   className,

@@ -15,6 +15,7 @@ import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
+import { AttentionBadge } from "./admin/attention-badge";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
 import { ScopeSwitcher } from "./nav/scope-switcher";
@@ -149,7 +150,8 @@ function UserMenu() {
           <MenuItem asChild className={itemClass}>
             <Link href={adminRoutes.home()}>
               <ShieldIcon className="size-4 shrink-0 text-muted" />
-              Administration
+              <span className="min-w-0 flex-1">Administration</span>
+              <AttentionBadge />
             </Link>
           </MenuItem>
         ) : null}
@@ -408,6 +410,7 @@ function SidebarContent({
               label="Administration"
               icon={ShieldIcon}
               active={inAdmin}
+              badge={<AttentionBadge />}
               tour="administration"
             />
           </ul>

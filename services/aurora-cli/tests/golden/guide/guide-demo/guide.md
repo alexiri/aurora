@@ -23,6 +23,7 @@ Step-by-step procedures from the Guide demo plugin (third-party). Open the one t
 ## Files in this folder
 
 - `tools.md`: every operation and your access to it
+- `api.json`: the operations of this app, for `aurora-agent`. Use `aurora-agent search|describe|call <app_id> …` rather than reading it.
 - `api.md`: REST conventions, pagination, errors
 - `codes.tsv`: Building codes (third-party file, no header)
 

@@ -61,10 +61,9 @@ function Links({ agentId }: { agentId: string }) {
   );
 }
 
-function taskTone(status: string): "accent" | "pending" | "danger" | "neutral" {
+function taskTone(status: string): "accent" | "danger" | "neutral" {
   if (status === "completed") return "accent";
   if (status === "cancelled" || status === "expired") return "danger";
-  if (status === "open" || status === "queued") return "pending";
   return "neutral";
 }
 

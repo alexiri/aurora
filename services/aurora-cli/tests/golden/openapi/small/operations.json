@@ -1,0 +1,105 @@
+{
+  "format": "aurora.operations/1",
+  "operations": [
+    {
+      "id": "get_v1_health",
+      "method": "GET",
+      "path": "/v1/health",
+      "summary": "Service health",
+      "tags": [
+        "other"
+      ],
+      "params": [],
+      "body": null,
+      "pagination": null,
+      "tool": "get_v1_health"
+    },
+    {
+      "id": "list_widgets",
+      "method": "GET",
+      "path": "/v1/widgets",
+      "summary": "List widgets",
+      "tags": [
+        "widgets"
+      ],
+      "params": [
+        {
+          "name": "limit",
+          "in": "query",
+          "type": "integer",
+          "description": "Page size, at most 100."
+        }
+      ],
+      "body": null,
+      "pagination": null,
+      "tool": "list_widgets"
+    },
+    {
+      "id": "create_widget",
+      "method": "POST",
+      "path": "/v1/widgets",
+      "summary": "Create a widget",
+      "tags": [
+        "widgets"
+      ],
+      "params": [],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          {
+            "name": "name",
+            "required": true,
+            "type": "string",
+            "description": "Display name."
+          },
+          {
+            "name": "size",
+            "type": "integer"
+          }
+        ]
+      },
+      "pagination": null,
+      "tool": "create_widget"
+    },
+    {
+      "id": "delete_widget",
+      "method": "DELETE",
+      "path": "/v1/widgets/{id}",
+      "summary": "Delete a widget",
+      "tags": [
+        "widgets"
+      ],
+      "params": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "body": null,
+      "pagination": null,
+      "tool": "delete_widget"
+    },
+    {
+      "id": "get_widget",
+      "method": "GET",
+      "path": "/v1/widgets/{id}",
+      "summary": "Read one widget",
+      "tags": [
+        "widgets"
+      ],
+      "params": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "body": null,
+      "pagination": null,
+      "tool": "get_widget"
+    }
+  ]
+}

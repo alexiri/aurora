@@ -817,6 +817,37 @@ tries within 60 s. Five consecutive failures set `disabled_at` and the dashboard
 receiving — re-enable". A push failure never affects an approval, a decision or the e-mail. Metrics
 `aurora_push_sent_total{result}`, `aurora_push_duration_seconds`, `aurora_push_subscriptions`.
 
+### Administration decisions: e-mail and push (FIX-167 Part B, D-370, C-1022..C-1024)
+
+Some things only an **instance admin** can decide: a connector or app package that waits for
+approval, an add-on source whose signing key changed, a host claim that waits for a winner. When
+one of these **first appears**, each instance admin gets **one e-mail and one Web Push** (and the
+item shows on Administration, `14 §Needs your attention`).
+
+* **First appears** means a new subject reaches its pending state: a connector's first
+  registration, a connector's new widened manifest digest, a package version reaching
+  `pending_approval` (a `claim_conflict` is its own kind), an addon source reaching
+  `signing_key_changed` with a new key. The state change writes one `admin_attention_notices` row
+  per active instance admin in **its own transaction** (`03`), keyed by `(kind, subject_id,
+  subject_version, user_id)`: a retried or replayed registration or ingest finds the row and sends
+  nothing more. Items that were already pending when this shipped, and the informational kinds
+  (`connector_down`, `ownerless_org`), are never e-mailed or pushed (they would flap).
+* **Claim, then send, after commit.** A sweeper (every `10 s`) claims `mailed_at` with
+  `FOR UPDATE SKIP LOCKED`, then hands the mail to the mailer (a crash between the two loses one
+  e-mail, never doubles one). The Web Push loop claims `pushed_at` the same way. With `email.smtp_url`
+  unset the mailer only logs, like every other e-mail. With `push.enabled` off nothing is claimed
+  for push; a notice older than 1 hour is never pushed.
+* **E-mail.** Subject "Aurora needs your decision: <title>"; the body is the title, the detail
+  and a link to `<external_url>/admin`. It names the connector or package, the version and what it
+  adds, never a setting value, a secret or a token. An admin who turned the switch off
+  (**Account → Notifications**, `admin_attention_email`, default on, C-1024) gets none.
+* **Push.** The payload is `{ "v": 1, "type": "admin_attention", "url": "/admin" }`, plus `title`
+  only on a device whose owner turned names on (`show_details`). The notification reads "Aurora —
+  something in Administration needs your decision / Open Administration to review it". Push follows
+  the device's own opt-in and ignores the e-mail switch; the audience is the administrator's
+  deliverable devices (live session, key servable) exactly as for approvals (SEC-75: no secret, no
+  setting value, no detail). Clicking opens `/admin` (C-835 allows exactly that path).
+
 ## Action approvals (platform-level)
 
 For privileged agent **actions** that are not HTTP requests. Registered

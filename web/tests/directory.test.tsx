@@ -104,7 +104,7 @@ describe("Directory sync page", () => {
     expect(screen.getByText(/Last request/i)).toBeInTheDocument();
     expect(screen.getByText(/invalidValue/)).toBeInTheDocument();
     // The expiring token carries the banner badge.
-    expect(screen.getByText("expiring")).toBeInTheDocument();
+    expect(screen.getByText("Expiring")).toBeInTheDocument();
   });
 
   it("shows no reauth_error notice, even with the param present (FIX-157)", async () => {

@@ -26,6 +26,7 @@ import { landingPath } from "@/lib/nav/landing";
 import { adminRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
+import { AttentionSection } from "./attention-section";
 import { OwnerlessBanner } from "./ownerless-banner";
 import { PlacementView } from "./placement-view";
 import { SignInGaps, gapsFromChecks } from "./sign-in-gaps";
@@ -132,7 +133,7 @@ function StepCard({ n, id, step, children }: { n: number; id: string; step?: Set
             </h2>
             <p className="mt-0.5 text-sm text-ink-2">{meta.lead}</p>
           </div>
-          {state ? <Badge tone={state.tone}>{state.label}</Badge> : null}
+          {state ? <Badge tone={state.tone === "pending" ? "neutral" : state.tone}>{state.label}</Badge> : null}
         </div>
         {children}
       </Card>
@@ -487,6 +488,7 @@ export function SetupView() {
     return (
       <div className="max-w-page space-y-6">
         <PageHeader title="Overview" description="What needs you, and whether Aurora is healthy." className="mb-0" />
+        <AttentionSection />
         <OwnerlessBanner />
         <ConnectorAvailableCallout />
         <HealthView setup={setup.data} onRunSetup={() => setAgain(true)} />
@@ -510,6 +512,7 @@ export function SetupView() {
       />
       {setup.isPending ? <Loading /> : null}
       {setup.isError ? <ErrorState error={setup.error} onRetry={() => setup.refetch()} /> : null}
+      <AttentionSection />
       <OwnerlessBanner />
       <ConnectorAvailableCallout />
       <PreviewsLine />

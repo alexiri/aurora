@@ -254,6 +254,8 @@ struct AppFolder {
     reference: Vec<(String, String)>,
     /// `guide.md` with the "reference files left out" form, for when the budget is exhausted.
     guide_without_reference: String,
+    /// `api.json` without the recipe list, for an app left without its reference files.
+    api_without_reference: Option<String>,
 }
 
 /// Renders the folder of one app for one agent from the grant rows of its connections.
@@ -306,8 +308,45 @@ async fn app_folder(
         .find(|p| p.package_id == app.package_id)
         .map(|p| p.version.as_str())
         .unwrap_or_default();
-    let with = agent_guide::render(app, &lost, &accounts, version, true);
-    let without = agent_guide::render(app, &lost, &accounts, version, false);
+    // (P5-GUIDE-6) The operations file feeds `api.json`; it is never projected itself. A missing
+    // or unparsable blob leaves `api.json` to the catalogue entries.
+    let mut operations = None;
+    if let Some(r) = app.agent.as_ref().and_then(|a| a.operations.as_ref()) {
+        match guide_bytes(conn, &r.sha256).await? {
+            Some(bytes) => match aurora_registry::operations::parse(&bytes) {
+                Ok(f) => operations = Some(f),
+                Err(e) => {
+                    tracing::warn!(app = %app.app_id, error = %e.message(), "operations file does not parse; api.json without it");
+                }
+            },
+            None => {
+                tracing::warn!(app = %app.app_id, "operations file blob missing; api.json without it");
+            }
+        }
+    }
+    let with = agent_guide::render_with_operations(
+        app,
+        &lost,
+        &accounts,
+        version,
+        true,
+        operations.as_ref(),
+    );
+    let without = agent_guide::render_with_operations(
+        app,
+        &lost,
+        &accounts,
+        version,
+        false,
+        operations.as_ref(),
+    );
+    let mut generated = vec![
+        ("guide.md".to_owned(), with.guide_md),
+        ("tools.md".to_owned(), with.tools_md),
+    ];
+    if let Some(api) = with.api_json {
+        generated.push(("api.json".to_owned(), api));
+    }
     let mut reference = Vec::new();
     for g in app.agent.iter().flat_map(|a| a.guide.iter()) {
         let Some(bytes) = guide_bytes(conn, &g.sha256).await? else {
@@ -325,12 +364,10 @@ async fn app_folder(
     }
     Ok(AppFolder {
         app_id: app.app_id.clone(),
-        generated: vec![
-            ("guide.md".into(), with.guide_md),
-            ("tools.md".into(), with.tools_md),
-        ],
+        generated,
         reference,
         guide_without_reference: without.guide_md,
+        api_without_reference: without.api_json,
     })
 }
 
@@ -614,6 +651,14 @@ pub async fn render(
         if over_budget && let Some(g) = files.iter_mut().find(|(n, _)| n == "guide.md") {
             g.1 = f.guide_without_reference.clone();
         }
+        if over_budget
+            && let (Some(a), Some(api)) = (
+                files.iter_mut().find(|(n, _)| n == "api.json"),
+                f.api_without_reference.clone(),
+            )
+        {
+            a.1 = api;
+        }
         if !over_budget {
             files.extend(f.reference);
         }
@@ -623,6 +668,11 @@ pub async fn render(
             app_entries.push(json!({"path": path, "content": content}));
         }
     }
+    // (P5-GUIDE-7, C-654) The catalogue of the agent's available tools, and from it the family
+    // index of the instruction file.
+    let catalogue = crate::domains::tools::catalogue(state, claim.agent_id).await?;
+    render_inputs["platform_tools"] =
+        platform_tools_input(&state.ops().hosted.platform_tools, &catalogue);
     if render_inputs.to_string().len() > PACK_MAX {
         // Pathological fan-out (hundreds of apps/accounts): keep the structure, shed the
         // third-party snippets so the part still fits the wire bound.
@@ -639,8 +689,7 @@ pub async fn render(
     if fit_render_inputs(&mut render_inputs, PACK_MAX) {
         tracing::warn!(agent = %claim.agent_id, "render inputs over the part bound; lists truncated");
     }
-    let tools: Vec<Value> = crate::domains::tools::catalogue(state, claim.agent_id)
-        .await?
+    let tools: Vec<Value> = catalogue
         .iter()
         .filter_map(|t| serde_json::to_value(t).ok())
         .collect();
@@ -723,6 +772,48 @@ pub async fn render(
         .collect())
 }
 
+/// One line per family for the instruction file (C-654): what the family is for.
+fn family_purpose(family: &str) -> &'static str {
+    match family {
+        "memory" => "notes you keep across conversations",
+        "skills" => "reusable procedures you write and refine",
+        "schedules" => "run a prompt on a cron schedule",
+        "webhooks" => "inspect and change your inbound webhooks",
+        "conversations" => "search and read your past conversations",
+        "messaging" => "find people and send, read and edit messages",
+        "agents" => "other agents in the workspace and the tasks you give or get",
+        "apps" => "the apps connected to you, and asking for more",
+        "calendar" => "invite people to events, update, cancel and list them",
+        _ => "more platform tools",
+    }
+}
+
+/// `render_inputs.platform_tools` (C-654): the mode and, for `on_demand`, the families of the
+/// available tools the harness does not see: `{ name, purpose, tools }` in registry order.
+/// Core tools stay out of the families (the harness lists them itself).
+fn platform_tools_input(mode: &str, catalogue: &[aurora_protocol::tools::ToolDescriptor]) -> Value {
+    use aurora_protocol::tools::Exposure;
+    let mut families: Vec<(String, Vec<String>)> = Vec::new();
+    for t in catalogue {
+        if t.exposure == Some(Exposure::Core) {
+            continue;
+        }
+        let Some(family) = t.family.as_deref() else {
+            continue;
+        };
+        match families.iter_mut().find(|(n, _)| n == family) {
+            Some((_, tools)) => tools.push(t.name.clone()),
+            None => families.push((family.to_owned(), vec![t.name.clone()])),
+        }
+    }
+    json!({
+        "mode": mode,
+        "families": families.into_iter().map(|(name, tools)| json!({
+            "purpose": family_purpose(&name), "name": name, "tools": tools,
+        })).collect::<Vec<_>>(),
+    })
+}
+
 /// (FIX-115) Shrink the `render_inputs` value to at most `max` serialized bytes: while it is too
 /// big, the largest of `peers`, `channels` and `apps` is cut to half its entries (app accounts
 /// too), and a `truncated` notice says what was cut. As a last resort the lists are emptied and
@@ -784,6 +875,41 @@ pub(crate) fn fit_render_inputs(v: &mut Value, max: usize) -> bool {
 #[cfg(test)]
 mod name_tests {
     use super::*;
+
+    /// (P5-GUIDE-7, C-654) `render_inputs.platform_tools` over the real registry: core tools stay
+    /// out of the families, every on-demand tool is in exactly one family with a purpose, and the
+    /// size of the on-demand index is recorded for the report.
+    #[test]
+    fn platform_tools_input_groups_the_on_demand_tools_by_family() {
+        use aurora_protocol::tools::{Exposure, ToolDescriptor};
+        let d = |name: &str, family: &str, exposure: Exposure| ToolDescriptor {
+            name: name.into(),
+            description: None,
+            input_schema: json!({"type": "object"}),
+            family: Some(family.into()),
+            exposure: Some(exposure),
+        };
+        let cat = vec![
+            d("complete_task", "tasks", Exposure::Core),
+            d("memory_save", "memory", Exposure::OnDemand),
+            d("schedule_list", "schedules", Exposure::OnDemand),
+            d("memory_get", "memory", Exposure::OnDemand),
+            ToolDescriptor {
+                family: None,
+                exposure: None,
+                ..d("legacy", "x", Exposure::OnDemand)
+            },
+        ];
+        let v = platform_tools_input("on_demand", &cat);
+        assert_eq!(v["mode"], "on_demand");
+        let fams = v["families"].as_array().unwrap();
+        assert_eq!(fams.len(), 2, "{v}");
+        assert_eq!(fams[0]["name"], "memory");
+        assert_eq!(fams[0]["tools"], json!(["memory_save", "memory_get"]));
+        assert_eq!(fams[1]["name"], "schedules");
+        assert!(!v.to_string().contains("complete_task"));
+        assert_eq!(platform_tools_input("all", &cat)["mode"], "all");
+    }
 
     /// (P5-HARN) The projection's skills directory per harness is the one each adapter declares.
     #[test]

@@ -495,6 +495,14 @@ sandboxes:
     limitsMemory: 200Gi
     pvcs: "100"
     storage: 1Ti
+  # D-394 / SEC-137: sandbox pods run with a Localhost seccomp profile (the runtime default minus
+  # ptrace and process_vm_readv/writev). `install` runs a DaemonSet that copies it into the
+  # kubelet's seccomp directory on every node (on the nodes `runner.k8s.nodeSelector` selects);
+  # set it false only when you provide the file yourself (<hostDir>/aurora/sandbox-seccomp.json).
+  seccomp:
+    install: true
+    namespace: aurora-seccomp   # created with Pod Security `privileged` (the DaemonSet writes a hostPath)
+    hostDir: /var/lib/kubelet/seccomp   # the kubelet's seccomp directory (its --root-dir + /seccomp)
   limitRange:
     defaultRequest: {cpu: 250m, memory: 512Mi}
     default: {cpu: "1", memory: 2Gi}

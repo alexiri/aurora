@@ -1,4 +1,5 @@
 # Add under apps[].agent in plugin.yaml (summary is required with a guide):
+operations: operations.json
 guide:
   - { file: operations.md, title: "Operation index: every operation, grouped by tag" }
   - { file: ops-items.md, title: "Operations: Items" }

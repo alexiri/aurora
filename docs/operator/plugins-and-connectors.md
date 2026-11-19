@@ -16,7 +16,7 @@ state change is audited.
 
 | Source | How packages arrive | Activation |
 |--------|--------------------|------------|
-| `builtin` | Shipped in the API image under `plugins.builtin_dir` (`/usr/share/aurora/plugins`): eleven app packages, signed with the project key (only those load from here). | Automatic, unless permissions widened. |
+| `builtin` | Shipped in the API image under `plugins.builtin_dir` (`/usr/share/aurora/plugins`): the app packages of the release, signed with the project key (only those load from here; dev installs with `plugins.allow_unsigned` also take unsigned ones). | Automatic at first install and at every upgrade, widened permissions included (SEC-136; audit `plugin.auto_approved`). |
 | `directory` | Files in `plugins.dir` (default `/var/lib/aurora/plugins`), scanned at startup and every 60 s (`services/aurora-api/src/domains/plugins/scan.rs`). | Same rules as upload. |
 | `upload` | `POST /v1/admin/plugins`, multipart with a field named `package` (the archive, at most 20 MiB). | Same rules as upload. |
 

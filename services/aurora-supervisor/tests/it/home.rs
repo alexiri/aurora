@@ -21,6 +21,7 @@ fn projector(root: &Path) -> HomeProjector {
         skills_dir: Some(".claude/skills".into()),
         instruction_files: vec!["AGENTS.md".into()],
         pg: None,
+        agent_cli: false,
     })
 }
 
@@ -89,6 +90,7 @@ fn codex_projection_renders_agents_md_and_its_own_skills_dir_only() {
         skills_dir: caps.skills_dir.clone(),
         instruction_files: caps.instruction_files.clone(),
         pg: None,
+        agent_cli: false,
     });
     let skill = ".codex/skills/aurora/a/SKILL.md";
     let system = d.path().join(".codex/skills/.system/seeded/SKILL.md");
@@ -487,6 +489,7 @@ fn databases_in_render_inputs_become_libpq_files_and_disappear_with_the_grant() 
         skills_dir: Some(".claude/skills".into()),
         instruction_files: vec!["AGENTS.md".into()],
         pg: Some(3130),
+        agent_cli: false,
     });
     let conn = Uuid::now_v7();
     let with = |g: u64, dbs: Value| -> Vec<HomeSync> {
@@ -549,6 +552,7 @@ fn links_in_render_inputs_become_links_json_and_disappear_with_the_last_link() {
         instruction_files: vec!["AGENTS.md".into()],
         // No database relay: the links file does not depend on it.
         pg: None,
+        agent_cli: false,
     });
     let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
     let with = |g: u64, links: Value| -> Vec<HomeSync> {
@@ -896,4 +900,172 @@ fn unknown_part_kinds_and_render_input_fields_are_skipped() {
     apply_all(&mut p2, &with_unknown);
     p2.commit(1).unwrap();
     assert_eq!(fs::read(d2.path().join("AGENTS.md")).unwrap(), want);
+}
+
+/// (P5-GUIDE-7, C-654) The catalogue digest, which releases idle sessions, covers the core
+/// descriptors and the rendered instruction files: an on-demand tool's description changing in a
+/// core-only sandbox does not move it, a core descriptor does, and in mode `all` any descriptor
+/// does.
+#[test]
+fn the_catalogue_digest_follows_core_descriptors_and_instruction_files_only() {
+    let digest = |mode: &str, core_desc: &str, demand_desc: &str, brief: &str| -> String {
+        let d = TempDir::new();
+        let mut p = HomeProjector::new(HomeConfig {
+            root: d.path().to_path_buf(),
+            skills_dir: Some(".claude/skills".into()),
+            instruction_files: vec!["AGENTS.md".into()],
+            pg: None,
+            agent_cli: true,
+        });
+        let mut parts = generation(1, &[], &[]);
+        parts[2] = part(
+            1,
+            2,
+            6,
+            "render_inputs",
+            json!([
+                {"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}},
+                {"brief": brief},
+                {"platform_tools": {"mode": mode, "families": [
+                    {"name": "memory", "purpose": "Notes.", "tools": ["memory_search"]}]}}
+            ]),
+        );
+        parts[3] = part(
+            1,
+            3,
+            6,
+            "tools",
+            json!([
+                {"name": "send_file", "description": core_desc, "exposure": "core"},
+                {"name": "memory_search", "description": demand_desc, "exposure": "on_demand"}
+            ]),
+        );
+        apply_all(&mut p, &parts);
+        assert_eq!(
+            p.catalogue_digest(),
+            None,
+            "nothing installed before the commit"
+        );
+        p.commit(1).unwrap();
+        p.catalogue_digest().unwrap()
+    };
+    let base = digest("on_demand", "c", "d", "b");
+    assert_eq!(base, digest("on_demand", "c", "d", "b"), "deterministic");
+    assert_eq!(
+        base,
+        digest("on_demand", "c", "d2", "b"),
+        "an on-demand description is not in the digest"
+    );
+    assert_ne!(
+        base,
+        digest("on_demand", "c2", "d", "b"),
+        "a core descriptor is"
+    );
+    assert_ne!(
+        base,
+        digest("on_demand", "c", "d", "b2"),
+        "the instruction file is"
+    );
+    let all = digest("all", "c", "d", "b");
+    assert_ne!(
+        all,
+        digest("all", "c", "d2", "b"),
+        "mode all lists every descriptor"
+    );
+}
+
+/// (P5-GUIDE-7, C-654) The bridge lists only the core tools exactly when the installed render
+/// inputs say `on_demand` and the sandbox has `aurora-agent`; an older API (no `platform_tools`),
+/// mode `all` and an older image keep listing everything (rolling upgrade, old API + new
+/// supervisor). The *Platform tools* fragment is in the instruction file in the same case only.
+#[test]
+fn the_bridge_is_core_only_exactly_for_on_demand_with_the_command() {
+    let run = |platform: Option<serde_json::Value>, agent_cli: bool| -> (bool, String) {
+        let d = TempDir::new();
+        let mut p = HomeProjector::new(HomeConfig {
+            root: d.path().to_path_buf(),
+            skills_dir: Some(".claude/skills".into()),
+            instruction_files: vec!["AGENTS.md".into()],
+            pg: None,
+            agent_cli,
+        });
+        let mut inputs =
+            vec![json!({"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}})];
+        if let Some(pt) = platform {
+            inputs.push(json!({ "platform_tools": pt }));
+        }
+        let mut parts = generation(1, &[], &[]);
+        parts[2] = part(1, 2, 6, "render_inputs", json!(inputs));
+        apply_all(&mut p, &parts);
+        assert!(
+            !p.bridge_core_only(),
+            "nothing installed: everything is listed"
+        );
+        p.commit(1).unwrap();
+        let md = fs::read_to_string(d.path().join("AGENTS.md")).unwrap_or_default();
+        (p.bridge_core_only(), md)
+    };
+    let pt = |mode: &str| {
+        json!({"mode": mode, "families": [
+            {"name": "memory", "purpose": "Notes.", "tools": ["memory_search"]}]})
+    };
+    let (core, md) = run(Some(pt("on_demand")), true);
+    assert!(core);
+    assert!(
+        md.contains("## Platform tools") && md.contains("- memory ("),
+        "{md}"
+    );
+    let (core, md) = run(Some(pt("all")), true);
+    assert!(!core && !md.contains("Platform tools"));
+    let (core, md) = run(Some(pt("on_demand")), false);
+    assert!(
+        !core && !md.contains("Platform tools"),
+        "an older image loses nothing"
+    );
+    let (core, md) = run(None, true);
+    assert!(
+        !core && !md.contains("Platform tools"),
+        "an older API sends no platform_tools"
+    );
+}
+
+/// (P5-GUIDE-6, C-653) The `aurora-agent` sentences are rendered only when the supervisor found
+/// the wrapper (`agent_cli`); the same render inputs otherwise keep the `tools.md` sentence.
+#[test]
+fn the_aurora_agent_sentences_follow_the_agent_cli_flag() {
+    let render = |agent_cli: bool| -> String {
+        let d = TempDir::new();
+        let mut p = HomeProjector::new(HomeConfig {
+            root: d.path().to_path_buf(),
+            skills_dir: Some(".claude/skills".into()),
+            instruction_files: vec!["AGENTS.md".into()],
+            pg: None,
+            agent_cli,
+        });
+        let mut parts = generation(1, &[], &[]);
+        parts[2] = part(
+            1,
+            2,
+            6,
+            "render_inputs",
+            json!([
+                {"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}},
+                {"apps": [{"name": "Demo", "accounts": [], "docs_links": [], "app_id": "demo",
+                           "summary": "Things.", "guide_path": ".aurora/apps/demo/guide.md"}]}
+            ]),
+        );
+        apply_all(&mut p, &parts);
+        p.commit(1).unwrap();
+        fs::read_to_string(d.path().join("AGENTS.md")).unwrap()
+    };
+    let with = render(true);
+    assert!(with.contains("`aurora-agent search <words>`"), "{with}");
+    assert!(
+        with.contains("`aurora-agent call` does both for you"),
+        "{with}"
+    );
+    assert!(!with.contains("`tools.md` lists every operation"));
+    let without = render(false);
+    assert!(!without.contains("aurora-agent"), "{without}");
+    assert!(without.contains("`tools.md` lists every operation"));
 }

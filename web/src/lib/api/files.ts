@@ -121,26 +121,6 @@ export function humanSize(n: number): string {
   return `${v >= 10 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
-/** "3 minutes ago" from an ISO instant; `null` → "—". The absolute time goes in the tooltip. */
-export function relativeTime(iso: string | null | undefined, now: number = Date.now()): string {
-  if (!iso) return "—";
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return "—";
-  const secs = Math.round((then - now) / 1000);
-  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-  const steps: [Intl.RelativeTimeFormatUnit, number][] = [
-    ["year", 31536000],
-    ["month", 2592000],
-    ["day", 86400],
-    ["hour", 3600],
-    ["minute", 60],
-  ];
-  for (const [unit, size] of steps) {
-    if (Math.abs(secs) >= size) return rtf.format(Math.round(secs / size), unit);
-  }
-  return rtf.format(secs, "second");
-}
-
 /** `/workspace/.aurora` and everything under it is platform-managed and read-only (C-899). */
 export const isManaged = (path: string) => path === `${WORKSPACE_ROOT}/.aurora` || path.startsWith(`${WORKSPACE_ROOT}/.aurora/`);
 

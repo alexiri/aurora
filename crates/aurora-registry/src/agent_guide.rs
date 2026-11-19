@@ -18,6 +18,8 @@ use aurora_core::limits::AGENT_SNIPPET_MAX;
 use aurora_core::sanitize::{fenced, inline};
 use aurora_policy::HostPattern;
 
+mod api_json;
+
 use crate::manifest::{GitKind, GraphqlKind, INSTANCE_HOST, ParamCondition, ParamSource, ToolItem};
 use crate::snapshot::{AppEntry, GuideFile, GuideKind, HostEntry};
 
@@ -71,11 +73,13 @@ impl Access {
     }
 }
 
-/// The generated files of one app. `api_json` joins in P5-GUIDE-6 without changing callers.
+/// The generated files of one app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rendered {
     pub guide_md: String,
     pub tools_md: String,
+    /// (P5-GUIDE-6, C-652) `None` for a database app or an app with no operation at all.
+    pub api_json: Option<String>,
 }
 
 /// Access of one account to a tool, from the grant row only.
@@ -372,6 +376,7 @@ fn guide_md(
     lost_hosts: &[&HostEntry],
     accounts: &[GuideAccount],
     reference_available: bool,
+    has_api_json: bool,
 ) -> String {
     let name = inline(&app.about.name, NAME_MAX);
     let mut o = format!(
@@ -441,6 +446,11 @@ fn guide_md(
     o.push_str(
         "\n## Files in this folder\n\n- `tools.md`: every operation and your access to it\n",
     );
+    if has_api_json {
+        o.push_str(
+            "- `api.json`: the operations of this app, for `aurora-agent`. Use `aurora-agent search|describe|call <app_id> …` rather than reading it.\n",
+        );
+    }
     if reference_available {
         for f in files.iter().filter(|f| f.kind == GuideKind::Reference) {
             let tp = if is_text_file(&f.file) {
@@ -504,9 +514,44 @@ pub fn render(
     package_version: &str,
     reference_available: bool,
 ) -> Rendered {
-    let _ = package_version;
+    render_with_operations(
+        app,
+        lost_hosts,
+        accounts,
+        package_version,
+        reference_available,
+        None,
+    )
+}
+
+/// [`render`] with the app's parsed operations file (C-652): `api.json` then carries the package
+/// operations next to the catalogue entries no operation maps to.
+#[must_use]
+pub fn render_with_operations(
+    app: &AppEntry,
+    lost_hosts: &[&HostEntry],
+    accounts: &[GuideAccount],
+    package_version: &str,
+    reference_available: bool,
+    operations: Option<&crate::operations::OperationsFile>,
+) -> Rendered {
+    let api_json = api_json::render(
+        app,
+        lost_hosts,
+        accounts,
+        package_version,
+        reference_available,
+        operations,
+    );
     Rendered {
-        guide_md: guide_md(app, lost_hosts, accounts, reference_available),
+        guide_md: guide_md(
+            app,
+            lost_hosts,
+            accounts,
+            reference_available,
+            api_json.is_some(),
+        ),
         tools_md: tools_md(app, lost_hosts, accounts),
+        api_json,
     }
 }

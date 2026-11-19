@@ -177,7 +177,7 @@ export function AccountRow({
         </div>
       ) : account.agents.length === 0 ? (
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="pending">No agent can use this</Badge>
+          <Badge>No agent can use this</Badge>
         </div>
       ) : (
         <ul className="flex flex-wrap items-center gap-2" aria-label="Who can use it">

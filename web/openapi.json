@@ -1371,6 +1371,60 @@
         ]
       }
     },
+    "/v1/admin/attention": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "What needs an instance admin's attention (C-1022): decisions first, then informational items.",
+        "operationId": "adminAttention",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/audit": {
       "get": {
         "tags": [
@@ -2391,6 +2445,63 @@
             }
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/llm-endpoint-warnings": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Which model roles each configured LLM endpoint leaves unset, from the same resolution as an agent's\nturn (C-1034). Only endpoints with at least one warning are listed; agents' own overrides are not\nconsidered. Instance admins only.",
+        "operationId": "adminListLlmEndpointWarnings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EndpointWarnings"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
@@ -39655,6 +39766,31 @@
           }
         }
       },
+      "AppAccountRef": {
+        "type": "object",
+        "description": "(C-1029) An account of an app, with the agents that already use it.",
+        "required": [
+          "id",
+          "name",
+          "agent_ids"
+        ],
+        "properties": {
+          "agent_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "AppAvailability": {
         "type": "object",
         "required": [
@@ -39769,6 +39905,13 @@
               }
             ]
           },
+          "first_prompt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-POLISH-3, D-387, C-1031) A question a person could send to try the app; the journey's Done\nstep opens it as a chat draft."
+          },
           "has_dark_icon": {
             "type": "boolean"
           },
@@ -39819,6 +39962,13 @@
           "serves_library": {
             "type": "boolean",
             "description": "(phase 4, P4-GSL) as on `AppSummary`."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-POLISH-3, C-1031) As on `AppSummary`."
           },
           "tools": {
             "type": "array",
@@ -40024,6 +40174,36 @@
           }
         }
       },
+      "AppReadiness": {
+        "type": "object",
+        "description": "(C-1029) An app's readiness in the catalogue.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "needs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupNeed"
+            },
+            "description": "The union of what the blocking methods need (empty when the app is switched off)."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReadinessState"
+          },
+          "who_can": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhoCan",
+                "description": "Who can fix it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "AppRestrictions": {
         "type": "object",
         "description": "(phase 4, P4-GRANTS, D-123, C-410) The app's manifest restrictions, so clients can explain\nthem: `custom_only` (no `full` grants) and `block_untooled` (requests matching no catalogue\ntool are blocked). Both `false` for an app without `grants`.",
@@ -40126,9 +40306,17 @@
           "has_dark_icon",
           "app_restrictions",
           "serves_library",
-          "credential_free"
+          "credential_free",
+          "accounts"
         ],
         "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppAccountRef"
+            },
+            "description": "(C-1029) The workspace's accounts of this app the caller may give to an agent; only in the catalogue\nlist with a `workspace_id`."
+          },
           "app_id": {
             "type": "string"
           },
@@ -40179,9 +40367,27 @@
           "package_version": {
             "type": "string"
           },
+          "readiness": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppReadiness",
+                "description": "(P5-POLISH-3, D-388, C-1029) Whether the connect journey can start now for the caller; only in the\ncatalogue list with a `workspace_id` (`null` otherwise)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "serves_library": {
             "type": "boolean",
             "description": "(phase 4, P4-GSL, D-149) the app declares a `library` block: it can serve a git skill\nlibrary (the dashboard offers its org-scoped connections when connecting a repository)."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-POLISH-3, D-387, C-1029, C-1031) The manifest's `about.summary`: one plain sentence cards show\nwhole; `null` when the package has none (clients then clamp `description`, never cutting mid-word)."
           }
         }
       },
@@ -40902,6 +41108,74 @@
             ],
             "format": "uuid",
             "description": "Set once bound to a turn (outbound files: the turn that sent them)."
+          }
+        }
+      },
+      "AttentionItem": {
+        "type": "object",
+        "description": "One thing that needs an instance admin: a fixed sentence filled with names and versions.",
+        "required": [
+          "kind",
+          "subject_id",
+          "title",
+          "detail",
+          "since",
+          "href",
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "type": "boolean",
+            "description": "The administrator has to decide (approve, reject, choose); informational items are `false`."
+          },
+          "detail": {
+            "type": "string"
+          },
+          "href": {
+            "type": "string",
+            "description": "The dashboard page that resolves it."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AttentionKind"
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the item first appeared (or the row last changed, for an item that predates the notice table)."
+          },
+          "subject_id": {
+            "type": "string",
+            "description": "The connector id, the package or source id, or the organization slug."
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "AttentionKind": {
+        "type": "string",
+        "description": "(FIX-167 Part B, C-1022) What an item of `GET /v1/admin/attention` is about.",
+        "enum": [
+          "connector_approval",
+          "package_approval",
+          "addon_key_changed",
+          "host_claim_conflict",
+          "connector_down",
+          "ownerless_org"
+        ]
+      },
+      "AttentionList": {
+        "type": "object",
+        "description": "`GET /v1/admin/attention` (C-1022): decisions first, oldest first; computed on read.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            }
           }
         }
       },
@@ -41669,6 +41943,7 @@
           "probe_scopes",
           "audience",
           "scope_presets",
+          "permission_hints",
           "show_context",
           "has_probe"
         ],
@@ -41732,6 +42007,13 @@
               "null"
             ],
             "description": "(FIX-123, D-214) Short name for the connect window's \"How do you want to connect?\"\nchooser; `null` = the window falls back to the kind."
+          },
+          "permission_hints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LevelHints"
+            },
+            "description": "(P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's token screen, per access level."
           },
           "probe_scopes": {
             "type": "array",
@@ -44831,6 +45113,24 @@
           }
         }
       },
+      "EndpointRoleWarning": {
+        "type": "object",
+        "description": "(P5-POLISH-3, D-385, C-1034) A role an endpoint leaves unset (or not allowed), for the endpoint's row in\nAdministration › AI models.",
+        "required": [
+          "role",
+          "warning"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "`large` | `medium` | `small`."
+          },
+          "warning": {
+            "type": "string",
+            "description": "`role_unset` | `role_not_allowed`."
+          }
+        }
+      },
       "EndpointTestRequest": {
         "type": "object",
         "description": "Request body (C-779).",
@@ -44879,6 +45179,25 @@
             "format": "int32",
             "description": "The HTTP status of the answer.",
             "minimum": 0
+          }
+        }
+      },
+      "EndpointWarnings": {
+        "type": "object",
+        "description": "An endpoint with at least one role warning.",
+        "required": [
+          "endpoint_id",
+          "roles"
+        ],
+        "properties": {
+          "endpoint_id": {
+            "type": "string"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EndpointRoleWarning"
+            }
           }
         }
       },
@@ -46606,23 +46925,39 @@
       },
       "Health": {
         "type": "object",
-        "description": "C-944. Until P5-UX-14 adds the check fields: `sign_in_expired`, `disabled`, else `unknown`.",
+        "description": "C-944, amended by C-1033: `state` follows the account's status and what agents' real calls showed.",
         "required": [
           "state"
         ],
         "properties": {
-          "checked_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
           "detail": {
             "type": [
               "string",
               "null"
+            ],
+            "description": "For `failing`: the word of what the app refuses (`token`, `password`, `key`) when `last_error` is\n`rejected`; the host when it is `unreachable` (filled in by the caller)."
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
             ]
+          },
+          "last_error_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The last failed agent call, and why (`rejected | unreachable | unexpected | expired`)."
+          },
+          "last_ok_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The last successful agent call through the account."
           },
           "last_used_at": {
             "type": [
@@ -46633,19 +46968,47 @@
           },
           "state": {
             "$ref": "#/components/schemas/HealthState"
+          },
+          "test": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HealthTest",
+                "description": "The last Test, apart from use."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
       "HealthState": {
         "type": "string",
         "enum": [
-          "ok",
-          "rejected",
           "sign_in_expired",
-          "unreachable",
           "disabled",
-          "unknown"
+          "failing",
+          "working",
+          "not_used"
         ]
+      },
+      "HealthTest": {
+        "type": "object",
+        "description": "What the last Test said (C-1033). Shown as \"Test passed … ago\", never as the account working.",
+        "required": [
+          "at",
+          "result"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "result": {
+            "type": "string",
+            "description": "`ok` | `rejected` | `unreachable` | `unexpected`."
+          }
+        }
       },
       "HookAccepted": {
         "type": "object",
@@ -48027,6 +48390,30 @@
           "act"
         ]
       },
+      "LevelHints": {
+        "type": "object",
+        "description": "(P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's own token screen for one access level, in\nthe app's own words (\"Contents · Read\"). For a token method the levels are the journey's `read` and `write`.",
+        "required": [
+          "level",
+          "label",
+          "hints"
+        ],
+        "properties": {
+          "hints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string",
+            "description": "The access level's id (`read` | `write` for a token method)."
+          }
+        }
+      },
       "LibraryCatalogue": {
         "type": "object",
         "required": [
@@ -48788,10 +49175,15 @@
         "required": [
           "user",
           "approval_email",
+          "admin_attention_email",
           "memberships",
           "groups"
         ],
         "properties": {
+          "admin_attention_email": {
+            "type": "boolean",
+            "description": "(FIX-167 Part B, C-1024) E-mail me when something new needs an instance admin's decision\n(default `true`; the dashboard shows it to instance admins only)."
+          },
           "approval_email": {
             "type": "boolean",
             "description": "(phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`)."
@@ -53444,6 +53836,9 @@
                 "digest",
                 "signer",
                 "source",
+                "origin",
+                "reaches",
+                "reaches_more",
                 "status",
                 "violations",
                 "apps",
@@ -53515,6 +53910,10 @@
                     }
                   ]
                 },
+                "origin": {
+                  "type": "string",
+                  "description": "(P5-POLISH-3, C-1032) Where the package came from, in the words the list shows: `aurora` (shipped\nwith Aurora), `uploaded`, `directory` or `addon`."
+                },
                 "package_id": {
                   "type": "string"
                 },
@@ -53523,6 +53922,19 @@
                 },
                 "publisher": {
                   "type": "string"
+                },
+                "reaches": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "(C-1032) The hosts the package's apps reach (host claims, deduplicated, sorted), at most five."
+                },
+                "reaches_more": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "(C-1032) How many more hosts there are than `reaches` lists.",
+                  "minimum": 0
                 },
                 "signer": {
                   "$ref": "#/components/schemas/PluginSigner"
@@ -53555,6 +53967,13 @@
                     "string",
                     "null"
                   ]
+                },
+                "summary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(C-1032, C-1031) The first app's `about.summary`, for the list's one-line description."
                 },
                 "update_available": {
                   "type": "boolean",
@@ -55339,6 +55758,13 @@
       "PatchMeRequest": {
         "type": "object",
         "properties": {
+          "admin_attention_email": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(FIX-167 Part B, C-1024) Opt in or out of the e-mail about new administration decisions.\nStored for anyone, used only for an instance admin."
+          },
           "approval_email": {
             "type": [
               "boolean",
@@ -56534,6 +56960,9 @@
           "digest",
           "signer",
           "source",
+          "origin",
+          "reaches",
+          "reaches_more",
           "status",
           "violations",
           "apps",
@@ -56605,6 +57034,10 @@
               }
             ]
           },
+          "origin": {
+            "type": "string",
+            "description": "(P5-POLISH-3, C-1032) Where the package came from, in the words the list shows: `aurora` (shipped\nwith Aurora), `uploaded`, `directory` or `addon`."
+          },
           "package_id": {
             "type": "string"
           },
@@ -56613,6 +57046,19 @@
           },
           "publisher": {
             "type": "string"
+          },
+          "reaches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(C-1032) The hosts the package's apps reach (host claims, deduplicated, sorted), at most five."
+          },
+          "reaches_more": {
+            "type": "integer",
+            "format": "int32",
+            "description": "(C-1032) How many more hosts there are than `reaches` lists.",
+            "minimum": 0
           },
           "signer": {
             "$ref": "#/components/schemas/PluginSigner"
@@ -56645,6 +57091,13 @@
               "string",
               "null"
             ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1032, C-1031) The first app's `about.summary`, for the list's one-line description."
           },
           "update_available": {
             "type": "boolean",
@@ -58287,6 +58740,14 @@
           "blocked",
           "left",
           "expired"
+        ]
+      },
+      "ReadinessState": {
+        "type": "string",
+        "description": "(C-1029) Whether the connect plan's suggested method is ready for people here.",
+        "enum": [
+          "ready",
+          "needs_admin"
         ]
       },
       "ReassignCreatorRequest": {
@@ -60980,7 +61441,8 @@
           "recommended",
           "ready",
           "needs",
-          "scope_presets"
+          "scope_presets",
+          "permission_hints"
         ],
         "properties": {
           "audience": {
@@ -61014,6 +61476,13 @@
             "items": {
               "$ref": "#/components/schemas/SetupNeed"
             }
+          },
+          "permission_hints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LevelHints"
+            },
+            "description": "(P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's token screen, per access level."
           },
           "ready": {
             "type": "boolean",

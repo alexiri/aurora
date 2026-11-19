@@ -69,6 +69,8 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
         })
         .collect();
     let approval_email = account::approval_email_enabled(&state.pool, user_id).await?;
+    let admin_attention_email =
+        aurora_db::repo::admin_attention::email_enabled(&state.pool, user_id).await?;
     let idp_roles = aurora_db::repo::idp_roles::get_state(&state.pool, user_id)
         .await?
         .map(Into::into);
@@ -77,6 +79,7 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
         idp_roles,
         default_org_id: user.default_org_id,
         approval_email,
+        admin_attention_email,
         client_address: None,
         user: user.into(),
         memberships,
@@ -114,6 +117,9 @@ pub async fn patch_me(
     }
     if let Some(on) = req.approval_email {
         account::set_approval_email(&mut *tx, user_id, on).await?;
+    }
+    if let Some(on) = req.admin_attention_email {
+        aurora_db::repo::admin_attention::set_email_enabled(&mut *tx, user_id, on).await?;
     }
     tx.commit().await.map_err(DbError::from)?;
     load_me(state, user_id).await

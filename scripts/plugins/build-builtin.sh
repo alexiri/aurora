@@ -11,7 +11,8 @@
 # --key-file is the base64 seed written by `aurora plugin keygen` (the GitHub secret
 # AURORA_PROJECT_SIGNING_KEY has exactly that content). When the file is missing or empty the
 # archives are built UNSIGNED with a clear log line: the API's builtin directory refuses those
-# (fail closed), they are only useful for dev (`plugins.dir` + `plugins.allow_unsigned`).
+# (fail closed) unless `plugins.allow_unsigned` is on, so they are only useful for dev (the dev image puts
+# them in the builtin directory, where they arrive approved, D-381).
 # The key file is read, never copied, and never printed.
 #
 # Compiling a hook guest runs third-party build scripts and proc-macros, so the image build splits

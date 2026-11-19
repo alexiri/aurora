@@ -507,6 +507,28 @@ async fn a_changed_signing_key_never_auto_trusts() {
     let new_fp = v["new_key_fingerprint"].as_str().unwrap().to_owned();
     assert!(new_fp.starts_with("sha256:"));
 
+    // (FIX-167 Part B, D-370) A changed key is a decision item: one notice per admin and new key,
+    // and a row in `GET /v1/admin/attention` that links to the source.
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM admin_attention_notices
+         WHERE kind = 'addon_key_changed' AND subject_id = $1 AND subject_version = $2",
+    )
+    .bind(sid.to_string())
+    .bind(&new_fp)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+    let att = w.get("/v1/admin/attention").await.1;
+    let it = att["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "addon_key_changed")
+        .unwrap_or_else(|| panic!("{att}"));
+    assert_eq!(it["decision"], true);
+    assert_eq!(it["href"], format!("/admin/apps?tab=advanced#{sid}"));
+
     // Nothing new ingested; the trusted key row still holds the OLD key.
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM plugin_packages WHERE source = 'addon'")
         .fetch_one(w.h.pool())

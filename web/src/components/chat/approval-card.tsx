@@ -137,7 +137,7 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
         // The pending list has not loaded yet: the sentence the transcript event carries, without answers.
         <>
           <div className="flex flex-wrap items-center gap-2">
-            {parked ? <ParkedChip /> : <Badge tone="pending">Waiting</Badge>}
+            {parked ? <ParkedChip /> : <Badge>Waiting</Badge>}
             <p className="break-words">{s(ev.payload.summary)}</p>
           </div>
           {parked ? <ParkedNote className="text-xs text-ink-2" /> : null}
@@ -166,7 +166,7 @@ export function ActionApprovalNote({ summary, wsId }: { summary: string; wsId: s
   const canApprove = useCanApprove(wsId);
   return (
     <div className="flex max-w-chat-card flex-wrap items-center gap-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel px-3 py-2 text-sm text-pending-ink">
-      <Badge tone="pending">Held</Badge>
+      <Badge>Held</Badge>
       <span className="min-w-0 break-words">
         Action approval: {summary} {canApprove ? "(decide in Approvals)" : "(waiting for an approver)"}
       </span>

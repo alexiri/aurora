@@ -27,7 +27,7 @@ async function mockAccounts(page: Page) {
           {
             ref: { type: "connection", id: C_PG }, kind: "app", name: "analytics", scope: "workspace", levels: ["read", "ask", "act"], given: true,
             app: { app_id: "postgresql", name: "PostgreSQL", custom_only: false },
-            health: state.pg === "unreachable" ? { state: "unreachable", detail: "db.platform.example.org", checked_at: now, last_used_at: null } : { state: "ok", checked_at: now, last_used_at: now },
+            health: state.pg === "unreachable" ? { state: "failing", last_error: "unreachable", detail: "db.platform.example.org", last_error_at: now, last_used_at: null } : { state: "working", last_ok_at: now, last_used_at: now },
             agents: given("read"), can,
           },
           {

@@ -4,7 +4,7 @@ import Link from "next/link";
 
 import { AccountAttentionItem, useWorkspaceAttention } from "@/components/accounts/attention";
 import { ParkedChip } from "@/components/approvals/parked";
-import { Badge } from "@/components/ui/badge";
+import { AttentionChip } from "@/components/ui/attention-chip";
 import { buttonVariants } from "@/components/ui/button";
 import { countdown, useCanApprove, useNow, usePendingApprovals } from "@/lib/api/approvals";
 import { cn } from "@/lib/utils";
@@ -28,7 +28,7 @@ export function NeedsYou({ wsId, base }: { wsId: string; base: string }) {
     <section aria-labelledby="needs-you-h" className="rounded-card border border-pending-line bg-pending-panel p-4 text-ink sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id="needs-you-h" className="font-display text-base font-semibold text-pending-ink">
-          Needs you <Badge tone="pending" aria-label={`${total} waiting`}>{total}</Badge>
+          Needs you <AttentionChip actionId="needs-you-list" aria-label={`${total} waiting`}>{total}</AttentionChip>
         </h2>
         {approvals.length > 0 ? (
           <Link href={`${base}/approvals`} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
