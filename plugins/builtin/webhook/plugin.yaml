@@ -69,9 +69,11 @@ apps:
         Each webhook the person connected is an operation of the `webhook` target. Find them with
         `aurora-agent list webhook`, read one with `aurora-agent describe webhook <operation>` (its
         notes say when to use it, its fields are the slots) and send with
-        `aurora-agent call webhook <operation> field=value`. Follow the notes: use a webhook only
-        for what they say, and send once per event. When unsure of the payload, add the dry run
-        (header `X-Aurora-Dry-Run: 1`): it checks the values and shows the body without sending.
+        `aurora-agent call webhook <operation> field=value` (a `json` field is `field:=<json>`).
+        Follow the notes: use a webhook only for what they say, and send once per event. When
+        unsure of the payload, add the dry run (`X-Aurora-Dry-Run=1` to `aurora-agent call`, the
+        header `X-Aurora-Dry-Run: 1` with `curl`): it checks the values and shows the body without
+        sending.
         You control only the slot values; never look for the URL, the template or the secrets.
         A `webhook_timeout` means the message may have been delivered: do not resend without asking
         the person. An answer with the header `X-Aurora-Error` is the gateway refusing (an invalid

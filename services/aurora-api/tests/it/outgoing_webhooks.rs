@@ -717,3 +717,142 @@ async fn the_org_ceiling_is_checked_against_the_instances_and_lowers_an_existing
     let (_, view) = l.call(Method::GET, &uri, None).await;
     assert_eq!(view["effective_rate"]["per_minute"], 20);
 }
+
+/// (P5-WEBHOOK-3, C-911, SEC-127) A webhook is an `aurora-agent` operation: the agent granted on
+/// the connection gets `api.json` and `tools.md` entries with the slots (and no URL, secret value,
+/// header or template part); a `PUT …/webhook` that changes only a slot bumps the agent's home
+/// generation and the next render shows it; a send-mode connection is never in `links`.
+#[tokio::test]
+async fn a_webhook_is_an_agent_operation_that_follows_its_edits() {
+    use aurora_db::repo::hosted::HomeSyncClaim;
+    let l = lane().await;
+    let v = l.connect(body_with(json!({}))).await;
+    let id = v["connection"]["id"].as_str().unwrap().to_owned();
+    let pool = l.w.h.pool();
+    let agent = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, effort, brief) VALUES ($1,$2,$3,'ada','Ada','hosted','fake','medium','')")
+        .bind(agent).bind(l.w.org).bind(l.w.ws).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4::uuid,'full')")
+        .bind(Uuid::now_v7()).bind(l.w.ws).bind(agent).bind(&id).execute(pool).await.unwrap();
+    let render = || async {
+        let mut conn = pool.acquire().await.unwrap();
+        let claim = HomeSyncClaim {
+            sandbox_id: Uuid::now_v7(),
+            boot_id: Uuid::now_v7(),
+            agent_id: agent,
+            generation: 1,
+            harness_id: None,
+        };
+        aurora_api::domains::hosted::home::render(&l.w.h.state, &mut conn, &claim)
+            .await
+            .unwrap()
+    };
+    let generation = || async {
+        sqlx::query_scalar::<_, i64>("SELECT home_sync_generation FROM agents WHERE id = $1")
+            .bind(agent)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+    let files = |parts: &[aurora_protocol::runner::HomeSync]| -> std::collections::BTreeMap<String, String> {
+        parts
+            .iter()
+            .filter(|p| p.part.kind.as_str() == "apps")
+            .flat_map(|p| p.part.entries.iter())
+            .map(|e| {
+                (
+                    e["path"].as_str().unwrap().to_owned(),
+                    e["content"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    };
+    let parts = render().await;
+    let f = files(&parts);
+    let api: Value = serde_json::from_str(
+        f.get(".aurora/apps/webhook/api.json")
+            .unwrap_or_else(|| panic!("api.json in {:?}", f.keys().collect::<Vec<_>>())),
+    )
+    .unwrap();
+    let op = api["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == "send_ops_alerts")
+        .unwrap_or_else(|| panic!("{api}"));
+    assert_eq!(
+        (op["account"].as_str(), op["source"].as_str()),
+        (Some("A"), Some("connection"))
+    );
+    assert_eq!(op["notes"], "Posts to ops");
+    assert_eq!(op["body"]["fields"][0]["name"], "text");
+    // No link, and no canary or template/header text in any generated file.
+    let ri = parts
+        .iter()
+        .find(|p| p.part.kind.as_str() == "render_inputs")
+        .unwrap()
+        .part
+        .entries[0]
+        .clone();
+    assert_eq!(
+        ri["links"],
+        json!([]),
+        "a send-mode connection is not a link"
+    );
+    let all: String = f.values().cloned().collect::<Vec<_>>().join("\n") + &ri.to_string();
+    for needle in [
+        PATH_CANARY,
+        QUERY_CANARY,
+        SECRET_CANARY,
+        "hooks.example",
+        "Bearer",
+        "{{secret",
+    ] {
+        assert!(!all.contains(needle), "`{needle}` reached the agent's home");
+    }
+    assert!(f[".aurora/apps/webhook/tools.md"].contains("Webhook: Ops alerts"));
+    // A slot-only edit re-renders.
+    let g0 = generation().await;
+    let mut put = config();
+    put["slots"] = json!([
+        {"name": "text", "type": "string", "required": true, "description": "The message"},
+        {"name": "severity", "type": "enum", "required": false, "enum": ["info", "page"]}
+    ]);
+    put["template"] =
+        json!("{\"text\": {{text}}, \"sev\": {{severity}}, \"topic\": \"{{secret:topic}}\"}");
+    put["secret_values"] = json!({});
+    put["signing_secret"] = json!({"mode": "keep"});
+    let (s, r) = l
+        .call(
+            Method::PUT,
+            &format!("/v1/connections/{id}/webhook"),
+            Some(put),
+        )
+        .await;
+    assert_eq!(s, 200, "{r}");
+    assert!(
+        generation().await > g0,
+        "a config-only edit moves the home generation"
+    );
+    let api: Value =
+        serde_json::from_str(&files(&render().await)[".aurora/apps/webhook/api.json"]).unwrap();
+    let fields: Vec<&str> = api["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == "send_ops_alerts")
+        .unwrap()["body"]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(fields, ["text", "severity"]);
+    // Revoking the grant empties the folder on the next render.
+    sqlx::query("DELETE FROM grants WHERE agent_id = $1")
+        .bind(agent)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(!files(&render().await).contains_key(".aurora/apps/webhook/api.json"));
+}
