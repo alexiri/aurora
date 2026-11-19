@@ -1033,8 +1033,17 @@ async fn export_format_authorization_and_redacted_markers() {
         .0,
         200
     );
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    assert!(f.audit("conversation.export").await.len() >= 3);
+    // The export audit rows are best-effort, written after each answer: wait for them (bounded) rather
+    // than a fixed 300 ms (CI run 44619448618 read fewer than 3).
+    let mut n = 0;
+    for _ in 0..100 {
+        n = f.audit("conversation.export").await.len();
+        if n >= 3 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(n >= 3, "export audit rows: {n}");
 }
 
 #[tokio::test]
