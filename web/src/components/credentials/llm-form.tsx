@@ -84,7 +84,13 @@ export function LlmKeyForm({
   orgId,
   preselect,
   onSaved,
+  submitLabel = "Add LLM key",
+  onCancel,
 }: {
+  /** The submit button's words ("Add key" in the Add an AI key dialog). */
+  submitLabel?: string;
+  /** Adds a Cancel button before the submit button (the dialog's). */
+  onCancel?: () => void;
   scope: SecretScope;
   orgId: string;
   /** Called once the key exists (the setup wizard refetches its status, which now counts this key). */
@@ -336,8 +342,13 @@ export function LlmKeyForm({
           </Notice>
         ) : null}
         <FormActions>
+          {onCancel ? (
+            <Button type="button" variant="outline" size="lg" onClick={onCancel}>
+              Cancel
+            </Button>
+          ) : null}
           <Button type="submit" size="lg" disabled={create.isPending || !scopeOk}>
-            {create.isPending ? "Verifying…" : "Add LLM key"}
+            {create.isPending ? "Verifying…" : submitLabel}
           </Button>
         </FormActions>
       </Form>

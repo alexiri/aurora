@@ -1,6 +1,7 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { accountsSentence } from "@/components/accounts/accounts-list";
 import { AppsTab, appStatus, isSwitchedOff } from "@/components/apps/apps-tab";
 import { approvalsSentence, mergePending } from "@/components/approvals/approvals-view";
 import { overviewSentence } from "@/components/overview/overview-view";
@@ -75,6 +76,15 @@ describe("approvals: one list", () => {
     expect(approvalsSentence(0)).toBe("Nothing is waiting for you.");
     expect(approvalsSentence(1)).toBe("1 request is waiting for you.");
     expect(approvalsSentence(3)).toBe("3 requests are waiting for you.");
+  });
+});
+
+describe("accounts sentence", () => {
+  it("counts the accounts, and an account that needs you takes precedence", () => {
+    expect(accountsSentence(1, 0)).toBe("1 account.");
+    expect(accountsSentence(3, 0)).toBe("3 accounts.");
+    expect(accountsSentence(3, 1)).toBe("1 account needs you.");
+    expect(accountsSentence(3, 2)).toBe("2 accounts need you.");
   });
 });
 

@@ -87,6 +87,8 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page).toHaveURL(/\/apps\?tab=accounts&kind=ai-key$/);
         await page.getByRole("button", { name: "Add", exact: true }).click();
         await page.getByRole("menuitem", { name: "Add an AI key" }).click();
+        // (P5-POLISH-7) The form is in the Add an AI key dialog.
+        await expect(page.getByRole("dialog", { name: "Add an AI key" })).toBeVisible();
         const form = page.getByRole("form", { name: "New LLM key" });
         await form.getByLabel("Name").fill("Team key");
         await form.getByLabel("Provider endpoint").selectOption("aigw");
@@ -95,7 +97,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();
         await form.getByRole("checkbox", { name: "Giskard can use this key" }).check();
         await check(page, "add-ai-key", scheme, width);
-        await form.getByRole("button", { name: "Add LLM key" }).click();
+        await form.getByRole("button", { name: "Add key", exact: true }).click();
         await expect(page.getByText("Saved Team key")).toBeVisible();
         expect(posted).toHaveLength(1);
         expect(posted[0].grant).toEqual({ agent_ids: [second.id] });
