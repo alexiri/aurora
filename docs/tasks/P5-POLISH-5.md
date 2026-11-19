@@ -241,3 +241,11 @@ All paths are under `web/src/`.
 
 Sonnet (`nextjs-developer`). A multi-step dialog with several data sources and an OAuth window round
 trip that must keep working.
+
+## Completion report — review pass 1 (P5-POLISH-11)
+
+- **#1 done.** A one-level app (no write tools) ends with `level: "read"`: "Daneel can now read Team calendar." and
+  "Read only. You can change this on Daneel's Access tab." (custom-only apps keep no level).
+- **#2 done.** While a search is set, a group with no match is hidden; "No app matches" shows only when every group
+  is empty (`tests/connect-journey.test.tsx`).
+- Gates: typecheck, `connect-journey` + `org-accounts` vitest (42 passed), Playwright `connect-journey.spec.ts` passed.
