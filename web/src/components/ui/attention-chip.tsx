@@ -13,6 +13,7 @@ export type AttentionChipProps = {
   className?: string;
   "aria-hidden"?: boolean | "true" | "false";
   "aria-label"?: string;
+  "data-testid"?: string;
 } & ({ action: ReactNode; actionId?: undefined } | { actionId: string; action?: undefined });
 
 export function AttentionChip({ children, action, actionId, className, ...aria }: AttentionChipProps) {
