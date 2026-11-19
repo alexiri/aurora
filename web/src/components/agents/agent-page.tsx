@@ -224,6 +224,7 @@ export function AgentPage() {
             onValueChange={goSection}
             label="Agent sections"
             idBase="agent-section"
+            className="flex"
             tabClassName="max-md:min-h-11 max-md:px-1.5"
           />
         </div>

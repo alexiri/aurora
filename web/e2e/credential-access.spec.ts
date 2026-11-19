@@ -119,15 +119,13 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page).toHaveURL(/\?tab=apps$/);
       });
 
-      test("the agent Access tab shows Model readiness, addressed by ?tab=access", async ({ page }) => {
+      test("the agent Access page (?tab=access) has no Model readiness block: one Can't answer line with its fix", async ({ page }) => {
         await open(page, "/o/acme/w/main/agents/daneel?tab=access", scheme);
-        await expect(page.getByRole("tab", { name: "Access" })).toHaveAttribute("aria-selected", "true");
-        const section = page.getByRole("region", { name: "Model readiness" });
-        await expect(section.getByText("Ready")).toBeVisible();
-        await expect(section.getByText("Not usable")).toBeVisible();
-        await expect(section.getByRole("link", { name: "Re-verify the key." })).toBeVisible();
-        await expect(section.getByText(/No model chosen/)).toBeVisible();
-        await expect(page.getByText("Daneel thinks with claude-sonnet through this key.")).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Access", level: 2 })).toBeVisible();
+        await expect(page.getByRole("region", { name: "Model readiness" })).toHaveCount(0);
+        await expect(page.getByTestId("cant-answer")).toContainText("Can't answer");
+        await expect(page.getByRole("link", { name: "Choose a model" })).toBeVisible();
+        await expect(page.getByText(/Daneel thinks with claude-sonnet through this key/)).toBeVisible();
         await check(page, "model-readiness", scheme, width);
       });
     });

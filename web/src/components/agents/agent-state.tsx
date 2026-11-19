@@ -39,11 +39,11 @@ export function AgentState({
   const conversations = useConversations(agentId);
   const keys = readiness.data?.keys;
   const cantAnswer = Array.isArray(keys) && !keys.some((k) => k.usable);
-  const needs = (gateway.data?.items.length ?? 0) + (actions.data?.items.length ?? 0);
+  const needs = (gateway.data?.items?.length ?? 0) + (actions.data?.items?.length ?? 0);
   const working = (conversations.data?.items ?? []).some((c) => !!c.active_turn);
   const { word, tone } = agentStateOf({ cantAnswer, needs, working });
   return (
-    <StatusLine tone={tone} className="whitespace-nowrap" data-testid="agent-state">
+    <StatusLine tone={tone} className="whitespace-nowrap leading-4" data-testid="agent-state">
       {word}
     </StatusLine>
   );
