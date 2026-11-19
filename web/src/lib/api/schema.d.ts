@@ -6239,6 +6239,11 @@ export interface components {
             app?: components["schemas"]["AccountApp"] | null;
             can: components["schemas"]["AccountCan"];
             connected_by?: components["schemas"]["PersonName"] | null;
+            /**
+             * @description (P5-APIGAP-3, C-1048) An AI key only: the model an agent gets on this key with no override (D-372);
+             *     null when unknown and on every other kind.
+             */
+            default_model?: string | null;
             /** @description Only with `agent_id`: whether that agent can use the account (given ones come first). */
             given?: boolean | null;
             health: components["schemas"]["Health"];
@@ -6251,6 +6256,11 @@ export interface components {
             ref: components["schemas"]["AccountRef"];
             /** @description `workspace` | `organization`. */
             scope: string;
+            /**
+             * @description (P5-APIGAP-3, C-1049) An organization's AI key in the organization list only: the instance's starter
+             *     grants give it to every new agent of the organization.
+             */
+            starter?: boolean | null;
             /**
              * @description (FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it
              *     off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
@@ -10492,6 +10502,11 @@ export interface components {
                 app?: components["schemas"]["AccountApp"] | null;
                 can: components["schemas"]["AccountCan"];
                 connected_by?: components["schemas"]["PersonName"] | null;
+                /**
+                 * @description (P5-APIGAP-3, C-1048) An AI key only: the model an agent gets on this key with no override (D-372);
+                 *     null when unknown and on every other kind.
+                 */
+                default_model?: string | null;
                 /** @description Only with `agent_id`: whether that agent can use the account (given ones come first). */
                 given?: boolean | null;
                 health: components["schemas"]["Health"];
@@ -10504,6 +10519,11 @@ export interface components {
                 ref: components["schemas"]["AccountRef"];
                 /** @description `workspace` | `organization`. */
                 scope: string;
+                /**
+                 * @description (P5-APIGAP-3, C-1049) An organization's AI key in the organization list only: the instance's starter
+                 *     grants give it to every new agent of the organization.
+                 */
+                starter?: boolean | null;
                 /**
                  * @description (FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it
                  *     off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).

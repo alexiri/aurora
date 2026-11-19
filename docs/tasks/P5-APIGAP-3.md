@@ -30,3 +30,9 @@ before. Vitest for both lines. Targeted only (CI is the gate); `extract-schema -
 ## Ownership
 The model/key listing and organization accounts views in `services/aurora-api`, the web member AI models row and
 org Accounts row. Size S. D-399, C-1048, C-1049.
+
+## Completion report
+**Changed.** `Account` (workspace and organization account lists) gains `default_model` (C-1048, always present; the key's D-372 default via the new `hosted::model::key_default_model`, null when unknown or not an AI key) and `starter` (C-1049, organization list only, on organization AI keys: true when the saved placement is `shared_org` with personal workspaces on, this is the default organization and the key is one of its starter grants). Member key row shows "· default <model>"; organization Accounts shows "New agents get this key automatically." on the starter key. Docs: `05`, `API_CONTRACTS` C-1048/C-1049, `14`.
+**Files.** `services/aurora-api/src/domains/{accounts/dto.rs,accounts/service.rs,hosted/model.rs}`, `tests/it/key_listing.rs`, `web/openapi.json`, `web/src/lib/api/schema.d.ts`, `web/src/components/{accounts/account-row.tsx,governance/org-governance.tsx}`, `web/tests/{accounts,governance}.test.tsx`, docs above.
+**Tests run.** `cargo clippy -p aurora-api --all-targets -- -D warnings` clean; `cargo test -p aurora-api --test it -- key_listing` 7 passed (3 new: member sees default_model with D-372 fallback and no endpoint URL, other workspace's key absent; served configured default; org list marks exactly the starter key and member list never carries `starter`, member 403 on org list); `cargo fmt --check` clean; `extract-schema --check` up to date; `pnpm typecheck` clean; vitest accounts + governance 48 passed; eslint 0 errors (2 pre-existing warnings).
+**Not done.** No Playwright, no full suites (CI is the gate). A member's `default_model` may trigger one LiteLLM listing read per uncached key (cached afterwards).

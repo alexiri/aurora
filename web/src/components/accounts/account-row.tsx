@@ -189,6 +189,8 @@ export function AccountRow({
               {account.managed_by && account.managed_by.people.length > 0 ? ` · managed by ${orList(account.managed_by.people.map((p) => p.name))}` : ""}
             </p>
           ) : null}
+          {/* (P5-APIGAP-3, C-1049) The key the instance's starter grants give every new agent of the organization. */}
+          {account.starter ? <p className="text-sm text-ink-2" data-testid="starter-key">New agents get this key automatically.</p> : null}
           <AccountHealth
             account={account}
             outcome={test.isPending ? null : outcome}

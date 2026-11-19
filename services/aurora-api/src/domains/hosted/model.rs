@@ -1049,6 +1049,40 @@ async fn key_listing(state: &AppState, c: &LlmCandidate, fetch: bool) -> Option<
     read
 }
 
+/// (P5-APIGAP-3, C-1048) The model an agent gets on this key with no override (D-372's rule, over this key's own
+/// listing for `litellm`): `None` when the key is not active, its endpoint or provider is gone, or nothing
+/// resolves. Reads the listing from the cache or, on a miss, from the endpoint.
+pub async fn key_default_model(
+    state: &AppState,
+    llm: &ProviderRegistry,
+    eff: &EffectiveGovernance,
+    s: &aurora_db::repo::secrets::SecretRow,
+) -> Option<String> {
+    if s.status != "active" {
+        return None;
+    }
+    let ep = llm.endpoint(s.llm_endpoint_id.as_deref()?)?;
+    let cand = LlmCandidate {
+        id: s.id,
+        name: s.name.clone(),
+        status: s.status.clone(),
+        workspace_id: s.workspace_id,
+        llm_provider: s.llm_provider.clone().unwrap_or_default(),
+        llm_endpoint_id: ep.id.clone(),
+        llm_auth_mode: s.llm_auth_mode.clone(),
+        origin: s.origin.clone(),
+        value_version: s.value_version,
+    };
+    let listing = if ep.provider == "litellm" {
+        key_listing(state, &cand, true).await
+    } else {
+        None
+    };
+    default_model(llm, eff, ep, listing.as_deref())
+        .pick
+        .map(|(m, _)| m)
+}
+
 /// The one readiness function (D-136, `08 §Model readiness`): every granted key's `usable`
 /// or first failing reason, plus the default selection with its source. Keeps the selection
 /// semantics: the override first, never re-pointed, dropped when no longer usable.

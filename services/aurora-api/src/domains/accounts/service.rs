@@ -143,6 +143,20 @@ async fn list(
     scopes.push(None);
 
     let managed_by = org_managed_by(state, scope, caller).await?;
+    let llm = state.llm();
+    let eff = if want(AccountKind::AiKey) && q.app_id.is_none() {
+        crate::domains::secrets::gov::effective_for(state, scope.org)
+            .await
+            .ok()
+    } else {
+        None
+    };
+    // (C-1049) The organization's starter keys: only the organization list says so (owners and admins).
+    let starter_secrets = if scope.workspace.is_none() && want(AccountKind::AiKey) {
+        starter_keys(state, scope.org).await?
+    } else {
+        Vec::new()
+    };
     let mut rows: Vec<Row> = Vec::new();
     for ws in scopes {
         if want(AccountKind::App) {
@@ -180,7 +194,22 @@ async fn list(
                     AccountKind::Website
                 };
                 if want(kind) {
-                    rows.push(secret_row(&s, kind, scope, &managed_by));
+                    let mut row = secret_row(&s, kind, scope, &managed_by);
+                    if kind == AccountKind::AiKey {
+                        // (P5-APIGAP-3, C-1048) What an agent gets on this key; (C-1049) whether new agents
+                        // of the organization get the key by the instance's starter grants.
+                        if let Some(eff) = &eff {
+                            row.account.default_model =
+                                crate::domains::hosted::model::key_default_model(
+                                    state, &llm, eff, &s,
+                                )
+                                .await;
+                        }
+                        if scope.workspace.is_none() && s.workspace_id.is_none() {
+                            row.account.starter = Some(starter_secrets.contains(&s.id));
+                        }
+                    }
+                    rows.push(row);
                 }
             }
         }
@@ -234,6 +263,18 @@ async fn list(
         items,
         next_cursor: None,
     })
+}
+
+/// (C-1049) The AI keys the saved placement gives every new agent of `org`: only when new people are placed in
+/// the shared default organization with a personal workspace (the starter grants' home).
+async fn starter_keys(state: &AppState, org: Uuid) -> Result<Vec<Uuid>, ApiError> {
+    let Some(row) = aurora_db::repo::placement::get(&state.pool).await? else {
+        return Ok(Vec::new());
+    };
+    if row.mode != "shared_org" || !row.personal_enabled || row.default_org_id != Some(org) {
+        return Ok(Vec::new());
+    }
+    Ok(crate::domains::placement::service::starter_ids(&row).0)
 }
 
 /// The model the agent's next turn uses and the key it goes through, for the AI-key row.
@@ -353,6 +394,8 @@ fn connection_row(
         managed_by: org_account.then(|| managed_by.clone()).flatten(),
         can: can_of(scope, org_account),
         given: None,
+        default_model: None,
+        starter: None,
     };
     Row {
         account,
@@ -407,6 +450,8 @@ fn secret_row(
             managed_by: org_account.then(|| managed_by.clone()).flatten(),
             can: can_of(scope, org_account),
             given: None,
+            default_model: None,
+            starter: None,
         },
         tools: Vec::new(),
         limit: None,

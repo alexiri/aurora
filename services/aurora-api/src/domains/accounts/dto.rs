@@ -185,6 +185,13 @@ pub struct Account {
     /// Only with `agent_id`: whether that agent can use the account (given ones come first).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub given: Option<bool>,
+    /// (P5-APIGAP-3, C-1048) An AI key only: the model an agent gets on this key with no override (D-372);
+    /// null when unknown and on every other kind.
+    pub default_model: Option<String>,
+    /// (P5-APIGAP-3, C-1049) An organization's AI key in the organization list only: the instance's starter
+    /// grants give it to every new agent of the organization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub starter: Option<bool>,
 }
 
 /// (C-943) What Test found.

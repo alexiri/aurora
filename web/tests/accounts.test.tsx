@@ -91,6 +91,15 @@ describe("AccountsList: one row per kind", () => {
     expect(screen.getAllByRole("button", { name: /^More for / })).toHaveLength(3);
   });
 
+  it("an organization's starter key says new agents get it automatically; other keys do not (P5-APIGAP-3, C-1049)", async () => {
+    routes["GET /v1/orgs/o1/accounts"] = () =>
+      json(200, { items: [aiKey({ name: "Starter key", scope: "organization", starter: true }), aiKey({ ref: { type: "secret", id: "s3" }, name: "Other key", scope: "organization", starter: false })], next_cursor: null });
+    wrap(<AccountsList scope={{ kind: "organization", id: "o1" }} orgId="o1" canOwn />);
+    const starter = await screen.findByRole("listitem", { name: "Starter key" });
+    expect(within(starter).getByText("New agents get this key automatically.")).toBeInTheDocument();
+    expect(screen.getAllByText("New agents get this key automatically.")).toHaveLength(1);
+  });
+
   it("offers Give access, Rename, Reconnect, Turn off and Remove for an app; Replace and Test for a website, never a rule or host", async () => {
     listWs([app(), website()]);
     list();

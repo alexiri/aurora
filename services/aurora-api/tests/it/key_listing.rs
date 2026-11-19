@@ -255,3 +255,172 @@ async fn an_unreadable_listing_fails_the_turn_with_a_message_that_says_so() {
     let said = said.into_iter().map(|(s,)| s).collect::<String>();
     assert!(said.contains("model list could not be read"), "{said}");
 }
+
+async fn accounts(r: &Rig, ck: &str, uri: &str) -> (u16, Value) {
+    let (s, _, v) =
+        r.h.send(
+            Method::GET,
+            uri,
+            &[("cookie", ck), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    (s.as_u16(), v)
+}
+
+fn item<'a>(v: &'a Value, id: Uuid) -> &'a Value {
+    v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["ref"]["id"] == id.to_string())
+        .unwrap_or_else(|| panic!("no account {id} in {v}"))
+}
+
+/// P5-APIGAP-3 (C-1048): a member reads each AI key's default model from the workspace list; a configured
+/// default the key does not serve falls back as D-372 says; a key of another workspace is not listed to them.
+#[tokio::test]
+async fn a_member_sees_the_default_model_of_a_key_they_can_use() {
+    let lite = litellm().await;
+    let r = rig(lite.uri(), Some("hosted_vllm/glm53-flash-int4")).await;
+    let org_admin = cookie_of(&r, "orgadmin@x.io", "admin", "member").await;
+    let member = cookie_of(&r, "member@x.io", "member", "member").await;
+    let org_key = post_key(
+        &r,
+        &org_admin,
+        &format!("/v1/orgs/{}/secrets", r.org),
+        "org-b",
+        "sk-b",
+    )
+    .await;
+    let uri = format!("/v1/workspaces/{}/accounts?kind=ai_key", r.ws);
+    let (s, v) = accounts(&r, &member, &uri).await;
+    assert_eq!(s, 200, "{v}");
+    let k = item(&v, org_key);
+    // The configured default is not served: the first chat model of this key's listing (not the embedding model).
+    assert_eq!(k["default_model"], "m-b", "{v}");
+    assert!(
+        k.get("starter").is_none(),
+        "a member's list never says starter: {v}"
+    );
+    // No endpoint URL and no value leak with it.
+    assert!(!v.to_string().contains(&lite.uri()), "{v}");
+
+    // A key of a workspace the member is not in is not in their list at all.
+    let other = r.h.workspace(r.org).await;
+    let u2 = r.h.user("owner3@x.io", false).await;
+    r.h.member(r.org, u2, "member", "active").await;
+    r.h.bind_ws(other, u2, "owner").await;
+    let (_, s2) = r.h.good_session(u2).await;
+    let other_key = post_key(
+        &r,
+        &cookie(&s2),
+        &format!("/v1/workspaces/{other}/secrets"),
+        "other-a",
+        "sk-a",
+    )
+    .await;
+    let (s, v) = accounts(&r, &member, &uri).await;
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|a| a["ref"]["id"] != other_key.to_string()),
+        "{v}"
+    );
+}
+
+/// A served default is the default; without a listing to read (no key value works) nothing is invented.
+#[tokio::test]
+async fn a_served_configured_default_is_the_keys_default_model() {
+    let lite = litellm().await;
+    let r = rig(lite.uri(), Some("m-a")).await;
+    let ck = cookie_of(&r, "owner@x.io", "member", "owner").await;
+    let key = post_key(
+        &r,
+        &ck,
+        &format!("/v1/workspaces/{}/secrets", r.ws),
+        "ws-a",
+        "sk-a",
+    )
+    .await;
+    let (s, v) = accounts(&r, &ck, &format!("/v1/workspaces/{}/accounts", r.ws)).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(item(&v, key)["default_model"], "m-a", "{v}");
+}
+
+/// P5-APIGAP-3 (C-1049): an organization admin sees `starter: true` exactly on the starter key, and only on the
+/// organization list.
+#[tokio::test]
+async fn the_organization_list_marks_the_starter_key() {
+    let lite = litellm().await;
+    let r = rig(lite.uri(), None).await;
+    let admin_id = r.h.user("orgadmin@x.io", false).await;
+    r.h.member(r.org, admin_id, "admin", "active").await;
+    let (_, s) = r.h.good_session(admin_id).await;
+    let admin = cookie(&s);
+    let starter = post_key(
+        &r,
+        &admin,
+        &format!("/v1/orgs/{}/secrets", r.org),
+        "starter",
+        "sk-a",
+    )
+    .await;
+    let other = post_key(
+        &r,
+        &admin,
+        &format!("/v1/orgs/{}/secrets", r.org),
+        "other",
+        "sk-b",
+    )
+    .await;
+    let org_uri = format!("/v1/orgs/{}/accounts?kind=ai_key", r.org);
+
+    // No placement saved: nothing is starter.
+    let (st, v) = accounts(&r, &admin, &org_uri).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(item(&v, starter)["starter"], false, "{v}");
+    assert_eq!(item(&v, other)["starter"], false, "{v}");
+
+    sqlx::query(
+        "INSERT INTO instance_placement (singleton, mode, default_org_id, default_org_role, shared_workspaces,
+            personal_enabled, personal_role, name_template, starter_grants, updated_by, updated_at)
+         VALUES (true, 'shared_org', $1, 'member', '[]'::jsonb, true, 'owner', '{name}', $2, $3, now())
+         ON CONFLICT (singleton) DO UPDATE SET mode = 'shared_org', default_org_id = $1, personal_enabled = true,
+            starter_grants = $2",
+    )
+    .bind(r.org)
+    .bind(json!([{"kind": "secret", "id": starter}]))
+    .bind(admin_id)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let (st, v) = accounts(&r, &admin, &org_uri).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(item(&v, starter)["starter"], true, "{v}");
+    assert_eq!(item(&v, other)["starter"], false, "{v}");
+
+    // The workspace list (what a member reads) never carries it.
+    let member = cookie_of(&r, "member@x.io", "member", "member").await;
+    let (st, v) = accounts(
+        &r,
+        &member,
+        &format!("/v1/workspaces/{}/accounts?kind=ai_key", r.ws),
+    )
+    .await;
+    assert_eq!(st, 200, "{v}");
+    assert!(
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|a| a.get("starter").is_none()),
+        "{v}"
+    );
+    // A member may not read the organization list at all.
+    let (st, _) = accounts(&r, &member, &org_uri).await;
+    assert_eq!(st, 403);
+}
