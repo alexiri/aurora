@@ -446,6 +446,38 @@ fn boot_doc(c: &str) -> Value {
     serde_json::from_slice(&raw).unwrap()
 }
 
+/// (FIX-179, D-394, SEC-137) No process in the sandbox can trace another. A process the harness
+/// started (the fake adapter's `[[shell:]]` directive) starts a child of its own and tries
+/// `PTRACE_ATTACH` and `process_vm_readv` on it: both answer `EPERM` (errno 1). Without the seccomp
+/// profile the attach succeeds, since `kernel.yama.ptrace_scope=1` allows a parent to trace its
+/// child and a host with scope 0 allows any same-uid process; this probe targets a child so it
+/// proves the profile and not the host's sysctl.
+#[tokio::test]
+async fn s8c_sandbox_processes_cannot_ptrace() {
+    if !enabled() {
+        return;
+    }
+    let (st, api) = fx(Opts::default()).await;
+    let conv = api.direct().await;
+    let script = "import ctypes,subprocess;l=ctypes.CDLL(None,use_errno=True);c=subprocess.Popen([\"sleep\",\"20\"]);a=l.ptrace(16,c.pid,0,0);ea=ctypes.get_errno();b=ctypes.create_string_buffer(8);v=ctypes.c_size_t*2;i=v(ctypes.addressof(b),8);r=l.process_vm_readv(c.pid,i,1,i,1,0);er=ctypes.get_errno();c.kill();print(\"ptrace=%d:%d vm_readv=%d:%d\"%(a,ea,r,er))";
+    let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    run_turn(
+        &st,
+        &api,
+        &conv,
+        &format!("[[shell: python3 -c {} > /tmp/ptrace.out 2>&1]]", q(script)),
+    )
+    .await;
+    let cs = containers();
+    assert_eq!(cs.len(), 1);
+    let out = exec_in(cs[0].as_str(), "cat /tmp/ptrace.out").1;
+    assert_eq!(
+        out.trim(),
+        "ptrace=-1:1 vm_readv=-1:1",
+        "ptrace and process_vm_readv answer EPERM inside the sandbox"
+    );
+}
+
 #[tokio::test]
 async fn s8_security_probes() {
     if !enabled() {
