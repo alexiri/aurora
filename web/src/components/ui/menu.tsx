@@ -5,7 +5,10 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
-export const Menu = M.Root;
+/** Non-modal by default: a modal menu aria-hides the page while its controls stay focusable (axe aria-hidden-focus). */
+export function Menu({ modal = false, ...props }: ComponentProps<typeof M.Root>) {
+  return <M.Root modal={modal} {...props} />;
+}
 export const MenuTrigger = M.Trigger;
 
 export function MenuContent({ className, ...props }: ComponentProps<typeof M.Content>) {

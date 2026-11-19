@@ -204,8 +204,8 @@ export interface ErrorCopy {
 
 const ERROR_COPY: Record<string, ErrorCopy> = {
   no_model_key: {
-    message: "This agent has no usable LLM key.",
-    link: { label: "Open LLM keys", path: "credentials", tab: "llm" },
+    message: "This agent has no usable AI key.",
+    link: { label: "Open AI keys", path: "credentials", tab: "llm" },
     extra: { label: "Agent access", path: "access", ownerOnly: true },
     showServerMessage: true,
     guideStep: "key",

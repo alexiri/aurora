@@ -10,7 +10,6 @@ import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
-import { BotIcon } from "@/components/ui/icons";
 import { ScopeLadder, type LadderAbove } from "@/components/ui/scope-ladder";
 import { WhoCan } from "@/components/ui/who-can";
 import { useAccounts } from "@/lib/api/accounts";
@@ -336,8 +335,8 @@ function MemberAiModels({ org }: { org: Org }) {
           const models = endpoints[0]?.allowed_models.value ?? [];
           return (
             <li key={k.ref.id} className="flex items-center gap-3 px-4 py-3">
-              <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-control bg-subtle text-ink-2">
-                <BotIcon className="size-5" />
+              <span aria-hidden="true" className="inline-flex size-8 shrink-0 items-center justify-center rounded-control border border-line bg-accent-soft text-xs font-semibold text-accent-ink">
+                AI
               </span>
               <div className="min-w-0">
                 <p className="font-medium text-ink">{k.name}</p>
