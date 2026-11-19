@@ -594,16 +594,6 @@ impl MockUpstream {
             .await;
     }
 
-    /// Mount a route that only matches requests carrying header `name: value`.
-    /// Answers 200 with an empty body; use [`MockUpstream::received`] to assert
-    /// on what was sent.
-    pub async fn expect_header(&self, name: &str, value: &str) {
-        wiremock::Mock::given(wiremock::matchers::header(name, value))
-            .respond_with(wiremock::ResponseTemplate::new(200))
-            .mount(&self.server)
-            .await;
-    }
-
     /// Requests received so far, in arrival order.
     pub async fn received(&self) -> Vec<wiremock::Request> {
         self.server.received_requests().await.unwrap_or_default()

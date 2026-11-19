@@ -163,16 +163,6 @@ impl FakeGitHost {
         repo.refs.insert("main".into(), c);
     }
 
-    pub fn set_default_branch(&self, repo: &str, branch: &str) {
-        self.inner
-            .lock()
-            .unwrap()
-            .repos
-            .get_mut(repo)
-            .unwrap()
-            .default_branch = branch.to_owned();
-    }
-
     /// A new commit on `branch` (created from the default branch's head when new) applying
     /// `changes`; returns its sha. The branch head moves.
     pub fn commit(&self, repo: &str, branch: &str, changes: &[Change]) -> String {

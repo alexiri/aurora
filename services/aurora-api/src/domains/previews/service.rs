@@ -553,34 +553,3 @@ pub async fn start(
         },
     ))
 }
-
-/// Org `settings.previews_enabled` (C-549): the owner/admin switch, audited
-/// `org.previews.update` (security-critical). Switching off keeps the shares but ends access.
-pub async fn set_org_enabled(
-    s: &AppState,
-    c: &Caller,
-    org: Uuid,
-    enabled: bool,
-) -> Result<(), ApiError> {
-    let mut tx = audit::begin(s).await?;
-    sqlx::query(
-        "UPDATE organizations SET settings = coalesce(settings, '{}'::jsonb) \
-             || jsonb_build_object('previews_enabled', $2), updated_at = now() \
-         WHERE id = $1",
-    )
-    .bind(org)
-    .bind(enabled)
-    .execute(&mut *tx)
-    .await
-    .map_err(DbError::from)?;
-    // (FIX-042) The next home sync must carry the (possibly empty) `previews` part so a running
-    // sandbox's share list is emptied at once: bump every agent of the org (the `bump_org`
-    // pattern) inside the same transaction.
-    aurora_db::repo::skills::bump_org(&mut tx, org).await?;
-    let ev = event(c, "org.previews.update")
-        .org(org)
-        .target("organization", org)
-        .metadata(json!({"previews_enabled": enabled}));
-    audit::commit_critical(tx, &ev).await?;
-    Ok(())
-}

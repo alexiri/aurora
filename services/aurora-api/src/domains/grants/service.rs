@@ -515,31 +515,6 @@ fn dedupe(v: Vec<String>) -> Vec<String> {
     v.into_iter().filter(|t| seen.insert(t.clone())).collect()
 }
 
-/// Agent-side `PUT`: create or replace the connection grant in its own transaction.
-pub async fn grant_connection(
-    state: &AppState,
-    caller: &Caller,
-    agent_id: Uuid,
-    connection_id: Uuid,
-    req: PutConnectionGrant,
-) -> Result<ConnectionGrant, ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
-    let w = grant_connection_in_tx(
-        &mut tx,
-        state,
-        caller,
-        agent_id,
-        connection_id,
-        req,
-        Origin::Agent,
-    )
-    .await?;
-    if let Some(ev) = &w.event {
-        audit::commit_critical(tx, ev).await?;
-    }
-    Ok(w.grant)
-}
-
 /// (P5-UX-4, C-980) `PUT /agents/{agent}/grants/connections/{conn}` with a body that is either a
 /// `level` or a `mode` with tool lists. A level is expanded here, inside the transaction, from
 /// the app's tools in the snapshot; everything after that is the one writer of connection
