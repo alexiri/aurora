@@ -9,10 +9,9 @@ use aurora_db::repo::gateway::{
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
 use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
-use aurora_gateway::guard::Guard;
 use aurora_gateway::mechanisms::finalize::{SignParams, UNSIGNED_PAYLOAD, sign};
 use aurora_gateway::plaintext::PlaintextCache;
-use aurora_gateway::proxy::{Proxy, ProxyParts};
+
 use aurora_gateway::reqlog::{LogWriter, RequestLog};
 use aurora_gateway::resolve::{PolicySource, Resolver};
 use aurora_gateway::snapshot::{SnapshotStore, parse};
@@ -421,22 +420,13 @@ async fn start_in(
     let cache = handler.link_cache();
     let handler = Arc::new(handler);
     let gw = ca::generate("gw").unwrap();
-    let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let proxy = pl.local_addr().unwrap();
-    let guard = Arc::new(Guard::new(&["127.0.0.0/8".to_owned()], vec![proxy]).unwrap());
-    let (gw_ca, gw_tls) = crate::common::gateway_tls(&gw, proxy);
-    let p = Proxy::new(ProxyParts {
-        ca: gw_ca,
-        tls: gw_tls,
-        resolver: Arc::new(Static(w)),
+    let (proxy, _) = crate::common::spawn_proxy(
+        &gw,
+        Arc::new(Static(w)),
         handler,
-        guard,
-        header_timeout: Duration::from_secs(5),
-        extra_ca_pem: extra_ca_pem.map(String::into_bytes),
-        egress_proxy: None,
-    })
-    .unwrap();
-    tokio::spawn(p.run(pl, std::future::pending()));
+        extra_ca_pem.map(String::into_bytes),
+    )
+    .await;
     (
         Env {
             proxy,
