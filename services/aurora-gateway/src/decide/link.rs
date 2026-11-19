@@ -309,16 +309,10 @@ impl PolicyHandler {
                     ctx.decision = "error";
                     self.log
                         .record(ctx.row(503, None, Some("gateway_restarting")));
-                    return Outcome::Respond(guidance::response(&ApiError::unavailable(
-                        "gateway_restarting",
-                        "The gateway is restarting while this request awaited approval. Retry shortly.",
-                    )));
+                    return Outcome::Respond(guidance::restarting());
                 }
                 HoldOutcome::StoreUnavailable => {
-                    let err = ApiError::unavailable(
-                        "approval_store_unavailable",
-                        "The approval store is unavailable. Retry shortly.",
-                    );
+                    let err = self.approval_store_unavailable();
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
             }
