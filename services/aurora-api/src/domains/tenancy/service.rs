@@ -6,7 +6,7 @@ use crate::app::AppState;
 use crate::domains::automations::service::{To, reassign_org_member};
 use aurora_config::ApiConfig;
 use aurora_core::token::{self, TokenPrefix};
-use aurora_core::{ApiError, FieldError, ids};
+use aurora_core::{ApiError, ids};
 use aurora_db::repo::agents::{self, AgentRow, NewDefaultAgent};
 use aurora_db::repo::members::{self, MemberRow};
 use aurora_db::repo::orgs::{self, OrgRow};
@@ -25,7 +25,7 @@ pub struct CreatedOrg {
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid request.", path, msg)
 }
 
 fn slug_taken() -> ApiError {
@@ -799,18 +799,14 @@ pub async fn set_byo_posture(
     let row = workspaces::set_byo_posture(&mut *tx, ws, new.map(ByoPosture::as_str))
         .await?
         .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
-    let ev = crate::audit::AuditEvent::new(
-        crate::audit::AuditActor::from_caller(c),
-        "workspace.byo_posture.update",
-        crate::audit::Outcome::Success,
-    )
-    .org(a.org_id)
-    .workspace(ws)
-    .target("workspace", ws)
-    .metadata(serde_json::json!({
-        "byo_posture": new.map(ByoPosture::as_str),
-        "previous": before.byo_posture,
-    }));
+    let ev = crate::audit::AuditEvent::by(c, "workspace.byo_posture.update")
+        .org(a.org_id)
+        .workspace(ws)
+        .target("workspace", ws)
+        .metadata(serde_json::json!({
+            "byo_posture": new.map(ByoPosture::as_str),
+            "previous": before.byo_posture,
+        }));
     crate::audit::insert_tx(&mut tx, &ev).await.map_err(|e| {
         tracing::error!(error = %e, "workspace.byo_posture.update audit write failed");
         ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")

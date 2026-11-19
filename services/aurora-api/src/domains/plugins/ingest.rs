@@ -44,14 +44,7 @@ pub struct Ingested {
     pub created: bool,
 }
 
-fn hex(b: &[u8]) -> String {
-    use std::fmt::Write;
-    b.iter()
-        .fold(String::with_capacity(b.len() * 2), |mut s, x| {
-            let _ = write!(s, "{x:02x}");
-            s
-        })
-}
+use ::hex::encode as hex;
 
 fn violations_json(v: &[Violation]) -> Value {
     Value::Array(
@@ -331,7 +324,7 @@ async fn ingest_inner(
         Signer::Trusted { key_id, .. } => key_id.clone(),
         Signer::Unsigned => "unsigned".to_owned(),
     };
-    let digest = hex(&aurora_registry::digest::digest(&pkg));
+    let digest = hex(aurora_registry::digest::digest(&pkg));
 
     let running = env!("CARGO_PKG_VERSION");
     let parsed = pkg.manifest(running);
@@ -518,7 +511,7 @@ async fn ingest_inner(
     }
     if decision.status != "invalid" {
         if let Some(wasm) = pkg.file(aurora_registry::package::HOOKS_WASM) {
-            plugins::put_blob(&mut *tx, &hex(&Sha256::digest(wasm)), "hooks_wasm", wasm).await?;
+            plugins::put_blob(&mut *tx, &hex(Sha256::digest(wasm)), "hooks_wasm", wasm).await?;
         }
         plugins::put_blob(&mut *tx, &digest, "archive", bytes).await?;
         // (P5-GUIDE-1, C-642) One blob per agent guide file, keyed by the digest of its bytes.
@@ -526,7 +519,7 @@ async fn ingest_inner(
             if path.starts_with(aurora_registry::package::AGENT_DIR) {
                 plugins::put_blob(
                     &mut *tx,
-                    &hex(&Sha256::digest(content)),
+                    &hex(Sha256::digest(content)),
                     "agent_guide",
                     content,
                 )

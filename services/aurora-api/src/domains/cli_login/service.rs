@@ -3,7 +3,7 @@ use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::ratelimit::Quota;
 use aurora_core::token::{self, TokenPrefix};
-use aurora_core::{ApiError, FieldError, sanitize};
+use aurora_core::{ApiError, sanitize};
 use aurora_db::authz;
 use aurora_db::repo::api_keys::NewKey;
 use aurora_db::repo::cli_logins;
@@ -134,10 +134,7 @@ pub async fn pending(
         },
     )?;
     let code = normalize_user_code(code).ok_or_else(|| {
-        ApiError::invalid_request(
-            "Invalid code.",
-            vec![FieldError::new("/code", "expected format ABCD-EFGH")],
-        )
+        ApiError::invalid_field("Invalid code.", "/code", "expected format ABCD-EFGH")
     })?;
     let login = cli_logins::find_pending_by_user_code(&s.pool, &code)
         .await?
@@ -172,10 +169,7 @@ pub async fn approve(
     )?;
     let nf = || ApiError::not_found("Login code not found or expired.");
     let code = normalize_user_code(&req.user_code).ok_or_else(|| {
-        ApiError::invalid_request(
-            "Invalid code.",
-            vec![FieldError::new("/user_code", "expected format ABCD-EFGH")],
-        )
+        ApiError::invalid_field("Invalid code.", "/user_code", "expected format ABCD-EFGH")
     })?;
     let a = c.workspace(s, req.workspace_id).await?;
     let login = cli_logins::find_pending_by_user_code(&s.pool, &code)
@@ -186,14 +180,10 @@ pub async fn approve(
     if !cli_logins::approve(&mut *tx, login.id, c.user_id, req.workspace_id).await? {
         return Err(nf());
     }
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(c),
-        "cli_login.approve",
-        Outcome::Success,
-    )
-    .org(a.org_id)
-    .workspace(req.workspace_id)
-    .target("cli_login", login.id);
+    let ev = AuditEvent::by(c, "cli_login.approve")
+        .org(a.org_id)
+        .workspace(req.workspace_id)
+        .target("cli_login", login.id);
     audit::commit_critical(tx, &ev).await?;
     Ok((login.id, a.org_id))
 }

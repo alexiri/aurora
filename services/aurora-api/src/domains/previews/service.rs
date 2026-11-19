@@ -5,12 +5,12 @@
 //! row; the command text is never audited, only `start_command_set` and a hash prefix.
 use super::dto::*;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::conversations::service::notify_work;
 use crate::domains::freeze::service as freeze;
 use crate::http::auth::Caller;
 use aurora_core::limits::{PREVIEW_WAKE_WAIT, PREVIEW_WAKE_WINDOW};
-use aurora_core::{ApiError, FieldError, token};
+use aurora_core::{ApiError, token};
 use aurora_db::DbError;
 use aurora_db::repo::agents as agents_repo;
 use aurora_db::repo::preview_shares as repo;
@@ -20,7 +20,7 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid request.", path, msg)
 }
 
 pub fn previews_disabled() -> ApiError {
@@ -113,7 +113,7 @@ async fn ensure_org_enabled(conn: &mut PgConnection, org: Uuid) -> Result<(), Ap
 }
 
 pub fn event(c: &Caller, action: &str) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
 }
 
 /// The command text is never audited (SEC-80): only that it is set and the first 12 hex

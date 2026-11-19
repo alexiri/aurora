@@ -52,8 +52,7 @@ async fn list_agents(
 ) -> Result<Json<Page<Agent>>, ApiError> {
     let p = params.resolve()?;
     let a = caller.workspace(&state, ws).await?;
-    let rows = agents::list_for_workspace(&state.pool, ws, p.after.map(|c| (c.t, c.id)), p.fetch())
-        .await?;
+    let rows = agents::list_for_workspace(&state.pool, ws, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     let refs: Vec<&agents::AgentRow> = page.items.iter().collect();
     let views = super::byo::views(&state, a.org_id, ws, &refs).await?;
@@ -148,15 +147,11 @@ async fn create_agent(
     let created = service::create(&state, &caller, &a, a.org_id, ws, req).await?;
     audit::record(
         &state,
-        AuditEvent::new(
-            AuditActor::from_caller(&caller),
-            "agent.create",
-            Outcome::Success,
-        )
-        .org(a.org_id)
-        .workspace(ws)
-        .target("agent", created.agent.id)
-        .metadata(json!({"handle": created.agent.handle, "kind": created.agent.kind})),
+        AuditEvent::by(&caller, "agent.create")
+            .org(a.org_id)
+            .workspace(ws)
+            .target("agent", created.agent.id)
+            .metadata(json!({"handle": created.agent.handle, "kind": created.agent.kind})),
     );
     let (container_config, agent) = match &created.token {
         Some(t) => {
@@ -225,14 +220,10 @@ async fn patch_agent(
     let row = service::patch(&state, &caller, id, &req).await?;
     audit::record(
         &state,
-        AuditEvent::new(
-            AuditActor::from_caller(&caller),
-            "agent.update",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .workspace(before.workspace_id)
-        .target("agent", id),
+        AuditEvent::by(&caller, "agent.update")
+            .org(row.org_id)
+            .workspace(before.workspace_id)
+            .target("agent", id),
     );
     Ok(Json(with_byo(&state, row).await?))
 }
@@ -259,15 +250,11 @@ async fn delete_agent(
     service::delete(&state, id).await?;
     audit::record(
         &state,
-        AuditEvent::new(
-            AuditActor::from_caller(&caller),
-            "agent.delete",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .workspace(row.workspace_id)
-        .target("agent", id)
-        .metadata(json!({"handle": row.handle})),
+        AuditEvent::by(&caller, "agent.delete")
+            .org(row.org_id)
+            .workspace(row.workspace_id)
+            .target("agent", id)
+            .metadata(json!({"handle": row.handle})),
     );
     Ok(StatusCode::NO_CONTENT)
 }
@@ -483,15 +470,12 @@ async fn agent_token_page(
         org,
         q.stale,
         q.expiring_within_days,
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.credential_id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(AgentTokenEntry::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(AgentTokenEntry::from)))
 }
 
 /// Live BYO agent tokens of a workspace with expiry and use (workspace owner).

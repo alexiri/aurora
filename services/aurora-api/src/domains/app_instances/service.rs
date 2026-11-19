@@ -28,10 +28,7 @@ fn field_error(code: &str, path: &str, message: &str, extra: Option<Value>) -> A
 }
 
 fn bad(path: &str, message: &str) -> ApiError {
-    ApiError::invalid_request(
-        "Invalid app instance.",
-        vec![FieldError::new(path, message)],
-    )
+    ApiError::invalid_field("Invalid app instance.", path, message)
 }
 
 fn clean_label(s: &str) -> Result<String, ApiError> {
@@ -342,7 +339,7 @@ pub async fn list_for_org(
         &state.pool,
         org,
         q.app_id.as_deref(),
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;
@@ -356,23 +353,15 @@ pub async fn list_instance_wide(
     q: &ListQuery,
 ) -> Result<Page<AppInstance>, ApiError> {
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    let rows = repo::list_instance_wide(
-        &state.pool,
-        q.app_id.as_deref(),
-        p.after.map(|c| (c.t, c.id)),
-        p.fetch(),
-    )
-    .await?;
+    let rows = repo::list_instance_wide(&state.pool, q.app_id.as_deref(), p.after_key(), p.fetch())
+        .await?;
     Ok(map_page(Page::from_rows(rows, p.limit, |r| {
         (r.created_at, r.id)
     })))
 }
 
 fn map_page(page: Page<InstanceRow>) -> Page<AppInstance> {
-    Page {
-        items: page.items.into_iter().map(Into::into).collect(),
-        next_cursor: page.next_cursor,
-    }
+    page.map(Into::into)
 }
 
 /// Registrations for the instance admin: instance-wide only (`all = false`) or every
@@ -402,7 +391,7 @@ pub async fn list_admin(
         &state.pool,
         q.org,
         q.app_id.as_deref(),
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;

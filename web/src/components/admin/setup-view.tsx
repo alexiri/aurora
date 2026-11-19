@@ -151,6 +151,8 @@ function AiKeyDialog({ open, onOpenChange, onSaved }: { open: boolean; onOpenCha
           <LlmKeyForm
             scope={{ kind: "organization", id: org.id }}
             orgId={org.id}
+            submitLabel="Add key"
+            onCancel={() => onOpenChange(false)}
             onSaved={(secret) => {
               const p = placement.data;
               if (p && startersAllowed(p)) {
@@ -199,7 +201,8 @@ function ChecklistRow({ n, row, action, primary }: { n: number; row: Row; action
 function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup: SetupStatus; tryIt: ReturnType<typeof useTryIt>; toast: string | null; onKeyAdded: () => void; onDismissToast: () => void }) {
   const placement = usePlacement();
   const org = placement.data?.default_org ?? null;
-  const secrets = useSecrets({ kind: "organization", id: org?.id ?? "" });
+  // (P5-POLISH-11) No request before the placement names an organization (it was GET /v1/orgs//secrets → 400).
+  const secrets = useSecrets({ kind: "organization", id: org?.id ?? "" }, !!org);
   const orgKey = (secrets.data?.items ?? []).find((s) => s.kind === "llm" && s.status === "active");
   const [keyOpen, setKeyOpen] = useState(false);
   const uploaded = usePlugins("pending_approval");

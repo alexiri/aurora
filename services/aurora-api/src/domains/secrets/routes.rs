@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service::{self, CreateScope};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -35,7 +35,7 @@ fn record(
     row: &SecretRow,
     extra: serde_json::Value,
 ) {
-    let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+    let mut ev = AuditEvent::by(caller, action)
         .org(row.org_id)
         .target("secret", row.id)
         .metadata(json!({

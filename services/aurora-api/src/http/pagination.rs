@@ -1,7 +1,7 @@
 //! Cursor pagination: `?limit=` (default 50, max 200), opaque `?cursor=`,
 //! order `created_at desc, id desc`; fetch `limit + 1` rows and call [`Page::from_rows`].
 
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -47,21 +47,24 @@ pub struct Pagination {
 }
 
 impl Pagination {
+    /// The cursor as the `(created_at, id)` key the keyset queries take.
+    pub fn after_key(&self) -> Option<(DateTime<Utc>, Uuid)> {
+        self.after.map(|c| (c.t, c.id))
+    }
+
     pub fn new(limit: Option<u32>, cursor: Option<&str>) -> Result<Self, ApiError> {
         let limit = limit.unwrap_or(DEFAULT_LIMIT);
         if !(1..=MAX_LIMIT).contains(&limit) {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Invalid limit.",
-                vec![FieldError::new("/limit", "must be between 1 and 200")],
+                "/limit",
+                "must be between 1 and 200",
             ));
         }
         let after = match cursor {
             None => None,
             Some(c) => Some(Cursor::decode(c).ok_or_else(|| {
-                ApiError::invalid_request(
-                    "Invalid cursor.",
-                    vec![FieldError::new("/cursor", "malformed cursor")],
-                )
+                ApiError::invalid_field("Invalid cursor.", "/cursor", "malformed cursor")
             })?),
         };
         Ok(Self { limit, after })
@@ -86,6 +89,14 @@ pub struct Page<T> {
 }
 
 impl<T> Page<T> {
+    /// The same page with each item converted (the cursor is kept).
+    pub fn map<U>(self, f: impl FnMut(T) -> U) -> Page<U> {
+        Page {
+            items: self.items.into_iter().map(f).collect(),
+            next_cursor: self.next_cursor,
+        }
+    }
+
     /// Build from up to `limit + 1` rows; `key` yields `(created_at, id)`.
     pub fn from_rows(
         mut rows: Vec<T>,

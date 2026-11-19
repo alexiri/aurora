@@ -47,7 +47,7 @@ async fn list_approvals(
         ws,
         q.status.as_deref(),
         q.agent_id,
-        p.after.map(|a| (a.t, a.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;

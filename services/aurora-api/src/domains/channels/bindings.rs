@@ -4,11 +4,11 @@
 use super::dto::*;
 use super::inbox::send::{self, Ctx};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::connectors::ops::{self, CORRELATED_WAIT, CorrelatedError, NewOp};
 use crate::domains::conversations::service::load_agent;
 use crate::http::auth::{Caller, require_own};
-use aurora_core::{ApiError, FieldError, sanitize};
+use aurora_core::{ApiError, sanitize};
 use aurora_db::repo::agents::AgentRow;
 use aurora_db::repo::channel_integrations::{self as integrations_repo, IntegrationRow};
 use aurora_db::repo::space_bindings::{self as repo, BindingRow};
@@ -86,18 +86,14 @@ pub async fn patch(
     .await?;
     audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "space_binding.update",
-            Outcome::Success,
-        )
-        .org(agent.org_id)
-        .workspace(agent.workspace_id)
-        .target("space_binding", id)
-        .metadata(json!({
-            "listen": req.listen.map(Listen::as_str),
-            "followups_need_mention": req.followups_need_mention,
-        })),
+        AuditEvent::by(c, "space_binding.update")
+            .org(agent.org_id)
+            .workspace(agent.workspace_id)
+            .target("space_binding", id)
+            .metadata(json!({
+                "listen": req.listen.map(Listen::as_str),
+                "followups_need_mention": req.followups_need_mention,
+            })),
     );
     let row = repo::get(&s.pool, id)
         .await?
@@ -110,15 +106,11 @@ pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> 
     repo::delete(&s.pool, id).await?;
     audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "space_binding.delete",
-            Outcome::Success,
-        )
-        .org(agent.org_id)
-        .workspace(agent.workspace_id)
-        .target("space_binding", id)
-        .metadata(json!({"integration_id": row.integration_id, "space_ref": row.space_ref})),
+        AuditEvent::by(c, "space_binding.delete")
+            .org(agent.org_id)
+            .workspace(agent.workspace_id)
+            .target("space_binding", id)
+            .metadata(json!({"integration_id": row.integration_id, "space_ref": row.space_ref})),
     );
     Ok(())
 }
@@ -245,9 +237,10 @@ pub async fn my_spaces(
     q: MySpacesQuery,
 ) -> Result<MySpacesList, ApiError> {
     if q.mine != Some(true) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new("/mine", "must be true")],
+            "/mine",
+            "must be true",
         ));
     }
     // The role first: someone who cannot bind is told so, not asked to link an account.
@@ -349,9 +342,10 @@ pub async fn create(
     // Live checks through the connector, no cached ledger.
     let space_ref = req.space_ref.trim().to_owned();
     if space_ref.is_empty() || space_ref.len() > 256 {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new("/space_ref", "invalid")],
+            "/space_ref",
+            "invalid",
         ));
     }
     let listed = bot_spaces(s, integ.id, None, SPACES_SCAN)
@@ -438,11 +432,7 @@ pub async fn create(
     }
     audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "space_binding.create",
-            Outcome::Success,
-        )
+        AuditEvent::by(c, "space_binding.create")
         .org(agent.org_id)
         .workspace(agent.workspace_id)
         .target("space_binding", agent.id)

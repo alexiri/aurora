@@ -5,13 +5,13 @@ use super::custody::{self, Discards};
 use super::dto::*;
 use super::end;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent};
 use crate::domains::channels::inbox::send::Ctx;
 use crate::domains::connectors::ops::{self, CORRELATED_WAIT, CorrelatedError, NewOp};
 use crate::http::auth::{Caller, SessionCaller};
 use aurora_channels::Capability;
 use aurora_core::limits::USER_TOKENS_PER_PERSON;
-use aurora_core::{ApiError, FieldError, sanitize};
+use aurora_core::{ApiError, sanitize};
 use aurora_db::repo::{agents, channel_integrations, connectors, user_links, user_tokens as repo};
 use aurora_db::{DbError, conflict_code};
 use aurora_protocol::connector::UserTokenVerifyResult;
@@ -36,9 +36,10 @@ fn unsupported() -> ApiError {
 fn clean_label(label: Option<&str>) -> Result<Option<String>, ApiError> {
     let Some(l) = label else { return Ok(None) };
     if l.chars().count() > LABEL_MAX {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new("/label", "must be at most 80 characters")],
+            "/label",
+            "must be at most 80 characters",
         ));
     }
     let l = sanitize::one_line(l, LABEL_MAX);
@@ -71,9 +72,10 @@ pub async fn create(
 ) -> Result<UserToken, ApiError> {
     let token = req.token.trim();
     if token.is_empty() || token.chars().count() > TOKEN_MAX {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new("/token", "must be 1 to 256 characters")],
+            "/token",
+            "must be 1 to 256 characters",
         ));
     }
     let label = clean_label(req.label.as_deref())?;
@@ -196,14 +198,10 @@ pub async fn create(
     tx.commit().await.map_err(DbError::from)?;
     audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "user_token.create",
-            Outcome::Success,
-        )
-        .org(org)
-        .target("user_token", token_id)
-        .metadata(json!({"integration_id": integ.id})),
+        AuditEvent::by(c, "user_token.create")
+            .org(org)
+            .target("user_token", token_id)
+            .metadata(json!({"integration_id": integ.id})),
     );
     Ok(UserToken::build(row, &[]))
 }
@@ -304,14 +302,10 @@ pub async fn grant(s: &AppState, c: &SessionCaller, id: Uuid, agent: Uuid) -> Re
     if added {
         audit::record(
             s,
-            AuditEvent::new(
-                AuditActor::from_caller(c),
-                "user_token.grant",
-                Outcome::Success,
-            )
-            .org(token.org_id)
-            .target("user_token", id)
-            .metadata(json!({"agent_id": agent})),
+            AuditEvent::by(c, "user_token.grant")
+                .org(token.org_id)
+                .target("user_token", id)
+                .metadata(json!({"agent_id": agent})),
         );
     }
     Ok(())
@@ -339,14 +333,10 @@ pub async fn ungrant(
     if removed {
         audit::record(
             s,
-            AuditEvent::new(
-                AuditActor::from_caller(c),
-                "user_token.ungrant",
-                Outcome::Success,
-            )
-            .org(token.org_id)
-            .target("user_token", id)
-            .metadata(json!({"agent_id": agent})),
+            AuditEvent::by(c, "user_token.ungrant")
+                .org(token.org_id)
+                .target("user_token", id)
+                .metadata(json!({"agent_id": agent})),
         );
     }
     Ok(())

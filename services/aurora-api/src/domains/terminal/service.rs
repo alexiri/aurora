@@ -12,7 +12,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::audit::{AuditActor, AuditEvent, Outcome};
+use crate::audit::AuditEvent;
 use crate::domains::conversations::service::load_agent;
 use crate::http::auth::Caller;
 use aurora_core::limits::{
@@ -213,7 +213,7 @@ pub async fn upgrade(
     };
     // ---- mint the single-use `auy_` grant (C-618) and answer the upgrade by proxying.
     let grant = token::generate(token::TokenPrefix::TerminalStream);
-    let grant_hash = hex(&token::hash(grant.expose()));
+    let grant_hash = hex(token::hash(grant.expose()));
     let id = Uuid::now_v7();
     let expires_at = chrono::Utc::now()
         + chrono::Duration::seconds(i64::try_from(TERMINAL_GRANT_TTL.as_secs()).unwrap_or(30));
@@ -234,15 +234,11 @@ pub async fn upgrade(
     // never bytes, never the grant value.
     crate::audit::record(
         &s,
-        AuditEvent::new(
-            AuditActor::from_caller(&c),
-            "agent.terminal.open",
-            Outcome::Success,
-        )
-        .org(a.org_id)
-        .workspace(a.workspace_id)
-        .target("agent", a.id)
-        .metadata(serde_json::json!({ "agent": a.id, "workspace": a.workspace_id })),
+        AuditEvent::by(&c, "agent.terminal.open")
+            .org(a.org_id)
+            .workspace(a.workspace_id)
+            .target("agent", a.id)
+            .metadata(serde_json::json!({ "agent": a.id, "workspace": a.workspace_id })),
     );
     // ---- proxy: dial the runner's :4108 with the grant as the bearer, then bridge.
     let endpoint = dial_endpoint(&s, sandbox_id).await?;
@@ -326,7 +322,7 @@ pub(crate) async fn open(
     if !s.ops().terminal.enabled {
         return Err(grant_invalid());
     }
-    let hash = hex(&token::hash(req.grant.expose()));
+    let hash = hex(token::hash(req.grant.expose()));
     let row = grants_repo::consume_terminal_grant(&s.pool, &hash)
         .await?
         .ok_or_else(grant_invalid)?;
@@ -714,20 +710,16 @@ async fn proxy_leg(
     // duration — never bytes, never content (SEC-87).
     crate::audit::record(
         &recheck.s,
-        AuditEvent::new(
-            AuditActor::from_caller(&recheck.c),
-            "agent.terminal.close",
-            Outcome::Success,
-        )
-        .org(recheck.org)
-        .workspace(recheck.workspace)
-        .target("agent", recheck.agent)
-        .metadata(serde_json::json!({
-            "agent": recheck.agent,
-            "workspace": recheck.workspace,
-            "close_code": code,
-            "duration_secs": started.elapsed().as_secs(),
-        })),
+        AuditEvent::by(&recheck.c, "agent.terminal.close")
+            .org(recheck.org)
+            .workspace(recheck.workspace)
+            .target("agent", recheck.agent)
+            .metadata(serde_json::json!({
+                "agent": recheck.agent,
+                "workspace": recheck.workspace,
+                "close_code": code,
+                "duration_secs": started.elapsed().as_secs(),
+            })),
     );
 }
 
@@ -743,14 +735,7 @@ where
     )
 }
 
-/// Lower-case hex of a SHA-256 (the `grant_hash` column is text, like the previews plane's).
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out
-}
+use ::hex::encode as hex;
 
 #[cfg(test)]
 mod tests {

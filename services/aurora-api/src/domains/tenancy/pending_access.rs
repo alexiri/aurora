@@ -15,7 +15,7 @@ use crate::http::json::{Json, Path};
 use crate::http::pagination::Page;
 use aurora_config::SignupMode;
 use aurora_core::limits::{PENDING_ACCESS_MAX, PENDING_ACCESS_TTL};
-use aurora_core::{ApiError, FieldError, ids};
+use aurora_core::{ApiError, ids};
 use aurora_db::DbError;
 use aurora_db::repo::pending_access::{self as repo, Added};
 use aurora_db::repo::{placement, workspaces};
@@ -97,7 +97,7 @@ impl From<repo::PendingRow> for PendingAccess {
 }
 
 fn event(c: &Caller, action: &str) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
 }
 
 /// Whether anyone who signs in lands in this organization: open sign-up with a shared-organization placement whose
@@ -144,9 +144,10 @@ async fn add_by_email(
     // Normalized like invitations; one exact address, compared for equality (no prefix, no wildcard, no search).
     let email = req.email.trim().to_lowercase();
     if !crate::domains::invitations::service::valid_email(&email) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid email.",
-            vec![FieldError::new("/email", "must be a valid email address")],
+            "/email",
+            "must be a valid email address",
         ));
     }
     let role = req.role.as_str();

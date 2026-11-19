@@ -6,7 +6,7 @@ use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, Pagination};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::{conversations as convs, turns};
 use aurora_db::repo::{transcript, users};
 use axum::extract::State;
@@ -148,9 +148,10 @@ async fn export_conversation(
         None | Some("none") => false,
         Some("zip") => true,
         Some(_) => {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Invalid request.",
-                vec![FieldError::new("/attachments", "must be `none` or `zip`")],
+                "/attachments",
+                "must be `none` or `zip`",
             ));
         }
     };
@@ -219,9 +220,10 @@ async fn list_conversations(
     if let Some(k) = q.kind.as_deref()
         && !KINDS.contains(&k)
     {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid kind.",
-            vec![FieldError::new("/kind", "unknown conversation kind")],
+            "/kind",
+            "unknown conversation kind",
         ));
     }
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
@@ -236,7 +238,7 @@ async fn list_conversations(
             viewer_owns: owns,
             archived: q.archived.unwrap_or(false),
         },
-        p.after.map(|a| (a.t, a.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;

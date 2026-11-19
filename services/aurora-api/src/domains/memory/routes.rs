@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service::{self, Author, Source, Write};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -51,7 +51,7 @@ fn source(c: &Caller) -> Source {
 fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, action: &str, key: &str) {
     audit::record(
         s,
-        AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+        AuditEvent::by(c, action)
             .org(a.org_id)
             .workspace(a.workspace_id)
             .target("agent", a.id)
@@ -244,15 +244,11 @@ async fn redact_revision(
     Path((agent, key, rev)): Path<(Uuid, String, i32)>,
 ) -> Result<StatusCode, ApiError> {
     let a = visible_agent(&c, &s, agent).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(&c),
-        "memory.redact",
-        Outcome::Success,
-    )
-    .org(a.org_id)
-    .workspace(a.workspace_id)
-    .target("agent", a.id)
-    .metadata(json!({"key": key, "revision": rev}));
+    let ev = AuditEvent::by(&c, "memory.redact")
+        .org(a.org_id)
+        .workspace(a.workspace_id)
+        .target("agent", a.id)
+        .metadata(json!({"key": key, "revision": rev}));
     service::redact(&s.pool, agent, &key, rev, c.user_id, &ev).await?;
     Ok(StatusCode::NO_CONTENT)
 }

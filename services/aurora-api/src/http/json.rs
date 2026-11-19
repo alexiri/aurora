@@ -1,7 +1,7 @@
 //! `Json`, `Query` and `Path` extractors whose rejections are 400 `invalid_request`
 //! with `details.fields = [{path, message}]`.
 
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use axum::body::Bytes;
 use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::response::{IntoResponse, Response};
@@ -54,12 +54,10 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for Json<T> {
 
     async fn from_request(req: Request, state: &S) -> Result<Self, ApiError> {
         if !is_json(&req) {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Content-Type must be application/json.",
-                vec![FieldError::new(
-                    "",
-                    "expected Content-Type: application/json",
-                )],
+                "",
+                "expected Content-Type: application/json",
             ));
         }
         let bytes = Bytes::from_request(req, state).await.map_err(|e| {
@@ -73,9 +71,10 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for Json<T> {
         serde_path_to_error::deserialize(&mut de)
             .map(Json)
             .map_err(|e| {
-                ApiError::invalid_request(
+                ApiError::invalid_field(
                     "Invalid request body.",
-                    vec![FieldError::new(pointer(e.path()), e.inner().to_string())],
+                    pointer(e.path()),
+                    e.inner().to_string(),
                 )
             })
     }
@@ -90,12 +89,7 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequestParts<S> for Query<T> {
         axum::extract::Query::<T>::from_request_parts(parts, state)
             .await
             .map(|q| Query(q.0))
-            .map_err(|e| {
-                ApiError::invalid_request(
-                    "Invalid query parameters.",
-                    vec![FieldError::new("", e.body_text())],
-                )
-            })
+            .map_err(|e| ApiError::invalid_field("Invalid query parameters.", "", e.body_text()))
     }
 }
 
@@ -108,11 +102,6 @@ impl<T: DeserializeOwned + Send, S: Send + Sync> FromRequestParts<S> for Path<T>
         axum::extract::Path::<T>::from_request_parts(parts, state)
             .await
             .map(|p| Path(p.0))
-            .map_err(|e| {
-                ApiError::invalid_request(
-                    "Invalid path parameter.",
-                    vec![FieldError::new("", e.body_text())],
-                )
-            })
+            .map_err(|e| ApiError::invalid_field("Invalid path parameter.", "", e.body_text()))
     }
 }

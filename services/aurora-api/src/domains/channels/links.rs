@@ -2,11 +2,11 @@
 
 use super::dto::*;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::pagination::{Page, Pagination};
+use aurora_core::ApiError;
 use aurora_core::token;
-use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::user_links::{self as repo, UserLinkRow};
 use aurora_db::repo::{agents, channel_integrations as integ_repo, channel_presences, dm_defaults};
 use aurora_db::repo::{link_requests, reach_grants};
@@ -51,13 +51,7 @@ pub async fn list_for_integration(
     p: Pagination,
 ) -> Result<Page<UserLink>, ApiError> {
     load_admin(s, c, integration).await?;
-    let rows = repo::page_for_integration(
-        &s.pool,
-        integration,
-        p.after.map(|a| (a.t, a.id)),
-        p.fetch(),
-    )
-    .await?;
+    let rows = repo::page_for_integration(&s.pool, integration, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Page {
         items: page.items.iter().map(view).collect(),
@@ -74,38 +68,32 @@ pub async fn admin_create(
     let integ = load_admin(s, c, integration).await?;
     let refl = req.platform_user_ref.trim();
     if refl.is_empty() || refl.chars().count() > REF_MAX {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/platform_user_ref",
-                "must be 1-512 characters",
-            )],
+            "/platform_user_ref",
+            "must be 1-512 characters",
         ));
     }
     let member = authz::org_membership(&s.pool, req.user_id, integ.org_id)
         .await?
         .is_some_and(|m| m.is_active());
     if !member {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/user_id",
-                "not an active member of the organization",
-            )],
+            "/user_id",
+            "not an active member of the organization",
         ));
     }
     let mut tx = audit::begin(s).await?;
     let id = repo::insert(&mut *tx, integration, refl, req.user_id, "admin")
         .await
         .map_err(|e| conflict_code(e, &[(LINK_CONSTRAINT, "already_linked")]))?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(c),
-        "user_link.create",
-        Outcome::Success,
-    )
-    .org(integ.org_id)
-    .target("user_link", id)
-    .metadata(json!({"integration_id": integration, "user_id": req.user_id, "method": "admin"}));
+    let ev = AuditEvent::by(c, "user_link.create")
+        .org(integ.org_id)
+        .target("user_link", id)
+        .metadata(
+            json!({"integration_id": integration, "user_id": req.user_id, "method": "admin"}),
+        );
     audit::commit_critical(tx, &ev).await?;
     let row = repo::get(&s.pool, id)
         .await?
@@ -117,14 +105,10 @@ pub async fn admin_delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiE
     let not_found = || ApiError::not_found("Link not found.");
     let row = repo::get(&s.pool, id).await?.ok_or_else(not_found)?;
     c.org(s, row.org_id).await?.require_admin()?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(c),
-        "user_link.delete",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .target("user_link", id)
-    .metadata(json!({"integration_id": row.integration_id, "user_id": row.user_id}));
+    let ev = AuditEvent::by(c, "user_link.delete")
+        .org(row.org_id)
+        .target("user_link", id)
+        .metadata(json!({"integration_id": row.integration_id, "user_id": row.user_id}));
     remove(s, &row, &ev).await?;
     Ok(())
 }
@@ -162,14 +146,10 @@ pub async fn delete_mine(s: &AppState, c: &SessionCaller, id: Uuid) -> Result<()
         .await?
         .filter(|r| r.user_id == c.user_id)
         .ok_or_else(|| ApiError::not_found("Link not found."))?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(c),
-        "user_link.delete",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .target("user_link", id)
-    .metadata(json!({"integration_id": row.integration_id, "self": true}));
+    let ev = AuditEvent::by(c, "user_link.delete")
+        .org(row.org_id)
+        .target("user_link", id)
+        .metadata(json!({"integration_id": row.integration_id, "self": true}));
     remove(s, &row, &ev).await?;
     Ok(())
 }
@@ -253,14 +233,10 @@ pub async fn confirm(
         .map_err(|e| conflict_code(e, &[(LINK_CONSTRAINT, "already_linked")]))?,
     };
     link_requests::mark_used(&mut *tx, lr.id, c.user_id).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(c),
-        "user_link.create",
-        Outcome::Success,
-    )
-    .org(integ.org_id)
-    .target("user_link", link_id)
-    .metadata(json!({"integration_id": integ.id, "method": "sign_in_link"}));
+    let ev = AuditEvent::by(c, "user_link.create")
+        .org(integ.org_id)
+        .target("user_link", link_id)
+        .metadata(json!({"integration_id": integ.id, "method": "sign_in_link"}));
     audit::commit_critical(tx, &ev).await?;
     let row = repo::get(&s.pool, link_id)
         .await?

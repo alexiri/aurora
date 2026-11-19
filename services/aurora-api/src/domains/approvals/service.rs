@@ -1,10 +1,10 @@
 use super::bus::BusMsg;
 use super::dto::{AlwaysApplied, AlwaysTool, Approval, Decision};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::grants::levels::{self, Level};
 use crate::http::auth::{Caller, Principal};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::authz;
 use aurora_db::repo::approvals::{self, ApprovalRow, RuleOrigin};
 use aurora_db::repo::connections;
@@ -32,9 +32,10 @@ fn via(c: &Caller) -> &'static str {
 
 pub fn validate_status(status: Option<&str>) -> Result<(), ApiError> {
     match status {
-        Some(s) if !STATUSES.contains(&s) => Err(ApiError::invalid_request(
+        Some(s) if !STATUSES.contains(&s) => Err(ApiError::invalid_field(
             "Invalid status.",
-            vec![FieldError::new("/status", "unknown status")],
+            "/status",
+            "unknown status",
         )),
         _ => Ok(()),
     }
@@ -45,20 +46,16 @@ fn decision_event(c: &Caller, row: &ApprovalRow, decision: Decision, batch: bool
         Decision::Approve => "approved",
         Decision::Deny => "denied",
     };
-    AuditEvent::new(
-        AuditActor::from_caller(c),
-        "approval.decide",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .workspace(row.workspace_id)
-    .target("approval", row.id)
-    .metadata(serde_json::json!({
-        "decision": verb, "via": via(c), "batch": batch,
-        "agent_id": row.agent_id, "host": row.host, "method": row.method,
-        // (P4-011B-2, C-838) a parked approval's grant window; absent for held approvals.
-        "parked": row.parked, "resume_expires_at": row.resume_expires_at,
-    }))
+    AuditEvent::by(c, "approval.decide")
+        .org(row.org_id)
+        .workspace(row.workspace_id)
+        .target("approval", row.id)
+        .metadata(serde_json::json!({
+            "decision": verb, "via": via(c), "batch": batch,
+            "agent_id": row.agent_id, "host": row.host, "method": row.method,
+            // (P4-011B-2, C-838) a parked approval's grant window; absent for held approvals.
+            "parked": row.parked, "resume_expires_at": row.resume_expires_at,
+        }))
 }
 
 fn already_decided() -> ApiError {
@@ -328,7 +325,7 @@ pub async fn decide_batch(
         .iter()
         .map(|(id, workspace_id, org_id)| {
             let stored = decided_rows.iter().find(|r| r.id == *id);
-            AuditEvent::new(AuditActor::from_caller(c), "approval.decide", Outcome::Success)
+            AuditEvent::by(c, "approval.decide")
                 .org(*org_id)
                 .workspace(*workspace_id)
                 .target("approval", id)

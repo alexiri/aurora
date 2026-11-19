@@ -120,19 +120,9 @@ pub async fn list(
 ) -> Result<crate::http::pagination::Page<OAuthClient>, ApiError> {
     use crate::http::pagination::{Page, Pagination};
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    let rows = repo::list_scope(
-        &state.pool,
-        scope.org,
-        scope.ws,
-        p.after.map(|c| (c.t, c.id)),
-        p.fetch(),
-    )
-    .await?;
+    let rows = repo::list_scope(&state.pool, scope.org, scope.ws, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Page {
-        items: page.items.into_iter().map(Into::into).collect(),
-        next_cursor: page.next_cursor,
-    })
+    Ok(page.map(Into::into))
 }
 
 /// Security-critical audit event of an OAuth client change (RFE-008), committed with it.

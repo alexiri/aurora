@@ -28,7 +28,6 @@ export default function OrgPage() {
           {workspaceDisplayName(w, me.data?.user)}
           {w.personal_of ? <span className="ml-2 font-normal text-ink-2">{w.personal_of.name}</span> : null}
         </span>
-        <span className="font-mono text-sm text-muted">{w.slug}</span>
       </Link>
     </ListRow>
   );

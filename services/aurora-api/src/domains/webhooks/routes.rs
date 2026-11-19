@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::{receive, service};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent};
 use crate::domains::automations::{
     dto::ReassignCreatorRequest,
     service::{self as auto, Acting, To},
@@ -54,7 +54,7 @@ async fn authorized(
 fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, r: &WebhookRow, action: &str) {
     audit::record(
         s,
-        AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+        AuditEvent::by(c, action)
             .org(a.org_id)
             .workspace(a.workspace_id)
             .target("webhook", r.id)
@@ -255,18 +255,10 @@ async fn list_deliveries(
 ) -> Result<Json<Page<WebhookDelivery>>, ApiError> {
     authorized(&c, &s, id).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    let rows = aurora_db::repo::webhooks::list_deliveries(
-        &s.pool,
-        id,
-        p.after.map(|c| (c.t, c.id)),
-        p.fetch(),
-    )
-    .await?;
+    let rows =
+        aurora_db::repo::webhooks::list_deliveries(&s.pool, id, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(WebhookDelivery::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(WebhookDelivery::from)))
 }
 
 /// Reassign the webhook's creator (fire-time authority) to an active member who can use the

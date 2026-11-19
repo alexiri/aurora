@@ -6,7 +6,7 @@ use crate::app::AppState;
 use crate::domains::conversations::service as conv;
 use crate::domains::secrets::service::secret_err;
 use aurora_core::token::{self, TokenPrefix};
-use aurora_core::{ApiError, FieldError, Secret};
+use aurora_core::{ApiError, Secret};
 use aurora_db::DbError;
 use aurora_db::repo::conversations as convs;
 use aurora_db::repo::turns::TurnRow;
@@ -27,7 +27,7 @@ const PER_AGENT_MAX: i64 = 20;
 const FAILURE_DISABLE: i32 = 5;
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid webhook.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid webhook.", path, msg)
 }
 
 pub fn not_found() -> ApiError {

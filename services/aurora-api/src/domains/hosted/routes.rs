@@ -8,7 +8,7 @@ use super::dto::{
 };
 use super::{lifecycle, model, readiness};
 use crate::app::AppState;
-use crate::audit::{AuditActor, AuditEvent, Outcome};
+use crate::audit::{AuditActor, AuditEvent};
 use crate::domains::conversations::service::{self as conv, load_agent};
 use crate::domains::runner_plane::boot;
 use crate::http::auth::Caller;
@@ -436,15 +436,11 @@ async fn retry_failed(
 fn audit_event(s: &AppState, c: &Caller, a: &AgentRow, previous_code: Option<String>, via: &str) {
     crate::audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "agent.sandbox_retry",
-            Outcome::Success,
-        )
-        .org(a.org_id)
-        .workspace(a.workspace_id)
-        .target("agent", a.id)
-        .metadata(serde_json::json!({ "previous_failure_code": previous_code, "via": via })),
+        AuditEvent::by(c, "agent.sandbox_retry")
+            .org(a.org_id)
+            .workspace(a.workspace_id)
+            .target("agent", a.id)
+            .metadata(serde_json::json!({ "previous_failure_code": previous_code, "via": via })),
     );
 }
 

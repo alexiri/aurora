@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::{Caller, Principal, SessionCaller};
 use crate::http::client_ip::ClientIp;
 use crate::http::error::ErrorEnvelope;
@@ -46,8 +46,7 @@ async fn patch_me(
     me.client_address = ip.0.map(|a| a.to_string());
     audit::record(
         &s,
-        AuditEvent::new(AuditActor::from_caller(&c), "user.update", Outcome::Success)
-            .target("user", c.user_id),
+        AuditEvent::by(&c, "user.update").target("user", c.user_id),
     );
     Ok(Json(me))
 }
@@ -61,8 +60,7 @@ async fn delete_me(c: SessionCaller, State(s): State<AppState>) -> Result<Status
     let Principal::Session { .. } = c.principal else {
         return Err(ApiError::forbidden("Session required."));
     };
-    let ev = AuditEvent::new(AuditActor::from_caller(&c), "user.delete", Outcome::Success)
-        .target("user", c.user_id);
+    let ev = AuditEvent::by(&c, "user.delete").target("user", c.user_id);
     service::delete_me(&s, c.user_id, &ev).await?;
     Ok(StatusCode::NO_CONTENT)
 }

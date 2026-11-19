@@ -44,14 +44,7 @@ impl From<DbError> for CompileFail {
     }
 }
 
-pub fn hex(b: &[u8]) -> String {
-    use std::fmt::Write;
-    b.iter()
-        .fold(String::with_capacity(b.len() * 2), |mut s, x| {
-            let _ = write!(s, "{x:02x}");
-            s
-        })
-}
+pub use ::hex::encode as hex;
 
 async fn active_package(
     conn: &mut PgConnection,
@@ -80,7 +73,7 @@ async fn active_package(
             .map_err(|_| ApiError::internal("Stored package archive is unreadable."))?;
         hooks_digest = pkg
             .file(aurora_registry::package::HOOKS_WASM)
-            .map(|w| hex(&Sha256::digest(w)));
+            .map(|w| hex(Sha256::digest(w)));
         guide_digests = guide_digests_of(&manifest, &pkg);
     }
     Ok((
@@ -356,7 +349,7 @@ pub async fn active_snapshot_on(
         return Ok(None);
     };
     let body = aurora_registry::snapshot::canonical_bytes(&v);
-    if hex(&Sha256::digest(&body)) != hash {
+    if hex(Sha256::digest(&body)) != hash {
         return Err(ApiError::internal(
             "Stored snapshot does not match its hash.",
         ));

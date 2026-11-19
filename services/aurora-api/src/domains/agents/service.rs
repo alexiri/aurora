@@ -1,9 +1,9 @@
 use super::dto::*;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::Caller;
+use aurora_core::ApiError;
 use aurora_core::token::{self, TokenPrefix};
-use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::agents::{self, AgentPatch, AgentRow, NewAgent};
 use aurora_db::repo::{credentials, hosted};
 use aurora_db::{DbError, conflict_code};
@@ -15,7 +15,7 @@ const EFFORTS: [&str; 4] = ["low", "medium", "high", "max"];
 const PROACTIVE: [&str; 3] = ["ask", "allow", "off"];
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid agent.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid agent.", path, msg)
 }
 
 fn name_ok(n: &str) -> Result<String, ApiError> {
@@ -416,14 +416,10 @@ pub async fn regenerate(
     let max = super::byo::token_max_age_days(state, &mut tx, row.org_id).await?;
     credentials::revoke_for_agent(&mut *tx, agent_id, false).await?;
     let (t, expires_at) = mint_agent_token(&mut tx, agent_id, max).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(caller),
-        "agent.token_regenerate",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .workspace(row.workspace_id)
-    .target("agent", agent_id);
+    let ev = AuditEvent::by(caller, "agent.token_regenerate")
+        .org(row.org_id)
+        .workspace(row.workspace_id)
+        .target("agent", agent_id);
     audit::insert_tx(&mut tx, &ev).await.map_err(|e| {
         tracing::error!(error = %e, "agent.token_regenerate audit write failed");
         ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")
@@ -459,20 +455,16 @@ pub async fn put_byo(
     let updated = agents::set_byo_settings(&mut *tx, row.id, list.as_deref(), req.require_context)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(caller),
-        "agent.byo_settings.update",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .workspace(row.workspace_id)
-    .target("agent", row.id)
-    .metadata(serde_json::json!({
-        "source_cidrs": list,
-        "previous_source_cidrs": row.byo_source_cidrs,
-        "require_context": req.require_context,
-        "previous_require_context": row.byo_require_context,
-    }));
+    let ev = AuditEvent::by(caller, "agent.byo_settings.update")
+        .org(row.org_id)
+        .workspace(row.workspace_id)
+        .target("agent", row.id)
+        .metadata(serde_json::json!({
+            "source_cidrs": list,
+            "previous_source_cidrs": row.byo_source_cidrs,
+            "require_context": req.require_context,
+            "previous_require_context": row.byo_require_context,
+        }));
     audit::insert_tx(&mut tx, &ev).await.map_err(|e| {
         tracing::error!(error = %e, "agent.byo_settings.update audit write failed");
         ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")
@@ -666,9 +658,10 @@ pub fn sanitize_label(l: &str) -> Result<String, ApiError> {
     let s: String = l.chars().filter(|c| !c.is_control()).collect();
     let s = s.trim().to_owned();
     if !(1..=128).contains(&s.chars().count()) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid context credential.",
-            vec![FieldError::new("/label", "must be 1-128 characters")],
+            "/label",
+            "must be 1-128 characters",
         ));
     }
     Ok(s)
@@ -682,9 +675,10 @@ pub async fn mint_context(
     let label = sanitize_label(&req.label)?;
     let ttl = req.ttl_secs.unwrap_or(3600);
     if !(60..=86400).contains(&ttl) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid context credential.",
-            vec![FieldError::new("/ttl_secs", "must be between 60 and 86400")],
+            "/ttl_secs",
+            "must be between 60 and 86400",
         ));
     }
     if let Some(conv) = req.conversation_id

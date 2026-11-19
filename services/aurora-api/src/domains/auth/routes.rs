@@ -25,13 +25,9 @@ async fn logout(State(s): State<AppState>, c: SessionCaller) -> Result<Response,
         let push = service::logout(&s, id).await?;
         crate::audit::record(
             &s,
-            crate::audit::AuditEvent::new(
-                crate::audit::AuditActor::from_caller(&c),
-                "user.logout",
-                crate::audit::Outcome::Success,
-            )
-            .target("user", c.user_id)
-            .metadata(serde_json::json!({ "push_subscriptions_removed": push })),
+            crate::audit::AuditEvent::by(&c, "user.logout")
+                .target("user", c.user_id)
+                .metadata(serde_json::json!({ "push_subscriptions_removed": push })),
         );
     }
     let mut r = StatusCode::NO_CONTENT.into_response();

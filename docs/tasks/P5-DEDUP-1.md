@@ -401,3 +401,25 @@ Gate as above (clippy on touched crates, module-filtered tests, guards; GitHub C
 
 Dead tests removed: none. P4 list left (and why): `ImportPlan` (`settings/service.rs`, p5-agent), `reject_public` (`plugins/ingest.rs`, p5-polish-b), `regenerate_agent_token` (aurora-client: a published client surface, owner decides), `turn_controls`, `addon_sources/poll.rs actor()`, `role_str` (still used), aurora-db unreferenced repo fns, `dash_paths.rs`, `repo/policy.rs workspace_org`, `groups role_str`, runner/supervisor test `next_data`.
 Left from the first list: T6 `with_byo` variants and `proxy.rs` tails; T7 other `RequestIdentity` literals (differing fields). Next: T8, T9, T11, T12–T17, P2, P1, P3.
+
+### Part B, third round (2026-11-19)
+| Batch | Δ lines | Tests run |
+|---|---:|---|
+| P2 `ApiError::invalid_field(message, path, detail)` (aurora-core) replaces 99 single-field `invalid_request(.., vec![FieldError::new(..)])` sites in aurora-api (parser-based rewrite, reviewed; JSON body identical) | −69 | openapi drift + 175 it tests, aurora-core lib 82 |
+| P5 seven hand-written `hex()` in aurora-api become `use ::hex::encode as hex` | −49 | 186 it tests |
+| P6 six char-boundary `clip` loops use `str::floor_char_boundary` | −36 | 136 it tests |
+| **Net** | **−154** | |
+
+`regenerate_agent_token` kept (client surface, owner). `ImportPlan`, `reject_public`: skipped (other lanes' files at the time). T16 (testkit `axum::serve` tail, six sites of four lines) judged not worth a helper (net ≈ −10). `outgoing_webhooks::the_send_test_posts_…` failed once on a tree merged with an older master (no `webhook.test_sent` audit row) and passed after merging current master; not related to these batches.
+Left: T8, T9, T11–T15, T17, P1, P3, P7, P8–P21; X tier untouched.
+
+### Part B, fourth round (2026-11-19) — and where the lane stops
+| Batch | Δ lines | Tests run |
+|---|---:|---|
+| P3 `Page::map` and `Pagination::after_key` replace 22 rebuilt `Page { items: ..map(X::from).collect(), next_cursor }` blocks and 33 `p.after.map(\|c\| (c.t, c.id))` sites | −124 | openapi drift + 238 it tests, pagination lib tests |
+| P1 `AuditEvent::by(&Caller, action)` replaces 82 `AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)` sites (Failure/Denied and agent-scoped chains stay explicit) | −221 | 249 it tests (audit, keys, groups, invitations, grants, secrets, agents, approvals, tenancy, plugins, freeze, schedules) |
+| **Net** | **−345** | |
+
+**Total Part B so far (rounds 1–4): about −1,980 test and production lines** (T1–T7, T10, P1–P6 first slices; see the tables above).
+
+**Stopped here, by the "when the remaining clusters are tiny" rule.** Measured and dropped: T9 (gateway org/workspace seed: the slug/name literals differ, only 2 sites match exactly, net ≈ −20), T16 (≈ −10), T8/T11/T12–T15/T17 (estimates 40–150 each from the catalogue, each needing a new parameterised helper and with different timeouts or failure behaviour listed under "not duplicates"; T17's `wait_audit` variants differ on purpose). Not started: P7 (`Endpoint: Default`, aurora-llm; FIX-170 check first), P8–P21 (medium risk or small), the X tier (owner review first), `can_use` (FIX-181). These are left in the catalogue for an owner decision.

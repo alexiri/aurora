@@ -4,10 +4,10 @@
 use super::dto::*;
 use super::keys::{self, known_hosts_lines};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::{Caller, KeyKind, Principal};
+use aurora_core::ApiError;
 use aurora_core::limits::{SSH_KEYS_PER_USER, SSH_MINTS_PER_USER_AGENT_HOUR};
-use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
 use aurora_db::authz::{self, SshAccess};
 use aurora_db::repo::{agents, ssh as repo};
@@ -80,13 +80,9 @@ pub async fn create_key(
         Err(e) => return Err(e.into()),
     };
     // Name and fingerprint only: never the key line (docs/04 §Audit).
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(c),
-        "ssh_key.create",
-        Outcome::Success,
-    )
-    .target("ssh_key", row.id)
-    .metadata(json!({"name": row.name, "fingerprint": row.fingerprint}));
+    let ev = AuditEvent::by(c, "ssh_key.create")
+        .target("ssh_key", row.id)
+        .metadata(json!({"name": row.name, "fingerprint": row.fingerprint}));
     audit::commit_critical(tx, &ev).await?;
     Ok(row.into())
 }
@@ -101,12 +97,8 @@ pub async fn rename_key(
     id: Uuid,
     name: &str,
 ) -> Result<SshKey, ApiError> {
-    let clean = aurora_core::names::clean(name, 80).map_err(|e| {
-        ApiError::invalid_request(
-            "Invalid request.",
-            vec![FieldError::new("/name", e.to_string())],
-        )
-    })?;
+    let clean = aurora_core::names::clean(name, 80)
+        .map_err(|e| ApiError::invalid_field("Invalid request.", "/name", e.to_string()))?;
     repo::rename_key(&s.pool, c.user_id, id, &clean)
         .await?
         .map(Into::into)
@@ -118,13 +110,9 @@ pub async fn delete_key(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiErr
     let row = repo::delete_key(&mut *tx, c.user_id, id)
         .await?
         .ok_or_else(key_404)?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(c),
-        "ssh_key.delete",
-        Outcome::Success,
-    )
-    .target("ssh_key", row.id)
-    .metadata(json!({"name": row.name, "fingerprint": row.fingerprint}));
+    let ev = AuditEvent::by(c, "ssh_key.delete")
+        .target("ssh_key", row.id)
+        .metadata(json!({"name": row.name, "fingerprint": row.fingerprint}));
     audit::commit_critical(tx, &ev).await?;
     Ok(())
 }
@@ -304,21 +292,17 @@ pub async fn mint_certificate(
     let valid_before_dt = to_utc(cert.valid_before());
     audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "agent.ssh_certificate.mint",
-            Outcome::Success,
-        )
-        .org(org_id)
-        .workspace(workspace_id)
-        .target("agent", agent)
-        .metadata(json!({
-            "agent": agent,
-            "workspace": workspace_id,
-            "fingerprint": key.fingerprint,
-            "serial": cert.serial().to_string(),
-            "valid_before": valid_before_dt,
-        })),
+        AuditEvent::by(c, "agent.ssh_certificate.mint")
+            .org(org_id)
+            .workspace(workspace_id)
+            .target("agent", agent)
+            .metadata(json!({
+                "agent": agent,
+                "workspace": workspace_id,
+                "fingerprint": key.fingerprint,
+                "serial": cert.serial().to_string(),
+                "valid_before": valid_before_dt,
+            })),
     );
 
     let (_, host_keys) = terminator_facts(s).await?;

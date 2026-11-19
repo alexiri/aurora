@@ -4,7 +4,7 @@ use super::registry::{self, CompileFail};
 use super::{service, supersede, upgrade};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::plugins::{self, PackageRow};
 use aurora_registry::Manifest;
@@ -36,12 +36,10 @@ fn clean_reason(r: Option<String>) -> Result<Option<String>, ApiError> {
     let Some(r) = r else { return Ok(None) };
     let r = r.trim().to_owned();
     if r.chars().count() > 64 || r.chars().any(char::is_control) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid reason.",
-            vec![FieldError::new(
-                "/reason",
-                "must be at most 64 characters, no control characters",
-            )],
+            "/reason",
+            "must be at most 64 characters, no control characters",
         ));
     }
     Ok((!r.is_empty()).then_some(r))

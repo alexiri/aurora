@@ -2,11 +2,11 @@ use super::blob;
 use super::dto::Attachment;
 use super::{quota, sweep};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::conversations::service as conv;
 use crate::http::auth::Caller;
+use aurora_core::ApiError;
 use aurora_core::limits::{ATTACH_IN_FILE_MAX, ATTACH_PENDING_TTL};
-use aurora_core::{ApiError, FieldError};
 use aurora_db::PgPool;
 use aurora_db::repo::attachments::{self, AttachmentRow, NewAttachment};
 use axum::body::Body;
@@ -82,10 +82,7 @@ fn multipart_error(e: &MultipartError) -> ApiError {
     if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
         ApiError::too_large("File is too large.")
     } else {
-        ApiError::invalid_request(
-            "Malformed multipart body.",
-            vec![FieldError::new("/", "malformed multipart body")],
-        )
+        ApiError::invalid_field("Malformed multipart body.", "/", "malformed multipart body")
     }
 }
 
@@ -105,23 +102,19 @@ pub async fn upload(
     // (phase 2, RFE-006) An attachment is part of starting work: refused for a frozen agent.
     crate::domains::freeze::service::ensure_agent_active_pool(state, conv_row.agent_id).await?;
     let mut mp = mp.map_err(|_| {
-        ApiError::invalid_request(
+        ApiError::invalid_field(
             "Expected multipart/form-data.",
-            vec![FieldError::new(
-                "/",
-                "content type must be multipart/form-data",
-            )],
+            "/",
+            "content type must be multipart/form-data",
         )
     })?;
     let mut file: Option<(String, String, Vec<u8>, String)> = None;
     while let Some(mut field) = mp.next_field().await.map_err(|e| multipart_error(&e))? {
         if field.name() != Some("file") || file.is_some() {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Unexpected multipart part.",
-                vec![FieldError::new(
-                    "/file",
-                    "exactly one part `file` is allowed",
-                )],
+                "/file",
+                "exactly one part `file` is allowed",
             ));
         }
         let filename = sanitize_filename(field.file_name().unwrap_or(""));
@@ -140,10 +133,7 @@ pub async fn upload(
         file = Some((filename, content_type, buf, hex::encode(hasher.finalize())));
     }
     let (filename, content_type, bytes, sha256) = file.ok_or_else(|| {
-        ApiError::invalid_request(
-            "Missing file.",
-            vec![FieldError::new("/file", "part `file` is required")],
-        )
+        ApiError::invalid_field("Missing file.", "/file", "part `file` is required")
     })?;
     let row = store(
         state,
@@ -280,18 +270,14 @@ pub async fn delete(state: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiErr
         sweep::remove_blobs(&state.pool, std::slice::from_ref(&p)).await;
         audit::record(
             state,
-            AuditEvent::new(
-                AuditActor::from_caller(c),
-                "attachment.delete",
-                Outcome::Success,
-            )
-            .org(auth.org_id)
-            .workspace(conv_row.workspace_id)
-            .target("attachment", id)
-            .metadata(serde_json::json!({
-                "conversation_id": row.conversation_id, "direction": row.direction,
-                "size_bytes": p.size_bytes,
-            })),
+            AuditEvent::by(c, "attachment.delete")
+                .org(auth.org_id)
+                .workspace(conv_row.workspace_id)
+                .target("attachment", id)
+                .metadata(serde_json::json!({
+                    "conversation_id": row.conversation_id, "direction": row.direction,
+                    "size_bytes": p.size_bytes,
+                })),
         );
     }
     Ok(())

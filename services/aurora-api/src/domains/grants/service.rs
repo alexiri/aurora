@@ -331,10 +331,7 @@ pub async fn list_connection_grants(
 }
 
 pub(crate) fn bulk_check(agent_ids: &[Uuid]) -> Result<(), ApiError> {
-    use aurora_core::FieldError;
-    let bad = |m: &str| {
-        ApiError::invalid_request("Invalid request.", vec![FieldError::new("/agent_ids", m)])
-    };
+    let bad = |m: &str| ApiError::invalid_field("Invalid request.", "/agent_ids", m);
     if agent_ids.is_empty() || agent_ids.len() > GRANT_BULK_MAX {
         return Err(bad(&format!("must hold 1 to {GRANT_BULK_MAX} agents")));
     }

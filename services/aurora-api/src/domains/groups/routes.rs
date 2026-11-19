@@ -6,7 +6,7 @@ use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, PageParams, Pagination};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::groups as repo;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -29,7 +29,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 }
 
 fn after(p: &Pagination) -> Option<(chrono::DateTime<chrono::Utc>, Uuid)> {
-    p.after.map(|c| (c.t, c.id))
+    p.after_key()
 }
 
 fn if_match(h: &HeaderMap) -> Result<Option<i64>, ApiError> {
@@ -41,9 +41,10 @@ fn if_match(h: &HeaderMap) -> Result<Option<i64>, ApiError> {
         .and_then(|s| s.trim().trim_matches('"').parse::<i64>().ok())
         .map(Some)
         .ok_or_else(|| {
-            ApiError::invalid_request(
+            ApiError::invalid_field(
                 "Invalid If-Match.",
-                vec![FieldError::new("/if-match", "must be the group's revision")],
+                "/if-match",
+                "must be the group's revision",
             )
         })
 }
@@ -76,9 +77,10 @@ async fn list_groups(
     if let Some(src) = q.source.as_deref()
         && !matches!(src, "manual" | "scim" | "idp")
     {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid source.",
-            vec![FieldError::new("/source", "manual, scim or idp")],
+            "/source",
+            "manual, scim or idp",
         ));
     }
     let rows = repo::list(
@@ -92,10 +94,7 @@ async fn list_groups(
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(Group::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(Group::from)))
 }
 
 /// Create a group (org `owner`/`admin`); `source: "idp"` links it to a provider's claim value.
@@ -194,10 +193,7 @@ async fn list_members(
     let p = q.resolve()?;
     let rows = repo::list_members(&s.pool, id, after(&p), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.user_id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(GroupMember::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(GroupMember::from)))
 }
 
 /// Add a member of the organization to a manual group (idempotent).
@@ -247,12 +243,10 @@ async fn members_batch(
     Json(req): Json<MembersBatchRequest>,
 ) -> Result<Json<MembersBatchResult>, ApiError> {
     if req.add.len() > BATCH_MAX || req.remove.len() > BATCH_MAX {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/add",
-                "at most 100 `add` and 100 `remove`",
-            )],
+            "/add",
+            "at most 100 `add` and 100 `remove`",
         ));
     }
     Ok(Json(
@@ -276,10 +270,7 @@ async fn list_group_workspaces(
     let p = q.resolve()?;
     let rows = repo::list_bindings(&s.pool, id, after(&p), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.workspace_id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(GroupBinding::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(GroupBinding::from)))
 }
 
 /// What deleting the group (or, with `remove_member`, removing that member; with

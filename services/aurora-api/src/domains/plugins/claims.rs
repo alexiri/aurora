@@ -4,7 +4,7 @@ use super::dto::{HostClaimConflict, HostClaimDecision, HostClaimMember, PluginUs
 use super::registry::{self, CompileFail};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use aurora_core::{ApiError, FieldError, ids};
+use aurora_core::{ApiError, ids};
 use aurora_db::DbError;
 use aurora_db::repo::plugins::{self, DecisionRow, PackageRow};
 use aurora_registry::Manifest;
@@ -121,12 +121,10 @@ pub async fn decide(
         .iter()
         .any(|m| m.package_id == winner_package_id && m.app_id == winner_app_id)
     {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Winner is not part of the conflict.",
-            vec![FieldError::new(
-                "/winner_package_id",
-                "must be a package/app taking part in the conflict",
-            )],
+            "/winner_package_id",
+            "must be a package/app taking part in the conflict",
         ));
     }
     let previous = plugins::decisions(&mut *tx)

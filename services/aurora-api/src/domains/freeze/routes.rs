@@ -268,15 +268,12 @@ async fn admin_list_orgs(
     let rows = repo::list_orgs(
         &mut conn,
         q.frozen.unwrap_or(false),
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(admin_org).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(admin_org)))
 }
 
 fn admin_org(r: repo::AdminOrgRow) -> AdminOrg {
@@ -336,24 +333,16 @@ async fn admin_list_org_workspaces(
     if !repo::exists(&mut conn, Scope::Org, org).await? {
         return Err(ApiError::not_found("Organization not found."));
     }
-    let rows = repo::list_admin_workspaces(&mut conn, org, p.after.map(|c| (c.t, c.id)), p.fetch())
-        .await?;
+    let rows = repo::list_admin_workspaces(&mut conn, org, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page
-            .items
-            .into_iter()
-            .map(|r| AdminWorkspace {
-                id: r.id,
-                slug: r.slug,
-                name: r.name,
-                personal: r.personal,
-                agent_count: r.agent_count,
-                created_at: r.created_at,
-            })
-            .collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(|r| AdminWorkspace {
+        id: r.id,
+        slug: r.slug,
+        name: r.name,
+        personal: r.personal,
+        agent_count: r.agent_count,
+        created_at: r.created_at,
+    })))
 }
 
 /// The admin deletes are session only: an API key or agent token is refused (FIX-157, D-317:

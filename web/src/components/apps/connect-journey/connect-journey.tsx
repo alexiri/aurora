@@ -234,7 +234,7 @@ export function ConnectJourney({
         granted: agentIds,
         grantFailed: null,
         missing: [],
-        level: levels.length > 0 ? effective : null,
+        level: levels.length > 0 ? effective : "read",
         appId: target.app?.app_id,
         accountName: target.name,
         firstPrompt: app?.first_prompt ?? null,
@@ -259,7 +259,8 @@ export function ConnectJourney({
       granted: r.granted.length > 0 ? r.granted : r.grantFailed ? [] : agentKey ? agentKey.split(",") : [],
       grantFailed: r.grantFailed,
       missing: r.missing,
-      level: hasLevels ? effective : null,
+      // A one-level app (no write tools) is read only; the Done line says so (B5). Custom-only apps have no single level.
+      level: hasLevels ? effective : customOnly ? null : "read",
       appId: realApp,
       customOnly,
       scopes: r.scopes,

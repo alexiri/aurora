@@ -1,6 +1,6 @@
 use crate::app::AppState;
 use crate::domains::auth::service::normalize_email;
-use aurora_core::{ApiError, FieldError, ids};
+use aurora_core::{ApiError, ids};
 use aurora_db::repo::account::{self, AdminUserRow};
 use aurora_db::repo::sessions;
 use aurora_db::{DbError, PgPool};
@@ -86,9 +86,10 @@ pub async fn bootstrap_admin(
     }
     let email = normalize_email(email);
     if !email.contains('@') || email.len() > 254 || email.chars().any(char::is_whitespace) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid email.",
-            vec![FieldError::new("/email", "must be a valid email address")],
+            "/email",
+            "must be a valid email address",
         ));
     }
     let name = email.split('@').next().unwrap_or("admin");

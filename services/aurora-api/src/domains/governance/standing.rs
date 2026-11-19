@@ -182,7 +182,7 @@ pub async fn list(
     inst: &Instance,
     page: Pagination,
 ) -> Result<Page<OrgStandingRow>, ApiError> {
-    let rows = repo::orgs_page(pool, page.after.map(|c| (c.t, c.id)), page.fetch()).await?;
+    let rows = repo::orgs_page(pool, page.after_key(), page.fetch()).await?;
     let limit = page.limit as usize;
     let next_cursor = (rows.len() > limit).then(|| {
         let r = &rows[limit - 1];

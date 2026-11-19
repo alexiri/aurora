@@ -8,8 +8,8 @@ use crate::http::auth::InstanceAdmin;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, PageParams, Pagination};
+use aurora_core::ApiError;
 use aurora_core::limits::PACKAGE_MAX;
-use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::plugins;
 use axum::extract::{DefaultBodyLimit, Multipart, State, multipart::MultipartRejection};
 use axum::response::{IntoResponse, Response};
@@ -51,13 +51,7 @@ async fn list_plugins(
     if let Some(st) = q.status.as_deref() {
         service::check_status(st)?;
     }
-    let rows = plugins::list(
-        &s.pool,
-        q.status.as_deref(),
-        p.after.map(|c| (c.t, c.id)),
-        p.fetch(),
-    )
-    .await?;
+    let rows = plugins::list(&s.pool, q.status.as_deref(), p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     let mut items = Vec::with_capacity(page.items.len());
     for r in page.items {
@@ -84,32 +78,25 @@ async fn upload_plugin(
     mp: Result<Multipart, MultipartRejection>,
 ) -> Result<(StatusCode, Json<PluginPackage>), ApiError> {
     let mut mp = mp.map_err(|_| {
-        ApiError::invalid_request(
+        ApiError::invalid_field(
             "Expected multipart/form-data.",
-            vec![FieldError::new(
-                "/",
-                "content type must be multipart/form-data",
-            )],
+            "/",
+            "content type must be multipart/form-data",
         )
     })?;
     let mut bytes = None;
     while let Some(field) = mp.next_field().await.map_err(multipart_error)? {
         if field.name() != Some("package") || bytes.is_some() {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Unexpected multipart part.",
-                vec![FieldError::new(
-                    "/package",
-                    "exactly one part `package` is allowed",
-                )],
+                "/package",
+                "exactly one part `package` is allowed",
             ));
         }
         bytes = Some(field.bytes().await.map_err(multipart_error)?);
     }
     let bytes = bytes.ok_or_else(|| {
-        ApiError::invalid_request(
-            "Missing package.",
-            vec![FieldError::new("/package", "part `package` is required")],
-        )
+        ApiError::invalid_field("Missing package.", "/package", "part `package` is required")
     })?;
     let out = ingest::ingest(&s, &bytes, Source::Upload, &AuditActor::instance_admin(&c)).await?;
     Ok((
@@ -122,10 +109,7 @@ fn multipart_error(e: axum::extract::multipart::MultipartError) -> ApiError {
     if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
         ApiError::too_large("Package is too large.")
     } else {
-        ApiError::invalid_request(
-            "Malformed multipart body.",
-            vec![FieldError::new("/", "malformed multipart body")],
-        )
+        ApiError::invalid_field("Malformed multipart body.", "/", "malformed multipart body")
     }
 }
 
@@ -187,12 +171,9 @@ async fn list_trusted_keys(
     Query(q): Query<PageParams>,
 ) -> Result<Json<Page<TrustedKey>>, ApiError> {
     let p = q.resolve()?;
-    let rows = plugins::list_trusted_keys(&s.pool, p.after.map(|c| (c.t, c.id)), p.fetch()).await?;
+    let rows = plugins::list_trusted_keys(&s.pool, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(TrustedKey::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(TrustedKey::from)))
 }
 
 /// Trust a publisher key.

@@ -6,7 +6,7 @@
 //! or trailing data is ever stored or served. The public key rotates on every change.
 
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::attachments::blob;
 use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
@@ -274,7 +274,7 @@ async fn sync(s: &AppState, agent: Uuid, public_key: Option<&str>) {
 fn record(s: &AppState, c: &Caller, row: &agents::AgentRow, action: &'static str) {
     audit::record(
         s,
-        AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+        AuditEvent::by(c, action)
             .org(row.org_id)
             .workspace(row.workspace_id)
             .target("agent", row.id)

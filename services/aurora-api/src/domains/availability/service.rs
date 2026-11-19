@@ -1,6 +1,6 @@
 use super::dto::*;
 use crate::app::AppState;
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::{availability as repo, credentials};
 use uuid::Uuid;
 
@@ -22,10 +22,7 @@ pub async fn get(state: &AppState, org: Uuid) -> Result<AppAvailability, ApiErro
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request(
-        "Invalid app availability.",
-        vec![FieldError::new(path, msg)],
-    )
+    ApiError::invalid_field("Invalid app availability.", path, msg)
 }
 
 pub async fn put(

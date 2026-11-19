@@ -5,9 +5,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use aurora_core::ApiError;
 use aurora_core::limits;
 use aurora_core::sanitize::one_line;
-use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
 use aurora_db::repo::skill_libraries::{self as repo, Source, UpdateRow};
 use aurora_db::repo::skills::{self as skills_repo, SkillRow};
@@ -24,7 +24,7 @@ use super::dto::{FromLibrary, Skill};
 use super::routes::authorize;
 use super::service::{self, Owner, SkillView};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::skill_libraries::content::{self, LoadedFile, LoadedSkill};
 use crate::domains::skill_libraries::dto::TierRef;
 use crate::domains::skill_libraries::service as lib_service;
@@ -165,12 +165,10 @@ pub async fn add(
         )
     })?;
     aurora_registry::library::check_hex_id(commit, "sha").map_err(|_| {
-        ApiError::invalid_request(
+        ApiError::invalid_field(
             "Invalid skill.",
-            vec![FieldError::new(
-                "/from_library/commit_sha",
-                "a full commit id (40 to 64 lowercase hex characters)",
-            )],
+            "/from_library/commit_sha",
+            "a full commit id (40 to 64 lowercase hex characters)",
         )
     })?;
     if from.path.is_empty()
@@ -180,12 +178,10 @@ pub async fn add(
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
     {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid skill.",
-            vec![FieldError::new(
-                "/from_library/path",
-                "the skill's directory name as the library lists it",
-            )],
+            "/from_library/path",
+            "the skill's directory name as the library lists it",
         ));
     }
     let lib = lib_service::get(state, from.library_id).await?;
@@ -238,18 +234,14 @@ pub async fn add(
     }
     service::bump(&mut tx, &row).await?;
     repo::forget_head(&mut tx, lib.id, commit).await?;
-    let mut ev = AuditEvent::new(
-        AuditActor::from_caller(caller),
-        "skill.library.add",
-        Outcome::Success,
-    )
-    .org(org)
-    .target("skill", row.id)
-    .metadata(
-        json!({"name": row.name, "tier": service::tier_of(&row), "library_id": lib.id,
+    let mut ev = AuditEvent::by(caller, "skill.library.add")
+        .org(org)
+        .target("skill", row.id)
+        .metadata(
+            json!({"name": row.name, "tier": service::tier_of(&row), "library_id": lib.id,
             "repo": lib.repo, "path": from.path, "commit_sha": commit,
-            "content_sha256": content::hex(&loaded.content_sha256)}),
-    );
+            "content_sha256": content::hex(loaded.content_sha256)}),
+        );
     if let Some(w) = workspace {
         ev = ev.workspace(w);
     }
@@ -634,12 +626,10 @@ async fn approve_update(
     let cur = service::row(&s.pool, id).await?;
     authorize(&c, &s, &cur, true).await?;
     let quoted = content::parse_hex(&req.content_sha256).ok_or_else(|| {
-        ApiError::invalid_request(
+        ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/content_sha256",
-                "64 hexadecimal characters",
-            )],
+            "/content_sha256",
+            "64 hexadecimal characters",
         )
     })?;
     let mut tx = audit::begin(&s).await?;
@@ -733,14 +723,10 @@ async fn approve_update(
     if let Some(o) = meta.as_object_mut() {
         o.insert("removed".into(), json!(result.is_none()));
     }
-    let mut ev = AuditEvent::new(
-        AuditActor::from_caller(&c),
-        "skill.library.update_apply",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .target("skill", id)
-    .metadata(meta);
+    let mut ev = AuditEvent::by(&c, "skill.library.update_apply")
+        .org(row.org_id)
+        .target("skill", id)
+        .metadata(meta);
     if let Some(w) = workspace {
         ev = ev.workspace(w);
     }
@@ -774,17 +760,13 @@ async fn reject_update(
     let mut tx = audit::begin(&s).await?;
     let (row, u) = lock_pending(&mut tx, id, uid).await?;
     repo::decide_update(&mut tx, uid, "rejected", c.user_id).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(&c),
-        "skill.library.update_reject",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .target("skill", id)
-    .metadata(
-        json!({"name": row.name, "tier": service::tier_of(&row), "kind": u.kind,
+    let ev = AuditEvent::by(&c, "skill.library.update_reject")
+        .org(row.org_id)
+        .target("skill", id)
+        .metadata(
+            json!({"name": row.name, "tier": service::tier_of(&row), "kind": u.kind,
             "commit_sha": u.commit_sha}),
-    );
+        );
     audit::commit_critical(tx, &ev).await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -813,14 +795,10 @@ async fn detach_skill(
         ));
     }
     repo::detach_skill(&mut tx, id).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(&c),
-        "skill.library.detach",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .target("skill", id)
-    .metadata(json!({"name": row.name, "tier": service::tier_of(&row),
+    let ev = AuditEvent::by(&c, "skill.library.detach")
+        .org(row.org_id)
+        .target("skill", id)
+        .metadata(json!({"name": row.name, "tier": service::tier_of(&row),
             "library_id": row.library_id, "commit_sha": row.library_commit_sha}));
     audit::commit_critical(tx, &ev).await?;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;

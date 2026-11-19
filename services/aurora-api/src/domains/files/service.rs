@@ -17,7 +17,7 @@ use super::dto::{FileEntry, FileList, FileTarget, FileText};
 use super::paths;
 use super::sftp::{Attr, BLOCK, Fail, OpenError, PIPELINE, Sftp};
 use crate::app::AppState;
-use crate::audit::{AuditActor, AuditEvent, Outcome};
+use crate::audit::AuditEvent;
 use crate::domains::conversations::service::load_agent;
 use crate::http::auth::Caller;
 use aurora_core::limits::{
@@ -661,7 +661,7 @@ fn audit(s: &AppState, c: &Caller, a: &AgentRow, action: &str, meta: serde_json:
     }
     crate::audit::record(
         s,
-        AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+        AuditEvent::by(c, action)
             .org(a.org_id)
             .workspace(a.workspace_id)
             .target("agent", a.id)
@@ -671,11 +671,7 @@ fn audit(s: &AppState, c: &Caller, a: &AgentRow, action: &str, meta: serde_json:
 
 /// Paths in audit metadata are cut at 1,024 bytes on a char boundary (C-906).
 fn clip(p: &str) -> String {
-    let mut end = p.len().min(1024);
-    while !p.is_char_boundary(end) {
-        end -= 1;
-    }
-    p[..end].to_owned()
+    p[..p.floor_char_boundary(1024)].to_owned()
 }
 
 // ------------------------------------------------------------------------------ operations

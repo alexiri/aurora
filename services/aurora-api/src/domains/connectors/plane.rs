@@ -108,7 +108,7 @@ pub(super) async fn verify_manifest(
     let trust = crate::domains::plugins::keys::trust_store(&s.pool).await?;
     verify_digest(signature.as_bytes(), &m.package.publisher, &digest, &trust)
         .map_err(|v| ApiError::unprocessable(v.code, v.message))?;
-    Ok(manifest::hex(&digest))
+    Ok(manifest::hex(digest))
 }
 
 async fn do_register(
@@ -257,7 +257,7 @@ fn norm_etag(v: &str) -> &str {
 
 fn etag_of(parts: &serde_json::Value) -> String {
     let bytes = aurora_registry::snapshot::canonical_bytes(parts);
-    manifest::hex(&Sha256::digest(bytes))
+    manifest::hex(Sha256::digest(bytes))
 }
 
 fn respond(etag: &str, body: Option<ConfigResponse>) -> Response {

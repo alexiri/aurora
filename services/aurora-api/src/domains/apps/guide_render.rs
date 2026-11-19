@@ -12,7 +12,7 @@
 use crate::app::AppState;
 use crate::http::auth::Caller;
 use crate::http::who_can::{self, WhoCanRole};
-use aurora_core::{ApiError, FieldError, dash_paths};
+use aurora_core::{ApiError, dash_paths};
 use aurora_db::repo::{connections, contacts};
 use aurora_registry::guide;
 use uuid::Uuid;
@@ -201,12 +201,10 @@ pub async fn resolve(
         (Some(ws), org) => {
             let a = caller.workspace(state, ws).await?;
             if org.is_some_and(|o| o != a.org_id) {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_field(
                     "org_id does not match the workspace.",
-                    vec![FieldError::new(
-                        "/org_id",
-                        "not the workspace's organization",
-                    )],
+                    "/org_id",
+                    "not the workspace's organization",
                 ));
             }
             let (org_slug, ws_slug) = contacts::slugs(&state.pool, a.org_id, Some(ws))

@@ -1,4 +1,4 @@
-use aurora_core::{ApiError, FieldError, limits};
+use aurora_core::{ApiError, limits};
 use aurora_db::DbError;
 use aurora_db::repo::agents;
 pub use aurora_db::repo::skills::Owner;
@@ -48,7 +48,7 @@ pub struct Patch<'a> {
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid skill.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid skill.", path, msg)
 }
 
 fn not_found() -> ApiError {

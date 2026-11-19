@@ -3,8 +3,8 @@ use super::sanitize;
 use crate::app::AppState;
 use crate::http::auth::SessionCaller;
 use crate::http::error::ErrorEnvelope;
+use aurora_core::ApiError;
 use aurora_core::limits::TELEMETRY_INGEST_BODY_MAX;
-use aurora_core::{ApiError, FieldError};
 use axum::body::Body;
 use axum::extract::{FromRequestParts, State};
 use axum::http::{StatusCode, header, request::Parts};
@@ -59,9 +59,10 @@ async fn ingest_traces(
                 .eq_ignore_ascii_case("application/json")
         });
     if !is_json {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Content-Type must be application/json.",
-            vec![FieldError::new("", "expected application/json")],
+            "",
+            "expected application/json",
         ));
     }
     let too_large = || {
@@ -82,9 +83,10 @@ async fn ingest_traces(
         .await
         .map_err(|_| too_large())?;
     let req: OtlpExportRequest = serde_json::from_slice(&bytes).map_err(|e| {
-        ApiError::invalid_request(
+        ApiError::invalid_field(
             "The request is not a valid OTLP/HTTP JSON trace export.",
-            vec![FieldError::new("", e.to_string())],
+            "",
+            e.to_string(),
         )
     })?;
     let rebuilt = sanitize::rebuild(&req, SystemTime::now(), spans.threshold)

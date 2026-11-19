@@ -5,12 +5,12 @@ use super::dto::*;
 use super::presences;
 use super::{capability_enabled, map_correlated, object_field};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent};
 use crate::domains::connectors::integration_seal_ctx;
 use crate::domains::connectors::ops::{self, CORRELATED_WAIT, CorrelatedError, NewOp};
 use crate::http::auth::Caller;
 use crate::http::pagination::{Page, Pagination};
-use aurora_core::{ApiError, FieldError, Secret};
+use aurora_core::{ApiError, Secret};
 use aurora_db::conflict_code;
 use aurora_db::repo::channel_integrations::{self as repo, IntegrationRow, NewIntegration};
 use aurora_db::repo::channel_ops;
@@ -61,7 +61,7 @@ pub async fn list(
     p: Pagination,
 ) -> Result<Page<ChannelIntegration>, ApiError> {
     c.org(s, org).await?.require_admin()?;
-    let rows = repo::page_for_org(&s.pool, org, p.after.map(|a| (a.t, a.id)), p.fetch()).await?;
+    let rows = repo::page_for_org(&s.pool, org, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Page {
         items: page.items.iter().map(view).collect(),
@@ -74,7 +74,7 @@ pub async fn get(s: &AppState, c: &Caller, id: Uuid) -> Result<ChannelIntegratio
 }
 
 fn invalid_field(path: &str, m: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, m)])
+    ApiError::invalid_field("Invalid request.", path, m)
 }
 
 fn check_config(config: &Value) -> Result<Value, ApiError> {
@@ -122,7 +122,7 @@ fn autolink_event(c: &Caller, org: Uuid, id: Uuid, was: bool, now: bool) -> Opti
         "channel_integration.autolink_disable"
     };
     Some(
-        AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+        AuditEvent::by(c, action)
             .org(org)
             .target("channel_integration", id),
     )
@@ -384,14 +384,10 @@ pub async fn create(
         ));
     }
     let mut events = vec![
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "channel_integration.create",
-            Outcome::Success,
-        )
-        .org(org)
-        .target("channel_integration", id)
-        .metadata(json!({"connector_id": row.connector_id, "tenant_ref": res.tenant_ref})),
+        AuditEvent::by(c, "channel_integration.create")
+            .org(org)
+            .target("channel_integration", id)
+            .metadata(json!({"connector_id": row.connector_id, "tenant_ref": res.tenant_ref})),
     ];
     events.extend(autolink_event(c, org, id, false, autolink_on(&new_config)));
     if let Err(e) = audit::commit_critical_many(tx, &events).await {
@@ -412,9 +408,10 @@ pub async fn patch(
 ) -> Result<ChannelIntegration, ApiError> {
     let row = load_admin(s, c, id).await?;
     if req.config.is_none() && req.credentials.is_none() && req.status.is_none() {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Nothing to change.",
-            vec![FieldError::new("", "give config, credentials or status")],
+            "",
+            "give config, credentials or status",
         ));
     }
     let new_config = req.config.as_ref().map(check_config).transpose()?;
@@ -512,18 +509,14 @@ pub async fn patch(
         presences::bump_integration_agents(&mut tx, row.id).await?;
         // RFE-008: the update and its audit rows commit together.
         let mut events = vec![
-            AuditEvent::new(
-                AuditActor::from_caller(c),
-                "channel_integration.update",
-                Outcome::Success,
-            )
-            .org(row.org_id)
-            .target("channel_integration", row.id)
-            .metadata(json!({
-                "config": req.config.is_some(),
-                "credentials": req.credentials.is_some(),
-                "status": req.status.map(SettableStatus::as_str),
-            })),
+            AuditEvent::by(c, "channel_integration.update")
+                .org(row.org_id)
+                .target("channel_integration", row.id)
+                .metadata(json!({
+                    "config": req.config.is_some(),
+                    "credentials": req.credentials.is_some(),
+                    "status": req.status.map(SettableStatus::as_str),
+                })),
         ];
         events.extend(autolink_event(
             c,
@@ -578,13 +571,9 @@ pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> 
         )
         .await?;
         repo::delete(&mut *tx, id).await?;
-        let ev = AuditEvent::new(
-            AuditActor::from_caller(c),
-            "channel_integration.delete",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .target("channel_integration", id);
+        let ev = AuditEvent::by(c, "channel_integration.delete")
+            .org(row.org_id)
+            .target("channel_integration", id);
         audit::commit_critical(tx, &ev).await?;
         Ok::<_, ApiError>(token_discards)
     }

@@ -50,21 +50,30 @@ function AdminTopic({ children }: { children: (org: Org, slug: string) => ReactN
 }
 
 export function OrgAgentsPage() {
+  const slug = useOrgSlug();
   return (
-    <AdminTopic>
-      {(org) => (
-        <TopicPage<Tabs<"orgAgents">>
-          idBase="org-agents"
-          title="Agents"
-          description="Rules for bring-your-own agents, the skills every agent has, and previews."
-          tabs={[
-            { id: "byo", label: "BYO", content: <OrgByo org={org} /> },
-            { id: "skills", label: "Skills", content: <OrgSkills /> },
-            { id: "previews", label: "Previews", content: <PreviewsForm org={org} /> },
-          ]}
-        />
-      )}
-    </AdminTopic>
+    <OrgGate slug={slug} allow={ALL_ROLES}>
+      {(org) =>
+        // (P5-POLISH-9, D-390) A member reads the sentence and who changes it, not a red refusal.
+        isAdmin(org) ? (
+          <TopicPage<Tabs<"orgAgents">>
+            idBase="org-agents"
+            title="Agents"
+            description="Rules for bring-your-own agents, the skills every agent has, and previews."
+            tabs={[
+              { id: "byo", label: "BYO", content: <OrgByo org={org} /> },
+              { id: "skills", label: "Skills", content: <OrgSkills /> },
+              { id: "previews", label: "Previews", content: <PreviewsForm org={org} /> },
+            ]}
+          />
+        ) : (
+          <div className="max-w-page-narrow space-y-4" data-testid="member-org-agents">
+            <PageHeader title="Agents" description="These rules apply to your organization. Only owners and admins can change them." className="mb-2" />
+            <OrgByo org={org} />
+          </div>
+        )
+      }
+    </OrgGate>
   );
 }
 

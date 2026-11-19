@@ -12,11 +12,11 @@ use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::attachments::{blob, quota};
 use crate::domains::governance::dto::InstanceSetting;
 use crate::http::auth::Caller;
+use aurora_core::ApiError;
 use aurora_core::limits::{
     EXPORT_MAX_BYTES, EXPORT_MAX_EVENTS, RETENTION_MAX_DAYS, RETENTION_MIN_DAYS,
     RETENTION_SWEEP_BATCH, RETENTION_SWEEP_PER_ORG,
 };
-use aurora_core::{ApiError, FieldError};
 use aurora_db::authz::WorkspaceAuth;
 use aurora_db::repo::conversations::{self as convs, ConversationRow};
 use aurora_db::repo::lifecycle::{self, Deleted};
@@ -109,15 +109,11 @@ pub async fn delete(state: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiErr
     )
     .await?;
     let gone = lifecycle::delete_conversation(&mut tx, id).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(c),
-        "conversation.delete",
-        Outcome::Success,
-    )
-    .org(auth.org_id)
-    .workspace(row.workspace_id)
-    .target("conversation", id)
-    .metadata(delete_meta(&[(id, &row.kind)], row.agent_id, &gone, None));
+    let ev = AuditEvent::by(c, "conversation.delete")
+        .org(auth.org_id)
+        .workspace(row.workspace_id)
+        .target("conversation", id)
+        .metadata(delete_meta(&[(id, &row.kind)], row.agent_id, &gone, None));
     audit::insert_tx(&mut tx, &ev).await?;
     service::notify_work(&mut tx).await?;
     tx.commit().await.map_err(db)?;
@@ -168,12 +164,10 @@ fn clean_reason(r: Option<&str>) -> Result<Option<String>, ApiError> {
         return Ok(None);
     };
     if r.chars().count() > REASON_MAX || r.chars().any(char::is_control) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/reason",
-                "must be at most 500 characters without control characters",
-            )],
+            "/reason",
+            "must be at most 500 characters without control characters",
         ));
     }
     Ok(Some(r.to_owned()))
@@ -268,19 +262,15 @@ pub async fn redact(
         service::notify_work(&mut tx).await?;
     }
     if !done.is_empty() || session_reset {
-        let ev = AuditEvent::new(
-            AuditActor::from_caller(c),
-            "transcript_event.redact",
-            Outcome::Success,
-        )
-        .org(auth.org_id)
-        .workspace(row.workspace_id)
-        .target("conversation", conversation)
-        .metadata(json!({
-            "seqs": done, "types": types, "reason": reason,
-            "turn_id": match &target { Target::Turn(t) => Some(*t), Target::Event(_) => None },
-            "reset_session": session_reset,
-        }));
+        let ev = AuditEvent::by(c, "transcript_event.redact")
+            .org(auth.org_id)
+            .workspace(row.workspace_id)
+            .target("conversation", conversation)
+            .metadata(json!({
+                "seqs": done, "types": types, "reason": reason,
+                "turn_id": match &target { Target::Turn(t) => Some(*t), Target::Event(_) => None },
+                "reset_session": session_reset,
+            }));
         audit::insert_tx(&mut tx, &ev).await?;
     }
     tx.commit().await.map_err(db)?;
@@ -441,14 +431,10 @@ pub async fn put_retention(
     }
     if !changed.is_empty() {
         // Security-critical: the row commits or rolls back with the change.
-        let ev = AuditEvent::new(
-            AuditActor::from_caller(c),
-            "retention.update",
-            Outcome::Success,
-        )
-        .org(org)
-        .target("organization", org)
-        .metadata(Value::Object(changed));
+        let ev = AuditEvent::by(c, "retention.update")
+            .org(org)
+            .target("organization", org)
+            .metadata(Value::Object(changed));
         audit::insert_tx(&mut tx, &ev).await?;
     }
     let out = retention_view(state, &mut tx, org).await?;
@@ -569,9 +555,10 @@ pub async fn export(
 ) -> Result<Exported, ApiError> {
     let after = after_seq.unwrap_or(0);
     if after < 0 {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new("/after_seq", "must be >= 0")],
+            "/after_seq",
+            "must be >= 0",
         ));
     }
     let (row, auth) = load_conversation_auth(state, c, id).await?;
@@ -633,15 +620,11 @@ pub async fn export(
     }
     audit::record(
         state,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "conversation.export",
-            Outcome::Success,
-        )
-        .org(auth.org_id)
-        .workspace(row.workspace_id)
-        .target("conversation", id)
-        .metadata(json!({"events": events.len(), "attachments": zip_files,
+        AuditEvent::by(c, "conversation.export")
+            .org(auth.org_id)
+            .workspace(row.workspace_id)
+            .target("conversation", id)
+            .metadata(json!({"events": events.len(), "attachments": zip_files,
                              "kind": row.kind, "after_seq": after})),
     );
     let stem = format!("conversation-{id}");

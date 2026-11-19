@@ -110,6 +110,15 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     await waitFor(() => expect(within(document.querySelector<HTMLElement>('[data-step="try"]')!).getByRole("link", { name: "Open chat" })).toHaveAttribute("href", "/o/users/w/ada/agents/daneel?tab=chat"));
   });
 
+  it("asks for no organization's keys before the placement names an organization (P5-POLISH-11)", async () => {
+    world();
+    routes["GET /v1/admin/placement"] = () => json(200, placement({ saved: false, default_org: null }));
+    wrap(<SetupView />);
+    await row("key");
+    await waitFor(() => expect(calls.some((c) => c.key === "GET /v1/admin/placement")).toBe(true));
+    expect(calls.filter((c) => c.key.includes("/secrets"))).toEqual([]);
+  });
+
   it("the AI key row asks for a key until one exists, then says every new agent gets it", async () => {
     world();
     wrap(<SetupView />);
@@ -189,7 +198,10 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "AIGW" } });
     fireEvent.change(await screen.findByLabelText("Provider endpoint"), { target: { value: "litellm" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-test" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    // (P5-POLISH-11) The dialog's buttons are P5-POLISH-7's: Cancel and "Add key".
+    const dialog = screen.getByRole("dialog", { name: "Add an organization AI key" });
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add key" }));
     const toast = await screen.findByTestId("setup-toast");
     expect(toast).toHaveTextContent("AI key added. 3 of 5 done.");
     // Still the checklist, with the starter grant saved (C-922).
