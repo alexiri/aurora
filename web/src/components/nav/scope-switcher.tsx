@@ -355,6 +355,7 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
         <PopoverContent
           align="start"
           sideOffset={6}
+          aria-label="Switch workspace or organization"
           className="w-72 p-1.5"
           onOpenAutoFocus={(e) => {
             e.preventDefault();
