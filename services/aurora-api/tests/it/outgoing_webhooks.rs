@@ -597,13 +597,21 @@ async fn the_send_test_posts_the_rendered_body_with_the_allowed_headers_and_a_ve
         "{e}"
     );
     assert_eq!(l.server.received_requests().await.unwrap().len(), 1);
-    // The audit row names the status and delivery id, nothing else.
-    let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT metadata::text FROM audit_log WHERE action = 'webhook.test_sent'",
-    )
-    .fetch_all(l.w.h.pool())
-    .await
-    .unwrap();
+    // The audit row names the status and delivery id, nothing else. It is written best-effort, after
+    // the answer: wait for it (bounded) before reading it (CI runs 44605469239, 44605616519 read 0).
+    let mut rows: Vec<String> = Vec::new();
+    for _ in 0..100 {
+        rows = sqlx::query_scalar(
+            "SELECT metadata::text FROM audit_log WHERE action = 'webhook.test_sent'",
+        )
+        .fetch_all(l.w.h.pool())
+        .await
+        .unwrap();
+        if !rows.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     assert_eq!(rows.len(), 1);
     assert!(rows[0].contains(delivery));
     l.clean("send test", &r).await;
