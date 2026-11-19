@@ -142,6 +142,11 @@ export function AppStep({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
+      {/* (P5-POLISH-5, B1) While searching, a group with no match is hidden; "No app matches" only when every group is empty. */}
+      {q && ready.length === 0 && !showWebsite && connected.length === 0 && blocked.length === 0 ? (
+        <p className="text-sm text-ink-2">No app matches “{query.trim()}”.</p>
+      ) : null}
+      {!q || ready.length > 0 || showWebsite ? (
       <Group title="Ready to connect" count={ready.length}>
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {ready.map((p) => (
@@ -160,8 +165,8 @@ export function AppStep({
             </li>
           ) : null}
         </ul>
-        {ready.length === 0 && q ? <p className="text-sm text-ink-2">No app matches “{query.trim()}”.</p> : null}
       </Group>
+      ) : null}
       {connected.length > 0 ? (
         <Group title="Already connected" count={connected.length}>
           <ul className="space-y-2">

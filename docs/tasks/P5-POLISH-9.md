@@ -180,3 +180,18 @@ All paths are under `web/src/`.
 
 Sonnet (`nextjs-developer`). Several pages with role-dependent rendering and an availability model that
 must not change meaning.
+
+## Completion report — review pass 1 (P5-POLISH-11)
+
+- **#1 (broken) done.** A member's AI models page read `GET /v1/orgs/{org}/accounts` (403 for members) and concluded
+  "no key". It now reads the organization's shared keys from the first workspace's accounts list
+  (`scope: "organization"`), shows them as rows, and drops the seven "Limits from above" rows from the member view.
+  Vitest (`governance.test.tsx`, org accounts 403) and Playwright (`org-pages.spec.ts`) cover it.
+- **#2 done.** Members get a neutral Agents page (sentence + who-can line), no red error box.
+- **#3 partly done.** The "AI key" chip is gone from the organization's Accounts and the sentence reads "n accounts,
+  shared with everyone in <Org>." Open: "New agents get this key automatically." — the starter grants (C-922) are
+  readable only by instance administrators (`/v1/admin/placement`), so an organization admin's page has no source.
+- **#4 done.** Apps table sorted by product name (the provider sentence too).
+- **#5 done.** Workspace slugs dropped from the organization home.
+- **Open:** the **Ask** button next to the who-can line (no contact/mention path for a button exists; the line names the
+  owners as text) and "default <model>" on the key row (no API field for the default model).

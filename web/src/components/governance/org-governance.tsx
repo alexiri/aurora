@@ -317,10 +317,14 @@ export function aiModelsSentence(orgName: string, keyNames: string[], workspaceK
 /** (P5-POLISH-9, D-390, E1) What a member reads on AI models: the sentence, the organization's keys and who changes the rules. */
 function MemberAiModels({ org }: { org: Org }) {
   const eff = useEffectiveGovernance(org.id);
-  const accounts = useAccounts({ kind: "organization", id: org.id });
-  if (eff.isPending) return <Loading />;
+  // `GET /v1/orgs/{org}/accounts` is for owners and admins (403 for a member), so a member reads the organization's
+  // shared keys from a workspace's accounts list, where they carry `scope: "organization"`.
+  const workspaces = useWorkspaces(org.id);
+  const firstWorkspace = workspaces.data?.items[0]?.id;
+  const accounts = useAccounts({ kind: "workspace", id: firstWorkspace ?? "" }, !!firstWorkspace);
+  if (eff.isPending || workspaces.isPending || (!!firstWorkspace && accounts.isPending)) return <Loading />;
   if (eff.isError) return <ErrorState error={eff.error} onRetry={() => eff.refetch()} />;
-  const keys = (accounts.data?.items ?? []).filter((a) => a.kind === "ai_key");
+  const keys = (accounts.data?.items ?? []).filter((a) => a.kind === "ai_key" && a.scope === "organization");
   const endpoints = eff.data.llm.endpoints.filter((e) => e.permitted.value);
   const workspaceKeys = endpoints.some((e) => e.key_scopes.value.includes("workspace"));
   return (
@@ -343,7 +347,6 @@ function MemberAiModels({ org }: { org: Org }) {
           );
         })}
       </ul>
-      <ScopeLadder above={modelLimitsFromAbove(eff.data)} />
       <WhoChangesRules org={org} />
     </div>
   );

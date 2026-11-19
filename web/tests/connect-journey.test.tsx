@@ -469,6 +469,11 @@ describe("the App step", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search apps" }), { target: { value: "calendar" } });
     expect(await screen.findByText("Google Calendar")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "GitHub" })).toBeNull();
+    // A group with no match is hidden while searching; "No app matches" only when every group is empty (B1).
+    expect(screen.queryByText(/Ready to connect/)).toBeNull();
+    expect(screen.queryByText(/No app matches/)).toBeNull();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search apps" }), { target: { value: "zzzz" } });
+    expect(await screen.findByText(/No app matches/)).toBeInTheDocument();
   });
 
   it("Ask asks the admin, shows the asked state with Undo, and a reopened list restores it from requested.by_me", async () => {

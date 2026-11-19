@@ -171,7 +171,8 @@ export function AccountRow({
               )}
             </h3>
             {/* One chip per card (D-384): on an agent's page the kind is the list's heading and the sharing is in the line below. */}
-            {agent ? null : <Badge>{kindLabel(account.kind)}</Badge>}
+            {/* (P5-POLISH-9, E2) An organization's account says what it is by its name, not a kind chip. */}
+            {agent || scope.kind === "organization" ? null : <Badge>{kindLabel(account.kind)}</Badge>}
             {shared && !agent ? <Badge tone="accent">Shared by {org.data?.name ?? "your organization"}</Badge> : null}
           </div>
           <AccountHealth

@@ -48,7 +48,8 @@ export function providerOf(g: SignInGap): string {
 export function buildRows(apps: AppSummary[], gapById: Map<string, SignInGap>): AppRow[] {
   const groups = new Map<string, AppSummary[]>();
   for (const a of apps) groups.set(productKey(a), [...(groups.get(productKey(a)) ?? []), a]);
-  return [...groups.values()].map((members) => {
+  const byName = (x: AppSummary[], y: AppSummary[]) => productName(x[0]!).localeCompare(productName(y[0]!), undefined, { sensitivity: "base" });
+  return [...groups.values()].sort(byName).map((members) => {
     const sorted = [...members].sort((x, y) => Number(!!x.family?.instance_bound) - Number(!!y.family?.instance_bound));
     const first = sorted[0]!;
     const gap = sorted.map((m) => gapById.get(m.app_id)).find((g) => g && !g.tokenOnly) ?? null;
@@ -67,7 +68,7 @@ export function providerSentence(rows: AppRow[]): string {
   }
   return [...byProvider.entries()]
     .filter(([, names]) => names.length > 1)
-    .map(([p, names]) => `One ${p} sign-in covers ${listWords(names)}.`)
+    .map(([p, names]) => `One ${p} sign-in covers ${listWords([...names].sort((a, b) => a.localeCompare(b)))}.`)
     .join(" ");
 }
 
