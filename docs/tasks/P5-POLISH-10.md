@@ -224,3 +224,35 @@ All paths are under `web/src/`.
 ## Suggested agent/model and reason
 
 Sonnet (`nextjs-developer`). Several Administration pages with state-dependent rendering.
+
+## Completion report (lane `p5-polish-c`, 2026-11-19)
+
+Commits: part 1 `f0821d1a`, part 2 `7c376498`, part 3 `b8100399`, part 4 `460bdbd3`, part 5 `7e985eea`, part 6 `f8c2f37d`, part 7 (this commit).
+
+**Done**
+
+1. Checklist (part 1): five rows, one button each, toast stays on the checklist, Health tab, `StatusLine` health view. Part 7 added the missing `role="tabpanel"` for the Overview tabs (axe `aria-valid-attr-value`).
+2. Apps (E5): Waiting (uploaded, directory, addon packages pending review) and From Aurora ("<n> apps, approved with this release", three rows and "<n> more"); "Other apps" lists the remaining non-Aurora packages (active, rejected, disabled) with their status so they stay reachable. The name and **Review**/**Details** are real `<Link>`s. Review: sections open, Approve enabled at once, title is the app name with the version muted, `first_install` → "First install", `{instance}` → "your server's address"; Approve returns to the list with `?approved=<name>` and a status notice (an approval that flags connections for reconnecting stays on the review, where its notice says what happens).
+3. Chat platforms (E6): `waiting_for_host` is one `Unavailable` card ("<Platform> is added, but its connector isn't running"); the name is never the raw id; no "You are an instance administrator." sentence in any blocked state. The strings live in `components/channels/connector-blocked.tsx` (the Channels page), which is outside the brief's "Owns" list: the only place they are rendered.
+4. Settings (E7): runners table spans its card; **Run agents on Aurora's computers** with the owner's help text (`hosted.enabled` keeps its key). The label and help live in `crates/aurora-config/src/fields.rs` (one string pair, no test or doc quoted the old one). Sign-in lists the Helm-registered development sign-in ("Development sign-in · Set in Helm", from `GET /v1/instance`), so "No provider yet" means none; the break-glass text is a closed "If nobody can sign in" disclosure after the form.
+5. AI models (C-1034, D-385): endpoint row = name, kind as text ("LiteLLM gateway"), base URL, models line, at most one chip. The role warning shows once from `GET /v1/admin/llm-endpoint-warnings` (new hook `lib/api/llm-endpoint-warnings.ts`): amber with **Set roles** (opens the endpoint editor) for a dashboard endpoint, neutral with the Helm path (`llm.endpoints.<id>.roles`) for a Helm one. The per-endpoint "Set the roles." notice is gone from the row; the one inside the endpoint editor stays (it is the form).
+6. People › Users: own row has neither "Remove admin" nor "Turn off"; the only instance admin cannot be removed (hidden, only when the list is complete: no search, no further page); role values and Make/Remove admin and Turn on/off sit in a per-row … menu.
+7. Tests: updated `plugins-admin`, `agent-guide-section`, `addon-sources`, `channels-guided`, `admin-settings-llm`, `account-settings`, `admin-settings-sign-in`; new `admin-apps-list`; part 1's `setup-checklist`. Playwright: new `e2e/p5-polish-10.spec.ts` (fresh install walks five steps, AI key → toast and stays, apps list → review → Approve without opening sections, 1280/390 px × both themes, axe, no console errors); `onboarding.spec.ts`, `onboarding-journeys.spec.ts` (journey 1 rewritten for the checklist), `agent-guide.spec.ts` updated.
+
+**Verification (what ran)**
+
+- `pnpm typecheck`: clean. `eslint` on touched files: clean.
+- vitest, the 11 files above: 103 passed.
+- Playwright (mocked project, ports 4217/4218/4219): `p5-polish-10.spec.ts` 8 passed; `agent-guide` + `admin-settings` 49 passed; `onboarding` + `ia-navigation` + `admin-attention` (admin/wizard/checklist filter) passed; `stage4-axe`, `stage4-routes`, `stage2-narrow`, `fix-127-mattermost` (admin/connectors/chat/setup/users/plugin filter) 196 passed.
+- `scripts/guards/run-all.sh`: all guards passed; `extract-schema.py --check`: up to date. No tables changed.
+- Not run (owner rule: CI is the full gate): full vitest, full Playwright, production project, `build`. **`onboarding-journeys.spec.ts` is a real-stack spec and was NOT run**; its journey-1 rewrite is untested.
+
+**Caveats / left open**
+
+- Swap the AI-key `Dialog` for P5-POLISH-7's when it merges. No toast primitive exists: the toast is an accent `Notice role=status` (setup) and a query-parameter notice (apps).
+- Item 2 of the Health scope (an endpoint "did not answer" right after a key on it was accepted) was **not investigated**.
+- The apps list has no "needs <a token | Google sign-in>" text: the list API carries `summary` and `reaches` only, so a row says "Reaches <host> · <summary>".
+- Sign-in "one Save per form section, at that section's end, only when it has changes" is the shared section form's behaviour (P5-POLISH-2 owns it): Sign-in is one section with one Save, shown disabled when clean. Not changed.
+- BYO "no raw enum values" (value-to-words, shared with P5-POLISH-9) was **not done**: it depends on P5-POLISH-9's mapping, which is not merged.
+- The "Add Mattermost" button on the Chat platforms page is unchanged (still where an admin can act).
+- A guide link on the new Chat platforms card is the admin's "Open Administration › Chat platforms" link; no separate operator-guide link was added.

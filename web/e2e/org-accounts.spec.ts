@@ -176,11 +176,11 @@ for (const scheme of ["light", "dark"] as const) {
         expect(new Set(state.puts.map((x) => x.agent))).toEqual(new Set([giskard.id, hari.id]));
 
         // The organization's row says who can use it, in both workspaces.
-        await dialog.getByRole("button", { name: "Done", exact: true }).click();
+        await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
         const rowItem = page.getByRole("listitem", { name: "platform-prod" });
         await expect(rowItem.getByText("Agents may at most:")).toBeVisible();
-        await expect(rowItem.getByRole("button", { name: "Giskard · Read only: change access" })).toBeVisible();
-        await expect(rowItem.getByRole("button", { name: "Hari · Read only: change access" })).toBeVisible();
+        await expect(rowItem.getByRole("button", { name: "Giskard · Read only" })).toBeVisible();
+        await expect(rowItem.getByRole("button", { name: "Hari · Read only" })).toBeVisible();
         await check(page, "org-row", scheme, width);
       });
 
@@ -191,9 +191,9 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(row.getByText("Shared by Acme Labs")).toBeVisible();
         await expect(row.getByRole("button", { name: /More for/ })).toHaveCount(0);
         await row.getByRole("button", { name: "Give Daneel access" }).click();
-        await expect(row.getByRole("radio", { name: /Read only/ })).toBeChecked();
-        await expect(row.getByRole("radio", { name: /Ask before changes/ })).toHaveCount(0);
-        await expect(row.getByRole("radio", { name: /Change without asking/ })).toHaveCount(0);
+        // Read only is the only level offered, so it is text, not a select.
+        await expect(row.getByText("Read only", { exact: true })).toBeVisible();
+        await expect(row.getByRole("combobox", { name: /Daneel's access to/ })).toHaveCount(0);
         await expect(row.getByText("Limited by Acme Labs.")).toBeVisible();
         await expect(row.getByRole("button", { name: /Reconnect|Remove/ })).toHaveCount(0);
         expect(state.puts).toEqual([{ agent: agent.id, level: "read" }]);

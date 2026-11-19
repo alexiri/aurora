@@ -55,11 +55,11 @@ const openMenu = async () => {
 };
 
 describe("agent page frame (D-200)", () => {
-  it("opens a hosted agent on Chat with the five sections in one header line", async () => {
+  it("opens a hosted agent on Chat with three tabs in one header line; Behaviour and Access are in the menu", async () => {
     mockFetch(routes());
     renderPage();
     expect(await screen.findByTestId("chat-tab")).toBeInTheDocument();
-    expect(sectionTabs()).toEqual(["Chat", "Behaviour", "Triggers", "Computer", "Access"]);
+    expect(sectionTabs()).toEqual(["Chat", "Triggers", "Computer"]);
     expect(screen.getByRole("tab", { name: "Chat", selected: true })).toBeInTheDocument();
     const h1 = screen.getByRole("heading", { level: 1 });
     expect(h1.className).toContain("text-xl");
@@ -69,27 +69,38 @@ describe("agent page frame (D-200)", () => {
     expect(screen.queryByRole("tablist", { name: /pages/ })).toBeNull();
   });
 
-  it("switches sections and shows a section's pages as a second row; the URL keeps the page id", async () => {
+  it("opens Behaviour and Access from the … menu: no tab selected, a back link, the page name and its sentence; the URL keeps the page id", async () => {
     mockFetch(routes());
     renderPage();
     await screen.findByTestId("chat-tab");
-    fireEvent.click(screen.getByRole("tab", { name: "Behaviour" }));
+    await openMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Behaviour/ }));
     expect(await screen.findByTestId("instructions-tab")).toBeInTheDocument();
     expect(window.location.search).toBe("?tab=instructions");
+    expect(within(screen.getByRole("tablist", { name: "Agent sections" })).queryByRole("tab", { selected: true })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Behaviour", level: 2 })).toBeInTheDocument();
+    expect(screen.getByText("How Scout works: its name, instructions, model, memory and skills.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
     const pages = screen.getByRole("tablist", { name: "Behaviour pages" });
     expect(within(pages).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Instructions", "Memory", "Skills", "Evals"]);
     fireEvent.click(within(pages).getByRole("tab", { name: "Memory" }));
     expect(await screen.findByTestId("memory-tab")).toBeInTheDocument();
     expect(window.location.search).toBe("?tab=memory");
-    // Leaving the section and coming back returns to the page last open in it.
-    fireEvent.click(screen.getByRole("tab", { name: "Access" }));
+    // Access from the same menu; leaving and coming back returns to the page last open in Behaviour.
+    await openMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Access/ }));
     expect(await screen.findByTestId("access-tab")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Behaviour" }));
+    expect(screen.getByText("What Scout can use: apps, accounts and its AI key.")).toBeInTheDocument();
+    await openMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Behaviour/ }));
     expect(await screen.findByTestId("memory-tab")).toBeInTheDocument();
+    // The back link returns to Chat.
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(await screen.findByTestId("chat-tab")).toBeInTheDocument();
   });
 
   it("opens legacy deep links on the page they always opened: ?tab=memory, ?tab=access, ?tab=instructions", async () => {
-    for (const [tab, testId, section] of [
+    for (const [tab, testId, title] of [
       ["memory", "memory-tab", "Behaviour"],
       ["access", "access-tab", "Access"],
       ["instructions", "instructions-tab", "Behaviour"],
@@ -98,7 +109,9 @@ describe("agent page frame (D-200)", () => {
       mockFetch(routes());
       renderPage();
       expect(await screen.findByTestId(testId)).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: section, selected: true })).toBeInTheDocument();
+      // The configuration page: no tab is selected and the page has its own title.
+      expect(screen.getByRole("heading", { name: title, level: 2 })).toBeInTheDocument();
+      expect(within(screen.getByRole("tablist", { name: "Agent sections" })).queryByRole("tab", { selected: true })).toBeNull();
       cleanup();
     }
   });
@@ -113,7 +126,7 @@ describe("agent page frame (D-200)", () => {
     mockFetch(routes({}, { ...agent, kind: "byo", is_default: true }));
     renderPage();
     expect(await screen.findByTestId("instructions-tab")).toBeInTheDocument();
-    expect(sectionTabs()).toEqual(["Behaviour", "Computer", "Access"]);
+    expect(sectionTabs()).toEqual(["Computer"]);
     // Without a rail the kind and Default badges stay in the header.
     expect(screen.getByText("byo")).toBeInTheDocument();
     expect(screen.getByText("Default")).toBeInTheDocument();
@@ -134,10 +147,11 @@ describe("Agent actions menu", () => {
     mockFetch(routes());
     renderPage();
     await openMenu();
-    expect(await screen.findByRole("menuitem", { name: /Freeze agent/ })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: /Behaviour/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Access/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Freeze Scout/ })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /Delete agent/ })).toBeInTheDocument();
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
-    fireEvent.click(screen.getByRole("tab", { name: "Behaviour" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Behaviour/ }));
     await screen.findByTestId("instructions-tab");
     expect(screen.queryByText("Delete this agent")).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete agent" })).toBeNull();
@@ -148,7 +162,7 @@ describe("Agent actions menu", () => {
     const fn = mockFetch(routes({ "POST /v1/agents/a1/freeze": () => json(200, { frozen: null, effective_frozen: true }) }));
     renderPage();
     await openMenu();
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Freeze agent/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Freeze Scout/ }));
     expect(await screen.findByRole("dialog", { name: /Freeze agent Scout\?/ })).toBeInTheDocument();
     expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method === "POST")).toBe(false);
     const submit = screen.getByRole("button", { name: "Freeze agent" });
@@ -184,15 +198,19 @@ describe("Agent actions menu", () => {
     expect(await screen.findByRole("button", { name: "Unfreeze agent" })).toBeInTheDocument();
     await openMenu();
     expect(await screen.findByRole("menuitem", { name: /Delete agent/ })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /Freeze agent/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /Freeze Scout/ })).toBeNull();
   });
 
-  it("members without can_own get no Agent actions", async () => {
+  it("members without can_own see Behaviour and Access (read-only pages) and no Freeze or Delete", async () => {
     mockFetch(
       routes({ "GET /v1/workspaces/w1": () => json(200, { id: "w1", org_id: "o1", my_role: "member", timezone: "Europe/Zurich" }) }),
     );
     renderPage();
     await screen.findByTestId("chat-tab");
-    expect(screen.queryByRole("button", { name: "Agent actions" })).toBeNull();
+    await openMenu();
+    expect(await screen.findByRole("menuitem", { name: /Behaviour/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Access/ })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Freeze/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /Delete/ })).toBeNull();
   });
 });

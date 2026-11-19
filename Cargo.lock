@@ -298,6 +298,7 @@ dependencies = [
  "aurora-secrets",
  "aurora-supervisor",
  "aurora-testkit",
+ "aurora-webhook",
  "aws-lc-rs",
  "axum",
  "base64 0.23.1",
@@ -713,6 +714,7 @@ dependencies = [
  "aurora-sqlclass",
  "aurora-summary",
  "aurora-testkit",
+ "aurora-webhook",
  "axum",
  "base64 0.23.1",
  "bytes",
@@ -1092,6 +1094,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "utoipa",
 ]
 
 [[package]]

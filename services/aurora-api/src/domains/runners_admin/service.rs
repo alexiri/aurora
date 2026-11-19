@@ -149,13 +149,9 @@ pub async fn create(
     name: &str,
     actor: &crate::audit::AuditActor,
 ) -> Result<RunnerWithToken, ApiError> {
-    let name = name.trim();
-    if name.is_empty() || name.chars().count() > 64 {
-        return Err(ApiError::invalid_request(
-            "name must be 1-64 characters.",
-            vec![],
-        ));
-    }
+    let name = aurora_core::names::clean(name, 64)
+        .map_err(|e| ApiError::invalid_request(format!("name {e}."), vec![]))?;
+    let name = name.as_str();
     let tok = token::generate(TokenPrefix::Runner);
     let mut tx = crate::audit::begin(s).await?;
     let row = runners::insert(

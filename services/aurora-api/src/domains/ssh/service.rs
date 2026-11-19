@@ -7,7 +7,7 @@ use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::{Caller, KeyKind, Principal};
 use aurora_core::limits::{SSH_KEYS_PER_USER, SSH_MINTS_PER_USER_AGENT_HOUR};
-use aurora_core::{ApiError, FieldError, sanitize};
+use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
 use aurora_db::authz::{self, SshAccess};
 use aurora_db::repo::{agents, ssh as repo};
@@ -101,15 +101,13 @@ pub async fn rename_key(
     id: Uuid,
     name: &str,
 ) -> Result<SshKey, ApiError> {
-    let clean = sanitize::one_line(name, 80);
-    let clean = clean.trim();
-    if name.chars().count() > 80 || clean.is_empty() {
-        return Err(ApiError::invalid_request(
+    let clean = aurora_core::names::clean(name, 80).map_err(|e| {
+        ApiError::invalid_request(
             "Invalid request.",
-            vec![FieldError::new("/name", "must be 1 to 80 characters")],
-        ));
-    }
-    repo::rename_key(&s.pool, c.user_id, id, clean)
+            vec![FieldError::new("/name", e.to_string())],
+        )
+    })?;
+    repo::rename_key(&s.pool, c.user_id, id, &clean)
         .await?
         .map(Into::into)
         .ok_or_else(key_404)

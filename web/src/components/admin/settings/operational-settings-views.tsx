@@ -10,10 +10,9 @@ import {
   type SettingsGroup,
 } from "@/components/admin/settings/settings-section-form";
 import { ErrorState, Loading } from "@/components/states";
-import { Badge } from "@/components/ui/badge";
 import { LockPill } from "@/components/ui/lock-pill";
 import { Button } from "@/components/ui/button";
-import { DataTable, Td, Th } from "@/components/ui/data-table";
+import { Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
@@ -278,11 +277,13 @@ export function RunnersTable({ section }: { section: SettingsSection }) {
         </>
       }
     >
-      <div className="py-4">
       {runners.length === 0 ? (
-        <p className="text-sm text-ink-2">No runner has registered yet.</p>
+        <p className="py-4 text-sm text-ink-2">No runner has registered yet.</p>
       ) : (
-        <DataTable caption="Runners and sandbox sizes">
+        // (P5-POLISH-10, E7) The table spans the card edge to edge; it scrolls inside itself only when a column would not fit.
+        <div role="region" aria-label="Runners and sandbox sizes" tabIndex={0} className="-mx-4 overflow-x-auto sm:-mx-5">
+        <table className="w-full min-w-max text-left text-sm text-ink">
+          <caption className="sr-only">Runners and sandbox sizes</caption>
           <thead>
             <tr>
               <Th>Runner</Th>
@@ -307,9 +308,9 @@ export function RunnersTable({ section }: { section: SettingsSection }) {
               </tr>
             ))}
           </tbody>
-        </DataTable>
+        </table>
+        </div>
       )}
-      </div>
     </SettingsCard>
   );
 }

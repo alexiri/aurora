@@ -420,7 +420,7 @@ a try-later page (503, `Retry-After`) when `resolve` fails the same way, never a
 
 | Call | Request → Response |
 |------|--------------------|
-| `POST /preview-streams/open` | `{ grant: "aux_…" }` → `{ sandbox_id, boot_id, port, share_id, window, idle_secs, max_lifetime_secs }`; the grant is **consumed** (single use, ≤ 30 s, hashed in `preview_stream_grants`); 403 `grant_invalid`; 409 `not_current` (boot is no longer current, share paused, agent frozen, previews off); the runner uses **only** the values of this answer, never anything the relay sent. (phase 4, P4-TERM, C-617) the body gains an optional `kind: "port" | "terminal"` (absent = `"port"`); a terminal request carries a `auy_` grant hashed in `terminal_stream_grants` and the answer omits `port`/`share_id`; a runner that does not know `kind` (older version) refuses unknown kinds — the API closes the browser WebSocket 4502; a runner that knows it answers either kind on the same listener |
+| `POST /preview-streams/open` | `{ grant: "aux_…" }` → `{ sandbox_id, boot_id, port, share_id, window, idle_secs, max_lifetime_secs }`; the grant is **consumed** (single use, ≤ 30 s, hashed in `preview_stream_grants`); 403 `grant_invalid`; 423 `frozen` (agent frozen, C-1041); 409 `not_current` (boot is no longer current, share paused, previews off); the runner uses **only** the values of this answer, never anything the relay sent. (phase 4, P4-TERM, C-617) the body gains an optional `kind: "port" | "terminal"` (absent = `"port"`); a terminal request carries a `auy_` grant hashed in `terminal_stream_grants` and the answer omits `port`/`share_id`; a runner that does not know `kind` (older version) refuses unknown kinds — the API closes the browser WebSocket 4502; a runner that knows it answers either kind on the same listener |
 | `POST /preview-streams/closed` | `{ share_id, bytes_to_app, bytes_from_app, reason }` (advisory; accounting) |
 
 ## W18 — Preview byte streams (phase 4, P4-PRV-2, D-147, SEC-82)
@@ -657,8 +657,9 @@ guarded transition makes a second close, a sweep close or a heartbeat revocation
 **Leg 1, terminator → runner.** `GET /v1/preview-stream` on the runner's stream listener, `Authorization:
 Bearer auz_…` — the prefix selects the kind, as `auy_` does. The runner redeems the grant (`POST
 /v1/runner/preview-streams/open { kind: "ssh", grant }` → `{ sandbox_id, boot_id, window, idle_secs,
-max_lifetime_secs }`; 403 `grant_invalid`; 409 `not_current` when the boot is stale, the agent frozen,
-`ssh.enabled` off or the grant's session no longer open and lease-current), checks it holds the
+max_lifetime_secs }`; 403 `grant_invalid`; 423 `frozen` when the agent is frozen (C-1041); 409
+`not_current` when the boot is stale, `ssh.enabled` off or the grant's session no longer open and
+lease-current), checks it holds the
 sandbox's channel for that boot (404 `not_here`), and completes the handshake (101). The terminator's
 **first message** must then be one Text frame, within 5 s (else close 4504):
 `{"kind":"exec.open","mode":"shell"|"exec"|"sftp","command"?:string,"tty"?:{"term","cols","rows"},"env":{…}}`
@@ -723,8 +724,8 @@ mutations). The browser never sees a grant, a runner address or an SFTP byte.
 **Leg 1, API → runner.** `GET /v1/preview-stream` on the runner's stream listener :4108,
 `Authorization: Bearer auf_…` — the prefix selects the kind, as `auy_` and `auz_` do. The runner
 redeems the grant (`POST /v1/runner/preview-streams/open { kind: "files", grant }` → `{ sandbox_id,
-boot_id, window, idle_secs, max_lifetime_secs }`; 403 `grant_invalid`; 409 `not_current` when the boot
-is stale, the agent frozen or `terminal.enabled` off), checks it holds that boot's channel (404
+boot_id, window, idle_secs, max_lifetime_secs }`; 403 `grant_invalid`; 423 `frozen` when the agent is
+frozen (C-1041); 409 `not_current` when the boot is stale or `terminal.enabled` off), checks it holds that boot's channel (404
 `not_here`), enforces `FILE_SESSIONS_PER_SANDBOX` (4) live `auf_` legs (4409) and completes the
 handshake (101). The API's **first message** must be one Text frame within 5 s (else 4504):
 `{"kind":"exec.open","mode":"sftp"}` — on an `auf_` leg any other mode, a `command`, a `tty` or a

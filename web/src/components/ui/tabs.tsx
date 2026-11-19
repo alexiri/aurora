@@ -188,7 +188,7 @@ export function Tabs({
             id={tabId(base, t.value)}
             aria-selected={selected}
             aria-controls={tabPanelId(base, t.value)}
-            tabIndex={selected ? 0 : -1}
+            tabIndex={selected || (selectedIndex < 0 && i === 0) ? 0 : -1}
             onClick={() => onValueChange(t.value)}
             className={cn(tabClass(variant, selected, !useMenu), tabClassName)}
           >

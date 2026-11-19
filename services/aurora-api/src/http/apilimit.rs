@@ -57,6 +57,8 @@ pub enum Class {
     Check,
     /// (phase 5, P5-UX-5, C-919, SEC-128) `POST /v1/workspaces/{ws}/access/by-email`: one exact address per call.
     Invite,
+    /// (phase 5, P5-POLISH-4, C-1030, SEC-135) `POST /v1/workspaces/{ws}/apps/{app}/setup-request`: 20 asks per hour per person.
+    SetupRequest,
 }
 
 impl Class {
@@ -72,6 +74,7 @@ impl Class {
             Self::Files => "files",
             Self::Check => "check",
             Self::Invite => "invite",
+            Self::SetupRequest => "setup_request",
         }
     }
 }
@@ -98,6 +101,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
         ["accounts", _, _, "test"] if post => return Some(Class::Check),
         // (P5-UX-5, C-919) Adding a person by e-mail: its own small bucket (the route adds a per-workspace cap).
         ["workspaces", _, "access", "by-email"] if post => return Some(Class::Invite),
+        // (P5-POLISH-4, C-1030) Asking an admin to set an app up: 20 per person per hour.
+        ["workspaces", _, "apps", _, "setup-request"] if post => return Some(Class::SetupRequest),
         ["conversations", _, "messages"] if post => return Some(Class::Message),
         ["turns", _, "send-now"] if post => return Some(Class::Message),
         ["conversations", _, "attachments"] if post => return Some(Class::Upload),
@@ -231,6 +236,7 @@ pub struct Limits {
     pub files: Spec,
     pub check: Spec,
     pub invite: Spec,
+    pub setup_request: Spec,
     pub preview: Spec,
     pub org: Spec,
     pub unauth_get: Spec,
@@ -272,6 +278,7 @@ impl Limits {
             files: class("files", Spec::per_min(300, 60)),
             check: class("check", Spec::per_min(10, 3)),
             invite: class("invite", Spec::per_min(10, 5)),
+            setup_request: class("setup_request", Spec::per_hour(20, 20)),
             preview: Spec::per_sec(c.preview_per_second, c.preview_burst).scaled(m),
             org: Spec::per_min(c.org_per_minute, org_burst).scaled(m),
             unauth_get: Spec::per_min(UNAUTH_GET_PER_MIN, UNAUTH_GET_PER_MIN).scaled(m),
@@ -293,6 +300,7 @@ impl Limits {
             Class::Files => self.files,
             Class::Check => self.check,
             Class::Invite => self.invite,
+            Class::SetupRequest => self.setup_request,
         }
     }
 }
@@ -873,6 +881,21 @@ mod tests {
         assert_eq!(
             c(Method::POST, "/v1/workspaces/1/access/by-email"),
             Some(Class::Invite)
+        );
+        // (P5-POLISH-4) Asking an admin to set an app up is class `setup_request`; withdrawing is a plain write.
+        assert_eq!(
+            c(
+                Method::POST,
+                "/v1/workspaces/1/apps/google-calendar/setup-request"
+            ),
+            Some(Class::SetupRequest)
+        );
+        assert_eq!(
+            c(
+                Method::DELETE,
+                "/v1/workspaces/1/apps/google-calendar/setup-request"
+            ),
+            Some(Class::Write)
         );
         assert_eq!(
             c(Method::POST, "/v1/conversations/1/messages"),

@@ -1,0 +1,16 @@
+description: P5-TOOLASK an explicit block of the tool wins over the package default ask (the block is the verdict, nothing is held)
+org: {ordered_rules: []}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: block-send, action: block, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}]}
+facts:
+  host: dav.example.org
+  port: 443
+  path: /dav/outbox/
+  method: POST
+  app_id: caldav
+  tool_id: send_scheduling_message
+  tool_tags: {write: true, ask_default: true}
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: caldav, scope: workspace}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect:
+  verdict: block
+  reason: rule

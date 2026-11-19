@@ -1,9 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crate::common::*;
-use aurora_crypto::{SigningKey, generate_signing_key};
 use aurora_registry::Limits;
-use aurora_registry::builder::PackageBuilder;
 use aurora_testkit::oauth::MockOAuth;
 use aurora_testkit::wiremock::matchers::{method, path};
 use aurora_testkit::wiremock::{Mock, MockServer, ResponseTemplate};
@@ -113,6 +111,10 @@ mod account_test;
 #[path = "link_connect.rs"]
 mod link_connect;
 
+// (P5-WEBHOOK-2, D-320) The outgoing webhook's connect, edit, preview, presets and send test.
+#[path = "outgoing_webhooks.rs"]
+mod outgoing_webhooks;
+
 // (P5-CALDAV, D-275) The own-server app's connect (discovery).
 #[path = "caldav_connect.rs"]
 mod caldav_connect;
@@ -132,6 +134,16 @@ async fn world(hook_url: Option<String>) -> W {
 
 /// [`world`] with another package manifest (`hooks`: ship the fixture hook component with it).
 async fn world_with(hook_url: Option<String>, yaml: &str, hooks: bool) -> W {
+    world_with_files(hook_url, yaml, hooks, &[]).await
+}
+
+/// [`world_with`] plus archive files (the presets of an outgoing webhook, P5-WEBHOOK-2).
+async fn world_with_files(
+    hook_url: Option<String>,
+    yaml: &str,
+    hooks: bool,
+    files: &[(String, Vec<u8>)],
+) -> W {
     let oauth = MockOAuth::start().await;
     let h = Harness::with_config(|c| {
         if let Some(u) = hook_url {
@@ -142,57 +154,20 @@ async fn world_with(hook_url: Option<String>, yaml: &str, hooks: bool) -> W {
     let mut h = h;
     h.state = h.state.clone().with_connect_override(oauth.base());
     h.app = test_router(h.state.clone());
-    let root = h.user("root@x.io", true).await;
-    let (_, admin_tok) = h.good_session(root).await;
-    let admin = cookie(&admin_tok);
-    let key: SigningKey = generate_signing_key().unwrap();
-    let hd = [("cookie", admin.as_str()), ("origin", ORIGIN)];
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            "/v1/admin/trusted-keys",
-            &hd,
-            Some(json!({"publisher": "acme", "name": "k", "public_key": PackageBuilder::key_id(&key)})),
-        )
-        .await;
-    assert_eq!(s, 201, "{v}");
-    let mut b = PackageBuilder::new(yaml);
-    if hooks {
-        let wasm = hooks_wasm();
-        b.set_file("hooks.wasm", &wasm);
-    }
-    b.sign(&key, &PackageBuilder::key_id(&key));
-    let boundary = "XB";
-    let mut body = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p\"\r\nContent-Type: application/gzip\r\n\r\n"
-    )
-    .into_bytes();
-    body.extend_from_slice(&b.build().unwrap());
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/admin/plugins")
-        .header("cookie", &admin)
-        .header("origin", ORIGIN)
-        .header(
-            "content-type",
-            format!("multipart/form-data; boundary={boundary}"),
-        )
-        .body(Body::from(body))
-        .unwrap();
-    let res = h.app.clone().oneshot(req).await.unwrap();
-    let v: Value =
-        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(v["status"], "pending_approval", "{}", v["violations"]);
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            &format!("/v1/admin/plugins/{}/approve", v["id"].as_str().unwrap()),
-            &hd,
-            Some(json!({})),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    // (P5-DEDUP-1 T1 helper, with P5-WEBHOOK-2's archive files) Install and approve the package.
+    let _admin = {
+        let a = crate::plugins_lifecycle::setup(&h).await;
+        let wasm = if hooks { Some(hooks_wasm()) } else { None };
+        let mut extra: Vec<(&str, &[u8])> = files
+            .iter()
+            .map(|(p, d)| (p.as_str(), d.as_slice()))
+            .collect();
+        if let Some(w) = &wasm {
+            extra.push(("hooks.wasm", w.as_slice()));
+        }
+        a.install_with(yaml, &extra).await;
+        a.cookie
+    };
     let org = h.org().await;
     let ws = h.workspace(org).await;
     let o = h.user("owner@x.io", false).await;

@@ -211,10 +211,7 @@ impl W {
 
     async fn agent(&self, handle: &str) -> Uuid {
         let ws = self.h.workspace(self.org).await;
-        let agent = Uuid::now_v7();
-        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,$4,$4,'hosted','fake')")
-            .bind(agent).bind(self.org).bind(ws).bind(handle).execute(self.h.pool()).await.unwrap();
-        agent
+        self.h.hosted_agent(self.org, ws, handle).await
     }
 
     async fn conversation(&self) -> Uuid {

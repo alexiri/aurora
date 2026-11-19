@@ -201,6 +201,9 @@ pub struct Tool {
     pub graphql: Option<String>,
     /// `push` | `fetch`.
     pub git: Option<String>,
+    /// (P5-TOOLASK, D-397, C-1042) The package's default for the tool: `ask` (held for approval
+    /// unless a workspace or organization rule allows it) or `null`.
+    pub approval: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

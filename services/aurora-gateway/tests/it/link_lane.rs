@@ -605,7 +605,7 @@ async fn the_canaries_appear_in_no_response_error_or_log_row() {
 }
 
 /// The id, workspace and summary of the one pending approval of connection `conn`.
-async fn pending_for(pool: &sqlx::PgPool, conn: Uuid) -> (Uuid, Uuid, Value) {
+pub(super) async fn pending_for(pool: &sqlx::PgPool, conn: Uuid) -> (Uuid, Uuid, Value) {
     for _ in 0..100 {
         if let Some(row) = sqlx::query_as::<_, (Uuid, Uuid, Value)>(
             "SELECT id, workspace_id, summary FROM approvals WHERE connection_id=$1 AND status='pending'",
@@ -623,7 +623,7 @@ async fn pending_for(pool: &sqlx::PgPool, conn: Uuid) -> (Uuid, Uuid, Value) {
 }
 
 /// Applies a decision the way the API does: first decision wins, then NOTIFY.
-async fn decide(pool: &sqlx::PgPool, id: Uuid, status: &str, ws: Uuid) {
+pub(super) async fn decide(pool: &sqlx::PgPool, id: Uuid, status: &str, ws: Uuid) {
     sqlx::query(
         "UPDATE approvals SET status=$2, decided_at=now() WHERE id=$1 AND status='pending'",
     )
@@ -702,6 +702,48 @@ async fn an_approval_hold_names_the_connection_and_host_never_the_url_and_fetche
         1,
         "a withdrawn grant is not fetched after approval"
     );
+}
+
+/// (FIX-181 F1) A link hold released by SIGTERM answers `gateway_restarting` with `Retry-After: 1`.
+#[tokio::test]
+async fn a_link_hold_at_shutdown_is_503_with_retry_after() {
+    let db = aurora_testkit::TestDb::new().await;
+    let pool = db.pool().clone();
+    let l = Arc::new(lane_with_approval(&[pq()], pool.clone()).await);
+    let l2 = l.clone();
+    let t = tokio::spawn(async move { l2.get(0, "/", "").await });
+    let (_id, _ws, _) = pending_for(&pool, l.ids[0]).await;
+    l.env
+        .shutdown
+        .as_ref()
+        .expect("hold store")
+        .send(true)
+        .unwrap();
+    let r = t.await.unwrap();
+    assert_eq!(r.status, 503, "{} {}", r.head, r.body);
+    assert_eq!(r.code(), "gateway_restarting");
+    assert_eq!(
+        header(&r, "retry-after").as_deref(),
+        Some("1"),
+        "{}",
+        r.head
+    );
+    assert_eq!(l.upstream_count(), 0);
+}
+
+/// (FIX-181 F2) The link lane's unavailable approval store (the database is gone) carries
+/// `details.reason`, like the request lane.
+#[tokio::test]
+async fn a_link_hold_with_the_database_down_names_the_database_reason() {
+    let db = aurora_testkit::TestDb::new().await;
+    let pool = db.pool().clone();
+    let l = lane_with_approval(&[pq()], pool.clone()).await;
+    pool.close().await;
+    let r = l.get(0, "/", "").await;
+    assert_eq!(r.status, 503, "{} {}", r.head, r.body);
+    assert_eq!(r.code(), "approval_store_unavailable");
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(v["error"]["details"]["reason"], "database_unavailable");
 }
 
 #[tokio::test]

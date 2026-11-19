@@ -47,9 +47,11 @@ export function QuestionsSection({ agentId }: { agentId: string }) {
       title="Questions"
       description={`${items.length} of ${EVAL_QUESTIONS_PER_AGENT} questions, ${enabled} included in runs. Questions run one at a time, in this order.`}
       actions={
-        <Button size="sm" disabled={full} aria-describedby={full ? "evq-cap" : undefined} onClick={() => setDialog({})}>
-          Add a question
-        </Button>
+        items.length === 0 ? null : (
+          <Button size="sm" disabled={full} aria-describedby={full ? "evq-cap" : undefined} onClick={() => setDialog({})}>
+            Add a question
+          </Button>
+        )
       }
     >
       {full ? (

@@ -91,7 +91,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("Website")).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Team key" }).getByText("AI key")).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("No agent can use this")).toBeVisible();
-        await expect(list.getByRole("listitem", { name: "Product team" }).getByText(/The sign-in to .* expired/)).toBeVisible();
+        await expect(list.getByRole("listitem", { name: "Product team" }).getByText("Sign-in expired")).toBeVisible();
         // No rule id, host pattern or "secret" on a row.
         await expect(list).not.toContainText(/secret|host pattern|rule/i);
         await check(page, "ws-accounts", scheme, width);
@@ -101,8 +101,8 @@ for (const scheme of ["light", "dark"] as const) {
         await mockApi(page);
         await open(page, "/o/acme/w/main/agents/daneel?tab=access", scheme);
         const used = page.getByRole("list", { name: "Accounts Daneel can use" });
-        await expect(used.getByRole("listitem", { name: "acme-bot" }).getByRole("radio", { name: /Read only/ })).toBeChecked();
-        await expect(used.getByText("Daneel thinks with claude-sonnet through this key.")).toBeVisible();
+        await expect(used.getByRole("listitem", { name: "acme-bot" }).getByRole("combobox", { name: /Daneel's access to/ })).toHaveValue("read");
+        await expect(used.getByText(/Daneel thinks with claude-sonnet through this key/)).toBeVisible();
         await expect(page.getByText("Not given to Daneel (1)")).toBeVisible();
         await check(page, "agent-access", scheme, width);
       });
@@ -113,10 +113,11 @@ for (const scheme of ["light", "dark"] as const) {
         const row = page.getByRole("listitem", { name: "platform-prod" });
         // The saved choice is not one of the three: nothing is chosen and the row says how it differs.
         await expect(row.getByText(/3 actions differ/)).toBeVisible();
-        await expect(row.getByRole("radio", { name: /Ask before changes/ })).not.toBeChecked();
+        const select = row.getByRole("combobox", { name: /Daneel's access to/ });
+        await expect(select).toHaveValue("__custom");
         await check(page, "walkthrough-custom", scheme, width);
-        await row.getByText("Ask before changes", { exact: true }).click(); // the card is the label of the (visually hidden) radio
-        await expect(row.getByRole("radio", { name: /Ask before changes/ })).toBeChecked();
+        await select.selectOption("ask");
+        await expect(select).toHaveValue("ask");
         expect(state.puts).toEqual([{ level: "ask" }]);
         await check(page, "walkthrough-ask", scheme, width);
       });
@@ -125,8 +126,8 @@ for (const scheme of ["light", "dark"] as const) {
         await mockAws(page, "two");
         await open(page, "/o/acme/w/main/apps?tab=accounts", scheme);
         const row = page.getByRole("listitem", { name: "platform-prod" });
-        await expect(row.getByRole("button", { name: "Daneel · Custom: change access" })).toBeVisible();
-        await expect(row.getByRole("button", { name: "Giskard · Change without asking: change access" })).toBeVisible();
+        await expect(row.getByRole("button", { name: "Daneel · Custom" })).toBeVisible();
+        await expect(row.getByRole("button", { name: "Giskard · Change without asking" })).toBeVisible();
         await expect(row).not.toContainText(/limit/i);
         await check(page, "two-agents", scheme, width);
       });
@@ -145,12 +146,13 @@ for (const scheme of ["light", "dark"] as const) {
         });
         await page.getByRole("button", { name: "Add", exact: true }).click();
         await page.getByRole("menuitem", { name: "Add an AI key" }).click();
+        await expect(page.getByRole("dialog", { name: "Add an AI key" })).toBeVisible();
         const form = page.getByRole("form", { name: "New LLM key" });
         await form.getByLabel("Name").fill("Team key");
         await form.getByLabel("Provider endpoint").selectOption("aigw");
         await form.getByLabel("API key", { exact: true }).fill("sk-not-a-real-key");
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
-        await form.getByRole("button", { name: "Add LLM key" }).click();
+        await form.getByRole("button", { name: "Add key", exact: true }).click();
         await expect(page.getByText("Saved Team key")).toBeVisible();
         // No "Give agents access" second step.
         await expect(page.getByRole("region", { name: "Give agents access" })).toHaveCount(0);

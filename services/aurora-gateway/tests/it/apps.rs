@@ -43,6 +43,10 @@ mod ldap_lane;
 #[path = "link_lane.rs"]
 mod link_lane;
 
+// (P5-WEBHOOK-2, D-320) The outgoing-webhook send path of the same lane.
+#[path = "webhook_send.rs"]
+mod webhook_send;
+
 #[path = "account_health.rs"]
 mod account_health;
 // (P5-CALDAV, D-275) The person-pinned server's injection tests share this file's harness.
@@ -110,6 +114,9 @@ struct Rows {
     availability: (bool, Vec<String>),
     /// Active app instances visible to the org (D-74).
     instances: Vec<InstanceHostRow>,
+    /// (P5-WEBHOOK-2) Per connection: the stored webhook configuration and the org's
+    /// `settings.outgoing_webhooks`.
+    wh: std::collections::HashMap<Uuid, (Value, Option<Value>)>,
 }
 
 struct Src(Mutex<Rows>);
@@ -122,6 +129,19 @@ impl PolicySource for Src {
         } else {
             self.0.lock().unwrap().org.clone()
         })
+    }
+    async fn webhook_config(
+        &self,
+        _o: Uuid,
+        id: Uuid,
+    ) -> Result<(Option<Value>, Option<Value>), String> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .wh
+            .get(&id)
+            .map_or((None, None), |(c, o)| (Some(c.clone()), o.clone())))
     }
     async fn connection(
         &self,
@@ -189,6 +209,8 @@ struct Env {
     cache: Arc<aurora_gateway::seclink::LinkCache>,
     /// The resolver's policy cache: flushed after a test changes the rows.
     resolve_cache: Arc<aurora_gateway::resolve::ResolveCache>,
+    /// With a hold store: the shutdown signal its holds listen to (`send(true)` = SIGTERM).
+    shutdown: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
@@ -385,9 +407,10 @@ async fn start_in(
     let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
     let rows = Arc::new(Mutex::new(Vec::new()));
     let log = RequestLog::new(Arc::new(Capture(rows.clone())));
+    let mut shutdown_tx = None;
     let holds = if let (true, Some(pool)) = (with_holds, touch_pool.as_ref()) {
         let (shutdown, rx) = tokio::sync::watch::channel(false);
-        std::mem::forget(shutdown);
+        shutdown_tx = Some(shutdown);
         let hub = aurora_gateway::invalidation::Hub::new();
         tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
         while !hub.is_connected() {
@@ -442,6 +465,7 @@ async fn start_in(
             log,
             cache,
             resolve_cache,
+            shutdown: shutdown_tx,
         },
         src,
         store,

@@ -19,14 +19,7 @@ fn bad(path: &str, msg: &str) -> ApiError {
 }
 
 fn name_ok(n: &str) -> Result<String, ApiError> {
-    let t = n.trim();
-    if !(1..=80).contains(&t.chars().count()) || t.chars().any(char::is_control) {
-        return Err(bad(
-            "/name",
-            "must be 1-80 characters without control characters",
-        ));
-    }
-    Ok(t.to_owned())
+    aurora_core::names::clean(n, 80).map_err(|e| bad("/name", &e.to_string()))
 }
 
 /// (P4-HAR, D-122) A harness must be one `hosted.enabled_harnesses` allows (`fake` only with

@@ -986,6 +986,18 @@ pub struct ToolItem {
     /// `graphql` and `git`); absent = matched on host, method and path only, as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<Vec<ParamCondition>>,
+    /// (P5-TOOLASK, D-397, C-1042) The package's default for this tool: `ask` = held for a person's
+    /// approval unless an explicit workspace or organization rule allows or blocks it. Write group
+    /// only; absent = no package default (and no change to the package's snapshot hash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ToolDefaultApproval>,
+}
+
+/// (P5-TOOLASK, C-1042) The values of a tool's `approval`; only `ask` exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolDefaultApproval {
+    Ask,
 }
 
 /// `apps[].grants` (phase 4, P4-GRANTS, D-123, SEC-67): restrictions that only tighten.

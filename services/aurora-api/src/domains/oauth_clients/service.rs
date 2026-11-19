@@ -210,6 +210,8 @@ pub async fn create(
         discard(state, &c, &sref).await;
         return Err(e);
     }
+    // (P5-POLISH-4) A new client can make an app ready: re-evaluate the open setup requests.
+    crate::domains::app_setup_requests::service::reevaluate(state, scope.org).await;
     Ok(row)
 }
 
@@ -289,6 +291,7 @@ pub async fn patch(
     if new_ref.is_some() {
         discard(state, &c, &old_ref).await;
     }
+    crate::domains::app_setup_requests::service::reevaluate(state, updated.org_id).await;
     Ok(updated)
 }
 
@@ -311,5 +314,6 @@ pub async fn delete(state: &AppState, row: &ClientRow, actor: &AuditActor) -> Re
     if let Ok(r) = row.secret_ref.parse::<SecretRef>() {
         discard(state, &ctx(row.id, row.org_id, row.workspace_id), &r).await;
     }
+    crate::domains::app_setup_requests::service::reevaluate(state, row.org_id).await;
     Ok(())
 }

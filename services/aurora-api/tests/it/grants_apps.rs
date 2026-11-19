@@ -2,13 +2,8 @@
 //! FIX-154 (D-306(c), C-895, C-896): credential-free apps and `PUT /agents/{agent}/grants/apps/{app}`.
 
 use crate::common::*;
-use aurora_crypto::{SigningKey, generate_signing_key};
-use aurora_registry::builder::PackageBuilder;
-use axum::body::Body;
-use http::{Method, Request};
-use http_body_util::BodyExt;
+use http::Method;
 use serde_json::{Value, json};
-use tower::ServiceExt;
 use uuid::Uuid;
 
 /// `free_app`: nothing to enter. `free_custom`: the same, `custom_only`. `needs_key`: a field.
@@ -62,54 +57,11 @@ struct W {
 
 async fn world() -> W {
     let h = Harness::new().await;
-    let root = h.user("root@x.io", true).await;
-    let (_, admin_tok) = h.good_session(root).await;
-    let admin = cookie(&admin_tok);
-    let key: SigningKey = generate_signing_key().unwrap();
-    let hd = [("cookie", admin.as_str()), ("origin", ORIGIN)];
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            "/v1/admin/trusted-keys",
-            &hd,
-            Some(json!({"publisher": "acme", "name": "k", "public_key": PackageBuilder::key_id(&key)})),
-        )
-        .await;
-    assert_eq!(s, 201, "{v}");
-    let mut b = PackageBuilder::new(YAML);
-    b.sign(&key, &PackageBuilder::key_id(&key));
-    let boundary = "XB";
-    let mut body = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p\"\r\nContent-Type: application/gzip\r\n\r\n"
-    )
-    .into_bytes();
-    body.extend_from_slice(&b.build().unwrap());
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/admin/plugins")
-        .header("cookie", &admin)
-        .header("origin", ORIGIN)
-        .header(
-            "content-type",
-            format!("multipart/form-data; boundary={boundary}"),
-        )
-        .body(Body::from(body))
-        .unwrap();
-    let res = h.app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), 201);
-    let v: Value =
-        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(v["status"], "pending_approval", "{}", v["violations"]);
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            &format!("/v1/admin/plugins/{}/approve", v["id"].as_str().unwrap()),
-            &hd,
-            Some(json!({})),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    let _admin = {
+        let a = crate::plugins_lifecycle::setup(&h).await;
+        a.install(YAML).await;
+        a.cookie
+    };
 
     let org = h.org().await;
     let ws = h.workspace(org).await;
@@ -140,11 +92,7 @@ impl W {
     }
 
     async fn call(&self, who: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", who), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call(who, m, uri, body).await
     }
 
     fn url(&self, agent: Uuid, app: &str) -> String {

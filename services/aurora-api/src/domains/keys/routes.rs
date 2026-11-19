@@ -43,8 +43,8 @@ async fn list_org_keys(
     Path(org): Path<Uuid>,
     Query(q): Query<PageParams>,
 ) -> Result<Json<Page<ApiKey>>, ApiError> {
-    let p = q.resolve()?;
     c.org(&s, org).await?.require_admin()?;
+    let p = q.resolve()?;
     let rows = api_keys::list_org(&s.pool, org, p.after.map(|a| (a.t, a.id)), p.fetch()).await?;
     Ok(Json(page(rows, p.limit)))
 }
@@ -95,8 +95,8 @@ async fn list_workspace_keys(
     Path(ws): Path<Uuid>,
     Query(q): Query<PageParams>,
 ) -> Result<Json<Page<ApiKey>>, ApiError> {
-    let p = q.resolve()?;
     require_own(&c.workspace(&s, ws).await?)?;
+    let p = q.resolve()?;
     let rows =
         api_keys::list_workspace(&s.pool, ws, p.after.map(|a| (a.t, a.id)), p.fetch()).await?;
     Ok(Json(page(rows, p.limit)))

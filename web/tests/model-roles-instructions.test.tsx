@@ -79,7 +79,7 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
   it("labels the default model, lists the endpoint's models per role with the claude-code alias", async () => {
     mockFetch(base());
     wrap(<InstructionsTab agent={agent()} wsId="w1" />);
-    expect(screen.getByLabelText("Default model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toBeInTheDocument();
     expect(screen.getByText(/It may use other allowed models on the same endpoint/)).toBeInTheDocument();
     const large = await roleSelect("Large (opus)");
     expect(screen.getByLabelText("Medium (sonnet)")).toBeInTheDocument();
@@ -89,10 +89,8 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
     expect(names).not.toContain("elsewhere");
     await waitFor(() => expect(within(large).getByRole("option", { name: "Use the endpoint's setting (claude-opus)" })).toBeInTheDocument());
     expect(within(screen.getByLabelText("Small (haiku)")).getByRole("option", { name: "Use the endpoint's setting (none)" })).toBeInTheDocument();
-    expect((await screen.findAllByTestId("role-warning")).map((n) => n.textContent)).toEqual([
-      expect.stringContaining("Medium is not set."),
-      expect.stringContaining("Small is not set."),
-    ]);
+    // (P5-POLISH-6, D-385) The role warnings are not on this page; the endpoint shows them.
+    expect(screen.queryAllByTestId("role-warning")).toHaveLength(0);
   });
 
   it("saves roles with the default endpoint and the subagent default; clearing them sends null", async () => {
@@ -109,6 +107,8 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
     mockFetch({ ...base(), "PATCH /v1/agents/a1": () => json(200, agent()) });
     const stored = agent({ model_roles: { endpoint_id: "gw", small: "claude-sonnet" }, subagent_model: "small" });
     wrap(<InstructionsTab agent={stored} wsId="w1" />);
+    // Only the instructions change: the roles and the subagent model stay out of the request.
+    fireEvent.change(await screen.findByLabelText("Instructions"), { target: { value: "Changed" } });
     fireEvent.click(await screen.findByRole("button", { name: "Save" }));
     await waitFor(() => expect(patches()).toHaveLength(1));
     expect(patches()[0]!.body).not.toHaveProperty("model_roles");
@@ -177,7 +177,7 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
     expect(await screen.findByText(/belong to another endpoint/)).toBeInTheDocument();
   });
 
-  it("shows the drop notice and a not-allowed warning from readiness", async () => {
+  it("shows no role warning on the page, even when readiness reports a drop or a not-allowed role (D-385)", async () => {
     mockFetch({
       ...base(),
       "GET /v1/agents/a1/model-readiness": () =>
@@ -188,8 +188,8 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
         })),
     });
     wrap(<InstructionsTab agent={agent({ model_roles: { endpoint_id: "gw", large: "claude-opus" }, subagent_model: "medium" })} wsId="w1" />);
-    const notes = (await screen.findAllByTestId("role-warning")).map((n) => n.textContent);
-    expect(notes.some((t) => t?.includes("Large (claude-opus) is not allowed for your organization"))).toBe(true);
-    expect(notes.some((t) => t?.includes("The Small model set for this agent is no longer usable"))).toBe(true);
+    await roleSelect("Large (opus)");
+    expect(screen.queryAllByTestId("role-warning")).toHaveLength(0);
+    expect(screen.queryByText(/is not allowed for your organization/)).toBeNull();
   });
 });

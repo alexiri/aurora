@@ -120,8 +120,9 @@ for (const scheme of ["light", "dark"] as const) {
         // One heading for the page: the tabs' sections do not repeat it as another title.
         await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toHaveCount(1);
         // The agents section's groups and its runners table are one run on the tab, not a page of their own.
-        await expect(page.getByRole("group", { name: "Defaults for new agents" })).toBeVisible();
-        await expect(page.getByRole("group", { name: "Runners and sandbox sizes" })).toBeVisible();
+        // (P5-POLISH-2) Settings groups are SettingsCards: a section titled by its heading, no longer a named group.
+        await expect(page.getByRole("heading", { name: "Defaults for new agents" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Runners and sandbox sizes" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
         for (const tab of ["BYO", "Computers", "Skills"]) {
@@ -138,7 +139,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByRole("heading", { name: "AI models", level: 1 })).toHaveCount(1);
         expect(await axeClean(page)).toEqual([]);
         await page.getByRole("tab", { name: "Rules" }).click();
-        await expect(page.getByRole("group", { name: "AI keys" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "AI keys" })).toBeVisible();
         await expect(page.getByRole("region", { name: "Where organizations stand" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);

@@ -721,9 +721,7 @@ async fn rename_and_grants_are_idempotent_and_audited() {
     // An agent in a workspace the owner cannot see is 404.
     let other_org = w.h.org().await;
     let other_ws = w.h.workspace(other_org).await;
-    let stranger = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'s','S','byo','medium','')")
-        .bind(stranger).bind(other_org).bind(other_ws).execute(w.h.pool()).await.unwrap();
+    let stranger = w.h.byo_agent(other_org, other_ws, "s", "S").await;
     assert_eq!(w.grant(t, stranger).await, 404);
     let del = w
         .call(
@@ -889,9 +887,7 @@ async fn a_grant_of_another_agent_an_inactive_token_and_an_inactive_link_are_ref
     let v = w.send_as_me("x").await;
     assert!(refusal(&v).starts_with("not_granted"), "{v}");
     // A grant of another agent is no grant of this one.
-    let other = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'o','Other','byo','medium','')")
-        .bind(other).bind(w.org).bind(w.ws).execute(w.h.pool()).await.unwrap();
+    let other = w.h.byo_agent(w.org, w.ws, "o", "Other").await;
     assert_eq!(w.grant(t, other).await, 204);
     let v = w.send_as_me("x").await;
     assert!(refusal(&v).starts_with("not_granted"), "{v}");

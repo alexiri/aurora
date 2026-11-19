@@ -3,189 +3,98 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { ConnectorAvailableCallout } from "@/components/connectors/available-callout";
 import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { ErrorState, Loading } from "@/components/states";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { CheckboxField } from "@/components/ui/form";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { CheckIcon } from "@/components/ui/icons";
+import { Meter } from "@/components/ui/meter";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
-import { StatusDot } from "@/components/ui/status-dot";
+import { StatusLine, type StatusTone } from "@/components/ui/status-line";
+import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { errorMessage } from "@/lib/api/errors";
 import { onboardingKeys, useAdminSetup, type SetupCheck, type SetupStatus, type SetupStep } from "@/lib/api/onboarding";
 import { formatBytes } from "@/lib/api/attachments";
 import { useAdminStorage } from "@/lib/api/org";
+import { usePlugins } from "@/lib/api/plugins";
 import { useBackfillStarterGrants, usePlacement, useSavePlacement, type PlacementView as Placement, type PutPlacement } from "@/lib/api/placement";
+import { useAgents, useMe } from "@/lib/api/queries";
 import { useSecrets } from "@/lib/api/secrets";
-import { useOrgs, useWorkspaces } from "@/lib/api/queries";
-import { landingPath } from "@/lib/nav/landing";
+import { useAgentReplied } from "@/lib/onboarding/use-guide";
 import { adminRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 import { AttentionSection } from "./attention-section";
 import { OwnerlessBanner } from "./ownerless-banner";
-import { PlacementView } from "./placement-view";
 import { SignInGaps, gapsFromChecks } from "./sign-in-gaps";
 import { PreviewsLine } from "./previews-line";
 import { PushLine } from "./push-line";
 import { SshLine } from "./ssh-line";
 
-type Tone = "accent" | "pending" | "neutral";
+/** How many steps there are (D-391): builtin apps arrive approved, so there is no approval step. */
+export const SETUP_STEPS = 5;
 
-const STATE: Record<SetupCheck["status"], { label: string; tone: Tone }> = {
-  ok: { label: "Ready", tone: "accent" },
-  warning: { label: "Check this", tone: "pending" },
-  todo: { label: "To do", tone: "neutral" },
-};
+type StepId = "signin" | "placement" | "key" | "try" | "email";
 
-const TITLES: Record<string, { title: string; lead: string }> = {
-  roles: { title: "Sign-in and roles", lead: "Who is an admin, and how people get their roles." },
-  placement: { title: "Where new users land", lead: "The organization and workspace a new person gets on day one." },
-  llm: { title: "LLM access", lead: "Agents need an LLM key and a model to think." },
-  runners: { title: "Agents can run", lead: "Agents run on their own computers, started by a runner, and reach the outside through the gateway." },
-  optional: { title: "Optional", lead: "Nothing here is needed to start." },
-};
-
-/** What to do about a check that is not ready, in words. */
-const FIX: Record<string, string> = {
-  no_provider: "Add an OIDC provider so people can sign in. The operator guide on sign-in explains how.",
-  no_role_mappings: "Map a role from your sign-in token to instance admin. The operator guide on sign-in explains how.",
-  no_endpoints: "Add an LLM endpoint under Admin › Settings › LLM endpoints. The operator guide on LLM endpoints explains how.",
-  endpoint_unreachable: "Check the endpoint's address and that the API can reach it. Test connection is on the endpoint's page.",
-  no_runner: "Install a runner and register it. The operator guide on runners explains how.",
-  runner_offline: "Check that the runner is running and can reach the API. The operator guide on runners explains how.",
-  no_gateway: "Start the gateway. Without it agents cannot reach the internet or the LLM.",
-  plugins_pending: "Review them under Apps & accounts › Apps.",
-  email_not_configured: "Set an SMTP server under Platform › Email.",
-};
-
-/** The checks whose fix is made on Admin › Settings › LLM endpoints (SET-3): the step links there. */
-const LLM_SETTINGS_FIXES: Record<string, true> = { no_endpoints: true, endpoint_unreachable: true };
-
-function CheckRow({ c }: { c: SetupCheck }) {
-  const s = STATE[c.status];
-  const fix = c.status !== "ok" ? FIX[c.reason] : undefined;
-  return (
-    <li className="space-y-1 py-2 text-sm" data-reason={c.reason}>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <StatusDot tone={c.status === "ok" ? "accent" : c.status === "warning" ? "pending" : "neutral"}>{s.label}</StatusDot>
-        <span className="min-w-0 break-words text-ink">{c.message}</span>
-      </div>
-      {c.value ? (
-        <p className="break-all pl-0 font-mono text-xs text-ink-2">{c.value}</p>
-      ) : null}
-      {fix ? (
-        <p className="text-ink-2">
-          {fix}
-          {c.reason in LLM_SETTINGS_FIXES ? (
-            <>
-              {" "}
-              <Link href={adminRoutes.aiModels("endpoints")} className="font-medium text-ink underline underline-offset-2">
-                Open LLM endpoints
-              </Link>
-            </>
-          ) : null}
-        </p>
-      ) : null}
-      {c.helm ? (
-        <p className="text-xs text-muted">
-          Helm value: <code className="font-mono text-ink-2">{c.helm}</code> (read-only here)
-        </p>
-      ) : null}
-    </li>
-  );
+interface Row {
+  id: StepId;
+  title: string;
+  optional?: boolean;
+  done: boolean;
+  /** One line on the current state. */
+  summary: ReactNode;
 }
 
-function Checks({ step }: { step: SetupStep }) {
-  if (step.checks.length === 0) return null;
-  return (
-    <ul aria-label={`${TITLES[step.id]?.title ?? step.id} checks`} className="divide-y divide-line">
-      {step.checks.map((c) => (
-        <CheckRow key={c.id} c={c} />
-      ))}
-    </ul>
-  );
+/** The step of the server's status by id. */
+const stepOf = (setup: SetupStatus, id: string): SetupStep | undefined => setup.steps.find((s) => s.id === id);
+
+/** The count of a step's checks by id, for the health lines. */
+const checkOf = (setup: SetupStatus, stepId: string, id: string): SetupCheck | undefined => stepOf(setup, stepId)?.checks.find((c) => c.id === id);
+
+/** Sign-in is done when the roles step has no open item. */
+const signInDone = (setup: SetupStatus) => stepOf(setup, "roles")?.status === "ok";
+
+/** An organization AI key exists: the `org_key` check, else the whole LLM step being fine. */
+function keyDone(setup: SetupStatus): boolean {
+  const llm = stepOf(setup, "llm");
+  const key = llm?.checks.find((c) => c.id === "org_key");
+  return key ? key.status === "ok" : llm?.status === "ok";
 }
 
-function StepCard({ n, id, step, children }: { n: number; id: string; step?: SetupStep; children: ReactNode }) {
-  const meta = TITLES[id] ?? { title: "Try it", lead: "Open your workspace and say hello." };
-  const state = step ? STATE[step.status] : null;
-  return (
-    <li id={`setup-${id}`} className="scroll-mt-20">
-      <Card role="region" aria-labelledby={`setup-${id}-h`} className="space-y-3">
-        <div className="flex flex-wrap items-start gap-3">
-          <span
-            aria-hidden="true"
-            className={cn(
-              "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
-              step?.status === "ok" ? "bg-accent text-on-accent" : "bg-subtle text-ink-2",
-            )}
-          >
-            {n}
-          </span>
-          <div className="min-w-0 flex-1">
-            <h2 id={`setup-${id}-h`} className="font-display text-base font-semibold text-ink">
-              {meta.title}
-            </h2>
-            <p className="mt-0.5 text-sm text-ink-2">{meta.lead}</p>
-          </div>
-          {state ? <Badge tone={state.tone === "pending" ? "neutral" : state.tone}>{state.label}</Badge> : null}
-        </div>
-        {children}
-      </Card>
-    </li>
-  );
+/** E-mail is done when SMTP works: the optional step carries no `email_not_configured` check. */
+const emailDone = (setup: SetupStatus) => !(stepOf(setup, "optional")?.checks.some((c) => c.reason === "email_not_configured") ?? false);
+
+/** The required steps (everything but the optional e-mail): setup is complete when they are all done. */
+export function setupComplete(setup: SetupStatus, replied: boolean): boolean {
+  return setup.placement_saved && signInDone(setup) && keyDone(setup) && replied;
 }
 
-function RolesBody({ setup, step }: { setup: SetupStatus; step: SetupStep }) {
-  const you = setup.you;
-  return (
-    <div className="space-y-3">
-      {you ? (
-        <div className="space-y-1 text-sm text-ink-2">
-          <p>
-            You signed in through <strong className="text-ink">{you.provider_name ?? you.provider}</strong>.
-            {you.role_claim ? (
-              <>
-                {" "}
-                Your token&apos;s <code className="font-mono text-ink">{you.role_claim}</code>:
-              </>
-            ) : null}
-          </p>
-          {you.values.length > 0 ? (
-            <ul aria-label="Your role values" className="space-y-1">
-              {you.values.map((v) => {
-                const g = you.granted.find((x) => x.value === v);
-                const what = g
-                  ? [g.instance_admin ? "instance admin" : null, g.org ? `${g.org.role} of ${g.org.slug}` : null, ...g.workspaces.map((w) => `${w.role} of workspace ${w.slug}`)]
-                      .filter(Boolean)
-                      .join(", ")
-                  : "";
-                return (
-                  <li key={v} className="flex flex-wrap items-center gap-2">
-                    <code className="rounded-control bg-subtle px-1.5 py-0.5 font-mono text-xs text-ink">{v}</code>
-                    <span>{what ? `→ ${what}` : "→ not mapped to anything"}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p>The token carried no role values.</p>
-          )}
-        </div>
-      ) : (
-        <p className="text-sm text-ink-2">Your last sign-in did not read a role claim, so there is nothing to show here.</p>
-      )}
-      <Checks step={step} />
-      <Link href={adminRoutes.signIn()} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-        Open Sign-in settings
-      </Link>
-    </div>
-  );
+/** How many of the five steps are done. */
+export function doneCount(setup: SetupStatus, replied: boolean): number {
+  return [signInDone(setup), setup.placement_saved && stepOf(setup, "placement")?.status !== "todo", keyDone(setup), replied, emailDone(setup)].filter(Boolean).length;
+}
+
+/** The admin's own agent: the default agent of their personal workspace, and whether it has answered once. */
+function useTryIt() {
+  const me = useMe();
+  let personal: { id: string; href: string } | null = null;
+  for (const m of me.data?.memberships ?? []) {
+    const w = m.workspaces.find((x) => x.personal === true);
+    if (w?.id) {
+      personal = { id: w.id, href: `/o/${m.org.slug}/w/${w.slug}` };
+      break;
+    }
+  }
+  const agents = useAgents(personal?.id);
+  const agent = agents.data?.items.find((a) => a.is_default) ?? agents.data?.items[0];
+  const replied = useAgentReplied(agent?.id);
+  const href = personal && agent ? `${personal.href}/agents/${agent.handle}?tab=chat` : (personal?.href ?? "/");
+  return { href, replied: replied.data === true, ready: !me.isPending };
 }
 
 /** Build the whole-document PUT from the saved view with another starter-grant set (C-521). */
@@ -202,37 +111,6 @@ function putWithStarters(v: Placement, starters: { kind: "secret" | "connection"
 
 /** Placement allows starter grants: a saved shared organization with personal workspaces (C-521). */
 const startersAllowed = (p: Placement) => p.saved && p.mode === "shared_org" && p.personal_workspace.enabled;
-
-/** "Give it to every new user's agent": the starter grant of the org key (`04 §New-user placement`), on by default (C-922). */
-function StarterSwitch({ placement, secretId, onChanged }: { placement: Placement; secretId: string; onChanged: () => void }) {
-  const save = useSavePlacement();
-  const on = placement.starter_grants.some((g) => g.kind === "secret" && g.id === secretId);
-  const usable = startersAllowed(placement);
-  function toggle(next: boolean) {
-    const others = placement.starter_grants.filter((g) => !(g.kind === "secret" && g.id === secretId)).map((g) => ({ kind: g.kind, id: g.id }));
-    save.mutate(putWithStarters(placement, next ? [...others, { kind: "secret", id: secretId }] : others), { onSuccess: onChanged });
-  }
-  return (
-    <div className="space-y-2">
-      <CheckboxField
-        id="setup-starter"
-        label="Give the organization's AI key to every new person's agent"
-        hint="Every new person's agent can use this key from the first minute. Turn off to make people add their own."
-        checked={on}
-        disabled={!usable || save.isPending}
-        onChange={toggle}
-      />
-      {!usable ? (
-        <p className="text-sm text-ink-2">Save a shared organization with personal workspaces in the step above to turn this on.</p>
-      ) : null}
-      {save.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(save.error)}
-        </Notice>
-      ) : null}
-    </div>
-  );
-}
 
 /** (C-922) People who signed in before the starter grant existed: one click gives them the key too. Idempotent. */
 function BackfillOffer({ waiting }: { waiting: number }) {
@@ -263,116 +141,196 @@ function BackfillOffer({ waiting }: { waiting: number }) {
   );
 }
 
-function LlmBody({ step, waiting, onChanged }: { step: SetupStep; waiting: number; onChanged: () => void }) {
+/**
+ * The AI-key dialog of the checklist: the organization's key form for the default organization. The first key is a
+ * starter grant by default, whenever placement allows one (C-922).
+ */
+function AiKeyDialog({ open, onOpenChange, onSaved }: { open: boolean; onOpenChange: (o: boolean) => void; onSaved: () => void }) {
   const placement = usePlacement();
   const savePlacement = useSavePlacement();
   const org = placement.data?.default_org ?? null;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="lg" title="Add an organization AI key" description={org ? `Every new agent in ${org.name} gets this key.` : undefined}>
+        {org ? (
+          <LlmKeyForm
+            scope={{ kind: "organization", id: org.id }}
+            orgId={org.id}
+            onSaved={(secret) => {
+              const p = placement.data;
+              if (p && startersAllowed(p)) {
+                const others = p.starter_grants.map((g) => ({ kind: g.kind, id: g.id }));
+                savePlacement.mutate(putWithStarters(p, [...others, { kind: "secret", id: secret.id }]), { onSettled: onSaved });
+              } else onSaved();
+            }}
+          />
+        ) : (
+          <Loading />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const rowButton = cn(buttonVariants({ variant: "outline", size: "sm" }));
+
+/** One row of the checklist: a status circle (a check when done, the number otherwise), a title, one line, one button. */
+function ChecklistRow({ n, row, action, primary }: { n: number; row: Row; action: ReactNode; primary: boolean }) {
+  return (
+    <li id={`setup-${row.id}`} data-step={row.id} data-done={row.done} className={cn("flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5", primary && "bg-pending-panel")}>
+      <span
+        aria-hidden="true"
+        className={cn(
+          "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
+          row.done ? "bg-accent-soft text-accent-ink" : primary ? "bg-pending-panel text-pending-ink" : "bg-subtle text-ink-2",
+        )}
+      >
+        {row.done ? <CheckIcon className="size-4" /> : n}
+      </span>
+      <div className="min-w-0 flex-1">
+        <h2 className="font-display text-base font-semibold text-ink">
+          {row.title}
+          {row.optional ? <span className="ml-1.5 text-sm font-normal text-muted">· optional</span> : null}
+          <span className="sr-only">{row.done ? " (done)" : " (to do)"}</span>
+        </h2>
+        <p className="text-sm text-ink-2">{row.summary}</p>
+      </div>
+      <div className="shrink-0">{action}</div>
+    </li>
+  );
+}
+
+/** The checklist: five rows, each one state and one button. */
+function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup: SetupStatus; tryIt: ReturnType<typeof useTryIt>; toast: string | null; onKeyAdded: () => void; onDismissToast: () => void }) {
+  const placement = usePlacement();
+  const org = placement.data?.default_org ?? null;
   const secrets = useSecrets({ kind: "organization", id: org?.id ?? "" });
   const orgKey = (secrets.data?.items ?? []).find((s) => s.kind === "llm" && s.status === "active");
+  const [keyOpen, setKeyOpen] = useState(false);
+  const uploaded = usePlugins("pending_approval");
+  const waiting = (uploaded.data?.items ?? []).filter((p) => p.origin !== "aurora").length;
+  const you = setup.you;
+  const placed = setup.placement_saved && stepOf(setup, "placement")?.status !== "todo";
+
+  const rows: Row[] = [
+    { id: "signin", title: "Sign-in", done: signInDone(setup), summary: you ? (you.provider_name ?? you.provider) : "Development sign-in" },
+    {
+      id: "placement",
+      title: "Where new people land",
+      done: placed,
+      summary:
+        placed && org
+          ? `The ${org.name} organization, ${placement.data?.personal_workspace.enabled ? "each in their own workspace" : "in a shared workspace"}`
+          : "Choose the organization and workspace a new person gets on day one",
+    },
+    {
+      id: "key",
+      title: "AI key",
+      done: keyDone(setup),
+      summary: keyDone(setup) ? `${orgKey?.name ?? "The organization's key"} · every new agent gets it` : org ? "Add an organization AI key" : "Choose where new people land first",
+    },
+    { id: "try", title: "Try it", done: tryIt.replied, summary: "Say hello to your own agent" },
+    {
+      id: "email",
+      title: "E-mail",
+      optional: true,
+      done: emailDone(setup),
+      summary: emailDone(setup) ? "Invitations and approval notices are sent" : "For invitations and approval notices",
+    },
+  ];
+  const first = rows.findIndex((r) => !r.done && !r.optional);
+  const actions: Record<StepId, ReactNode> = {
+    signin: (
+      <Link href={adminRoutes.signIn()} className={rowButton}>
+        {rows[0]!.done ? "Review" : "Set up"}
+      </Link>
+    ),
+    placement: (
+      <Link href={adminRoutes.people("new-users")} className={rowButton}>
+        {placed ? "Change" : "Choose"}
+      </Link>
+    ),
+    key: (
+      <Button variant={first === 2 ? "primary" : "outline"} size="sm" disabled={!org || !placement.data?.saved} onClick={() => setKeyOpen(true)}>
+        {rows[2]!.done ? "Add another" : "Add key"}
+      </Button>
+    ),
+    try: (
+      <Link href={tryIt.href} className={cn(buttonVariants({ variant: first === 3 ? "primary" : "outline", size: "sm" }), first === 3 && "text-on-primary!")}>
+        Open chat
+      </Link>
+    ),
+    email: (
+      <Link href={adminRoutes.platform("email")} className={rowButton}>
+        {rows[4]!.done ? "Review" : "Set up"}
+      </Link>
+    ),
+  };
+  const done = rows.filter((r) => r.done).length;
   return (
     <div className="space-y-4">
-      <Checks step={step} />
-      {!org || !placement.data?.saved ? (
-        <p className="text-sm text-ink-2">Choose the default organization in the step above, then add its LLM key here.</p>
-      ) : (
-        <div className="space-y-3">
-          <h3 className="font-display text-sm font-semibold text-ink">{orgKey ? `LLM key of ${org.name}` : `Add an organization LLM key for ${org.name}`}</h3>
-          {orgKey ? (
-            <p className="text-sm text-ink-2">
-              <strong className="text-ink">{orgKey.name}</strong> belongs to {org.name}. It is stored sealed and never shown again.
-            </p>
-          ) : (
-            <LlmKeyForm
-              scope={{ kind: "organization", id: org.id }}
-              orgId={org.id}
-              onSaved={(secret) => {
-                // (C-922) The first key is a starter grant by default, whenever placement allows one.
-                const p = placement.data;
-                if (p && startersAllowed(p)) {
-                  const others = p.starter_grants.map((g) => ({ kind: g.kind, id: g.id }));
-                  savePlacement.mutate(putWithStarters(p, [...others, { kind: "secret", id: secret.id }]), { onSettled: onChanged });
-                } else onChanged();
-              }}
-            />
-          )}
-          {orgKey ? <StarterSwitch placement={placement.data} secretId={orgKey.id} onChanged={onChanged} /> : null}
-          {orgKey && placement.data.starter_grants.some((g) => g.kind === "secret" && g.id === orgKey.id) ? <BackfillOffer waiting={waiting} /> : null}
-        </div>
-      )}
-      <Link href={adminRoutes.aiModels("endpoints")} className="inline-block text-sm font-medium text-ink underline underline-offset-2">
-        Open AI models
-      </Link>
-    </div>
-  );
-}
-
-/** Step 5: apps people can't sign in to yet (C-924), chat platforms and e-mail, each linking to the page that holds it. */
-function OptionalBody({ step }: { step: SetupStep }) {
-  const placement = usePlacement();
-  const gaps = gapsFromChecks(step.checks);
-  // The instance-wide OAuth client count is the gaps' business now; the rest stays a plain check.
-  const rest: SetupStep = { ...step, checks: step.checks.filter((c) => !c.id.startsWith("app:") && c.id !== "oauth_clients") };
-  return (
-    <div className="space-y-4">
-      <SignInGaps gaps={gaps} where={{ level: "admin", orgSlug: placement.data?.default_org?.slug }} />
-      <Checks step={rest} />
-      <div className="flex flex-wrap gap-2">
-        <Link href={adminRoutes.chatPlatforms()} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-          Chat platforms
-        </Link>
-        <Link href={adminRoutes.platform("email")} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-          Platform › Email
-        </Link>
-        <Link href={adminRoutes.apps("apps")} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-          Apps &amp; accounts
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-function TryBody() {
-  const placement = usePlacement();
-  const orgs = useOrgs();
-  // The step promises "if Daneel answers, everything above works": that is the placement's default
-  // organization — the one the wizard set up with its key — not whichever org happens to be first
-  // in the admin's list (their own personal organization predates the placement and has no key).
-  const org = placement.data?.default_org ?? orgs.data?.items[0];
-  const workspaces = useWorkspaces(org?.id);
-  const href = useMemo(() => (org ? (landingPath([org], workspaces.data?.items) ?? "/") : "/"), [org, workspaces.data]);
-  return (
-    <div className="space-y-2 text-sm text-ink-2">
-      <p>Open your workspace and say hello to Daneel. If Daneel answers, everything above works.</p>
-      {/* `text-on-primary!`: the global `a { color: inherit }` would otherwise win over the utility. */}
-      <Link href={href} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
-        Open your workspace
-      </Link>
-    </div>
-  );
-}
-
-/** Setup is complete when no step that blocks is still to do (`optional` never blocks). */
-export function setupComplete(setup: SetupStatus): boolean {
-  return setup.placement_saved && setup.steps.every((s) => s.id === "optional" || s.status !== "todo");
-}
-
-/** The count of a step's checks by reason, for the health lines. */
-function checkOf(setup: SetupStatus, stepId: string, id: string) {
-  return setup.steps.find((s) => s.id === stepId)?.checks.find((c) => c.id === id);
-}
-
-function HealthLine({ tone, title, children, href, hrefLabel }: { tone: Tone; title: string; children: ReactNode; href?: string; hrefLabel?: string }) {
-  return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm" data-health={title}>
-      <StatusDot tone={tone === "neutral" ? "neutral" : tone} className="min-w-28 text-sm font-semibold text-ink">
-        {title}
-      </StatusDot>
-      <span className="min-w-0 flex-1 text-ink-2">{children}</span>
-      {href ? (
-        <Link href={href} className="text-sm font-medium text-ink underline underline-offset-2">
-          {hrefLabel}
-        </Link>
+      {toast ? (
+        <Notice tone="accent" role="status" className="flex items-center justify-between gap-3" data-testid="setup-toast">
+          <span>{toast}</span>
+          <button type="button" className="text-sm font-medium underline" onClick={onDismissToast}>
+            Dismiss
+          </button>
+        </Notice>
       ) : null}
+      <div className="flex items-center justify-between gap-3 text-sm text-ink-2">
+        <span id="setup-progress-label">{`${done} of ${SETUP_STEPS}`}</span>
+      </div>
+      <Meter ratio={done / SETUP_STEPS} role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={SETUP_STEPS} aria-valuenow={done} />
+      <Card className="p-0">
+        <ol aria-label="Setup steps" className="divide-y divide-line">
+          {rows.map((r, i) => (
+            <ChecklistRow key={r.id} n={i + 1} row={r} action={actions[r.id]} primary={i === first} />
+          ))}
+        </ol>
+      </Card>
+      {waiting > 0 ? (
+        <p className="text-sm text-ink-2" data-testid="uploaded-waiting">
+          {waiting === 1 ? "1 uploaded app is waiting for review. " : `${waiting} uploaded apps are waiting for review. `}
+          <Link href={adminRoutes.apps("apps")} className="font-medium text-ink underline underline-offset-2">
+            Open Apps
+          </Link>
+        </p>
+      ) : null}
+      <AiKeyDialog
+        open={keyOpen}
+        onOpenChange={setKeyOpen}
+        onSaved={() => {
+          setKeyOpen(false);
+          onKeyAdded();
+        }}
+      />
+    </div>
+  );
+}
+
+const tone = (s?: SetupCheck["status"]): StatusTone => (s === "ok" ? "ok" : s === "warning" ? "attention" : "idle");
+
+/** "1 runner online." / "3 runners online.": the server's "runner(s)" is turned into the right number. */
+const pluralRunners = (msg: string, n: string | null | undefined) => {
+  const count = Number(n);
+  return msg.replace(/(\d+) runner\(s\)/, (_m, d: string) => `${d} ${Number(d) === 1 ? "runner" : "runners"}`).replace(/\brunner\(s\)/, count === 1 ? "runner" : "runners");
+};
+
+function HealthRow({ tone: t, title, children, href, hrefLabel }: { tone: StatusTone; title: string; children: ReactNode; href?: string; hrefLabel?: string }) {
+  return (
+    <li className="px-4 py-3" data-health={title}>
+      <StatusLine
+        tone={t}
+        action={
+          href ? (
+            <Link href={href} className="text-sm font-medium text-ink underline underline-offset-2">
+              {hrefLabel}
+            </Link>
+          ) : undefined
+        }
+      >
+        <span className="font-semibold text-ink">{title}</span> · <span>{children}</span>
+      </StatusLine>
     </li>
   );
 }
@@ -381,19 +339,18 @@ function HealthLine({ tone, title, children, href, hrefLabel }: { tone: Tone; ti
 function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () => void }) {
   const placement = usePlacement();
   const storage = useAdminStorage();
-  const optional = setup.steps.find((s) => s.id === "optional");
+  const optional = stepOf(setup, "optional");
   const gaps = gapsFromChecks(optional?.checks ?? []);
   const blocked = gaps.filter((g) => !g.tokenOnly);
-  const noMail = optional?.checks.some((c) => c.reason === "email_not_configured") ?? false;
+  const noMail = !emailDone(setup);
   const orgSlug = placement.data?.default_org?.slug;
-  const runners = setup.steps.find((s) => s.id === "runners");
-  const llm = setup.steps.find((s) => s.id === "llm");
+  const llm = stepOf(setup, "llm");
   const endpoints = llm?.checks.filter((c) => c.id.startsWith("endpoint:")) ?? [];
   const down = endpoints.filter((c) => c.status !== "ok");
   const gateway = checkOf(setup, "runners", "gateway");
   const runner = checkOf(setup, "runners", "runners");
-  const tone = (s?: SetupCheck["status"]): Tone => (s === "ok" ? "accent" : s === "warning" ? "pending" : "neutral");
   const needs = blocked.length + (noMail ? 1 : 0);
+  const withStarter = (placement.data?.starter_grants.length ?? 0) > 0;
   return (
     <div className="space-y-6" data-testid="admin-health">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -414,7 +371,7 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
         </Button>
       </header>
       {needs > 0 ? (
-        <section aria-labelledby="needs-you-h" className="space-y-4 rounded-card border border-pending-line bg-pending-panel p-4">
+        <section aria-labelledby="needs-you-h" className="space-y-4 rounded-card border border-line bg-surface p-4">
           <div>
             <h2 id="needs-you-h" className="font-display text-base font-semibold text-ink">
               Needs you
@@ -423,14 +380,17 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
           </div>
           <SignInGaps gaps={blocked} where={{ level: "admin", orgSlug }} />
           {noMail ? (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm" data-reason="email_not_configured">
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold text-ink">E-mail is not set up</p>
-                <p className="text-ink-2">E-mail is not set up. Aurora cannot send approval or invitation e-mails.</p>
-              </div>
-              <Link href={adminRoutes.platform("email")} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-                Open Platform › Email
-              </Link>
+            <div data-reason="email_not_configured">
+              <StatusLine
+                tone="attention"
+                action={
+                  <Link href={adminRoutes.platform("email")} className={rowButton}>
+                    Set up e-mail
+                  </Link>
+                }
+              >
+                E-mail isn&apos;t set up. Aurora can&apos;t send approval or invitation e-mails.
+              </StatusLine>
             </div>
           ) : null}
         </section>
@@ -439,29 +399,35 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
       <Card className="p-0">
         <h2 className="px-4 pt-4 font-display text-base font-semibold text-ink">Health</h2>
         <ul aria-label="Health" className="divide-y divide-line">
-          <HealthLine tone={tone(runner?.status)} title="Runners" href={adminRoutes.platform("runners")} hrefLabel="Open Platform › Runners">
-            {runner?.message ?? runners?.reason}
-          </HealthLine>
-          <HealthLine tone={tone(gateway?.status)} title="Gateway">
+          <HealthRow tone={tone(runner?.status)} title="Runners" href={adminRoutes.platform("runners")} hrefLabel="Open runners">
+            {runner?.message ? pluralRunners(runner.message, runner.value) : (stepOf(setup, "runners")?.reason ?? "No runner is registered.")}
+          </HealthRow>
+          <HealthRow tone={tone(gateway?.status)} title="Gateway">
             {gateway?.message ?? "No gateway has been seen."}
-          </HealthLine>
-          <HealthLine tone={endpoints.length === 0 ? "neutral" : down.length > 0 ? "pending" : "accent"} title="AI models" href={adminRoutes.aiModels("endpoints")} hrefLabel="Open AI models">
+          </HealthRow>
+          <HealthRow
+            tone={endpoints.length === 0 ? "idle" : down.length > 0 ? "attention" : "ok"}
+            title="AI models"
+            href={adminRoutes.aiModels("endpoints")}
+            hrefLabel="Open AI models"
+          >
             {endpoints.length === 0
               ? "No AI endpoint is set up."
               : down.length > 0
                 ? down.map((c) => c.message).join(" ")
                 : `${endpoints.length === 1 ? "1 endpoint answers" : `${endpoints.length} endpoints answer`}.`}
-          </HealthLine>
-          <HealthLine tone="accent" title="New people" href={adminRoutes.people("new-users")} hrefLabel="Open People › New users">
-            {setup.placement_saved ? "Land where you chose, with a personal workspace and the organization's AI key." : "Not saved yet."}
-          </HealthLine>
+          </HealthRow>
+          <HealthRow tone="ok" title="New people" href={adminRoutes.people("new-users")} hrefLabel="Change">
+            {setup.placement_saved ? "They land where you chose, with a personal workspace and the organization's AI key." : "Not saved yet."}
+          </HealthRow>
           {storage.data ? (
-            <HealthLine tone="accent" title="Storage" href={adminRoutes.data()} hrefLabel="Open Data">
+            <HealthRow tone="ok" title="Storage" href={adminRoutes.data()} hrefLabel="Open Data">
               {formatBytes(storage.data.blob_bytes)} in {storage.data.blob_count} stored files.
-            </HealthLine>
+            </HealthRow>
           ) : null}
         </ul>
       </Card>
+      {withStarter ? <BackfillOffer waiting={setup.personal_workspaces_without_starter ?? 0} /> : null}
       <div className="space-y-3">
         <PreviewsLine />
         <SshLine />
@@ -471,43 +437,54 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
   );
 }
 
+type View = "checklist" | "health";
+
 /**
- * Administration › Overview (`14 §Agents, accounts and access` §9): the setup checklist until setup is complete,
- * then a health page from the same status. **Run setup again** brings the checklist back.
+ * Administration › Overview (`14 §Agents, accounts and access` §9): the five-step checklist until the required steps are
+ * done, then the health view from the same status. A **Health** tab is always there, **Run setup again** brings the
+ * checklist back. Saving a step's work (the AI key) stays on the checklist with a toast (D-391).
  */
 export function SetupView() {
   const qc = useQueryClient();
   const setup = useAdminSetup();
   const params = useSearchParams();
-  const [again, setAgain] = useState(params.get("setup") === "1");
-  const refresh = () => void qc.invalidateQueries({ queryKey: onboardingKeys.setup });
-  const step = (id: string) => setup.data?.steps.find((s) => s.id === id);
-  const complete = setup.data ? setupComplete(setup.data) : false;
+  const tryIt = useTryIt();
+  // `null` = automatic: the health view when the required steps are done. A choice (or a step just finished) pins it.
+  const [view, setView] = useState<View | null>(params.get("setup") === "1" ? "checklist" : null);
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [toast]);
 
-  if (setup.data && complete && !again) {
-    return (
-      <div className="max-w-page space-y-6">
-        <PageHeader title="Overview" description="What needs you, and whether Aurora is healthy." className="mb-0" />
-        <AttentionSection />
-        <OwnerlessBanner />
-        <ConnectorAvailableCallout />
-        <HealthView setup={setup.data} onRunSetup={() => setAgain(true)} />
-      </div>
-    );
+  const complete = setup.data ? setupComplete(setup.data, tryIt.replied) : false;
+  const shown: View = view ?? (complete && tryIt.ready ? "health" : "checklist");
+
+  async function keyAdded() {
+    setView("checklist");
+    await qc.invalidateQueries({ queryKey: onboardingKeys.setup });
+    const fresh = qc.getQueryData<SetupStatus>(onboardingKeys.setup);
+    setToast(fresh ? `AI key added. ${doneCount(fresh, tryIt.replied)} of ${SETUP_STEPS} done.` : "AI key added.");
   }
 
   return (
     <div className="max-w-page space-y-6">
       <PageHeader
-        title="Set up Aurora"
-        description="Six steps from a fresh install to your first answer. Each shows what is ready now."
+        title={shown === "health" ? "Overview" : "Set up Aurora"}
+        description={shown === "health" ? "What needs you, and whether Aurora is healthy." : "Five steps from a fresh install to your first answer."}
         className="mb-0"
         actions={
-          complete ? (
-            <Button variant="outline" onClick={() => setAgain(false)}>
-              Back to the health page
-            </Button>
-          ) : undefined
+          <Tabs
+            label="Overview view"
+            idBase="overview"
+            value={shown}
+            onValueChange={(v) => setView(v as View)}
+            items={[
+              { value: "checklist", label: "Checklist" },
+              { value: "health", label: "Health" },
+            ]}
+          />
         }
       />
       {setup.isPending ? <Loading /> : null}
@@ -515,41 +492,12 @@ export function SetupView() {
       <AttentionSection />
       <OwnerlessBanner />
       <ConnectorAvailableCallout />
-      <PreviewsLine />
-      <SshLine />
-      <PushLine />
-      {setup.data ? (
-        <>
-          {!setup.data.placement_saved ? (
-            <Notice tone="pending" role="status">
-              This page opens at sign-in until you save where new users land (step 2).
-            </Notice>
-          ) : null}
-          <ol aria-label="Setup steps" className="space-y-4">
-            <StepCard n={1} id="roles" step={step("roles")}>
-              {step("roles") ? <RolesBody setup={setup.data} step={step("roles")!} /> : null}
-            </StepCard>
-            <StepCard n={2} id="placement" step={step("placement")}>
-              <PlacementView embedded onSaved={refresh} />
-              <Link href={adminRoutes.people("new-users")} className="inline-block text-sm font-medium text-ink underline underline-offset-2">
-                Open People › New users
-              </Link>
-            </StepCard>
-            <StepCard n={3} id="llm" step={step("llm")}>
-              {step("llm") ? <LlmBody step={step("llm")!} waiting={setup.data.personal_workspaces_without_starter ?? 0} onChanged={refresh} /> : null}
-            </StepCard>
-            <StepCard n={4} id="runners" step={step("runners")}>
-              {step("runners") ? <Checks step={step("runners")!} /> : null}
-            </StepCard>
-            <StepCard n={5} id="optional" step={step("optional")}>
-              {step("optional") ? <OptionalBody step={step("optional")!} /> : null}
-            </StepCard>
-            <StepCard n={6} id="try">
-              <TryBody />
-            </StepCard>
-          </ol>
-        </>
-      ) : null}
+      <div role="tabpanel" id={tabPanelId("overview", shown)} aria-labelledby={tabId("overview", shown)} className="space-y-6">
+        {setup.data && shown === "health" ? <HealthView setup={setup.data} onRunSetup={() => setView("checklist")} /> : null}
+        {setup.data && shown === "checklist" ? (
+          <Checklist setup={setup.data} tryIt={tryIt} toast={toast} onKeyAdded={() => void keyAdded()} onDismissToast={() => setToast(null)} />
+        ) : null}
+      </div>
     </div>
   );
 }

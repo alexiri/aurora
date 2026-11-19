@@ -159,16 +159,7 @@ impl Rig {
         uri: &str,
         body: Option<Value>,
     ) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(
-                m,
-                uri,
-                &[("cookie", &self.cookie), ("origin", ORIGIN)],
-                body,
-            )
-            .await;
-        (s.as_u16(), v)
+        self.h.call(&self.cookie, m, uri, body).await
     }
 
     pub(crate) async fn agent(&self, handle: &str, grant: bool) -> Uuid {

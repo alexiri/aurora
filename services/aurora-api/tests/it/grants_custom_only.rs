@@ -55,11 +55,8 @@ struct W<'a> {
 }
 
 async fn agent(h: &Harness, org: Uuid, ws: Uuid, handle: &str) -> Uuid {
-    let id = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,$4,$5,'byo','medium','')")
-        .bind(id).bind(org).bind(ws).bind(handle).bind(format!("Agent {handle}"))
-        .execute(h.pool()).await.unwrap();
-    id
+    h.byo_agent(org, ws, handle, &format!("Agent {handle}"))
+        .await
 }
 
 async fn world(h: &Harness) -> W<'_> {
@@ -88,11 +85,7 @@ async fn world(h: &Harness) -> W<'_> {
 
 impl W<'_> {
     async fn call(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", &self.owner), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call(&self.owner, m, uri, body).await
     }
 
     /// An org-level connection of `cust_app`.

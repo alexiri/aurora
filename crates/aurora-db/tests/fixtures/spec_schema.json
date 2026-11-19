@@ -126,6 +126,7 @@
       "access",
       "app_id",
       "app_version",
+      "config",
       "connect_method",
       "connected_by",
       "credential_keys",
@@ -179,6 +180,32 @@
       "package_id",
       "secret_ref",
       "workspace_id"
+    ],
+    "app_setup_request_askers": [
+      "asked_at",
+      "request_id",
+      "user_id",
+      "workspace_id"
+    ],
+    "app_setup_request_notices": [
+      "detail",
+      "href",
+      "kind",
+      "mailed_at",
+      "pushed_at",
+      "request_id",
+      "title",
+      "user_id"
+    ],
+    "app_setup_requests": [
+      "app_id",
+      "closed_at",
+      "closed_by",
+      "id",
+      "needs",
+      "org_id",
+      "status",
+      "unavailable"
     ],
     "approval_notifications": [
       "approval_id",
@@ -1678,6 +1705,7 @@
       "access": "text not null",
       "app_id": "text not null",
       "app_version": "text not null",
+      "config": "jsonb null",
       "connect_method": "text null",
       "connected_by": "uuid null",
       "credential_keys": "text[] null",
@@ -1731,6 +1759,32 @@
       "package_id": "text not null",
       "secret_ref": "text not null",
       "workspace_id": "uuid null"
+    },
+    "app_setup_request_askers": {
+      "asked_at": "timestamptz",
+      "request_id": "uuid",
+      "user_id": "uuid",
+      "workspace_id": "uuid"
+    },
+    "app_setup_request_notices": {
+      "detail": "text not null",
+      "href": "text not null",
+      "kind": "text",
+      "mailed_at": "timestamptz null",
+      "pushed_at": "timestamptz null",
+      "request_id": "uuid",
+      "title": "text not null",
+      "user_id": "uuid"
+    },
+    "app_setup_requests": {
+      "app_id": "text",
+      "closed_at": "timestamptz null",
+      "closed_by": "uuid null",
+      "id": "uuid not null",
+      "needs": "jsonb",
+      "org_id": "uuid",
+      "status": "text",
+      "unavailable": "boolean"
     },
     "approval_notifications": {
       "approval_id": "uuid",

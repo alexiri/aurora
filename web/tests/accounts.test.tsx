@@ -83,7 +83,7 @@ describe("AccountsList: one row per kind", () => {
     list();
     const aws = await screen.findByRole("listitem", { name: "AWS prod" });
     expect(within(aws).getByText("App")).toBeInTheDocument();
-    expect(within(aws).getByRole("button", { name: "Daneel · Read only: change access" })).toBeInTheDocument();
+    expect(within(aws).getByRole("button", { name: "Daneel · Read only" })).toBeInTheDocument();
     expect(within(screen.getByRole("listitem", { name: "Stripe API" })).getByText("Website")).toBeInTheDocument();
     expect(within(screen.getByRole("listitem", { name: "Team key" })).getByText("AI key")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /^More for / })).toHaveLength(3);
@@ -94,13 +94,13 @@ describe("AccountsList: one row per kind", () => {
     list();
     await openMenu("AWS prod");
     const names = (await screen.findAllByRole("menuitem")).map((m) => m.textContent);
-    expect(names).toEqual(["Give access", "Rename", "Reconnect", "Test", "Turn off", "Remove"]);
+    expect(names).toEqual(["Give access", "Test the connection", "Sign in again", "Rename", "Turn off", "Remove"]);
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     cleanup();
     listWs([website()]);
     list();
     await openMenu("Stripe API");
-    expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual(["Give access", "Rename", "Change website", "Replace", "Test", "Remove"]);
+    expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual(["Give access", "Test the connection", "Change website", "Replace", "Rename", "Remove"]);
   });
 
   it("Change website edits the website, the path and the way the token is sent in one save, from the website's own record", async () => {
@@ -127,7 +127,7 @@ describe("AccountsList: one row per kind", () => {
     listWs([app({ health: { state: "disabled" } }), app({ ref: { type: "connection", id: "c2" }, name: "Jira", health: { state: "sign_in_expired" } })]);
     list();
     expect(await screen.findByText("Turned off")).toBeInTheDocument();
-    expect(screen.getByText(/The sign-in to .* expired/)).toBeInTheDocument();
+    expect(screen.getByText("Sign-in expired")).toBeInTheDocument();
     await openMenu("AWS prod");
     expect(await screen.findByRole("menuitem", { name: "Turn on" })).toBeInTheDocument();
   });
@@ -206,8 +206,8 @@ describe("AccountsList: an agent's Access tab", () => {
     list({ agent: { id: "a1", name: "Daneel" } });
     const used = await screen.findByRole("list", { name: "Accounts Daneel can use" });
     expect(within(used).getAllByRole("listitem", { name: /AWS prod|Team key/ })).toHaveLength(2);
-    expect(within(used).getByText("Daneel thinks with claude-sonnet through this key.")).toBeInTheDocument();
-    expect(within(used).getAllByRole("radio").length).toBeGreaterThan(0);
+    expect(within(used).getByText(/Daneel thinks with claude-sonnet through this key/)).toBeInTheDocument();
+    expect(within(used).getAllByRole("combobox").length).toBeGreaterThan(0);
     expect(screen.getByText("Not given to Daneel (1)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Give Daneel an app" })).toBeInTheDocument();
   });
@@ -226,14 +226,16 @@ describe("AccessControl", () => {
   it("offers the three choices in order, the saved one chosen, and one click is one save", async () => {
     put();
     control(app(), entry({ level: "read" }));
-    const radios = await screen.findAllByRole("radio");
-    expect(radios.map((r) => r.closest("label")?.textContent ?? "")).toEqual([
-      expect.stringContaining("Read only"),
-      expect.stringContaining("Ask before changes"),
-      expect.stringContaining("Change without asking"),
+    const select = await screen.findByRole("combobox");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Read only",
+      "Ask before changes",
+      "Change without asking",
+      "Custom…",
+      "What exactly?",
     ]);
-    expect(radios[0]).toBeChecked();
-    fireEvent.click(radios[1]);
+    expect(select).toHaveValue("read");
+    fireEvent.change(select, { target: { value: "ask" } });
     await waitFor(() => expect(sent("PUT /v1/agents/a1/grants/connections/c1")).toHaveLength(1));
     expect(sent("PUT /v1/agents/a1/grants/connections/c1")[0].body).toEqual({ level: "ask" });
   });
@@ -241,8 +243,8 @@ describe("AccessControl", () => {
   it("offers only the choices within an organization's limit, and says who limited them", async () => {
     put();
     control(app({ levels: ["read", "ask"], limit: "ask", managed_by: { level: "org_admin", people: [], more: 0, unreachable: false } }), entry({ level: "ask" }));
-    expect(await screen.findAllByRole("radio")).toHaveLength(2);
-    expect(screen.queryByText("Change without asking")).toBeNull();
+    const select = await screen.findByRole("combobox");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Read only", "Ask before changes", "Custom…", "What exactly?"]);
     expect(screen.getByText("Limited by your organization.")).toBeInTheDocument();
   });
 
@@ -267,7 +269,7 @@ describe("AccessControl", () => {
     control(app(), entry({ level: "custom", custom: { differs: 2, base: "read" } }));
     expect(await screen.findByText(/2 actions differ/)).toBeInTheDocument();
     expect(screen.getByText(/from Read only/)).toBeInTheDocument();
-    expect(screen.getAllByRole("radio").every((r) => !(r as HTMLInputElement).checked)).toBe(true);
+    expect(screen.getByRole("combobox")).toHaveValue("__custom");
   });
 
   it("gives people who cannot change the access text and no controls", () => {
@@ -300,6 +302,34 @@ describe("the actions table", () => {
     expect(decide(undefined, undefined, false)).toEqual({ get: "block", merge: "block", push: "block" });
   });
 
+  it("(P5-TOOLASK) an action its app asks about first starts as Asks you even under Act; the override is choosing Allowed", () => {
+    const withDefault = tools.map((t) => (t.id === "push" ? { ...t, approval: "ask" } : { ...t, approval: null }));
+    expect(startingDecisions(withDefault as never, { level: "act" }, undefined, false)).toEqual({ get: "allow", merge: "allow", push: "ask" });
+    expect(startingDecisions(withDefault as never, undefined, saved("full", [], []), false)).toEqual({ get: "allow", merge: "allow", push: "ask" });
+    // A custom grant that lists the action as allowed is the workspace's explicit override.
+    expect(startingDecisions(withDefault as never, { level: "custom" } as never, saved("custom", ["get", "push"], []), false).push).toBe("allow");
+  });
+
+  it("(P5-TOOLASK) the row says Asks first (app default) and offers Allowed as the override", async () => {
+    const asked = tools.map((t) => (t.id === "push" ? { ...t, approval: "ask" } : t));
+    routes["GET /v1/apps/aws"] = () => json(200, { app_id: "aws", name: "AWS", tools: asked });
+    routes["GET /v1/agents/a1/grants"] = () => json(200, { secrets: [], connections: [{ connection_id: "c1", mode: "full", allow_tools: [], ask_tools: [], ask_timeout_secs: null }], converted_by_app: [] });
+    routes["PUT /v1/agents/a1/grants/connections/c1"] = () => json(200, {});
+    routes["GET /v1/workspaces/w1/accounts"] = () => json(200, { items: [], next_cursor: null });
+    routes["GET /v1/agents/a1/apps/aws/access"] = () => json(200, ACCESS);
+    wrap(<AccessControl account={app()} entry={entry({ level: "act" })} workspaceId="w1" canChange />);
+    fireEvent.click(await screen.findByRole("button", { name: "What exactly?" }));
+    const dlg = await screen.findByRole("region", { name: /What Daneel can do in AWS/ });
+    // Only the action with the app default says so.
+    expect(within(dlg).getAllByText(/Asks first \(app default\)/)).toHaveLength(1);
+    const select = within(dlg).getByLabelText("Push a commit: what happens") as HTMLSelectElement;
+    expect(select.value).toBe("ask");
+    expect((within(dlg).getByLabelText("Merge a pull request: what happens") as HTMLSelectElement).value).toBe("allow");
+    // Allowed is the override: saved as a custom grant that names the action.
+    fireEvent.change(select, { target: { value: "allow" } });
+    expect(select.value).toBe("allow");
+  });
+
   async function openTable(e: AgentAccess, a: Account = app()) {
     routes["GET /v1/apps/aws"] = () => json(200, { app_id: "aws", name: "AWS", tools });
     routes["GET /v1/agents/a1/grants"] = () =>
@@ -308,7 +338,7 @@ describe("the actions table", () => {
     routes["GET /v1/workspaces/w1/accounts"] = () => json(200, { items: [], next_cursor: null });
     routes["GET /v1/agents/a1/apps/aws/access"] = () => json(200, ACCESS);
     wrap(<AccessControl account={a} entry={e} workspaceId="w1" canChange />);
-    fireEvent.click(await screen.findByRole("button", { name: "Custom…" }));
+    fireEvent.change(await screen.findByRole("combobox"), { target: { value: "__custom" } });
     return screen.findByRole("region", { name: /What Daneel can do in AWS/ });
   }
   const ACCESS = {
@@ -333,12 +363,8 @@ describe("the actions table", () => {
     expect(within(dlg).getByRole("link", { name: "Internet access" })).toHaveAttribute("href", "/o/acme/internet-access");
     expect(within(dlg).getAllByText("Blocked").filter((e) => e.tagName === "SPAN")).toHaveLength(2);
     expect(within(dlg).queryByText(/Look up a repository.*Limited/)).toBeNull();
-    // What exactly? closes the table that Custom… opened: one table, one toggle.
-    const exactly = screen.getByRole("button", { name: "What exactly?" });
-    expect(exactly).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(exactly);
-    expect(screen.queryByRole("region", { name: /What Daneel can do in AWS/ })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "What exactly?" }));
+    // What exactly? opens the same table (one table, one select).
+    fireEvent.change(screen.getByRole("combobox", { name: "Daneel's access to AWS prod" }), { target: { value: "__exactly" } });
     expect(await screen.findByRole("region", { name: /What Daneel can do in AWS/ })).toBeInTheDocument();
   });
 

@@ -68,14 +68,28 @@ export function SkillsEditor({ scope, readOnly = false, orgId }: { scope: SkillS
       ) : (
         <div className="flex flex-wrap justify-end gap-2">
           <AddFromLibrary scope={scope} orgId={orgId} tier={tier} usage={usage} onAdded={(id) => { setCreating(false); setSelected(id); }} />
-          <Button type="button" onClick={() => { setCreating(true); setSelected(null); }}>New skill</Button>
+          {/* The empty state carries its own New skill (one action). */}
+          {items.length > 0 || creating ? <Button type="button" onClick={() => { setCreating(true); setSelected(null); }}>New skill</Button> : null}
         </div>
       )}
       <PendingUpdatesNotice scope={scope} enabled={!readOnly && libraryItems.length > 0} />
       {list.isPending ? <Loading /> : null}
       {list.isError ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : null}
-      {list.data && items.length === 0 && !creating ? <EmptyState title="No skills yet" /> : null}
-      <div className="grid gap-6 md:layout-aside-md">
+      {list.data && items.length === 0 && !creating ? (
+        <EmptyState
+          title="No skills yet"
+          when="Skills are instructions an agent can load when a task needs them."
+          action={
+            readOnly ? undefined : (
+              <Button type="button" onClick={() => { setCreating(true); setSelected(null); }}>
+                New skill
+              </Button>
+            )
+          }
+        />
+      ) : null}
+      {/* (P5-POLISH-6, C6) While the list is empty there is no detail pane and no "Select a skill" text. */}
+      <div className={items.length === 0 && !creating ? "hidden" : "grid gap-6 md:layout-aside-md"}>
         <ul aria-label="Skills" className="min-w-0 space-y-1">
           {items.map((s) => (
             <li key={s.id} className="min-w-0">
@@ -102,7 +116,7 @@ export function SkillsEditor({ scope, readOnly = false, orgId }: { scope: SkillS
           {!creating && current ? (
             <SkillEditor key={`${current.id}:${current.updated_at}`} scope={scope} skill={current} readOnly={readOnly} onDeleted={() => setSelected(null)} />
           ) : null}
-          {!creating && !current ? <p className="text-sm text-muted">Select a skill to edit it.</p> : null}
+          {!creating && !current && items.length > 0 ? <p className="text-sm text-muted">Select a skill to edit it.</p> : null}
         </div>
       </div>
     </div>
@@ -357,6 +371,8 @@ export function EffectiveSkillsView({ agentId }: { agentId: string }) {
       <span className="basis-full truncate text-xs text-ink-2">{s.description}</span>
     </li>
   );
+  // (P5-POLISH-6, C6) "Skills this agent receives" shows only when there are some.
+  if (eff.data && items.length === 0 && shadowed.length === 0) return null;
   return (
     <section aria-label="Effective skills" className="space-y-3">
       <h3 className="font-display text-base font-semibold text-ink">Skills this agent receives</h3>

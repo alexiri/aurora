@@ -7,6 +7,7 @@ import type { AgentPageId } from "@/components/agents/sections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusDot } from "@/components/ui/status-dot";
+import { StatusLine } from "@/components/ui/status-line";
 import { useDecideAction } from "@/lib/api/action-approvals";
 import { countdown, isAlreadyDecided, useDecide, useNow } from "@/lib/api/approvals";
 import { approvalAnchorId } from "@/components/chat/approval-card";
@@ -31,7 +32,7 @@ export function showApprovalInConversation(approvalId: string): boolean {
 /** A part's heading inside the expanded rail and the sheet (the collapsed strip shows only the icon). */
 export function PartHeading({ icon, children, id, pending = false }: { icon: ReactNode; children: ReactNode; id: string; pending?: boolean }) {
   return (
-    <h3 id={id} className="flex items-center gap-2 text-label font-semibold uppercase tracking-label text-muted">
+    <h3 id={id} className="flex items-center gap-2 text-sm font-semibold text-ink-2">
       {/* Needs you carries its icon on a `pending-soft` tile (the board's Needs-you heading). */}
       <span aria-hidden="true" className={cn("inline-flex", pending && "size-6 items-center justify-center rounded-md bg-pending-soft text-pending-ink")}>
         {icon}
@@ -187,10 +188,11 @@ export function DoingNow({
 export function RecentCalls({ status, activityHref }: { status: AgentStatus; activityHref: string }) {
   return (
     <div className="space-y-2">
+      <p className="text-xs text-muted">Only actions in apps and websites; thinking isn&apos;t listed.</p>
       {status.recentLoading ? <p className="text-sm text-muted">Loading…</p> : null}
-      {status.recentError ? <p className="text-sm text-danger-ink">Could not load recent tool calls.</p> : null}
+      {status.recentError ? <p className="text-sm text-danger-ink">Could not load recent actions.</p> : null}
       {!status.recentLoading && !status.recentError && status.recent.length === 0 ? (
-        <p className="text-sm text-ink-2">No tool calls yet.</p>
+        <p className="text-sm text-ink-2">No actions yet.</p>
       ) : null}
       {status.recent.length > 0 ? (
         <ul className="space-y-1.5">
@@ -218,11 +220,13 @@ export function RecentCalls({ status, activityHref }: { status: AgentStatus; act
 // ---- Computer ---------------------------------------------------------------------------------------------------
 
 export function ComputerPart({
+  agentName = "the agent",
   sandbox,
   terminalAvailable,
   sshAvailable = false,
   onNavigate,
 }: {
+  agentName?: string;
   sandbox: AgentStatus["sandbox"];
   terminalAvailable: boolean;
   sshAvailable?: boolean;
@@ -231,16 +235,23 @@ export function ComputerPart({
   const look = sandbox ? sandboxLook(sandbox) : null;
   return (
     <div className="space-y-2">
-      {look ? (
-        <StatusDot tone={look.tone} title={look.title}>
-          {look.label}
-        </StatusDot>
+      {/* (P5-POLISH-6) The state as a sentence, not "stopped": asleep, awake, starting, or why it could not start. */}
+      {sandbox ? (
+        <StatusLine tone={look?.tone === "danger" ? "fail" : sandbox.state === "running" ? "ok" : "idle"} data-testid="computer-state">
+          {sandbox.state === "running"
+            ? "Awake"
+            : sandbox.state === "starting"
+              ? "Starting…"
+              : sandbox.state === "failed"
+                ? `Couldn't start${sandbox.failure_message ? `: ${sandbox.failure_message}` : ""}`
+                : `Asleep. It wakes when ${agentName} needs it.`}
+        </StatusLine>
       ) : (
-        <p className="text-sm text-muted">Sandbox state unknown</p>
+        <p className="text-sm text-muted">Computer state unknown</p>
       )}
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" size="sm" onClick={() => onNavigate("computer")}>
-          Open computer
+          Open Computer
         </Button>
         {terminalAvailable ? (
           <Button type="button" variant="outline" size="sm" onClick={() => onNavigate("terminal")}>
@@ -280,10 +291,14 @@ export function AboutPart({
   const [open, setOpen] = useState(false);
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Badge>{kind}</Badge>
-        {isDefault ? <Badge tone="accent">Default</Badge> : null}
-      </div>
+      {/* (P5-POLISH-6) No HOSTED/DEFAULT chips: the kind is plain text, and only when it matters. */}
+      {kind !== "hosted" || isDefault ? (
+        <p className="text-xs text-muted">
+          {kind !== "hosted" ? "Runs on your own computer" : null}
+          {kind !== "hosted" && isDefault ? " · " : null}
+          {isDefault ? "Default agent" : null}
+        </p>
+      ) : null}
       {brief ? (
         <p className={open ? "text-sm text-ink-2" : "line-clamp-3 text-sm text-ink-2"}>
           {brief}

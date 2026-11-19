@@ -107,8 +107,8 @@ pub fn runner_endpoint_of(advertised_host: &str, tls: bool) -> String {
 }
 
 /// `POST /v1/runner/preview-streams/open`: consume the grant (single use, ≤ 30 s) and return
-/// its binding. 403 `grant_invalid`; 409 `not_current` (boot not current, share paused, agent
-/// frozen, previews off, or the answering runner does not hold the channel). A terminal grant
+/// its binding. 403 `grant_invalid`; 423 `frozen` (agent frozen, C-1041); 409 `not_current` (boot
+/// not current, share paused, previews off, or the answering runner does not hold the channel). A terminal grant
 /// (`kind: "terminal"`, P4-TERM C-617) redeems from `terminal_stream_grants`: the answer
 /// carries no port and no share, only the sandbox/boot binding and the terminal window.
 pub async fn open(

@@ -93,6 +93,10 @@ pub struct ToolTags {
     /// it). Never set when the connection's scopes are unknown.
     #[serde(default)]
     pub scope_missing: bool,
+    /// (P5-TOOLASK, D-397, C-1043) The matched tool's package default is `approval: ask`: the
+    /// request needs approval unless an explicit rule of either scope allows it (a block wins).
+    #[serde(default)]
+    pub ask_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

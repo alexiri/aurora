@@ -106,9 +106,7 @@ async fn world(h: &Harness) -> W<'_> {
     h.member(org, o, "owner", "active").await;
     h.bind_ws(ws, o, "owner").await;
     let (_, ot) = h.good_session(o).await;
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'daneel','Daneel','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let agent = h.byo_agent(org, ws, "daneel", "Daneel").await;
     W {
         h,
         org,
@@ -120,11 +118,7 @@ async fn world(h: &Harness) -> W<'_> {
 
 impl W<'_> {
     async fn call(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", &self.owner), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call(&self.owner, m, uri, body).await
     }
 
     /// An org-level connection of the app with the given `access` (`read` | `write`).

@@ -214,6 +214,8 @@ async fn list_conversations(
     Path(agent): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Conversation>>, ApiError> {
+    // Authorise before parsing the query (FIX-181 F7, C-1041).
+    let agent_row = service::load_agent(&s, &c, agent).await?;
     if let Some(k) = q.kind.as_deref()
         && !KINDS.contains(&k)
     {
@@ -223,7 +225,6 @@ async fn list_conversations(
         ));
     }
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    let agent_row = service::load_agent(&s, &c, agent).await?;
     // RFE-009: owners see every direct conversation of the agent; others only their own.
     let owns = c.workspace(&s, agent_row.workspace_id).await?.can_own();
     let rows = convs::list_for_agent(

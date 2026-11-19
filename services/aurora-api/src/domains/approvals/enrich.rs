@@ -69,6 +69,13 @@ pub async fn enrich(s: &AppState, chooser: Option<Uuid>, items: &mut [Approval])
             a.sentence.action = as_action(&t.name);
         }
         let Some(logical) = a.rule_logical_id else {
+            // (P5-TOOLASK, C-1043) Held by the package's `approval: ask` default.
+            if a.rule_name.as_deref() == Some(aurora_policy::eval::PACKAGE_ASK_REASON) {
+                a.asked_by = Some(AskedBy::Package {
+                    app_id: app_id.clone(),
+                    tool_id: a.tool_id.clone(),
+                });
+            }
             continue;
         };
         let Ok(mut c) = s.pool.acquire().await else {

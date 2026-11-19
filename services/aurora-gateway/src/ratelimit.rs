@@ -84,6 +84,9 @@ pub enum Settled {
 #[derive(Default)]
 pub struct RuleCounters {
     class: Option<ClassCounters>,
+    /// (P5-WEBHOOK-2) Outgoing-webhook windows when no shared store is configured, or the class
+    /// policy is `local` and the store is unreachable.
+    webhook_local: aurora_counters::MemoryStore,
 }
 
 fn period(p: Per) -> Period {
@@ -121,7 +124,67 @@ impl RuleCounters {
     }
 
     pub fn shared(class: ClassCounters) -> Self {
-        Self { class: Some(class) }
+        Self {
+            class: Some(class),
+            ..Self::default()
+        }
+    }
+
+    /// (P5-WEBHOOK-2, C-910, D-119) One all-or-nothing take of both fixed windows of a webhook
+    /// connection (`gw:wh:<connection>:minute|day`), on the shared counters (per replica in memory
+    /// without them). A refusal is 429 `webhook_rate_limited` with `retry_after_secs`; an
+    /// unreachable store applies the `gateway` class policy (`closed` refuses with 503).
+    pub async fn take_webhook(
+        &self,
+        connection: Uuid,
+        per_minute: u32,
+        per_day: u32,
+    ) -> Result<(), ApiError> {
+        use aurora_counters::CounterStore;
+        let units = [
+            WindowUnit {
+                key: format!("gw:wh:{connection}:minute"),
+                period: Period::Minute,
+                limit: u64::from(per_minute),
+                cost: 1,
+            },
+            WindowUnit {
+                key: format!("gw:wh:{connection}:day"),
+                period: Period::Day,
+                limit: u64::from(per_day),
+                cost: 1,
+            },
+        ];
+        let verdict = match &self.class {
+            Some(class) => match class.consume(&units).await {
+                Ok(v) => v,
+                Err(Fallback::Local) => self
+                    .webhook_local
+                    .fixed_window_consume(&units)
+                    .await
+                    .map_err(|_| unavailable())?,
+                Err(Fallback::Closed) => return Err(unavailable()),
+            },
+            None => self
+                .webhook_local
+                .fixed_window_consume(&units)
+                .await
+                .map_err(|_| unavailable())?,
+        };
+        match verdict {
+            Verdict::Allowed => Ok(()),
+            Verdict::Refused { retry_after, .. } => {
+                let secs =
+                    (retry_after.as_secs() + u64::from(retry_after.subsec_nanos() > 0)).max(1);
+                Err(ApiError::new(
+                    http::StatusCode::TOO_MANY_REQUESTS,
+                    "webhook_rate_limited",
+                    format!("This webhook's send limit is reached. Retry after {secs} seconds."),
+                )
+                .with_retry_after(secs)
+                .with_details(json!({ "retry_after_secs": secs })))
+            }
+        }
     }
 
     pub fn class(&self) -> Option<&ClassCounters> {

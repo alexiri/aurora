@@ -50,10 +50,7 @@ async fn org_account(w: &W, limit: &str) -> Uuid {
 }
 
 async fn agent(w: &W, handle: &str) -> Uuid {
-    let id = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,$4,$4,'byo','medium','')")
-        .bind(id).bind(w.org).bind(w.ws).bind(handle).execute(w.h.pool()).await.unwrap();
-    id
+    w.h.byo_agent(w.org, w.ws, handle, handle).await
 }
 
 async fn put(w: &W, agent: Uuid, conn: Uuid, body: Value) -> (u16, Value) {

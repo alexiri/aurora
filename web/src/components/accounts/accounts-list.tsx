@@ -12,14 +12,22 @@ import { appKeys, useConnectChannel } from "@/lib/api/apps";
 import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { accountKeys, useAccounts, type Account } from "@/lib/api/accounts";
 import type { SecretScope } from "@/lib/api/secrets";
 import { useWhoCan } from "@/lib/api/who-can";
 import { splitGiven } from "@/lib/accounts";
+import { needsAttention } from "@/lib/account-health";
 
 import { AccountRow } from "./account-row";
 import { FreeApps } from "./free-apps";
+
+/** "3 accounts." / "1 account needs you." / "2 accounts need you." */
+export function accountsSentence(total: number, failing: number): string {
+  if (failing > 0) return failing === 1 ? "1 account needs you." : `${failing} accounts need you.`;
+  return total === 1 ? "1 account." : `${total} accounts.`;
+}
 
 /**
  * The one list of what agents can use (C-925, `14 §1`), over the accounts API (C-917). Used by a workspace's Accounts
@@ -122,14 +130,27 @@ export function AccountsList({
               : `${target.name} cannot be reconnected here.`}
         </Notice>
       ) : null}
-      {addEntries ? <div className="flex flex-wrap items-center justify-end gap-2">{addEntries}</div> : null}
-      {addingKey ? (
-        <div className="rounded-card border border-line bg-surface p-4">
-          <LlmKeyForm scope={scope} orgId={orgId} preselect={agent ? [agent.id] : undefined} />
-          <Button className="mt-3" variant="outline" size="sm" onClick={() => setAddingKey(false)}>
-            Close
-          </Button>
+      {/* (P5-POLISH-7, D1) A sentence from state; an account that needs you takes precedence. */}
+      {!agent && !appId && items.length > 0 ? (
+        <p className="text-sm text-ink-2" data-testid="accounts-sentence">
+          {accountsSentence(items.length, items.filter(needsAttention).length)}
+        </p>
+      ) : null}
+      {agent && addEntries ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-base font-semibold text-ink">Apps and accounts</h2>
+          <div className="flex flex-wrap items-center gap-2">{addEntries}</div>
         </div>
+      ) : addEntries ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">{addEntries}</div>
+      ) : null}
+      {/* (P5-POLISH-7, D1) Add an AI key is a dialog like every other add, not a card inside the page. */}
+      {addingKey ? (
+        <Dialog open onOpenChange={(o) => (o ? null : setAddingKey(false))}>
+          <DialogContent size="lg" title="Add an AI key">
+            <LlmKeyForm scope={scope} orgId={orgId} preselect={agent ? [agent.id] : undefined} submitLabel="Add key" onCancel={() => setAddingKey(false)} />
+          </DialogContent>
+        </Dialog>
       ) : null}
       {items.length === 0 && appId ? (
         <p className="text-sm text-ink-2">No accounts of this app {scope.kind === "workspace" ? "in this workspace" : "for the whole organization"} yet.</p>

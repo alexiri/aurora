@@ -10,7 +10,7 @@ import {
   useRailExpanded,
   writeRailPreference,
 } from "@/components/agents/status-rail/rail-state";
-import { decisionBadge, hasProblem, mergeNeeds, sandboxLook, type AgentStatus } from "@/components/agents/status-rail/status-data";
+import { actionsOnly, decisionBadge, hasProblem, mergeNeeds, sandboxLook, type AgentStatus } from "@/components/agents/status-rail/status-data";
 import type { ActionApproval } from "@/lib/api/action-approvals";
 import type { Approval } from "@/lib/api/approvals";
 import { wrap } from "./support/render";
@@ -163,6 +163,11 @@ describe("rail data helpers", () => {
     expect(hasProblem([{ decision: "allow", error_code: null }])).toBe(false);
     expect(hasProblem([{ decision: "allow", error_code: null }, { decision: "blocked", error_code: null }])).toBe(true);
   });
+  it("lists only actions: the agent's own model calls are filtered out", () => {
+    const rows = [{ llm_model: "claude-opus" }, { llm_model: null }, {}];
+    expect(actionsOnly(rows as never)).toEqual([{ llm_model: null }, {}]);
+  });
+
   it("shares the sandbox labels and failure tooltip with the header pill", () => {
     expect(sandboxLook({ state: "starting", failure_message: null, failure_code: null })).toEqual({ tone: "neutral", label: "Sandbox starting", title: undefined });
     expect(sandboxLook({ state: "failed", failure_message: "no runner", failure_code: "pod_failed" })).toMatchObject({
@@ -193,7 +198,7 @@ describe("collapsed strip", () => {
       "Expand status panel",
       "Needs you: 2 approvals waiting",
       "Doing now: working",
-      "Recent tool calls: some were denied or failed",
+      "Recent actions: some were denied or failed",
       "Computer: Sandbox running",
       "About this agent",
     ]);
@@ -206,7 +211,7 @@ describe("collapsed strip", () => {
     expect(labels).toMatchObject({
       needs: "Needs you: nothing waiting",
       doing: "Doing now: idle",
-      recent: "Recent tool calls: none denied or failed",
+      recent: "Recent actions: none denied or failed",
       computer: "Computer: state unknown",
     });
     expect(stripLabels(ctxOf({}, { needs: needs(gw("g1", FAR)) })).needs).toBe("Needs you: 1 approval waiting");
@@ -278,7 +283,7 @@ describe("expanded rail", () => {
       />,
     );
     const heads = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(heads).toEqual(["Needs you1", "Doing now", "Recent tool calls", "Computer", "About"]);
+    expect(heads).toEqual(["Needs you1", "Doing now", "Recent actions", "Computer", "About"]);
     // Doing now: the open conversation's running tool from its stream.
     expect(screen.getByText("Direct chat · Running gh pr list")).toBeInTheDocument();
     // Recent tool calls: badge, tool id or method + host, latency, link.
@@ -289,11 +294,14 @@ describe("expanded rail", () => {
     expect(screen.getByText("2.4 s")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "All activity" }).getAttribute("href")).toBe("/o/x/w/y/activity?agent=a1");
     // Computer and About.
-    expect(screen.getByText("Sandbox stopped")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open computer" })).toBeInTheDocument();
+    expect(screen.getByText("Asleep. It wakes when the agent needs it.")).toBeInTheDocument();
+    expect(screen.getByText("Only actions in apps and websites; thinking isn't listed.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Computer" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Terminal" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
-    expect(screen.getByText("Default")).toBeInTheDocument();
+    // No HOSTED/DEFAULT chips: a default agent says so in plain text.
+    expect(screen.getByText("Default agent")).toBeInTheDocument();
+    expect(screen.queryByText("hosted")).toBeNull();
     expect(screen.getByText("Triage pull requests.")).toBeInTheDocument();
   });
   it("says Idle when nothing runs and offers no Terminal where the page is unavailable", () => {
@@ -309,7 +317,7 @@ describe("expanded rail", () => {
     mock();
     const ctx = ctxOf({}, { working: [{ id: "c9", title: "Nightly report", kind: "schedule", external_ref: "x", direct_user: null, active_turn: { id: "t" } } as never] });
     wrap(<Harness start ctx={ctx} />);
-    fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Computer" }));
     fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit instructions" }));
     fireEvent.click(screen.getByRole("button", { name: "Files" }));
@@ -405,7 +413,7 @@ describe("phone sheet", () => {
     mock();
     wrap(<StatusSheet ctx={ctxOf({}, { needs: needs(gw("g1", FAR, { conversation_id: "c5" })) })} open onOpenChange={() => undefined} />);
     const sheet = screen.getByRole("dialog", { name: "Status" });
-    expect(within(sheet).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Needs you1", "Doing now", "Recent tool calls", "Computer", "About"]);
+    expect(within(sheet).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Needs you1", "Doing now", "Recent actions", "Computer", "About"]);
     expect(within(sheet).getByRole("button", { name: "Allow once" })).toBeInTheDocument();
   });
 });

@@ -15,6 +15,7 @@ vi.mock("@/components/apps/apps-tab", () => ({ AppsTab: () => <div>apps-tab</div
 vi.mock("@/components/apps/oauth-clients-panel", () => ({ OAuthClientsPanel: () => <div>oauth-tab</div> }));
 
 import { AccessTab } from "@/components/agents/access-tab";
+import { ModelReadinessSection } from "@/components/agents/model-readiness";
 import { AccessDialog, GiveAccessStep, type GrantSubject } from "@/components/credentials/give-access";
 import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { OriginView, originDetailText } from "@/components/credentials/origin-view";
@@ -128,8 +129,9 @@ describe("model readiness on the Access tab", () => {
   const key = (over: Record<string, unknown>) => ({
     secret_id: "k" + Math.random(), name: "Team key", scope: "workspace", endpoint_id: "aigw", provider: "litellm", usable: true, reason: null, ...over,
   });
-  const tab = (canOwn = true, hosted = true) =>
-    wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn={canOwn} hosted={hosted} base="/o/acme/w/ops" />);
+  // (P5-POLISH-6, D-385) The Access page no longer shows this block (it shows one "Can't answer" line); the section is kept
+  // for the endpoint's page, so these tests render it on its own.
+  const tab = () => wrap(<ModelReadinessSection agentId="a1" base="/o/acme/w/ops" />);
   beforeEach(() => {
     routes["GET /v1/workspaces/w1/secrets"] = () => json(200, { items: [] });
     routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: [] });
@@ -214,13 +216,18 @@ describe("model readiness on the Access tab", () => {
     expect(screen.queryByText(/No model chosen/)).toBeNull();
   });
 
-  it("is hidden for non-owners and BYO agents (no request is made)", async () => {
-    tab(false, true);
+  it("the Access page shows no readiness block, and makes no readiness request for non-owners or BYO agents", async () => {
+    routes["GET /v1/agents/a1/model-readiness"] = () => readiness([key({ usable: false, reason: "not_active" })], null);
+    wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn={false} hosted base="/o/acme/w/ops" />);
     await screen.findByText("Nothing is given yet");
     cleanup();
-    tab(true, false);
+    wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn hosted={false} base="/o/acme/w/ops" />);
     await screen.findByText("Nothing is given yet");
     expect(calls.some((c) => c.key.includes("model-readiness"))).toBe(false);
+    cleanup();
+    wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn hosted base="/o/acme/w/ops" />);
+    expect(await screen.findByTestId("cant-answer")).toHaveTextContent("Can't answer");
+    expect(screen.queryByRole("list", { name: "Granted LLM keys" })).toBeNull();
   });
 });
 

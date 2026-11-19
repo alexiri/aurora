@@ -87,6 +87,8 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page).toHaveURL(/\/apps\?tab=accounts&kind=ai-key$/);
         await page.getByRole("button", { name: "Add", exact: true }).click();
         await page.getByRole("menuitem", { name: "Add an AI key" }).click();
+        // (P5-POLISH-7) The form is in the Add an AI key dialog.
+        await expect(page.getByRole("dialog", { name: "Add an AI key" })).toBeVisible();
         const form = page.getByRole("form", { name: "New LLM key" });
         await form.getByLabel("Name").fill("Team key");
         await form.getByLabel("Provider endpoint").selectOption("aigw");
@@ -95,7 +97,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();
         await form.getByRole("checkbox", { name: "Giskard can use this key" }).check();
         await check(page, "add-ai-key", scheme, width);
-        await form.getByRole("button", { name: "Add LLM key" }).click();
+        await form.getByRole("button", { name: "Add key", exact: true }).click();
         await expect(page.getByText("Saved Team key")).toBeVisible();
         expect(posted).toHaveLength(1);
         expect(posted[0].grant).toEqual({ agent_ids: [second.id] });
@@ -119,15 +121,13 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page).toHaveURL(/\?tab=apps$/);
       });
 
-      test("the agent Access tab shows Model readiness, addressed by ?tab=access", async ({ page }) => {
+      test("the agent Access page (?tab=access) has no Model readiness block: one Can't answer line with its fix", async ({ page }) => {
         await open(page, "/o/acme/w/main/agents/daneel?tab=access", scheme);
-        await expect(page.getByRole("tab", { name: "Access" })).toHaveAttribute("aria-selected", "true");
-        const section = page.getByRole("region", { name: "Model readiness" });
-        await expect(section.getByText("Ready")).toBeVisible();
-        await expect(section.getByText("Not usable")).toBeVisible();
-        await expect(section.getByRole("link", { name: "Re-verify the key." })).toBeVisible();
-        await expect(section.getByText(/No model chosen/)).toBeVisible();
-        await expect(page.getByText("Daneel thinks with claude-sonnet through this key.")).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Access", level: 2 })).toBeVisible();
+        await expect(page.getByRole("region", { name: "Model readiness" })).toHaveCount(0);
+        await expect(page.getByTestId("cant-answer")).toContainText("Can't answer");
+        await expect(page.getByRole("link", { name: "Choose a model" })).toBeVisible();
+        await expect(page.getByText(/Daneel thinks with claude-sonnet through this key/)).toBeVisible();
         await check(page, "model-readiness", scheme, width);
       });
     });

@@ -24,7 +24,11 @@ export function AgentFreeze({
   canOwn,
   inMenu = false,
   menuExtra,
+  menuLead,
+  menuTriggerClassName,
 }: {
+  menuLead?: ReactNode;
+  menuTriggerClassName?: string;
   agentId: string;
   name: string;
   orgId: string;
@@ -40,7 +44,7 @@ export function AgentFreeze({
   // A workspace or organization freeze is shown by the shell banner (frozen-entity-banner).
   if (frozen && frozen.level !== "agent") return null;
   if (!canOwn) return frozen ? <FrozenBanner frozen={frozen} subject="agent" /> : null;
-  return <FreezeControl subject="agent" name={name} frozen={frozen} callerRank={rank} freeze={m.freeze} unfreeze={m.unfreeze} inMenu={inMenu} menuExtra={menuExtra} />;
+  return <FreezeControl subject="agent" name={name} frozen={frozen} callerRank={rank} freeze={m.freeze} unfreeze={m.unfreeze} inMenu={inMenu} menuExtra={menuExtra} menuLead={menuLead} menuTriggerClassName={menuTriggerClassName} />;
 }
 
 /** Workspace settings, danger zone (`can_own`). */

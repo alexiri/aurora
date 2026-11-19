@@ -9,6 +9,7 @@ pub const RATE_PER_MINUTE_MAX: u32 = 600;
 pub const RATE_PER_DAY_MAX: u32 = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub enum Method {
     #[serde(rename = "POST")]
     Post,
@@ -27,6 +28,7 @@ impl Method {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub enum ContentType {
     #[serde(rename = "application/json")]
     Json,
@@ -48,6 +50,7 @@ impl ContentType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SlotType {
     String,
@@ -61,6 +64,7 @@ pub enum SlotType {
 
 /// One typed blank of the template that the agent fills in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Slot {
     pub name: String,
@@ -87,6 +91,7 @@ pub struct Slot {
 
 /// A header sent to the receiver: a constant value, or one with `{{secret:name}}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
 pub struct HeaderTemplate {
     pub name: String,
@@ -95,6 +100,7 @@ pub struct HeaderTemplate {
 
 /// The connection's own send limits (`null` = the ceiling).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Rate {
     #[serde(default)]
@@ -113,6 +119,7 @@ fn de_version<'de, D: Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
 pub struct WebhookConfig {
     #[serde(deserialize_with = "de_version")]
@@ -138,6 +145,7 @@ pub struct WebhookConfig {
 /// A preset file of a package (C-909): holds no secret value; the names say which ones the person
 /// must enter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
 pub struct WebhookPreset {
     pub id: String,

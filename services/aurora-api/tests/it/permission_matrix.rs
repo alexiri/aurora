@@ -704,6 +704,27 @@ const ROWS: &[Row] = &[
     // organization view (owner/admin) is covered by it/app_setup.rs.
     r("GET", "/v1/apps/{app}/setup", G::WsOwn, false),
     r("GET", "/v1/apps/{app}/connect-plan", G::WsOwn, false),
+    // (P5-POLISH-4, C-1030, SEC-135) Ask an admin to set an app up: workspace owners ask, anyone with the
+    // workspace may withdraw their own ask, owners and admins read and decline.
+    r(
+        "POST",
+        "/v1/workspaces/{ws}/apps/{app}/setup-request",
+        G::WsOwn,
+        false,
+    ),
+    r(
+        "DELETE",
+        "/v1/workspaces/{ws}/apps/{app}/setup-request",
+        G::WsUse,
+        false,
+    ),
+    r("GET", "/v1/orgs/{org}/app-setup-requests", G::Admin, false),
+    r(
+        "POST",
+        "/v1/orgs/{org}/app-setup-requests/{id}/decline",
+        G::Admin,
+        false,
+    ),
     r("GET", "/v1/connectors", G::Auth, false),
     r("GET", "/v1/connectors/{id}/icon", G::Auth, false),
     r("POST", "/v1/apps/{app}/connect", G::Auth, false),
@@ -1084,6 +1105,13 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/connections/{id}", G::WsOwn, false),
     r("PATCH", "/v1/connections/{id}", G::WsOwn, false),
     r("DELETE", "/v1/connections/{id}", G::WsOwn, false),
+    // (P5-WEBHOOK-2, C-909) An outgoing webhook's configuration: `can_own` of the workspace (owner
+    // or admin for an organization's); the preview and the presets need a signed-in caller.
+    r("GET", "/v1/connections/{id}/webhook", G::WsOwn, false),
+    r("PUT", "/v1/connections/{id}/webhook", G::WsOwn, false),
+    r("POST", "/v1/connections/{id}/webhook/test", G::WsOwn, false),
+    r("POST", "/v1/apps/webhook/webhook-preview", G::Auth, false),
+    r("GET", "/v1/apps/{app}/webhook-presets", G::Auth, false),
     r("GET", "/v1/connections/{id}/grants", G::WsOwn, false),
     // (P5-UX-11, C-990) who a lower limit would change: workspace `can_own`, or org owner/admin
     // for an organization's account (a workspace's account has no limit: 400).

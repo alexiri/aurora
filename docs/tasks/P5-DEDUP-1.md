@@ -368,3 +368,19 @@ Live diffs checked on 2026-11-18 with `git diff --name-only master...alexiri/<la
 
 `web/**` is P5-DEDUP-2's. Part B clusters that sit **only** in non-skipped files and can start now:
 T3, T4, T5, T6-T11, T13, T15-T17, P6, P7 (after a FIX-170 file check), P9 (non-skipped files), P12, P14, P16, P19.
+
+## Part B batches (lane p5-platform, worker 41, 2026-11-19)
+Lines are `git diff --shortstat` of the batch commit (insertions/deletions, test code only; counts include blank lines). Gate per batch: `cargo clippy -p aurora-api --tests -- -D warnings`, the tests of every touched file by module filter, guards; no full suites (owner 2026-11-19, GitHub CI is the full gate). Test counts: the same tests run as before (they were run per module, none removed).
+
+| Batch | Commit | Δ lines | Tests run |
+|---|---|---:|---|
+| T2 hosted/runner rigs: `schedules.rs` uses `hosted::Rig`; new `tests/it/runner_rig.rs` (seeded-sandbox rig) shared by `memory.rs`, `skills.rs` | fe15ea6a | +189 / −646 (−457) | schedules, memory, skills: 30 passed |
+| T1 plugin install block: `Admin::trust`/`install`/`install_with` (`plugins_lifecycle.rs`) replace nine copies | 760057b7 | +84 / −478 (−394) | 10 modules + `plugins_lifecycle`: 149 passed |
+| T3 `Harness::call`/`call_tok` replace the cookie+origin bodies of 43 per-file `call()` helpers (signatures kept) | b3bf2814 | +70 / −281 (−211) | 42 modules: 430 passed |
+| T4 `Harness::hosted_agent`/`byo_agent` replace 33 `INSERT INTO agents` sequences | da209b15 | +53 / −131 (−78) | 28 modules: 421 passed |
+| **Net, four batches** | | **−1,140** | |
+
+Scripted bulk rewrites (stated in each commit, diffs reviewed): T2 line-range deletions; T1 six identical blocks replaced by line range; T3 and T4 regex rewrites over exact-shape copies (T3 first run over-matched into off-limits files and a mis-anchored regex, was reverted with `git checkout` and re-run with a `[^;]` anchor and a skip list).
+
+Left, and why: `webhooks.rs`, `tools.rs` rigs (P5-WEBHOOK-2, P5-GUIDE-7); `app_setup.rs`, `apps_connections.rs`, `plugins*.rs`, `secrets.rs`, `permission_matrix.rs`, `model_roles.rs` (p5-polish-b), `settings.rs`, `settings_ops.rs` (p5-agent) skipped by T3/T4; `attachments.rs` rig and `fix_029.rs`/`runner_plane.rs` partial rigs (different shape: own `Live`, second runner, admin cookie; need a parameterised rig, next); hosted `agent()` with grant rows and the `$1::text`-handle (11) and `'ada'` (8) agent shapes (T4 remainder); inline conversation/turn seed rows (T4 rest); T3's 67 inline `.send(` blocks. Next: T5 runner test support, T16/T17, T6–T11 gateway test support, then the P clusters (P4 dead code first).
+FIX-182 (priority, separate commit 52d1602b) is not a dedup batch; its report is in `docs/tasks/FIX-182.md`.

@@ -14554,6 +14554,70 @@
         ]
       }
     },
+    "/v1/apps/webhook/webhook-preview": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Render a configuration for sample values with no network; secret values appear as\n`«secret:name»` (C-909). Needs a session.",
+        "operationId": "previewWebhook",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/apps/{app}": {
       "get": {
         "tags": [
@@ -15119,6 +15183,77 @@
             }
           },
           "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app}/webhook-presets": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "The presets of the installed package version of a send-mode app (C-909).",
+        "operationId": "listWebhookPresets",
+        "parameters": [
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookPreset"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
             "content": {
               "application/json": {
                 "schema": {
@@ -16963,6 +17098,303 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/connections/{id}/webhook": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "The configuration of an outgoing webhook (C-909): the template, slots, headers, limits, the\nhost and the **names** of its secret values. Never the URL, a secret value or the signing\nsecret. `can_own` of the connection's workspace (owner/admin for an organization's).",
+        "operationId": "getConnectionWebhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Replace the configuration (C-909). `secret_values`: a value sets, `null` deletes, an absent name\nis kept. `signing_secret.mode`: `keep`, `generate`, `provided` or `off`. A change of secrets bumps\nthe credential version; any change reaches the gateway at once. Audited\n`connection.webhook.update`.",
+        "operationId": "putConnectionWebhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PutWebhookResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`webhook_config_invalid` with `fields[{path, code}]`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/connections/{id}/webhook/test": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Send the webhook now, or with `dry_run` show the stored configuration's rendering (C-909). The\nperson is the actor; the same renderer, destination guard, redirect rule and rate counters as the\ngateway. The answer is capped at 4 KiB and echo-checked. Audited `webhook.test_sent`.",
+        "operationId": "testConnectionWebhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "504": {
             "content": {
               "application/json": {
                 "schema": {
@@ -23682,6 +24114,185 @@
           },
           "422": {
             "description": "app_not_instance_bound, instance_host_invalid, instance_host_conflict or instance_probe_failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/app-setup-requests": {
+      "get": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "The organization's app setup requests (`status=open` by default), the latest ask first. Owners and\nadmins only; anyone else gets 404.",
+        "operationId": "listAppSetupRequests",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`open` (default) | `resolved` | `declined` | `withdrawn`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSetupRequestList"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/app-setup-requests/{id}/decline": {
+      "post": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "\"Not now\": closes the request as declined; each asker is told once. Owners and admins only.",
+        "operationId": "declineAppSetupRequest",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Request id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSetupRequest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already_closed",
             "content": {
               "application/json": {
                 "schema": {
@@ -35294,6 +35905,172 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/apps/{app}/setup-request": {
+      "post": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "Ask the organization's owners and admins to make an app ready (C-1030). `can_own` of the workspace.\nIdempotent per person; 409 `app_ready` when the app is ready already; 429 after 20 asks in an hour.",
+        "operationId": "askAppSetup",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSetupRequest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "app_ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "Withdraw the caller's ask; the request closes when no asker is left.",
+        "operationId": "withdrawAppSetup",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Withdrawn"
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/audit": {
       "get": {
         "tags": [
@@ -40188,6 +40965,17 @@
             },
             "description": "The union of what the blocking methods need (empty when the app is switched off)."
           },
+          "requested": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Requested",
+                "description": "(P5-POLISH-4, C-1030) Whether the caller asked an admin to set it up, and how many people did;\nabsent when nobody asked."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "state": {
             "$ref": "#/components/schemas/ReadinessState"
           },
@@ -40217,6 +41005,84 @@
           },
           "custom_only": {
             "type": "boolean"
+          }
+        }
+      },
+      "AppSetupRequest": {
+        "type": "object",
+        "description": "An organization's request for an app to be made ready (C-1030). There is no free text.",
+        "required": [
+          "id",
+          "org_id",
+          "app_id",
+          "app_name",
+          "status",
+          "askers",
+          "needs",
+          "unavailable",
+          "created_at"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "app_name": {
+            "type": "string"
+          },
+          "askers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Asker"
+            },
+            "description": "The askers; a person who is not an owner or admin of the organization sees only their own ask."
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupNeed"
+            },
+            "description": "What is missing (C-1029); empty when the app is switched off."
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "`open` | `resolved` | `declined` | `withdrawn`."
+          },
+          "unavailable": {
+            "type": "boolean",
+            "description": "The app is switched off for the organization."
+          }
+        }
+      },
+      "AppSetupRequestList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppSetupRequest"
+            }
           }
         }
       },
@@ -41017,9 +41883,63 @@
                 "description": "`workspace` | `organization`"
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "(P5-TOOLASK, C-1043) The app's own default for the tool asked: no rule or access choice did.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "package"
+                ]
+              },
+              "tool_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
           }
         ],
         "description": "(P5-UX-16, C-982) What asked the question: the agent's access, or a rule."
+      },
+      "Asker": {
+        "type": "object",
+        "description": "One person's ask: their display name and where they asked from. Never an e-mail.",
+        "required": [
+          "user_id",
+          "display_name",
+          "workspace_id",
+          "asked_at"
+        ],
+        "properties": {
+          "asked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       },
       "AttachPresenceRequest": {
         "type": "object",
@@ -42199,6 +43119,17 @@
             },
             "description": "(FIX-136, D-241) For a `fields` method that declares scopes: the scopes the pasted token\nhas (\"Which scopes did you give this token?\"). Absent = prefilled by the method's read\nprobes. Each must be one of the method's scopes."
           },
+          "webhook": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WebhookConnectBody",
+                "description": "(P5-WEBHOOK-2, C-909) For a send-mode app (an outgoing webhook): the configuration and the\nsecrets the person enters. Required for a new connection; a reconnect keeps what it has\nunless this is given."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "workspace_id": {
             "type": [
               "string",
@@ -42259,6 +43190,13 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "signing_secret": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "(P5-WEBHOOK-2, C-909) A signing secret Aurora generated for an outgoing webhook: shown\nhere once and never again."
               }
             }
           }
@@ -43165,6 +44103,14 @@
             }
           }
         }
+      },
+      "ContentType": {
+        "type": "string",
+        "enum": [
+          "application/json",
+          "application/x-www-form-urlencoded",
+          "text/plain"
+        ]
       },
       "ContextCredential": {
         "type": "object",
@@ -44967,6 +45913,31 @@
           },
           "posture": {
             "$ref": "#/components/schemas/Sourced_String"
+          }
+        }
+      },
+      "EffectiveRateDto": {
+        "type": "object",
+        "description": "The effective send limit and who lowered it.",
+        "required": [
+          "per_minute",
+          "per_day",
+          "source"
+        ],
+        "properties": {
+          "per_day": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_minute": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string",
+            "description": "`instance` | `org` | `connection`."
           }
         }
       },
@@ -46922,6 +47893,23 @@
             "description": "(P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none."
           }
         }
+      },
+      "HeaderTemplate": {
+        "type": "object",
+        "description": "A header sent to the receiver: a constant value, or one with `{{secret:name}}`.",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "Health": {
         "type": "object",
@@ -49680,6 +50668,13 @@
           }
         }
       },
+      "Method": {
+        "type": "string",
+        "enum": [
+          "POST",
+          "PUT"
+        ]
+      },
       "MethodAudience": {
         "type": "string",
         "enum": [
@@ -50577,7 +51572,8 @@
         "required": [
           "members_can_create_workspaces",
           "previews_enabled",
-          "calendar_invitations_enabled"
+          "calendar_invitations_enabled",
+          "outgoing_webhooks_enabled"
         ],
         "properties": {
           "calendar_invitations_enabled": {
@@ -50600,6 +51596,25 @@
           },
           "members_can_create_workspaces": {
             "type": "boolean"
+          },
+          "outgoing_webhooks_enabled": {
+            "type": "boolean",
+            "description": "(phase 5, P5-WEBHOOK-2, D-320, C-912) Outgoing webhooks for the organization (default\n`true`); stored as `settings.outgoing_webhooks.enabled`."
+          },
+          "outgoing_webhooks_per_day_max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "outgoing_webhooks_per_minute_max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The org's own send ceilings (`null` = the instance's), stored as\n`settings.outgoing_webhooks.per_minute_max` / `.per_day_max`."
           },
           "previews_enabled": {
             "type": "boolean",
@@ -50637,6 +51652,28 @@
               "boolean",
               "null"
             ]
+          },
+          "outgoing_webhooks_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(phase 5, P5-WEBHOOK-2, C-912) The outgoing-webhook switch; audited with `org.update`."
+          },
+          "outgoing_webhooks_per_day_max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "outgoing_webhooks_per_minute_max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The org's send ceilings. Absent = unchanged, `null` = the instance's; above the instance's →\n422 `above_instance_ceiling`."
           },
           "previews_enabled": {
             "type": [
@@ -57675,6 +58712,28 @@
         },
         "additionalProperties": false
       },
+      "PreviewConfig": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WebhookConfig"
+          },
+          {
+            "type": "object",
+            "required": [
+              "secret_value_names"
+            ],
+            "properties": {
+              "secret_value_names": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "description": "The configuration of a preview: the configuration and `secret_value_names`, the names of the secret\nvalues the person will enter."
+      },
       "PreviewCreatedBy": {
         "type": "object",
         "properties": {
@@ -57715,6 +58774,49 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PreviewRequest": {
+        "type": "object",
+        "required": [
+          "config",
+          "values"
+        ],
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/PreviewConfig"
+          },
+          "values": {
+            "description": "The slot values."
+          }
+        }
+      },
+      "PreviewResponse": {
+        "type": "object",
+        "required": [
+          "method",
+          "content_type",
+          "headers",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The rendered body, secrets shown as `«secret:name»`."
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Header names only."
+          },
+          "method": {
+            "type": "string"
           }
         }
       },
@@ -58595,6 +59697,87 @@
           }
         }
       },
+      "PutWebhookRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WebhookConfig"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "secret_values": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "A value sets, `null` deletes, an absent name is kept.",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "signing_secret": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SigningInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "`PUT /v1/connections/{id}/webhook` request: the configuration plus the edits of the secrets."
+      },
+      "PutWebhookResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WebhookView"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "signing_secret": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The answer of an edit: the view, and the signing secret when one was generated (once)."
+      },
+      "Rate": {
+        "type": "object",
+        "description": "The connection's own send limits (`null` = the ceiling).",
+        "properties": {
+          "per_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_minute": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "RateLimit": {
         "type": "object",
         "required": [
@@ -59161,6 +60344,23 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "Requested": {
+        "type": "object",
+        "description": "`AppSummary.readiness.requested` (C-1029): whether the caller asked, and how many people did.",
+        "required": [
+          "by_me",
+          "count"
+        ],
+        "properties": {
+          "by_me": {
+            "type": "boolean"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -61755,6 +62955,27 @@
           }
         }
       },
+      "SigningInput": {
+        "type": "object",
+        "description": "How a signing secret is set on connect.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "description": "Connect: `generate` | `provided`. Edit: `keep` | `generate` | `provided` | `off`."
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The secret, for `provided`."
+          }
+        },
+        "additionalProperties": false
+      },
       "SimApp": {
         "type": "object",
         "description": "(FIX-159, C-930) What the request was recognized as.",
@@ -62326,6 +63547,74 @@
             "type": "boolean"
           }
         }
+      },
+      "Slot": {
+        "type": "object",
+        "description": "One typed blank of the template that the agent fills in.",
+        "required": [
+          "name",
+          "type",
+          "required"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "enum": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "`enum`: the allowed values."
+          },
+          "example": {},
+          "max_items": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`string_list`: at most this many items.",
+            "minimum": 0
+          },
+          "max_length": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`string` and `string_list` items: at most this many Unicode scalar values.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "schema": {
+            "description": "`json`: the schema subset of C-909."
+          },
+          "type": {
+            "$ref": "#/components/schemas/SlotType"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SlotType": {
+        "type": "string",
+        "enum": [
+          "string",
+          "integer",
+          "number",
+          "boolean",
+          "string_list",
+          "enum",
+          "json"
+        ]
       },
       "Sourced_Option_Vec_String": {
         "type": "object",
@@ -63500,6 +64789,71 @@
           }
         }
       },
+      "TestRequest": {
+        "type": "object",
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          },
+          "values": {}
+        },
+        "additionalProperties": false
+      },
+      "TestResponse": {
+        "type": "object",
+        "description": "The answer of a send test, or with `dry_run` the preview of the stored configuration.",
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The receiver's answer (≤ 4 KiB, echo-checked), or the masked body of a dry run."
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivery_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "headers": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The receiver's status (a real send).",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
       "TestResult": {
         "type": "object",
         "description": "`POST /v1/admin/secret-stores/test` (C-746).",
@@ -63660,6 +65014,13 @@
           "scopes"
         ],
         "properties": {
+          "approval": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-TOOLASK, D-397, C-1042) The package's default for the tool: `ask` (held for approval\nunless a workspace or organization rule allows it) or `null`."
+          },
           "connect_methods": {
             "type": "array",
             "items": {
@@ -64815,6 +66176,96 @@
           }
         }
       },
+      "WebhookConfig": {
+        "type": "object",
+        "required": [
+          "version",
+          "method",
+          "content_type",
+          "template"
+        ],
+        "properties": {
+          "content_type": {
+            "$ref": "#/components/schemas/ContentType"
+          },
+          "description": {
+            "type": "string",
+            "description": "The person's note for the agent (≤ 1,000 characters)."
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeaderTemplate"
+            }
+          },
+          "method": {
+            "$ref": "#/components/schemas/Method"
+          },
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rate": {
+            "$ref": "#/components/schemas/Rate"
+          },
+          "signing": {
+            "type": "boolean"
+          },
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Slot"
+            }
+          },
+          "template": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebhookConnectBody": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WebhookConfig"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "secret_values": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "Secret values by name; each ≤ 4 KiB.",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "signing_secret": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SigningInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "`webhook` of a connect: the configuration and the secrets the person enters."
+      },
       "WebhookCreator": {
         "type": "object",
         "required": [
@@ -64865,6 +66316,69 @@
             "format": "uuid"
           }
         }
+      },
+      "WebhookPreset": {
+        "type": "object",
+        "description": "A preset file of a package (C-909): holds no secret value; the names say which ones the person\nmust enter.",
+        "required": [
+          "id",
+          "name",
+          "config"
+        ],
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/WebhookConfig"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "secret_value_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "suggest_for_hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebhookView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WebhookConfig"
+          },
+          {
+            "type": "object",
+            "required": [
+              "host",
+              "secret_value_names",
+              "effective_rate"
+            ],
+            "properties": {
+              "effective_rate": {
+                "$ref": "#/components/schemas/EffectiveRateDto"
+              },
+              "host": {
+                "type": "string"
+              },
+              "secret_value_names": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "description": "`GET /v1/connections/{id}/webhook`: never a URL, a secret value or the signing secret."
       },
       "WebhookWithUrl": {
         "type": "object",

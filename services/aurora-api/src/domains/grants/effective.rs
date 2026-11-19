@@ -306,6 +306,7 @@ pub(crate) fn tool_eval(
             t.graphql.is_some(),
             t.git.is_some(),
             aurora_registry::identify::scope_missing(&t.scopes, &c.scopes),
+            t.approval.is_some(),
         ),
         winning_credential: Some(cred.clone()),
         is_llm_host: false,
@@ -374,6 +375,14 @@ fn reason_for(
     let Some(d) = &e.decision else {
         return Some(package());
     };
+    // (P5-TOOLASK, C-1043) Held by the app's own default, not by a rule or a limit.
+    if d.package_ask {
+        return Some(ToolReason {
+            layer: "package".into(),
+            label: "The app asks before this action.".into(),
+            link: None,
+        });
+    }
     let scope = d.trace.decided_by?;
     let (trace, matched) = match scope {
         ScopeKind::Organization => (&d.trace.organization, d.org_matched.as_ref()),

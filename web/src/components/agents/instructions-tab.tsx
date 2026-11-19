@@ -6,9 +6,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Form, FormActions, FormSection } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
-import { Section } from "@/components/ui/section";
+import { SwitchField } from "@/components/ui/switch";
 import { useHarnesses, usePatchAgent } from "@/lib/api/agents";
 import { ApiError } from "@/lib/api/client";
 import { useModelReadiness } from "@/lib/api/credential-grants";
@@ -22,6 +21,13 @@ import { AvatarField } from "./avatar-field";
 import { automaticModelText, READINESS_WARNING_COPY } from "./model-readiness";
 import { EMPTY_ROLES, ModelRolesFields, type RoleDraft, type RoleFieldErrors } from "./model-roles-fields";
 
+/**
+ * Behaviour › Instructions (P5-POLISH-6, C3, D-385): one card. The avatar (click it to change it) beside the Name, the
+ * Instructions (the agent's brief, same data), the Model, "<Agent> may message you first" (a switch over the stored
+ * proactive messaging: on is the stored Ask first or Allow, off is Off; switching on from Off stores Ask first), and a
+ * collapsed **Advanced** with the harness, the model roles, Subagents use and Effort. No role warnings here (the
+ * endpoint shows them). Save appears at the bottom of the viewport only when something changed.
+ */
 export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string }) {
   const patch = usePatchAgent(wsId, agent.id);
   const isAdmin = useMe().data?.user.is_instance_admin === true;
@@ -30,14 +36,13 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
   const [effort, setEffort] = useState(agent.effort ?? "");
   const [proactive, setProactive] = useState(agent.proactive_messaging);
   const models = useModels(agent.id, agent.kind === "hosted");
-  const [model, setModel] = useState(
-    agent.model_endpoint_id && agent.model_id ? `${agent.model_endpoint_id}\u0000${agent.model_id}` : "",
-  );
+  const initialModel = agent.model_endpoint_id && agent.model_id ? `${agent.model_endpoint_id}\u0000${agent.model_id}` : "";
+  const [model, setModel] = useState(initialModel);
   const [clientErr, setClientErr] = useState("");
   const [saved, setSaved] = useState(false);
   const fe = patch.error ? fieldErrors(patch.error) : {};
 
-  // (FIX-170) The chat's "Choose a model" link ends in `#a-model`: scroll to the Default model field and focus it
+  // (FIX-170) The chat's "Choose a model" link ends in `#a-model`: scroll to the Model field and focus it
   // once it can take focus (it is disabled until the model list has loaded).
   const modelReady = agent.kind === "hosted" && !!models.data?.items.length;
   useEffect(() => {
@@ -90,6 +95,30 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     return same ? null : { model_roles: next };
   }
 
+  const dirty =
+    name !== agent.name ||
+    brief !== agent.brief ||
+    effort !== (agent.effort ?? "") ||
+    proactive !== agent.proactive_messaging ||
+    model !== initialModel ||
+    harnessChanged ||
+    rolesPatch() !== null ||
+    (agent.kind === "hosted" && !roleless && subagent !== agent.subagent_model);
+
+  function discard() {
+    setName(agent.name);
+    setBrief(agent.brief);
+    setEffort(agent.effort ?? "");
+    setProactive(agent.proactive_messaging);
+    setModel(initialModel);
+    setHarness(agent.harness ?? "");
+    setRoles(rolesFor(agent.model_endpoint_id && agent.model_id ? agent.model_endpoint_id : (defaultView?.endpoint_id ?? null)));
+    setSubagent(agent.subagent_model);
+    setClientErr("");
+    setSaved(false);
+    patch.reset();
+  }
+
   async function save(n: string) {
     try {
       await patch.mutateAsync({
@@ -119,151 +148,169 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     await save(n);
   }
 
+  const defaultModelLabel = defaultView ? `Workspace default · ${defaultView.model_id}` : "Workspace default";
+
   return (
     <div className="space-y-6">
-      <Section id="avatar" title="Avatar" card>
-        <AvatarField agent={agent} wsId={wsId} />
-      </Section>
-      <Form onSubmit={(e) => void submit(e)} noValidate className="max-w-2xl">
-      <FormSection title="Details" description="What this agent is called and how it behaves.">
-      <Field id="a-name" label="Name" error={clientErr || fe.name}>
-        <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
-      </Field>
-      <Field id="a-handle" label="Handle" hint="The handle cannot be changed.">
-        <input id="a-handle" className={inputClass} value={agent.handle} readOnly />
-      </Field>
-      <Field id="a-brief" label="Brief" error={fe.brief}>
-        <textarea id="a-brief" className={inputClass} rows={5} value={brief} onChange={(e) => setBrief(e.target.value)} />
-      </Field>
-      <Field
-        id="a-harness"
-        label="Harness"
-        error={fe.harness}
-        hint={
-          showPicker ? (
-            "Changing it starts fresh sessions for every conversation of this agent."
-          ) : (
-            <>
-              Your administrator chooses which programs agents can run.
-              {isAdmin ? (
-                <>
-                  {" "}
-                  <Link href={adminRoutes.agents("defaults")} className="underline">
-                    Administration › Agents › Defaults
-                  </Link>
-                </>
-              ) : null}
-            </>
-          )
-        }
-      >
-        {showPicker ? (
-          <select id="a-harness" className={inputClass} value={chosenHarness} onChange={(e) => setHarness(e.target.value)}>
-            {options.map((h) => (
-              <option key={h.id} value={h.id} disabled={!h.available && h.id !== currentHarness}>
-                {h.display_name}
-                {h.available ? "" : " (no runner offers this)"}
+      <form onSubmit={(e) => void submit(e)} noValidate className="max-w-180 space-y-5 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+        <div className="flex items-start gap-4">
+          <AvatarField agent={agent} wsId={wsId} compact />
+          <div className="min-w-0 flex-1">
+            <Field id="a-name" label="Name" error={clientErr || fe.name}>
+              <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+            </Field>
+          </div>
+        </div>
+        <Field
+          id="a-brief"
+          label="Instructions"
+          error={fe.brief}
+          hint={`What ${agent.name} should do and how. It reads these before every conversation.`}>
+          <textarea id="a-brief" className={inputClass} rows={6} value={brief} onChange={(e) => setBrief(e.target.value)} />
+        </Field>
+        <Field id="a-model" label="Model" error={roleErrors.model} hint={modelHint(agent.kind, models.data?.items.length, models.isError)}>
+          <select
+            id="a-model"
+            className={inputClass}
+            value={model}
+            disabled={agent.kind !== "hosted" || !models.data?.items.length}
+            onChange={(e) => {
+              setModel(e.target.value);
+              setRoles(rolesFor(e.target.value ? e.target.value.split("\u0000")[0]! : (defaultView?.endpoint_id ?? null)));
+            }}>
+            <option value="">{defaultModelLabel}</option>
+            {model && !models.data?.items.some((m) => `${m.endpoint_id}\u0000${m.model_id}` === model) ? (
+              <option value={model}>{model.replace("\u0000", " / ")}</option>
+            ) : null}
+            {(models.data?.items ?? []).map((m) => (
+              <option key={`${m.endpoint_id}/${m.model_id}`} value={`${m.endpoint_id}\u0000${m.model_id}`}>
+                {m.display_name ?? m.model_id} ({m.provider})
               </option>
             ))}
           </select>
-        ) : (
-          // Read-only text, not an input-looking box (D-374): the display name, or the id while the list loads.
-          <p id="a-harness" className="text-sm text-ink">
-            {options.find((h) => h.id === (agent.harness ?? harnesses.data?.default))?.display_name ??
-              agent.harness ??
-              harnesses.data?.default ??
-              "—"}
-          </p>
-        )}
-      </Field>
-      <Field
-        id="a-model"
-        label="Default model"
-        error={roleErrors.model}
-        hint={modelHint(agent.kind, models.data?.items.length, models.isError)}
-      >
-        <select
-          id="a-model"
-          className={inputClass}
-          value={model}
-          disabled={agent.kind !== "hosted" || !models.data?.items.length}
-          onChange={(e) => {
-            setModel(e.target.value);
-            setRoles(rolesFor(e.target.value ? e.target.value.split("\u0000")[0]! : (defaultView?.endpoint_id ?? null)));
-          }}
-        >
-          <option value="">Default</option>
-          {model && !models.data?.items.some((m) => `${m.endpoint_id}\u0000${m.model_id}` === model) ? (
-            <option value={model}>{model.replace("\u0000", " / ")}</option>
+          {/* (FIX-170, C-1026) What the next turn uses while no model is chosen, and the warnings of the default selection. */}
+          {!model && defaultView ? (
+            <p className="text-xs text-ink-2" data-testid="model-automatic">
+              {automaticModelText(defaultView.source, defaultView.model_id)}
+            </p>
           ) : null}
-          {(models.data?.items ?? []).map((m) => (
-            <option key={`${m.endpoint_id}/${m.model_id}`} value={`${m.endpoint_id}\u0000${m.model_id}`}>
-              {m.display_name ?? m.model_id} ({m.provider})
-            </option>
+          {(readiness.data?.warnings ?? []).map((w) => (
+            <p key={w} className="text-xs text-pending-ink" data-testid="model-warning">
+              {READINESS_WARNING_COPY[w] ?? w}
+            </p>
           ))}
-        </select>
-        {/* (FIX-170, C-1026) What the next turn uses while no model is chosen, and the warnings of the default selection. */}
-        {!model && defaultView ? (
-          <p className="text-xs text-ink-2" data-testid="model-automatic">
-            {automaticModelText(defaultView.source, defaultView.model_id)}
-          </p>
-        ) : null}
-        {(readiness.data?.warnings ?? []).map((w) => (
-          <p key={w} className="text-xs text-pending-ink" data-testid="model-warning">
-            {READINESS_WARNING_COPY[w] ?? w}
-          </p>
-        ))}
-      </Field>
-      {agent.kind === "hosted" ? (
-        <ModelRolesFields
-          harnessId={chosenHarness || undefined}
-          harnessName={harnessInfo?.display_name ?? "this harness"}
-          roleless={roleless}
-          mapped={harnessInfo?.model_roles ?? null}
-          models={endpointModels}
-          roles={roles}
-          onRoles={setRoles}
-          subagent={subagent}
-          onSubagent={setSubagent}
-          readiness={defaultView}
-          errors={roleErrors}
-          disabled={!endpointId}
+        </Field>
+        <SwitchField
+          id="a-proactive"
+          label={`${agent.name} may message you first`}
+          hint="For example when a schedule finds something."
+          checked={proactive !== "off"}
+          onChange={(on) => setProactive(on ? (agent.proactive_messaging !== "off" ? agent.proactive_messaging : "ask") : "off")}
         />
-      ) : null}
-      <Field id="a-effort"label="Effort" error={fe.effort}>
-        <select id="a-effort" className={inputClass} value={effort} onChange={(e) => setEffort(e.target.value)}>
-          <option value="">Default</option>
-          {["low", "medium", "high", "max"].map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field id="a-proactive" label="Proactive messaging" error={fe.proactive_messaging}>
-        <select id="a-proactive" className={inputClass} value={proactive} onChange={(e) => setProactive(e.target.value)}>
-          <option value="ask">Ask first</option>
-          <option value="allow">Allow</option>
-          <option value="off">Off</option>
-        </select>
-      </Field>
-      {patch.error && Object.keys(fe).length === 0 && !hasRoleError(roleErrors) ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(patch.error)}
-        </Notice>
-      ) : null}
-      </FormSection>
-      <FormActions>
-        <Button type="submit" size="lg" disabled={patch.isPending}>
-          {patch.isPending ? "Saving…" : "Save"}
-        </Button>
-        {saved ? (
-          <span role="status" className="text-sm text-accent-ink">
-            Saved
-          </span>
+        {fe.proactive_messaging ? (
+          <p role="alert" className="text-xs text-danger-ink">
+            {fe.proactive_messaging}
+          </p>
         ) : null}
-      </FormActions>
-      </Form>
+        <details className="rounded-control border border-line px-3 py-2">
+          <summary className="cursor-pointer text-sm font-medium text-ink">Advanced: model roles, effort, agent program</summary>
+          <div className="mt-3 space-y-5">
+            <Field
+              id="a-harness"
+              label="Harness"
+              error={fe.harness}
+              hint={
+                showPicker ? (
+                  "Changing it starts fresh sessions for every conversation of this agent."
+                ) : (
+                  <>
+                    Your administrator chooses which programs agents can run.
+                    {isAdmin ? (
+                      <>
+                        {" "}
+                        <Link href={adminRoutes.agents("defaults")} className="underline">
+                          Administration › Agents › Defaults
+                        </Link>
+                      </>
+                    ) : null}
+                  </>
+                )
+              }>
+              {showPicker ? (
+                <select id="a-harness" className={inputClass} value={chosenHarness} onChange={(e) => setHarness(e.target.value)}>
+                  {options.map((h) => (
+                    <option key={h.id} value={h.id} disabled={!h.available && h.id !== currentHarness}>
+                      {h.display_name}
+                      {h.available ? "" : " (no runner offers this)"}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                // Read-only text, not an input-looking box (D-374): the display name, or the id while the list loads.
+                <p id="a-harness" className="text-sm text-ink">
+                  {options.find((h) => h.id === (agent.harness ?? harnesses.data?.default))?.display_name ??
+                    agent.harness ??
+                    harnesses.data?.default ??
+                    "—"}
+                </p>
+              )}
+            </Field>
+            {agent.kind === "hosted" ? (
+              <ModelRolesFields
+                harnessId={chosenHarness || undefined}
+                harnessName={harnessInfo?.display_name ?? "this harness"}
+                roleless={roleless}
+                mapped={harnessInfo?.model_roles ?? null}
+                models={endpointModels}
+                roles={roles}
+                onRoles={setRoles}
+                subagent={subagent}
+                onSubagent={setSubagent}
+                readiness={defaultView}
+                errors={roleErrors}
+                disabled={!endpointId}
+              />
+            ) : null}
+            <Field id="a-effort" label="Effort" error={fe.effort}>
+              <select id="a-effort" className={inputClass} value={effort} onChange={(e) => setEffort(e.target.value)}>
+                <option value="">Default</option>
+                {["low", "medium", "high", "max"].map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        </details>
+        {patch.error && Object.keys(fe).length === 0 && !hasRoleError(roleErrors) ? (
+          <Notice tone="danger" role="alert">
+            {errorMessage(patch.error)}
+          </Notice>
+        ) : null}
+        {saved ? (
+          <p role="status" className="text-sm text-accent-ink">
+            Saved
+          </p>
+        ) : null}
+        {/* (P5-POLISH-6) The save bar: only after a change, at the bottom of the viewport. There is no Save at the end of the page. */}
+        {dirty ? (
+          <div
+            role="region"
+            aria-label="Unsaved changes"
+            className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-xl items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-pop">
+            <span className="text-sm font-medium text-ink">Unsaved changes</span>
+            <span className="flex items-center gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={discard} disabled={patch.isPending}>
+                Discard
+              </Button>
+              <Button type="submit" size="sm" disabled={patch.isPending}>
+                {patch.isPending ? "Saving…" : "Save"}
+              </Button>
+            </span>
+          </div>
+        ) : null}
+      </form>
       <ConfirmDialog
         open={confirmSwitch}
         onOpenChange={setConfirmSwitch}

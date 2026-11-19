@@ -70,16 +70,7 @@ async fn rig() -> Rig {
 impl Rig {
     async fn call(&self, who: Uuid, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
         let (_, tok) = self.h.good_session(who).await;
-        let (s, _, v) = self
-            .h
-            .send(
-                m,
-                uri,
-                &[("cookie", &cookie(&tok)), ("origin", ORIGIN)],
-                body,
-            )
-            .await;
-        (s.as_u16(), v)
+        self.h.call_tok(&tok, m, uri, body).await
     }
 
     async fn schedule(&self, who: Uuid, name: &str, extra: Value) -> String {

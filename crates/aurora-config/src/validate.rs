@@ -245,6 +245,8 @@ pub struct ApiConfig {
     pub push: PushSection,
     /// (phase 4, P4-TERM, D-161) validated `[terminal]` (off means every route 404s).
     pub terminal: TerminalSection,
+    /// (P5-WEBHOOK-2, C-912) validated `[outgoing_webhooks]`.
+    pub outgoing_webhooks: OutgoingWebhooksSection,
     pub plugins: PluginsSection,
     pub retention: RetentionSection,
     pub attachments: AttachmentsSection,
@@ -620,6 +622,13 @@ impl RawConfig {
         if self.terminal.wake_window_secs == 0 {
             c.err("terminal.wake_window_secs", "must be greater than 0");
         }
+        // (P5-WEBHOOK-2, C-912) the instance ceilings of the outgoing-webhook send limits.
+        if !(1..=600).contains(&self.outgoing_webhooks.per_minute_max) {
+            c.err("outgoing_webhooks.per_minute_max", "must be 1–600");
+        }
+        if !(1..=100_000).contains(&self.outgoing_webhooks.per_day_max) {
+            c.err("outgoing_webhooks.per_day_max", "must be 1–100000");
+        }
         if self.terminal.wake_wait_secs == 0 {
             c.err("terminal.wake_wait_secs", "must be greater than 0");
         }
@@ -761,6 +770,7 @@ impl RawConfig {
             previews,
             push: self.push.clone(),
             terminal: self.terminal.clone(),
+            outgoing_webhooks: self.outgoing_webhooks.clone(),
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
             attachments: self.attachments.clone(),
@@ -1059,6 +1069,7 @@ impl RawConfig {
                 None
             }
         };
+        check_dev_switches(&mut c, self);
         check_common(&mut c, &self.tls, &self.telemetry);
         c.finish()?;
         Ok(ConnectorConfig {
@@ -1082,9 +1093,7 @@ impl RawConfig {
         };
         check_dev_switches(&mut c, self);
         let h = &self.connector_host;
-        if !(h.api_url.starts_with("http://") || h.api_url.starts_with("https://")) {
-            c.err("connector_host.api_url", "must be an http(s) URL");
-        }
+        check_url(&mut c, "connector_host.api_url", Some(&h.api_url));
         if h.listen
             .rsplit_once(':')
             .is_none_or(|(_, p)| p.parse::<u16>().is_err())
@@ -1118,10 +1127,9 @@ impl RawConfig {
                 None
             }
         };
+        check_dev_switches(&mut c, self);
         let r = &self.relay;
-        if !(r.api_url.starts_with("http://") || r.api_url.starts_with("https://")) {
-            c.err("relay.api_url", "must be an http(s) URL");
-        }
+        check_url(&mut c, "relay.api_url", Some(&r.api_url));
         if r.listen
             .rsplit_once(':')
             .is_none_or(|(_, p)| p.parse::<u16>().is_err())
@@ -1218,10 +1226,9 @@ impl RawConfig {
                 None
             }
         };
+        check_dev_switches(&mut c, self);
         let t = &self.terminator;
-        if !(t.api_url.starts_with("http://") || t.api_url.starts_with("https://")) {
-            c.err("terminator.api_url", "must be an http(s) URL");
-        }
+        check_url(&mut c, "terminator.api_url", Some(&t.api_url));
         if t.listen
             .rsplit_once(':')
             .is_none_or(|(_, p)| p.parse::<u16>().is_err())

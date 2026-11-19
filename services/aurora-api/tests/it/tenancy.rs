@@ -20,11 +20,7 @@ impl Who {
 }
 
 async fn call(h: &Harness, who: &Who, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-    let c = cookie(&who.0);
-    let (s, _, v) = h
-        .send(m, uri, &[("cookie", &c), ("origin", ORIGIN)], body)
-        .await;
-    (s.as_u16(), v)
+    h.call_tok(&who.0, m, uri, body).await
 }
 
 async fn count(h: &Harness, sql: &str, id: Uuid) -> i64 {
@@ -863,9 +859,7 @@ async fn agent_delete_removes_its_grant_derived_rules() {
     let v = setup_org(&h, &ot, "Org").await;
     let org = id(&v["org"]["id"]);
     let ws = id(&v["workspace"]["id"]);
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let agent = h.byo_agent(org, ws, "bot", "Bot").await;
     let conn = Uuid::now_v7();
     sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'acme_app','acme','1.0.0','c','active','x')")
         .bind(conn).bind(org).bind(ws).execute(h.pool()).await.unwrap();
@@ -937,10 +931,7 @@ async fn webhook_with_secret(h: &Harness, org: Uuid, ws: Uuid, agent: Uuid) -> (
 }
 
 async fn plain_agent(h: &Harness, org: Uuid, ws: Uuid, handle: &str) -> Uuid {
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,$4,'Bot','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).bind(handle).execute(h.pool()).await.unwrap();
-    agent
+    h.byo_agent(org, ws, handle, "Bot").await
 }
 
 async fn integration_with_credentials(h: &Harness, org: Uuid, tenant: &str) -> (Uuid, String) {

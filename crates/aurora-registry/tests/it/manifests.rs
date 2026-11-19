@@ -187,6 +187,85 @@ fn connect_methods_with_token_presentation_and_tool_filter_are_valid() {
     );
 }
 
+/// (P5-TOOLASK, C-1042) `approval: ask` is valid on a write tool, only `ask` is accepted, and a
+/// tool without it serializes exactly as before (the package hashes of other packages hold).
+#[test]
+fn a_write_tool_may_default_to_ask_and_the_field_is_additive() {
+    let write = METHODS.replace(
+        "    tools:\n      read:",
+        "    tools:\n      write:\n        items:\n          - { id: send, name: Send, host: api.example.com, path: /send, methods: [POST], approval: ask }\n      read:",
+    );
+    let v = run(&write);
+    assert!(v.is_empty(), "{v:#?}");
+    let m = Manifest::parse(&write, RUNNING).unwrap();
+    let send = &m.apps[0]
+        .tools
+        .as_ref()
+        .unwrap()
+        .write
+        .as_ref()
+        .unwrap()
+        .items[0];
+    assert_eq!(
+        send.approval,
+        Some(aurora_registry::manifest::ToolDefaultApproval::Ask)
+    );
+    assert!(
+        serde_json::to_string(send)
+            .unwrap()
+            .contains(r#""approval":"ask""#)
+    );
+    let plain = Manifest::parse(METHODS, RUNNING).unwrap();
+    let read = &plain.apps[0]
+        .tools
+        .as_ref()
+        .unwrap()
+        .read
+        .as_ref()
+        .unwrap()
+        .items[0];
+    assert!(read.approval.is_none());
+    assert!(!serde_json::to_string(read).unwrap().contains("approval"));
+    // Only `ask` exists: `allow` is not a package default.
+    assert!(Manifest::parse(&write.replace("approval: ask", "approval: allow"), RUNNING).is_err());
+}
+
+/// (P5-TOOLASK, D-397) The shipped packages that act on other people ask first by default, and the
+/// policy tag follows the catalogue: `send_scheduling_message` (CalDAV) and the webhook `send`.
+#[test]
+fn caldav_scheduling_messages_and_webhook_sends_default_to_ask() {
+    use aurora_registry::manifest::ToolDefaultApproval::Ask;
+    for (pkg, ask_tool) in [("caldav", "send_scheduling_message"), ("webhook", "send")] {
+        let y = std::fs::read_to_string(format!(
+            "{}/../../plugins/builtin/{pkg}/plugin.yaml",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let m = Manifest::parse(&y, RUNNING).unwrap();
+        assert!(validate::manifest(&m).is_empty(), "{pkg}");
+        let tools = m.apps[0].tools.as_ref().unwrap();
+        let asked: Vec<&str> = tools
+            .read
+            .iter()
+            .chain(tools.write.iter())
+            .flat_map(|g| g.items.iter())
+            .filter(|i| i.approval == Some(Ask))
+            .map(|i| i.id.as_str())
+            .collect();
+        assert_eq!(asked, [ask_tool], "{pkg}: exactly one tool asks first");
+        assert!(
+            tools
+                .write
+                .as_ref()
+                .unwrap()
+                .items
+                .iter()
+                .any(|i| i.id == ask_tool),
+            "{pkg}: it is a write tool"
+        );
+    }
+}
+
 #[test]
 fn connect_method_rules_reject_each_invalid_case() {
     let cases = [
@@ -252,6 +331,12 @@ fn connect_method_rules_reject_each_invalid_case() {
             "blank description",
             METHODS.replace("description: Acts as you.", "description: \"  \""),
             "method_text_invalid",
+        ),
+        // (P5-TOOLASK, C-1042) A read tool cannot default to Ask.
+        (
+            "a read tool with approval: ask",
+            METHODS.replace("connect_methods: [token] }", "connect_methods: [token], approval: ask }"),
+            "tool_approval_read",
         ),
         // (P5-POLISH-3, C-1031) The package text for people has limits.
         (

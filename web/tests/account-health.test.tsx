@@ -35,25 +35,40 @@ const asAccount = (a: any) => a;
 
 describe("the health line (14 §7)", () => {
   it("says each state in the one wording, with its fix", () => {
-    const line = (h: Health) => healthLine(asAccount(acct(h)));
-    expect(line({ state: "working" }).text).toBe("Works");
-    expect(healthLine(asAccount(acct({ state: "working" })), "2 hours ago").text).toBe("Works · used 2 hours ago");
-    expect(line(failed("token"))).toMatchObject({ text: "GitHub no longer accepts this token", fix: { kind: "replace", label: "Replace token" } });
-    expect(line(failed("password")).fix?.label).toBe("Replace password");
-    expect(line(failed("key")).fix?.label).toBe("Replace key");
-    expect(line({ state: "sign_in_expired" })).toMatchObject({ text: "The sign-in to GitHub expired", fix: { kind: "reconnect", label: "Reconnect" } });
-    expect(line(failed("db.platform.example.org", "unreachable"))).toMatchObject({
-      text: "Could not be reached (db.platform.example.org)",
-      fix: { kind: "test", label: "Test" },
+    const now = Date.parse("2026-11-19T12:00:00Z");
+    const ago = (min: number) => new Date(now - min * 60_000).toISOString();
+    const line = (h: Health & Record<string, unknown>) => healthLine(asAccount(acct(h)), now);
+    // (D-383) "Worked" only from a real call; a passed test never reads as working.
+    expect(line({ state: "working", last_ok_at: ago(5) }).text).toBe("Worked 5 min ago");
+    expect(line({ state: "working", last_ok_at: ago(0) }).text).toBe("Worked just now");
+    expect(line(failed("token"))).toMatchObject({ text: "Failed: GitHub no longer accepts this token", fix: { kind: "replace", label: "Reconnect" } });
+    expect(line({ ...failed("token"), last_error_at: ago(120) }).text).toBe("Failed 2 h ago: GitHub no longer accepts this token");
+    expect(line(failed("password")).fix?.label).toBe("Reconnect");
+    expect(line({ state: "sign_in_expired" })).toMatchObject({ text: "Sign-in expired", fix: { kind: "reconnect", label: "Sign in again" } });
+    expect(line({ ...failed("db.platform.example.org", "unreachable"), last_error_at: ago(10) })).toMatchObject({
+      text: "Failed 10 min ago: it could not be reached (db.platform.example.org)",
+      fix: { kind: "test", label: "Try again" },
     });
+    expect(line({ ...failed(null, "expired"), last_error_at: ago(10) }).text).toBe("Failed 10 min ago: the sign-in expired");
     expect(line({ state: "disabled" })).toMatchObject({ text: "Turned off", fix: { kind: "turn_on", label: "Turn on" } });
-    expect(line({ state: "not_used" }).text).toBe("Not checked yet");
+    expect(line({ state: "not_used" }).text).toBe("Not used yet");
+  });
+
+  it("shows a test apart from the line, and a passed test never reads as Worked", () => {
+    const now = Date.parse("2026-11-19T12:00:00Z");
+    const at = new Date(now - 3 * 60_000).toISOString();
+    const passed = healthLine(asAccount(acct({ state: "not_used", test: { at, result: "ok" } } as Health)), now);
+    expect(passed.text).toBe("Not used yet");
+    expect(passed.test).toEqual({ ok: true, text: "Test passed 3 min ago" });
+    const failedTest = healthLine(asAccount(acct({ state: "not_used", test: { at, result: "unreachable" } } as Health)), now);
+    expect(failedTest.test).toEqual({ ok: false, text: "Test failed 3 min ago: it could not be reached" });
+    for (const l of [passed, failedTest]) expect(`${l.text} ${l.test?.text}`).not.toMatch(/Worked/);
   });
 
   it("names a website or an AI key by its own name, and never uses a raw reason", () => {
     const site = acct(failed("key"), { app: undefined, name: "Weather API" });
-    expect(healthLine(asAccount(site)).text).toBe("Weather API no longer accepts this key");
-    expect(healthLine(asAccount(acct(failed("invalid_grant: raw upstream text")))).text).toBe("GitHub no longer accepts this token");
+    expect(healthLine(asAccount(site)).text).toBe("Failed: Weather API no longer accepts this key");
+    expect(healthLine(asAccount(acct(failed("invalid_grant: raw upstream text")))).text).toBe("Failed: GitHub no longer accepts this token");
   });
 
   it("counts the accounts that need attention, and a turned-off account is not one", () => {
@@ -82,8 +97,8 @@ describe("the row's health line", () => {
   it("shows the line and the fix, and calls it", () => {
     const onFix = vi.fn();
     render(<AccountHealth account={asAccount(acct({ state: "sign_in_expired" }))} onFix={onFix} />);
-    expect(screen.getByText("The sign-in to GitHub expired")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(screen.getByText("Sign-in expired")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Sign in again" }));
     expect(onFix).toHaveBeenCalledWith("reconnect");
   });
 
@@ -127,7 +142,7 @@ describe("where a broken account shows up", () => {
     mockAccounts([acct({ state: "sign_in_expired" })]);
     wrap(<AccountsBanner workspaceId="ws1" agent={{ id: "a1", name: "Daneel" }} base="/o/acme/w/main" />);
     expect(await screen.findByText(/Daneel can't use GitHub: the sign-in expired\./)).toBeTruthy();
-    const fix = screen.getByRole("link", { name: "Reconnect" });
+    const fix = screen.getByRole("link", { name: "Sign in again" });
     expect(fix.getAttribute("href")).toBe("/o/acme/w/main/agents/a1?tab=access&reconnect=c1");
   });
 
@@ -141,10 +156,10 @@ describe("where a broken account shows up", () => {
     // The block lives in the Overview's "Needs you" card (P5-UX-7), counted with anything else that waits.
     expect(await screen.findByRole("heading", { name: /^Needs you/ })).toBeTruthy();
     expect(screen.getByLabelText("2 waiting")).toBeTruthy();
-    expect(screen.getByText(/: The sign-in to GitHub expired/)).toBeTruthy();
+    expect(screen.getByText(/: Sign-in expired/)).toBeTruthy();
     expect(screen.getByText(/analytics/).parentElement?.textContent).toContain("PostgreSQL no longer accepts this password");
-    expect(screen.getByRole("link", { name: "Reconnect" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts&reconnect=c1");
-    expect(screen.getByRole("link", { name: "Replace password" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts");
+    expect(screen.getByRole("link", { name: "Sign in again" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts&reconnect=c1");
+    expect(screen.getByRole("link", { name: "Reconnect" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts");
     unmount();
     mockAccounts([acct({ state: "working" })]);
     wrap(<NeedsYou wsId="ws1" base="/o/acme/w/main" />);
@@ -156,6 +171,6 @@ describe("where a broken account shows up", () => {
     mockAccounts([acct(failed("token"), { can: { give_access: false, change_access: false, manage: false } })]);
     wrap(<AccountsBanner workspaceId="ws1" agent={{ id: "a1", name: "Daneel" }} base="/o/acme/w/main" />);
     expect(await screen.findByText(/Daneel can't use GitHub: it no longer accepts this token\./)).toBeTruthy();
-    expect(screen.queryByRole("link", { name: /Replace/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Reconnect/ })).toBeNull();
   });
 });
