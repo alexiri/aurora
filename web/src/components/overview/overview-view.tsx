@@ -16,15 +16,7 @@ import { Section } from "@/components/ui/section";
 import { StatusDot } from "@/components/ui/status-dot";
 import { useActivity, useApprovalsStream, useCanApprove, useNow } from "@/lib/api/approvals";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
-
-function ago(iso: string, now: number): string {
-  const s = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 1000));
-  if (s < 60) return "just now";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min ago`;
-  const h = Math.floor(m / 60);
-  return h < 24 ? `${h} h ago` : `${Math.floor(h / 24)} d ago`;
-}
+import { ago } from "@/lib/utils";
 
 function LiveIndicator({ wsId }: { wsId: string }) {
   const { live } = useApprovalsStream(wsId);

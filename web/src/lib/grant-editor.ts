@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api/client";
-import { fieldErrors } from "@/lib/api/errors";
+import { errorDetail, fieldErrors } from "@/lib/api/errors";
 import type { components } from "@/lib/api/schema";
 
 // Pure rules of the per-agent connection grant editor (docs/14 › agent page › Access, 07 §Grants, 09 §3). Which
@@ -183,7 +183,7 @@ export function mapGrantError(err: unknown, tools: Tool[], decisions: Record<str
     return { ...out, timeout: fieldErrors(err).ask_timeout_secs ?? err.message };
   }
   if (err.code === "grant_invalid") {
-    const reason = (err.details as { reason?: unknown } | null)?.reason;
+    const reason = errorDetail(err, "reason");
     if (reason === "empty_custom") return { ...out, general: "Allow or ask at least one tool, or remove this connection's access instead." };
     if (reason === "ask_timeout_without_ask_tools") return { ...out, timeout: "An approval timeout needs at least one tool set to Ask." };
     if (reason === "tool_in_both") {

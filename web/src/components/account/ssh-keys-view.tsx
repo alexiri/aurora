@@ -23,10 +23,10 @@ import {
   type SshKey,
 } from "@/lib/api/ssh";
 import { SshSessionsList } from "@/components/ssh/sessions-list";
+import { fmtDate } from "@/lib/utils";
 
 import { CopyBlock, CopyButton, middleTruncate } from "./ssh-copy";
 
-const fmtDate = (s?: string | null) => (s ? new Date(s).toLocaleString() : "—");
 
 function AddKeyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const add = useAddSshKey();

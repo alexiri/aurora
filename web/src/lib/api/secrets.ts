@@ -218,8 +218,3 @@ export function buildLlmCreate(s: {
     ...(s.agentIds && s.agentIds.length > 0 ? { grant: { agent_ids: s.agentIds } } : {}),
   };
 }
-
-/** Whether any store can hold references (C-07). */
-export function referencesAvailable(stores: { capabilities: { references: boolean } }[] | undefined): boolean {
-  return !!stores?.some((s) => s.capabilities.references);
-}

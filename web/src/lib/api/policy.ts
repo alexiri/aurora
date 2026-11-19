@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { detailFields } from "./errors";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -331,8 +332,7 @@ export interface PolicyIssues {
 export function policyIssues(err: unknown): PolicyIssues {
   const out: PolicyIssues = { rules: {}, general: [] };
   if (!(err instanceof ApiError) || err.code !== "policy_invalid") return out;
-  const d = err.details as { fields?: { path?: unknown; message?: unknown }[] } | null;
-  const fields = Array.isArray(d?.fields) ? d.fields : [];
+  const fields = detailFields(err);
   if (fields.length === 0) out.general.push(err.message);
   for (const f of fields) {
     const path = typeof f.path === "string" ? f.path : "";

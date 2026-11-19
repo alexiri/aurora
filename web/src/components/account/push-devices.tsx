@@ -21,9 +21,8 @@ import {
   type PushState,
   type PushSubscriptionRow,
 } from "@/lib/api/push";
+import { fmtDate as fmt } from "@/lib/utils";
 import { deviceLabel, hasPushMarker, pushSupport, removeDevice, turnOnPush, type PushSupport } from "@/lib/web-push";
-
-const fmt = (s?: string | null) => (s ? new Date(s).toLocaleString() : "—");
 
 const STATE_CHIP: Record<PushState, { text: string; tone: "accent" | "neutral" | "pending" | "danger" }> = {
   active: { text: "Active", tone: "accent" },
