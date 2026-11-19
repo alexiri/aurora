@@ -96,7 +96,7 @@ test.describe("390 px", () => {
   test("the agent tab strip never scrolls", async ({ page }) => {
     await mockApi(page);
     await page.goto("/o/acme/w/main/agents/daneel");
-    const strip = page.getByRole("tablist", { name: "Agent" });
+    const strip = page.getByRole("tablist", { name: "Agent sections" });
     await strip.waitFor();
     expect(await strip.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
     expect(await noPageScroll(page)).toBe(true);
