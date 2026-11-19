@@ -370,7 +370,7 @@ pub fn spawn(state: AppState) {
         loop {
             tick.tick().await;
             // Hourly: a sent or abandoned notice is history after `RETENTION_DAYS`.
-            if sweeps % 360 == 0
+            if sweeps.is_multiple_of(360)
                 && let Err(e) = repo::prune(&state.pool, RETENTION_DAYS).await
             {
                 tracing::warn!(error = %e, "administration attention notices could not be pruned");
