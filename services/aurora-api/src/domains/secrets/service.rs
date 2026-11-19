@@ -946,6 +946,48 @@ fn model_cache() -> &'static ModelCache {
     C.get_or_init(|| ModelCache::new(MODEL_CACHE_TTL))
 }
 
+/// (D-372) What the key serves, read with the key itself and **without** the static-list fallback of
+/// [`models`]: the model ids in the provider's order, and (LiteLLM) the `mode` of each public name from
+/// `GET /model/info` (`None` when that read failed: every model then counts as a chat model).
+/// The caller caches it (`hosted::model`); nothing is read here from or written to a database transaction.
+pub async fn fetch_listing(
+    state: &AppState,
+    row: &SecretRow,
+) -> Result<
+    (
+        Vec<String>,
+        Option<std::collections::HashMap<String, String>>,
+    ),
+    ApiError,
+> {
+    if row.kind != "llm" || row.status != "active" {
+        return Err(ApiError::unprocessable(
+            "not_llm_secret",
+            "Only active LLM secrets have models.",
+        ));
+    }
+    let key = open_key(state, row).await?;
+    let ep_id = row.llm_endpoint_id.as_deref().unwrap_or_default();
+    let lc = llm_ctx(state, row.org_id, row.workspace_id, ep_id, false).await?;
+    let check = llm::key_check(&state.pool, row.org_id, auth_mode_of(row)).await?;
+    let list = lc
+        .provider
+        .list_models_strict_as(&lc.ep, &check, &key, &state.llm_http)
+        .await
+        .map_err(|_| {
+            ApiError::bad_gateway(
+                "llm_endpoint_unreachable",
+                "The LLM endpoint could not be reached.",
+            )
+        })?;
+    let modes = lc
+        .provider
+        .model_modes(&lc.ep, &key, &state.llm_http)
+        .await
+        .ok();
+    Ok((list.into_iter().map(|m| m.id).collect(), modes))
+}
+
 pub async fn models(state: &AppState, row: &SecretRow) -> Result<Models, ApiError> {
     if row.kind != "llm" || row.status != "active" {
         return Err(ApiError::unprocessable(

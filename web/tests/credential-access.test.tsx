@@ -79,8 +79,10 @@ describe("error links", () => {
     expect(a.link).toMatchObject({ label: "Open LLM keys", path: "credentials", tab: "llm" });
     expect(a.extra).toMatchObject({ label: "Agent access", path: "access", ownerOnly: true });
     const b = errorCopy("no_default_model");
-    expect(b.message).toBe("This agent has an LLM key but no model is chosen.");
+    expect(b.message).toBe("This agent has an LLM key, but Aurora could not pick a model for it.");
     expect(b.link).toMatchObject({ label: "Choose a model", path: "instructions" });
+    expect(b.guideStep).toBeUndefined(); // (FIX-170) the direct link is the fix
+    expect(a.guideStep).toBe("key");
   });
 });
 
@@ -211,7 +213,7 @@ describe("model readiness on the Access tab", () => {
     routes["GET /v1/agents/a1/model-readiness"] = () => readiness([key({})], null);
     tab();
     expect(await screen.findByText(/No model chosen/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "choose one on Instructions" }).getAttribute("href")).toBe("/o/acme/w/ops/credentials?tab=instructions"); // relative to the (mocked) current path
+    expect(screen.getByRole("link", { name: "Choose one on Instructions" }).getAttribute("href")).toBe("/o/acme/w/ops/credentials?tab=instructions#a-model"); // relative to the (mocked) current path
     expect(screen.queryByTestId("next-model")).toBeNull();
   });
 

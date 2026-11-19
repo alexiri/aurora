@@ -724,14 +724,14 @@ async fn the_endpoint_test_probes_without_a_credential_through_the_guard() {
     );
 }
 
-/// The preview of a litellm endpoint without a default model keeps FIX-019's warning.
+/// (FIX-170, D-372) A litellm endpoint without a default model is not a warning any more.
 #[tokio::test]
-async fn the_preview_warns_about_a_litellm_endpoint_without_a_default_model() {
+async fn the_preview_does_not_warn_about_a_litellm_endpoint_without_a_default_model() {
     let w = world(false, "").await;
     let (s, p) = w.preview(json!({"llm.endpoints": [w.team_entry()]})).await;
     assert_eq!(s, 200, "{p}");
     assert!(
-        p["warnings"]
+        !p["warnings"]
             .as_array()
             .unwrap()
             .iter()

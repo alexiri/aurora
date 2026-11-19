@@ -24,10 +24,24 @@ export const REASON_COPY: Record<string, { text: string; fix: string; where?: "k
   no_shared_dialect: { text: "The endpoint serves no dialect this agent's harness speaks.", fix: "Ask your operator to add a dialect, or use another harness." },
 };
 
+/** (FIX-170, C-1026) Readiness warnings of the default selection, one line each. */
+export const READINESS_WARNING_COPY: Record<string, string> = {
+  default_model_not_served: "The endpoint's default model is not in your key's model list, so it is skipped.",
+  override_not_served: "This agent's model is not in your key's model list. It is still used.",
+};
+
+/** What the next turn uses when no model is chosen, and where it comes from. */
+export function automaticModelText(source: string, modelId: string): string {
+  return source === "key_listing"
+    ? `Automatic: ${modelId} (the first model your key serves)`
+    : `Automatic: ${modelId} (${SOURCE_COPY[source] ?? source})`;
+}
+
 const SOURCE_COPY: Record<string, string> = {
   override: "the model chosen for this agent",
   endpoint_default: "the endpoint's default model",
   provider_default: "the provider's default model",
+  key_listing: "the first model your key serves",
   allow_list: "the first model in the allow-list",
   static_list: "the first model in the endpoint's list",
 };
@@ -123,6 +137,11 @@ export function ModelReadinessSection({ agentId, base }: { agentId: string; base
               ))}
             </ItemList>
           )}
+          {(readiness.data.warnings ?? []).map((w) => (
+            <Notice key={w} tone="pending" role="status" data-testid="readiness-warning">
+              {READINESS_WARNING_COPY[w] ?? w}
+            </Notice>
+          ))}
           {readiness.data.override_dropped ? (
             <Notice tone="pending" role="status">
               The model chosen for this agent is not usable with these keys, so the next turn will ignore it.
@@ -139,9 +158,9 @@ export function ModelReadinessSection({ agentId, base }: { agentId: string; base
               </>
             ) : (
               <Notice tone="pending" role="status">
-                No model chosen —{" "}
-                <Link href={`${pathname}?tab=instructions`} className="font-semibold underline">
-                  choose one on Instructions
+                No model chosen, and Aurora could not pick one: the key&apos;s model list could not be read, or it has no allowed chat model.{" "}
+                <Link href={`${pathname}?tab=instructions#a-model`} className="font-semibold underline">
+                  Choose one on Instructions
                 </Link>
                 .
               </Notice>

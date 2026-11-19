@@ -119,7 +119,8 @@ pub async fn complete(
         .clone()
         .unwrap_or_else(|| s.ops().hosted.default_harness.clone());
     let mut conn = s.pool.acquire().await.map_err(internal)?;
-    let r = model::readiness(
+    // (D-372) Only the keys' reasons are read here: no key listing is fetched.
+    let r = model::readiness_cached(
         s,
         &llm,
         &mut conn,

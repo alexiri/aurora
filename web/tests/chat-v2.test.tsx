@@ -225,7 +225,8 @@ describe("transcript", () => {
     mock({ "GET /v1/workspaces/w": () => json(200, { id: "w", org_id: "o", my_role: "owner" }) });
     pane();
     const link = await screen.findByRole("link", { name: "Agent access" });
-    expect(link.getAttribute("href")).toBe("?tab=access");
+    // (FIX-170) The failing agent's own page, not a path relative to wherever the chat is.
+    expect(link.getAttribute("href")).toBe("/o/x/w/y/agents/a1?tab=access");
   });
 
   it("maps no_default_model to 'Choose a model' on the Instructions tab", () => {
@@ -233,8 +234,8 @@ describe("transcript", () => {
     mock();
     pane();
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("This agent has an LLM key but no model is chosen.");
-    expect(within(alert).getByRole("link", { name: "Choose a model" }).getAttribute("href")).toBe("?tab=instructions");
+    expect(alert.textContent).toContain("This agent has an LLM key, but Aurora could not pick a model for it.");
+    expect(within(alert).getByRole("link", { name: "Choose a model" }).getAttribute("href")).toBe("/o/x/w/y/agents/a1?tab=instructions#a-model");
   });
 
   it("renders an expired attachment as a muted chip, never a link (RFE-015, C-196)", () => {

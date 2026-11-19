@@ -19,6 +19,7 @@ const readiness = (keys: ModelReadiness["keys"], withDefault = true): ModelReadi
   harness: "claude-code",
   keys,
   override_dropped: false,
+  warnings: [],
   default: withDefault
     ? {
         endpoint_id: "litellm", model_id: "claude-sonnet", provider: "litellm", source: "endpoint_default",

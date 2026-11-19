@@ -159,7 +159,7 @@ pub struct RoleView {
     pub model_id: Option<String>,
     /// `agent` | `endpoint` | `none`.
     pub source: String,
-    /// `role_unset` | `role_not_allowed`; null when none.
+    /// `role_unset` | `role_not_allowed` | `role_not_served` (C-1026); null when none.
     pub warning: Option<String>,
 }
 
@@ -182,6 +182,10 @@ pub struct ModelReadiness {
     pub default: Option<DefaultModel>,
     /// An agent model override exists but is not usable (the next turn drops it with a notice).
     pub override_dropped: bool,
+    /// (C-1026, D-372) Readiness warnings, empty when none: `default_model_not_served` (the endpoint's
+    /// default is not served by the key and was skipped), `override_not_served` (the agent's model is not
+    /// in the key's list; it is still used). Additive: clients ignore unknown values.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Serialize, ToSchema)]
