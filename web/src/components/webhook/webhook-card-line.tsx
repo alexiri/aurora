@@ -25,6 +25,9 @@ export function WebhookCardLine({ connectionId, name }: { connectionId: string; 
           Sends to <span className="font-medium text-ink">{v.host}</span>. Limit: <span data-testid="webhook-limit">{effectiveLimitSentence(v.effective_rate)}</span>.
         </p>
       ) : null}
+      <p className="text-sm text-ink-2" data-testid="webhook-ask-line">
+        An agent&apos;s send waits for your approval unless you allow it in the account&apos;s access settings.
+      </p>
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)} aria-label={`Edit ${name}`}>
           Edit
