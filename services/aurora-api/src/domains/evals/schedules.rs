@@ -56,10 +56,9 @@ fn validate(cron_expr: &str, tz: &str) -> Result<DateTime<Utc>, ApiError> {
 }
 
 fn check_name(n: &str) -> Result<(), ApiError> {
-    if n.trim().is_empty() || n.chars().count() > 200 {
-        return Err(invalid("name", "1 to 200 characters"));
-    }
-    Ok(())
+    aurora_core::names::clean(n, 200)
+        .map(|_| ())
+        .map_err(|e| invalid("name", &e.to_string()))
 }
 
 fn sched_audit(

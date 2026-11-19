@@ -63,8 +63,8 @@ pub async fn create(
             "publisher `aurora` is reserved for the project key",
         ));
     }
-    if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
-        errs.push(FieldError::new("/name", "must be 1-80 characters"));
+    if let Err(e) = aurora_core::names::clean(name, 80) {
+        errs.push(FieldError::new("/name", e.to_string()));
     }
     let canonical = aurora_crypto::parse_public_key_b64(public_key.trim())
         .map(|k| STANDARD.encode(k.to_bytes()));

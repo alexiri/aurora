@@ -60,10 +60,9 @@ pub struct Patch {
 }
 
 fn check_name(v: &str) -> Result<(), ApiError> {
-    if v.trim().is_empty() || v.chars().count() > NAME_MAX {
-        return Err(bad("/name", "1 to 120 characters"));
-    }
-    Ok(())
+    aurora_core::names::clean(v, NAME_MAX)
+        .map(|_| ())
+        .map_err(|e| bad("/name", &e.to_string()))
 }
 
 fn check_instructions(v: &str) -> Result<(), ApiError> {

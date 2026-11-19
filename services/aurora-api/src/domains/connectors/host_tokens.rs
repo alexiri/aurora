@@ -96,8 +96,8 @@ pub async fn issue(
 ) -> Result<HostTokenIssued, ApiError> {
     let name = req.name.trim().to_owned();
     let mut errs = Vec::new();
-    if name.is_empty() || name.chars().count() > NAME_MAX || name.chars().any(char::is_control) {
-        errs.push(FieldError::new("/name", "must be 1-80 characters"));
+    if let Err(e) = aurora_core::names::clean(&name, NAME_MAX) {
+        errs.push(FieldError::new("/name", e.to_string()));
     }
     let mut types: Vec<String> = req.type_ids.iter().map(|t| t.trim().to_owned()).collect();
     types.sort();

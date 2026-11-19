@@ -69,6 +69,7 @@ mod home_render_inputs;
 mod hosted;
 mod invitations;
 mod jobs;
+mod invisible_names;
 mod key_listing;
 mod key_rings;
 mod keys;

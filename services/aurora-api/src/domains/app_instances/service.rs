@@ -35,12 +35,7 @@ fn bad(path: &str, message: &str) -> ApiError {
 }
 
 fn clean_label(s: &str) -> Result<String, ApiError> {
-    let t: String = s.chars().filter(|c| !c.is_control()).collect();
-    let t = t.trim().to_owned();
-    if t.is_empty() || t.chars().count() > 120 {
-        return Err(bad("/label", "label must be 1 to 120 characters"));
-    }
-    Ok(t)
+    aurora_core::names::clean(s, 120).map_err(|e| bad("/label", &e.to_string()))
 }
 
 /// A host an admin may register: a lower-case DNS name with at least two labels, never an IP

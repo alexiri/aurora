@@ -142,14 +142,13 @@ pub async fn patch(
     row: &ConnectionRow,
     req: &PatchConnectionRequest,
 ) -> Result<ConnectionRow, ApiError> {
-    if let Some(l) = &req.label {
-        let n = l.trim().chars().count();
-        if n == 0 || n > LABEL_MAX {
-            return Err(ApiError::invalid_request(
-                "Invalid label.",
-                vec![FieldError::new("/label", "must be 1-120 characters")],
-            ));
-        }
+    if let Some(l) = &req.label
+        && let Err(e) = aurora_core::names::clean(l, LABEL_MAX)
+    {
+        return Err(ApiError::invalid_request(
+            "Invalid label.",
+            vec![FieldError::new("/label", e.to_string())],
+        ));
     }
     let status = match req.status.as_deref() {
         None => None,
