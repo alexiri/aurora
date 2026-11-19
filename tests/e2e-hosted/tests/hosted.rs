@@ -998,15 +998,25 @@ async fn s8d_chromium_wrapper_on_the_full_image_fetches_through_the_open_proxy()
     );
     assert!(can_connect(c, "127.0.0.1", 3128), "machine proxy");
 
+    // Chromium abandons a load with `net::ERR_NETWORK_CHANGED` when an interface appears or goes in
+    // the shared rootless network namespace (other test containers starting or stopping; nightly
+    // 2026-11-19): that is the host, not the proxy path, so such a load is retried (at most 3 tries).
     let chromium = |url: &str| {
-        exec_in(
-            c,
-            &format!(
-                "HOME=/workspace timeout 120 chromium-browser --headless --no-sandbox --disable-gpu \
-                 --disable-dev-shm-usage --ignore-certificate-errors --user-data-dir=/workspace/.chromium-profile \
-                 --virtual-time-budget=10000 --dump-dom {url} 2>&1; echo rc=$?"
-            ),
-        )
+        let mut r = (0, String::new());
+        for _ in 0..3 {
+            r = exec_in(
+                c,
+                &format!(
+                    "HOME=/workspace timeout 120 chromium-browser --headless --no-sandbox --disable-gpu \
+                     --disable-dev-shm-usage --ignore-certificate-errors --user-data-dir=/workspace/.chromium-profile \
+                     --virtual-time-budget=10000 --dump-dom {url} 2>&1; echo rc=$?"
+                ),
+            );
+            if !r.1.contains("ERR_NETWORK_CHANGED") {
+                break;
+            }
+        }
+        r
     };
     // Allowed host: the page is fetched through the gateway and rendered.
     let (_, out) = chromium(&format!("https://127.0.0.1:{port}/allowed"));

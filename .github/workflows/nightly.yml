@@ -120,9 +120,16 @@ jobs:
       # The run includes s17 (a non-admin member's fetch of an approval post carries no action
       # context, docs/20 §Public callbacks, FIX-113/FIX-139): it must have run and passed on this
       # server version, not been skipped by a rename or a filter.
+      # `target/` does not exist yet on a fresh runner (no rust-cache here): without the mkdir, tee
+      # cannot open its file and fails the step under pipefail even when every test passed (every
+      # nightly until 2026-11-19). AURORA_MM_KEEP leaves the container up for the logs step below
+      # (conformance.sh removes it otherwise); the runner is discarded anyway.
       - name: Mattermost conformance (scripts/conformance.sh --mattermost)
+        env:
+          AURORA_MM_KEEP: "1"
         run: |
           set -o pipefail
+          mkdir -p target
           bash scripts/conformance.sh --mattermost 2>&1 | tee target/mattermost-conformance.log
           grep -Eq '^test s17_members_never_see_the_action_context \.\.\. ok$' target/mattermost-conformance.log
       - name: Mattermost container logs of a failed run

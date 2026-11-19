@@ -12,7 +12,9 @@ import { PLACEMENT_ADMIN } from "./support/placement";
 // The mock: endpoint `litellm-mock` defaults to the model alias `scn-pong`, which VidaiMock answers with "pong".
 const MOCK_KEY = "sk-aurora-mock-dev"; // dev-only dummy master key (docs/operator/llm-endpoints.md)
 const MOCK_REPLY = "pong";
-const ENDPOINT_LABEL = "LiteLLM (VidaiMock, dev only) (litellm)";
+// The endpoint is chosen by its id (deploy/kind/values-llm-mock.yaml), not its label: the label carries hints that
+// change ("— Works with Claude Code" since P4-LLM-6), and a stale label waits out the whole test timeout.
+const ENDPOINT_ID = "litellm-mock";
 
 test.describe.configure({ mode: "serial" });
 
@@ -85,7 +87,7 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   const llm = steps.getByRole("region", { name: "LLM access" });
   const form = llm.getByRole("form", { name: "New LLM key" });
   await form.getByLabel("Name").fill("Mock LLM");
-  await form.getByLabel("Provider endpoint").selectOption({ label: ENDPOINT_LABEL });
+  await form.getByLabel("Provider endpoint").selectOption(ENDPOINT_ID);
   await form.getByLabel("API key").fill(MOCK_KEY);
   await form.getByRole("button", { name: "Add LLM key" }).click();
   // The key is saved when the wizard shows it from the server's state: the form gives way to the starter
