@@ -571,8 +571,8 @@ pub static FIELDS: &[FieldMeta] = &[
     ),
     f(
         "hosted.enabled",
-        "Agents Aurora runs for people",
-        "Turn it off to stop new hosted agents and sandbox starts; agents people run themselves are unaffected.",
+        "Run agents on Aurora's computers",
+        "On: Aurora gives each agent its own computer to work on. Off: people can only connect agents that run on their own machines.",
         K::Bool,
         "On",
         None,

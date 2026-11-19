@@ -7,6 +7,7 @@ import { AddConnectorFlow } from "@/components/connectors/add-connector";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
+import { Unavailable } from "@/components/ui/unavailable";
 import type { ConnectorAvailability } from "@/lib/api/connectors";
 import { adminRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -16,9 +17,15 @@ export function adminNames(admins: { name: string }[]): string {
   return admins.length ? admins.map((a) => a.name).join(", ") : "your instance administrator";
 }
 
+/** The platform's name for people: never the connector's raw id ("fake" → "Fake"). */
+export function platformName(item: { name: string; type_id: string }): string {
+  const n = item.name.trim();
+  if (n === "") return item.type_id;
+  return n === item.type_id ? n.charAt(0).toUpperCase() + n.slice(1) : n;
+}
+
 const HEAD: Record<string, (name: string) => string> = {
   not_added: (n) => `An instance administrator needs to add ${n} first.`,
-  waiting_for_host: (n) => `${n} is added, but waiting for the connector host. The operator must start it.`,
   disabled: (n) => `${n} is disabled. An instance administrator can enable it.`,
   needs_approval: (n) => `${n} needs an instance administrator's approval before it can be used.`,
 };
@@ -38,13 +45,32 @@ export function ConnectorBlocked({
   isInstanceAdmin: boolean;
 }) {
   const [adding, setAdding] = useState(false);
-  const head = (HEAD[item.setup_state] ?? HEAD.not_added!)(item.name);
+  const name = platformName(item);
+  if (item.setup_state === "waiting_for_host") {
+    // (P5-POLISH-10, E6) One neutral card, not an amber notice: nothing here needs the viewer unless they run the host.
+    return (
+      <li data-testid={`blocked-${item.type_id}`}>
+        <Unavailable
+          title={`${name} is added, but its connector isn't running`}
+          fixer={isInstanceAdmin ? "Start the connector host that runs it." : <>Ask: {adminNames(admins)}.</>}
+          guide={
+            isInstanceAdmin ? (
+              <Link href={adminRoutes.chatPlatforms()} className="font-medium text-link underline">
+                Open Administration › Chat platforms
+              </Link>
+            ) : undefined
+          }>
+          Until an operator starts it, {name} can&apos;t be connected.
+        </Unavailable>
+      </li>
+    );
+  }
+  const head = (HEAD[item.setup_state] ?? HEAD.not_added!)(name);
   return (
     <li>
       <Notice tone="pending" role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="min-w-0 flex-1 basis-60" data-testid={`blocked-${item.type_id}`}>
-          <strong className="font-semibold">{head}</strong>{" "}
-          {isInstanceAdmin ? "You are an instance administrator." : <>Ask: {adminNames(admins)}.</>}
+          <strong className="font-semibold">{head}</strong> {isInstanceAdmin ? null : <>Ask: {adminNames(admins)}.</>}
         </span>
         {isInstanceAdmin ? (
           item.setup_state === "not_added" ? (

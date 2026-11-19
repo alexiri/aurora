@@ -54,59 +54,60 @@ async function asAdmin<T>(browser: Browser, baseURL: string, fn: (req: Page["req
   }
 }
 
-test("1. fresh instance: the admin walks the setup wizard to a working chat", async ({ page }) => {
+test("1. fresh instance: the admin walks the five-step checklist to a working chat", async ({ page }) => {
   test.setTimeout(10 * 60_000);
   await signInAs(page, PLACEMENT_ADMIN);
-  // A fresh instance sends its admin to the wizard; one that already has a placement is reached from Admin.
+  // A fresh instance sends its admin to the checklist; one that already has a placement is reached from Admin.
   await page.waitForURL((u) => !u.pathname.startsWith("/v1/") && !u.pathname.startsWith("/dev-idp"), { timeout: 30_000 });
-  if (!page.url().includes("/admin/setup")) await page.goto("/admin/setup");
+  if (!page.url().includes("/admin")) await page.goto("/admin");
   await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();
   const steps = page.getByRole("list", { name: "Setup steps" });
-  // Six steps, by id (nested check lists make a role/li count meaningless).
-  for (const id of ["roles", "placement", "llm", "runners", "optional", "try"]) {
+  // Five steps, by id (D-391: builtin apps arrive approved, so there is no approval step).
+  for (const id of ["signin", "placement", "key", "try", "email"]) {
     await expect(steps.locator(`#setup-${id}`)).toHaveCount(1);
   }
 
-  // 2. Where new users land: shared organization "Users" with personal workspaces (the recommended choice).
-  // On this instance the placement was once personal_org (the pre-wizard default), so pick the mode, then
-  // create the shared organization "Users" from the wizard.
-  const placement = steps.getByRole("region", { name: "Where new users land" });
+  // 2. Where new people land: the row's button opens People › New users (no form on the checklist): shared
+  // organization "Users" with personal workspaces (the recommended choice). On this instance the placement was once
+  // personal_org (the pre-wizard default), so pick the mode, then create the shared organization "Users".
+  await steps.locator("#setup-placement").getByRole("link", { name: /Choose|Change/ }).click();
+  await expect(page).toHaveURL(/\/admin\/people\?tab=new-users/);
+  const placement = page.getByRole("main");
   // The mode radio is `sr-only` inside its label: click the visible label text (a `check()` is not actionable).
   await placement.getByText("Shared organization", { exact: true }).click();
   await placement.getByLabel("Organization", { exact: true }).selectOption({ label: "Create a new organization…" });
   await placement.getByLabel("New organization name").fill("Users");
-  // Personal workspaces are what makes the starter grant possible below (the LLM step's switch stays
-  // disabled until a shared organization WITH personal workspaces is saved).
+  // Personal workspaces are what makes the starter grant possible below (the AI-key dialog's starter grant needs a
+  // shared organization WITH personal workspaces saved).
   await placement.getByRole("checkbox", { name: "Give every user a workspace of their own" }).check();
   await placement.getByRole("button", { name: "Save placement" }).click();
-  // The step is saved when the wizard shows it from the server's state (the "Saved…" status is transient:
-  // the form is re-keyed on the saved revision, so it remounts the moment the placement refetch lands).
-  await expect(placement.getByText("Ready", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(placement.getByRole("status").filter({ hasText: "Saved" })).toBeVisible({ timeout: 30_000 });
 
-  // 3. LLM access: add an organization key for the default org, and give it to every new user's agent.
-  const llm = steps.getByRole("region", { name: "LLM access" });
-  const form = llm.getByRole("form", { name: "New LLM key" });
+  // 3. AI key: back on the checklist the row's button opens the dialog; saving stays on the checklist with a toast.
+  await page.goto("/admin?setup=1");
+  await expect(steps.locator("#setup-placement")).toHaveAttribute("data-done", "true", { timeout: 30_000 });
+  await steps.locator("#setup-key").getByRole("button", { name: /Add key|Add another/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Add an organization AI key" });
+  const form = dialog.getByRole("form", { name: "New LLM key" });
   await form.getByLabel("Name").fill("Mock LLM");
   await form.getByLabel("Provider endpoint").selectOption(ENDPOINT_ID);
   await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
   await form.getByRole("button", { name: "Add LLM key" }).click();
-  // The key is saved when the wizard shows it from the server's state: the form gives way to the starter
-  // switch ("Saved …" is transient — the Setup query refetch replaces the form as soon as the key exists).
-  const starter = llm.getByRole("checkbox", { name: "Give the organization's AI key to every new person's agent" });
-  await expect(starter).toBeVisible({ timeout: 60_000 });
-  // (C-922) The first key is a starter grant by default: nothing to click. The checkbox is controlled, so it
-  // renders checked once the PUT and the refetch have round-tripped.
-  await expect(starter).toBeChecked({ timeout: 30_000 });
+  await expect(page.getByTestId("setup-toast")).toContainText("AI key added", { timeout: 60_000 });
+  await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();
+  await expect(steps.locator("#setup-key")).toHaveAttribute("data-done", "true");
 
-  // 4. Agents can run: the runner and the gateway report ready on the stack.
-  await expect(steps.getByRole("region", { name: "Agents can run" }).getByText("Ready").first()).toBeVisible();
+  // 4. The Health tab says the runner and the gateway report ready on the stack.
+  await page.getByRole("tab", { name: "Health" }).click();
+  await expect(page.locator('[data-health="Runners"]')).toBeVisible();
+  await page.getByRole("tab", { name: "Checklist" }).click();
 
-  // 6. Try it: open the workspace and chat. The admin's own agent predates the placement (starter
+  // 5. Try it: open the workspace and chat. The admin's own agent predates the placement (starter
   // grants apply to new users), so the guide finishes the job: the key step is done — the org key from
-  // the wizard provides it — and access is one click away.
-  await steps.getByRole("link", { name: "Open your workspace" }).click();
+  // the checklist provides it — and access is one click away.
+  await steps.locator("#setup-try").getByRole("link", { name: "Open chat" }).click();
   await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible({ timeout: 30_000 });
-  const base = new URL(page.url()).pathname.replace(/\/welcome$/, "");
+  const base = /^\/o\/[^/]+\/w\/[^/]+/.exec(new URL(page.url()).pathname)![0];
   await page.goto(`${base}/welcome`);
   const guide = page.getByRole("region", { name: "Get Daneel talking" });
   await expect(guide.getByText("Give Daneel access to Mock LLM")).toBeVisible({ timeout: 30_000 }); // (C-927) only a key the agent cannot use

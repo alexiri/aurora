@@ -213,4 +213,29 @@ describe("Admin › Settings › Sign-in (SET-4)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("alert");
   });
+
+  it("lists the Helm-registered development sign-in read-only, and says 'No provider yet' only when there is none (E7)", async () => {
+    const empty = signIn();
+    const providers = empty.settings.find((s) => s.key === "auth.oidc_providers")!;
+    providers.value = [];
+    providers.entries = [];
+    mockFetch({
+      "GET /v1/admin/settings/sign_in": () => json(200, empty),
+      "GET /v1/instance": () => json(200, { name: "Aurora", oidc_providers: [{ id: "dev", display_name: "Dev sign-in" }] }),
+    });
+    wrap(<SettingsSectionView slug="sign-in" />);
+    const list = await screen.findByRole("list", { name: "Identity providers" });
+    await within(list).findByText("Development sign-in");
+    expect(within(list).getByText("Set in Helm")).toBeInTheDocument();
+    expect(within(list).queryByRole("button", { name: /Edit|Remove/ })).toBeNull();
+    expect(screen.queryByText(/No provider yet/)).toBeNull();
+  });
+
+  it("puts the break-glass text in a closed 'If nobody can sign in' disclosure at the end of the page", async () => {
+    await open();
+    const details = screen.getByText("If nobody can sign in").closest("details")!;
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain("aurora-api settings reset sign_in");
+    expect(details.compareDocumentPosition(screen.getByRole("button", { name: "Save" })) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  });
 });

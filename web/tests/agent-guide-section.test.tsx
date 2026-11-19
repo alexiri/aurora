@@ -6,6 +6,12 @@ import { PluginReview } from "@/components/admin/plugin-detail-view";
 import type { PluginAgentGuide, PluginPackage } from "@/lib/api/plugins";
 import { wrap } from "./support/render";
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/admin/apps/p1",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 /** (P5-GUIDE-3, C-648) The agent guide section: structure, change marks, inert text, fetch on selection. */
 
 interface Call {
@@ -150,15 +156,11 @@ describe("AgentGuideSection", () => {
 });
 
 describe("PluginReview and the agent guide", () => {
-  it("makes the agent guide part of the mandatory reading, with no second confirmation", async () => {
+  it("shows the agent guide open, and approval needs no second confirmation", async () => {
     const calls = mockFetch(() => new Response(JSON.stringify({ ...plugin, status: "active" }), { status: 200, headers: { "content-type": "application/json" } }));
     wrap(<PluginReview plugin={plugin} />);
     const approve = screen.getByRole("button", { name: "Approve" });
-    for (const name of [/Hooks/, /Egress per hook/, /Context variables/, /Host claims/]) {
-      fireEvent.click(screen.getByRole("button", { name }));
-    }
-    expect(approve).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: /What agents can read/ }));
+    expect(screen.getByRole("button", { name: /What agents can read/ })).toHaveAttribute("aria-expanded", "true");
     expect(approve).toBeEnabled();
     fireEvent.click(approve);
     await waitFor(() => expect(calls.some((c) => c.path === "/v1/admin/plugins/p1/approve")).toBe(true));
