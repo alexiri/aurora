@@ -665,6 +665,14 @@ pub async fn set_access_status(
     Ok(())
 }
 
+/// The turn end of an organization suspension (FIX-185, D-401).
+const SUSPENDED_IN_ORG: crate::domains::scim::deprovision::TurnEnd =
+    crate::domains::scim::deprovision::TurnEnd {
+        code: "user_suspended",
+        notice: "This turn was stopped: the person was suspended in this organization.",
+        message: "The speaker was suspended in this organization.",
+    };
+
 fn admin_vs_owner() -> ApiError {
     ApiError::forbidden("Admins cannot modify owners or grant the owner role.")
 }
@@ -764,6 +772,21 @@ pub async fn patch_member(
     {
         scim::set_user_state(&mut tx, org_id, link.id, st.as_str(), false).await?;
     }
+    // (FIX-185, D-401) A person suspended in the organization stops acting: their queued and
+    // live speaker turns in every workspace of the org end in this transaction (the helper
+    // SCIM deprovisioning shares). Restoring starts nothing.
+    let flush = if req.status == Some(MemberStatus::Suspended) && cur.status != "suspended" {
+        crate::domains::scim::deprovision::abort_speaker_turns(
+            &mut tx,
+            org_id,
+            None,
+            target,
+            &SUSPENDED_IN_ORG,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
     // A role change (owner/admin → member) can also end `can_use`, which ends speaker binding
     // (RFE-005).
     if req.status.is_some_and(|s| s.as_str() != cur.status)
@@ -790,6 +813,9 @@ pub async fn patch_member(
     }
     ev.metadata["change"] = change.into();
     crate::audit::commit_critical(tx, &ev).await?;
+    for (c, t) in flush {
+        crate::domains::hosted::lifecycle::flush_deltas(state, c, t).await;
+    }
     Ok(out)
 }
 
