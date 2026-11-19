@@ -179,8 +179,9 @@ for (const scheme of ["light", "dark"] as const) {
         await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
         const rowItem = page.getByRole("listitem", { name: "platform-prod" });
         await expect(rowItem.getByText("Agents may at most:")).toBeVisible();
-        await expect(rowItem.getByRole("button", { name: "Giskard · Read only" })).toBeVisible();
-        await expect(rowItem.getByRole("button", { name: "Hari · Read only" })).toBeVisible();
+        // (P5-POLISH-9, E2) Outside its own workspace an agent carries its workspace: "Giskard · Main workspace · Read only".
+        await expect(rowItem.getByRole("button", { name: /Giskard · .* · Read only/ })).toBeVisible();
+        await expect(rowItem.getByRole("button", { name: /Hari · .* · Read only/ })).toBeVisible();
         await check(page, "org-row", scheme, width);
       });
 
