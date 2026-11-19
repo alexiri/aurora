@@ -27,9 +27,13 @@ import {
   type OrgRole,
 } from "@/lib/api/org";
 import { useOrgOffboarding } from "@/lib/api/automations";
-import { useInstance } from "@/lib/api/queries";
+import { formatExact } from "@/lib/format-date";
+import { useInstance, useMe, useOrg } from "@/lib/api/queries";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 
 import { InviteDialog } from "./invite-dialog";
+
+const cap = (s: string) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
 
 export function MemberRow({
   m,
@@ -38,6 +42,9 @@ export function MemberRow({
   onRole,
   onStatus,
   onRemove,
+  mine = false,
+  lastOwner = false,
+  orgName,
 }: {
   m: OrgMember;
   viewer: OrgRole;
@@ -45,15 +52,23 @@ export function MemberRow({
   onRole: (role: OrgRole) => void;
   onStatus: (status: "active" | "suspended") => void;
   onRemove: () => void;
+  /** (P5-POLISH-9, D6) The viewer's own row: no menu, no role change, no removal. */
+  mine?: boolean;
+  /** The only owner: the roles below Owner are not offered. */
+  lastOwner?: boolean;
+  orgName?: string;
 }) {
   const fromIdp = m.idp_value ?? null;
-  // A role the IdP gives is read-only here (409 managed_by_idp on the API).
-  const options = fromIdp ? [] : roleOptions(viewer, m.role);
-  const manage = canManageMember(viewer, m.role);
+  // A role the IdP gives is read-only here (409 managed_by_idp on the API); nobody changes their own, and the last owner stays owner.
+  const options = fromIdp || mine ? [] : lastOwner ? roleOptions(viewer, m.role).filter((r) => r === "owner") : roleOptions(viewer, m.role);
+  const manage = canManageMember(viewer, m.role) && !mine;
   return (
     <tr>
       <Td>
-        <div className="font-medium">{m.display_name}</div>
+        <div className="font-medium">
+          {m.display_name}
+          {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
+        </div>
         <div className="text-muted">{m.email}</div>
       </Td>
       <Td>
@@ -69,7 +84,7 @@ export function MemberRow({
             >
               {options.map((r) => (
                 <option key={r} value={r}>
-                  {r}
+                  {cap(r)}
                 </option>
               ))}
             </select>
@@ -81,7 +96,7 @@ export function MemberRow({
           </>
         ) : (
           <span className="flex flex-wrap items-center gap-1.5">
-            {m.role}
+            {cap(m.role)}
             {fromIdp ? <IdpRoleBadge value={fromIdp} /> : null}
           </span>
         )}
@@ -94,8 +109,9 @@ export function MemberRow({
           >
             Waiting for first sign-in
           </Badge>
-        ) : (
-          <Badge tone={m.status === "active" ? "accent" : "neutral"}>{m.status}</Badge>
+        ) : m.status === "active" ? null : (
+          // Only when not active: an active member needs no chip.
+          <Badge>{cap(m.status)}</Badge>
         )}
         {m.directory ? (
           <Badge
@@ -107,33 +123,36 @@ export function MemberRow({
           </Badge>
         ) : null}
       </Td>
-      <Td className="whitespace-nowrap text-ink-2">{fmtDate(m.created_at)}</Td>
-      <Td>
-        {manage ? (
-          <div className="flex gap-2">
-            {m.status === "pending" ? null : (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                aria-label={`${m.status === "active" ? "Suspend" : "Reactivate"} ${m.email}`}
-                onClick={() => onStatus(m.status === "active" ? "suspended" : "active")}
-              >
-                {m.status === "active" ? "Suspend" : "Reactivate"}
+      <Td className="whitespace-nowrap text-ink-2">
+        <span title={formatExact(m.created_at)}>{fmtDate(m.created_at)}</span>
+      </Td>
+      <Td className="text-right">
+        {manage && !(m.status === "pending" && fromIdp) ? (
+          <Menu>
+            <MenuTrigger asChild>
+              <Button variant="outline" size="sm" disabled={busy} aria-label={`More for ${m.display_name || m.email}`}>
+                <span aria-hidden="true">…</span>
               </Button>
-            )}
-            {fromIdp ? null : (
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={busy}
-                aria-label={`Remove ${m.email}`}
-                onClick={onRemove}
-              >
-                Remove
-              </Button>
-            )}
-          </div>
+            </MenuTrigger>
+            <MenuContent align="end">
+              {m.status === "pending" ? null : (
+                <MenuItem
+                  aria-label={`${m.status === "active" ? "Suspend" : "Reactivate"} ${m.email}`}
+                  onSelect={() => onStatus(m.status === "active" ? "suspended" : "active")}
+                >
+                  <span>
+                    {m.status === "active" ? "Suspend" : "Reactivate"}
+                    {m.status === "active" ? <span className="block text-xs text-muted">Can&apos;t sign in until you resume them</span> : null}
+                  </span>
+                </MenuItem>
+              )}
+              {fromIdp ? null : (
+                <MenuItem className="text-danger-ink" aria-label={`Remove ${m.email}`} onSelect={onRemove}>
+                  Remove from {orgName ?? "the organization"}…
+                </MenuItem>
+              )}
+            </MenuContent>
+          </Menu>
         ) : null}
       </Td>
     </tr>
@@ -185,6 +204,8 @@ function OffboardDialog({
 
 function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   const members = useAllMembers(orgId);
+  const meId = useMe().data?.user.id;
+  const orgName = useOrg(orgId).data?.name;
   const patch = usePatchMember(orgId);
   const remove = useRemoveMember(orgId);
   const [err, setErr] = useState<unknown>(null);
@@ -194,6 +215,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   if (members.isPending) return <Loading />;
   if (members.isError) return <ErrorState error={members.error} onRetry={() => members.refetch()} />;
   const items = members.data.pages.flatMap((p) => p.items);
+  const owners = items.filter((m) => m.role === "owner" && m.status === "active").length;
   const busy = patch.isPending || remove.isPending;
   const onError = (e: unknown) => setErr(e);
 
@@ -226,6 +248,9 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
                   m={m}
                   viewer={viewer}
                   busy={busy}
+                  mine={m.user_id === meId}
+                  lastOwner={m.role === "owner" && owners === 1}
+                  orgName={orgName}
                   onRole={(role) => {
                     setErr(null);
                     patch.mutate({ user: m.user_id, body: { role } }, { onError });
