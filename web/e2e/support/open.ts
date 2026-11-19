@@ -20,6 +20,11 @@ export async function titled(page: Page) {
 export async function openRoute(page: Page, path: string, scheme: Scheme) {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // (P5-POLISH-1) A console error (a CSP violation included) fails every spec that opens a route. "Failed to load
+  // resource" is a request the mock leaves unanswered, not a page error.
+  page.on("console", (m) => {
+    if (m.type() === "error" && !/^Failed to load resource/.test(m.text())) errors.push(m.text());
+  });
   await mockApi(page);
   await page.emulateMedia({ colorScheme: scheme });
   await page.goto(path);

@@ -247,6 +247,7 @@ export async function mockApi(
       return json({ user, memberships: [{ org, status: "active", workspaces: [{ ...ws, personal: false }] }], default_org_id: id(1), client_address: "203.0.113.7" });
     }
     // P4-ONB-2: onboarding progress (seen, so `/` stays on the workspace), the guide's readiness and the setup wizard.
+    if (p === "/v1/me/user-tokens") return json({ tokens: [] });
     if (p === "/v1/me/onboarding") return json({ welcome_seen: true, guide_dismissed: [], tour_completed_at: null });
     if (/^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json(readinessReady);
     // FIX-029 (C-611) + P4-PRV-1: ONE sandbox view — running with port 3000 listening (the

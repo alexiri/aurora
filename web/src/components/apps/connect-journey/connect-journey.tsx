@@ -77,7 +77,7 @@ function Footer({ onBack, onNext, nextLabel = "Next", nextDisabled, busy }: { on
 function Steps({ steps, current }: { steps: StepId[]; current: StepId }) {
   const at = steps.indexOf(current);
   return (
-    <ol className="mb-4 flex gap-1.5 text-xs font-semibold uppercase tracking-wider" aria-label="Steps">
+    <ol className="flex gap-1.5 text-xs font-semibold uppercase tracking-wider" aria-label="Steps">
       {steps.map((s, i) => (
         <li
           key={s}
@@ -505,8 +505,11 @@ export function ConnectJourney({
 
   return (
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
-      <DialogContent size="lg" title={title} data-testid="ws-connect-journey">
-        {step !== "done" ? <Steps steps={steps.filter((s) => s !== "agent" || !agent)} current={step} /> : null}
+      <DialogContent
+        size="lg"
+        title={title}
+        data-testid="ws-connect-journey"
+        header={step !== "done" ? <Steps steps={steps.filter((s) => s !== "agent" || !agent)} current={step} /> : null}>
         {body}
       </DialogContent>
     </Dialog>

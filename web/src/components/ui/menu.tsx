@@ -15,7 +15,7 @@ export function MenuContent({ className, ...props }: ComponentProps<typeof M.Con
         align="start"
         sideOffset={4}
         className={cn(
-          "z-50 min-w-56 rounded-control border border-line bg-surface p-1 text-ink shadow-pop",
+          "z-50 min-w-56 rounded-control border border-line bg-surface p-1 text-ink shadow-pop outline-none",
           className,
         )}
         {...props}
