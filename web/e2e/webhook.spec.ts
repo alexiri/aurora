@@ -29,7 +29,7 @@ for (const scheme of ["light", "dark"] as const) {
         await dialog.getByRole("button", { name: "Give Daneel access" }).click();
         await dialog.getByRole("button", { name: "Next" }).click();
         await dialog.getByLabel("Name", { exact: true }).fill("ops-alerts");
-        await dialog.getByLabel("Webhook address (URL)").fill(URL_CANARY);
+        await dialog.getByLabel("Webhook address (URL)", { exact: true }).fill(URL_CANARY);
         await check(page);
         await dialog.getByRole("button", { name: "Next" }).click();
         await expect(dialog.getByText("This address looks like Slack.")).toBeVisible();
@@ -59,7 +59,7 @@ for (const scheme of ["light", "dark"] as const) {
         await dialog.getByRole("button", { name: "Give Daneel access" }).click();
         await dialog.getByRole("button", { name: "Next" }).click();
         await dialog.getByLabel("Name", { exact: true }).fill("ops-alerts");
-        await dialog.getByLabel("Webhook address (URL)").fill("https://example.org/hook");
+        await dialog.getByLabel("Webhook address (URL)", { exact: true }).fill("https://example.org/hook");
         await dialog.getByRole("button", { name: "Next" }).click();
         await dialog.getByText("Start from an example").click();
         await dialog.getByLabel("The example body").fill('{"username": "Aurora", "text": "Hello"}');

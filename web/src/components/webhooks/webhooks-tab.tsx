@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
+import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
@@ -123,7 +124,7 @@ export function WebhookForm({
             <input id="wh-header" className={inputClass} value={header} onChange={(e) => setHeader(e.target.value)} />
           </Field>
           <Field id="wh-secret" label="Shared secret" hint={initial ? "Leave empty to keep the current secret." : undefined} error={fe["verification/secret"] ?? fe.secret}>
-            <input id="wh-secret" type="password" autoComplete="off" className={inputClass} value={secret} onChange={(e) => setSecret(e.target.value)} />
+            <SecretInput id="wh-secret" revealLabel="shared secret" value={secret} onChange={setSecret} />
           </Field>
         </div>
       ) : null}

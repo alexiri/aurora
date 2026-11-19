@@ -168,7 +168,8 @@ describe("Channels: the integration stepper", () => {
     expect(team.tagName).toBe("SELECT");
     expect(within(team).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select…", "Alpha Team", "Beta"]);
     expect(screen.getByText("No admin token: replies arrive as DMs.")).toBeInTheDocument();
-    expect(screen.getByLabelText(/Admin token/)).toBeInTheDocument();
+    // The field, not its Show button (named "Show Admin token", D-375).
+    expect(screen.getByLabelText(/Admin token/, { selector: "input" })).toBeInTheDocument();
     // The probe carried what step 1 asked, credentials separated from config, nothing else.
     expect(calls.find((c) => c.key.endsWith(":probe"))?.body).toEqual({
       connector_id: "mattermost",

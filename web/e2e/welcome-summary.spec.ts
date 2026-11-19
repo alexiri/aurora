@@ -79,7 +79,7 @@ for (const scheme of ["light", "dark"] as const) {
         await check(page);
         await form.getByLabel("Name").fill("Mock LLM");
         await form.getByLabel("Provider endpoint").selectOption({ index: 1 });
-        await form.getByLabel("API key").fill("not-a-real-key");
+        await form.getByLabel("API key", { exact: true }).fill("not-a-real-key");
         await form.getByRole("button", { name: "Add LLM key" }).click();
         await expect(page.getByText("1 of 2 done")).toBeVisible();
         await expect(page.getByRole("link", { name: "Say hello to Daneel" })).toBeVisible();

@@ -34,7 +34,7 @@ test("journey: add Mattermost with zero typed fields, connect it picking a team,
   await page.getByRole("button", { name: /Connect Mattermost/ }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Your Mattermost server").fill("https://chat.example.com");
-  await dialog.getByLabel("Bot access token").fill("bot-secret");
+  await dialog.getByLabel("Bot access token", { exact: true }).fill("bot-secret");
   await dialog.getByRole("button", { name: "Check" }).click();
   await expect(dialog.getByText("No admin token: replies to individuals arrive as DMs.")).toBeVisible();
   await dialog.getByLabel("Team").selectOption("alpha");
@@ -95,7 +95,7 @@ for (const scheme of ["light", "dark"] as const) {
           async (page) => {
             await page.getByRole("button", { name: /Connect Mattermost/ }).click();
             await page.getByLabel("Your Mattermost server").fill("https://chat.example.com");
-            await page.getByLabel("Bot access token").fill("t");
+            await page.getByLabel("Bot access token", { exact: true }).fill("t");
             await page.getByRole("button", { name: "Check" }).click();
             await page.getByLabel("Team").waitFor();
           },
@@ -106,7 +106,7 @@ for (const scheme of ["light", "dark"] as const) {
           async (page) => {
             await page.getByRole("button", { name: /Connect Mattermost/ }).click();
             await page.getByLabel("Your Mattermost server").fill("https://chat.example.com");
-            await page.getByLabel("Bot access token").fill("t");
+            await page.getByLabel("Bot access token", { exact: true }).fill("t");
             await page.getByRole("button", { name: "Check" }).click();
             await page.getByLabel("Team").selectOption("alpha");
             await page.getByRole("button", { name: "Connect" }).click();

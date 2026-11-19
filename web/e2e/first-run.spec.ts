@@ -48,7 +48,7 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   const form = guide.getByRole("form", { name: "New LLM key" });
   await form.getByLabel("Name").fill("Mock LLM");
   await form.getByLabel("Provider endpoint").selectOption({ label: "LiteLLM (VidaiMock, dev only) (litellm)" });
-  await form.getByLabel("API key").fill(MOCK_KEY);
+  await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
   // (P5-UX-4, C-988) The form's "Who can use this key" has Daneel ticked (the workspace's only agent), so the key is saved
   // with its access in one request. Key and access are done from the server's state (the mock endpoint has a default
   // model: no model step).

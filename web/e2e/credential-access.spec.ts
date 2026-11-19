@@ -97,7 +97,7 @@ for (const scheme of ["light", "dark"] as const) {
         const form = page.getByRole("form", { name: "New LLM key" });
         await form.getByLabel("Name").fill("Team key");
         await form.getByLabel("Provider endpoint").selectOption("aigw");
-        await form.getByLabel("API key").fill("sk-not-a-real-key");
+        await form.getByLabel("API key", { exact: true }).fill("sk-not-a-real-key");
         // (C-925) Two agents may be chosen and none is the context: nothing is ticked.
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();
         await form.getByRole("checkbox", { name: "Giskard can use this key" }).check();

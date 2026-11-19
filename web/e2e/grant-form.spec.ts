@@ -72,7 +72,7 @@ for (const scheme of ["light", "dark"] as const) {
         const journey = page.getByTestId("ws-connect-journey");
         await journey.getByRole("checkbox", { name: `Give ${agent.name} access` }).uncheck();
         await journey.getByRole("button", { name: "Next" }).click();
-        await journey.getByLabel("API token").fill("not-a-real-token");
+        await journey.getByLabel("API token", { exact: true }).fill("not-a-real-token");
         await journey.getByRole("button", { name: "Connect", exact: true }).click();
         await journey.getByRole("button", { name: "Give access" }).click();
         const panel = page.getByLabel("Give agents access");

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 
 import { Field, fieldLabel, inputClass } from "@/components/ui/field";
+import { SecretInput } from "@/components/ui/secret-input";
 import { visibleFields, type FieldValues, type FormField } from "@/lib/api/apps";
 import { safeHref } from "@/components/ui/markdown";
 
@@ -50,11 +51,21 @@ export function FieldControl({ f, value, error, onChange }: { f: FormField; valu
   } else {
     const extra = f as FormField & { default?: unknown; min?: number | null; max?: number | null };
     const fallback = extra.default !== undefined && extra.default !== null ? String(extra.default) : undefined;
-    control = (
+    control = f.type === "secret" ? (
+      // Written, never read back; Show reveals only what was typed here (D-375).
+      <SecretInput
+        id={id}
+        revealLabel={f.label}
+        placeholder={f.placeholder ?? fallback}
+        required={f.required}
+        value={value}
+        onChange={onChange}
+      />
+    ) : (
       <input
         id={id}
         className={inputClass}
-        type={f.type === "secret" ? "password" : f.type === "number" ? "number" : f.type === "url" ? "url" : "text"}
+        type={f.type === "number" ? "number" : f.type === "url" ? "url" : "text"}
         inputMode={f.type === "number" ? "numeric" : undefined}
         min={f.type === "number" ? (extra.min ?? undefined) : undefined}
         max={f.type === "number" ? (extra.max ?? undefined) : undefined}
