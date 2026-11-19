@@ -90,7 +90,8 @@ for (const width of [1280, 390]) {
       test(`files, change marks, plain-text viewer, no horizontal scroll, accessible (${scheme})`, async ({ page }) => {
         await open(page, scheme);
         expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
-        await page.getByRole("button", { name: /What agents can read/ }).click();
+        // (P5-POLISH-10) The review's sections are open from the start.
+        await expect(page.getByRole("button", { name: /What agents can read/ })).toHaveAttribute("aria-expanded", "true");
         const app = page.getByTestId("agent-guide-guide-demo");
         await expect(app.getByRole("heading", { name: "Recipes" })).toBeVisible();
         await expect(app.getByRole("heading", { name: "Reference files" })).toBeVisible();

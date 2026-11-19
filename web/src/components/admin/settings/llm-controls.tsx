@@ -246,7 +246,8 @@ export function EndpointsControl({
     (s.entries ?? []).some((e) => e.id === id && e.source === "dashboard" && e.warnings?.includes("needs_allowed_private"));
   const own = ctx.own;
   const helmIds = helm.map((e) => e.id);
-  const roleWarnings = useLlmEndpointWarnings().data ?? [];
+  const warningsData = useLlmEndpointWarnings().data;
+  const roleWarnings = Array.isArray(warningsData) ? warningsData : [];
   const enabled = enabledNow(ctx, enabledEffective);
   const providers = available.filter((p) => enabled.includes(p));
   const [editing, setEditing] = useState<{ index: number | null } | null>(null);

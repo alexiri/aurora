@@ -16,7 +16,7 @@ import { Meter } from "@/components/ui/meter";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusLine, type StatusTone } from "@/components/ui/status-line";
-import { Tabs } from "@/components/ui/tabs";
+import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { errorMessage } from "@/lib/api/errors";
 import { onboardingKeys, useAdminSetup, type SetupCheck, type SetupStatus, type SetupStep } from "@/lib/api/onboarding";
 import { formatBytes } from "@/lib/api/attachments";
@@ -492,10 +492,12 @@ export function SetupView() {
       <AttentionSection />
       <OwnerlessBanner />
       <ConnectorAvailableCallout />
-      {setup.data && shown === "health" ? <HealthView setup={setup.data} onRunSetup={() => setView("checklist")} /> : null}
-      {setup.data && shown === "checklist" ? (
-        <Checklist setup={setup.data} tryIt={tryIt} toast={toast} onKeyAdded={() => void keyAdded()} onDismissToast={() => setToast(null)} />
-      ) : null}
+      <div role="tabpanel" id={tabPanelId("overview", shown)} aria-labelledby={tabId("overview", shown)} className="space-y-6">
+        {setup.data && shown === "health" ? <HealthView setup={setup.data} onRunSetup={() => setView("checklist")} /> : null}
+        {setup.data && shown === "checklist" ? (
+          <Checklist setup={setup.data} tryIt={tryIt} toast={toast} onKeyAdded={() => void keyAdded()} onDismissToast={() => setToast(null)} />
+        ) : null}
+      </div>
     </div>
   );
 }
