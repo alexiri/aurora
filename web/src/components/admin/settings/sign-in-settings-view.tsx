@@ -8,10 +8,10 @@ import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { LockPill } from "@/components/ui/lock-pill";
 import { Button } from "@/components/ui/button";
-import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { SettingField, settingControlId } from "@/components/ui/setting-field";
+import { useInstance } from "@/lib/api/queries";
 import { useSettingsSection } from "@/lib/api/settings";
 
 export const PROVIDERS = "auth.oidc_providers";
@@ -45,6 +45,7 @@ function ProvidersControl({ ctx, signedInWith }: { ctx: SettingControlCtx; signe
   const helm = (s.entries ?? []).filter((e) => e.source === "helm");
   const own = ctx.own;
   const helmIds = helm.map((e) => e.id);
+  const instanceProviders = useInstance().data?.oidc_providers ?? [];
   const [editing, setEditing] = useState<{ index: number | null } | null>(null);
   const [viewing, setViewing] = useState<Record<string, unknown> | null>(null);
   const errorsOf = (id: string): Record<string, string> => {
@@ -82,6 +83,23 @@ function ProvidersControl({ ctx, signedInWith }: { ctx: SettingControlCtx; signe
             {signedInWith === e.id ? <Badge tone="accent">You signed in with this</Badge> : null}
           </div>
           <p className="break-all text-xs text-ink-2">{hostOf(v.issuer) || hostOf(v.issuer_url)}</p>
+        </div>
+      </ListRow>,
+    );
+  }
+  // (P5-POLISH-10, E7) A provider people sign in with that is not a list entry: the development provider, which Helm
+  // registers through `auth.dev_idp`. It is listed read-only, so "No provider yet" only appears when there is none.
+  const known = new Set([...helm.map((e) => e.id), ...own.map(idOf)]);
+  for (const p of instanceProviders.filter((p) => !known.has(p.id))) {
+    rows.push(
+      <ListRow key={`i-${p.id}`}>
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-ink">{p.id === "dev" ? "Development sign-in" : p.display_name}</span>
+            <LockPill owner="Set in Helm" />
+            {signedInWith === p.id ? <Badge tone="accent">You signed in with this</Badge> : null}
+          </div>
+          {p.id === "dev" ? <p className="text-xs text-ink-2">Signs in without a password. For development only.</p> : null}
         </div>
       </ListRow>,
     );
@@ -175,11 +193,6 @@ export function SignInSettingsView() {
         title={section.title}
         description={section.description}
       />
-      <Notice tone="neutral" role="status" className="max-w-3xl">
-        Break-glass: <code className="font-mono">auth.instance_admins</code> and any provider defined in Helm stay in force
-        whatever is saved here, and <code className="font-mono">aurora-api settings reset sign_in</code> restores the defaults.
-        See “Sign-in providers” in the operator guide.
-      </Notice>
       <SettingsSectionForm
         key={section.generation}
         section={section}
@@ -187,6 +200,15 @@ export function SignInSettingsView() {
         onReload={() => void q.refetch()}
         controls={{ [PROVIDERS]: (ctx) => <ProvidersControl ctx={ctx} signedInWith={signedInWith} /> }}
       />
+      {/* (P5-POLISH-10, E7) The operator's recovery text is the last thing on the page, closed. */}
+      <details className="max-w-3xl rounded-card border border-line bg-surface px-4 py-3 text-sm text-ink-2">
+        <summary className="cursor-pointer font-medium text-ink">If nobody can sign in</summary>
+        <p className="mt-2">
+          <code className="font-mono">auth.instance_admins</code> and any provider defined in Helm stay in force whatever is
+          saved here, and <code className="font-mono">aurora-api settings reset sign_in</code> restores the defaults. See
+          “Sign-in providers” in the operator guide.
+        </p>
+      </details>
     </div>
   );
 }
