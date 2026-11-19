@@ -550,3 +550,118 @@ async fn an_organization_block_rule_still_refuses_after_always_allow() {
         .unwrap();
     assert_eq!(n, 0, "a blocked request never creates an approval");
 }
+
+/// The demo catalogue with `write_item` marked `approval: ask` by its package (P5-TOOLASK, C-1042).
+fn snapshot_package_ask() -> Value {
+    let mut s = snapshot();
+    s["apps"][0]["tools"]["write"]["items"][0]["approval"] = json!("ask");
+    s
+}
+
+/// The workspace has no rule about `write_item`: the reads are allowed and the Default Rule
+/// allows the rest (so only the package default can hold the write).
+fn package_default_rows(w: &World) -> Rows {
+    let mut r = demo_rows(w);
+    let cid = r.conns[0].id;
+    r.ws.default_action = "allow".into();
+    r.ws.derived = vec![(
+        Uuid::now_v7(),
+        json!({"name":"d1","enabled":true,"identities":[],"action":"allow",
+               "targets":[{"type":"connection","id":cid,"tools":["read_item"]}]}),
+    )];
+    r
+}
+
+async fn approvals(pool: &sqlx::PgPool) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM approvals")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// (P5-TOOLASK, D-397, C-1043) A tool whose package default is Ask is held when no rule speaks:
+/// the card's reason is the app, the request proceeds after approval and is refused after a denial;
+/// a read tool of the same app is untouched.
+#[tokio::test]
+async fn a_package_default_ask_holds_the_write_and_names_the_app_as_the_reason() {
+    let db = TestDb::new().await;
+    let env = Arc::new(
+        start_with(
+            db.pool().clone(),
+            snapshot_package_ask(),
+            package_default_rows,
+        )
+        .await,
+    );
+    assert_eq!(send(&env, "GET", "/items", "").await.status, 200);
+    assert_eq!(approvals(&env.pool).await, 0);
+
+    let e2 = env.clone();
+    let t = tokio::spawn(async move { send(&e2, "POST", "/items", "{\"a\":1}").await });
+    let id = pending(&env.pool, env.w.ws).await;
+    let (tool, rule_name, rule_id): (Option<String>, Option<String>, Option<Uuid>) =
+        sqlx::query_as("SELECT tool_id, rule_name, rule_logical_id FROM approvals WHERE id=$1")
+            .bind(id)
+            .fetch_one(&env.pool)
+            .await
+            .unwrap();
+    assert_eq!(tool.as_deref(), Some("write_item"));
+    assert_eq!(
+        rule_name.as_deref(),
+        Some(aurora_policy::eval::PACKAGE_ASK_REASON)
+    );
+    assert!(rule_id.is_none(), "no rule decided");
+    decide(&env.pool, id, "approved", env.w.ws).await;
+    let r = t.await.unwrap();
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(r.body.contains("authorization: Bearer T0K"), "{}", r.body);
+
+    let e2 = env.clone();
+    let t = tokio::spawn(async move { send(&e2, "POST", "/items", "{}").await });
+    let id2 = pending(&env.pool, env.w.ws).await;
+    assert_ne!(id, id2);
+    decide(&env.pool, id2, "denied", env.w.ws).await;
+    let r = t.await.unwrap();
+    assert_eq!(r.status, 403, "{}", r.body);
+    assert!(r.body.contains("manual_approval_denied"), "{}", r.body);
+}
+
+/// (C-1043) An explicit Allow of the tool by the workspace wins over the package default; an
+/// explicit Block of an organization rule wins over everything; a tool without a package default
+/// is unchanged in the same world.
+#[tokio::test]
+async fn an_explicit_allow_lifts_the_package_default_and_a_block_wins_over_it() {
+    // Explicit workspace allow (the shape Always allow and Act grants compile to): no hold.
+    let db = TestDb::new().await;
+    let env = start_with(db.pool().clone(), snapshot_package_ask(), |w| {
+        always_allowed_rows(w, false)
+    })
+    .await;
+    let r = send(&env, "POST", "/items", "{\"a\":1}").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(r.body.contains("authorization: Bearer T0K"), "{}", r.body);
+    assert_eq!(
+        approvals(&env.pool).await,
+        0,
+        "an explicit allow asks no one"
+    );
+
+    // The same allow under an organization block: refused, no hold, nothing sent upstream.
+    let db = TestDb::new().await;
+    let env = start_with(db.pool().clone(), snapshot_package_ask(), |w| {
+        always_allowed_rows(w, true)
+    })
+    .await;
+    let r = send(&env, "POST", "/items", "{\"a\":1}").await;
+    assert_eq!(r.status, 403, "{}", r.body);
+    assert!(r.body.contains("blocked_by_policy"), "{}", r.body);
+    assert!(!r.body.contains("T0K"), "{}", r.body);
+    assert_eq!(approvals(&env.pool).await, 0);
+
+    // No package default: the same rule-less world lets the write through, as before.
+    let db = TestDb::new().await;
+    let env = start_with(db.pool().clone(), snapshot(), package_default_rows).await;
+    let r = send(&env, "POST", "/items", "{\"a\":1}").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(approvals(&env.pool).await, 0, "no package default, no hold");
+}

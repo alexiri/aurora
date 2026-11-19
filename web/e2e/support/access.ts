@@ -10,8 +10,8 @@ import type { Scheme } from "./open";
 export const ACCESS_SCREENS = ["list", "table", "table-custom-only", "table-limited"] as const;
 export type AccessScreen = (typeof ACCESS_SCREENS)[number];
 
-const tool = (tid: string, name: string, group: "read" | "write", path: string, methods: string[], host = "api.github.com") => ({
-  id: tid, name, group, host, path, methods, wildcard: false,
+const tool = (tid: string, name: string, group: "read" | "write", path: string, methods: string[], host = "api.github.com", approval: "ask" | null = null) => ({
+  id: tid, name, group, host, path, methods, wildcard: false, approval,
 });
 const githubTools = [
   tool("get_repo", "Get a repository", "read", "/repos/*/*", ["GET"]),
@@ -22,7 +22,8 @@ const githubTools = [
   tool("graphql_query", "GraphQL query", "read", "/graphql", ["POST"]),
   tool("create_issue", "Create an issue", "write", "/repos/*/*/issues", ["POST"]),
   tool("create_issue_comment", "Comment on an issue or pull request", "write", "/repos/*/*/issues/*/comments", ["POST"]),
-  tool("merge_pull", "Merge a pull request", "write", "/repos/*/*/pulls/*/merge", ["PUT"]),
+  // (P5-TOOLASK, C-1042) The mocked package asks first about merging by default.
+  tool("merge_pull", "Merge a pull request", "write", "/repos/*/*/pulls/*/merge", ["PUT"], "api.github.com", "ask"),
   tool("git_push", "Push code over HTTPS", "write", "/*/*/**", ["GET", "POST"], "github.com"),
 ];
 const indicoTools = [

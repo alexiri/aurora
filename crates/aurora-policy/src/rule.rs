@@ -120,6 +120,19 @@ fn custom_only_inert(c: &Credential, tools: &Option<Vec<String>>) -> bool {
 }
 
 impl Target {
+    /// (P5-TOOLASK, C-1043) The target lists `tool_id` by name (`tools` of an app, connection or
+    /// app-connections target): a choice about that tool, not about everything.
+    pub fn names_tool(&self, tool_id: &str) -> bool {
+        match self {
+            Self::App { tools, .. }
+            | Self::Connection { tools, .. }
+            | Self::AppConnections { tools, .. } => tools
+                .as_ref()
+                .is_some_and(|t| t.iter().any(|x| x == tool_id)),
+            _ => false,
+        }
+    }
+
     pub fn matches(&self, f: &RequestFacts) -> bool {
         match self {
             Self::App { app_id, tools } => f.app_id.as_ref() == Some(app_id) && tools_ok(tools, f),

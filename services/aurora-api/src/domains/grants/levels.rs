@@ -361,6 +361,7 @@ mod tests {
             scopes: vec![],
             graphql: None,
             git: None,
+            approval: None,
         }
     }
 

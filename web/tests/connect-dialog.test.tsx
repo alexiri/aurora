@@ -58,6 +58,11 @@ const openSpy = vi.fn();
 beforeEach(() => {
   vi.stubGlobal("BroadcastChannel", FakeChannel);
   vi.stubGlobal("open", openSpy);
+  // jsdom has no `matchMedia`; the journey's frame (`fixedHeight`) asks whether the viewport is wide.
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("min-width"), media: query, onchange: null, addEventListener: () => undefined, removeEventListener: () => undefined,
+    addListener: () => undefined, removeListener: () => undefined, dispatchEvent: () => false,
+  }));
   window.history.replaceState(null, "", "/o/acme/w/main/credentials");
 });
 afterEach(() => {
@@ -192,7 +197,8 @@ describe("Connect on the Apps tab", () => {
     expect(await screen.findByText(/Some requested permissions were not granted: admin/)).toBeInTheDocument();
     expect(screen.getByText("GitHub is connected. No agent can use it yet.")).toBeInTheDocument();
     expect(calls.find((c) => c.method === "POST")?.body).toMatchObject({ scope: "workspace", workspace_id: "w1", method_id: "token", fields: { access_token: "ghp_x" } });
-    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    // Close, at the left of the footer (the dialog's own × is the other Close).
+    fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(calls.filter((c) => c.path === "/v1/apps").length).toBeGreaterThan(before));
     expect(openSpy).not.toHaveBeenCalled();
@@ -219,8 +225,7 @@ function fakeWindow() {
 describe("OAuth sign-in in the dialog (C-842)", () => {
   async function openOauth() {
     fireEvent.click(await screen.findByRole("button", { name: "Connect GitHub" }));
-    // The journey suggests the token; signing in is one of the other ways, under Advanced.
-    fireEvent.click(await screen.findByText(/^Advanced/));
+    // The journey suggests the token; signing in is the other way that works, offered at the top ("Sign in with:").
     fireEvent.click(await screen.findByRole("radio", { name: /Sign in/ }));
   }
 
@@ -256,7 +261,7 @@ describe("OAuth sign-in in the dialog (C-842)", () => {
     await emit({ type: "aurora:connected", app_id: "github", connection_id: "c1", missing_scopes: [], granted_agent_ids: [] });
     expect(await screen.findByText("GitHub is connected. No agent can use it yet.")).toBeInTheDocument();
     expect(FakeChannel.sent).toContainEqual({ type: "aurora:connect-ack", connection_id: "c1" });
-    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
@@ -316,7 +321,7 @@ describe("Reconnect on the Accounts tab", () => {
     stub();
     wrap(list());
     fireEvent.keyDown(await screen.findByRole("button", { name: "More for me@acme.io" }), { key: "Enter" });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Reconnect" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Sign in again" }));
     const dialog = await screen.findByRole("dialog", { name: "Reconnect GitHub" });
     await waitFor(() => expect(within(dialog).getByRole("radio", { name: /Sign in/ })).toBeChecked());
     expect(openSpy).not.toHaveBeenCalled();

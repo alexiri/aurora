@@ -253,12 +253,17 @@ describe("Workspace Access with groups", () => {
       [`GET /v1/orgs/${ORG}/groups`]: () => json(200, { items: [group(G1, "manual"), group(G2, "manual", { name: "Admins" })], next_cursor: null }),
     });
     wrap(<AccessTab wsId={WS} orgId={ORG} canOwn />);
-    expect(await screen.findByText("Members with access")).toBeInTheDocument();
+    // (P5-POLISH-7) The people who have access through a group or the organization are rows of the one People table, with the reason.
+    const rows = await screen.findAllByTestId("inherited-row");
+    expect(rows).toHaveLength(2);
     expect(calls.some((c) => c.includes("expand=groups"))).toBe(true);
     expect(screen.getByLabelText("Role for group Platform team")).toHaveValue("approver");
-    expect(screen.getByText("Group Platform team")).toBeInTheDocument();
-    expect(screen.getByText("Org role via Admins")).toBeInTheDocument();
-    expect(screen.getByText("Org admin/owner")).toBeInTheDocument();
+    expect(rows[0]!).toHaveTextContent("Bob");
+    expect(rows[0]!).toHaveTextContent("Group Platform team");
+    expect(rows[1]!).toHaveTextContent("Org role via Admins");
+    expect(rows[1]!).toHaveTextContent("Org admin/owner");
+    expect(within(rows[1]!).queryByRole("button")).toBeNull();
+    expect(screen.queryByText("Members with access")).toBeNull();
     // only the unbound group is offered
     const pick = await screen.findByLabelText("Group");
     expect(within(pick).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select a group…", "Admins (1)"]);

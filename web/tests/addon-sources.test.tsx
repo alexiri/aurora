@@ -233,6 +233,10 @@ describe("plugins list: provenance, update badges and the check-all button (C-60
     source: "addon",
     source_id: "s1",
     source_name: "CERN addons",
+    origin: "addon",
+    reaches: [],
+    reaches_more: 0,
+    apps: [{ app_id: "indigo", name: "Indigo SSO" }],
     update_available: true,
     status: "active",
     status_reason: null,
@@ -248,7 +252,7 @@ describe("plugins list: provenance, update badges and the check-all button (C-60
         json(200, {
           items: [
             pkg({}),
-            pkg({ id: "p2", package_id: "github", version: "0.1.0", source: "builtin", source_id: null, source_name: null, update_available: false }),
+            pkg({ id: "p2", package_id: "github", version: "0.1.0", source: "builtin", origin: "aurora", apps: [{ app_id: "github", name: "GitHub" }], source_id: null, source_name: null, update_available: false }),
           ],
           next_cursor: null,
         }),
@@ -263,9 +267,8 @@ describe("plugins list: provenance, update badges and the check-all button (C-60
       },
     });
     wrap(<PluginsView />);
-    expect(await screen.findByText("Source")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "CERN addons" }).getAttribute("href")).toBe("/admin/apps?tab=advanced#s1");
-    expect(screen.getByText("builtin")).toBeTruthy();
+    expect(await screen.findByText("Indigo SSO")).toBeTruthy();
+    expect(screen.getByText("GitHub")).toBeTruthy();
     expect(screen.getAllByText("Update available").length).toBeGreaterThan(0);
     fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));
     await waitFor(() => expect(calls).toBe(1));
@@ -278,7 +281,7 @@ describe("plugins list: provenance, update badges and the check-all button (C-60
       "GET /v1/admin/addon-sources": () => json(200, { items: [] }),
     });
     wrap(<PluginsView />);
-    expect(await screen.findByText("No plugins")).toBeTruthy();
+    expect(await screen.findByText("No apps yet")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Check for updates" })).toBeNull();
   });
 });

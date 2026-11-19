@@ -126,8 +126,8 @@ for (const scheme of ["light", "dark"] as const) {
         await mockAws(page, "two");
         await open(page, "/o/acme/w/main/apps?tab=accounts", scheme);
         const row = page.getByRole("listitem", { name: "platform-prod" });
-        await expect(row.getByRole("button", { name: "Daneel · Custom: change access" })).toBeVisible();
-        await expect(row.getByRole("button", { name: "Giskard · Change without asking: change access" })).toBeVisible();
+        await expect(row.getByRole("button", { name: "Daneel · Custom" })).toBeVisible();
+        await expect(row.getByRole("button", { name: "Giskard · Change without asking" })).toBeVisible();
         await expect(row).not.toContainText(/limit/i);
         await check(page, "two-agents", scheme, width);
       });
@@ -146,12 +146,13 @@ for (const scheme of ["light", "dark"] as const) {
         });
         await page.getByRole("button", { name: "Add", exact: true }).click();
         await page.getByRole("menuitem", { name: "Add an AI key" }).click();
+        await expect(page.getByRole("dialog", { name: "Add an AI key" })).toBeVisible();
         const form = page.getByRole("form", { name: "New LLM key" });
         await form.getByLabel("Name").fill("Team key");
         await form.getByLabel("Provider endpoint").selectOption("aigw");
         await form.getByLabel("API key", { exact: true }).fill("sk-not-a-real-key");
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
-        await form.getByRole("button", { name: "Add LLM key" }).click();
+        await form.getByRole("button", { name: "Add key", exact: true }).click();
         await expect(page.getByText("Saved Team key")).toBeVisible();
         // No "Give agents access" second step.
         await expect(page.getByRole("region", { name: "Give agents access" })).toHaveCount(0);

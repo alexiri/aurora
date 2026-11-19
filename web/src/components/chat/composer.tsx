@@ -137,6 +137,11 @@ export function Composer({
   useEffect(() => {
     if (autoFocus) area.current?.focus();
   }, [autoFocus]);
+  // (P5-POLISH-5, C-1035) A `?draft=` suggestion fills the box and focuses it, never sent.
+  const hadDraft = useRef(text.length > 0);
+  useEffect(() => {
+    if (hadDraft.current) area.current?.focus();
+  }, []);
   // Choosing Reply moves focus to the text field.
   const replySeq = reply?.seq;
   useEffect(() => {

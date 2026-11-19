@@ -87,6 +87,13 @@ pub struct OrgSettings {
     /// (phase 5, P5-CALINV, D-274, C-844) Calendar-invitation tools for the organization's agents
     /// (default `true`); stored as `settings.calendar_invitations.enabled`.
     pub calendar_invitations_enabled: bool,
+    /// (phase 5, P5-WEBHOOK-2, D-320, C-912) Outgoing webhooks for the organization (default
+    /// `true`); stored as `settings.outgoing_webhooks.enabled`.
+    pub outgoing_webhooks_enabled: bool,
+    /// The org's own send ceilings (`null` = the instance's), stored as
+    /// `settings.outgoing_webhooks.per_minute_max` / `.per_day_max`.
+    pub outgoing_webhooks_per_minute_max: Option<i64>,
+    pub outgoing_webhooks_per_day_max: Option<i64>,
 }
 
 impl OrgSettings {
@@ -103,7 +110,21 @@ impl OrgSettings {
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
             calendar_invitations_enabled: Self::calendar_invitations_enabled(v),
+            outgoing_webhooks_enabled: Self::outgoing_webhooks_enabled(v),
+            outgoing_webhooks_per_minute_max: v
+                .pointer("/outgoing_webhooks/per_minute_max")
+                .and_then(serde_json::Value::as_i64),
+            outgoing_webhooks_per_day_max: v
+                .pointer("/outgoing_webhooks/per_day_max")
+                .and_then(serde_json::Value::as_i64),
         }
+    }
+
+    /// The org switch of outgoing webhooks (default on).
+    pub fn outgoing_webhooks_enabled(v: &serde_json::Value) -> bool {
+        v.pointer("/outgoing_webhooks/enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true)
     }
 
     /// The org switch of the calendar-invitation tools (default on).
@@ -305,6 +326,16 @@ pub struct OrgSettingsPatch {
     pub previews_enabled: Option<bool>,
     /// (phase 5, P5-CALINV, C-844) The calendar-invitation tools for the organization's agents.
     pub calendar_invitations_enabled: Option<bool>,
+    /// (phase 5, P5-WEBHOOK-2, C-912) The outgoing-webhook switch; audited with `org.update`.
+    pub outgoing_webhooks_enabled: Option<bool>,
+    /// The org's send ceilings. Absent = unchanged, `null` = the instance's; above the instance's →
+    /// 422 `above_instance_ceiling`.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<i64>)]
+    pub outgoing_webhooks_per_minute_max: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<i64>)]
+    pub outgoing_webhooks_per_day_max: Option<Option<i64>>,
 }
 
 #[derive(Deserialize, ToSchema)]

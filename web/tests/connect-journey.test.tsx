@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ConnectJourney } from "@/components/apps/connect-journey/connect-journey";
@@ -7,9 +7,13 @@ import {
   buildJourneyConnect,
   connectFailure,
   doneSentence,
+  firstName,
   hostOf,
+  journeyTitle,
   levelsForApp,
+  needsReason,
   nextStep,
+  permissionHints,
   prevStep,
   scopesFor,
   stepsOf,
@@ -126,9 +130,43 @@ describe("words and payloads", () => {
 
   it("failures name the app (C-958)", () => {
     const err = (cause: string, extra: object = {}) => new ApiError("connect_probe_failed", "x", { cause, ...extra }, 422);
-    expect(connectFailure(err("rejected"), "GitHub")).toBe("GitHub did not accept this token. Check that it is complete and has not expired.");
-    expect(connectFailure(err("unreachable", { host: "git.example.org" }), "GitHub")).toBe("Aurora could not reach GitHub (git.example.org).");
-    expect(connectFailure(err("unexpected", { upstream_status: 502 }), "GitHub")).toBe("GitHub answered with an unexpected error (502).");
+    expect(connectFailure(err("rejected"), "GitHub")).toBe(
+      "GitHub refused this token: it may be incomplete, expired or missing a permission. Create a new one and paste it here.",
+    );
+    expect(connectFailure(err("unreachable", { host: "git.example.org" }), "GitHub")).toBe("Aurora could not reach GitHub (git.example.org). Check the address, then try again.");
+    expect(connectFailure(err("unexpected", { upstream_status: 502 }), "GitHub")).toBe("GitHub answered with an unexpected error (502). Try again in a moment.");
+    // A network error says what to check, in words.
+    expect(connectFailure(new TypeError("Failed to fetch"), "GitHub")).toBe("Aurora could not be reached. Check your connection, then try again.");
+  });
+
+  it("titles: Give <Agent> an app, then <App> for <Agent>; no host", () => {
+    expect(journeyTitle({ step: "app", agent: "Daneel" })).toBe("Give Daneel an app");
+    expect(journeyTitle({ step: "signin", app: "GitHub", agent: "Daneel" })).toBe("GitHub for Daneel");
+    expect(journeyTitle({ step: "access", website: true, agent: "Daneel" })).toBe("Website or API for Daneel");
+    expect(journeyTitle({ step: "app" })).toBe("Connect an app or website");
+  });
+
+  it("permission hints per level, and the tick line when the package gives none", () => {
+    const withHints = {
+      ...method,
+      permission_hints: [
+        { level: "read", label: "Read only", hints: ["Contents · Read", "Issues · Read"] },
+        { level: "write", label: "Read and write", hints: ["Contents · Read and write"] },
+      ],
+    } as unknown as ConnectMethod;
+    expect(permissionHints(withHints, "read")).toEqual(["Contents · Read", "Issues · Read"]);
+    expect(permissionHints(withHints, "ask")).toEqual(["Contents · Read and write"]);
+    expect(permissionHints(withHints, "act")).toEqual(["Contents · Read and write"]);
+    expect(permissionHints(method, "read")).toEqual(["read:org"]);
+  });
+
+  it("the reasons an app waits for an admin", () => {
+    expect(firstName("Alice Admin")).toBe("Alice");
+    expect(firstName(undefined)).toBeNull();
+    expect(needsReason(["oauth_client"], "Alice Admin", "Google", false)).toBe("Alice Admin needs to set up Google sign-in");
+    expect(needsReason(["oauth_client"], "Alice Admin", "Google", true)).toBe("Same Google sign-in");
+    expect(needsReason(["instance"], null, "Jira", false)).toBe("An admin needs to add a server");
+    expect(needsReason(["admin_material"], null, "AWS", false)).toBe("Needs setup by an admin");
   });
 
   it("a website's host is read from what was typed", () => {
@@ -167,9 +205,14 @@ const DETAIL = {
       id: "token", label: "Token", fields: [field], recommended: true,
       scopes: [{ scope: "repo", name: "repo", access: "write" }, { scope: "read:org", name: "read:org", access: "read" }],
       scope_presets: { read: ["read:org"], write: ["repo", "read:org"] },
+      permission_hints: [
+        { level: "read", label: "Read only", hints: ["Contents · Read", "Issues · Read", "Pull requests · Read", "Metadata · Read"] },
+        { level: "write", label: "Read and write", hints: ["Contents · Read and write", "Issues · Read and write"] },
+      ],
     }),
     method({ id: "oauth", kind: "oauth2", label: "Sign in", client_key: "gh", callback: "query" }),
   ],
+  first_prompt: "Which pull requests are waiting for my review?",
   tools: [{ id: "list", name: "List issues", group: "read" }, { id: "create", name: "Create issue", group: "write" }],
   hosts: [], agent_instructions: null, credentials: [], metadata: [], oauth_clients: [], instances: null,
 };
@@ -177,7 +220,7 @@ const planMethod = (id: string, kind: string, over: Record<string, unknown> = {}
   id, kind, label: id, description: null, recommended: false, audience: "person", needs: [], ready: true, scope_presets: { read: [], write: [] }, ...over,
 });
 const PLAN = { app_id: "github", available: true, suggested_method: "token", methods: [planMethod("token", "fields"), planMethod("oauth", "oauth2")] };
-const CONN = { id: "c9", scope: "workspace", app_id: "github", scopes: [], missing_scopes: [], label: "me", status: "active", access: "read" };
+const CONN = { id: "c9", scope: "workspace", app_id: "github", scopes: [], missing_scopes: [], label: "Team repos", status: "active", access: "read" };
 const ACCOUNT = {
   ref: { type: "connection", id: "c1" }, kind: "app", name: "GitHub · bob-builder", scope: "workspace", levels: ["read", "ask", "act"],
   app: { app_id: "github", name: "GitHub", custom_only: false }, health: { state: "not_used" }, agents: [], connected_by: { name: "Bob" }, given: false,
@@ -226,6 +269,11 @@ const post = (calls: Call[]) => calls.find((c) => c.method === "POST" && c.path 
 
 const openSpy = vi.fn();
 beforeEach(() => {
+  // jsdom has no `matchMedia`; the frame's `fixedHeight` asks whether the viewport is wide (a wide one, no listeners).
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("min-width"), media: query, onchange: null, addEventListener: () => undefined, removeEventListener: () => undefined,
+    addListener: () => undefined, removeListener: () => undefined, dispatchEvent: () => false,
+  }));
   vi.stubGlobal("BroadcastChannel", FakeChannel);
   vi.stubGlobal("open", openSpy);
 });
@@ -238,21 +286,48 @@ describe("the journey for a fixed agent and a given app", () => {
   it("Read only: Give Daneel GitHub → Next → the token page and the permissions → Connect → Done", async () => {
     const calls = stub({ "POST /v1/apps/github/connect": () => json(200, { kind: "connected", connection: CONN, grants: [{ agent_id: "a1" }], missing_scopes: [] }) });
     open();
-    await screen.findByRole("dialog", { name: "Give Daneel GitHub" });
+    await screen.findByRole("dialog", { name: "GitHub for Daneel" });
     // Access first: Read only is preselected
     expect(await screen.findByRole("radio", { name: /Read only/ })).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    const link = await screen.findByRole("link", { name: "Create a token on GitHub" });
+    // The numbered steps of B4: the token page, the permissions for the chosen access, then the field.
+    const link = await screen.findByRole("link", { name: "Open GitHub" });
     expect(link).toHaveAttribute("href", "https://github.com/settings/tokens");
-    expect(screen.getByText(/For Read only, tick/)).toHaveTextContent("For Read only, tick: read:org");
+    expect(screen.getByText(/Give it these permissions, for/)).toHaveTextContent("Give it these permissions, for Read only:");
+    expect(screen.getByLabelText("Permissions to give the token")).toHaveTextContent("Contents · Read Issues · Read Pull requests · Read Metadata · Read");
     fireEvent.change(screen.getByLabelText("Token"), { target: { value: "ghp_x" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    expect(await screen.findByText("Daneel can now read GitHub.")).toBeInTheDocument();
+    // Done names the account and the access, and offers the first prompt as an unsent draft (C-1035).
+    expect(await screen.findByText("Daneel can now read Team repos.")).toBeInTheDocument();
+    expect(screen.getByText(/Read only\. You can change this on/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Daneel's Access tab" })).toHaveAttribute("href", "/o/acme/w/main/agents/daneel?tab=access");
+    expect(screen.getByText("“Which pull requests are waiting for my review?”")).toBeInTheDocument();
     expect(post(calls)?.body).toMatchObject({
       method_id: "token", fields: { access_token: "ghp_x" }, scopes: ["read:org"], grant: { agent_ids: ["a1"], level: "read" },
     });
+    const chat = new URL(screen.getByRole("link", { name: "Try it in chat" }).getAttribute("href")!, "http://x");
+    expect(chat.pathname).toBe("/o/acme/w/main/agents/daneel");
+    expect(chat.searchParams.get("draft")).toBe("Which pull requests are waiting for my review?");
+    expect(screen.getByRole("button", { name: "Another app" })).toBeInTheDocument();
+    // Close at the left edge of the footer (the dialog's own X is the other Close).
+    expect(screen.getAllByRole("button", { name: "Close" }).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("Read and write shows the write permissions; with no first prompt the button is Open chat without a draft", async () => {
+    stub({
+      "GET /v1/apps/github": () => json(200, { ...DETAIL, first_prompt: null }),
+      "POST /v1/apps/github/connect": () => json(200, { kind: "connected", connection: CONN, grants: [{ agent_id: "a1" }], missing_scopes: [] }),
+    });
+    open();
+    fireEvent.click(await screen.findByRole("radio", { name: /Ask before changes/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText(/Give it these permissions, for/)).toHaveTextContent("for Ask before changes");
+    expect(screen.getByLabelText("Permissions to give the token")).toHaveTextContent("Contents · Read and write Issues · Read and write");
+    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "ghp_x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await screen.findByText(/Daneel can now read Team repos, and asks you/);
     expect(screen.getByRole("link", { name: "Open chat" })).toHaveAttribute("href", "/o/acme/w/main/agents/daneel");
-    expect(screen.getByRole("button", { name: "Give Daneel another app" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Try it in chat" })).toBeNull();
   });
 
   it("Ask before changes: the Done sentence, the write permissions and level ask", async () => {
@@ -262,32 +337,46 @@ describe("the journey for a fixed agent and a given app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.change(await screen.findByLabelText("Token"), { target: { value: "ghp_x" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    expect(await screen.findByText("Daneel can now read GitHub, and asks you before each change.")).toBeInTheDocument();
+    expect(await screen.findByText("Daneel can now read Team repos, and asks you before each change.")).toBeInTheDocument();
     expect(post(calls)?.body).toMatchObject({ scopes: ["repo", "read:org"], grant: { level: "ask" } });
   });
 
-  it("a wrong token says so by the app's name and keeps the form", async () => {
+  it("a wrong token is said under its field, in words, and the pasted value stays (D-388)", async () => {
     stub({
       "POST /v1/apps/github/connect": () => json(422, { error: { code: "connect_probe_failed", message: "x", details: { cause: "rejected" } } }),
     });
     open();
     fireEvent.click(await screen.findByRole("button", { name: "Next" }));
-    fireEvent.change(await screen.findByLabelText("Token"), { target: { value: "bad" } });
+    fireEvent.change(await screen.findByLabelText("Token"), { target: { value: "ghp_bad" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("GitHub did not accept this token. Check that it is complete and has not expired.");
-    expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
+    const message = await screen.findByText(/GitHub refused this token/);
+    expect(message).toHaveTextContent("Create a new one and paste it here.");
+    // The error belongs to the field (aria-describedby), which keeps what was typed, masked.
+    const input = screen.getByLabelText("Token");
+    expect(input).toHaveValue("ghp_bad");
+    expect(input).toHaveAttribute("type", "password");
+    expect(input.getAttribute("aria-describedby") ?? "").toContain(message.id);
+    expect(screen.getByRole("button", { name: "Connect" })).toBeEnabled();
   });
 
-  it("a blocked suggested method shows who can fix it and no form", async () => {
-    stub({
+  it("an app that needs an admin shows who, and Ask turns into the asked state with Undo (not a disabled Connect)", async () => {
+    const calls = stub({
       "GET /v1/apps/github/connect-plan": () => json(200, { app_id: "github", available: false, available_who_can: WHO, suggested_method: null, methods: [planMethod("token", "fields", { ready: false, who_can: WHO })] }),
+      "POST /v1/workspaces/w1/apps/github/setup-request": () => json(200, { id: "r1", app_id: "github", status: "open", askers: [], needs: ["oauth_client"] }),
+      "DELETE /v1/workspaces/w1/apps/github/setup-request": () => new Response(null, { status: 204 }),
     });
     open();
     fireEvent.click(await screen.findByRole("button", { name: "Next" }));
-    expect(await screen.findByText("GitHub cannot be connected yet.")).toBeInTheDocument();
+    expect(await screen.findByText("GitHub needs an admin to set it up first.")).toBeInTheDocument();
     expect(screen.getAllByText(/Ada Lovelace/).length).toBeGreaterThan(0);
     expect(screen.queryByLabelText("Token")).toBeNull();
-    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ask Ada" }));
+    expect(await screen.findByText(/Asked just now/)).toBeInTheDocument();
+    expect(calls.some((c) => c.method === "POST" && c.path === "/v1/workspaces/w1/apps/github/setup-request")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("button", { name: "Ask Ada" })).toBeInTheDocument();
+    expect(calls.some((c) => c.method === "DELETE")).toBe(true);
   });
 
   it("an existing account: Use it, choose the access, and only the access is saved", async () => {
@@ -300,7 +389,7 @@ describe("the journey for a fixed agent and a given app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("radio", { name: /Ask before changes/ }));
     fireEvent.click(screen.getByRole("button", { name: "Give Daneel access" }));
-    expect(await screen.findByText("Daneel can now read GitHub, and asks you before each change.")).toBeInTheDocument();
+    expect(await screen.findByText("Daneel can now read GitHub · bob-builder, and asks you before each change.")).toBeInTheDocument();
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ level: "ask" });
     expect(post(calls)).toBeUndefined();
   });
@@ -313,7 +402,7 @@ describe("the journey for a fixed agent and a given app", () => {
     });
     open();
     fireEvent.click(await screen.findByRole("button", { name: "Next" }));
-    fireEvent.click(await screen.findByText(/^Advanced/));
+    // Two ways work: the choice sits at the top of the step ("Sign in with:").
     fireEvent.click(await screen.findByRole("radio", { name: /Sign in/ }));
     fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
     await screen.findByText("Waiting for you to sign in to GitHub…");
@@ -332,17 +421,106 @@ describe("the journey for a fixed agent and a given app", () => {
 });
 
 describe("the App step", () => {
-  it("a blocked tile shows who can fix it and cannot be opened; another website is the last tile", async () => {
-    stub({
-      "GET /v1/apps/github/connect-plan": () => json(200, { app_id: "github", available: false, available_who_can: WHO, suggested_method: null, methods: [] }),
-    });
-    open({ agent: undefined, appId: null });
-    const tile = await screen.findByRole("button", { name: "GitHub" });
-    expect(screen.getByRole("button", { name: "Another website or API" })).toBeInTheDocument();
-    fireEvent.focus(tile);
-    expect(await screen.findByText("Needs setup by an admin")).toBeInTheDocument();
-    expect(screen.getByText(/Ada Lovelace/)).toBeInTheDocument();
+  const ADMIN = { action: "register_oauth_client", role: "org_admin", people: [{ name: "Alice Admin" }], you_can: false };
+  const item = (id: string, name: string, over: Record<string, unknown> = {}) => ({
+    ...DETAIL, app_id: id, package_id: id, name, summary: `${name} things.`, readiness: { state: "ready" }, accounts: [], ...over,
+  });
+  const blockedItem = (id: string, name: string, pkg: string, over: Record<string, unknown> = {}) =>
+    item(id, name, { package_id: pkg, readiness: { state: "needs_admin", needs: ["oauth_client"], who_can: ADMIN }, ...over });
+  const apps = (items: unknown[]) => ({ "GET /v1/apps": () => json(200, { items, next_cursor: null }) });
+
+  it("groups come from the catalogue's readiness: Ready (alphabetical, website last), Already connected, Needs an admin first", async () => {
+    stub(
+      apps([
+        item("linear", "Linear"),
+        item("github", "GitHub"),
+        blockedItem("gcal", "Google Calendar", "google-workspace"),
+        blockedItem("gdrive", "Google Drive", "google-workspace"),
+        item("sentry", "Sentry", { accounts: [{ id: "c7", name: "Team Sentry", agent_ids: [] }] }),
+        item("notion", "Notion", { accounts: [{ id: "c8", name: "Notion docs", agent_ids: ["a1"] }] }),
+      ]),
+    );
+    open({ appId: null });
+    await screen.findByRole("region", { name: "Ready to connect · 3" });
+    const ready = within(screen.getByRole("region", { name: "Ready to connect · 3" }))
+      .getAllByRole("button")
+      .map((b) => b.textContent);
+    // Alphabetical; the account Daneel can already use stays ready (it is on the Access tab, not "connected, can't use yet").
+    expect(ready).toEqual(["GitHub", "Linear", "Notion", "+Another website or API"]);
+    const connected = screen.getByRole("region", { name: "Already connected · 1" });
+    expect(within(connected).getByText("Team Sentry")).toBeInTheDocument();
+    expect(within(connected).getByText("Sentry · connected, Daneel can't use it yet")).toBeInTheDocument();
+    const blocked = screen.getByRole("region", { name: "Needs an admin first · 2" });
+    // The reason in one line; the second app of the same provider says so.
+    expect(within(blocked).getByText("Alice Admin needs to set up Google sign-in")).toBeInTheDocument();
+    expect(within(blocked).getByText("Same Google sign-in")).toBeInTheDocument();
+    expect(within(blocked).getAllByRole("button", { name: "Ask Alice" })).toHaveLength(2);
+    // No plan is fetched to decide the groups.
+    expect((fetch as unknown as { mock: { calls: Request[][] } }).mock.calls.some((c) => c[0]!.url.includes("connect-plan"))).toBe(false);
+  });
+
+  it("search filters every group by name and summary", async () => {
+    stub(apps([item("linear", "Linear"), item("github", "GitHub", { summary: "Repositories and pull requests." }), blockedItem("gcal", "Google Calendar", "google-workspace")]));
+    open({ appId: null });
+    fireEvent.change(await screen.findByRole("searchbox", { name: "Search apps" }), { target: { value: "pull" } });
+    expect(screen.getByRole("button", { name: "GitHub" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Linear" })).toBeNull();
+    expect(screen.queryByRole("region", { name: /Needs an admin first/ })).toBeNull();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search apps" }), { target: { value: "calendar" } });
+    expect(await screen.findByText("Google Calendar")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "GitHub" })).toBeNull();
+  });
+
+  it("Ask asks the admin, shows the asked state with Undo, and a reopened list restores it from requested.by_me", async () => {
+    const calls = stub({
+      ...apps([blockedItem("gcal", "Google Calendar", "google-workspace")]),
+      "POST /v1/workspaces/w1/apps/gcal/setup-request": () => json(200, { id: "r1", app_id: "gcal", status: "open", askers: [], needs: ["oauth_client"] }),
+      "DELETE /v1/workspaces/w1/apps/gcal/setup-request": () => new Response(null, { status: 204 }),
+    });
+    open({ appId: null });
+    fireEvent.click(await screen.findByRole("button", { name: "Ask Alice" }));
+    expect(await screen.findByText(/Asked just now\. You'll get a notice when it's ready, and Daneel's Access tab will offer it\./)).toBeInTheDocument();
+    expect(calls.some((c) => c.method === "POST" && c.path === "/v1/workspaces/w1/apps/gcal/setup-request")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("button", { name: "Ask Alice" })).toBeInTheDocument();
+    expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+  });
+
+  it("the asked state comes back from requested.by_me when the list is read again", async () => {
+    stub(apps([blockedItem("gcal", "Google Calendar", "google-workspace", { readiness: { state: "needs_admin", needs: ["oauth_client"], who_can: ADMIN, requested: { by_me: true, count: 1 } } })]));
+    open({ appId: null });
+    expect(await screen.findByText(/Asked\. You'll get a notice when it's ready/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ask Alice" })).toBeNull();
+  });
+
+  it("Give access on an Already connected row goes to the Access step and saves only the access", async () => {
+    const calls = stub({
+      ...apps([item("github", "GitHub", { accounts: [{ id: "c1", name: "GitHub · bob-builder", agent_ids: [] }] })]),
+      "GET /v1/workspaces/w1/accounts": () => json(200, { items: [ACCOUNT], next_cursor: null }),
+      "PUT /v1/agents/a1/grants/connections/c1": () => json(200, {}),
+    });
+    open({ appId: null });
+    fireEvent.click(await screen.findByRole("button", { name: "Give access" }));
+    // Straight to Access for that account: no Account step, no Sign in.
+    fireEvent.click(await screen.findByRole("radio", { name: /Ask before changes/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Give Daneel access" }));
+    expect(await screen.findByText(/Daneel can now read GitHub · bob-builder, and asks you/)).toBeInTheDocument();
+    expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ level: "ask" });
+    expect(post(calls)).toBeUndefined();
+  });
+
+  it("the frame: the title, the stepper and the footer stay in place; Back on the left, the action on the right", async () => {
+    stub({ ...apps([item("github", "GitHub")]), "GET /v1/workspaces/w1/accounts": () => json(200, { items: [], next_cursor: null }) });
+    open({ appId: null });
+    expect(await screen.findByRole("dialog", { name: "Give Daneel an app" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "GitHub" }));
+    expect(await screen.findByRole("dialog", { name: "GitHub for Daneel" })).toBeInTheDocument();
+    // Footer: Back first, Next last; the sheet's arrow is the same Back.
+    const footerButtons = (await screen.findAllByRole("button", { name: /^(Back|Next)$/ })).map((b) => b.textContent);
+    expect(footerButtons).toContain("Back");
+    expect(footerButtons).toContain("Next");
   });
 
   it("from Apps & accounts in a one-agent workspace the agent is preselected and the button says Give Daneel access", async () => {

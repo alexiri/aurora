@@ -90,7 +90,7 @@ function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }
   const draftRevision = gens.data?.items.find((g) => g.status === "draft")?.draft_revision ?? undefined;
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title="History" className="max-h-[90vh] overflow-y-auto">
+      <DialogContent title="History of changes" className="max-h-[90vh] overflow-y-auto">
         {gens.isPending ? <Loading /> : null}
         {gens.isError ? <ErrorState error={gens.error} /> : null}
         {rollback.isError ? <ErrorState error={rollback.error} /> : null}
@@ -261,6 +261,7 @@ export function InternetLevel(p: InternetLevelProps) {
   const orgSecrets = useSecrets({ kind: "organization", id: p.orgId }, p.canEdit && workspace);
   const [editing, setEditing] = useState<{ index: number | null; rule: ReturnType<typeof newRule> } | null>(null);
   const [history, setHistory] = useState(false);
+  const [simulating, setSimulating] = useState(false);
   const [confirmBroad, setConfirmBroad] = useState(false);
   const [partial, setPartial] = useState<string | null>(null);
   const [applied, setApplied] = useState(false);
@@ -382,7 +383,7 @@ export function InternetLevel(p: InternetLevelProps) {
           </span>
         </>,
         <Button variant="outline" size="sm" onClick={() => setHistory(true)}>
-          History
+          History of changes
         </Button>,
       )}
 
@@ -507,7 +508,22 @@ export function InternetLevel(p: InternetLevelProps) {
         {p.belowNote}
       </Section>
 
-      {workspace ? <SimulatePanel wsId={p.scope.id} agents={p.agents ?? []} users={p.users ?? []} currentUserId={p.currentUserId} /> : null}
+      {/* (P5-POLISH-7, F1) The simulator is a button that opens it in a dialog, not a form at the bottom of the page. */}
+      {workspace ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="outline" onClick={() => setSimulating(true)}>
+            Check what would happen
+          </Button>
+          <span className="text-sm text-ink-2">Try a request and see which rule decides it.</span>
+        </div>
+      ) : null}
+      {workspace && simulating ? (
+        <Dialog open onOpenChange={(o) => (o ? null : setSimulating(false))}>
+          <DialogContent size="lg" title="Check what would happen">
+            <SimulatePanel wsId={p.scope.id} agents={p.agents ?? []} users={p.users ?? []} currentUserId={p.currentUserId} />
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       {confirmBroad ? (
         <Notice tone="pending" role="alertdialog" aria-label="Confirm broad rules" className="space-y-2">

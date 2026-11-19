@@ -3,7 +3,7 @@
 import { useSearchParams } from "next/navigation";
 
 import { ProposalsList } from "@/components/credentials/proposals";
-import { ErrorState, Loading } from "@/components/states";
+import { ErrorState } from "@/components/states";
 import { Section } from "@/components/ui/section";
 import { useSecrets, type SecretScope } from "@/lib/api/secrets";
 
@@ -28,15 +28,10 @@ export function AccountsPanel({ scope, orgId, canOwn }: { scope: SecretScope; or
         kind={kind}
         banner={scope.kind === "workspace" && !kind ? <RequestsBanner wsId={scope.id} canOwn={canOwn} /> : undefined}
       />
-      {scope.kind === "workspace" && canOwn && !kind ? (
+      {/* (P5-POLISH-7, D1) Agents' proposals appear only while there are some: no empty Requests box. */}
+      {scope.kind === "workspace" && canOwn && !kind && (secrets.isError || (secrets.data?.items ?? []).some((s) => s.status === "proposed")) ? (
         <Section id="requests" title="Requests" description="Accounts that agents asked for.">
-          {secrets.isPending ? (
-            <Loading />
-          ) : secrets.isError ? (
-            <ErrorState error={secrets.error} />
-          ) : (
-            <ProposalsList scope={scope} items={secrets.data?.items ?? []} canOwn={canOwn} />
-          )}
+          {secrets.isError ? <ErrorState error={secrets.error} /> : <ProposalsList scope={scope} items={secrets.data?.items ?? []} canOwn={canOwn} />}
         </Section>
       ) : null}
     </div>

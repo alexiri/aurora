@@ -633,10 +633,21 @@ pub async fn run(
         host_apps: Vec::new(),
     };
     let d = evaluate(&org_policy, &ws_policy, &facts, &MemoryCounter::new());
-    let trace = SimTrace {
+    let mut trace = SimTrace {
         organization: scope_trace(&d.trace.organization, &derived),
         workspace: scope_trace(&d.trace.workspace, &derived),
     };
+    // (P5-TOOLASK, C-1043) The app's own default decided: no rule did. Shown as the last entry of
+    // the workspace trace, in the shape the synthetic default entries use.
+    if d.package_ask {
+        trace.workspace.considered.push(TraceEntry {
+            rule_logical_id: Uuid::nil(),
+            rule_name: "App default: asks first".to_owned(),
+            source: TraceSource::Default,
+            matched: true,
+            reason: "package_default_ask".to_owned(),
+        });
+    }
 
     if kept.len() > 1 {
         let same_app = kept[0].app_id.is_some() && kept.iter().all(|c| c.app_id == kept[0].app_id);

@@ -38,6 +38,11 @@ pub struct ConnectRequest {
     /// the access are written in one transaction (or, across an OAuth sign-in, at the callback).
     /// Workspace scope, new connections only.
     pub grant: Option<ConnectGrant>,
+    /// (P5-WEBHOOK-2, C-909) For a send-mode app (an outgoing webhook): the configuration and the
+    /// secrets the person enters. Required for a new connection; a reconnect keeps what it has
+    /// unless this is given.
+    #[schema(value_type = Option<crate::domains::outgoing_webhooks::dto::WebhookConnectBody>)]
+    pub webhook: Option<serde_json::Value>,
 }
 
 /// The access a connect gives (C-957): the agents and one level for all of them.
@@ -62,5 +67,9 @@ pub enum ConnectResponse {
         missing_scopes: Vec<String>,
         /// The access written with the connection (empty without a `grant`).
         grants: Vec<ConnectionGrant>,
+        /// (P5-WEBHOOK-2, C-909) A signing secret Aurora generated for an outgoing webhook: shown
+        /// here once and never again.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signing_secret: Option<String>,
     },
 }

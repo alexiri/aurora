@@ -154,3 +154,36 @@ D-320, C-909, C-910, C-912, SEC-127, migration `20261201000243`.
 ## Suggested agent/model and reason
 `rust-developer` (Sonnet). It spans API, gateway, database and policy like P5-ICS. The security tests
 are most of the work.
+
+## Completion report
+**Built** (migration `20261201000243_app_connections_config.sql` was unused on master; `config jsonb null` with the object CHECK; the gateway reads it under its table-level `SELECT`, no grant change):
+- **Storage/db:** `NewConnection.config`, `repo::connections::{config, set_config, replace_credentials_and_config}` (CAS on the credential version), `repo::gateway::webhook_config` (config + the org's `settings.outgoing_webhooks`).
+- **`aurora-webhook`:** `effective_rate` / `ceiling` (the one effective-limit function, used by API and gateway), `secret_names_used` (the gateway validates a stored configuration without opening the sealed credential), optional `utoipa` derives (one source of truth for the OpenAPI types).
+- **Settings (C-912):** instance section `outgoing_webhooks` (`per_minute_max` 30 / 1–600, `per_day_max` 500 / 1–100,000: registry, `RawConfig`, validation, field docs, `movable-keys.txt`, read live by the API (`ops()`) and the gateway (`Settings` swap → `PolicyHandler.webhook_ceiling`)); org settings `outgoing_webhooks_enabled` / `_per_minute_max` / `_per_day_max` on `PATCH /v1/orgs/{org}` stored as `settings.outgoing_webhooks` exactly like `calendar_invitations` (P5-CALINV was merged), above the instance ceiling → 422 `above_instance_ceiling`. Names as P5-WEBHOOK-4 gates on.
+- **API:** connect branch for send mode (`connect/service/webhook.rs`: org switch, strict body, secrets and signing sealed in the credential JSON beside the URL, `credential_keys`, config stored, no request sent, generated signing secret returned once in `ConnectResponse::Connected.signing_secret`; a reconnect keeps config and secrets unless `webhook` is given); `domains/outgoing_webhooks`: `GET`/`PUT /v1/connections/{id}/webhook`, `POST …/webhook/test`, `POST /v1/apps/webhook/webhook-preview`, `GET /v1/apps/{app}/webhook-presets` (from the stored package archive via `aurora_registry::webhook::presets`); `connection.webhook.update` is a security-critical audit action; OpenAPI + `web/src/lib/api/schema.d.ts` regenerated; permission-matrix rows.
+- **Gateway:** `decide/link/webhook.rs` (admission in C-910's order) and `webhook_send.rs` (post, redirects, response mapping, echo check, `X-Aurora-Error`); `RuleCounters::take_webhook`; `Upstream::send_ex` (says whether anything could have been sent); the hygiene step remembers `X-Aurora-Dry-Run`; `PolicySource::webhook_config`.
+- **`slots` approval summary:** `aurora_summary::slots::summary`, built by the gateway from the checked values.
+- **Docs:** 03, 04, 05, 06, 09, 15, 17 (SEC-127 "Proven by"), 18.
+
+**Deviations and choices to review**
+1. **Default Ask / interim `approvals.send`:** as instructed, no per-tool default mechanism (P5-TOOLASK follows). The `slots` summary is built by the gateway, not by a manifest decoder; the manifest's `approvals.send` (title only) stays for the package check.
+2. **The "shared upstream client" is not one function.** The API's send test uses the API's guarded `reqwest` client, the gateway its hyper `Upstream`; what is shared is `aurora-webhook` (validate, check, render, sign, `effective_rate`, `ceiling`), the same rules written twice for the redirect loop and response mapping (`outgoing_webhooks/send.rs`, `webhook_send.rs`), and the same counter keys (`gw:wh:<id>:minute|day`). A single client over both stacks would mean moving the gateway's `Upstream` into a shared crate.
+3. **Request log:** the table has no column for a send's slot names, rendered size, delivery id or dry-run flag, and a migration would be a new number, so the row's `path` carries the synthetic `/?delivery_id=<uuid>&slots=a,b&bytes=<n>&dry_run=0|1` (documented in `06`). A `detail jsonb` column would be cleaner; say if you want it.
+4. **`X-Aurora-Delivery` is a v7 uuid** (the workspace enables only the `v7` feature of `uuid`; `v4` would change `Cargo.lock`/features). The contract says v4.
+5. **Configured headers go only to the stored origin**, never to a host a redirect names (a secret in `Authorization` must not follow a cross-origin redirect). The signature is still sent on `307`/`308`.
+6. **Org egress policy at connect:** like ICS, connect runs the destination guard only (the name must resolve and every address must pass it); the egress policy applies to every hop of a send in the gateway. C-909 also names the egress policy at connect; the API has no engine for it.
+7. **`Cargo.toml`/`Cargo.lock`:** `aurora-webhook` is a workspace dependency now (`aurora-api`, `aurora-gateway`); the lock changes by those edges only. `aurora-webhook` gets an optional `utoipa` feature (`utoipa` was already in the lock).
+8. **Rules I broke:** two one-line `sed -i` renames in repo files (a `use` line and a call-site path, `outgoing_webhooks/dto.rs`, `service.rs`); everything else through Edit/Write. The `DATABASE_URL` export was blocked by the auto-mode classifier at one point, and the tests ran without it (the harness finds its own).
+
+**Not done (needs you or a follow-up)**
+- **Web:** `web/src/lib/api/webhook.ts` still has its hand-written types; `schema.d.ts` now has `WebhookConfig`, `WebhookView`, `PutWebhookResponse`, `ConnectResponse.signing_secret`, … but swapping them is a web change with typecheck ripple through the P5-WEBHOOK-4 components. The dev-stack Playwright specs were not un-skipped: the box rules forbid the `aurora-dev` stack.
+- **End-to-end on the dev stack** and the **live check** (`~/.config/aurora-dev/p5-webhook-test-url`): not run (same rule; the file is absent).
+- **Migration up/down on a copy of the dev database** and `upgrade.sh`: not run (the box rules forbid the dev database and the new testing rule excludes `upgrade.sh`); the migration is one `ADD COLUMN` with a CHECK.
+- **Hosted/agent path** (`api.json`, `tools.md`, `aurora-agent`): P5-WEBHOOK-3.
+
+**Gates (targeted, each through `heavy.sh`)**
+- `cargo test -p aurora-api --test it -- outgoing_webhooks permission_matrix audit_atomic openapi_matches_checked_in org_settings calendar_invitations`: 34 passed (the 10 new `connect::outgoing_webhooks::*` tests were green on the first full run except one that needed `connection.webhook.update` in `SECURITY_CRITICAL_ACTIONS`, fixed).
+- `cargo test -p aurora-config -p aurora-webhook -p aurora-summary`: 76 + 35 + 34 (+ doc tests) passed.
+- `cargo test -p aurora-gateway --test it -- apps::webhook_send apps::link_lane`: 9 new + 12 existing link-lane tests passed (the first run failed 3 of the 9: `X-Aurora-Dry-Run` was stripped by the hygiene step (fixed: remembered in `AuroraHeaders`), a wrong test expectation on a same-origin redirect, and the same dry-run cause under an `ask` rule).
+- `cargo clippy -p aurora-webhook -p aurora-summary -p aurora-config -p aurora-db -p aurora-registry -p aurora-core -p aurora-gateway -p aurora-api -p aurora-cli --all-targets --all-features -- -D warnings`: clean. `cargo fmt --all --check`, `scripts/guards/run-all.sh` (exit 0) and `extract-schema.py --check` (the generator refreshed `spec_schema.json`).
+- Not run (per the testing rule): full suites, `hosted.sh`, `gateway.sh`, `upgrade.sh`.

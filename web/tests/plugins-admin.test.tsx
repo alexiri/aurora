@@ -6,6 +6,13 @@ import { PluginReview } from "@/components/admin/plugin-detail-view";
 import { UploadForm } from "@/components/admin/plugins-view";
 import type { HostClaimConflict, PluginPackage } from "@/lib/api/plugins";
 import { wrap } from "./support/render";
+
+const push = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push, replace: vi.fn(), back: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/admin/apps/p1",
+  useSearchParams: () => new URLSearchParams(),
+}));
 import { json } from "./support/api";
 
 interface Call {
@@ -66,25 +73,44 @@ const plugin: PluginPackage = {
 };
 
 describe("PluginReview", () => {
-  it("disables approve until every section is expanded", async () => {
-    const calls = mockFetch(() => json(200, plugin));
+  it("enables approve at once, with every section open, and returns to the list with the app's name (E5)", async () => {
+    push.mockClear();
+    const calls = mockFetch(() => json(200, { ...plugin, status: "active", connections_reauth: 0 }));
     wrap(<PluginReview plugin={plugin} />);
     const approve = screen.getByRole("button", { name: "Approve" });
-    expect(approve).toBeDisabled();
-    for (const name of [/Hooks/, /Egress per hook/, /Context variables/]) {
-      fireEvent.click(screen.getByRole("button", { name }));
-    }
-    expect(approve).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: /Host claims/ }));
     expect(approve).toBeEnabled();
+    for (const name of [/Hooks/, /Egress per hook/, /Context variables/, /Host claims/]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute("aria-expanded", "true");
+    }
     expect(screen.getByText(/adds api.acme.test/)).toBeInTheDocument();
     // plugin text is plain text, not markup
-    expect(screen.getByText("<b>Git</b>", { exact: false })).toBeInTheDocument();
+    expect(screen.getAllByText("<b>Git</b>", { exact: false }).length).toBeGreaterThan(0);
     fireEvent.click(approve);
     await waitFor(() => expect(calls.some((c) => c.path === "/v1/admin/plugins/p1/approve")).toBe(true));
+    await waitFor(() => expect(push).toHaveBeenCalledWith(expect.stringContaining("approved=")));
+    expect(push.mock.calls[0]![0]).toContain("/admin/apps");
   });
 
-  it("shows the impact banner and gates approval on the Impact section of a major upgrade", async () => {
+  it("says reason codes and the {instance} placeholder in words", () => {
+    mockFetch(() => json(200, plugin));
+    wrap(
+      <PluginReview
+        plugin={{
+          ...plugin,
+          status_reason: "first_install",
+          permissions: { hooks: [], egress: { h: ["{instance}"] }, context: [] },
+          apps: [{ app_id: "git", name: "Git" }],
+        }}
+      />,
+    );
+    expect(screen.getByText("First install")).toBeInTheDocument();
+    expect(screen.queryByText("(first_install)")).toBeNull();
+    expect(screen.getByText(/your server's address/)).toBeInTheDocument();
+    expect(screen.queryByText(/\{instance\}/)).toBeNull();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Git 1.0.0");
+  });
+
+  it("shows the impact banner and keeps approval enabled on a major upgrade", async () => {
     const major: PluginPackage = {
       ...plugin,
       version: "2.0.0",
@@ -101,12 +127,6 @@ describe("PluginReview", () => {
     wrap(<PluginReview plugin={major} />);
     expect(screen.getByRole("status", { name: "Upgrade impact" })).toHaveTextContent("3 connections will need reconnecting");
     const approve = screen.getByRole("button", { name: "Approve" });
-    for (const name of [/Hooks/, /Egress per hook/, /Context variables/, /Host claims/]) {
-      fireEvent.click(screen.getByRole("button", { name }));
-    }
-    // The four permission sections are not enough: the Impact section is mandatory too.
-    expect(approve).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: /Impact on connections/ }));
     expect(approve).toBeEnabled();
     expect(screen.getByText(/3 of 5 to reconnect/)).toBeInTheDocument();
     fireEvent.click(approve);
@@ -114,7 +134,7 @@ describe("PluginReview", () => {
     expect(await screen.findByText(/Approved\. 3 connections will need reconnecting/)).toBeInTheDocument();
   });
 
-  it("shows the grant conversion banner and gates approval on its section (P4-GRANTS)", async () => {
+  it("shows the grant conversion banner and its section (P4-GRANTS)", async () => {
     const conv: PluginPackage = {
       ...plugin,
       version: "1.1.0",
@@ -136,11 +156,6 @@ describe("PluginReview", () => {
     // Not a major upgrade: no reconnect banner.
     expect(screen.queryByRole("status", { name: "Upgrade impact" })).toBeNull();
     const approve = screen.getByRole("button", { name: "Approve" });
-    for (const name of [/Hooks/, /Egress per hook/, /Context variables/, /Host claims/]) {
-      fireEvent.click(screen.getByRole("button", { name }));
-    }
-    expect(approve).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: /Grants to convert/ }));
     expect(approve).toBeEnabled();
     expect(screen.getByText(/indico/)).toBeInTheDocument();
     expect(screen.getByText(/3 grants in/)).toBeInTheDocument();

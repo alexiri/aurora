@@ -82,7 +82,7 @@ export function WorkspacePeoplePage() {
         w.my_role === "owner" ? (
           <div className="max-w-page space-y-4">
             <PageHeader title="People" description="Who can use this workspace." className="mb-2" />
-            <AccessTab wsId={w.id} orgId={w.org_id} canOwn people={{ workspacePath: wsRoutes(org, ws).base, initiallyOpen: addOpen }} />
+            <AccessTab wsId={w.id} orgId={w.org_id} canOwn personal={!!w.personal_of} people={{ workspacePath: wsRoutes(org, ws).base, initiallyOpen: addOpen }} />
           </div>
         ) : (
           <ErrorState error={forbiddenError(whoCanFromContacts("workspace_owner", w.contacts, "view_this"))} />

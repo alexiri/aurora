@@ -124,11 +124,21 @@ describe("approvals", () => {
     expect(screen.getByRole("button", { name: "Allow once" })).toBeInTheDocument();
   });
 
+  it("(P5-TOOLASK) a question held by the app's own default says the app asks, names no rule and offers no Always allow", async () => {
+    const q = mk("a1", { asked_by: { kind: "package", app_id: "caldav", tool_id: "send_scheduling_message" }, can_always_allow: false });
+    routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [q], next_cursor: null });
+    show();
+    expect(await screen.findByTestId("asked-by-package")).toHaveTextContent("This app asks before this action.");
+    expect(screen.queryByTestId("asked-by-rule")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Always allow" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeInTheDocument();
+  });
+
   it("an empty list says nothing is waiting, in the words of the page", async () => {
     routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [], next_cursor: null });
     show();
-    expect(await screen.findByText("Nothing is waiting for you.")).toBeInTheDocument();
-    expect(screen.getByText("Agents ask here when their access is Ask before changes, or when a rule says so.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Nothing is waiting for you." })).toBeInTheDocument();
+    expect(screen.getByText("When an agent asks before a change, the request appears here and on Overview.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "History" }));
     expect(await screen.findByText("No questions have been answered yet.")).toBeInTheDocument();
   });

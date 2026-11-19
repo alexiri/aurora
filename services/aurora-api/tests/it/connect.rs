@@ -111,6 +111,10 @@ mod account_test;
 #[path = "link_connect.rs"]
 mod link_connect;
 
+// (P5-WEBHOOK-2, D-320) The outgoing webhook's connect, edit, preview, presets and send test.
+#[path = "outgoing_webhooks.rs"]
+mod outgoing_webhooks;
+
 // (P5-CALDAV, D-275) The own-server app's connect (discovery).
 #[path = "caldav_connect.rs"]
 mod caldav_connect;
@@ -130,6 +134,16 @@ async fn world(hook_url: Option<String>) -> W {
 
 /// [`world`] with another package manifest (`hooks`: ship the fixture hook component with it).
 async fn world_with(hook_url: Option<String>, yaml: &str, hooks: bool) -> W {
+    world_with_files(hook_url, yaml, hooks, &[]).await
+}
+
+/// [`world_with`] plus archive files (the presets of an outgoing webhook, P5-WEBHOOK-2).
+async fn world_with_files(
+    hook_url: Option<String>,
+    yaml: &str,
+    hooks: bool,
+    files: &[(String, Vec<u8>)],
+) -> W {
     let oauth = MockOAuth::start().await;
     let h = Harness::with_config(|c| {
         if let Some(u) = hook_url {
@@ -140,13 +154,18 @@ async fn world_with(hook_url: Option<String>, yaml: &str, hooks: bool) -> W {
     let mut h = h;
     h.state = h.state.clone().with_connect_override(oauth.base());
     h.app = test_router(h.state.clone());
+    // (P5-DEDUP-1 T1 helper, with P5-WEBHOOK-2's archive files) Install and approve the package.
     let _admin = {
         let a = crate::plugins_lifecycle::setup(&h).await;
-        if hooks {
-            a.install_with(yaml, &[("hooks.wasm", &hooks_wasm())]).await;
-        } else {
-            a.install(yaml).await;
+        let wasm = if hooks { Some(hooks_wasm()) } else { None };
+        let mut extra: Vec<(&str, &[u8])> = files
+            .iter()
+            .map(|(p, d)| (p.as_str(), d.as_slice()))
+            .collect();
+        if let Some(w) = &wasm {
+            extra.push(("hooks.wasm", w.as_slice()));
         }
+        a.install_with(yaml, &extra).await;
         a.cookie
     };
     let org = h.org().await;

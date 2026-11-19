@@ -78,10 +78,10 @@ describe("AccessTab", () => {
       "GET /v1/orgs/o/members": () => json(200, members),
     });
     wrap(<AccessTab wsId="w" orgId="o" canOwn />);
-    expect(await screen.findByText("Implicit (org)")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Remove bob@x.io" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Remove boss@x.io" })).not.toBeInTheDocument();
-    expect(await screen.findByLabelText("Organization member")).toBeInTheDocument();
+    expect(await screen.findByText("(organization)")).toBeInTheDocument();
+    // Remove is in the row's … menu (D6); organization owners have no menu.
+    expect(screen.getByRole("button", { name: "More for Bob" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More for Boss" })).not.toBeInTheDocument();    expect(await screen.findByLabelText("Organization member")).toBeInTheDocument();
   });
   it("member sees a read-only list", async () => {
     mockFetch({ "GET /v1/workspaces/w/access": () => json(200, bindings) });
@@ -104,14 +104,49 @@ describe("AccessTab", () => {
 });
 
 describe("UsersTable", () => {
-  it("explains cannot_modify_self", async () => {
-    mockFetch({
-      "PATCH /v1/admin/users/me": () =>
-        json(422, { error: { code: "cannot_modify_self", message: "x" } }),
-    });
-    const u = { id: "me", email: "me@x.io", display_name: "Me", is_instance_admin: true } as AdminUser;
-    wrap(<UsersTable users={[u]} selfId="me" />);
-    fireEvent.click(screen.getByRole("button", { name: "Remove admin from me@x.io" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/cannot change your own/);
+  const openMenu = (email: string) => fireEvent.keyDown(screen.getByRole("button", { name: `More for ${email}` }), { key: "Enter" });
+  const admin = (id: string, over: Partial<AdminUser> = {}) =>
+    ({ id, email: `${id}@x.io`, display_name: id, is_instance_admin: false, ...over }) as AdminUser;
+
+  it("your own row offers no Remove admin and no Turn off (P5-POLISH-10)", () => {
+    mockFetch({});
+    wrap(<UsersTable users={[admin("me", { is_instance_admin: true }), admin("ben", { is_instance_admin: true })]} selfId="me" />);
+    expect(screen.getByText("This is you.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More for me@x.io" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove admin|Turn off/ })).toBeNull();
+  });
+
+  it("another person's … menu offers Make admin and Turn off, and a change is sent", async () => {
+    const calls: string[] = [];
+    mockFetch({ "PATCH /v1/admin/users/ben": () => { calls.push("patch"); return json(200, admin("ben", { is_instance_admin: true })); } });
+    wrap(<UsersTable users={[admin("me", { is_instance_admin: true }), admin("ben")]} selfId="me" />);
+    openMenu("ben@x.io");
+    expect(await screen.findByRole("menuitem", { name: "Turn off" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Make admin" }));
+    await waitFor(() => expect(calls).toEqual(["patch"]));
+  });
+
+  it("the only instance admin cannot be removed: Remove admin is not offered, Turn off is", async () => {
+    mockFetch({});
+    wrap(<UsersTable complete users={[admin("me"), admin("ana", { is_instance_admin: true })]} selfId="me" />);
+    openMenu("ana@x.io");
+    expect(await screen.findByRole("menuitem", { name: "Turn off" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Remove admin" })).toBeNull();
+  });
+
+  it("with another admin in the list, Remove admin is offered; role values open from the menu", async () => {
+    mockFetch({});
+    wrap(
+      <UsersTable
+        complete
+        users={[admin("me"), admin("ana", { is_instance_admin: true, idp_roles: { values: ["ops"], granted: [], provider: "corp", synced_at: "2026-11-19T10:00:00Z" } }), admin("bo", { is_instance_admin: true })]}
+        selfId="me"
+      />,
+    );
+    openMenu("ana@x.io");
+    expect(await screen.findByRole("menuitem", { name: "Remove admin" })).toBeInTheDocument();
+    expect(screen.queryByTestId("idp-role-values")).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show role values (1)" }));
+    expect(await screen.findByTestId("idp-role-values")).toBeInTheDocument();
   });
 });

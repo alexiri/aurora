@@ -1,0 +1,15 @@
+description: P5-TOOLASK without a package default the same request with no rule runs as before
+org: {ordered_rules: []}
+workspace: {ordered_rules: [], default_action: allow}
+facts:
+  host: dav.example.org
+  port: 443
+  path: /dav/outbox/
+  method: POST
+  app_id: caldav
+  tool_id: send_scheduling_message
+  tool_tags: {write: true}
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: caldav, scope: workspace}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect:
+  verdict: allow

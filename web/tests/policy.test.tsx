@@ -157,7 +157,7 @@ describe("Internet access page (InternetLevel)", () => {
       },
     });
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
-    fireEvent.click(await screen.findByText("History"));
+    fireEvent.click(await screen.findByText("History of changes"));
     fireEvent.click(await screen.findByLabelText("Roll back to generation 2"));
     await waitFor(() => expect(rollbackBody).toEqual({ generation: 2, expect_revision: 7 }));
   });

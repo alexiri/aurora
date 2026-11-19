@@ -3,7 +3,6 @@
 import { useState } from "react";
 
 import { ImpactSummary } from "@/components/groups/impact-summary";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -14,12 +13,10 @@ import { cn } from "@/lib/utils";
 import type { components } from "@/lib/api/schema";
 import { errorMessage } from "@/lib/api/errors";
 import {
-  sourceText,
   useDeleteGroupAccess,
   useGroupImpact,
   useGroups,
   usePutGroupAccess,
-  type DerivedMember,
   type GroupAccessBinding,
   type WorkspaceRole,
 } from "@/lib/api/groups";
@@ -136,52 +133,10 @@ function AddGroup({ wsId, orgId, bound }: { wsId: string; orgId: string; bound: 
   );
 }
 
-function Derived({ rows }: { rows: DerivedMember[] }) {
-  if (rows.length === 0) return null;
-  return (
-    <Section
-      id="acc-derived"
-      title="Members with access"
-      description="Everyone who has access through a group or an organization role, and why."
-    >
-      <DataTable caption="Members with access through groups or organization roles">
-        <thead>
-          <tr>
-            <Th>Person</Th>
-            <Th>Effective role</Th>
-            <Th>Why</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((d) => (
-            <tr key={d.user.id}>
-              <Td>
-                <div className="font-medium">{d.user.display_name}</div>
-                <div className="text-xs text-muted">{d.user.email}</div>
-              </Td>
-              <Td>{d.role}</Td>
-              <Td>
-                <span className="flex flex-wrap gap-1.5">
-                  {d.sources.map((s, i) => (
-                    <Badge key={i} className="normal-case tracking-normal">
-                      {sourceText(s)}
-                    </Badge>
-                  ))}
-                </span>
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </DataTable>
-    </Section>
-  );
-}
-
 /** The Groups part of the workspace Access section (`04 §Groups`; `can_own`). */
 export function GroupAccess({ wsId, orgId, canOwn, data }: { wsId: string; orgId: string; canOwn: boolean; data: AccessList }) {
   const [err, setErr] = useState<unknown>(null);
   const bindings = data.group_bindings ?? [];
-  const derived = data.derived_members?.items ?? [];
   const bound = new Set(bindings.map((b) => b.group.id));
   return (
     <div className="space-y-6">
@@ -215,7 +170,7 @@ export function GroupAccess({ wsId, orgId, canOwn, data }: { wsId: string; orgId
         </div>
       </Section>
       {canOwn ? <AddGroup wsId={wsId} orgId={orgId} bound={bound} /> : null}
-      <Derived rows={derived} />
+      {/* (P5-POLISH-7) The people who have access through a group are rows of the People table, with their reason. */}
     </div>
   );
 }

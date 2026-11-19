@@ -44,6 +44,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "connection.enable",
     "connection.reconnect",
     "connection.update",
+    // (P5-WEBHOOK-2, C-909) An outgoing webhook's configuration, secret values and signing secret.
+    "connection.webhook.update",
     "oauth_client.create",
     "oauth_client.delete",
     "oauth_client.update",

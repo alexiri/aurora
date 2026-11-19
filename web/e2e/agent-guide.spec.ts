@@ -90,7 +90,8 @@ for (const width of [1280, 390]) {
       test(`files, change marks, plain-text viewer, no horizontal scroll, accessible (${scheme})`, async ({ page }) => {
         await open(page, scheme);
         expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
-        await page.getByRole("button", { name: /What agents can read/ }).click();
+        // (P5-POLISH-10) The review's sections are open from the start.
+        await expect(page.getByRole("button", { name: /What agents can read/ })).toHaveAttribute("aria-expanded", "true");
         const app = page.getByTestId("agent-guide-guide-demo");
         await expect(app.getByRole("heading", { name: "Recipes" })).toBeVisible();
         await expect(app.getByRole("heading", { name: "Reference files" })).toBeVisible();
@@ -124,14 +125,10 @@ for (const width of [1280, 390]) {
 
 test.describe("the review", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
-  test("approval waits for the agent guide section, with no second confirmation", async ({ page }) => {
+  test("the agent guide section is open and approval is enabled, with no second confirmation", async ({ page }) => {
     await open(page, "light");
     const approve = page.getByRole("button", { name: "Approve" });
-    for (const name of [/^▸ Hooks/, /Egress per hook/, /Context variables/, /Host claims/]) {
-      await page.getByRole("button", { name }).click();
-    }
-    await expect(approve).toBeDisabled();
-    await page.getByRole("button", { name: /What agents can read/ }).click();
+    await expect(page.getByRole("button", { name: /What agents can read/ })).toHaveAttribute("aria-expanded", "true");
     await expect(approve).toBeEnabled();
   });
 });

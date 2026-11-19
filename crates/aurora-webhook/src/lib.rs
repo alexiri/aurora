@@ -2,6 +2,7 @@
 //! types, `validate`, `check_values`, `render` and `sign`. Pure (no IO, no async, no database): the
 //! API, the gateway and `aurora-agent` share this one implementation and must not re-implement it.
 mod model;
+mod rate;
 mod render;
 mod schema;
 mod sign;
@@ -13,10 +14,12 @@ pub use model::{
     RenderError, Rendered, Rule, SecretValues, Slot, SlotError, SlotType, WebhookConfig,
     WebhookPreset,
 };
+pub use rate::{EffectiveRate, RateSource, ceiling, effective_rate};
 pub use render::{render, render_masked};
 pub use sign::sign;
 pub use validate::{
-    CheckedValues, CompiledConfig, HEADERS_MAX, SECRET_VALUES_MAX, check_values, validate,
+    CheckedValues, CompiledConfig, HEADERS_MAX, SECRET_VALUES_MAX, check_values, secret_names_used,
+    validate,
 };
 
 #[cfg(test)]

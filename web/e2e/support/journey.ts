@@ -22,6 +22,10 @@ export async function openJourney(page: Page, path: string, scheme: Scheme) {
     const can = { give_access: true, change_access: true, manage: true };
     if (m === "POST" && /^\/v1\/apps\/[^/]+\/connect$/.test(p)) {
       const body = req.postDataJSON() as Record<string, unknown>;
+      // A token the app refuses (B4): the value must stay in the field and the error is said under it.
+      if ((body.fields as { access_token?: string } | undefined)?.access_token === "refused-token") {
+        return json({ error: { code: "connect_probe_failed", message: "refused", details: { cause: "rejected" } } }, 422);
+      }
       saved.push({ path: p, method: m, body });
       const appId = p.split("/")[3]!;
       const level = ((body.grant as { level?: Level } | undefined)?.level ?? "read") as Level;
@@ -45,7 +49,13 @@ export async function openJourney(page: Page, path: string, scheme: Scheme) {
       });
       return json({ id: id(501), name, kind: "generic", scope: "workspace", created_at: new Date().toISOString() });
     }
-    if (m === "PUT" && /^\/v1\/agents\/[^/]+\/grants\//.test(p)) {
+    // (P5-POLISH-4, C-1030) Ask an admin to set an app up, and Undo.
+    if (/^\/v1\/workspaces\/[^/]+\/apps\/[^/]+\/setup-request$/.test(p)) {
+      saved.push({ path: p, method: m, body: {} });
+      if (m === "DELETE") return route.fulfill({ status: 204 });
+      return json({ id: id(900), org_id: id(1), app_id: p.split("/")[5], app_name: p.split("/")[5], status: "open", askers: [], needs: ["oauth_client"], unavailable: false, created_at: new Date().toISOString() });
+    }
+    if (m === "PUT"&& /^\/v1\/agents\/[^/]+\/grants\//.test(p)) {
       saved.push({ path: p, method: m, body: req.postDataJSON() as Record<string, unknown> });
       return json({});
     }
