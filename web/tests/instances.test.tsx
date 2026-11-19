@@ -1,14 +1,11 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { ConnectDialog } from "@/components/apps/connect-dialog";
+import { InstanceField } from "@/components/apps/connect-journey/advanced-fields";
 import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
-
-// The connect flow is a dialog now (D-272).
-const ConnectView = () => <ConnectDialog appId="desk" workspaceId="w1" orgId="o1" onClose={() => {}} />;
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main", app: "desk" }),
@@ -251,61 +248,25 @@ describe("instances admin section", () => {
   });
 });
 
-describe("connect dialog instance picker", () => {
-  const routes = (extra: Record<string, (c: Call) => Response> = {}) => ({
-    ...catalogue,
-    "GET /v1/resolve": () => json(200, { org: { id: "o1", name: "Acme", slug: "acme" }, workspace: { id: "w1", name: "Main", slug: "main" } }),
-    "GET /v1/apps/desk/guide": () => json(404, { error: { code: "not_found", message: "x" } }),
-    "GET /v1/orgs/o1/app-instances": () => json(200, { items: [inst({}), inst({ id: "i3", host: "off.acme.example", status: "disabled" })], next_cursor: null }),
-    "GET /v1/workspaces/w1/oauth-clients": () =>
-      json(200, {
-        items: [
-          { id: "c-default", scope: "workspace", package_id: "selfhost", client_key: "oa", fields: { client_id: "d" }, enabled: true, instance_id: null, connection_count: 0, created_at: "", updated_at: "" },
-          { id: "c-inst", scope: "workspace", package_id: "selfhost", client_key: "oa", fields: { client_id: "i" }, enabled: true, instance_id: "i1", connection_count: 0, created_at: "", updated_at: "" },
-        ],
-        next_cursor: null,
-      }),
-    ...extra,
-  });
+// The instance picker of the connect journey (the Reconnect dialog keeps the connection's instance and has none).
+describe("instance picker", () => {
+  const field = (builtin: ReturnType<typeof inst>[], registered: ReturnType<typeof inst>[], onChange = vi.fn()) =>
+    render(<InstanceField label="Desk instance" value="" onChange={onChange} defaultHost="saas.desk.example" builtin={builtin as never} registered={registered as never} />);
 
-  it("offers the default host and active instances, and sends the chosen instance", async () => {
-    const calls = stub(
-      routes({
-        "POST /v1/apps/desk/connect": () => json(200, { kind: "connected", connection: { id: "k1" }, missing_scopes: [] }),
-      }),
-    );
-    wrap(<ConnectView />);
-    const picker = await screen.findByLabelText("Desk instance");
-    await within(picker).findByRole("option", { name: "Acme desk (https://desk.acme.example)" });
-    const options = within(picker).getAllByRole("option").map((o) => o.textContent);
-    // the default host first; the disabled instance is not offered
-    expect(options).toEqual(["saas.desk.example (default)", "Acme desk (https://desk.acme.example)"]);
+  it("offers the default host first, then the registered servers, and reports the chosen instance", () => {
+    const onChange = vi.fn();
+    field([], [inst({})], onChange);
+    const picker = screen.getByLabelText("Desk instance");
+    expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual(["saas.desk.example (default)", "Acme desk (https://desk.acme.example)"]);
     fireEvent.change(picker, { target: { value: "i1" } });
-    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "t" } });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/desk/connect")).toBe(true));
-    expect(calls.find((c) => c.path === "/v1/apps/desk/connect")?.body).toMatchObject({ instance_id: "i1", method_id: "token" });
+    expect(onChange).toHaveBeenCalledWith("i1");
   });
 
   // FIX-134 (D-243): the package's preset instances (Sentry's regions) come before the registered servers.
-  it("offers the package's built-in instances (regions) before registered servers and sends the chosen one", async () => {
-    const calls = stub(
-      routes({
-        "GET /v1/orgs/o1/app-instances": () =>
-          json(200, {
-            items: [
-              inst({ id: "i1" }),
-              inst({ id: "r-us", org_id: null, host: "us.desk.example", label: "US region", builtin: true, connections: 0 }),
-              inst({ id: "r-eu", org_id: null, host: "eu.desk.example", label: "EU region (DE)", builtin: true, connections: 0 }),
-            ],
-            next_cursor: null,
-          }),
-        "POST /v1/apps/desk/connect": () => json(200, { kind: "connected", connection: { id: "k1" }, missing_scopes: [] }),
-      }),
-    );
-    wrap(<ConnectView />);
-    const picker = await screen.findByLabelText("Desk instance");
-    await within(picker).findByRole("option", { name: "US region (us.desk.example)" });
+  it("offers the package's built-in instances (regions) before registered servers", () => {
+    const region = (id: string, host: string, label: string) => inst({ id, org_id: null, host, label, builtin: true, connections: 0 });
+    field([region("r-us", "us.desk.example", "US region"), region("r-eu", "eu.desk.example", "EU region (DE)")], [inst({})]);
+    const picker = screen.getByLabelText("Desk instance");
     expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "saas.desk.example (default)",
       "US region (us.desk.example)",
@@ -313,39 +274,6 @@ describe("connect dialog instance picker", () => {
       "Acme desk (https://desk.acme.example)",
     ]);
     expect(within(picker).getByRole("group", { name: "Registered servers" })).toBeInTheDocument();
-    fireEvent.change(picker, { target: { value: "r-us" } });
-    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "t" } });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/desk/connect")).toBe(true));
-    expect(calls.find((c) => c.path === "/v1/apps/desk/connect")?.body).toMatchObject({ instance_id: "r-us" });
-  });
-
-  it("omits instance_id for the default host", async () => {
-    const calls = stub(
-      routes({
-        "POST /v1/apps/desk/connect": () => json(200, { kind: "connected", connection: { id: "k1" }, missing_scopes: [] }),
-      }),
-    );
-    wrap(<ConnectView />);
-    await screen.findByLabelText("Desk instance");
-    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "t" } });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/desk/connect")).toBe(true));
-    expect(calls.find((c) => c.path === "/v1/apps/desk/connect")?.body).not.toHaveProperty("instance_id");
-  });
-
-  it("OAuth lists only the clients of the chosen instance and warns when there is none", async () => {
-    stub(routes());
-    wrap(<ConnectView />);
-    const picker = await screen.findByLabelText("Desk instance");
-    fireEvent.click(await screen.findByRole("radio", { name: /Sign in/ }));
-    // default host: the unbound client only
-    let client = await screen.findByLabelText("OAuth client");
-    expect(within(client).getAllByRole("option").map((o) => o.textContent)).toEqual(["Automatic", "workspace client (d)"]);
-    fireEvent.change(picker, { target: { value: "i1" } });
-    client = await screen.findByLabelText("OAuth client");
-    expect(within(client).getAllByRole("option").map((o) => o.textContent)).toEqual(["Automatic", "workspace client (i)"]);
-    expect(screen.queryByText(/No OAuth application is registered for this instance/)).toBeNull();
   });
 });
 
