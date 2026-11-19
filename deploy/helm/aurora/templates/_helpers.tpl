@@ -22,6 +22,13 @@ app.kubernetes.io/component: {{ .component }}
 {{- if .override -}}{{ .override }}{{- else if $reg -}}{{ printf "%s/%s:%s" (trimSuffix "/" $reg) .name $tag }}{{- else -}}{{ printf "%s:%s" .name $tag }}{{- end -}}
 {{- end -}}
 
+{{/* The sandbox image, as configmap.yaml derives it for config.runner.image (D-159): the legacy
+     `config.runner.image` wins, then `runner.sandboxImage`, then <registry>/aurora-sandbox:<tag>. */}}
+{{- define "aurora.sandboxImage" -}}
+{{- $derived := include "aurora.image" (dict "root" . "name" "aurora-sandbox" "override" .Values.runner.sandboxImage) -}}
+{{- default $derived ((.Values.config).runner).image -}}
+{{- end -}}
+
 {{- define "aurora.secretName" -}}
 {{- if .Values.secrets.existingSecret -}}{{ .Values.secrets.existingSecret }}{{- else -}}{{ default (printf "%s-secrets" (include "aurora.fullname" .)) .Values.secrets.generatedName }}{{- end -}}
 {{- end -}}

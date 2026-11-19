@@ -123,6 +123,14 @@ and [install-kind-dev.md](install-kind-dev.md) keeps a persistent cluster with f
   `sandboxes.create: true`. It has a ResourceQuota `sandboxes`, a LimitRange `sandboxes`,
   Pod Security Admission labels `restricted` (enforce and audit), and a runner Role
   and RoleBinding.
+- **Sandbox seccomp profile** (D-394, SEC-137): sandbox pods use the `Localhost` profile
+  `aurora/sandbox-seccomp.json`. With `sandboxes.seccomp.install: true` (default) the chart creates the
+  namespace `sandboxes.seccomp.namespace` (Pod Security `privileged`, because the DaemonSet writes a
+  hostPath) and a DaemonSet that copies the profile into `sandboxes.seccomp.hostDir` (default
+  `/var/lib/kubelet/seccomp`, the kubelet's `--root-dir` plus `/seccomp`) on the nodes that
+  `runner.k8s.nodeSelector` selects. A node without the file cannot start a sandbox pod (pods stay in
+  `CreateContainerConfigError`). Set `install: false` to provide the file yourself (for example with the
+  Security Profiles Operator): it must exist at `<hostDir>/aurora/sandbox-seccomp.json` on every sandbox node.
 
 ## Secrets
 

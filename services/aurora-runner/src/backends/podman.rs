@@ -77,7 +77,38 @@ impl PodmanSettings {
 pub struct PodmanBackend {
     docker: Docker,
     socket: String,
+    /// Where [`install_seccomp_profile`] wrote the sandbox seccomp profile (D-394, SEC-137).
+    seccomp_path: String,
     s: PodmanSettings,
+}
+
+/// File name of the sandbox seccomp profile, written next to the podman socket.
+const SECCOMP_FILE: &str = "aurora-sandbox-seccomp.json";
+
+/// D-394 / SEC-137: podman reads a `seccomp=` profile from a *file on its own host*, not from the
+/// request, so the runner writes the embedded profile (the runtime default minus `ptrace` and
+/// `process_vm_*`) beside the podman socket, a directory the podman service shares with its
+/// clients by definition. Atomic (temp file + rename); an unwritable directory fails startup:
+/// the runner never starts sandboxes without the profile.
+fn install_seccomp_profile(socket: &str) -> Result<String, String> {
+    let dir = std::path::Path::new(socket)
+        .parent()
+        .ok_or_else(|| format!("podman socket `{socket}` has no directory"))?;
+    let path = dir.join(SECCOMP_FILE);
+    let tmp = dir.join(format!("{SECCOMP_FILE}.{}.tmp", std::process::id()));
+    let fail = |e: std::io::Error| {
+        format!(
+            "cannot write the sandbox seccomp profile `{}` (the runner needs write access to the \
+             podman socket's directory, D-394): {e}",
+            path.display()
+        )
+    };
+    std::fs::write(&tmp, super::SANDBOX_SECCOMP_PROFILE).map_err(fail)?;
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        fail(e)
+    })?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 fn other(e: impl std::fmt::Display) -> BackendError {
@@ -273,9 +304,11 @@ impl PodmanBackend {
                 "runner.dev_supervisor_binary is set: sandboxes run a host-built supervisor (dev only, never production)"
             );
         }
+        let seccomp_path = install_seccomp_profile(&path)?;
         Ok(Self {
             docker,
             socket: path,
+            seccomp_path,
             s,
         })
     }
@@ -362,7 +395,10 @@ impl PodmanBackend {
                 ("/run/aurora".to_owned(), RUN_TMPFS.to_owned()),
             ])),
             cap_drop: Some(vec!["ALL".into()]),
-            security_opt: Some(vec!["no-new-privileges".into()]),
+            security_opt: Some(vec![
+                "no-new-privileges".into(),
+                format!("seccomp={}", self.seccomp_path),
+            ]),
             privileged: Some(false),
             init: Some(false),
             pids_limit: Some(i64::from(res.pids)),
@@ -830,6 +866,48 @@ mod tests {
         assert!(!valid_volume_name("../x"));
     }
 
+    /// D-394 / SEC-137: the profile denies `ptrace` and `process_vm_*` with EPERM, allows them in
+    /// no rule, and the runner writes it where podman will read it.
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    fn seccomp_profile_denies_ptrace_and_is_installed() {
+        let p: serde_json::Value = serde_json::from_str(crate::backends::SANDBOX_SECCOMP_PROFILE)
+            .expect("the profile is JSON");
+        assert_eq!(p["defaultAction"], "SCMP_ACT_ERRNO");
+        let rules = p["syscalls"].as_array().unwrap();
+        for call in ["ptrace", "process_vm_readv", "process_vm_writev"] {
+            let mut denied = false;
+            for r in rules {
+                if !r["names"].as_array().unwrap().iter().any(|n| n == call) {
+                    continue;
+                }
+                assert_eq!(
+                    r["action"], "SCMP_ACT_ERRNO",
+                    "{call} must never be allowed"
+                );
+                assert_eq!(r["errnoRet"], 1, "{call} is refused with EPERM");
+                denied = true;
+            }
+            assert!(denied, "{call} has an explicit deny rule");
+        }
+        // The runtime default's allowlist is otherwise intact (a file with only the denials would
+        // be a deny-list over an allow-all).
+        assert!(crate::backends::SANDBOX_SECCOMP_PROFILE.contains("\"openat\""));
+
+        let dir = std::env::temp_dir().join(format!("aurora-seccomp-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("podman.sock");
+        let path = install_seccomp_profile(sock.to_str().unwrap()).unwrap();
+        assert_eq!(path, dir.join(SECCOMP_FILE).to_string_lossy());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            crate::backends::SANDBOX_SECCOMP_PROFILE
+        );
+        // An unwritable location fails (the runner then does not start).
+        assert!(install_seccomp_profile("/proc/nope/podman.sock").is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// SEC-26 / SEC-34: the rendered container spec is hardened (no live podman needed).
     #[test]
     #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -852,6 +930,7 @@ mod tests {
         let b = PodmanBackend {
             docker,
             socket: "/dev/null".into(),
+            seccomp_path: "/run/podman/aurora-sandbox-seccomp.json".into(),
             s,
         };
         let req = StartRequest {
@@ -874,7 +953,13 @@ mod tests {
         let h = b.host_config(&req);
         assert_eq!(h.cap_drop, Some(vec!["ALL".to_owned()]));
         assert!(h.cap_add.is_none());
-        assert_eq!(h.security_opt, Some(vec!["no-new-privileges".to_owned()]));
+        assert_eq!(
+            h.security_opt,
+            Some(vec![
+                "no-new-privileges".to_owned(),
+                "seccomp=/run/podman/aurora-sandbox-seccomp.json".to_owned()
+            ])
+        );
         assert_eq!(h.privileged, Some(false));
         assert_eq!(h.readonly_rootfs, Some(true));
         assert_eq!(h.memory, Some(512 * 1024 * 1024));
@@ -890,6 +975,7 @@ mod tests {
         let b2 = PodmanBackend {
             docker: b.docker.clone(),
             socket: b.socket.clone(),
+            seccomp_path: b.seccomp_path.clone(),
             s: dev,
         };
         assert_eq!(

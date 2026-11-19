@@ -510,6 +510,7 @@ Files: `deploy/dev/kind-dev.sh` (driven by `just kind-up | kind-dev | kind-statu
 |-------------------|-------------|
 | `edge` (Caddy, 4000) | chart Ingress (`ingress.className: nginx`) behind ingress-nginx; one URL `http://localhost:4000`, same `/v1/*` → api, `/` → web rule, guarded by `scripts/guards/edge-routes.sh` |
 | `postgres`, `migrate`, `api`, `gateway`, `hookhost`, `web` | the same components as chart Deployments; `postgres.enabled` (evaluation StatefulSet), the migrate pre-install/upgrade hook |
+| (`kind` nodes carry the sandbox seccomp profile) | the chart's `sandboxes.seccomp.install` DaemonSet (namespace `aurora-seccomp`, Pod Security `privileged`) copies `files/sandbox-seccomp.json` to `/var/lib/kubelet/seccomp/aurora/` on every sandbox node (D-394, SEC-137) |
 | `setup.sh` secrets and gateway CA | the chart's `secrets` and `gateway-ca` hooks |
 | `runner` (profile `hosted`, podman socket) | `runner` with the Kubernetes backend: sandboxes are Pods in `aurora-sandboxes`, enforced by NetworkPolicies (so SEC-02/SEC-09 are exercised the way production runs them) |
 | `connector-fake` (profile) | `values-connector-fake.yaml`: a chart `connectors` entry; `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` from the generated token |

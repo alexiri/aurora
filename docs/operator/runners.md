@@ -105,7 +105,7 @@ For development and single-host installs (docs/11 §Backend podman).
 
 What the runner does with them (docs/11): sandboxes get `--read-only` root, a tmpfs `/tmp`
 and `/run/aurora`, `--user 1000:1000`, `--cap-drop=ALL`, `no-new-privileges`, the default
-seccomp profile, pid, memory and CPU limits, and no host mounts except the home volume
+seccomp profile (the runtime default without `ptrace` and `process_vm_readv/writev`, see below), pid, memory and CPU limits, and no host mounts except the home volume
 `aurora-home-<sandbox_id>` at `/workspace`.
 
 Prerequisites on the host (standard podman, not checked by this repository): a running
@@ -158,6 +158,33 @@ spec in docs/11. The sandbox namespace enforces Pod Security `restricted` (the c
 
 The runner's RBAC from the chart allows Pods, PVCs and Secrets in the sandbox namespace,
 and Services in the core namespace.
+
+## Sandbox seccomp profile (FIX-179, D-394, SEC-137)
+
+No process in a sandbox can trace another: the sandbox's seccomp profile is the container runtime's
+default with `ptrace`, `process_vm_readv` and `process_vm_writev` answering `EPERM`. That keeps a
+same-uid process from attaching to a harness and calling platform tools as it, whatever the host's
+`kernel.yama.ptrace_scope` is (a host setting Aurora does not control). The five harnesses, the web
+terminal, SSH, `process_start` and the language servers do not use `ptrace`; what stops working is a
+debugger (`gdb`, `strace`, `rr`) inside the sandbox. The profile is 64-bit only: a process that uses
+32-bit (compat) system calls is killed. The file is `deploy/helm/aurora/files/sandbox-seccomp.json`.
+
+- **Kubernetes.** Sandbox pods use `seccompProfile: {type: Localhost, localhostProfile:
+  aurora/sandbox-seccomp.json}`, which the kubelet reads from `<kubelet root-dir>/seccomp/` on the
+  node. The chart installs it with a DaemonSet (`sandboxes.seccomp.install`, default on; namespace
+  `aurora-seccomp`, which needs Pod Security `privileged` because the DaemonSet writes a hostPath;
+  nodes chosen by `runner.k8s.nodeSelector`/`tolerations`, so a sandbox node is a node that runs
+  it). The kubelet refuses to start a container whose profile file is missing, so a node without
+  it never runs a sandbox: pods stay in `CreateContainerConfigError`, and the fix is to let the
+  DaemonSet run there. If your kubelet's root directory is not `/var/lib/kubelet`, set
+  `sandboxes.seccomp.hostDir`. To provide the file yourself (for example with the Security Profiles
+  Operator) set `install: false` and put the file at `<hostDir>/aurora/sandbox-seccomp.json` on
+  every sandbox node.
+- **Podman.** The runner writes the profile as `aurora-sandbox-seccomp.json` in the podman socket's
+  directory (podman reads a `seccomp=` profile from a file on its own host) and starts containers
+  with `--security-opt seccomp=<that file>`. It needs write access to that directory and does not
+  start without it. A runner in a container must see the socket's directory at the same path the
+  podman service does.
 
 ## Fake backend
 
@@ -318,6 +345,6 @@ A sandbox image in a **private registry** is configured with `runner.k8s.image_p
 Accepted by the owner on 2026-11-08 (FUP-M7, RUN-004). These are limits of Kubernetes itself, not of Aurora:
 
 - **No per-Pod process limit on Kubernetes.** The podman backend sets `--pids-limit` from `runner.sandbox_pids`. Kubernetes has no per-Pod field for it, so the value is only validated there. Kubernetes limits processes per Pod through the kubelet: set `podPidsLimit` in the KubeletConfiguration of the nodes that run sandboxes (for example 1024; kind accepts it through a `kubeadmConfigPatches` KubeletConfiguration patch). Without it, a sandbox can fork until the node's own limit stops it, which affects other Pods on that node. Run sandboxes on dedicated nodes (`runner.k8s.node_selector` / `tolerations`) if that matters to you.
-- **`/run/aurora` is not `noexec` on Kubernetes.** It is a small memory-backed `emptyDir` (16 MiB; `/tmp` is 512 MiB), and Kubernetes can't set mount options on an `emptyDir`. The sandbox container still runs as non-root with a read-only root filesystem, all capabilities dropped, no privilege escalation and the `RuntimeDefault` seccomp profile. So a file written there can run as the sandbox user, which can already run code in its own home. `/run/aurora` holds only the public gateway CA (`ca.pem`) and the supervisor's tools socket. Boot material never touches it: it arrives in the supervisor's environment, which the supervisor scrubs, and the supervisor is non-dumpable (SEC-34).
+- **`/run/aurora` is not `noexec` on Kubernetes.** It is a small memory-backed `emptyDir` (16 MiB; `/tmp` is 512 MiB), and Kubernetes can't set mount options on an `emptyDir`. The sandbox container still runs as non-root with a read-only root filesystem, all capabilities dropped, no privilege escalation and the sandbox seccomp profile (the runtime default without `ptrace`, above). So a file written there can run as the sandbox user, which can already run code in its own home. `/run/aurora` holds only the public gateway CA (`ca.pem`) and the supervisor's tools socket. Boot material never touches it: it arrives in the supervisor's environment, which the supervisor scrubs, and the supervisor is non-dumpable (SEC-34).
 
 Resolved since the first list: sandbox env and `AURORA_AGENT_HANDLE` reach every backend (FIX-002). Pod names are `sbx-<handle>-<boot>`. Private sandbox image registries use `runner.k8s.image_pull_secrets` (FIX-013; see §Kubernetes backend, Private sandbox registry).
