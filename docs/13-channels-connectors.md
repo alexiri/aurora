@@ -88,7 +88,7 @@ Manifest (JSON):
 ```
 
 Capability names are an open vocabulary; unknown capabilities are ignored.
-Strings are sanitized; the icon and guide follow app-package asset rules.
+Strings are sanitized; the icon and guide follow app-package asset rules. (FIX-183, D-398) The admin view says whether the icon exists (`has_icon`, C-1044), so the dashboard requests `GET /v1/connectors/{id}/icon` only for a connector that has one and shows the monogram tile otherwise.
 
 (phase 4, P4-MCON) The manifest may also carry `"instance_setup": { "fields": [ … ] }`:
 connector-level settings an instance admin fills in when adding a **managed** connector

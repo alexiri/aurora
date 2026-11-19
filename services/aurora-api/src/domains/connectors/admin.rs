@@ -37,7 +37,9 @@ async fn view(s: &AppState, r: ConnectorRow, count: i64) -> Result<ConnectorAdmi
     };
     let approved = r.manifest.as_ref().and_then(manifest::approved_value);
     let mv = managed::managed_view(s, &r).await?;
+    let has_icon = served_icon(&r).is_some();
     Ok(ConnectorAdmin {
+        has_icon,
         managed: r.managed,
         type_id: r.type_id.clone(),
         settings: mv.settings,
@@ -342,8 +344,13 @@ pub async fn icon(s: &AppState, id: &str) -> Result<Vec<u8>, ApiError> {
     if row.status != "active" {
         return Err(not_found());
     }
-    row.manifest
-        .as_ref()
-        .and_then(manifest::icon_bytes)
-        .ok_or_else(not_found)
+    served_icon(&row).ok_or_else(not_found)
+}
+
+/// The icon the route serves for this row; `has_icon` (C-1044) is exactly `is_some()`.
+fn served_icon(r: &ConnectorRow) -> Option<Vec<u8>> {
+    if r.status != "active" {
+        return None;
+    }
+    r.manifest.as_ref().and_then(manifest::icon_bytes)
 }

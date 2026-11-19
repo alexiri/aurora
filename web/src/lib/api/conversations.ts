@@ -53,6 +53,8 @@ export interface SandboxView {
   // (P4-TERM, C-621) `terminal` is among `keep_awake_reasons` while this is true.
   terminal_in_use?: boolean;
   restart_to_update: boolean;
+  /** (P5-APIGAP-1, C-1046) Seconds of quiet after which this computer sleeps; null when idle stop is off. */
+  idle_stop_after_secs?: number | null;
 }
 export interface ModelOption {
   endpoint_id: string;
@@ -110,6 +112,8 @@ export const chatApi = {
   restart: (agent: string) => call<SandboxView>("POST", `/v1/agents/${agent}/restart`),
   /** (FIX-029, C-610) Retry a failed start: 202 → the parked sandbox view. */
   retry: (agent: string) => call<SandboxView>("POST", `/v1/agents/${agent}/sandbox/retry`),
+  /** (P5-APIGAP-1, C-1045) Wake a sleeping computer: 202 (start requested) or 200 (already awake) with the view. */
+  wake: (agent: string) => call<SandboxView>("POST", `/v1/agents/${agent}/sandbox/wake`),
   /** (FIX-029, C-613) The agent's recent start failures, newest first (≤ 20). */
   startFailures: (agent: string) => unwrap(api.GET("/v1/agents/{agent}/start-failures", { params: { path: { agent } } })),
   models: (agent: string) => call<{ items: ModelOption[] }>("GET", `/v1/agents/${agent}/models`),
@@ -158,6 +162,14 @@ export function useRestartSandbox(agentId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => chatApi.restart(agentId),
+    onSuccess: (view) => qc.setQueryData(["agents", agentId, "sandbox"], view),
+  });
+}
+/** (P5-APIGAP-1, C-1045) **Wake it now**: the view answers `starting` once the start is claimed; the 5 s poll follows it. */
+export function useWakeSandbox(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => chatApi.wake(agentId),
     onSuccess: (view) => qc.setQueryData(["agents", agentId, "sandbox"], view),
   });
 }
