@@ -268,7 +268,7 @@ async fn accounts(r: &Rig, ck: &str, uri: &str) -> (u16, Value) {
     (s.as_u16(), v)
 }
 
-fn item<'a>(v: &'a Value, id: Uuid) -> &'a Value {
+fn item(v: &Value, id: Uuid) -> &Value {
     v["items"]
         .as_array()
         .unwrap()
