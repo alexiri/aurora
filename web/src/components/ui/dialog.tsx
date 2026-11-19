@@ -1,7 +1,7 @@
 "use client";
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import type { ComponentProps, ReactNode } from "react";
+import { useCallback, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -25,50 +25,87 @@ const SIZE: Record<DialogSize, string> = {
   "2xl": "w-[min(56rem,calc(100vw-2rem))]",
 };
 
+/** `sheet` is a full-screen panel below 640 px and the same as `centered` above it. */
+export type DialogVariant = "centered" | "sheet";
+const SHEET =
+  "max-sm:left-0 max-sm:top-0 max-sm:h-dvh max-sm:max-h-none max-sm:w-screen max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0";
+
+/**
+ * (P5-POLISH-1, D-393) Three rows in a flex column that never scrolls as a whole: a header (title, description, the
+ * optional `header` slot such as a stepper, and the close button), a body (the only element that scrolls) and an
+ * optional `footer` with a top border. `fixedHeight` ("600px") pins the height on desktop so multi-step dialogs do not
+ * re-centre between steps; `back` is a slot before the title (the sheet's back button).
+ */
 export function DialogContent({
   title,
   description,
   children,
   className,
   size = "sm",
+  header,
+  footer,
+  back,
+  variant = "centered",
+  fixedHeight,
   ...props
-}: { title: string; description?: string; children: ReactNode; size?: DialogSize } & ComponentProps<
-  typeof DialogPrimitive.Content
->) {
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+  size?: DialogSize;
+  header?: ReactNode;
+  footer?: ReactNode;
+  back?: ReactNode;
+  variant?: DialogVariant;
+  fixedHeight?: string;
+} & ComponentProps<typeof DialogPrimitive.Content>) {
+  // Set through the CSSOM: a `style` attribute is not allowed by the CSP guard, a property set from script is.
+  const heightRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      if (el && fixedHeight && window.matchMedia("(min-width: 640px)").matches) el.style.height = fixedHeight;
+    },
+    [fixedHeight],
+  );
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim" />
       <DialogPrimitive.Content
+        ref={heightRef}
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-card border border-line bg-surface p-6 text-ink shadow-pop",
+          "fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-card border border-line bg-surface text-ink shadow-pop outline-none",
           SIZE[size],
+          variant === "sheet" && SHEET,
           className,
         )}
         {...props}
       >
-        {/* (FIX-149, D-272) The title row stays at the top of the scroll area so the close icon is always reachable. */}
-        <div className="sticky top-0 z-10 -mx-6 -mt-6 flex items-start justify-between gap-3 bg-surface px-6 pb-3 pt-6">
-          <div className="min-w-0">
-            <DialogPrimitive.Title className="font-display text-lg font-semibold">{title}</DialogPrimitive.Title>
-            {description ? (
-              <DialogPrimitive.Description className="mt-1 text-sm text-ink-2">
-                {description}
-              </DialogPrimitive.Description>
-            ) : (
-              <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
-            )}
+        <div className="shrink-0 px-6 pb-3 pt-6">
+          <div className="flex items-start justify-between gap-3">
+            {back ? <div className="-ml-2 -mt-1 shrink-0">{back}</div> : null}
+            <div className="min-w-0 flex-1">
+              <DialogPrimitive.Title className="font-display text-lg font-semibold">{title}</DialogPrimitive.Title>
+              {description ? (
+                <DialogPrimitive.Description className="mt-1 text-sm text-ink-2">
+                  {description}
+                </DialogPrimitive.Description>
+              ) : (
+                <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
+              )}
+            </div>
+            <DialogPrimitive.Close asChild>
+              <button
+                type="button"
+                aria-label="Close"
+                className="-mr-2 -mt-1 inline-flex size-9 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink pointer-coarse:size-11"
+              >
+                <XIcon className="size-5" />
+              </button>
+            </DialogPrimitive.Close>
           </div>
-          <DialogPrimitive.Close asChild>
-            <button
-              type="button"
-              aria-label="Close"
-              className="-mr-2 -mt-1 inline-flex size-9 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink pointer-coarse:size-11"
-            >
-              <XIcon className="size-5" />
-            </button>
-          </DialogPrimitive.Close>
+          {header ? <div className="mt-3">{header}</div> : null}
         </div>
-        <div className="mt-1">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">{children}</div>
+        {footer ? <div className="shrink-0 border-t border-line px-6 py-3">{footer}</div> : null}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   );

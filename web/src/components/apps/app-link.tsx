@@ -34,7 +34,7 @@ export function AppLink({
   const href = useAppHref()(app);
   if (!href) return <>{children}</>;
   return (
-    <Link href={href} className={cn("font-medium text-link hover:underline", className)}>
+    <Link href={href} className={cn("font-medium text-link underline", className)}>
       {children}
     </Link>
   );
