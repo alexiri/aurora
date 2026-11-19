@@ -191,7 +191,7 @@ function StepRow({ step, index, agent, expanded, children }: { step: GuideStep; 
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-x-2 text-sm">
             <span className={cn("font-semibold", done ? "text-muted" : "text-ink")}>{title}</span>
-            {done ? <Badge tone="accent">Done</Badge> : null}
+            {/* (F2) The check on the left says it is done; no chip beside the title. */}
             {step.state === "owner" ? <Badge>Needs an owner</Badge> : null}
           </p>
           {done && step.provider ? <p className="mt-0.5 text-sm text-ink-2">{step.provider}</p> : null}

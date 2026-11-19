@@ -154,7 +154,7 @@ for (const scheme of ["light", "dark"] as const) {
         await form.getByLabel("Name").fill("AIGW key");
         await form.getByLabel("Provider endpoint").selectOption("litellm");
         await form.getByLabel("API key", { exact: true }).fill("sk-test-key");
-        await form.getByRole("button", { name: "Add key" }).click();
+        await dialog.getByRole("button", { name: "Add key" }).click();
         // The checklist stays, with its toast; the health view is not shown (the try-it step is still open).
         await expect(page.getByTestId("setup-toast")).toContainText("AI key added. 3 of 5 done.");
         await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();

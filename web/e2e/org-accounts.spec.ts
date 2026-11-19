@@ -189,7 +189,7 @@ for (const scheme of ["light", "dark"] as const) {
         const state = await mockOrg(page, "ws-owner", { limit: "read", agents: [{ id: giskard.id, level: "read" }, { id: hari.id, level: "read" }] });
         await open(page, "/o/acme/w/main/agents/daneel?tab=access", scheme);
         const row = page.getByRole("listitem", { name: "platform-prod" });
-        await expect(row.getByText("Shared by Acme Labs")).toBeVisible();
+        await expect(row.getByText("Shared by your organization")).toBeVisible();
         await expect(row.getByRole("button", { name: /More for/ })).toHaveCount(0);
         await row.getByRole("button", { name: "Give Daneel access" }).click();
         // Read only is the only level offered, so it is text, not a select.

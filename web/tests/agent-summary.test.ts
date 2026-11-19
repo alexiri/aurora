@@ -156,6 +156,11 @@ describe("the agent's summary: a table of conditions", () => {
       says: ["Daneel can read GitHub, Linear and 3 more.", "It can reach any website."],
     },
     {
+      when: "an account a person named is told by that name, not the app's",
+      accounts: [{ ...acct("Calendar link (ICS)", { level: "use" }), name: "Team calendar" }],
+      says: ["Daneel can read Team calendar.", "It can reach any website."],
+    },
+    {
       when: "two accounts of one app are told apart by their names",
       accounts: [{ ...acct("GitHub", { level: "read" }), name: "work" }, { ...acct("GitHub", { level: "read" }), name: "personal" }],
       says: ["Daneel can read GitHub (work) and GitHub (personal).", "It can reach any website."],

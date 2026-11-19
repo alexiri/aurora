@@ -447,7 +447,7 @@ export function AgentChannelsTab({
   // the connector types installed on the instance, not what the organization has connected.
   const options = usePresenceOptions(agentId);
   const presences = usePresences(agentId);
-  const who = useWhoCan({ orgId }, "org_admin", "connect_app");
+  const who = useWhoCan({ orgId }, "org_admin", "connect_chat");
   // (P5-POLISH-6, C6) The organization has no chat integration and the agent is attached nowhere: the whole tab is one
   // empty state. Presences, Space bindings, Reach requests and Show progress in chat appear only when there is one.
   if (options.data && options.data.items.length === 0 && presences.data && presences.data.items.length === 0) {

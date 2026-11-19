@@ -87,9 +87,11 @@ for (const scheme of ["light", "dark"] as const) {
         await mockApi(page);
         await open(page, "/o/acme/w/main/apps?tab=accounts", scheme);
         const list = page.getByRole("list", { name: "Accounts" });
-        await expect(list.getByRole("listitem", { name: "acme-bot" }).getByText("App")).toBeVisible();
+        // (P5-POLISH-6) An app and an AI key carry a tile, not a kind chip; only a website says what it is.
+        await expect(list.getByRole("listitem", { name: "acme-bot" }).getByText("App", { exact: true })).toHaveCount(0);
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("Website")).toBeVisible();
-        await expect(list.getByRole("listitem", { name: "Team key" }).getByText("AI key")).toBeVisible();
+        await expect(list.getByRole("listitem", { name: "Team key" }).getByText("AI key", { exact: true })).toHaveCount(0);
+        await expect(list.getByRole("listitem", { name: "Team key" }).getByText("AI", { exact: true })).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("No agent can use this")).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Product team" }).getByText("Sign-in expired")).toBeVisible();
         // No rule id, host pattern or "secret" on a row.
@@ -152,7 +154,9 @@ for (const scheme of ["light", "dark"] as const) {
         await form.getByLabel("Provider endpoint").selectOption("aigw");
         await form.getByLabel("API key", { exact: true }).fill("sk-not-a-real-key");
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
-        await form.getByRole("button", { name: "Add key", exact: true }).click();
+        // (P5-POLISH-11, A1) The buttons are the dialog's footer row, not inside the form.
+        await expect(form.getByRole("button", { name: "Add key", exact: true })).toHaveCount(0);
+        await page.getByRole("dialog", { name: "Add an AI key" }).getByRole("button", { name: "Add key", exact: true }).click();
         await expect(page.getByText("Saved Team key")).toBeVisible();
         // No "Give agents access" second step.
         await expect(page.getByRole("region", { name: "Give agents access" })).toHaveCount(0);

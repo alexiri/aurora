@@ -38,7 +38,9 @@ export function AccessControl({
   const put = usePutAccess();
   const grants = useGrants(entry.agent.id);
   const [table, setTable] = useState(startOpen);
-  if (account.levels.length === 0 || account.ref.type !== "connection") return null;
+  if (account.ref.type !== "connection") return null;
+  // (P5-POLISH-11) An app with no write tools has no choice, but the row still says what the agent may do.
+  if (account.levels.length === 0) return <p className="text-sm text-ink">Read only</p>;
   const level = entry.level === "read" || entry.level === "ask" || entry.level === "act" ? entry.level : null;
   const always = entry.always_allowed ?? [];
 

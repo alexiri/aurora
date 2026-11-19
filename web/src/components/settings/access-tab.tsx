@@ -6,7 +6,7 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Avatar } from "@/components/agent-avatar";
 import { Button } from "@/components/ui/button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
-import { useMe } from "@/lib/api/queries";
+import { useMe, useOrg } from "@/lib/api/queries";
 import { sourceText } from "@/lib/api/groups";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
@@ -48,7 +48,9 @@ function AddBinding({
   orgId: string;
   bound: Set<string>;
 }) {
-  const members = useOrgMembers(orgId);
+  // The member list is for organization owners and admins (a workspace owner who is only a member gets 403): ask only for them.
+  const orgRole = useOrg(orgId).data?.my_role;
+  const members = useOrgMembers(orgId, orgRole === "owner" || orgRole === "admin");
   const put = usePutAccess(wsId);
   const [user, setUser] = useState("");
   const [role, setRole] = useState<Role>("member");
@@ -109,7 +111,9 @@ function Row({
   onError,
   mine,
   lastOwner,
+  orgName,
 }: {
+  orgName?: string;
   b: AccessBinding;
   /** This row is the viewer's own: no menu and no role change. */
   mine: boolean;
@@ -136,14 +140,14 @@ function Row({
               {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
             </div>
             <div className="text-xs text-muted">{b.email}</div>
+            {b.implicit ? <div className="text-xs text-ink-2">Has access as an owner of {orgName ?? "the organization"}</div> : null}
           </div>
         </div>
       </Td>
       <Td>
         {b.implicit ? (
-          <span>
-            Owner <span className="text-xs text-muted">(organization)</span>
-          </span>
+          // (D6) The role is "Owner"; why is a line under the person: "Has access as an owner of Users".
+          "Owner"
         ) : b.idp_value ? (
           <span className="flex flex-wrap items-center gap-1.5">
             {ROLE_LABEL[b.role as Role] ?? b.role}
@@ -227,6 +231,7 @@ export function AccessTab({
 }) {
   const access = useAccess(wsId);
   const meId = useMe().data?.user.id;
+  const org = useOrg(orgId);
   const [err, setErr] = useState<unknown>(null);
   if (access.isPending) return <Loading />;
   if (access.isError) return <ErrorState error={access.error} onRetry={() => access.refetch()} />;
@@ -269,6 +274,7 @@ export function AccessTab({
                 b={b}
                 mine={b.user_id === meId}
                 lastOwner={b.role === "owner" && !b.implicit && directOwners === 1}
+                orgName={org.data?.name}
                 wsId={wsId}
                 canOwn={canOwn}
                 candidates={items

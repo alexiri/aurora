@@ -82,7 +82,7 @@ export function AccountMenu({
             <span aria-hidden="true">…</span>
           </Button>
         </MenuTrigger>
-        <MenuContent>
+        <MenuContent align="end">
           {/* (P5-POLISH-6, C2) In an agent's list the agent already has access, so Give access and Turn off are not here:
               "Remove from <Agent>" covers turning it off for that agent. */}
           {!agent && account.can.give_access ? <MenuItem onSelect={() => setGiving(true)}>Give access</MenuItem> : null}

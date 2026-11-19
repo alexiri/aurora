@@ -78,14 +78,16 @@ const list = (props: Partial<Parameters<typeof AccountsList>[0]> = {}) =>
 const openMenu = async (name: string) => fireEvent.keyDown(await screen.findByRole("button", { name: `More for ${name}` }), { key: "Enter" });
 
 describe("AccountsList: one row per kind", () => {
-  it("shows the kind chip, who can use it and the menu for each kind, for an owner", async () => {
+  it("shows the kind as its icon (no chip for an app or an AI key), who can use it and the menu for each kind, for an owner", async () => {
     listWs([app(), website(), aiKey()]);
     list();
     const aws = await screen.findByRole("listitem", { name: "AWS prod" });
-    expect(within(aws).getByText("App")).toBeInTheDocument();
+    expect(within(aws).queryByText("App")).toBeNull();
     expect(within(aws).getByRole("button", { name: "Daneel · Read only" })).toBeInTheDocument();
     expect(within(screen.getByRole("listitem", { name: "Stripe API" })).getByText("Website")).toBeInTheDocument();
-    expect(within(screen.getByRole("listitem", { name: "Team key" })).getByText("AI key")).toBeInTheDocument();
+    const key = screen.getByRole("listitem", { name: "Team key" });
+    expect(within(key).queryByText("AI key")).toBeNull();
+    expect(within(key).getByText("AI")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /^More for / })).toHaveLength(3);
   });
 
@@ -428,6 +430,9 @@ describe("picker preselection (C-925) and row format (C-948)", () => {
     expect(entryText(entry({ level: "act" }))).toBe("Daneel · Change without asking");
     expect(entryText(entry({ level: "custom" }))).toBe("Daneel · Custom");
     expect(entryText(entry({ level: "use" }))).toBe("Daneel");
+    // An app with no levels (read only) is granted `use`: the pill still says what it can do.
+    expect(entryText(entry({ level: "use" }), { ref: { type: "connection", id: "c1" }, levels: [] })).toBe("Daneel · Read only");
+    expect(entryText(entry({ level: "use" }), { ref: { type: "secret", id: "s1" }, levels: [] })).toBe("Daneel");
   });
 
   it("splits the agent's list into given and not given", () => {

@@ -231,6 +231,27 @@ All paths are under `web/src/`.
 4. Web gates: typecheck, lint, vitest, build, Playwright mocked (axe, narrow-route, both themes).
    Report the counts.
 
+## Completion report — review pass 1 (P5-POLISH-11)
+
+- **#1 done.** The Overview sentence counts the same items as the Needs you panel, app setup requests included.
+- **#2 done.** Recent activity drops the agent's model calls (`actionsOnly`, as the status rail) and reads as a sentence:
+  "Daneel used create issue in Team tracker." / "Daneel reached host." / "tried to …" when refused. Open: the mockup's
+  verbs ("read Team calendar") and app icon — a log row has a tool id and a connection id, no access kind or app id.
+- **#3 done** (in the P5-POLISH-6 commit, same row code): AI tile, "Shared by your organization · managed by alice",
+  no chips (the shared and kind chips are gone).
+- **#4 done.** "2 accounts. Daneel uses both." (one agent that uses every account; workspace list) and **Add** on the
+  sentence's line, on the workspace and the organization Accounts tab.
+- **#5 done** through P5-POLISH-6 #1: the pill popover shows "Read only".
+- **#6 done.** "Add an AI key" (and the setup checklist's dialog): no card border, Cancel and Add key in the dialog's
+  footer row (`LlmKeyForm footerTarget`, `useFooterSlot`). Playwright specs click the footer's button.
+- **#7 done.** Groups only in a shared workspace (`GET /v1/workspaces/{ws}` carries no `personal_of`, so the page reads
+  it from the organization's workspace list); the inherited owner reads "Owner" with "Has access as an owner of <Org>".
+- **#8 done.** The org member list is fetched only for organization owners and admins.
+- **#9 done.** Apps catalogue sorted by display name.
+- **#10 done.** No "Done" chip on guide steps.
+- Tests: vitest `polish-7` (sentences, activity line), `account-settings`; Playwright `accounts`, `credential-access`,
+  `p5-polish-10`, `onboarding-journeys`.
+
 ## Suggested agent/model and reason
 
 Sonnet (`nextjs-developer`). Several pages, each moderate, sharing the account pieces built in

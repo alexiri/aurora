@@ -40,7 +40,7 @@ export function UsageCard({ wsId, org, ws, agentId }: { wsId: string; org: strin
           </p>
           <p>
             <span className="font-medium text-ink" title={t ? exact(tokens) : undefined}>{t ? compact(tokens) : "…"}</span> tokens · awake{" "}
-            <span className="font-medium text-ink">{t ? duration(t.awake_seconds) : "…"}</span>
+            <span className="font-medium text-ink">{t ? (t.awake_seconds <= 0 && t.turns > 0 ? "under a minute" : duration(t.awake_seconds)) : "…"}</span>
           </p>
         </div>
       )}

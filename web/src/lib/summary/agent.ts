@@ -38,12 +38,20 @@ export function nameList(names: string[]): string {
   return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
 }
 
-/** What a row is called in a sentence: the app, else the account (a website). Same names are told apart by the account. */
+/**
+ * What a row is called in a sentence: the account when a person named it ("Team calendar" for the Calendar link app),
+ * else the app ("GitHub" for "GitHub account"; a website is its account). Same names are told apart by the account.
+ */
 function labels(accounts: Account[]): Map<Account, string> {
   const base = (a: Account) => a.app?.name ?? a.name;
   const count = new Map<string, number>();
   for (const a of accounts) count.set(base(a), (count.get(base(a)) ?? 0) + 1);
-  return new Map(accounts.map((a) => [a, (count.get(base(a)) ?? 0) > 1 && a.name !== base(a) ? `${base(a)} (${a.name})` : base(a)]));
+  const label = (a: Account) => {
+    if ((count.get(base(a)) ?? 0) > 1 && a.name !== base(a)) return `${base(a)} (${a.name})`;
+    // A name that does not carry the app's own ("Team calendar", not "GitHub account") is what people know it by.
+    return a.app && a.name && !a.name.toLowerCase().includes(a.app.name.toLowerCase()) ? a.name : base(a);
+  };
+  return new Map(accounts.map((a) => [a, label(a)]));
 }
 
 const unique = (xs: string[]) => [...new Set(xs)];

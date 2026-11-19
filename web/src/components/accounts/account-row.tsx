@@ -20,6 +20,7 @@ import { useWhoCan } from "@/lib/api/who-can";
 import { useMe, useOrg, useWorkspaces } from "@/lib/api/queries";
 import { workspaceDisplayName } from "@/lib/workspace-name";
 import { entryText, kindLabel } from "@/lib/accounts";
+import { orList } from "@/lib/who-can";
 import { WebhookCardLine } from "@/components/webhook/webhook-card-line";
 import { LimitControl } from "./limit-control";
 
@@ -41,7 +42,8 @@ export function workspaceLabelOf(
 
 function AgentEntry({ account, entry, workspaceId, canChange, orgName, workspaceLabel }: { account: Account; entry: AgentAccess; workspaceId: string; canChange: boolean; orgName?: string; workspaceLabel?: string }) {
   // The pill's words; outside its own workspace the agent carries its workspace: "Daneel · Bob's workspace · Read only".
-  const text = workspaceLabel ? entryText(entry).replace(entry.agent.name, `${entry.agent.name} · ${workspaceLabel}`) : entryText(entry);
+  const base = entryText(entry, account);
+  const text = workspaceLabel ? base.replace(entry.agent.name, `${entry.agent.name} · ${workspaceLabel}`) : base;
   const [open, setOpen] = useState(false);
   const remove = useRemoveAccess();
   // (P5-POLISH-7, D1) A pill: the agent and its access level. For someone who may change it, pressing it opens the access
@@ -150,7 +152,13 @@ export function AccountRow({
   return (
     <li className="space-y-3 rounded-card border border-line bg-surface p-4" aria-label={account.name}>
       <div className="flex flex-wrap items-start gap-3">
-        {account.app ? <AppIcon appId={account.app.app_id} name={account.app.name} size={32} /> : null}
+        {account.app ? (
+          <AppIcon appId={account.app.app_id} name={account.app.name} size={32} />
+        ) : account.kind === "ai_key" ? (
+          <span aria-hidden="true" className="inline-flex size-8 shrink-0 items-center justify-center rounded-control border border-line bg-accent-soft text-xs font-semibold text-accent-ink">
+            AI
+          </span>
+        ) : null}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="min-w-0 break-words font-display text-base font-semibold text-ink">
@@ -170,11 +178,17 @@ export function AccountRow({
                 account.name
               )}
             </h3>
-            {/* One chip per card (D-384): on an agent's page the kind is the list's heading and the sharing is in the line below. */}
+            {/* (P5-POLISH-11, F2) A kind is its icon: apps and AI keys carry a tile, no chip; only a website has no tile. */}
             {/* (P5-POLISH-9, E2) An organization's account says what it is by its name, not a kind chip. */}
-            {agent || scope.kind === "organization" ? null : <Badge>{kindLabel(account.kind)}</Badge>}
-            {shared && !agent ? <Badge tone="accent">Shared by {org.data?.name ?? "your organization"}</Badge> : null}
+            {account.kind === "website" && !agent && scope.kind !== "organization" ? <Badge>{kindLabel(account.kind)}</Badge> : null}
           </div>
+          {/* (D1) The sharing is one line, not a chip: "Shared by your organization · managed by alice". */}
+          {shared && !agent ? (
+            <p className="text-sm text-ink-2">
+              Shared by your organization
+              {account.managed_by && account.managed_by.people.length > 0 ? ` · managed by ${orList(account.managed_by.people.map((p) => p.name))}` : ""}
+            </p>
+          ) : null}
           <AccountHealth
             account={account}
             outcome={test.isPending ? null : outcome}
@@ -186,7 +200,8 @@ export function AccountRow({
           {account.app?.app_id === "webhook" && account.ref.type === "connection" && account.can.manage ? (
             <WebhookCardLine connectionId={account.ref.id} name={account.name} />
           ) : null}
-          {shared && account.managed_by ? <WhoCan value={account.managed_by} /> : null}
+          {/* No who-can line on an agent's page (C1: who manages it is on the account page); in the list only when no one is named. */}
+          {shared && !agent && account.managed_by && account.managed_by.people.length === 0 ? <WhoCan value={account.managed_by} /> : null}
           {/* (P5-UX-11, C-937) The limit of the organization's account, for the people who manage it. */}
           {scope.kind === "organization" && account.scope === "organization" && account.can.manage ? <LimitControl account={account} orgId={orgId} /> : null}
         </div>
@@ -211,17 +226,17 @@ export function AccountRow({
               <AccessControl account={account} entry={mine} workspaceId={ws} canChange={account.can.change_access} startOpen={false} orgName={org.data?.name} />
               {mine.model ? (
                 <p className="text-sm text-ink-2">
-                  {shared ? `Shared by ${org.data?.name ?? "your organization"} · ` : ""}
+                  {shared ? "Shared by your organization · " : ""}
                   {agent.name} thinks with {mine.model}
                   {shared ? "" : " through this key"}
                 </p>
               ) : shared ? (
-                <p className="text-sm text-ink-2">Shared by {org.data?.name ?? "your organization"}</p>
+                <p className="text-sm text-ink-2">Shared by your organization</p>
               ) : null}
             </>
           ) : account.can.give_access ? (
             <>
-              {shared ? <p className="text-sm text-ink-2">Shared by {org.data?.name ?? "your organization"}</p> : null}
+              {shared ? <p className="text-sm text-ink-2">Shared by your organization</p> : null}
               <GiveOne account={account} agent={agent} />
             </>
           ) : null}

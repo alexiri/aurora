@@ -41,7 +41,7 @@ function StatusParts({ ctx, idPrefix, onShow }: { ctx: RailContext; idPrefix: st
   const activityHref = `${ctx.base}/activity?agent=${encodeURIComponent(ctx.agentId)}`;
   const section = (id: PartId, icon: ReactNode, title: ReactNode, body: ReactNode) => (
     <section aria-labelledby={`${idPrefix}-${id}`} id={`${idPrefix}-part-${id}`} className="space-y-2 scroll-mt-2">
-      <PartHeading id={`${idPrefix}-${id}`} icon={icon} pending={id === "needs"}>
+      <PartHeading id={`${idPrefix}-${id}`} icon={icon} pending={id === "needs" && status.needs.length > 0}>
         {title}
       </PartHeading>
       {body}
@@ -208,7 +208,10 @@ export function StatusRail({
           </PopoverTrigger>
           <PopoverContent side="left" align="start" aria-label="Needs you" className="space-y-3">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-ink-2">
-              <span aria-hidden="true" className="inline-flex size-6 items-center justify-center rounded-md bg-pending-soft text-pending-ink">
+              {/* (F1) The amber tile only while something waits. */}
+              <span
+                aria-hidden="true"
+                className={cn("inline-flex", status.needs.length > 0 && "size-6 items-center justify-center rounded-md bg-pending-soft text-pending-ink")}>
                 <CheckCircleIcon width={16} height={16} />
               </span>
               Needs you

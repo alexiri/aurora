@@ -8,7 +8,7 @@ import { SearchBox } from "@/components/chat/search/search-box";
 import { resultKey, SearchResults, type SearchScope, type SearchSort } from "@/components/chat/search/search-results";
 import { ApiError } from "@/lib/api/client";
 import { errorDetail } from "@/lib/api/errors";
-import { useAgents } from "@/lib/api/queries";
+import { useAgents, useOrg } from "@/lib/api/queries";
 import { useMessageSearch, type SearchItem } from "@/lib/api/search";
 import { extractFilters, queryOf, toSearchParams, type FilterChip } from "@/lib/chat/search-syntax";
 import { ChatThread } from "@/components/chat/chat-thread";
@@ -127,7 +127,9 @@ export function ChatTab({
   const list = useConversations(agentId, archived);
   // The rail's "Doing now" reads the active conversations even while the Archived list is shown (same query when not).
   const activeList = useConversations(agentId, false);
-  const retention = useRetention(orgId);
+  // The retention rule is for organization owners and admins (a member gets 403): ask only for them.
+  const orgRole = useOrg(orgId).data?.my_role;
+  const retention = useRetention(orgId, orgRole === "owner" || orgRole === "admin");
   const [picked, select] = useSelectedConversation();
   const now = useMemo(() => new Date(), []);
   const canApprove = useCanApprove(wsId);

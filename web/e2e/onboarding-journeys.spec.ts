@@ -92,7 +92,7 @@ test("1. fresh instance: the admin walks the five-step checklist to a working ch
   await form.getByLabel("Name").fill("Mock LLM");
   await form.getByLabel("Provider endpoint").selectOption(ENDPOINT_ID);
   await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
-  await form.getByRole("button", { name: "Add key" }).click();
+  await dialog.getByRole("button", { name: "Add key" }).click();
   await expect(page.getByTestId("setup-toast")).toContainText("AI key added", { timeout: 60_000 });
   await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();
   await expect(steps.locator("#setup-key")).toHaveAttribute("data-done", "true");

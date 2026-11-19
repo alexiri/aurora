@@ -15,7 +15,7 @@ import { KeysTab } from "@/components/settings/keys-tab";
 import { ErrorState, Loading } from "@/components/states";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { PageHeader } from "@/components/ui/page-header";
-import { useResolve, useWorkspace, type Workspace } from "@/lib/api/queries";
+import { useResolve, useWorkspace, useWorkspaces, type Workspace } from "@/lib/api/queries";
 import { orgRoutes, wsRoutes, type TABS } from "@/lib/routes";
 import { forbiddenError, whoCanFromContacts } from "@/lib/who-can";
 
@@ -72,6 +72,21 @@ export function WorkspaceInternetAccessPage() {
   return <WorkspaceGate>{(w, org, ws) => <WorkspaceInternet workspace={w} orgSlug={org} wsSlug={ws} />}</WorkspaceGate>;
 }
 
+/**
+ * The People page's body. `GET /v1/workspaces/{ws}` does not say whose a personal workspace is; the organization's
+ * workspace list does (`personal_of`), so a personal workspace has no Groups section (P5-POLISH-11).
+ */
+function PeopleBody({ w, org, ws, addOpen }: { w: Workspace; org: string; ws: string; addOpen: boolean }) {
+  const list = useWorkspaces(w.org_id);
+  const personal = !!w.personal_of || !!list.data?.items.find((x) => x.id === w.id)?.personal_of;
+  return (
+    <div className="max-w-page space-y-4">
+      <PageHeader title="People" description="Who can use this workspace." className="mb-2" />
+      <AccessTab wsId={w.id} orgId={w.org_id} canOwn personal={personal} people={{ workspacePath: wsRoutes(org, ws).base, initiallyOpen: addOpen }} />
+    </div>
+  );
+}
+
 /** People: who can use this workspace (workspace owners). */
 export function WorkspacePeoplePage() {
   // `?add=1` (Welcome's **Add people**) opens the dialog.
@@ -80,10 +95,7 @@ export function WorkspacePeoplePage() {
     <WorkspaceGate>
       {(w, org, ws) =>
         w.my_role === "owner" ? (
-          <div className="max-w-page space-y-4">
-            <PageHeader title="People" description="Who can use this workspace." className="mb-2" />
-            <AccessTab wsId={w.id} orgId={w.org_id} canOwn personal={!!w.personal_of} people={{ workspacePath: wsRoutes(org, ws).base, initiallyOpen: addOpen }} />
-          </div>
+          <PeopleBody w={w} org={org} ws={ws} addOpen={addOpen} />
         ) : (
           <ErrorState error={forbiddenError(whoCanFromContacts("workspace_owner", w.contacts, "view_this"))} />
         )

@@ -187,11 +187,11 @@ export const deleteOrg = (orgId: string, confirm: string) =>
 export type Retention = components["schemas"]["Retention"];
 
 /** Conversation retention window (org owner/admin; others get 403, which hides the banner). */
-export function useRetention(orgId: string | undefined) {
+export function useRetention(orgId: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ["orgs", orgId, "retention"] as const,
     queryFn: () => unwrap(api.GET("/v1/orgs/{org}/retention", { params: { path: { org: orgId! } } })),
-    enabled: !!orgId,
+    enabled: !!orgId && enabled,
     retry: false,
   });
 }

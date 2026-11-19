@@ -27,6 +27,7 @@ export const ACTION_PHRASE: Record<string, string> = {
   add_account: "add an account",
   add_accounts: "add an account",
   connect_app: "connect an app",
+  connect_chat: "connect a chat platform",
   give_access: "give agents access",
   add_rule: "add a rule",
   add_schedule: "set up a schedule",

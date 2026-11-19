@@ -76,9 +76,11 @@ describe("AccessTab", () => {
     mockFetch({
       "GET /v1/workspaces/w/access": () => json(200, bindings),
       "GET /v1/orgs/o/members": () => json(200, members),
+      "GET /v1/orgs/o": () => json(200, { id: "o", slug: "users", name: "Users", my_role: "admin" }),
     });
     wrap(<AccessTab wsId="w" orgId="o" canOwn />);
-    expect(await screen.findByText("(organization)")).toBeInTheDocument();
+    // (D6) The inherited owner's reason is a line under the person.
+    expect(await screen.findByText("Has access as an owner of Users")).toBeInTheDocument();
     // Remove is in the row's … menu (D6); organization owners have no menu.
     expect(screen.getByRole("button", { name: "More for Bob" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "More for Boss" })).not.toBeInTheDocument();    expect(await screen.findByLabelText("Organization member")).toBeInTheDocument();
