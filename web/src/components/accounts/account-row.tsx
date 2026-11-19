@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { AppLink } from "@/components/apps/app-link";
+import { AiKeyTile } from "@/components/ui/ai-key-tile";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -156,9 +157,7 @@ export function AccountRow({
         {account.app ? (
           <AppIcon appId={account.app.app_id} name={account.app.name} size={32} />
         ) : account.kind === "ai_key" ? (
-          <span aria-hidden="true" className="inline-flex size-8 shrink-0 items-center justify-center rounded-control border border-line bg-accent-soft text-xs font-semibold text-accent-ink">
-            AI
-          </span>
+          <AiKeyTile />
         ) : null}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">

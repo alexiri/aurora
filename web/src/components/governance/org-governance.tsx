@@ -7,6 +7,7 @@ import { ByoPanel } from "@/components/governance/byo-panel";
 import { Errors } from "@/components/governance/controls";
 import { ModelsTab } from "@/components/governance/models-tab";
 import { ErrorState, Loading } from "@/components/states";
+import { AiKeyTile } from "@/components/ui/ai-key-tile";
 import { Button } from "@/components/ui/button";
 import { FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
@@ -335,9 +336,7 @@ function MemberAiModels({ org }: { org: Org }) {
           const models = endpoints[0]?.allowed_models.value ?? [];
           return (
             <li key={k.ref.id} className="flex items-center gap-3 px-4 py-3">
-              <span aria-hidden="true" className="inline-flex size-8 shrink-0 items-center justify-center rounded-control border border-line bg-accent-soft text-xs font-semibold text-accent-ink">
-                AI
-              </span>
+              <AiKeyTile />
               <div className="min-w-0">
                 <p className="font-medium text-ink">{k.name}</p>
                 <p className="text-sm text-ink-2">{models.length === 0 ? "Any model the gateway serves" : listWords(models)}</p>
