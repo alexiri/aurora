@@ -90,7 +90,7 @@ export function EmptyState({
   when?: ReactNode;
   action?: ReactNode;
   /** `onAsk` adds the **Ask** button next to the who-can line (P5-POLISH-2, C6). */
-  ask?: { whoCan: WhoCanValue; canAct: boolean; onAsk?: () => void };
+  ask?: { whoCan: WhoCanValue; canAct: boolean; onAsk?: () => void; /** (P5-APIGAP-2) The whole ask control (**Ask <Name>** / Asked · Undo) instead of the plain button. */ control?: ReactNode };
   /** The icon in the tile; a neutral one by default. */
   icon?: ReactNode;
 }) {
@@ -105,7 +105,8 @@ export function EmptyState({
       {ask && !ask.canAct ? (
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-control bg-subtle px-3 py-2">
           <WhoCan value={ask.whoCan} lead />
-          {ask.onAsk ? (
+          {ask.control ?? null}
+          {!ask.control && ask.onAsk ? (
             <Button type="button" variant="outline" size="sm" onClick={ask.onAsk}>
               Ask
             </Button>

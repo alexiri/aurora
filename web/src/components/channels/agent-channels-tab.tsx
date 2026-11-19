@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { DynamicForm } from "@/components/apps/dynamic-form";
+import { AskAdmin } from "@/components/ask-admin";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -456,7 +457,7 @@ export function AgentChannelsTab({
       <EmptyState
         title={`${name} isn't in any chat yet`}
         when={`Your organization hasn't connected a chat platform. Once it has, you can add ${name} to channels here.`}
-        ask={{ whoCan: who, canAct: false }}
+        ask={{ whoCan: who, canAct: false, control: <AskAdmin workspaceId={wsId} subject="chat_platform" who={who} /> }}
       />
     );
   }

@@ -11,6 +11,9 @@ use uuid::Uuid;
 pub struct RequestRow {
     pub id: Uuid,
     pub org_id: Uuid,
+    /// `app` | `chat_platform` | `ai_key` (P5-APIGAP-2, C-1047).
+    pub subject: String,
+    /// The app id; the connector type (or `""`) for a chat platform; `""` for an AI key.
     pub app_id: String,
     pub status: String,
     pub needs: serde_json::Value,
@@ -20,7 +23,7 @@ pub struct RequestRow {
     pub closed_by: Option<Uuid>,
 }
 
-const SELECT: &str = "SELECT id, org_id, app_id, status, needs, unavailable, created_at, closed_at, closed_by \
+const SELECT: &str = "SELECT id, org_id, subject, app_id, status, needs, unavailable, created_at, closed_at, closed_by \
     FROM app_setup_requests";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -36,12 +39,14 @@ pub struct AskerRow {
 pub async fn open_for_update<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,
+    subject: &str,
     app: &str,
 ) -> Result<Option<RequestRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{SELECT} WHERE org_id = $1 AND app_id = $2 AND status = 'open' FOR UPDATE"
+        "{SELECT} WHERE org_id = $1 AND subject = $2 AND app_id = $3 AND status = 'open' FOR UPDATE"
     )))
     .bind(org)
+    .bind(subject)
     .bind(app)
     .fetch_optional(exec)
     .await?)
@@ -61,16 +66,18 @@ pub async fn insert<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
     org: Uuid,
+    subject: &str,
     app: &str,
     needs: &serde_json::Value,
     unavailable: bool,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query(
-        "INSERT INTO app_setup_requests (id, org_id, app_id, needs, unavailable) \
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+        "INSERT INTO app_setup_requests (id, org_id, subject, app_id, needs, unavailable) \
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING",
     )
     .bind(id)
     .bind(org)
+    .bind(subject)
     .bind(app)
     .bind(needs)
     .bind(unavailable)
@@ -204,10 +211,84 @@ pub async fn open_counts<'e, E: PgExecutor<'e>>(
     Ok(sqlx::query_as(
         "SELECT r.app_id, count(a.user_id), COALESCE(bool_or(a.user_id = $2), false) \
          FROM app_setup_requests r JOIN app_setup_request_askers a ON a.request_id = r.id \
-         WHERE r.org_id = $1 AND r.status = 'open' GROUP BY r.app_id",
+         WHERE r.org_id = $1 AND r.status = 'open' AND r.subject = 'app' GROUP BY r.app_id",
     )
     .bind(org)
     .bind(user)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// The open requests of an organization the person has asked (all subjects), the latest first.
+pub async fn open_of_asker<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    user: Uuid,
+) -> Result<Vec<RequestRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} WHERE org_id = $1 AND status = 'open' \
+         AND id IN (SELECT request_id FROM app_setup_request_askers WHERE user_id = $2) \
+         ORDER BY updated_at DESC, id LIMIT 100"
+    )))
+    .bind(org)
+    .bind(user)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (C-1047) The organization has an `active` chat integration (of `connector` when given).
+pub async fn has_chat_platform<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    connector: Option<&str>,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM channel_integrations WHERE org_id = $1 AND status = 'active' \
+         AND ($2::text IS NULL OR connector_id = $2))",
+    )
+    .bind(org)
+    .bind(connector)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// (C-1047) An `active` LLM key with a provider and endpoint exists that is the organization's or the
+/// workspace's.
+pub async fn has_ai_key<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    workspace: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM secrets WHERE kind = 'llm' AND status = 'active' AND org_id = $1 \
+         AND (workspace_id IS NULL OR workspace_id = $2) \
+         AND llm_provider IS NOT NULL AND llm_endpoint_id IS NOT NULL)",
+    )
+    .bind(org)
+    .bind(workspace)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// (C-1047) A connector (of `connector` when given) is `active` on the instance.
+pub async fn has_active_connector<'e, E: PgExecutor<'e>>(
+    exec: E,
+    connector: Option<&str>,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM connectors WHERE status = 'active' \
+         AND ($1::text IS NULL OR id = $1 OR type_id = $1))",
+    )
+    .bind(connector)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// Active instance administrators: `user_id`.
+pub async fn instance_admins<'e, E: PgExecutor<'e>>(exec: E) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM users WHERE is_instance_admin AND disabled_at IS NULL ORDER BY id",
+    )
     .fetch_all(exec)
     .await?)
 }

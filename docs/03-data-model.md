@@ -689,8 +689,9 @@ The gateway database role's column-level `SELECT (id, status, gateway_instance_i
 |---|---|---|
 | id | uuid pk | |
 | org_id | uuid FK→organizations (cascade) | |
-| app_id | text | the catalogue app id |
-| status | text CHECK in (`open`,`resolved`,`declined`,`withdrawn`) default `open` | at most one `open` row per `(org_id, app_id)` (partial unique index `app_setup_requests_open`); a second person's ask joins it |
+| subject | text CHECK in (`app`,`chat_platform`,`ai_key`) default `app` | (P5-APIGAP-2, D-399, C-1047; migration `20261201000257`) what is asked for; existing rows are `app` |
+| app_id | text | the catalogue app id for subject `app`; the connector type (or `''`) for `chat_platform`; `''` for `ai_key` |
+| status | text CHECK in (`open`,`resolved`,`declined`,`withdrawn`) default `open` | at most one `open` row per `(org_id, subject, app_id)` (partial unique index `app_setup_requests_open`); a second person's ask joins it |
 | needs | jsonb | the `needs` of C-1029 at the last ask (`oauth_client`, `instance`, `admin_material`) |
 | unavailable | boolean | the app is switched off for the organization (nothing in `needs` then) |
 | closed_at | timestamptz null | null while open (`created_at`, `updated_at` per §Conventions) |

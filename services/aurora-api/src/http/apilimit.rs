@@ -103,6 +103,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
         ["workspaces", _, "access", "by-email"] if post => return Some(Class::Invite),
         // (P5-POLISH-4, C-1030) Asking an admin to set an app up: 20 per person per hour.
         ["workspaces", _, "apps", _, "setup-request"] if post => return Some(Class::SetupRequest),
+        // (P5-APIGAP-2, C-1047) The same ask with a subject.
+        ["workspaces", _, "requests"] if post => return Some(Class::SetupRequest),
         ["conversations", _, "messages"] if post => return Some(Class::Message),
         ["turns", _, "send-now"] if post => return Some(Class::Message),
         ["conversations", _, "attachments"] if post => return Some(Class::Upload),
@@ -881,6 +883,10 @@ mod tests {
         assert_eq!(
             c(Method::POST, "/v1/workspaces/1/access/by-email"),
             Some(Class::Invite)
+        );
+        assert_eq!(
+            c(Method::POST, "/v1/workspaces/1/requests"),
+            Some(Class::SetupRequest)
         );
         // (P5-POLISH-4) Asking an admin to set an app up is class `setup_request`; withdrawing is a plain write.
         assert_eq!(

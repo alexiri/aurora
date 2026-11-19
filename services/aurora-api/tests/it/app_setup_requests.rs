@@ -346,6 +346,269 @@ async fn asking_and_declining_change_no_availability_client_or_access() {
     assert_eq!(org, w.org.to_string());
 }
 
+// ---- P5-APIGAP-2 (D-399, C-1047): a chat platform or an AI key ------------------------------------------
+
+impl W {
+    fn req_uri(&self) -> String {
+        format!("/v1/workspaces/{}/requests", self.ws)
+    }
+
+    async fn ask_subject(&self, who: &str, body: Value) -> (u16, Value) {
+        self.call(who, Method::POST, &self.req_uri(), Some(body))
+            .await
+    }
+
+    async fn mine(&self, who: &str) -> Value {
+        let (s, v) = self.call(who, Method::GET, &self.req_uri(), None).await;
+        assert_eq!(s, 200, "{v}");
+        v["items"].clone()
+    }
+
+    /// The users who were told `kind` of the open request.
+    async fn notified(&self, kind: &str) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT u.email::text FROM app_setup_request_notices n JOIN users u ON u.id = n.user_id \
+             WHERE n.kind = $1 ORDER BY u.email",
+        )
+        .bind(kind)
+        .fetch_all(self.h.pool())
+        .await
+        .unwrap()
+    }
+
+    async fn connect_chat_platform(&self) {
+        sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('mattermost', $1, 'Mattermost', '{}', 'active')")
+            .bind(vec![9u8; 32])
+            .execute(self.h.pool())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO channel_integrations (id, org_id, connector_id, tenant_ref, tenant_label, config, credentials_ref, status) VALUES ($1,$2,'mattermost','T1','T1','{}','x','active')")
+            .bind(Uuid::now_v7())
+            .bind(self.org)
+            .execute(self.h.pool())
+            .await
+            .unwrap();
+    }
+
+    async fn add_ai_key(&self) {
+        sqlx::query("INSERT INTO secrets (id, org_id, name, kind, llm_provider, llm_auth_mode, llm_endpoint_id, host_pattern, injection, value_source, value_ref) VALUES ($1,$2,'k','llm','anthropic','api_key','anthropic','api.example.com','{}','managed','x')")
+            .bind(Uuid::now_v7())
+            .bind(self.org)
+            .execute(self.h.pool())
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_member_asks_for_a_chat_platform_a_second_ask_joins_and_the_right_admins_are_told() {
+    let w = world().await;
+    let carl = w.second_owner().await;
+    // A plain workspace member (no `can_own`) may ask: the places are pages a member sees.
+    let (s, a) = w
+        .ask_subject(&w.member, json!({"subject": "chat_platform"}))
+        .await;
+    assert_eq!(s, 200, "{a}");
+    assert_eq!(
+        (
+            a["subject"].as_str(),
+            a["app_id"].as_str(),
+            a["status"].as_str()
+        ),
+        (Some("chat_platform"), Some(""), Some("open"))
+    );
+    assert_eq!(a["app_name"], "A chat platform");
+    assert_eq!(asker_names(&a), ["Mia Member"]);
+    // Idempotent, and a second person joins the one request and sees only their own ask.
+    let (_, again) = w
+        .ask_subject(&w.member, json!({"subject": "chat_platform"}))
+        .await;
+    assert_eq!(again["id"], a["id"]);
+    let (_, b) = w
+        .ask_subject(&carl, json!({"subject": "chat_platform"}))
+        .await;
+    assert_eq!(b["id"], a["id"]);
+    assert_eq!(asker_names(&b), ["Carl Cooper"], "{b}");
+    // The organization's admin sees one request with both askers; its list says the subject.
+    let (s, list) = w.requests(&w.org_admin, "open").await;
+    assert_eq!(s, 200, "{list}");
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(list["items"][0]["subject"], "chat_platform");
+    assert_eq!(
+        asker_names(&list["items"][0]),
+        ["Mia Member", "Carl Cooper"]
+    );
+    // No connector is active on the instance, so the instance admin is told too (only they can add one).
+    assert_eq!(w.notified("asked").await, ["adam@x.io", "root@x.io"]);
+    // My own open asks, every subject, only mine.
+    let mine = w.mine(&w.member).await;
+    assert_eq!(mine.as_array().unwrap().len(), 1);
+    assert_eq!(asker_names(&mine[0]), ["Mia Member"]);
+    // A different connector type is a different request; an app is another subject entirely.
+    let (_, other) = w
+        .ask_subject(
+            &w.member,
+            json!({"subject": "chat_platform", "connector_type": "mattermost"}),
+        )
+        .await;
+    assert_ne!(other["id"], a["id"]);
+    assert_eq!(other["connector_type"], "mattermost");
+    assert_eq!(other["app_name"], "Mattermost");
+}
+
+#[tokio::test]
+async fn a_chat_platform_request_resolves_when_one_is_connected_and_is_409_when_it_already_is() {
+    let w = world().await;
+    let (_, a) = w
+        .ask_subject(&w.member, json!({"subject": "chat_platform"}))
+        .await;
+    // A connector is active on the instance: with one connected for the organization the request resolves.
+    w.connect_chat_platform().await;
+    reevaluate(&w.h.state, Some(w.org)).await;
+    assert_eq!(w.notified("resolved").await, ["mem@x.io"]);
+    let (_, open) = w.requests(&w.org_admin, "open").await;
+    assert_eq!(open["items"], json!([]));
+    let (_, done) = w.requests(&w.org_admin, "resolved").await;
+    assert_eq!(done["items"][0]["id"], a["id"]);
+    assert_eq!(w.mine(&w.member).await, json!([]));
+    // Asking for what exists is a 409, for the named type as for any.
+    for body in [
+        json!({"subject": "chat_platform"}),
+        json!({"subject": "chat_platform", "connector_type": "mattermost"}),
+    ] {
+        let (s, v) = w.ask_subject(&w.member, body).await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (409, Some("already_available")),
+            "{v}"
+        );
+    }
+    // Another type is still missing.
+    let (s, _) = w
+        .ask_subject(
+            &w.member,
+            json!({"subject": "chat_platform", "connector_type": "slack"}),
+        )
+        .await;
+    assert_eq!(s, 200);
+    // The first request (no type named) was asked while no connector was active, so the instance admin was told;
+    // `slack` is not an active connector either, so its request tells the instance admin too.
+    assert_eq!(
+        w.notified("asked").await,
+        ["adam@x.io", "adam@x.io", "root@x.io", "root@x.io"]
+    );
+}
+
+#[tokio::test]
+async fn an_ai_key_request_goes_to_the_organization_admins_and_resolves_when_a_key_exists() {
+    let w = world().await;
+    let (s, a) = w.ask_subject(&w.member, json!({"subject": "ai_key"})).await;
+    assert_eq!(s, 200, "{a}");
+    assert_eq!(
+        (a["subject"].as_str(), a["app_name"].as_str()),
+        (Some("ai_key"), Some("An AI key"))
+    );
+    // Only the organization's owners and admins; never the instance admin who is no member.
+    assert_eq!(w.notified("asked").await, ["adam@x.io"]);
+    w.add_ai_key().await;
+    reevaluate(&w.h.state, None).await;
+    assert_eq!(w.notified("resolved").await, ["mem@x.io"]);
+    let (_, done) = w.requests(&w.org_admin, "resolved").await;
+    assert_eq!(done["items"][0]["subject"], "ai_key");
+    let (s, v) = w.ask_subject(&w.member, json!({"subject": "ai_key"})).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("already_available")),
+        "{v}"
+    );
+}
+
+#[tokio::test]
+async fn a_subject_request_is_withdrawn_by_id_or_declined_and_nothing_leaks() {
+    let w = world().await;
+    let carl = w.second_owner().await;
+    let (_, a) = w.ask_subject(&w.member, json!({"subject": "ai_key"})).await;
+    w.ask_subject(&carl, json!({"subject": "ai_key"})).await;
+    let id = a["id"].as_str().unwrap();
+    let del = format!("{}/{id}", w.req_uri());
+    // Someone who did not ask changes nothing (and is told nothing); the asker's withdrawal leaves Carl's.
+    let stranger = {
+        let u = named(&w.h, "str@x.io", "Sam Stranger", false).await;
+        w.h.member(w.org, u, "member", "active").await;
+        w.h.bind_ws(w.ws, u, "member").await;
+        let (_, t) = w.h.good_session(u).await;
+        cookie(&t)
+    };
+    assert_eq!(w.call(&stranger, Method::DELETE, &del, None).await.0, 204);
+    let (_, list) = w.requests(&w.org_admin, "open").await;
+    assert_eq!(list["items"][0]["askers"].as_array().unwrap().len(), 2);
+    assert_eq!(w.call(&w.member, Method::DELETE, &del, None).await.0, 204);
+    let (_, list) = w.requests(&w.org_admin, "open").await;
+    assert_eq!(asker_names(&list["items"][0]), ["Carl Cooper"]);
+    // An organization admin declines it; Carl is told once.
+    let (s, v) = w
+        .call(
+            &w.org_admin,
+            Method::POST,
+            &format!("/v1/orgs/{}/app-setup-requests/{id}/decline", w.org),
+            None,
+        )
+        .await;
+    assert_eq!((s, v["status"].as_str()), (200, Some("declined")), "{v}");
+    assert_eq!(w.notified("declined").await, ["carl@x.io"]);
+    // A plain member neither lists nor declines the organization's requests.
+    let (s, _) = w.requests(&w.member, "open").await;
+    assert_eq!(s, 403);
+}
+
+#[tokio::test]
+async fn the_subject_route_validates_and_the_app_subject_matches_the_app_route() {
+    let w = world().await;
+    for body in [
+        json!({"subject": "nothing"}),
+        json!({"subject": "app"}),
+        json!({"subject": "chat_platform", "connector_type": "No Way!"}),
+        json!({"subject": "ai_key", "surprise": 1}),
+    ] {
+        let (s, v) = w.ask_subject(&w.ws_owner, body.clone()).await;
+        assert_eq!(s, 400, "{body}: {v}");
+    }
+    // `subject: app` is the app route: same request, same owner-only rule.
+    let (_, via_app_route) = w.ask(&w.ws_owner, "lin").await;
+    let (s, via_subject) = w
+        .ask_subject(&w.ws_owner, json!({"subject": "app", "app_id": "lin"}))
+        .await;
+    assert_eq!(s, 200, "{via_subject}");
+    assert_eq!(via_subject["id"], via_app_route["id"]);
+    assert_eq!(via_subject["subject"], "app");
+    let (s, _) = w
+        .ask_subject(&w.member, json!({"subject": "app", "app_id": "lin"}))
+        .await;
+    assert_eq!(s, 403);
+    // The catalogue's `requested` still counts only app requests.
+    w.ask_subject(&w.member, json!({"subject": "ai_key"})).await;
+    let (_, cat) = w.catalogue(&w.ws_owner).await;
+    assert_eq!(
+        item(&cat, "lin")["readiness"]["requested"],
+        json!({"by_me": true, "count": 1})
+    );
+}
+
+#[tokio::test]
+async fn the_twenty_first_subject_ask_in_an_hour_is_429() {
+    let w = world_with(|c| c.ratelimit.api.multiplier = 1.0).await;
+    for i in 0..20 {
+        let (s, v) = w.ask_subject(&w.member, json!({"subject": "ai_key"})).await;
+        assert_eq!(s, 200, "ask {i}: {v}");
+    }
+    let (s, v) = w.ask_subject(&w.member, json!({"subject": "ai_key"})).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (429, Some("rate_limited")),
+        "{v}"
+    );
+}
+
 #[tokio::test]
 async fn the_twenty_first_ask_in_an_hour_is_429() {
     let w = world_with(|c| c.ratelimit.api.multiplier = 1.0).await;

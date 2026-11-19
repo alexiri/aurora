@@ -18,7 +18,13 @@ pub struct Asker {
 pub struct AppSetupRequest {
     pub id: Uuid,
     pub org_id: Uuid,
+    /// (C-1047) `app` | `chat_platform` | `ai_key`.
+    pub subject: String,
+    /// The app id for `app`; `""` for the other subjects.
     pub app_id: String,
+    /// `chat_platform` only: the connector type asked for.
+    pub connector_type: Option<String>,
+    /// The app's name, or the subject's label ("A chat platform", a connector's name, "An AI key").
     pub app_name: String,
     /// `open` | `resolved` | `declined` | `withdrawn`.
     pub status: String,
@@ -48,4 +54,16 @@ pub struct AppSetupRequestList {
 pub struct Requested {
     pub by_me: bool,
     pub count: i64,
+}
+
+/// `POST /workspaces/{ws}/requests` (C-1047).
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewRequest {
+    /// `app` | `chat_platform` | `ai_key`.
+    pub subject: String,
+    /// Subject `app`: the catalogue app id (required).
+    pub app_id: Option<String>,
+    /// Subject `chat_platform`: the connector type id (optional).
+    pub connector_type: Option<String>,
 }
