@@ -138,6 +138,22 @@ section), then Playwright and `docs/14 §12`.
   `webhook.spec` 16/16 (both themes, 1280 and 390 px); `stage4-axe` and `ia-navigation` passed in the 358-test run (354
   passed, the 4 failures were the webhook org/admin test before I fixed my mock; rerun green).
 
+## Follow-up after P5-WEBHOOK-2 and P5-TOOLASK merged (lane p5-apps, 2026-11-19)
+- `web/src/lib/api/webhook.ts` now takes its types from the generated `schema.d.ts` (`WebhookConfig`, `WebhookView`,
+  `WebhookPreset`, `PreviewResponse`, `TestResponse`, `ConnectResponse`, `PutWebhookRequest`, `OrgSettingsPatch`). The wire
+  leaves `slots`, `headers`, `description`, `signing`, `rate`, `preset` optional, so the module exports the editor's
+  `WebhookConfig` with those defaults filled (`normalizeConfig`, applied to the view, presets and the Put cache) and splits
+  the test answer into a sent result and a preview; the calls stay on `tracedFetch`. Components were untouched by the swap.
+- Confirmed against -2: org keys `outgoing_webhooks_enabled` / `_per_minute_max` / `_per_day_max` on `PATCH /v1/orgs/{org}`
+  (`OrgSettings` returns `outgoing_webhooks_enabled` always, so the org switch now renders; the `as never` patch cast is
+  gone) and the admin section slug `outgoing_webhooks` (`aurora-config` settings registry), so both gates switch on.
+- `webhook-stack.spec.ts` stays skipped (all four cases need the real stack and receiver; local dev-stack e2e is not run);
+  `webhook.spec.ts` is the mocked coverage.
+- P5-TOOLASK: the card line says an agent's send waits for approval unless allowed in the access settings; Send test's
+  confirmation says a test goes out now while an agent's send waits.
+- Gates: web typecheck ok; eslint on touched files 0; vitest webhook-logic/dialogs/gating 60/60; Playwright `webhook.spec`
+  16/16 + 4 skipped (port 4181); guards ok.
+
 ## Suggested agent/model and reason
 `nextjs-developer` (Sonnet). An interactive editor with a tree picker, live preview and careful secret
 handling across several dialog steps.

@@ -122,7 +122,7 @@ function TestForm({ view, connectionId, name }: { view: WebhookView; connectionI
         open={confirm}
         onOpenChange={setConfirm}
         title={`Send a test to ${name}?`}
-        description="This really calls the webhook. The receiver will act on it."
+        description="This really calls the webhook. The receiver will act on it. A test sent here goes out now; an agent's send waits for your approval."
         confirmLabel="Send"
         busy={test.isPending}
         onConfirm={() => run(false)}
