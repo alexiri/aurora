@@ -11,15 +11,12 @@ use aurora_api::domains::skill_libraries::gateway::{
     FetchOk, FetchRequest, GatewayError, LibraryGateway,
 };
 use aurora_api::domains::skill_libraries::refresh;
-use aurora_crypto::{SigningKey, generate_signing_key};
 use aurora_db::repo::skill_libraries as repo;
-use aurora_registry::builder::PackageBuilder;
 use aurora_registry::library::{self, Params};
 use aurora_registry::manifest::Library;
 use aurora_testkit::git_host::{Change, FakeGitHost};
 use axum::body::Body;
 use http::{Method, Request};
-use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -193,51 +190,10 @@ struct W {
 }
 
 async fn upload(h: &Harness, admin: &str, yaml: &str) {
-    let key: SigningKey = generate_signing_key().unwrap();
-    let hd = [("cookie", admin), ("origin", ORIGIN)];
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            "/v1/admin/trusted-keys",
-            &hd,
-            Some(json!({"publisher": "acme", "name": "k", "public_key": PackageBuilder::key_id(&key)})),
-        )
+    crate::plugins_lifecycle::Admin::trust(h, admin.to_owned())
+        .await
+        .install(yaml)
         .await;
-    assert_eq!(s, 201, "{v}");
-    let mut b = PackageBuilder::new(yaml);
-    b.sign(&key, &PackageBuilder::key_id(&key));
-    let boundary = "XB";
-    let mut body = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p\"\r\nContent-Type: application/gzip\r\n\r\n"
-    )
-    .into_bytes();
-    body.extend_from_slice(&b.build().unwrap());
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/admin/plugins")
-        .header("cookie", admin)
-        .header("origin", ORIGIN)
-        .header(
-            "content-type",
-            format!("multipart/form-data; boundary={boundary}"),
-        )
-        .body(Body::from(body))
-        .unwrap();
-    let res = h.app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), 201);
-    let v: Value =
-        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(v["status"], "pending_approval", "{}", v["violations"]);
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            &format!("/v1/admin/plugins/{}/approve", v["id"].as_str().unwrap()),
-            &hd,
-            Some(json!({})),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
 }
 
 fn blocks() -> HashMap<String, Library> {
@@ -351,11 +307,7 @@ fn put(path: &str, content: Vec<u8>) -> Change {
 
 impl W {
     async fn call(&self, who: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", who), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call(who, m, uri, body).await
     }
 
     /// The default repository with two valid skills.

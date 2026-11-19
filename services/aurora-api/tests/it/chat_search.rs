@@ -46,9 +46,7 @@ async fn fx() -> Fx {
     let ws = h.workspace(org).await;
     let mut agents = Vec::new();
     for (handle, name) in [("bot", "Bot"), ("other", "Other")] {
-        let id = Uuid::now_v7();
-        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,$4,$5,'byo','medium','')")
-            .bind(id).bind(org).bind(ws).bind(handle).bind(name).execute(h.pool()).await.unwrap();
+        let id = h.byo_agent(org, ws, handle, name).await;
         agents.push(id);
     }
     let a = who(&h, org, ws, "a@x.io", "approver").await;

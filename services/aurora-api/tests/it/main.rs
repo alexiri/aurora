@@ -99,6 +99,7 @@ mod policy;
 mod preview_auth;
 mod previews;
 mod runner_plane;
+mod runner_rig;
 mod sandbox_env;
 mod schedules;
 mod scim_auth;

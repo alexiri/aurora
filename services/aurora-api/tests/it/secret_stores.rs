@@ -38,10 +38,7 @@ async fn admin(h: &Harness, email: &str) -> Admin {
 }
 
 async fn call(h: &Harness, a: &Admin, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-    let (s, _, v) = h
-        .send(m, uri, &[("cookie", &a.cookie), ("origin", ORIGIN)], body)
-        .await;
-    (s.as_u16(), v)
+    h.call(&a.cookie, m, uri, body).await
 }
 
 async fn status(h: &Harness, a: &Admin) -> Value {

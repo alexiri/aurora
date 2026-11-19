@@ -355,6 +355,32 @@ impl Harness {
         (parts.status, parts.headers, v)
     }
 
+    /// A browser-style request: the `aurora_session=…` cookie value `cookie` plus the CSRF origin
+    /// header; returns the status as a number and the JSON body (replaces the per-file `call` helpers).
+    pub async fn call(
+        &self,
+        cookie: &str,
+        m: Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        let (s, _, v) = self
+            .send(m, uri, &[("cookie", cookie), ("origin", ORIGIN)], body)
+            .await;
+        (s.as_u16(), v)
+    }
+
+    /// [`Self::call`] with a raw session token (as `good_session` returns it).
+    pub async fn call_tok(
+        &self,
+        tok: &str,
+        m: Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        self.call(&crate::common::cookie(tok), m, uri, body).await
+    }
+
     pub async fn get(&self, uri: &str, headers: &[(&str, &str)]) -> (StatusCode, Value) {
         let (s, _, v) = self.send(Method::GET, uri, headers, None).await;
         (s, v)
@@ -423,6 +449,24 @@ impl Harness {
             .unwrap();
         id
     }
+    /// A hosted agent on the fake harness named like its handle (replaces the per-file `INSERT INTO
+    /// agents … 'hosted','fake'` helpers).
+    pub async fn hosted_agent(&self, org: Uuid, ws: Uuid, handle: &str) -> Uuid {
+        let id = Uuid::now_v7();
+        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,$4,$4,'hosted','fake')")
+            .bind(id).bind(org).bind(ws).bind(handle).execute(self.pool()).await.unwrap();
+        id
+    }
+
+    /// A bring-your-own agent with the given display `name` (replaces the per-file `INSERT INTO agents
+    /// … 'byo','medium'` helpers).
+    pub async fn byo_agent(&self, org: Uuid, ws: Uuid, handle: &str, name: &str) -> Uuid {
+        let id = Uuid::now_v7();
+        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,$4,$5,'byo','medium','')")
+            .bind(id).bind(org).bind(ws).bind(handle).bind(name).execute(self.pool()).await.unwrap();
+        id
+    }
+
     pub async fn bind_ws(&self, ws: Uuid, user: Uuid, role: &str) {
         sqlx::query("INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,$3)")
             .bind(ws)

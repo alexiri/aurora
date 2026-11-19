@@ -51,12 +51,7 @@ async fn world() -> W {
 
 impl W {
     async fn call(&self, m: Method, uri: &str, tok: &str, body: Option<Value>) -> (u16, Value) {
-        let c = cookie(tok);
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", c.as_str()), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call_tok(tok, m, uri, body).await
     }
     async fn bearer(&self, m: Method, uri: &str, tok: &str, body: Option<Value>) -> (u16, Value) {
         let b = bearer(tok);

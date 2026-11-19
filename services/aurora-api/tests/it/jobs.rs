@@ -249,9 +249,7 @@ async fn retention_pass_removes_only_what_each_window_allows() {
     let h = Harness::new().await;
     let org = h.org().await;
     let ws = h.workspace(org).await;
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let agent = h.byo_agent(org, ws, "bot", "Bot").await;
     let user = h.user("u@x.io", false).await;
     let old = "now() - interval '8 days'"; // past the 7-day windows
     let new = "now() - interval '1 day'";

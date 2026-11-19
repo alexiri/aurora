@@ -32,11 +32,7 @@ async fn env(mode: SignupMode) -> Env {
 
 impl Env {
     async fn call(&self, who: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", who), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call(who, m, uri, body).await
     }
 
     async fn put(&self, body: Value) -> (u16, Value) {

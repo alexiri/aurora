@@ -14,16 +14,7 @@ fn today() -> NaiveDate {
 }
 
 async fn call(h: &Harness, tok: &str, uri: &str) -> (u16, Value) {
-    let c = cookie(tok);
-    let (s, _, v) = h
-        .send(
-            Method::GET,
-            uri,
-            &[("cookie", &c), ("origin", ORIGIN)],
-            None,
-        )
-        .await;
-    (s.as_u16(), v)
+    h.call_tok(tok, Method::GET, uri, None).await
 }
 
 async fn agent(h: &Harness, org: Uuid, ws: Uuid, name: &str) -> Uuid {

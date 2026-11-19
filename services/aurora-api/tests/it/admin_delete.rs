@@ -48,12 +48,7 @@ impl E {
     }
 
     async fn call(&self, tok: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let c = cookie(tok);
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", &c), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call_tok(tok, m, uri, body).await
     }
 
     async fn ia(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {

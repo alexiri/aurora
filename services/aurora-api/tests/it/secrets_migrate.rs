@@ -105,9 +105,7 @@ async fn world(vault: SecretVault) -> World {
     let vault = Arc::new(vault);
     let org = h.org().await;
     let ws = h.workspace(org).await;
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let agent = h.byo_agent(org, ws, "bot", "Bot").await;
     sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('chat', $1, 'chat', '{}', 'active')")
         .bind(vec![7u8; 32]).execute(h.pool()).await.unwrap();
     let integration = Uuid::now_v7();

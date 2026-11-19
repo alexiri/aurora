@@ -80,16 +80,7 @@ async fn fx() -> Fx {
 
 impl Fx {
     async fn call(&self, w: &Who, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(
-                m,
-                uri,
-                &[("cookie", w.cookie.as_str()), ("origin", ORIGIN)],
-                body,
-            )
-            .await;
-        (s.as_u16(), v)
+        self.h.call(w.cookie.as_str(), m, uri, body).await
     }
 
     async fn as_key(&self, key: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
@@ -834,9 +825,7 @@ async fn impact_view_counts_users_that_would_lose_access() {
     assert_eq!(w["total"], 1);
     assert_eq!(w["users_losing_access"][0]["id"], f.plain.id.to_string());
     // a creator-anchored schedule of the group-only user would be disabled
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(f.org).bind(f.ws).execute(f.h.pool()).await.unwrap();
+    let agent = f.h.byo_agent(f.org, f.ws, "bot", "Bot").await;
     let (s, v) = f
         .call(
             &f.owner,
@@ -948,9 +937,7 @@ async fn offboarding_views_carry_via_groups() {
     let g = f.create("infra", json!({})).await;
     f.bind(g, "member").await;
     f.add(g, f.plain.id).await;
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(f.org).bind(f.ws).execute(f.h.pool()).await.unwrap();
+    let agent = f.h.byo_agent(f.org, f.ws, "bot", "Bot").await;
     sqlx::query("INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, enabled, anchor, creator_user_id, next_fire_at) VALUES (gen_random_uuid(), $1, 's', 'p', '0 * * * *', 'UTC', true, 'creator', $2, now())")
         .bind(agent).bind(f.plain.id).execute(f.h.pool()).await.unwrap();
     let (s, v) = f
@@ -1180,9 +1167,7 @@ async fn drain(body: &mut Body, wait: Duration) -> Option<String> {
 #[tokio::test]
 async fn access_notification_closes_the_removed_users_stream_only() {
     let f = fx().await;
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(f.org).bind(f.ws).execute(f.h.pool()).await.unwrap();
+    let agent = f.h.byo_agent(f.org, f.ws, "bot", "Bot").await;
     // a group conversation of the workspace (visible to every user)
     let conv = Uuid::now_v7();
     sqlx::query("INSERT INTO conversations (id, workspace_id, agent_id, kind, external_ref, last_activity_at) VALUES ($1,$2,$3,'group','x', now())")

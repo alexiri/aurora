@@ -29,9 +29,7 @@ async fn world() -> W {
     h.member(org, x, "member", "active").await;
     let ws = h.workspace(org).await;
     h.bind_ws(ws, m, "member").await;
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let agent = h.byo_agent(org, ws, "bot", "Bot").await;
     let (_, owner) = h.good_session(o).await;
     let (_, member) = h.good_session(m).await;
     W {
@@ -49,12 +47,7 @@ async fn world() -> W {
 
 impl W {
     async fn call(&self, m: Method, uri: &str, tok: &str, body: Option<Value>) -> (u16, Value) {
-        let c = cookie(tok);
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", c.as_str()), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call_tok(tok, m, uri, body).await
     }
     fn wsu(&self, tail: &str) -> String {
         format!("/v1/workspaces/{}/policy{tail}", self.ws)

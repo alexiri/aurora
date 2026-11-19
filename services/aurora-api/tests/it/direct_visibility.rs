@@ -66,9 +66,7 @@ async fn fx() -> Fx {
     let h = Harness::new().await;
     let org = h.org().await;
     let ws = h.workspace(org).await;
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let agent = h.byo_agent(org, ws, "bot", "Bot").await;
     let gw = Uuid::now_v7();
     sqlx::query("INSERT INTO gateway_instances (id, hostname, version, started_at, last_seen_at) VALUES ($1,'h','0',now(),now())")
         .bind(gw).execute(h.pool()).await.unwrap();

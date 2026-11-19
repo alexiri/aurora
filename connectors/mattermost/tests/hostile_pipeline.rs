@@ -214,6 +214,80 @@ fn the_reviewed_inputs_leave_no_image_and_no_bad_link() {
     }
 }
 
+/// FIX-182: an `<code>` pair whose text crosses a line break became one code span with a block
+/// starter (`> `) inside it; the server reads the block first, the span never closes and the URL in
+/// it is a bare URL the server fetches (D-270). A span never holds a line break now.
+#[test]
+fn a_code_pair_across_a_block_boundary_leaves_no_bare_url() {
+    let url = "https://e.example/?d=SECRET";
+    // The CI Watcher's minimal case (CI run 44535701452, proptest seed `cc 02af42e0…`).
+    let ci = format!(
+        "<div>\n![x]({url})\n</div> <code> see {url} now > [!NOTE]\n> n <code>@channel</code> <kbd>@all</kbd> <pre>@here</pre>"
+    );
+    // The CI Watcher's second case: a list-item boundary instead of a blockquote, and the
+    // mentions broken up by empty tags must stay broken.
+    let list = "<div>\n![x](https://e.example/?d=S)\n</div> <code> - https://e.example/1\n- <https://e.example/2> @chan<span></span>nel @al<i></i>l @he<code></code>re @d<kbd></kbd>evs".to_owned();
+    for p in posts(&list) {
+        assert!(
+            violation(&p).is_none(),
+            "{list:?} -> {p:?}: {:?}",
+            violation(&p)
+        );
+        assert!(live_pings(&p, &["devs"]).is_empty(), "{list:?} -> {p:?}");
+    }
+    let mut cases = vec![ci, list];
+    for starter in [
+        "> q",
+        "# h",
+        "## h",
+        "- i",
+        "* i",
+        "+ i",
+        "1. i",
+        "1) i",
+        "| a |",
+        "```",
+        "~~~",
+        "---",
+        "===",
+        "    indented",
+        "    - nested",
+        "[r]: https://e.example/",
+        "<div>",
+        "<!-- c -->",
+        "$$",
+        ":::",
+        "[^1]: n",
+        "* * *",
+    ] {
+        for open in ["<code>", "<kbd>", "<pre>"] {
+            let close = open.replace('<', "</");
+            cases.push(format!("a {open} see {url} now\n{starter} x {close} b"));
+            cases.push(format!("a {open} see {url} now\n\n{starter} x {close} b"));
+            cases.push(format!("{open}{url}\r\n{starter}\r\n{close}"));
+        }
+    }
+    for src in &cases {
+        for p in posts(src) {
+            assert!(
+                violation(&p).is_none(),
+                "{src:?} -> {p:?}: {:?}",
+                violation(&p)
+            );
+            assert!(
+                !aurora_connector_mattermost::convert::has_bare_url(&p),
+                "{src:?} -> {p:?}"
+            );
+        }
+    }
+    // An ordinary closed span stays a span, on one line.
+    assert!(
+        posts(&format!("a <code>{url}</code> b"))
+            .iter()
+            .all(|p| p.contains('`'))
+    );
+}
+
 #[test]
 fn here_typed_in_code_never_goes_live_through_the_chunker() {
     let big: String = (0..40).map(|i| format!("    line {i} @here\n")).collect();

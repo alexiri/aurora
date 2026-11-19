@@ -182,16 +182,7 @@ impl Rig {
     }
 
     async fn user_call(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(
-                m,
-                uri,
-                &[("cookie", &self.cookie), ("origin", ORIGIN)],
-                body,
-            )
-            .await;
-        (s.as_u16(), v)
+        self.h.call(&self.cookie, m, uri, body).await
     }
 
     /// Multipart upload as `cookie`.
@@ -227,9 +218,7 @@ impl Rig {
     }
 
     async fn agent(&self, handle: &str) -> Uuid {
-        let id = Uuid::now_v7();
-        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,$4,$4,'hosted','fake')")
-            .bind(id).bind(self.org).bind(self.ws).bind(handle).execute(self.h.pool()).await.unwrap();
+        let id = self.h.hosted_agent(self.org, self.ws, handle).await;
         let sec = Uuid::now_v7();
         sqlx::query("INSERT INTO secrets (id, org_id, name, kind, llm_provider, llm_auth_mode, llm_endpoint_id, host_pattern, injection, value_source, value_ref) VALUES ($1,$2,$3,'llm','anthropic','api_key','anthropic','api.anthropic.com','{}','managed','x')")
             .bind(sec).bind(self.org).bind(format!("k-{handle}")).execute(self.h.pool()).await.unwrap();

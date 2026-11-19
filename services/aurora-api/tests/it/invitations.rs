@@ -10,11 +10,7 @@ fn code(v: &Value) -> &str {
 }
 
 async fn call(h: &Harness, tok: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-    let c = cookie(tok);
-    let (s, _, v) = h
-        .send(m, uri, &[("cookie", &c), ("origin", ORIGIN)], body)
-        .await;
-    (s.as_u16(), v)
+    h.call_tok(tok, m, uri, body).await
 }
 
 async fn verify(h: &Harness, u: Uuid) {

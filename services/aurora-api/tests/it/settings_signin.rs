@@ -73,12 +73,7 @@ async fn world() -> W {
 
 impl W {
     async fn call(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let c = cookie(&self.admin);
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", c.as_str()), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call_tok(&self.admin, m, uri, body).await
     }
     async fn section(&self, id: &str) -> Value {
         let (s, v) = self
