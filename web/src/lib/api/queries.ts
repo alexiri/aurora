@@ -110,7 +110,11 @@ export async function logout(): Promise<void> {
 export interface MeInfo {
   user: { id?: string; display_name: string; email: string; is_instance_admin?: boolean };
   /** The body's memberships, with each workspace the person can use and whether it is their personal one (C-531). */
-  memberships?: { org: { slug: string }; workspaces: { slug: string; personal?: boolean }[] }[];
+  memberships?: {
+    org: { id?: string; slug: string; name?: string };
+    role?: string;
+    workspaces: { id?: string; slug: string; name?: string; my_role?: string; personal?: boolean }[];
+  }[];
 }
 
 /**

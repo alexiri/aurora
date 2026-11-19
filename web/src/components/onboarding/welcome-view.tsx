@@ -14,6 +14,7 @@ import { useAgents, useOrg, useResolve, useSession, useWorkspace } from "@/lib/a
 import type { GuideStepId } from "@/lib/onboarding/guide";
 import { wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
+import { workspaceDisplayName } from "@/lib/workspace-name";
 
 import { GettingStarted, OptionalNext } from "./getting-started";
 import { startTour } from "./tour-events";
@@ -85,7 +86,8 @@ export function WelcomeView() {
       <div className="grid gap-3 md:grid-cols-3">
         <InfoCard id="welcome-where" title="Where you are">
           <p>
-            This is <strong className="text-ink">{workspace.name}</strong>, in <strong className="text-ink">{orgName}</strong>.
+            This is <strong className="text-ink">{personal ? "your workspace" : workspaceDisplayName(workspace, session.data?.user)}</strong> in{" "}
+            <strong className="text-ink">{orgName}</strong>.
             {agent ? ` ${agent.name} works here, on its own computer.` : " Agents work here, each on its own computer."}
           </p>
         </InfoCard>
