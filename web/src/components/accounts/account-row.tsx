@@ -179,7 +179,8 @@ export function AccountRow({
               )}
             </h3>
             {/* (P5-POLISH-11, F2) A kind is its icon: apps and AI keys carry a tile, no chip; only a website has no tile. */}
-            {account.kind === "website" && !agent ? <Badge>{kindLabel(account.kind)}</Badge> : null}
+            {/* (P5-POLISH-9, E2) An organization's account says what it is by its name, not a kind chip. */}
+            {account.kind === "website" && !agent && scope.kind !== "organization" ? <Badge>{kindLabel(account.kind)}</Badge> : null}
           </div>
           {/* (D1) The sharing is one line, not a chip: "Shared by your organization · managed by alice". */}
           {shared && !agent ? (

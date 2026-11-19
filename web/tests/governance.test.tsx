@@ -128,11 +128,17 @@ describe("OrgByo (P5-IA-3, C-967)", () => {
 
 describe("OrgAiModels (P5-IA-3, C-966)", () => {
   it("members see read-only controls and locked labels, and no Save", async () => {
-    mockFetch(routes());
+    // The organization's accounts call is 403 for a member: the key comes from the workspace's list (scope "organization").
+    mockFetch(routes({
+      "GET /v1/orgs/o1/accounts": () => json(403, { error: { code: "forbidden", message: "no" } }),
+      "GET /v1/workspaces/w1/accounts": () =>
+        json(200, { items: [{ kind: "ai_key", scope: "organization", name: "Users AI gateway", ref: { type: "secret", id: "k1" }, agents: [], levels: [] }], next_cursor: null }),
+    }));
     wrap(<OrgAiModels org={{ ...ORG, my_role: "member" }} />);
     // (P5-POLISH-9, D-390) A member reads a summary, never a disabled form.
     expect(await screen.findByTestId("member-ai-models")).toBeTruthy();
-    expect(screen.getAllByText("Set by Administration").length).toBeGreaterThan(0);
+    expect(await screen.findByText("Users AI gateway")).toBeTruthy();
+    expect(screen.queryByText("The organization has no key of its own.")).toBeNull();
     expect(screen.getByTestId("who-changes")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(screen.queryByLabelText("Allowed models")).toBeNull();

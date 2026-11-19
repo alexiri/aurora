@@ -34,6 +34,10 @@ describe("apps table helpers", () => {
     expect(rows[0]).toMatchObject({ name: "GitHub", hosts: "Cloud · Data Center" });
     expect(rows[0]!.gap?.appId).toBe("ghes");
   });
+  it("lists the products by name, not in package-id order", () => {
+    const rows = buildRows([app("gmail", "Gmail"), app("ics", "Calendar link (ICS)"), app("drive", "Drive")], new Map());
+    expect(rows.map((r) => r.name)).toEqual(["Calendar link (ICS)", "Drive", "Gmail"]);
+  });
   it("names the providers that serve several apps", () => {
     const rows = buildRows([app("c", "Google Calendar"), app("d", "Google Drive"), app("g", "Gmail"), app("n", "Notion")], new Map([["c", gap("c", "google")], ["d", gap("d", "google")], ["g", gap("g", "google")], ["n", gap("n", "notion")]]));
     expect(providerSentence(rows)).toBe("One Google sign-in covers Calendar, Drive and Gmail.");

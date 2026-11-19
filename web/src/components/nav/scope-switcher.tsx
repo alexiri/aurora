@@ -130,6 +130,8 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
   }, [me.data, orgSlug, resolved.data, currentWorkspaces.data]);
 
   const label = (w: WsItem) => workspaceDisplayName(w, viewer);
+  // (P5-POLISH-8, D4) The avatar of a personal workspace is its owner's initial ("B"), not the "Y" of "Your workspace".
+  const chipName = (w: WsItem) => (w.personal_of ? w.personal_of.name : w.personal === true ? (viewer?.display_name ?? label(w)) : label(w));
   const current = orgs.find((o) => o.slug === orgSlug);
   const currentWs = current?.workspaces.find((w) => w.slug === wsSlug);
   useEffect(() => {
@@ -204,7 +206,7 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
           onClick={close}
           className={rowClass}
         >
-          <Chip name={label(w)} tintKey={w.slug} />
+          <Chip name={chipName(w)} tintKey={w.slug} />
           <span className="min-w-0 flex-1">
             <span className={cn("block truncate", isCurrent && "font-semibold")}>{label(w)}</span>
             <span className="block truncate text-xs text-muted">{withOrg ? `${o.name} · ${roleLabel(w.role)}` : roleLabel(w.role)}</span>
@@ -324,7 +326,7 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
   const second = onWorkspace ? (current?.name ?? resolved.data?.org.name ?? orgSlug) : orgSlug ? "Organization" : undefined;
   const face = (
     <>
-      {first && orgSlug ? <Chip name={first} tintKey={onWorkspace ? wsSlug : orgSlug} square={!onWorkspace} /> : null}
+      {first && orgSlug ? <Chip name={onWorkspace && currentWs ? chipName(currentWs) : first} tintKey={onWorkspace ? wsSlug : orgSlug} square={!onWorkspace} /> : null}
       {first && orgSlug ? " " : null}
       <span className="min-w-0 flex-1 text-left">
         <span className="block truncate text-sm font-semibold text-ink">{first}</span>
@@ -356,14 +358,15 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
           align="start"
           sideOffset={6}
           aria-label="Switch workspace or organization"
-          className="w-72 p-1.5"
+          // (P5-POLISH-8, D4) Sized to the room there is, not a fixed 24 rem; the search box stays in view while the rows scroll.
+          className="max-h-[var(--radix-popover-content-available-height)] w-72 p-0"
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             search.current?.focus();
           }}
         >
-          <div ref={panel} onKeyDown={onKeyDown}>
-            <label className="relative block">
+          <div ref={panel} onKeyDown={onKeyDown} className="px-1.5 pb-1.5">
+            <label className="sticky top-0 z-10 block bg-surface pb-1 pt-1.5">
               <span className="sr-only">Find a workspace or organization</span>
               <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted" />
               <input
