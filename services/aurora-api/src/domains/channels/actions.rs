@@ -243,11 +243,11 @@ impl Click<'_> {
         }
     }
 
-    /// `can_use` / `can_own` of the clicker on a workspace, which must belong to the
-    /// integration's organization.
+    /// Membership (`c.workspace`) / `can_own` of the clicker on a workspace, which must belong to
+    /// the integration's organization.
     async fn authorize(&self, c: &Caller, ws: Uuid, own: bool) -> Result<(), Stop> {
         let auth = c.workspace(self.state, ws).await?;
-        if auth.org_id != self.integ.org_id || !auth.can_use() || (own && !auth.can_own()) {
+        if auth.org_id != self.integ.org_id || (own && !auth.can_own()) {
             return refuse("forbidden", "You do not have access to do that.");
         }
         Ok(())

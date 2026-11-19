@@ -13,7 +13,7 @@ export function AttentionBadge({ enabled = true }: { enabled?: boolean }) {
   const n = enabled && !q.isError ? (q.data?.items.length ?? 0) : 0;
   if (n === 0) return null;
   return (
-    <Badge tone="pending" data-testid="admin-attention-badge" className="tabular-nums">
+    <Badge tone="accent" data-testid="admin-attention-badge" className="tabular-nums">
       {n}
       <span className="sr-only"> need your attention</span>
     </Badge>

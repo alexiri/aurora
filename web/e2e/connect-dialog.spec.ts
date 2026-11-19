@@ -76,10 +76,19 @@ test.describe("× stays reachable at 390 px", () => {
     await dialog.getByRole("button", { name: "Give Daneel access" }).click();
     await dialog.getByRole("button", { name: "Next" }).click();
     await dialog.getByText(/^Advanced: other ways to connect/).click();
-    const scrollable = await dialog.evaluate((el) => el.scrollHeight - el.clientHeight);
+    // (P5-POLISH-1, D-393) The dialog never scrolls as a whole: its body row is the only scrolling element, between the
+    // fixed header (with ×) and footer.
+    const scrollable = await dialog.evaluate((el) => {
+      const b = [...el.children].find((c) => getComputedStyle(c).overflowY === "auto");
+      return b ? b.scrollHeight - b.clientHeight : -1;
+    });
     expect(scrollable, "the dialog body should scroll in this viewport").toBeGreaterThan(0);
-    await dialog.evaluate((el) => { el.scrollTop = el.scrollHeight; });
-    expect(await dialog.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    const scrolled = await dialog.evaluate((el) => {
+      const b = [...el.children].find((c) => getComputedStyle(c).overflowY === "auto")!;
+      b.scrollTop = b.scrollHeight;
+      return b.scrollTop;
+    });
+    expect(scrolled).toBeGreaterThan(0);
     const close = dialog.getByRole("button", { name: "Close" });
     await expect(close).toBeInViewport();
     const box = (await close.boundingBox())!;

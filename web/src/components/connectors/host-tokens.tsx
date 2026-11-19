@@ -78,7 +78,7 @@ export function HostTokens() {
               <Td>{t.name ?? "Shared bootstrap token"}</Td>
               <Td className="font-mono text-xs">{t.type_ids ? t.type_ids.join(", ") : "any (not bound)"}</Td>
               <Td>
-                <Badge tone={t.state === "active" ? "accent" : t.state === "refused" ? "pending" : "danger"}>{t.state}</Badge>
+                <Badge tone={t.state === "active" ? "accent" : t.state === "refused" ? "neutral" : "danger"}>{t.state}</Badge>
               </Td>
               <Td className="whitespace-nowrap text-ink-2">{fmtDate(t.last_used_at)}</Td>
               <Td>

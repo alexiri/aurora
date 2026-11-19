@@ -46,17 +46,10 @@ pub fn group_not_found() -> ApiError {
     ApiError::not_found("Group not found.")
 }
 
-/// Trimmed name, 1-80 chars, no control characters.
+/// Trimmed name, 1-80 chars, no control or invisible formatting characters
+/// (`aurora_core::names`, FIX-181 F6).
 pub fn validate_name(path: &str, s: &str) -> Result<String, ApiError> {
-    let t = s.trim();
-    let n = t.chars().count();
-    if n == 0 || n > GROUP_NAME_MAX {
-        return Err(bad(path, "must be 1 to 80 characters"));
-    }
-    if t.chars().any(char::is_control) {
-        return Err(bad(path, "must not contain control characters"));
-    }
-    Ok(t.to_owned())
+    aurora_core::names::clean(s, GROUP_NAME_MAX).map_err(|e| bad(path, &e.to_string()))
 }
 
 fn validate_description(s: &str) -> Result<Option<String>, ApiError> {

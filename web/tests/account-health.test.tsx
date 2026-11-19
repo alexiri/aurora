@@ -14,7 +14,9 @@ import { AccountsBanner, AgentAttentionChip } from "@/components/accounts/attent
 import { NeedsYou } from "@/components/overview/needs-you";
 import { attentionCount, healthClause, healthLine, needsAttention, savedButText, testOutcomeText } from "@/lib/account-health";
 
-type Health = { state: string; detail?: string | null; checked_at?: string | null; last_used_at?: string | null };
+type Health = { state: string; detail?: string | null; last_error?: string | null; last_used_at?: string | null };
+// (C-1033) A failed agent call is `failing` with its reason; a call that worked is `working`; nothing yet is `not_used`.
+const failed = (detail?: string | null, last_error = "rejected"): Health => ({ state: "failing", last_error, detail });
 const acct = (health: Health, o: Record<string, unknown> = {}) => ({
   ref: { type: "connection", id: "c1" },
   kind: "app",
@@ -22,7 +24,7 @@ const acct = (health: Health, o: Record<string, unknown> = {}) => ({
   app: { app_id: "github", name: "GitHub", custom_only: false },
   scope: "workspace",
   levels: [],
-  health: { detail: null, checked_at: null, last_used_at: null, ...health },
+  health: { detail: null, last_used_at: null, ...health },
   agents: [],
   can: { give_access: true, change_access: true, manage: true },
   given: true,
@@ -34,35 +36,36 @@ const asAccount = (a: any) => a;
 describe("the health line (14 §7)", () => {
   it("says each state in the one wording, with its fix", () => {
     const line = (h: Health) => healthLine(asAccount(acct(h)));
-    expect(line({ state: "ok" }).text).toBe("Works");
-    expect(healthLine(asAccount(acct({ state: "ok" })), "2 hours ago").text).toBe("Works · used 2 hours ago");
-    expect(line({ state: "rejected", detail: "token" })).toMatchObject({ text: "GitHub no longer accepts this token", fix: { kind: "replace", label: "Replace token" } });
-    expect(line({ state: "rejected", detail: "password" }).fix?.label).toBe("Replace password");
-    expect(line({ state: "rejected", detail: "key" }).fix?.label).toBe("Replace key");
+    expect(line({ state: "working" }).text).toBe("Works");
+    expect(healthLine(asAccount(acct({ state: "working" })), "2 hours ago").text).toBe("Works · used 2 hours ago");
+    expect(line(failed("token"))).toMatchObject({ text: "GitHub no longer accepts this token", fix: { kind: "replace", label: "Replace token" } });
+    expect(line(failed("password")).fix?.label).toBe("Replace password");
+    expect(line(failed("key")).fix?.label).toBe("Replace key");
     expect(line({ state: "sign_in_expired" })).toMatchObject({ text: "The sign-in to GitHub expired", fix: { kind: "reconnect", label: "Reconnect" } });
-    expect(line({ state: "unreachable", detail: "db.platform.example.org" })).toMatchObject({
+    expect(line(failed("db.platform.example.org", "unreachable"))).toMatchObject({
       text: "Could not be reached (db.platform.example.org)",
       fix: { kind: "test", label: "Test" },
     });
     expect(line({ state: "disabled" })).toMatchObject({ text: "Turned off", fix: { kind: "turn_on", label: "Turn on" } });
-    expect(line({ state: "unknown" }).text).toBe("Not checked yet");
+    expect(line({ state: "not_used" }).text).toBe("Not checked yet");
   });
 
   it("names a website or an AI key by its own name, and never uses a raw reason", () => {
-    const site = acct({ state: "rejected", detail: "key" }, { app: undefined, name: "Weather API" });
+    const site = acct(failed("key"), { app: undefined, name: "Weather API" });
     expect(healthLine(asAccount(site)).text).toBe("Weather API no longer accepts this key");
-    expect(healthLine(asAccount(acct({ state: "rejected", detail: "invalid_grant: raw upstream text" }))).text).toBe("GitHub no longer accepts this token");
+    expect(healthLine(asAccount(acct(failed("invalid_grant: raw upstream text")))).text).toBe("GitHub no longer accepts this token");
   });
 
   it("counts the accounts that need attention, and a turned-off account is not one", () => {
     expect(attentionCount(0)).toBeNull();
     expect(attentionCount(1)).toBe("1 account needs attention");
     expect(attentionCount(3)).toBe("3 accounts need attention");
-    expect(needsAttention(asAccount(acct({ state: "rejected" })))).toBe(true);
+    expect(needsAttention(asAccount(acct(failed())))).toBe(true);
     expect(needsAttention(asAccount(acct({ state: "sign_in_expired" })))).toBe(true);
-    expect(needsAttention(asAccount(acct({ state: "unreachable" })))).toBe(true);
+    expect(needsAttention(asAccount(acct(failed(null, "unreachable"))))).toBe(true);
     expect(needsAttention(asAccount(acct({ state: "disabled" })))).toBe(false);
-    expect(needsAttention(asAccount(acct({ state: "ok" })))).toBe(false);
+    expect(needsAttention(asAccount(acct({ state: "working" })))).toBe(false);
+    expect(needsAttention(asAccount(acct({ state: "not_used" })))).toBe(false);
   });
 
   it("has the clauses of the banner, and the Test and post-connect sentences", () => {
@@ -85,9 +88,9 @@ describe("the row's health line", () => {
   });
 
   it("shows no fix to someone who cannot make it, and a test outcome in place of the line", () => {
-    const { rerender } = render(<AccountHealth account={asAccount(acct({ state: "rejected", detail: "token" }))} />);
+    const { rerender } = render(<AccountHealth account={asAccount(acct(failed("token")))} />);
     expect(screen.queryByRole("button")).toBeNull();
-    rerender(<AccountHealth account={asAccount(acct({ state: "ok" }))} outcome="error" />);
+    rerender(<AccountHealth account={asAccount(acct({ state: "working" }))} outcome="error" />);
     expect(screen.getByText("The test could not run. Try again.")).toBeTruthy();
   });
 });
@@ -107,14 +110,14 @@ const wrap = (ui: React.ReactElement) => render(<QueryClientProvider client={new
 
 describe("where a broken account shows up", () => {
   it("counts the agent's broken accounts on its header and links to the Access tab", async () => {
-    mockAccounts([acct({ state: "sign_in_expired" }), acct({ state: "rejected", detail: "token" }, { ref: { type: "connection", id: "c2" } }), acct({ state: "ok" }, { ref: { type: "connection", id: "c3" } })]);
+    mockAccounts([acct({ state: "sign_in_expired" }), acct(failed("token"), { ref: { type: "connection", id: "c2" } }), acct({ state: "working" }, { ref: { type: "connection", id: "c3" } })]);
     wrap(<AgentAttentionChip workspaceId="ws1" agentId="a1" accessHref="/o/acme/w/main/agents/ada?tab=access" />);
     const link = await screen.findByRole("link", { name: "2 accounts need attention" });
     expect(link.getAttribute("href")).toBe("/o/acme/w/main/agents/ada?tab=access");
   });
 
   it("shows nothing when every account works, and ignores an account not given to the agent", async () => {
-    mockAccounts([acct({ state: "ok" }), acct({ state: "rejected" }, { ref: { type: "connection", id: "c9" }, given: false })]);
+    mockAccounts([acct({ state: "working" }), acct(failed(), { ref: { type: "connection", id: "c9" }, given: false })]);
     wrap(<AgentAttentionChip workspaceId="ws1" agentId="a1" accessHref="/x" />);
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole("link")).toBeNull();
@@ -131,8 +134,8 @@ describe("where a broken account shows up", () => {
   it("lists the workspace's broken accounts on the Overview with the row's line and fix, and nothing when all work", async () => {
     mockAccounts([
       acct({ state: "sign_in_expired" }),
-      acct({ state: "rejected", detail: "password" }, { ref: { type: "connection", id: "c2" }, name: "analytics", app: { app_id: "postgresql", name: "PostgreSQL", custom_only: false } }),
-      acct({ state: "ok" }, { ref: { type: "connection", id: "c3" } }),
+      acct(failed("password"), { ref: { type: "connection", id: "c2" }, name: "analytics", app: { app_id: "postgresql", name: "PostgreSQL", custom_only: false } }),
+      acct({ state: "working" }, { ref: { type: "connection", id: "c3" } }),
     ]);
     const { unmount } = wrap(<NeedsYou wsId="ws1" base="/o/acme/w/main" />);
     // The block lives in the Overview's "Needs you" card (P5-UX-7), counted with anything else that waits.
@@ -143,14 +146,14 @@ describe("where a broken account shows up", () => {
     expect(screen.getByRole("link", { name: "Reconnect" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts&reconnect=c1");
     expect(screen.getByRole("link", { name: "Replace password" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts");
     unmount();
-    mockAccounts([acct({ state: "ok" })]);
+    mockAccounts([acct({ state: "working" })]);
     wrap(<NeedsYou wsId="ws1" base="/o/acme/w/main" />);
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole("heading")).toBeNull();
   });
 
   it("shows who can fix it instead of the fix to someone who cannot", async () => {
-    mockAccounts([acct({ state: "rejected", detail: "token" }, { can: { give_access: false, change_access: false, manage: false } })]);
+    mockAccounts([acct(failed("token"), { can: { give_access: false, change_access: false, manage: false } })]);
     wrap(<AccountsBanner workspaceId="ws1" agent={{ id: "a1", name: "Daneel" }} base="/o/acme/w/main" />);
     expect(await screen.findByText(/Daneel can't use GitHub: it no longer accepts this token\./)).toBeTruthy();
     expect(screen.queryByRole("link", { name: /Replace/ })).toBeNull();

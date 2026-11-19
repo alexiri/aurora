@@ -6,6 +6,9 @@ const KIB: usize = 1024;
 const MIB: usize = 1024 * KIB;
 
 pub const GATEWAY_RESOLVE_CACHE_TTL: Duration = Duration::from_secs(60);
+/// (FIX-180, D-395) A proxied request whose body delivers no byte for this long is answered `408
+/// request_body_timeout` and its connection closed. An idle limit, not a total one.
+pub const GATEWAY_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
 /// (RFE-011a) lower bound of a per-rule / per-grant `approval_timeout_secs`.
 pub const APPROVAL_TIMEOUT_MIN: Duration = Duration::from_secs(60);

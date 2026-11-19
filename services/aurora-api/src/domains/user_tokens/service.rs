@@ -285,12 +285,9 @@ pub async fn grant(s: &AppState, c: &SessionCaller, id: Uuid, agent: Uuid) -> Re
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
     // 404 for an agent the caller cannot see (or in another organization than the integration),
     // 403 for a visible one the caller may not use.
-    let auth = c.workspace(s, agent_row.workspace_id).await?;
+    c.workspace(s, agent_row.workspace_id).await?;
     if agent_row.org_id != token.org_id {
         return Err(ApiError::not_found("Agent not found."));
-    }
-    if !auth.can_use() {
-        return Err(ApiError::forbidden("You may not use this agent."));
     }
     if token.status != "active" {
         return Err(ApiError::conflict(

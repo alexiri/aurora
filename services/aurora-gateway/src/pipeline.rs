@@ -204,6 +204,18 @@ pub trait RequestHandler: Send + Sync + 'static {
         _err: &ApiError,
     ) {
     }
+
+    /// (FIX-180) A request body stalled before the decision produced a hook: the proxy answered
+    /// `408 request_body_timeout`; this writes its request-log row.
+    fn body_stalled(
+        &self,
+        _identity: &Arc<RequestIdentity>,
+        _lane: &'static str,
+        _method: &str,
+        _host: &str,
+        _err: &ApiError,
+    ) {
+    }
 }
 
 /// Default handler: forwards everything unchanged.

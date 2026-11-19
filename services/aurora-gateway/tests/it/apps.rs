@@ -189,6 +189,8 @@ struct Env {
     cache: Arc<aurora_gateway::seclink::LinkCache>,
     /// The resolver's policy cache: flushed after a test changes the rows.
     resolve_cache: Arc<aurora_gateway::resolve::ResolveCache>,
+    /// With a hold store: the shutdown signal its holds listen to (`send(true)` = SIGTERM).
+    shutdown: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
@@ -227,6 +229,9 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
     }
     if parts.uri.path().ends_with("/403") {
         *r.status_mut() = http::StatusCode::FORBIDDEN;
+    }
+    if parts.uri.path().ends_with("/404") {
+        *r.status_mut() = http::StatusCode::NOT_FOUND;
     }
     if parts.uri.path().ends_with("/challenge") {
         *r.status_mut() = http::StatusCode::UNAUTHORIZED;
@@ -382,9 +387,10 @@ async fn start_in(
     let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
     let rows = Arc::new(Mutex::new(Vec::new()));
     let log = RequestLog::new(Arc::new(Capture(rows.clone())));
+    let mut shutdown_tx = None;
     let holds = if let (true, Some(pool)) = (with_holds, touch_pool.as_ref()) {
         let (shutdown, rx) = tokio::sync::watch::channel(false);
-        std::mem::forget(shutdown);
+        shutdown_tx = Some(shutdown);
         let hub = aurora_gateway::invalidation::Hub::new();
         tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
         while !hub.is_connected() {
@@ -439,6 +445,7 @@ async fn start_in(
             log,
             cache,
             resolve_cache,
+            shutdown: shutdown_tx,
         },
         src,
         store,

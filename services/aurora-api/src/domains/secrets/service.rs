@@ -168,14 +168,7 @@ pub async fn list(
 }
 
 fn clean_name(n: &str) -> Result<String, ApiError> {
-    let t = n.trim();
-    if !(1..=100).contains(&t.chars().count()) || t.chars().any(char::is_control) {
-        return Err(bad(
-            "/name",
-            "must be 1-100 characters without control characters",
-        ));
-    }
-    Ok(t.to_owned())
+    aurora_core::names::clean(n, 100).map_err(|e| bad("/name", &e.to_string()))
 }
 
 fn recipe_json(r: &InjectionRecipe) -> Result<Value, ApiError> {

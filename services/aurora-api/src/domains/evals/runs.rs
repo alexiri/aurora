@@ -144,9 +144,11 @@ pub async fn list(
     agent: Uuid,
     status: Option<String>,
     trigger: Option<String>,
-    p: Pagination,
+    page: (Option<u32>, Option<String>),
 ) -> Result<Page<EvalRun>, ApiError> {
+    // Authorise before parsing the pagination (FIX-181 F7, C-1041).
     let a = visible_agent(s, c, agent).await?;
+    let p = Pagination::new(page.0, page.1.as_deref())?;
     let bad = |f: &str, v: &str| service::invalid_filter(f, v);
     if let Some(v) = status.as_deref()
         && !["queued", "running", "done", "failed", "cancelled"].contains(&v)

@@ -1,6 +1,6 @@
 package:
   id: sentry
-  version: 2.1.0
+  version: 2.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -12,6 +12,8 @@ apps:
       id: sentry
       name: Sentry
       description: Read organizations, projects, issues, events and releases on Sentry, and update or resolve issues when you allow it
+      summary: Projects, issues, events and releases on Sentry.
+      first_prompt: "What are the newest unresolved errors in my projects?"
       category: monitoring
       api_docs: https://docs.sentry.io/api/
       web_hosts: [sentry.io]
@@ -36,6 +38,10 @@ apps:
         kind: fields
         label: Auth token
         description: "An internal integration token or a personal auth token from Sentry, with the organization it belongs to. Give it only the scopes agents need."
+        # The permissions to pick on Sentry's internal integration form (docs.sentry.io/api/guides/create-auth-token/, docs.sentry.io/api/permissions/).
+        access_levels:
+          - { id: read, label: Read only, permission_hints: ["Organization · Read", "Project · Read", "Issue & Event · Read", "Release · Read"] }
+          - { id: write, label: Read and write, permission_hints: ["Organization · Read", "Project · Read", "Issue & Event · Read & Write", "Release · Read"] }
         fields:
           - name: access_token
             label: Auth token

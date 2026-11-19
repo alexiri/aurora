@@ -11,12 +11,13 @@
 use super::dto::AppFamily;
 use super::service::{find_app, snapshot};
 use crate::app::AppState;
-use crate::http::who_can::{WhoCan, WhoCanRole};
+use crate::http::who_can::{self, WhoCan, WhoCanPerson, WhoCanRole};
 use aurora_core::{ApiError, dash_paths};
 use aurora_db::repo::{app_instances, connections, contacts, oauth_clients};
 use aurora_registry::manifest::{Audience, Connect, ScopePresets};
 use aurora_registry::snapshot::{AppEntry, PackageEntry};
 use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -81,6 +82,8 @@ pub struct SetupMethod {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub who_can: Option<WhoCan>,
     pub scope_presets: MethodScopePresets,
+    /// (P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's token screen, per access level.
+    pub permission_hints: Vec<super::dto::LevelHints>,
 }
 
 /// An OAuth client by reference: never its id (the provider's), its secret or its fields.
@@ -249,6 +252,250 @@ fn base_url(host: &str, base_path: Option<&str>) -> String {
     )
 }
 
+/// What every method of every app is evaluated against, loaded once (P5-POLISH-3, C-1029): the enabled OAuth
+/// clients usable at the level (workspace, organization, instance), the registered self-hosted servers and the
+/// people who can fix a gap. [`setup_status`] loads it for one app; the catalogue loads it once for all apps,
+/// and both evaluate methods with [`Facts::methods`], so the plan and the catalogue cannot disagree.
+pub struct Facts<'a> {
+    state: &'a AppState,
+    view: SetupView,
+    org_slug: String,
+    /// `(package_id, client_key, instance_id)` of each enabled client usable here.
+    clients: HashSet<(String, String, Option<Uuid>)>,
+    /// Self-hosted servers this organization can see, by app (at most 50 each, newest first).
+    instances: HashMap<String, Vec<app_instances::InstanceRow>>,
+    admins: Option<Vec<WhoCanPerson>>,
+}
+
+impl<'a> Facts<'a> {
+    /// `only_app`: the one app a plan is for (its instances only); `None` for the whole catalogue.
+    pub async fn load(
+        state: &'a AppState,
+        view: SetupView,
+        org_slug: String,
+        only_app: Option<&str>,
+    ) -> Result<Self, ApiError> {
+        let clients = connections::usable_client_keys(&state.pool, view.org, view.workspace)
+            .await?
+            .into_iter()
+            .collect();
+        let rows = match only_app {
+            Some(a) => {
+                app_instances::list_for_org(&state.pool, view.org, Some(a), None, 50).await?
+            }
+            None => {
+                app_instances::list_for_org(&state.pool, view.org, None, None, INSTANCES_MAX)
+                    .await?
+            }
+        };
+        let mut instances: HashMap<String, Vec<app_instances::InstanceRow>> = HashMap::new();
+        for i in rows {
+            let list = instances.entry(i.app_id.clone()).or_default();
+            if list.len() < 50 {
+                list.push(i);
+            }
+        }
+        Ok(Self {
+            state,
+            view,
+            org_slug,
+            clients,
+            instances,
+            admins: None,
+        })
+    }
+
+    /// The active registered servers of `app` (none for an app without `instances`).
+    pub fn registered(&self, app: &AppEntry) -> Vec<app_instances::InstanceRow> {
+        if app.instances.is_none() {
+            return Vec::new();
+        }
+        self.instances
+            .get(&app.app_id)
+            .map(|v| v.iter().filter(|i| i.status == "active").cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn usable(&self, package: &str, key: &str, instance: Option<Uuid>) -> bool {
+        self.clients
+            .contains(&(package.to_owned(), key.to_owned(), instance))
+    }
+
+    /// `WhoCan` for the organization's administrators; their names are read once per pass.
+    pub async fn who(&mut self, action: &str, path: Option<String>) -> WhoCan {
+        if self.admins.is_none() {
+            self.admins =
+                Some(who_can::people(self.state, WhoCanRole::OrgAdmin, self.view.org, None).await);
+        }
+        WhoCan {
+            action: action.to_owned(),
+            role: WhoCanRole::OrgAdmin,
+            people: self.admins.clone().unwrap_or_default(),
+            you_can: path.is_some(),
+            path,
+        }
+    }
+
+    /// Who can allow an app the organization switched off.
+    pub async fn allow_app_who(&mut self) -> WhoCan {
+        let path = self
+            .view
+            .org_admin
+            .then(|| dash_paths::org_apps(&self.org_slug, "apps"));
+        self.who("allow_app", path).await
+    }
+
+    /// The ways to connect `app` and what each still needs here (D-330). `available` is the
+    /// organization's availability of the app for this level.
+    pub async fn methods(
+        &mut self,
+        app: &AppEntry,
+        pkg: &PackageEntry,
+        available: bool,
+    ) -> Vec<SetupMethod> {
+        let registered = self.registered(app);
+        let hosted_default = app
+            .instances
+            .as_ref()
+            .is_none_or(|i| i.default_host.is_some());
+        let mut methods = Vec::new();
+        for c in &app.connect {
+            let mut needs = Vec::new();
+            let mut client_key = None;
+            let mut who: Option<(&str, Option<String>)> = None;
+            if let Connect::Oauth2(o) = c {
+                client_key = Some(o.client.clone());
+                // The connect flow's own resolution, for the hosted default and for each registered
+                // server (a server-bound client serves only its server).
+                let ok = (hosted_default && self.usable(&pkg.package_id, &o.client, None))
+                    || registered
+                        .iter()
+                        .any(|i| self.usable(&pkg.package_id, &o.client, Some(i.id)));
+                if !ok {
+                    needs.push(SetupNeed::OauthClient);
+                    who = Some((
+                        "register_oauth_client",
+                        self.view
+                            .org_admin
+                            .then(|| dash_paths::org_oauth_clients(&self.org_slug)),
+                    ));
+                }
+            }
+            if !hosted_default && registered.is_empty() {
+                needs.push(SetupNeed::Instance);
+                who = Some((
+                    "register_instance",
+                    self.view
+                        .org_admin
+                        .then(|| dash_paths::org_self_hosted(&self.org_slug)),
+                ));
+            }
+            let who_can = match who {
+                Some((action, path)) => Some(self.who(action, path).await),
+                None => None,
+            };
+            methods.push(SetupMethod {
+                id: c.id().to_owned(),
+                label: label_of(c),
+                description: c.description().map(str::to_owned),
+                kind: kind_of(c).to_owned(),
+                audience: audience_of(c),
+                recommended: c.recommended(),
+                ready: available && needs.is_empty(),
+                needs,
+                client_key,
+                who_can,
+                scope_presets: presets(c),
+                permission_hints: super::service::permission_hints(c),
+            });
+        }
+        methods
+    }
+}
+
+/// More servers than one organization registers in practice (the catalogue pass reads them in one query).
+const INSTANCES_MAX: i64 = 5000;
+
+/// The first ready person method: recommended, then oauth2, fields, hook; `None` if none.
+fn suggested_of(app: &AppEntry, methods: &[SetupMethod]) -> Option<String> {
+    app.connect
+        .iter()
+        .zip(methods)
+        .filter(|(c, m)| m.ready && c.audience() == Audience::Person)
+        .min_by_key(|(c, _)| rank(c))
+        .map(|(c, _)| c.id().to_owned())
+}
+
+/// (C-1029) Whether the connect plan's suggested method is ready for people here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadinessState {
+    Ready,
+    NeedsAdmin,
+}
+
+/// (C-1029) An app's readiness in the catalogue.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AppReadiness {
+    pub state: ReadinessState,
+    /// The union of what the blocking methods need (empty when the app is switched off).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub needs: Vec<SetupNeed>,
+    /// Who can fix it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub who_can: Option<WhoCan>,
+    /// (P5-POLISH-4, C-1030) Whether the caller asked an admin to set it up, and how many people did;
+    /// absent when nobody asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested: Option<crate::domains::app_setup_requests::dto::Requested>,
+}
+
+/// The catalogue's readiness of `app`, from the same methods the connect plan returns.
+pub async fn readiness(
+    facts: &mut Facts<'_>,
+    app: &AppEntry,
+    pkg: &PackageEntry,
+    available: bool,
+) -> AppReadiness {
+    let methods = facts.methods(app, pkg, available).await;
+    if suggested_of(app, &methods).is_some() {
+        return AppReadiness {
+            state: ReadinessState::Ready,
+            needs: Vec::new(),
+            who_can: None,
+            requested: None,
+        };
+    }
+    // The people methods block it; an app with only administrator methods is judged by those.
+    let people = methods.iter().any(|m| m.audience == MethodAudience::Person);
+    let blocking: Vec<&SetupMethod> = methods
+        .iter()
+        .filter(|m| !people || m.audience == MethodAudience::Person)
+        .collect();
+    let mut needs: Vec<SetupNeed> = Vec::new();
+    for n in [
+        SetupNeed::OauthClient,
+        SetupNeed::Instance,
+        SetupNeed::AdminMaterial,
+    ] {
+        if blocking.iter().any(|m| m.needs.contains(&n)) {
+            needs.push(n);
+        }
+    }
+    // An app switched off is fixed first by whoever may switch it on; only then do the methods matter.
+    let who_can = if available {
+        blocking.iter().find_map(|m| m.who_can.clone())
+    } else {
+        Some(facts.allow_app_who().await)
+    };
+    AppReadiness {
+        state: ReadinessState::NeedsAdmin,
+        needs,
+        who_can,
+        requested: None,
+    }
+}
+
 /// The one function (D-330): the setup status of `app_id` at `view`.
 pub async fn setup_status(
     state: &AppState,
@@ -288,20 +535,9 @@ pub async fn setup_status(
         )
     };
 
-    // Registered self-hosted servers this organization can use.
-    let registered: Vec<_> = if app.instances.is_some() {
-        app_instances::list_for_org(&state.pool, view.org, Some(app_id), None, 50)
-            .await?
-            .into_iter()
-            .filter(|i| i.status == "active")
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let hosted_default = app
-        .instances
-        .as_ref()
-        .is_none_or(|i| i.default_host.is_some());
+    // The facts every method is evaluated against (one query each, shared with the catalogue's pass).
+    let mut facts = Facts::load(state, view, org_slug.clone(), Some(app_id)).await?;
+    let registered = facts.registered(app);
 
     let keys: Vec<String> = app
         .connect
@@ -320,93 +556,8 @@ pub async fn setup_status(
     )
     .await?;
 
-    let mut methods = Vec::new();
-    for c in &app.connect {
-        let mut needs = Vec::new();
-        let mut client_key = None;
-        let mut who: Option<(&str, WhoCanRole, Option<String>)> = None;
-        if let Connect::Oauth2(o) = c {
-            client_key = Some(o.client.clone());
-            // The connect flow's own resolution, for the hosted default and for each registered
-            // server (a server-bound client serves only its server).
-            let mut ok = false;
-            if hosted_default {
-                ok = !connections::usable_clients(
-                    &state.pool,
-                    &pkg.package_id,
-                    &o.client,
-                    view.org,
-                    view.workspace,
-                    None,
-                )
-                .await?
-                .is_empty();
-            }
-            if !ok {
-                for i in &registered {
-                    if !connections::usable_clients(
-                        &state.pool,
-                        &pkg.package_id,
-                        &o.client,
-                        view.org,
-                        view.workspace,
-                        Some(i.id),
-                    )
-                    .await?
-                    .is_empty()
-                    {
-                        ok = true;
-                        break;
-                    }
-                }
-            }
-            if !ok {
-                needs.push(SetupNeed::OauthClient);
-                who = Some((
-                    "register_oauth_client",
-                    WhoCanRole::OrgAdmin,
-                    view.org_admin
-                        .then(|| dash_paths::org_oauth_clients(&org_slug)),
-                ));
-            }
-        }
-        if !hosted_default && registered.is_empty() {
-            needs.push(SetupNeed::Instance);
-            who = Some((
-                "register_instance",
-                WhoCanRole::OrgAdmin,
-                view.org_admin
-                    .then(|| dash_paths::org_self_hosted(&org_slug)),
-            ));
-        }
-        let who_can = match who {
-            Some((action, role, path)) => {
-                Some(WhoCan::build(state, role, view.org, None, action, path).await)
-            }
-            None => None,
-        };
-        methods.push(SetupMethod {
-            id: c.id().to_owned(),
-            label: label_of(c),
-            description: c.description().map(str::to_owned),
-            kind: kind_of(c).to_owned(),
-            audience: audience_of(c),
-            recommended: c.recommended(),
-            ready: available && needs.is_empty(),
-            needs,
-            client_key,
-            who_can,
-            scope_presets: presets(c),
-        });
-    }
-
-    let suggested_method = app
-        .connect
-        .iter()
-        .zip(&methods)
-        .filter(|(c, m)| m.ready && c.audience() == Audience::Person)
-        .min_by_key(|(c, _)| rank(c))
-        .map(|(c, _)| c.id().to_owned());
+    let methods = facts.methods(app, pkg, available).await;
+    let suggested_method = suggested_of(app, &methods);
 
     let instance_set_up = levels.iter().any(|r| r.level == "instance" && r.enabled);
     let clients = SetupClients {

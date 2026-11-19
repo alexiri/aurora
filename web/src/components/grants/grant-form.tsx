@@ -147,7 +147,7 @@ export function GrantForm({
                   <li key={id} className="space-y-1.5 px-3 py-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <code className="min-w-0 break-all text-sm text-ink">{id}</code>
-                      <Badge tone="pending">Inert</Badge>
+                      <Badge>Inert</Badge>
                     </div>
                     {errors.tools[id] ? (
                       <p role="alert" className="text-xs text-danger-ink">

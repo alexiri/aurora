@@ -1,6 +1,6 @@
 package:
   id: microsoft-365
-  version: 1.1.0
+  version: 1.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -26,6 +26,8 @@ apps:
       id: microsoft-365
       name: Microsoft 365
       description: Read Outlook mail, calendar events and OneDrive or SharePoint files through Microsoft Graph, and send mail, create events and upload files when you allow it
+      summary: Outlook mail and calendar, and OneDrive and SharePoint files.
+      first_prompt: "What's on my calendar this week?"
       category: productivity
       api_docs: https://learn.microsoft.com/en-us/graph/api/overview?view=graph-rest-1.0
       web_hosts: [outlook.office.com, outlook.live.com, onedrive.live.com]

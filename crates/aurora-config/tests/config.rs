@@ -1431,6 +1431,89 @@ fn bootstrap_connector_host_token_must_be_an_auh_token() {
     assert!(none.bootstrap_connector_host_token.is_none());
 }
 
+/// (FIX-181 F11) The relay, terminator and connector refuse the development-only switches off a
+/// loopback origin, as the connector host does, and the relay, terminator and connector host
+/// check their `api_url` with the shared URL check (a scheme-only prefix test accepted
+/// `http://` with no host, userinfo, spaces).
+#[test]
+fn relay_terminator_and_connector_refuse_dev_switches_and_malformed_api_urls() {
+    use base64::Engine as _;
+    let seed = base64::engine::general_purpose::STANDARD.encode([9u8; 32]);
+    let key = format!("ed25519:{seed}");
+    let dev = "[plugins]\nallow_unsigned = true\n";
+    let relay_env = [("AURORA_RELAY_TOKEN", "aul_abc123")];
+    let term_env = [
+        ("AURORA_TERMINATOR_TOKEN", "aut_abc123"),
+        ("AURORA_SSH_HOST_KEY", key.as_str()),
+    ];
+    let conn_env = [("AURORA_CONNECTOR_TOKEN", "aun_abc")];
+    let relay = |raw: &str| {
+        load_with(raw, &relay_env)
+            .unwrap()
+            .relay_config()
+            .map(|_| ())
+    };
+    let term = |raw: &str| {
+        load_with(raw, &term_env)
+            .unwrap()
+            .terminator_config()
+            .map(|_| ())
+    };
+    let conn = |raw: &str| {
+        load_with(raw, &conn_env)
+            .unwrap()
+            .connector_config()
+            .map(|_| ())
+    };
+    let relay_dom = "[relay]\npreviews_domain = \"preview.example.org\"\n";
+    // Off loopback: refused, named by the switch's key.
+    assert!(
+        relay(&format!("{BASE}{dev}{relay_dom}"))
+            .unwrap_err()
+            .has_key("plugins.allow_unsigned")
+    );
+    assert!(
+        term(&format!("{BASE}{dev}"))
+            .unwrap_err()
+            .has_key("plugins.allow_unsigned")
+    );
+    assert!(
+        conn(&format!("{BASE}{dev}"))
+            .unwrap_err()
+            .has_key("plugins.allow_unsigned")
+    );
+    // On loopback: accepted.
+    let lb = local_base();
+    assert!(relay(&format!("{lb}{dev}{relay_dom}")).is_ok());
+    assert!(term(&format!("{lb}{dev}")).is_ok());
+    assert!(conn(&format!("{lb}{dev}")).is_ok());
+    // A malformed `api_url` is refused with the shared URL check.
+    for bad in [
+        "http://",
+        "http://a b",
+        "http://host:notaport",
+        "ftp://aurora-api",
+    ] {
+        let e = relay(&format!(
+            "{BASE}[relay]\npreviews_domain = \"preview.example.org\"\napi_url = \"{bad}\"\n"
+        ));
+        assert!(e.unwrap_err().has_key("relay.api_url"), "relay {bad}");
+        let e = term(&format!("{BASE}[terminator]\napi_url = \"{bad}\"\n"));
+        assert!(
+            e.unwrap_err().has_key("terminator.api_url"),
+            "terminator {bad}"
+        );
+        let e = load_with(
+            &format!("{BASE}[connector_host]\napi_url = \"{bad}\"\n"),
+            &[("AURORA_CONNECTOR_HOST_TOKEN", "auh_abc123")],
+        )
+        .unwrap()
+        .connector_host_config()
+        .unwrap_err();
+        assert!(e.has_key("connector_host.api_url"), "connector_host {bad}");
+    }
+}
+
 #[test]
 fn connector_host_config_defaults_token_and_overrides() {
     let c = load_with(BASE, &[("AURORA_CONNECTOR_HOST_TOKEN", "auh_abc123")])

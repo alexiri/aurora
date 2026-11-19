@@ -133,14 +133,15 @@ fn find_by_team_and_token(shared: &Shared, team_id: &str, token: &str) -> Option
     })
 }
 
+/// Constant-time over the longer input: a length mismatch is folded into the result, not an early
+/// return that would leak the token's length (as `aurora-crypto`'s ring does).
 fn ct_eq(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let mut d = u8::from(a.len() != b.len());
+    for i in 0..a.len().max(b.len()) {
+        d |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
     }
-    a.bytes()
-        .zip(b.bytes())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
+    d == 0
 }
 
 async fn commands(
@@ -265,6 +266,10 @@ mod tests {
         assert!(!ct_eq("abc", "abd"));
         assert!(!ct_eq("abc", "abcd"));
         assert!(!ct_eq("", "x"));
+        assert!(!ct_eq("abcd", "abc"));
+        // A zero-padded shorter input must not equal the longer one.
+        assert!(!ct_eq("ab", "ab\0"));
+        assert!(ct_eq("", ""));
     }
 
     /// The fake core accepts every event it is sent.

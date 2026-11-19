@@ -746,6 +746,19 @@ impl PolicyHandler {
         self.health.as_ref().is_some_and(|h| h.db_unreachable())
     }
 
+    /// 503 `approval_store_unavailable` for every lane (request, link, database, park): counted as
+    /// refused while the database is down and carrying `details.reason = database_unavailable`.
+    fn approval_store_unavailable(&self) -> ApiError {
+        if self.db_down() {
+            crate::health::count_refused("approval_store_unavailable");
+        }
+        ApiError::unavailable(
+            "approval_store_unavailable",
+            "The approval store is unavailable. Retry shortly.",
+        )
+        .with_details(json!({ "reason": "database_unavailable" }))
+    }
+
     /// Set the condition body buffer (`gateway.condition_body_bytes`). Never below
     /// [`APPROVAL_BODY_PEEK`].
     pub fn with_condition_body_limit(self, bytes: usize) -> Self {
@@ -886,14 +899,7 @@ impl PolicyHandler {
                 self.refuse(ctx, &err, "rate_limited")
             }
             ParkAnswer::StoreUnavailable => {
-                if self.db_down() {
-                    crate::health::count_refused("approval_store_unavailable");
-                }
-                let err = ApiError::unavailable(
-                    "approval_store_unavailable",
-                    "The approval store is unavailable. Retry shortly.",
-                )
-                .with_details(json!({ "reason": "database_unavailable" }));
+                let err = self.approval_store_unavailable();
                 self.refuse(ctx, &err, "error")
             }
         }
@@ -1520,14 +1526,7 @@ impl PolicyHandler {
         {
             match holds.open_grants(identity.agent_id, conversation_id).await {
                 None => {
-                    if self.db_down() {
-                        crate::health::count_refused("approval_store_unavailable");
-                    }
-                    let err = ApiError::unavailable(
-                        "approval_store_unavailable",
-                        "The approval store is unavailable. Retry shortly.",
-                    )
-                    .with_details(json!({ "reason": "database_unavailable" }));
+                    let err = self.approval_store_unavailable();
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
                 Some(rows) if !rows.is_empty() => {
@@ -1562,14 +1561,7 @@ impl PolicyHandler {
                             }
                             crate::park::GrantOutcome::None => {}
                             crate::park::GrantOutcome::StoreUnavailable => {
-                                if self.db_down() {
-                                    crate::health::count_refused("approval_store_unavailable");
-                                }
-                                let err = ApiError::unavailable(
-                                    "approval_store_unavailable",
-                                    "The approval store is unavailable. Retry shortly.",
-                                )
-                                .with_details(json!({ "reason": "database_unavailable" }));
+                                let err = self.approval_store_unavailable();
                                 return Outcome::Respond(self.refuse(ctx, &err, "error"));
                             }
                         }
@@ -1739,14 +1731,7 @@ impl PolicyHandler {
                     return Outcome::Respond(guidance::restarting());
                 }
                 HoldOutcome::StoreUnavailable => {
-                    if self.db_down() {
-                        crate::health::count_refused("approval_store_unavailable");
-                    }
-                    let err = ApiError::unavailable(
-                        "approval_store_unavailable",
-                        "The approval store is unavailable. Retry shortly.",
-                    )
-                    .with_details(json!({ "reason": "database_unavailable" }));
+                    let err = self.approval_store_unavailable();
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
             }
@@ -2400,6 +2385,37 @@ impl RequestHandler for PolicyHandler {
             .record(ctx.row(err.status().as_u16(), None, Some(err.code())));
     }
 
+    fn body_stalled(
+        &self,
+        identity: &Arc<Ident>,
+        lane: &'static str,
+        method: &str,
+        host: &str,
+        err: &ApiError,
+    ) {
+        let ctx = Ctx {
+            identity: identity.clone(),
+            lane,
+            method: method.to_owned(),
+            host: host.to_owned(),
+            path: "/".into(),
+            started: Instant::now(),
+            secret_id: None,
+            decision: "blocked",
+            rule: None,
+            injected: 0,
+            app_id: None,
+            tool_id: None,
+            llm_model: None,
+            connection_id: None,
+            counter_fallback: false,
+            approval_id: None,
+            resumed: false,
+        };
+        self.log
+            .record(ctx.row(err.status().as_u16(), None, Some(err.code())));
+    }
+
     async fn open_lane_check(&self, identity: &Ident, host: &str, port: u16) -> OpenLaneDecision {
         let ctx = Ctx {
             identity: Arc::new(identity.clone()),
@@ -2962,10 +2978,7 @@ impl DbSession {
                     ));
                 }
                 HoldOutcome::StoreUnavailable => {
-                    let err = ApiError::unavailable(
-                        "approval_store_unavailable",
-                        "The approval store is unavailable. Retry shortly.",
-                    );
+                    let err = h.approval_store_unavailable();
                     h.refuse(ctx, &err, "error");
                     return DbVerdict::Unavailable(err);
                 }

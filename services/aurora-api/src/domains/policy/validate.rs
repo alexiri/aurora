@@ -166,8 +166,8 @@ fn check_shape(req: &mut DraftRequest, scope: Scope, e: &mut Errs) {
     for (i, r) in req.rules.iter_mut().enumerate() {
         let rp = format!("/rules/{i}");
         let name = r.name.trim();
-        if name.is_empty() || name.chars().count() > MAX_NAME {
-            e.add(format!("{rp}/name"), "name must be 1-120 characters");
+        if let Err(err) = aurora_core::names::clean(name, MAX_NAME) {
+            e.add(format!("{rp}/name"), &format!("name {err}"));
         }
         r.name = name.to_owned();
         if r.description

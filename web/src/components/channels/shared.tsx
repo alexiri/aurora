@@ -58,13 +58,13 @@ export function isStatus(err: unknown, code: string): boolean {
   return err instanceof ApiError && err.code === code;
 }
 
-const TONE: Record<string, "neutral" | "accent" | "pending" | "danger"> = {
+const TONE: Record<string, "neutral" | "accent" | "danger"> = {
   active: "accent",
   approved: "accent",
-  validating: "pending",
-  pending_setup: "pending",
-  pending: "pending",
-  pending_approval: "pending",
+  validating: "neutral",
+  pending_setup: "neutral",
+  pending: "neutral",
+  pending_approval: "neutral",
   awaiting_registration: "neutral",
   needs_attention: "danger",
   blocked: "danger",

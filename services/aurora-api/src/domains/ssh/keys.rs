@@ -92,21 +92,15 @@ pub fn parse_public_key(raw: &str) -> Result<ParsedKey, ApiError> {
 
 /// The name a new key gets: the given name, else the pasted comment, else "SSH key".
 pub fn key_name(given: Option<&str>, comment: &str) -> Result<String, ApiError> {
-    if let Some(g) = given {
-        if g.chars().count() > 80 {
-            return Err(ApiError::invalid_request(
+    if let Some(g) = given
+        && !g.trim().is_empty()
+    {
+        return aurora_core::names::clean(g, 80).map_err(|e| {
+            ApiError::invalid_request(
                 "Invalid request.",
-                vec![aurora_core::FieldError::new(
-                    "/name",
-                    "must be at most 80 characters",
-                )],
-            ));
-        }
-        let n = sanitize::one_line(g, 80);
-        let n = n.trim();
-        if !n.is_empty() {
-            return Ok(n.to_owned());
-        }
+                vec![aurora_core::FieldError::new("/name", e.to_string())],
+            )
+        });
     }
     let c = comment.trim();
     Ok(if c.is_empty() { "SSH key" } else { c }.to_owned())

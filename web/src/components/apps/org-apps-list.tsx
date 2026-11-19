@@ -6,6 +6,7 @@ import { useState } from "react";
 import { EmptyState } from "@/components/states";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { appDisplayName } from "@/lib/api/app-name";
@@ -162,13 +163,11 @@ export function OrgAppsList({
               <>
                 {switches ? (
                   <label className="inline-flex items-center gap-2 text-sm text-ink-2">
-                    <input
-                      type="checkbox"
-                      className="size-4 accent-accent"
+                    <Switch
                       aria-label={appDisplayName(a)}
                       checked={switches.isOn(a.app_id)}
                       disabled={switches.disabled}
-                      onChange={() => switches.onToggle(a.app_id)}
+                      onCheckedChange={() => switches.onToggle(a.app_id)}
                     />
                     {switches.isOn(a.app_id) ? "On" : "Off"}
                   </label>

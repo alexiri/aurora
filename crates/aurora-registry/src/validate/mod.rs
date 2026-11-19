@@ -1310,10 +1310,12 @@ fn method_rules(cx: &mut Ctx<'_>) {
                 );
             }
         }
+        permission_hint_rules(cx, c, &p);
         if c.recommended() {
             recommended += 1;
         }
     }
+    about_text_rules(cx);
     if recommended > 1 {
         cx.v(
             "recommended_multiple",
@@ -1484,6 +1486,81 @@ fn method_rules(cx: &mut Ctx<'_>) {
 
 const METHOD_LABEL_MAX: usize = 60;
 const METHOD_DESCRIPTION_MAX: usize = 400;
+/// (P5-POLISH-3, C-1031) `about.summary` and `about.first_prompt`, in characters.
+const ABOUT_SUMMARY_MAX: usize = 100;
+const ABOUT_FIRST_PROMPT_MAX: usize = 120;
+/// (C-1031) One `permission_hints` entry, and how many a level may carry.
+const HINT_MAX: usize = 60;
+const HINTS_PER_LEVEL_MAX: usize = 12;
+
+fn plain_text_ok(v: &str, max: usize) -> bool {
+    !v.trim().is_empty() && v.chars().count() <= max && !v.chars().any(char::is_control)
+}
+
+/// (P5-POLISH-3, D-387, C-1031) The texts that describe an app to people: one plain line each.
+fn about_text_rules(cx: &mut Ctx<'_>) {
+    let about = &cx.app.about;
+    let findings: Vec<(&str, usize)> = [
+        ("summary", about.summary.as_deref(), ABOUT_SUMMARY_MAX),
+        (
+            "first_prompt",
+            about.first_prompt.as_deref(),
+            ABOUT_FIRST_PROMPT_MAX,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(key, v, max)| v.filter(|v| !plain_text_ok(v, max)).map(|_| (key, max)))
+    .collect();
+    for (key, max) in findings {
+        cx.v(
+            "about_text_invalid",
+            &format!("/about/{key}"),
+            format!("`{key}` must be 1 to {max} characters without control characters"),
+        );
+    }
+}
+
+/// (P5-POLISH-3, D-387, C-1031) `access_levels[].permission_hints`: at most 12 short plain entries per
+/// level; a token (`fields`) method's levels are the journey's `read` and `write`, each once.
+fn permission_hint_rules(cx: &mut Ctx<'_>, c: &Connect, p: &str) {
+    let mut seen = BTreeSet::new();
+    for (k, l) in c.access_levels().iter().enumerate() {
+        let lp = format!("{p}/access_levels/{k}");
+        if matches!(c, Connect::Fields(_)) && !(l.id == "read" || l.id == "write") {
+            cx.v(
+                "access_level_unknown",
+                &format!("{lp}/id"),
+                format!(
+                    "a token method's access level is `read` or `write`, not `{}`",
+                    l.id
+                ),
+            );
+        }
+        if !seen.insert(l.id.as_str()) {
+            cx.v(
+                "access_level_duplicate",
+                &format!("{lp}/id"),
+                format!("access level `{}` appears twice", l.id),
+            );
+        }
+        if l.permission_hints.len() > HINTS_PER_LEVEL_MAX {
+            cx.v(
+                "permission_hints_invalid",
+                &format!("{lp}/permission_hints"),
+                format!("at most {HINTS_PER_LEVEL_MAX} permission hints per access level"),
+            );
+        }
+        for (j, h) in l.permission_hints.iter().enumerate() {
+            if !plain_text_ok(h, HINT_MAX) {
+                cx.v(
+                    "permission_hints_invalid",
+                    &format!("{lp}/permission_hints/{j}"),
+                    format!("a permission hint must be 1 to {HINT_MAX} characters without control characters"),
+                );
+            }
+        }
+    }
+}
 
 fn probe(cx: &mut Ctx<'_>, pr: &Probe, p: &str, fields: &[&str], fields_connect: bool) {
     cx.tmpl(

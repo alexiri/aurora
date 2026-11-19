@@ -1,14 +1,15 @@
-//! (P5-UX-14, D-350, C-985, SEC-129) Account health from real use.
+//! (P5-UX-14, D-350, C-985, SEC-129; P5-POLISH-3, D-383, C-1033) Account health from real use.
 //!
 //! When an upstream answers a request in which the gateway injected an account's credential, the answer
-//! says something about that account: a 401 means the app no longer accepts what Aurora holds
-//! (`rejected`); a later 2xx or 3xx means it works again (`ok`). Nothing else is recorded: a 403 is usually
-//! a permission, not a broken credential, and any other status says nothing about the credential.
+//! says something about that account: a 401 or 403 means the app refused what Aurora holds (`rejected`);
+//! a 2xx or 3xx means it works (`ok`). Any other status says nothing about the credential. What is written
+//! is `last_ok_at` or `last_error_at`/`last_error`: only agent calls reach this path, and a Test is
+//! recorded apart (`last_test_*`, written by the API), so a passed Test never reads as use.
 //!
-//! Writes are informational and bounded: only on a change of state (the statement itself skips a row that
-//! already holds the result), at most once a minute per account, off the request path, and never to
+//! Writes are informational and bounded: at most once a minute per account **and outcome** (so a failure is
+//! written even inside the minute after a success and is never hidden), off the request path, and never to
 //! `status` or anything an agent's access reads. A process that provokes refusals can therefore cause one
-//! warning on one account row and nothing else.
+//! write a minute on one account row and nothing else.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -22,27 +23,28 @@ const MIN_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_TRACKED: usize = 50_000;
 
 /// What real use showed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Observed {
     Rejected,
     Ok,
 }
 
 impl Observed {
-    /// The upstream status of a request with an injected credential, as health: 401 → rejected,
-    /// 2xx or 3xx → ok, anything else (a 403, a 404, a 5xx) → nothing.
+    /// The upstream status of a request with an injected credential, as health: 401 or 403 → rejected,
+    /// 2xx or 3xx → ok, anything else (a 404, a 5xx) → nothing.
     pub fn of_status(status: u16) -> Option<Self> {
         match status {
-            401 => Some(Self::Rejected),
+            401 | 403 => Some(Self::Rejected),
             200..=399 => Some(Self::Ok),
             _ => None,
         }
     }
 
-    pub fn as_str(self) -> &'static str {
+    /// The `last_error` value of a failure; `None` for a success.
+    pub fn error(self) -> Option<&'static str> {
         match self {
-            Self::Rejected => "rejected",
-            Self::Ok => "ok",
+            Self::Rejected => Some("rejected"),
+            Self::Ok => None,
         }
     }
 }
@@ -62,15 +64,10 @@ impl AccountId {
     }
 }
 
-struct Seen {
-    result: Observed,
-    at: Instant,
-}
-
-/// The in-memory half of the recording: what was last sent per account, and when.
+/// The in-memory half of the recording: when a write was last sent per account and outcome.
 pub struct AccountHealth {
     min_interval: Duration,
-    seen: Mutex<HashMap<Uuid, Seen>>,
+    seen: Mutex<HashMap<(Uuid, Observed), Instant>>,
 }
 
 impl Default for AccountHealth {
@@ -93,26 +90,20 @@ impl AccountHealth {
     }
 
     /// Whether to send a write for `observed` now, and remember that it was sent. False inside the minute
-    /// since the last write for this account, and when the state is what was last sent.
+    /// since the last write of the same outcome for this account; the other outcome has its own clock.
     pub fn should_write(&self, id: Uuid, observed: Observed, now: Instant) -> bool {
         let Ok(mut seen) = self.seen.lock() else {
             return false;
         };
-        if let Some(s) = seen.get(&id)
-            && (s.result == observed || now.duration_since(s.at) < self.min_interval)
+        if let Some(at) = seen.get(&(id, observed))
+            && now.duration_since(*at) < self.min_interval
         {
             return false;
         }
         if seen.len() >= MAX_TRACKED {
             seen.clear();
         }
-        seen.insert(
-            id,
-            Seen {
-                result: observed,
-                at: now,
-            },
-        );
+        seen.insert((id, observed), now);
         true
     }
 
@@ -127,11 +118,11 @@ impl AccountHealth {
         }
         let pool = pool.clone();
         tokio::spawn(async move {
-            let _ = aurora_db::repo::gateway::record_account_check(
+            let _ = aurora_db::repo::gateway::record_account_use(
                 &pool,
                 matches!(account, AccountId::Connection(_)),
                 account.id(),
-                observed.as_str(),
+                observed.error(),
             )
             .await;
         });
@@ -143,27 +134,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_401_and_a_success_say_anything() {
-        assert_eq!(Observed::of_status(401), Some(Observed::Rejected));
+    fn only_a_refusal_and_a_success_say_anything() {
+        for s in [401, 403] {
+            assert_eq!(Observed::of_status(s), Some(Observed::Rejected), "{s}");
+        }
         for s in [200, 204, 301, 304, 399] {
             assert_eq!(Observed::of_status(s), Some(Observed::Ok), "{s}");
         }
-        for s in [100, 400, 403, 404, 429, 500, 503] {
+        for s in [100, 400, 404, 429, 500, 503] {
             assert_eq!(Observed::of_status(s), None, "{s}");
         }
     }
 
     #[test]
-    fn writes_only_on_a_change_and_at_most_once_a_minute() {
+    fn at_most_one_write_a_minute_per_outcome_and_a_failure_is_never_hidden() {
         let h = AccountHealth::new();
         let id = Uuid::now_v7();
         let t0 = Instant::now();
-        assert!(h.should_write(id, Observed::Rejected, t0));
-        // The same state again, even after a minute: nothing to write.
-        assert!(!h.should_write(id, Observed::Rejected, t0 + Duration::from_secs(120)));
-        // A change inside the minute waits for the next request after it.
+        assert!(h.should_write(id, Observed::Ok, t0));
+        // A failure inside the minute after a success is written at once.
+        assert!(h.should_write(id, Observed::Rejected, t0 + Duration::from_secs(1)));
+        // The same outcome again inside the minute is not; after it, it is.
+        assert!(!h.should_write(id, Observed::Rejected, t0 + Duration::from_secs(30)));
         assert!(!h.should_write(id, Observed::Ok, t0 + Duration::from_secs(30)));
-        assert!(h.should_write(id, Observed::Ok, t0 + Duration::from_secs(61)));
+        assert!(h.should_write(id, Observed::Rejected, t0 + Duration::from_secs(62)));
         // Another account is independent.
         assert!(h.should_write(Uuid::now_v7(), Observed::Ok, t0));
     }

@@ -56,5 +56,7 @@ async fn put_availability(
         crate::audit::AuditActor::from_caller(&caller),
     )
     .await?;
+    // (P5-POLISH-4) Switching an app on can make it ready: re-evaluate the open setup requests.
+    crate::domains::app_setup_requests::service::reevaluate(&state, Some(org)).await;
     Ok(Json(out))
 }

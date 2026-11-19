@@ -53,7 +53,10 @@ Choose the Indico server, then one of:
 
 - **Personal API token**. In Indico open `/user/tokens/`, create a token and tick the scopes you
   want (the menu labels differ between Indico versions), then paste it into Aurora. The scope
-  `read:user` is always required: Aurora uses it to check the token and name the connection.
+  `read:user` is always required: Aurora uses it to check the token and name the connection. The
+  connect window lists the scopes to tick for the access you chose: **Read only** `read:user`,
+  `read:legacy_api` and `read:everything`; **Read and write** adds `write:legacy_api`. Source: Indico's
+  [API token authentication](https://docs.getindico.io/en/stable/http-api/access/#api-token-authentication).
 - **Sign in with Indico** (OAuth). Aurora asks for `read:user` and `read:legacy_api` by default.
   Anything more is a separate, clearly marked choice.
 

@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { LockPill } from "@/components/ui/lock-pill";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
@@ -211,7 +212,7 @@ export function CurrentValues({ title, current, fields }: { title: string; curre
   const byKey = new Map(fields.map((f) => [f.key, f]));
   const docTitles = [...new Set(fields.map((f) => f.doc?.title).filter((t): t is string => Boolean(t)))];
   return (
-    <section aria-label={title} className="max-w-3xl space-y-3 rounded-card border border-line bg-surface p-4 sm:p-5">
+    <section aria-label={title} className="space-y-3 rounded-card border border-line bg-surface p-4 sm:p-5">
       <dl className="space-y-3">
         {current.map((c) => {
           const f = byKey.get(c.key);
@@ -219,7 +220,7 @@ export function CurrentValues({ title, current, fields }: { title: string; curre
             <div key={c.key} id={c.key} className="min-w-0 scroll-mt-24 space-y-1 border-b border-line pb-3 last:border-b-0 last:pb-0">
               <dt className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-ink">
                 {f?.label ?? c.label}
-                <Badge tone={c.source === "helm" ? "pending" : "neutral"}>{c.source === "helm" ? "Helm" : "Default"}</Badge>
+                {c.source === "helm" ? <LockPill owner="Set in Helm" /> : <Badge>Default</Badge>}
               </dt>
               <dd className="break-words text-sm text-ink" data-testid={`${c.key}-current`}>
                 {c.value_display}

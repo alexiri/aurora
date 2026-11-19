@@ -35,12 +35,7 @@ fn bad(path: &str, message: &str) -> ApiError {
 }
 
 fn clean_label(s: &str) -> Result<String, ApiError> {
-    let t: String = s.chars().filter(|c| !c.is_control()).collect();
-    let t = t.trim().to_owned();
-    if t.is_empty() || t.chars().count() > 120 {
-        return Err(bad("/label", "label must be 1 to 120 characters"));
-    }
-    Ok(t)
+    aurora_core::names::clean(s, 120).map_err(|e| bad("/label", &e.to_string()))
 }
 
 /// A host an admin may register: a lower-case DNS name with at least two labels, never an IP
@@ -592,6 +587,8 @@ pub async fn create(
     let (scope, sid) = invalidate_scope(org);
     credentials::notify_gateway_invalidate(&mut *tx, scope, sid).await?;
     tx.commit().await.map_err(DbError::from)?;
+    // (P5-POLISH-4) A new server can make an app ready: re-evaluate the open setup requests.
+    crate::domains::app_setup_requests::service::reevaluate(state, row.org_id).await;
     Ok(row)
 }
 
@@ -628,6 +625,7 @@ pub async fn patch(
     let (scope, sid) = invalidate_scope(updated.org_id);
     credentials::notify_gateway_invalidate(&mut *tx, scope, sid).await?;
     tx.commit().await.map_err(DbError::from)?;
+    crate::domains::app_setup_requests::service::reevaluate(state, updated.org_id).await;
     Ok(updated)
 }
 
@@ -677,5 +675,6 @@ pub async fn delete(
             }
         }
     }
+    crate::domains::app_setup_requests::service::reevaluate(state, row.org_id).await;
     Ok(())
 }

@@ -126,6 +126,15 @@ pub struct PluginPackage {
     pub source: String,
     /// (P5-ASRC, C-600) the addon source row for `source = "addon"`.
     pub source_id: Option<Uuid>,
+    /// (P5-POLISH-3, C-1032) Where the package came from, in the words the list shows: `aurora` (shipped
+    /// with Aurora), `uploaded`, `directory` or `addon`.
+    pub origin: String,
+    /// (C-1032) The hosts the package's apps reach (host claims, deduplicated, sorted), at most five.
+    pub reaches: Vec<String>,
+    /// (C-1032) How many more hosts there are than `reaches` lists.
+    pub reaches_more: u32,
+    /// (C-1032, C-1031) The first app's `about.summary`, for the list's one-line description.
+    pub summary: Option<String>,
     /// (P5-ASRC, C-600) the addon source's name at read time (never stored).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_name: Option<String>,
@@ -233,6 +242,9 @@ fn widening(w: &Widening) -> PluginWidening {
     }
 }
 
+/// Hosts listed in `reaches` before the rest are only counted.
+const REACHES_MAX: usize = 5;
+
 impl PluginPackage {
     pub fn from_row(r: PackageRow, widenings: &[Widening]) -> Self {
         let manifest = serde_json::from_value::<Manifest>(r.manifest.clone()).ok();
@@ -241,7 +253,31 @@ impl PluginPackage {
             "unsigned" => ("unsigned", None),
             k => ("trusted_key", Some(k.to_owned())),
         };
+        let mut hosts: Vec<String> = manifest
+            .iter()
+            .flat_map(claims::claims)
+            .map(|c| c.host_pattern)
+            .collect();
+        hosts.sort();
+        hosts.dedup();
+        let reaches_more =
+            u32::try_from(hosts.len().saturating_sub(REACHES_MAX)).unwrap_or(u32::MAX);
+        hosts.truncate(REACHES_MAX);
+        let origin = match r.source.as_str() {
+            "builtin" => "aurora",
+            "upload" => "uploaded",
+            other => other,
+        }
+        .to_owned();
+        let summary = manifest
+            .iter()
+            .flat_map(|m| &m.apps)
+            .find_map(|a| a.about.summary.clone());
         Self {
+            origin,
+            summary,
+            reaches: hosts,
+            reaches_more,
             apps: manifest
                 .iter()
                 .flat_map(|m| &m.apps)

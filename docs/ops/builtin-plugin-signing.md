@@ -64,14 +64,15 @@ Nobody else needs the private key, and it is never committed. Rotating it means 
 
 ## Dev and e2e
 
-The builtin directory is not used for development: it rejects unsigned archives by design. To try the
-packages locally, build unsigned archives and load them through the ordinary plugin directory:
+The builtin directory rejects unsigned archives unless `plugins.allow_unsigned` is on, which only the dev values
+set (SEC-136). To try the packages locally, build unsigned archives and load them as builtins:
 
 ```sh
 cargo build -p aurora-cli
-bash scripts/plugins/build-builtin.sh --out /var/lib/aurora/plugins   # unsigned, says so
-# plugins.allow_unsigned = true (dev only); the package lands as `pending_approval` (first_install)
-# from source `directory`, because only project-signed builtin archives auto-activate.
+bash scripts/plugins/build-builtin.sh --out /usr/share/aurora/plugins   # unsigned, says so
+# plugins.allow_unsigned = true (dev only): the package is active at first install and at every upgrade, source
+# `builtin`, audit `plugin.auto_approved` with reason `builtin_dev_unsigned`. Without the switch it is refused.
+# The same archive in `plugins.dir` (source `directory`) lands as `pending_approval` and needs an admin.
 ```
 
 To test signing without the real key: `aurora plugin keygen --out <file outside the repo>`, then

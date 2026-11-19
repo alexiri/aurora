@@ -273,7 +273,7 @@ function TokenRow({
       <Td>
         <span className="flex items-center gap-1.5">
           <span className="whitespace-nowrap">{fmtDate(t.expires_at)}</span>
-          {t.expiring && !t.revoked ? <Badge tone="pending">expiring</Badge> : null}
+          {t.expiring && !t.revoked ? <Badge>Expiring</Badge> : null}
         </span>
       </Td>
       <Td className="text-ink-2">{t.last_used_at ? fmtDate(t.last_used_at) : "never"}</Td>

@@ -41,7 +41,7 @@ const account = (over: Record<string, unknown> = {}) => ({
   app: { app_id: "linear", name: "Linear", custom_only: false },
   scope: "workspace",
   levels: ["read", "ask", "act"],
-  health: { state: "ok" },
+  health: { state: "working" },
   agents: [{ agent: { id: "a1", name: "Daneel", handle: "daneel" }, workspace: { id: "w1", name: "Ops" }, level: "ask", always_allowed: [] }],
   can: { give_access: true, change_access: true, manage: true },
   given: true,

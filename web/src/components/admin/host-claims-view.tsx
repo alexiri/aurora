@@ -16,7 +16,7 @@ export function ConflictGroup({ c }: { c: HostClaimConflict }) {
     <li className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <h2 className="break-all font-mono text-sm font-medium text-ink">{c.group_key}</h2>
-        {!d ? <Badge tone="pending">Unresolved</Badge> : null}
+        {!d ? <Badge>Unresolved</Badge> : null}
       </div>
       {d ? (
         <p className="text-sm text-ink-2">

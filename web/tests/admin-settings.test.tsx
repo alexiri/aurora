@@ -201,7 +201,7 @@ describe("Generic settings section form (SET-1)", () => {
     expect(screen.getByRole("button", { name: "Replace…" })).toBeTruthy();
     expect(screen.queryByDisplayValue("canary")).toBeNull();
     // The keyed list: a Helm entry is locked.
-    expect(screen.getByText("Managed by Helm")).toBeTruthy();
+    expect(screen.getAllByText("Set in Helm").length).toBeGreaterThan(0);
   });
 
   it("saves via the preview, sending only the dashboard values and `keep` for the stored secret", async () => {

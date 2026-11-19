@@ -66,7 +66,7 @@ async fn requester_can_use(
     match user {
         Some(u) => Ok(authz::workspace_access(&mut *conn, u, workspace)
             .await?
-            .is_some_and(|a| a.can_use())),
+            .is_some()),
         None => Ok(false),
     }
 }

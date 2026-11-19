@@ -324,7 +324,7 @@ function ActionHistory({ wsId }: { wsId: string }) {
                   {a.error ? <span className="block text-xs text-danger-ink">{a.error}</span> : null}
                 </Td>
                 <Td>
-                  <Badge tone={a.status === "failed" || a.status === "rejected" ? "danger" : a.status === "expired" ? "pending" : "accent"}>
+                  <Badge tone={a.status === "failed" || a.status === "rejected" ? "danger" : a.status === "expired" ? "neutral" : "accent"}>
                     {a.status}
                   </Badge>
                 </Td>

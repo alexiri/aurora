@@ -6,6 +6,7 @@ import { HelmProviderDialog, ProviderDialog } from "@/components/admin/settings/
 import { SettingsSectionForm, type SettingControlCtx, type SettingsGroup } from "@/components/admin/settings/settings-section-form";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
+import { LockPill } from "@/components/ui/lock-pill";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
@@ -77,7 +78,7 @@ function ProvidersControl({ ctx, signedInWith }: { ctx: SettingControlCtx; signe
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-ink">{String(v.display_name ?? e.id)}</span>
-            <Badge tone="pending">Managed by Helm</Badge>
+            <LockPill owner="Set in Helm" />
             {signedInWith === e.id ? <Badge tone="accent">You signed in with this</Badge> : null}
           </div>
           <p className="break-all text-xs text-ink-2">{hostOf(v.issuer) || hostOf(v.issuer_url)}</p>

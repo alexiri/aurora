@@ -676,6 +676,10 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   (warning) and for `gateway.resolve_cache_ttl_secs` (critical: cache is running out,
   new requests are being refused); page on `state="down"`. Kubernetes probes use
   plain `/readyz`; use `?strict=true` only in monitoring, never as a readiness probe.
+  **(FIX-180, D-395)** A sandbox whose request body stops arriving for 60 s is answered `408
+  request_body_timeout` and its connection closed (`aurora_gateway_request_body_timeout_total`,
+  one request-log row each); a few are normal (killed uploads), a sustained rate points at a
+  broken client or network path. The 60 s is not configurable.
   **(FIX-102)** The chart's probes are `httpGet`: readiness `/readyz`, liveness `/healthz`, on the port that
   serves the ops router (api 4101, gateway 4103, hookhost 4104, runner 4106, connector host 4192, relay 4193),
   so an API replica without its database, or a gateway reporting `down`, leaves rotation. The web workload and

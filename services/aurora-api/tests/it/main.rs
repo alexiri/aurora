@@ -68,6 +68,7 @@ mod home_agent_guides;
 mod home_checksum;
 mod home_render_inputs;
 mod hosted;
+mod invisible_names;
 mod invitations;
 mod jobs;
 mod key_listing;
@@ -140,6 +141,7 @@ mod web_push;
 mod web_push_ssrf;
 mod webhooks;
 mod who_can;
+mod workspace_access;
 
 #[test]
 fn init_scim_logs() {

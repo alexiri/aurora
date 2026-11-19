@@ -356,8 +356,8 @@ async fn list_workspace_overrides(
     Path(org): Path<Uuid>,
     Query(q): Query<WorkspaceOverridesQuery>,
 ) -> Result<Json<Page<WorkspaceOverride>>, ApiError> {
-    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     c.org(&s, org).await?.require_admin()?;
+    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = aurora_db::repo::policy::workspace_overrides(
         &s.pool,
         org,
@@ -407,8 +407,8 @@ async fn list_workspaces(
     Path(org): Path<Uuid>,
     Query(q): Query<PageParams>,
 ) -> Result<Json<Page<Workspace>>, ApiError> {
-    let p = q.resolve()?;
     let auth = c.org(&s, org).await?;
+    let p = q.resolve()?;
     let all = auth.role.is_admin();
     let rows = workspaces::list_visible(&s.pool, org, c.user_id, all, after(&p), p.fetch()).await?;
     let ids: Vec<Uuid> = rows.iter().map(|w| w.id).collect();
@@ -634,8 +634,8 @@ async fn list_access(
     Query(q): Query<crate::domains::groups::dto::AccessQuery>,
 ) -> Result<Json<crate::domains::groups::dto::AccessList>, ApiError> {
     use crate::domains::groups::dto as g;
-    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     require_own(&c.workspace(&s, ws).await?)?;
+    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = workspaces::list_access(&s.pool, ws, after(&p), p.fetch()).await?;
     let page = page_of(rows, &p, |r| (r.created_at, r.user_id), AccessBinding::from);
     let (group_bindings, derived_members) = match q.expand.as_deref() {

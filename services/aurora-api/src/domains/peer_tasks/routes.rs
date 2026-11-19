@@ -27,6 +27,8 @@ async fn list_peer_tasks(
     Path(agent): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<PeerTask>>, ApiError> {
+    // Authorise before parsing the query (FIX-181 F7, C-1041).
+    load_agent(&s, &c, agent).await?;
     if q.status.as_deref().is_some_and(|v| !STATUSES.contains(&v)) {
         return Err(ApiError::invalid_request(
             "Invalid status.",
@@ -34,7 +36,6 @@ async fn list_peer_tasks(
         ));
     }
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    load_agent(&s, &c, agent).await?;
     let rows = repo::list_for_agent(
         &s.pool,
         agent,

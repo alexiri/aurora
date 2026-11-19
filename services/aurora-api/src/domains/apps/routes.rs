@@ -5,9 +5,11 @@ use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use aurora_core::{ApiError, FieldError};
+use aurora_db::repo::contacts;
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use std::collections::HashMap;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -119,10 +121,49 @@ async fn list_apps(
     let av = service::avail(&state, &caller, q.workspace_id).await?;
     let mut items = Vec::new();
     if let Some(snap) = service::snapshot(&state).await? {
-        for a in &snap.apps {
-            if let Ok((a, p)) = service::find_app(&snap, &a.app_id) {
-                items.push(service::summary(&state, a, p, &av).await);
+        // (P5-POLISH-3, C-1029) Readiness for every app in one pass, and the workspace's accounts of apps
+        // in one list, when the catalogue is read for a workspace.
+        let mut facts = match (av.view(), q.workspace_id) {
+            (Some(view), Some(_)) => {
+                let (slug, _) = contacts::slugs(&state.pool, view.org, view.workspace)
+                    .await?
+                    .ok_or_else(|| ApiError::not_found("Organization not found."))?;
+                Some(setup::Facts::load(&state, view, slug, None).await?)
             }
+            _ => None,
+        };
+        let mut asked = match av.view() {
+            Some(view) if q.workspace_id.is_some() => {
+                crate::domains::app_setup_requests::service::requested(
+                    &state,
+                    view.org,
+                    caller.user_id,
+                )
+                .await?
+            }
+            _ => HashMap::new(),
+        };
+        let mut accounts = match q.workspace_id {
+            Some(ws) => service::accounts_by_app(&state, &caller, ws).await?,
+            None => HashMap::new(),
+        };
+        for a in &snap.apps {
+            let Ok((a, p)) = service::find_app(&snap, &a.app_id) else {
+                continue;
+            };
+            let available = av.is_available(&a.app_id);
+            // Apps switched off are not returned to callers who cannot change availability.
+            if !available && av.view().is_some() && !av.can_change_availability() {
+                continue;
+            }
+            let mut item = service::summary(&state, a, p, &av).await;
+            if let Some(f) = facts.as_mut() {
+                let mut r = setup::readiness(f, a, p, available).await;
+                r.requested = asked.remove(&a.app_id);
+                item.readiness = Some(r);
+                item.accounts = accounts.remove(&a.app_id).unwrap_or_default();
+            }
+            items.push(item);
         }
     }
     Ok(Json(AppList { items }))

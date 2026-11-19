@@ -1,6 +1,6 @@
 package:
   id: postgresql
-  version: 1.2.0
+  version: 1.3.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -12,6 +12,8 @@ apps:
       id: postgresql
       name: PostgreSQL
       description: Let agents query and change a PostgreSQL database. The gateway holds the database login; agents connect to the gateway with psql or any PostgreSQL driver and each statement is checked against your rules and held for approval when it changes anything.
+      summary: Run SQL on a PostgreSQL database without the agent holding its password.
+      first_prompt: "Which tables are in the database, and how many rows does each have?"
       category: database
       api_docs: https://www.postgresql.org/docs/current/sql.html
       connect_note:

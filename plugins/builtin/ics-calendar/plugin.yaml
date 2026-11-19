@@ -1,6 +1,6 @@
 package:
   id: ics-calendar
-  version: 1.0.0
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -12,6 +12,8 @@ apps:
       id: ics-calendar
       name: Calendar link (ICS)
       description: Let agents read a calendar from its secret ICS link. You give a name and the link; the Aurora gateway fetches exactly that link for the agent, which never sees it. Works with any provider that publishes a calendar link, and needs no OAuth client.
+      summary: Events from any calendar's secret subscription link, read only.
+      first_prompt: "What's on my calendar this week?"
       category: productivity
       api_docs: https://icalendar.org/RFC-Specifications/iCalendar-RFC-5545/
       connect_note:

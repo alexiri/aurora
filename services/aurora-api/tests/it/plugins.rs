@@ -385,8 +385,9 @@ async fn directory_scan_picks_up_file_once() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// P2-CAT-0 (C-210): the builtin dir is fail-closed. Unsigned (even with allow_unsigned), signed by a
-// non-project key (publisher `aurora` or a trusted publisher) and garbage are refused, never loaded.
+// P2-CAT-0 (C-210), SEC-136: the builtin dir is fail-closed. Unsigned (with `allow_unsigned` off, as in
+// every release), signed by a non-project key (publisher `aurora` or a trusted publisher) and garbage are
+// refused, never loaded.
 #[tokio::test]
 async fn builtin_dir_refuses_everything_but_the_project_key() {
     let dir = std::env::temp_dir().join(format!("aurora-builtin-{}", uuid::Uuid::now_v7()));
@@ -394,7 +395,7 @@ async fn builtin_dir_refuses_everything_but_the_project_key() {
     let d = dir.to_string_lossy().into_owned();
     let h = Harness::with_config(|c| {
         c.plugins.builtin_dir = d;
-        c.plugins.allow_unsigned = true;
+        c.plugins.allow_unsigned = false;
     })
     .await;
     let other = generate_signing_key().unwrap();
@@ -438,6 +439,184 @@ async fn audit_n(h: &Harness, action: &str) -> i64 {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     0
+}
+
+async fn auto_approved_rows(h: &Harness) -> Vec<Value> {
+    sqlx::query_scalar("SELECT metadata FROM audit_log WHERE action = 'plugin.auto_approved' ORDER BY created_at, id")
+        .fetch_all(h.pool())
+        .await
+        .unwrap()
+}
+
+async fn versions(h: &Harness) -> Vec<(String, String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT version, status, status_reason FROM plugin_packages ORDER BY string_to_array(version, '.')::int[]",
+    )
+    .fetch_all(h.pool())
+    .await
+    .unwrap()
+}
+
+/// SEC-136 (D-381, C-1032): a package shipped with Aurora (the builtin directory; unsigned only where
+/// `plugins.allow_unsigned` is on, the dev values) arrives approved at first install and at every later
+/// version, one that widens permissions included, and each is audited `plugin.auto_approved`. The pending
+/// holds for identity still apply: a downgrade waits. (The project signing key is not available to tests; the
+/// signed path shares `decide`, and `builtin_reason` is unit-tested.)
+#[tokio::test]
+async fn sec136_a_shipped_package_and_its_upgrades_arrive_approved() {
+    let dir = std::env::temp_dir().join(format!("aurora-builtin-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let d = dir.to_string_lossy().into_owned();
+    let h = Harness::with_config(|c| {
+        c.plugins.builtin_dir = d;
+        c.plugins.allow_unsigned = true;
+    })
+    .await;
+    let mut seen = Seen::new();
+    std::fs::write(
+        dir.join("acme-1.0.0.aurora-plugin"),
+        unsigned(&yaml("aurora", "1.0.0", &["api.acme.example"])),
+    )
+    .unwrap();
+    assert_eq!(scan::scan_builtin_once(&h.state, &mut seen).await, 1);
+    assert_eq!(
+        versions(&h).await,
+        [("1.0.0".to_owned(), "active".to_owned(), None)]
+    );
+    audit_n(&h, "plugin.auto_approved").await;
+    let rows = auto_approved_rows(&h).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["reason"], "builtin_dev_unsigned");
+    assert_eq!(rows[0]["version"], "1.0.0");
+    assert!(rows[0]["previous_version"].is_null());
+
+    // A newer version that reaches another host (a widening) is active at once, the old one superseded.
+    std::fs::write(
+        dir.join("acme-1.1.0.aurora-plugin"),
+        unsigned(&yaml(
+            "aurora",
+            "1.1.0",
+            &["api.acme.example", "files.acme.example"],
+        )),
+    )
+    .unwrap();
+    assert_eq!(scan::scan_builtin_once(&h.state, &mut seen).await, 1);
+    assert_eq!(
+        versions(&h).await,
+        [
+            ("1.0.0".to_owned(), "superseded".to_owned(), None),
+            ("1.1.0".to_owned(), "active".to_owned(), None)
+        ]
+    );
+    for _ in 0..100 {
+        if auto_approved_rows(&h).await.len() == 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let rows = auto_approved_rows(&h).await;
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(
+        (
+            rows[1]["version"].as_str(),
+            rows[1]["previous_version"].as_str(),
+            rows[1]["reason"].as_str()
+        ),
+        (Some("1.1.0"), Some("1.0.0"), Some("builtin_dev_unsigned"))
+    );
+
+    // The identity holds still apply to a builtin: an older version waits for review.
+    std::fs::write(
+        dir.join("acme-0.9.0.aurora-plugin"),
+        unsigned(&yaml("aurora", "0.9.0", &["api.acme.example"])),
+    )
+    .unwrap();
+    assert_eq!(scan::scan_builtin_once(&h.state, &mut seen).await, 1);
+    let v = versions(&h).await;
+    assert_eq!(
+        v[0],
+        (
+            "0.9.0".to_owned(),
+            "pending_approval".to_owned(),
+            Some("version_downgrade".to_owned())
+        ),
+        "{v:?}"
+    );
+    assert_eq!(auto_approved_rows(&h).await.len(), 2);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// SEC-136: only the builtin source skips review. The same package from `plugins.dir`, an upload or (by
+/// ingest) any other source is `pending_approval` — first install and a widened upgrade — and writes no
+/// `plugin.auto_approved`.
+#[tokio::test]
+async fn sec136_directory_and_upload_packages_still_wait_for_review() {
+    let dir = std::env::temp_dir().join(format!("aurora-plugins-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let d = dir.to_string_lossy().into_owned();
+    let h = Harness::with_config(|c| {
+        c.plugins.dir = d;
+        c.plugins.allow_unsigned = true;
+    })
+    .await;
+    let a = setup(&h).await;
+    std::fs::write(
+        dir.join("acme-1.0.0.aurora-plugin"),
+        unsigned(&yaml("aurora", "1.0.0", &["api.acme.example"])),
+    )
+    .unwrap();
+    let mut seen = Seen::new();
+    assert_eq!(scan::scan_once(&h.state, &mut seen).await, 1);
+    let v = versions(&h).await;
+    assert_eq!(
+        v,
+        [(
+            "1.0.0".to_owned(),
+            "pending_approval".to_owned(),
+            Some("first_install".to_owned())
+        )]
+    );
+    // Approved by an admin, then a widened upgrade from the directory and another from an upload wait.
+    sqlx::query(
+        "UPDATE plugin_packages SET status='active', approved_at=now(), status_reason=NULL",
+    )
+    .execute(h.pool())
+    .await
+    .unwrap();
+    std::fs::write(
+        dir.join("acme-1.1.0.aurora-plugin"),
+        unsigned(&yaml(
+            "aurora",
+            "1.1.0",
+            &["api.acme.example", "files.acme.example"],
+        )),
+    )
+    .unwrap();
+    assert_eq!(scan::scan_once(&h.state, &mut seen).await, 1);
+    let (s, v) = a
+        .upload(&unsigned(&yaml(
+            "aurora",
+            "1.2.0",
+            &["api.acme.example", "other.acme.example"],
+        )))
+        .await;
+    assert_eq!(
+        (s, v["status"].as_str(), v["status_reason"].as_str()),
+        (201, Some("pending_approval"), Some("permissions_widened")),
+        "{v}"
+    );
+    let v = versions(&h).await;
+    assert_eq!(
+        v[1],
+        (
+            "1.1.0".to_owned(),
+            "pending_approval".to_owned(),
+            Some("permissions_widened".to_owned())
+        )
+    );
+    audit_n(&h, "plugin.ingest").await;
+    assert!(auto_approved_rows(&h).await.is_empty());
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// SEC-32: trusted keys, plugin ingest and activation are audited.

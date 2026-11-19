@@ -1,14 +1,14 @@
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 
-type Tone = "neutral" | "accent" | "pending" | "danger";
+type Tone = "neutral" | "accent" | "danger";
 type BadgeProps = { tone: Tone };
 
 /** Outcome of one question (C-867) in words and a tone. Colour is never the only signal: the badge carries the word. */
 export const OUTCOME: Record<string, { label: string; tone: BadgeProps["tone"] }> = {
   pass: { label: "Passed", tone: "accent" },
   fail: { label: "Failed", tone: "danger" },
-  error: { label: "Error", tone: "pending" },
+  error: { label: "Error", tone: "danger" },
   not_scored: { label: "Not scored", tone: "neutral" },
 };
 

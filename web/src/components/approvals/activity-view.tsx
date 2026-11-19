@@ -30,11 +30,11 @@ const DECISIONS = [
   "error",
 ];
 
-export function decisionTone(d: string): "accent" | "pending" | "danger" {
+export function decisionTone(d: string): "accent" | "neutral" | "danger" {
   if (d === "allow" || d === "approved") return "accent";
-  if (d === "approval_expired" || d === "error") return "pending";
+  if (d === "approval_expired" || d === "error") return "neutral";
   if (d === "blocked" || d.endsWith("_denied") || d.endsWith("_refused") || d === "rate_limited") return "danger";
-  return "pending";
+  return "neutral";
 }
 
 /** (P5-AGENT-2) The agent filter is in the URL (`?agent=<id>`), so the agent page's "All activity" lands filtered. */

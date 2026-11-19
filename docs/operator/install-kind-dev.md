@@ -81,13 +81,13 @@ own that the test trusts for its publisher.
 
 **The builtin apps** (P5-UX-6, D-326(d)). `kind-dev.sh up` builds the eleven packages of `plugins/builtin`
 (`aurora plugin build`, **unsigned**: the project key is a release secret) in the builder container and bakes
-them into the API image in `/var/lib/aurora/plugins` (`plugins.dir`; the chart mounts nothing over it with
-`plugins.source: none`). The API refuses unsigned packages from `plugins.builtin_dir` even with
-`plugins.allow_unsigned`, so they arrive as the `directory` source. `values-dev.yaml` sets
+them into the API image in `/usr/share/aurora/plugins` (`plugins.builtin_dir`, where a release image puts its
+signed ones; P5-POLISH-3, D-381). With `plugins.allow_unsigned` the API takes an unsigned package from that
+directory as a builtin: approved at first install and at every upgrade, audited `plugin.auto_approved` with
+reason `builtin_dev_unsigned` (SEC-136; without the switch it refuses them). `values-dev.yaml` sets
 `config.plugins.allow_unsigned: true` for that (dev only: the chart refuses it unless `externalUrl` is a
-loopback origin). A first install needs an instance admin's approval (docs/09 §10), so after sign-in the
-packages wait under Administration › Apps & accounts › Apps; approve them there and the organization's Apps tab
-lists the apps.
+loopback origin). A dev install therefore behaves like a release one: all the builtin apps are active after the
+first start, with nothing to approve, and the organization's Apps tab lists them.
 
 The mock's Service has the fixed ClusterIP `10.96.100.40`; the profile opens exactly that `/32` in
 `gateway.allowed_private` and gives the gateway's NetworkPolicy one extra egress rule
