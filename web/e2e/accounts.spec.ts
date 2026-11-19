@@ -148,7 +148,7 @@ for (const scheme of ["light", "dark"] as const) {
         const form = page.getByRole("form", { name: "New LLM key" });
         await form.getByLabel("Name").fill("Team key");
         await form.getByLabel("Provider endpoint").selectOption("aigw");
-        await form.getByLabel("API key").fill("sk-not-a-real-key");
+        await form.getByLabel("API key", { exact: true }).fill("sk-not-a-real-key");
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
         await form.getByRole("button", { name: "Add LLM key" }).click();
         await expect(page.getByText("Saved Team key")).toBeVisible();

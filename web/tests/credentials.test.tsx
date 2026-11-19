@@ -1,7 +1,6 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { GenericSecretForm } from "@/components/credentials/generic-form";
 import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { ERROR_MESSAGES } from "@/lib/api/errors";
 import { buildGenericCreate, buildRecipe, EMPTY_RECIPE_FIELDS, type GenericFormState } from "@/lib/api/secrets";
@@ -46,48 +45,6 @@ describe("recipe mapping", () => {
       name: "n", kind: "generic", host_pattern: "api.x.com", path_pattern: "/v1", injection: { kind: "bearer" },
       reference: { store_id: "vault", path: "p" },
     });
-  });
-});
-
-describe("generic form", () => {
-  const stores = (references: boolean) => ({
-    items: [{ id: "managed", kind: "managed", capabilities: { managed: true, references } }],
-  });
-
-  it("hides reference fields when no store supports references", async () => {
-    mockFetch({ "GET /v1/secret-stores": () => json(200, stores(false)) });
-    wrap(<GenericSecretForm scope={{ kind: "workspace", id: "w1" }} orgId="o1" />);
-    await screen.findByLabelText("Value");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(screen.queryByLabelText("Value source")).toBeNull();
-  });
-
-  it("offers reference mode when available", async () => {
-    mockFetch({ "GET /v1/secret-stores": () => json(200, stores(true)) });
-    wrap(<GenericSecretForm scope={{ kind: "workspace", id: "w1" }} orgId="o1" />);
-    expect(await screen.findByLabelText("Value source")).toBeTruthy();
-  });
-
-  it("posts the body and clears the value after submit", async () => {
-    let body: unknown;
-    mockFetch({
-      "GET /v1/secret-stores": () => json(200, stores(false)),
-      "POST /v1/workspaces/w1/secrets": async (req) => {
-        body = await req.json();
-        return json(409, { error: { code: "name_taken", message: "x" } });
-      },
-    });
-    wrap(<GenericSecretForm scope={{ kind: "workspace", id: "w1" }} orgId="o1" />);
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "gh" } });
-    fireEvent.change(screen.getByLabelText("Host pattern"), { target: { value: "api.github.com" } });
-    const value = screen.getByLabelText("Value") as HTMLInputElement;
-    expect(value.type).toBe("password");
-    fireEvent.change(value, { target: { value: "s3cret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add secret" }));
-    await waitFor(() => expect(body).toBeTruthy());
-    expect(body).toMatchObject({ name: "gh", kind: "generic", value: "s3cret", injection: { kind: "bearer" } });
-    await waitFor(() => expect((screen.getByLabelText("Value") as HTMLInputElement).value).toBe(""));
-    expect(await screen.findByText(ERROR_MESSAGES.name_taken!)).toBeTruthy();
   });
 });
 

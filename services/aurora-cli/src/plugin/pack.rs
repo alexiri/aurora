@@ -31,6 +31,16 @@ fn source_files(dir: &Path) -> Result<Vec<String>> {
         t.sort();
         out.extend(t);
     }
+    // (P5-WEBHOOK-1, C-909) `presets/<file>.json`: the webhook presets of a send-mode app.
+    if let Ok(rd) = std::fs::read_dir(dir.join("presets")) {
+        let mut p: Vec<String> = rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .map(|e| format!("presets/{}", e.file_name().to_string_lossy()))
+            .collect();
+        p.sort();
+        out.extend(p);
+    }
     // (P5-GUIDE-1, C-640) `agent/<app_id>/<file>`: the agent guide files, one directory per app.
     // Anything deeper or not a regular file is left out here and the linter says why a listed
     // file is missing.

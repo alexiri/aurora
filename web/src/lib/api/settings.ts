@@ -61,37 +61,6 @@ export function useGovernanceOrgs(cursor?: string) {
   });
 }
 
-/** What a save would change, which values loosen and which organizations are affected (C-774). */
-export function usePreviewSettings(section: string) {
-  return useMutation({
-    mutationFn: (body: { generation: number; values: SettingValues }) =>
-      unwrap(
-        api.POST("/v1/admin/settings/{section}/preview", {
-          params: { path: { section } },
-          body: body as never,
-        }),
-      ),
-  });
-}
-
-/** Replace a section's dashboard values (C-773). */
-export function usePutSettings(section: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { generation: number; values: SettingValues }) =>
-      unwrap(
-        api.PUT("/v1/admin/settings/{section}", {
-          params: { path: { section } },
-          body: body as never,
-        }),
-      ),
-    onSuccess: (v) => {
-      qc.setQueryData([...INDEX_KEY, section], v);
-      void qc.invalidateQueries({ queryKey: INDEX_KEY });
-    },
-  });
-}
-
 /**
  * Preview and replace any section by id (P5-IA-3: a stacked page saves several sections from one Save, so the section
  * is an argument rather than a hook parameter).

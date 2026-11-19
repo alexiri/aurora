@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AppName } from "@/components/apps/app-name";
 import { AppsTab } from "@/components/apps/apps-tab";
-import { ConnectDialog } from "@/components/apps/connect-dialog";
+import { DeploymentStep } from "@/components/apps/connect-dialog";
 import { appDisplayName, productKey, productName } from "@/lib/api/app-name";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
@@ -114,11 +114,13 @@ describe("catalogue and connect window", () => {
     expect(within(list).getByRole("button", { name: "Connect GitHub" })).toBeInTheDocument();
   });
 
-  it("asks where the product runs, then connects the chosen server's app with its instance", async () => {
-    const calls = stub({
-      "POST /v1/apps/github-ghes/connect": () => json(200, { kind: "connected", connection: { id: "k1" }, missing_scopes: [] }),
-    });
-    wrap(<ConnectDialog appId="github" workspaceId="w1" orgId="o1" onClose={() => {}} />);
+  const step = (onPick: (w: { appId: string; instanceId?: string }) => void = () => {}) =>
+    wrap(<DeploymentStep family={{ id: "github", name: "GitHub", variant_label: "github.com", instance_bound: false }} siblings={[GH, GHES] as never} orgId="o1" onPick={onPick} />);
+
+  it("asks where the product runs and hands over the chosen server's app with its instance", async () => {
+    stub();
+    const onPick = vi.fn();
+    step(onPick);
     const where = await screen.findByRole("radiogroup", { name: "Where does your GitHub run?" });
     await waitFor(() => expect(within(where).getAllByRole("radio")).toHaveLength(2));
     const labels = within(where).getAllByRole("radio").map((r) => r.closest("label")?.textContent ?? "");
@@ -127,26 +129,17 @@ describe("catalogue and connect window", () => {
     expect(labels[1]).toContain("https://ghe.acme.example");
     fireEvent.click(within(where).getAllByRole("radio")[1]!);
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.change(await screen.findByLabelText("Token"), { target: { value: "t" } });
-    // The server is already chosen: the instance picker is not asked again.
-    expect(screen.queryByLabelText("GHES host")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/github-ghes/connect")).toBe(true));
-    expect(calls.find((c) => c.path === "/v1/apps/github-ghes/connect")?.body).toMatchObject({ instance_id: "i1", method_id: "token" });
+    expect(onPick).toHaveBeenCalledWith({ appId: "github-ghes", instanceId: "i1" });
   });
 
-  it("the hosted deployment connects the hosted app without an instance", async () => {
-    const calls = stub({
-      "POST /v1/apps/github/connect": () => json(200, { kind: "connected", connection: { id: "k1" }, missing_scopes: [] }),
-    });
-    wrap(<ConnectDialog appId="github-ghes" workspaceId="w1" orgId="o1" onClose={() => {}} />);
+  it("the hosted deployment is picked without an instance", async () => {
+    stub();
+    const onPick = vi.fn();
+    step(onPick);
     const where = await screen.findByRole("radiogroup", { name: "Where does your GitHub run?" });
     fireEvent.click(within(where).getAllByRole("radio")[0]!);
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.change(await screen.findByLabelText("Token"), { target: { value: "t" } });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/github/connect")).toBe(true));
-    expect(calls.find((c) => c.path === "/v1/apps/github/connect")?.body).not.toHaveProperty("instance_id");
+    expect(onPick).toHaveBeenCalledWith({ appId: "github" });
   });
 
   it("without a registered server it says so (an instance admin is pointed at Self-hosted apps)", async () => {
@@ -154,7 +147,7 @@ describe("catalogue and connect window", () => {
       "GET /v1/orgs/o1/app-instances": () => json(200, { items: [], next_cursor: null }),
       "GET /v1/me": () => json(200, { user: { display_name: "A", email: "a@x.io", is_instance_admin: true } }),
     });
-    wrap(<ConnectDialog appId="github" workspaceId="w1" orgId="o1" onClose={() => {}} />);
+    step();
     expect(await screen.findByText(/No self-hosted server is registered yet/)).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: /Register a server/ })).toHaveAttribute("href", "/admin/apps?tab=self-hosted");
   });

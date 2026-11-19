@@ -20,7 +20,6 @@ import {
   connectApp,
   defaultValues,
   useApp,
-  useApps,
   useAppGuide,
   useAppInstances,
   appIsCustomOnly,
@@ -33,9 +32,8 @@ import {
   type FieldValues,
 } from "@/lib/api/apps";
 
-import { GiveAccessPanel, WorkspaceAgents } from "@/components/credentials/give-access";
-import { grantApp } from "@/lib/api/credential-grants";
-import { InstanceField, OAuthClientField, RequestedScopes, TokenScopes } from "./connect-journey/advanced-fields";
+import { GiveAccessPanel } from "@/components/credentials/give-access";
+import { OAuthClientField, RequestedScopes, TokenScopes } from "./connect-journey/advanced-fields";
 import { useSignInWindow } from "./connect-journey/use-sign-in-window";
 import { DynamicForm } from "./dynamic-form";
 import { Markdown, safeHref } from "@/components/ui/markdown";
@@ -126,7 +124,6 @@ function ConnectForm({
   orgId,
   keepMethod,
   reconnect,
-  initialInstanceId,
   orgScope,
   onClose,
 }: {
@@ -135,25 +132,14 @@ function ConnectForm({
   orgId: string;
   /** (P5-UX-11, C-842, C-937) Reconnecting an organization's account: the request is organization-scoped. */
   orgScope?: boolean;
-  /** (FIX-135) The server already chosen in a family's "Where?" step: the instance picker is not asked again. */
-  initialInstanceId?: string;
   /** A reconnect keeps the connection's method unless the person picks another (D-214). */
   keepMethod?: string | null;
-  /** The id of the connection being reconnected. */
-  reconnect?: string;
+  /** The id of the connection being reconnected; it keeps its instance, so no instance is asked for. */
+  reconnect: string;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
   const first = initialMethod(app, keepMethod);
-  // Instance-bound apps (D-74): the SaaS default host, or an instance an admin registered. A
-  // reconnect keeps the connection's instance, so the picker is not shown then.
-  const instanceBound = !!app.instances && !reconnect;
-  const instances = useAppInstances(instanceBound ? { kind: "organization", id: orgId } : undefined);
-  const [instanceId, setInstanceId] = useState(initialInstanceId ?? "");
-  const choices = (instances.data?.items ?? []).filter((i) => i.app_id === app.app_id && i.status === "active");
-  const builtinChoices = choices.filter((i) => i.builtin);
-  const registeredChoices = choices.filter((i) => !i.builtin);
-  const defaultHost = app.instances?.default_host ?? null;
   const [methodId, setMethodId] = useState(first?.id ?? "");
   const method: ConnectMethod | undefined = app.connect.find((m) => m.id === methodId);
   const [values, setValues] = useState<FieldValues>(() => defaultValues(first?.fields ?? []));
@@ -161,10 +147,6 @@ function ConnectForm({
   const [access, setAccess] = useState(first?.access_levels[0]?.id ?? "");
   // (FIX-136) A pasted token's scopes: detected by the method's read probes, or ticked by the person.
   const [scopeMode, setScopeMode] = useState<"detect" | "choose">("detect");
-  // (FIX-133, D-240) What agents may do through the connection: only offered for an app that has write tools, not on a
-  // reconnect (which keeps the connection's own choice). Read only is the recommended default.
-  const hasWriteTools = app.tools.some((t) => t.group === "write");
-  const [connAccess, setConnAccess] = useState<"read" | "write">("read");
   const [clientId, setClientId] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<unknown>(null);
@@ -190,15 +172,9 @@ function ConnectForm({
   const { phase, blocked, notice: flowNotice } = signIn;
   const guide = useAppGuide(app.app_id);
   const clients = useOAuthClients(orgScope ? { kind: "organization", id: orgId } : { kind: "workspace", id: workspaceId });
-  // An OAuth client bound to an instance serves only that instance; the default host uses unbound ones.
   const matching = (clients.data?.items ?? []).filter(
-    (c) =>
-      c.enabled &&
-      c.package_id === app.package_id &&
-      c.client_key === method?.client_key &&
-      (instanceBound ? (c.instance_id ?? "") === instanceId : !c.instance_id),
+    (c) => c.enabled && c.package_id === app.package_id && c.client_key === method?.client_key && !c.instance_id,
   );
-  const needsInstanceClient = instanceBound && !!instanceId && method?.kind === "oauth2" && matching.length === 0;
 
   function pick(id: string) {
     const m = app.connect.find((x) => x.id === id);
@@ -217,7 +193,6 @@ function ConnectForm({
     e.preventDefault();
     if (!method) return;
     const errs = validateFields(method.fields, values);
-    if (instanceBound && !defaultHost && !instanceId) errs.__instance = "Choose an instance.";
     setErrors(errs);
     if (Object.keys(errs).length) return;
     // The sign-in window is opened here, synchronously in the click, so popup blockers allow it (C-842).
@@ -242,13 +217,11 @@ function ConnectForm({
         method_id: method.id,
         ...(Object.keys(fields).length ? { fields } : {}),
         ...(clientId ? { oauth_client_id: clientId } : {}),
-        ...(instanceBound && instanceId ? { instance_id: instanceId } : {}),
         ...(access ? { access_level: access } : {}),
         ...(method.kind === "fields" && method.scopes.length > 0 && (scopeMode === "choose" || method.probe_scopes.length === 0)
           ? { scopes }
           : {}),
-        ...(hasWriteTools && !reconnect ? { access: connAccess } : {}),
-        ...(reconnect ? { reconnect_connection_id: reconnect } : {}),
+        reconnect_connection_id: reconnect,
       });
       if (res.kind === "redirect") {
         const url = safeHref(res.url);
@@ -335,26 +308,6 @@ function ConnectForm({
           <div className="mt-2"><Markdown source={guide.data} /></div>
         </details>
       ) : null}
-      {instanceBound && !initialInstanceId ? (
-        <InstanceField
-          label={app.instances?.label ?? "Instance"}
-          error={errors.__instance}
-          value={instanceId}
-          onChange={(v) => {
-            setInstanceId(v);
-            setClientId("");
-          }}
-          defaultHost={defaultHost}
-          builtin={builtinChoices}
-          registered={registeredChoices}
-        />
-      ) : null}
-      {needsInstanceClient ? (
-        <Notice tone="pending" role="status">
-          No OAuth application is registered for this self-hosted server yet. Ask an organization admin to add one under
-          Apps & accounts › OAuth clients, or connect with an access token instead.
-        </Notice>
-      ) : null}
       {app.connect.length > 1 ? (
         <ChoiceCards
           legend="How do you want to connect?"
@@ -386,27 +339,6 @@ function ConnectForm({
           {method.scopes.length > 0 && method.kind === "fields" ? (
             <TokenScopes method={method} mode={scopeMode} onMode={setScopeMode} selected={scopes} onChange={setScopes} disabled={busy} />
           ) : null}
-          {hasWriteTools && !reconnect ? (
-            <ChoiceCards
-              legend="What may agents do with this account?"
-              value={connAccess}
-              onChange={setConnAccess}
-              options={[
-                {
-                  value: "read",
-                  label: "Read only",
-                  badge: "Recommended",
-                  description:
-                    "Agents can look things up but never change anything: Aurora blocks every write operation, whatever the token or the access you give allows. You can change this later on the account.",
-                },
-                {
-                  value: "write",
-                  label: "Read and write",
-                  description: "Agents may also make changes, as far as the access you give them allows.",
-                },
-              ]}
-            />
-          ) : null}
           {method.kind === "oauth2" && method.client_key ? (
             <OAuthClientField value={clientId} onChange={setClientId} clients={matching} />
           ) : null}
@@ -427,9 +359,7 @@ function ConnectForm({
               ? blocked
                 ? "Try again"
                 : "Continue to sign in"
-              : reconnect
-                ? "Reconnect"
-                : "Connect"}
+              : "Reconnect"}
         </Button>
       </FormActions>
     </Form>
@@ -480,128 +410,6 @@ function ConnectedStep({
   );
 }
 
-/**
- * (FIX-154, C-897) An app with nothing to sign in to: no form. The note, the agents to give access to, and one action.
- * With agents chosen, each gets `PUT …/grants/apps/{app}` — the first creates the workspace's connection, the others
- * reuse it. With none, it only connects. A failed grant keeps the connection (harmless, and listed).
- */
-function CredentialFreeForm({ app, workspaceId, onClose }: { app: AppDetail; workspaceId: string; onClose: () => void }) {
-  const qc = useQueryClient();
-  const method = app.connect[0];
-  const customOnly = appIsCustomOnly(app);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [names, setNames] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<{ text: string } | null>(null);
-  const [done, setDone] = useState<{ granted: number } | null>(null);
-  const register = useCallback(
-    (agents: { id: string; name: string }[]) =>
-      setNames((cur) => (agents.every((a) => cur[a.id] === a.name) ? cur : { ...cur, ...Object.fromEntries(agents.map((a) => [a.id, a.name])) })),
-    [],
-  );
-  const toggle = (id: string) =>
-    setSelected((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  const refresh = () => {
-    void qc.invalidateQueries({ queryKey: ["apps"] });
-    void qc.invalidateQueries({ queryKey: ["connections"] });
-    void qc.invalidateQueries({ queryKey: ["grants"] });
-    void qc.invalidateQueries({ queryKey: ["credential-grants"] });
-  };
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!method) return;
-    setBusy(true);
-    setError(null);
-    let granted = 0;
-    try {
-      if (selected.size === 0) {
-        await connectApp(app.app_id, { scope: "workspace", workspace_id: workspaceId, method_id: method.id });
-      } else {
-        for (const id of selected) {
-          try {
-            await grantApp(id, app.app_id, { mode: "full" });
-            granted += 1;
-          } catch (err) {
-            throw Object.assign(new Error(`Could not give access to ${names[id] ?? "an agent"}: ${errorMessage(err)}`), { grant: true });
-          }
-        }
-      }
-      refresh();
-      setDone({ granted });
-    } catch (err) {
-      refresh();
-      const grantFailed = err instanceof Error && "grant" in err;
-      setError({
-        text: grantFailed
-          ? `${(err as Error).message} ${granted > 0 ? `${granted} agent${granted === 1 ? " was" : "s were"} given access. ` : ""}${app.name} is connected; you can give the others access on each agent's Access tab.`
-          : errorMessage(err),
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (done)
-    return (
-      <div role="status" className="space-y-3 text-sm">
-        <p className="font-medium text-ink">
-          {app.name} is connected
-          {done.granted > 0 ? ` and ${done.granted} agent${done.granted === 1 ? " has" : "s have"} access` : ""}.
-        </p>
-        <Button size="sm" variant="outline" onClick={onClose}>Done</Button>
-      </div>
-    );
-  return (
-    <Form onSubmit={(e) => void submit(e)} aria-label={`Connect ${app.name}`} noValidate>
-      {app.connect_note ? (
-        <Notice>
-          {app.connect_note.text}
-          {app.connect_note.url && safeHref(app.connect_note.url) ? (
-            <>
-              {" "}
-              <a className="break-all text-link underline" target="_blank" rel="noopener noreferrer" href={safeHref(app.connect_note.url)!}>
-                {safeHref(app.connect_note.url)}
-              </a>
-            </>
-          ) : null}
-        </Notice>
-      ) : (
-        <Notice>Nothing to sign in to: connecting {app.name} only needs your go-ahead.</Notice>
-      )}
-      <fieldset className="min-w-0 space-y-2">
-        <legend className="mb-1 text-sm font-semibold text-ink">Give agents access</legend>
-        {customOnly ? (
-          <p className="text-xs text-muted">
-            This app only allows custom access: choose the allowed tools on each agent&apos;s Access tab after connecting.
-          </p>
-        ) : (
-          <WorkspaceAgents
-            wsId={workspaceId}
-            register={register}
-            has={new Set()}
-            selected={selected}
-            toggle={toggle}
-            disabled={busy}
-            idp={`cf-${app.app_id}`}
-          />
-        )}
-      </fieldset>
-      {error ? <Notice tone="danger" role="alert">{error.text}</Notice> : null}
-      <FormActions>
-        <Button type="submit" size="lg" disabled={busy || !method}>
-          {busy ? "Connecting…" : selected.size > 0 ? "Connect and give access" : "Connect"}
-        </Button>
-      </FormActions>
-    </Form>
-  );
-}
-
 /** A reconnect opens on the method the connection was made with; wait for it (a failed load falls back). */
 function ReconnectForm({ app, workspaceId, orgId, orgScope, reconnect, onClose }: { app: AppDetail; workspaceId: string; orgId: string; orgScope?: boolean; reconnect: string; onClose: () => void }) {
   const conns = useConnections(orgScope ? { kind: "organization", id: orgId } : { kind: "workspace", id: workspaceId });
@@ -611,8 +419,9 @@ function ReconnectForm({ app, workspaceId, orgId, orgScope, reconnect, onClose }
 }
 
 /**
- * The Connect / Reconnect dialog (D-272): the whole flow (method, fields, scopes, submit, missing scopes, Give agents
- * access) happens in a `Dialog` on the page, like Details. Closing it (×, Escape, scrim, Done) drops the form.
+ * The Reconnect dialog (D-272): the whole flow (method, fields, scopes, submit, missing scopes, Give agents access)
+ * happens in a `Dialog` on the page, like Details. Closing it (×, Escape, scrim, Done) drops the form. Connecting a new
+ * account is the connect journey's job; this dialog is only mounted with a connection to reconnect.
  */
 export function ConnectDialog({
   appId,
@@ -631,46 +440,20 @@ export function ConnectDialog({
   /** (P5-UX-11) Reconnect an organization's account: nothing is read or written for `workspaceId`. */
   orgScope?: boolean;
   /** The id of the connection to reconnect. */
-  reconnect?: string;
+  reconnect: string;
   onClose: () => void;
 }) {
-  // (FIX-135, D-242) An app of a family asks where the person's product runs first; the chosen
-  // deployment is then the app (and, for a registered server, the instance) that is connected.
-  const [where, setWhere] = useState<{ appId: string; instanceId?: string } | null>(null);
-  const lookupWs = orgScope ? undefined : workspaceId;
-  const entry = useApp(appId, lookupWs);
-  const apps = useApps(lookupWs);
-  const family = entry.data?.family ?? null;
-  const siblings = family ? (apps.data?.items ?? []).filter((a) => a.family?.id === family.id && a.available) : [];
-  const asking = !reconnect && !where && siblings.length > 1;
-  const shownId = where?.appId ?? appId;
-  const detail = useApp(shownId, lookupWs);
+  const detail = useApp(appId, orgScope ? undefined : workspaceId);
   const d = detail.data;
-  const product = family?.name ?? d?.name ?? name ?? "app";
-  const title = `${reconnect ? "Reconnect" : "Connect"} ${asking || where ? product : (d ? appDisplayName(d) : (name ?? "app"))}`;
+  const title = `Reconnect ${d ? appDisplayName(d) : (name ?? "app")}`;
   let body;
-  if (entry.isPending || (family && apps.isPending)) body = <Loading />;
-  else if (asking) body = <DeploymentStep family={family!} siblings={siblings} orgId={orgId} onPick={setWhere} />;
-  else if (detail.isPending) body = <Loading />;
+  if (detail.isPending) body = <Loading />;
   else if (detail.isError) body = <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />;
   else if (!d) body = <Loading />;
   else if (!d.available) body = <ErrorState error={{ code: "app_unavailable" }} />;
-  else if (reconnect && d.connect.length > 1)
+  else if (d.connect.length > 1)
     body = <ReconnectForm app={d} workspaceId={workspaceId} orgId={orgId} orgScope={orgScope} reconnect={reconnect} onClose={onClose} />;
-  else if (d.credential_free && !reconnect) body = <CredentialFreeForm key={shownId} app={d} workspaceId={workspaceId} onClose={onClose} />;
-  else
-    body = (
-      <ConnectForm
-        key={`${shownId}:${where?.instanceId ?? ""}`}
-        app={d}
-        workspaceId={workspaceId}
-        orgId={orgId}
-        orgScope={orgScope}
-        reconnect={reconnect}
-        initialInstanceId={where?.instanceId}
-        onClose={onClose}
-      />
-    );
+  else body = <ConnectForm app={d} workspaceId={workspaceId} orgId={orgId} orgScope={orgScope} reconnect={reconnect} onClose={onClose} />;
   return (
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
       <DialogContent size="lg" title={title} description={d ? `${d.package_id} ${d.package_version}` : undefined}>

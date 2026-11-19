@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { toolsForMethod, type Tool } from "@/lib/grant-editor";
@@ -9,21 +9,16 @@ import { json } from "./support/api";
 // FIX-123 (D-195(a), D-214): one app per service; the ways to authenticate are connect methods, and the connect
 // window asks "How do you want to connect?" with a description and a Recommended badge for each.
 
-let search = "";
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main", app: "github" }),
-  useSearchParams: () => new URLSearchParams(search),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
-// The connect flow is a dialog now (D-272); `search` carries the connection to reconnect, as the old route's query did.
+// The dialog only reconnects (D-272; a new account goes through the connect journey): connection c1, made with no
+// recorded method unless a test says otherwise.
 function ConnectView() {
-  const reconnect = new URLSearchParams(search).get("reconnect") ?? undefined;
-  return <ConnectDialog appId="github" workspaceId="w1" orgId="o1" reconnect={reconnect} onClose={() => {}} />;
+  return <ConnectDialog appId="github" workspaceId="w1" orgId="o1" reconnect="c1" onClose={() => {}} />;
 }
-
-afterEach(() => {
-  search = "";
-});
 
 interface Call {
   method: string;
@@ -101,6 +96,7 @@ const routes = (extra: Record<string, (c: Call) => Response> = {}) => ({
   "GET /v1/apps/github": () => json(200, APP),
   "GET /v1/apps/github/guide": () => json(404, { error: { code: "not_found", message: "x" } }),
   "GET /v1/workspaces/w1/oauth-clients": () => json(200, { items: [], next_cursor: null }),
+  "GET /v1/workspaces/w1/connections": () => json(200, { items: [{ id: "c1", app_id: "github", connect_method: null }], next_cursor: null }),
   ...extra,
 });
 
@@ -130,9 +126,13 @@ describe("connect window: How do you want to connect?", () => {
     fireEvent.click(await screen.findByRole("radio", { name: /Personal access token/ }));
     fireEvent.change(await screen.findByLabelText("Personal access token field"), { target: { value: "ghp_x" } });
     expect(screen.queryByLabelText("Private key")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
     await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/github/connect")).toBe(true));
-    expect(calls.find((c) => c.path === "/v1/apps/github/connect")?.body).toMatchObject({ method_id: "token", fields: { access_token: "ghp_x" } });
+    expect(calls.find((c) => c.path === "/v1/apps/github/connect")?.body).toMatchObject({
+      method_id: "token",
+      fields: { access_token: "ghp_x" },
+      reconnect_connection_id: "c1",
+    });
   });
 
   it("a method without a label falls back to what kind of method it is", async () => {
@@ -150,7 +150,6 @@ describe("connect window: How do you want to connect?", () => {
   });
 
   it("a reconnect opens on the method the connection was made with", async () => {
-    search = "reconnect=c1";
     stub(
       routes({
         "GET /v1/workspaces/w1/connections": () =>
@@ -189,51 +188,15 @@ describe("tools restricted to a connect method", () => {
   });
 });
 
-// FIX-133 (D-240): "What may agents do with this account?" is offered on every method of an app that has write
-// tools, Read only is the recommended default, and the choice is sent as `access`.
+// FIX-133 (D-240): a reconnect keeps the connection's own access, so "What may agents do with this account?" is not asked.
 describe("connect window: read-only connection", () => {
-  const tool = (id: string, group: "read" | "write") => ({
-    id, name: id, group, host: "api.github.com", path: `/${id}`, methods: ["GET"], connect_methods: [], wildcard: false,
-  });
-  const withTools = (tools: unknown[]) => ({ "GET /v1/apps/github": () => json(200, { ...APP, tools }) });
-  const connected = { "POST /v1/apps/github/connect": () => json(200, { kind: "connected", connection: { id: "k1" }, missing_scopes: [] }) };
-
-  it("preselects Read only and sends it with the method's own form", async () => {
-    const calls = stub(routes({ ...withTools([tool("get_repo", "read"), tool("create_issue", "write")]), ...connected }));
-    wrap(<ConnectView />);
-    const group = await screen.findByRole("radiogroup", { name: "What may agents do with this account?" });
-    const [readOnly, readWrite] = within(group).getAllByRole("radio") as HTMLInputElement[];
-    expect([readOnly.checked, readWrite.checked]).toEqual([true, false]);
-    expect(within(group).getByText("Recommended")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("radio", { name: /Personal access token/ })); // every method offers it
-    expect(screen.getByRole("radiogroup", { name: "What may agents do with this account?" })).toBeInTheDocument();
-    fireEvent.change(await screen.findByLabelText("Personal access token field"), { target: { value: "ghp_x" } });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/github/connect")).toBe(true));
-    expect(calls.find((c) => c.path === "/v1/apps/github/connect")?.body).toMatchObject({ method_id: "token", access: "read" });
-  });
-
-  it("sends write when Read and write is chosen", async () => {
-    const calls = stub(routes({ ...withTools([tool("get_repo", "read"), tool("create_issue", "write")]), ...connected }));
-    wrap(<ConnectView />);
-    fireEvent.click(await screen.findByRole("radio", { name: /Read and write/ }));
-    fireEvent.click(screen.getByRole("radio", { name: /Personal access token/ }));
-    fireEvent.change(await screen.findByLabelText("Personal access token field"), { target: { value: "ghp_x" } });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/github/connect")).toBe(true));
-    expect(calls.find((c) => c.path === "/v1/apps/github/connect")?.body).toMatchObject({ access: "write" });
-  });
-
-  it("offers nothing for an app with only read tools, and a reconnect keeps the connection's own access", async () => {
-    stub(routes(withTools([tool("get_repo", "read")])));
-    wrap(<ConnectView />);
-    await screen.findByLabelText("Private key");
-    expect(screen.queryByRole("radiogroup", { name: "What may agents do with this account?" })).toBeNull();
-    cleanup();
-    search = "reconnect=c1";
+  it("a reconnect keeps the connection's own access", async () => {
+    const tool = (id: string, group: "read" | "write") => ({
+      id, name: id, group, host: "api.github.com", path: `/${id}`, methods: ["GET"], connect_methods: [], wildcard: false,
+    });
     stub(
       routes({
-        ...withTools([tool("get_repo", "read"), tool("create_issue", "write")]),
+        "GET /v1/apps/github": () => json(200, { ...APP, tools: [tool("get_repo", "read"), tool("create_issue", "write")] }),
         "GET /v1/workspaces/w1/connections": () => json(200, { items: [{ id: "c1", app_id: "github", connect_method: "token" }], next_cursor: null }),
       }),
     );

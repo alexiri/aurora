@@ -137,6 +137,36 @@ const fn with_choices(mut m: FieldMeta, choices: &'static [Choice]) -> FieldMeta
 
 use FieldKind as K;
 
+/// The real agent programs by name, in the order of the API's harness table (the development `fake` harness is
+/// left out; a test in `aurora-api` keeps this in step with that table, D-374).
+pub const HARNESS_CHOICES: &[Choice] = &[
+    Choice {
+        value: "claude-code",
+        label: "Claude Code",
+        description: "Anthropic, Bedrock and Vertex directly; anything else through LiteLLM.",
+    },
+    Choice {
+        value: "codex",
+        label: "OpenAI Codex",
+        description: "Endpoints that serve the OpenAI Responses API.",
+    },
+    Choice {
+        value: "pi",
+        label: "Pi",
+        description: "Any endpoint that serves Anthropic Messages, OpenAI Responses or OpenAI chat.",
+    },
+    Choice {
+        value: "goose",
+        label: "goose",
+        description: "Anthropic, and endpoints that serve OpenAI chat completions.",
+    },
+    Choice {
+        value: "opencode",
+        label: "OpenCode",
+        description: "Any endpoint that serves Anthropic Messages, OpenAI Responses or OpenAI chat.",
+    },
+];
+
 const SCOPES: &[Choice] = &[
     Choice {
         value: "organization",
@@ -536,23 +566,30 @@ pub static FIELDS: &[FieldMeta] = &[
         None,
         RUNNERS,
     ),
-    f(
-        "hosted.default_harness",
-        "Agent program new agents use",
-        "Must be one of the programs listed below.",
-        K::Text,
-        "claude-code",
-        None,
-        HARNESSES,
+    // Stored as a string (`fake` stays valid in development), read and edited as a choice of the programs.
+    with_choices(
+        f(
+            "hosted.default_harness",
+            "Agent program new agents use",
+            "The program a new agent starts with. It must be one of the ticked programs.",
+            K::Enum,
+            "Claude Code",
+            None,
+            HARNESSES,
+        ),
+        HARNESS_CHOICES,
     ),
-    f(
-        "hosted.enabled_harnesses",
-        "Agent programs agents may run",
-        "One per line; each must be offered by at least one runner.",
-        K::List,
-        "claude-code",
-        None,
-        HARNESSES,
+    with_choices(
+        f(
+            "hosted.enabled_harnesses",
+            "Agent programs agents may run",
+            "Tick the programs agents may run. Only programs a registered runner offers can be ticked.",
+            K::List,
+            "Claude Code",
+            None,
+            HARNESSES,
+        ),
+        HARNESS_CHOICES,
     ),
     f(
         "hosted.default_timezone",
@@ -1069,6 +1106,45 @@ mod tests {
     fn kind_ok(d: &SettingDef, m: &FieldMeta) -> bool {
         implied_kind(d).contains(&m.kind)
             || (m.kind == K::Duration && matches!(d.ty, SettingType::Int { .. }))
+            || is_harness_default(d, m)
+    }
+
+    /// The one named exception (D-374): a `Str` key whose choices are the harness table.
+    fn is_harness_default(d: &SettingDef, m: &FieldMeta) -> bool {
+        m.key == "hosted.default_harness"
+            && m.kind == K::Enum
+            && matches!(d.ty, SettingType::Str { .. })
+            && !m.choices.is_empty()
+            && m.choices
+                .iter()
+                .all(|c| crate::KNOWN_HARNESSES.contains(&c.value))
+    }
+
+    #[test]
+    fn harness_choices_read_in_words_and_the_default_is_the_named_exception() {
+        use serde_json::json;
+        let m = |k| field(k).unwrap();
+        let ids: Vec<_> = HARNESS_CHOICES.iter().map(|c| c.value).collect();
+        assert_eq!(ids, ["claude-code", "codex", "pi", "goose", "opencode"]);
+        assert_eq!(m("hosted.default_harness").choices.len(), 5);
+        assert_eq!(m("hosted.enabled_harnesses").choices.len(), 5);
+        assert_eq!(
+            value_words(
+                m("hosted.enabled_harnesses"),
+                &json!(["claude-code", "goose"]),
+                false
+            ),
+            "Claude Code, goose"
+        );
+        assert_eq!(
+            value_words(m("hosted.default_harness"), &json!("goose"), false),
+            "goose"
+        );
+        // An id that is not a choice (`fake`) reads as itself.
+        assert_eq!(
+            value_words(m("hosted.default_harness"), &json!("fake"), false),
+            "fake"
+        );
     }
 
     #[test]
@@ -1120,8 +1196,9 @@ mod tests {
                     m.key,
                     c.value
                 );
+                // The program's own spelling is its name: `goose` is `goose` (D-374).
                 assert!(
-                    c.label != c.value && !c.label.contains('_'),
+                    (c.label != c.value || m.key.contains("_harness")) && !c.label.contains('_'),
                     "{}: choice {} shows its raw id",
                     m.key,
                     c.value
@@ -1163,7 +1240,7 @@ mod tests {
                     "{}: choices must be exactly the enumeration",
                     m.key
                 );
-            } else if m.kind != K::List {
+            } else if m.kind != K::List && !is_harness_default(d, m) {
                 assert!(
                     m.choices.is_empty(),
                     "{}: choices on a non-enumeration",

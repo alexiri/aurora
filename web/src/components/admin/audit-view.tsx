@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { AuditPanel } from "@/components/audit/audit-panel";
@@ -7,17 +8,18 @@ import { inputClass } from "@/components/ui/field";
 import { Segmented } from "@/components/ui/segmented";
 import { useInstanceAudit, type InstanceAuditFilter } from "@/lib/api/admin-audit";
 import { useAdminOrgs } from "@/lib/api/freeze";
+import { instanceFromParams, useWriteAuditParams } from "@/lib/audit-url";
 
 /** Instance administration, Audit (FIX-125): what instance admins did, and optionally every organization's rows. */
 export function AdminAuditView() {
-  const [f, setF] = useState<InstanceAuditFilter>({
-    scope: "instance",
-    org: "",
-    action: "",
-    criticalOnly: false,
-    since: "",
-    until: "",
-  });
+  const params = useSearchParams();
+  const write = useWriteAuditParams();
+  // The first values come from the URL (a shared link opens the same view); every change is written back to it.
+  const [f, setFilter] = useState<InstanceAuditFilter>(() => instanceFromParams(params));
+  const setF = (n: InstanceAuditFilter) => {
+    setFilter(n);
+    write(n);
+  };
   const audit = useInstanceAudit(f);
   const orgs = useAdminOrgs(false);
   const all = f.scope === "all";
@@ -42,12 +44,7 @@ export function AdminAuditView() {
             onChange={(scope) => setF({ ...f, scope, org: scope === "all" ? f.org : "" })}
           />
           {all ? (
-            <select
-              aria-label="Organization"
-              className={`${inputClass} max-w-56`}
-              value={f.org}
-              onChange={(e) => setF({ ...f, org: e.target.value })}
-            >
+            <select aria-label="Organization" className={`${inputClass} max-w-56`} value={f.org} onChange={(e) => setF({ ...f, org: e.target.value })}>
               <option value="">Every organization</option>
               {orgs.data?.items.map((o) => (
                 <option key={o.id} value={o.id}>

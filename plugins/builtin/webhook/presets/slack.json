@@ -1,0 +1,26 @@
+{
+  "id": "slack",
+  "name": "Slack",
+  "suggest_for_hosts": ["hooks.slack.com"],
+  "secret_value_names": [],
+  "config": {
+    "version": 1,
+    "method": "POST",
+    "content_type": "application/json",
+    "template": "{\"text\": {{text}}}",
+    "slots": [
+      {
+        "name": "text",
+        "type": "string",
+        "required": true,
+        "description": "The message. Slack mrkdwn is supported (*bold*, _italic_, <https://example.com|a link>).",
+        "max_length": 4000
+      }
+    ],
+    "headers": [],
+    "description": "",
+    "signing": false,
+    "rate": { "per_minute": null, "per_day": null },
+    "preset": "slack"
+  }
+}

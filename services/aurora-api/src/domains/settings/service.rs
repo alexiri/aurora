@@ -1346,14 +1346,18 @@ fn notify_admins(state: &AppState, via: &Via, changed: &[&Plan], _reqs: &[Sectio
             }
         };
         let subject = format!("Aurora: instance settings changed ({})", titles.join(", "));
+        // One reading of the clock for the text and the link: the link lists that UTC day's instance-settings rows,
+        // newest first, so the change is at the top (D-373, C-1027).
+        let now = Utc::now();
         let intro = format!(
-            "{actor} changed instance settings at {}.\n\nChanged: {}.\n\nThe before and after values are in the audit log:",
-            Utc::now().format("%Y-%m-%d %H:%M UTC"),
+            "{actor} changed instance settings at {}.\n\nChanged: {}.\n\nThe before and after values are in the audit log: open the row's Details.",
+            now.format("%Y-%m-%d %H:%M UTC"),
             keys.join(", ")
         );
         let link = format!(
-            "{}/admin/audit?action=instance_settings",
-            state.config.external_url.trim_end_matches('/')
+            "{}/admin/data?tab=audit&action=instance_settings.&since={}",
+            state.config.external_url.trim_end_matches('/'),
+            now.format("%Y-%m-%d")
         );
         for to in emails {
             crate::domains::auth::mail::send_detached(

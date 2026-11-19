@@ -8,10 +8,6 @@ import { ApiError } from "@/lib/api/client";
 import { connectorIconUrl, type ConnectorAdmin } from "@/lib/api/connectors";
 import { fieldErrors } from "@/lib/api/errors";
 
-export const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-
-export const fmtWhen = (s?: string | null) => (s ? new Date(s).toLocaleString() : "—");
-
 const MESSAGES: Record<string, string> = {
   connector_exists: "A connector with this id already exists.",
   unknown_connector_type: "No running connector host offers this type any more.",

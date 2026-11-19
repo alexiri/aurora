@@ -796,6 +796,40 @@ to the real host of every hop (SEC-107). Fixtures send
 snapshot's `apps[].secret_link` (absent for other apps, so existing snapshot hashes do not change).
 The reference package is `ics-calendar` (`plugins/builtin/ics-calendar`).
 
+**`secret_link` in `send` mode** (phase 5, P5-WEBHOOK-1, D-320, C-909, SEC-127): an *outgoing
+webhook*. The URL is still the credential and the destination, but the gateway **posts** a body the
+person's template renders from the agent's slot values instead of reading the URL:
+
+```yaml
+secret_link:
+  credential: url                  # the only declared credential
+  mode: send                       # fetch (default) | send
+  presets: [slack.json, discord.json]   # send only: archive files presets/<file>.json
+```
+In `send` mode the app has exactly one tool: in the **write** group, methods `POST` and/or `PUT`,
+on `*.link.aurora.internal`, path `/`. `expect_prefix` is refused (nothing is read at connect), and
+`presets` is refused in `fetch` mode. The core adds the connection's secret values and signing secret
+to the sealed credential JSON (`credential_keys` lists them by name). Linter codes:
+`secret_link_mode` (another credential declared beside the URL), `secret_link_send_tool` (not exactly
+one write tool of that shape), `secret_link_send_expect_prefix`, `secret_link_presets_mode`, and
+`webhook_preset_invalid`: a preset name that is not `<a-z0-9->.json` or is repeated, more than 20
+presets, a listed file missing from the archive, a file under `presets/` that no send-mode app lists,
+or a preset that is not JSON of the shape below or whose `config` fails `aurora_webhook::validate`
+(the one implementation of C-909's rules, used by the API, the gateway and `aurora-agent`; it checks
+names, limits, JSON validity of the template with its placeholders, slot types against the content
+type, optional slots at the root, the schema subset, headers and sizes, without any secret value).
+
+A preset is the JSON file `{ id, name, suggest_for_hosts?: [host], secret_value_names: [string],
+config: WebhookConfig }` (`presets/<file>.json`, ≤ 64 KiB; `id` unique in the app). It holds no secret
+value: the names say which ones the person must enter. A receiver's documentation URL belongs in the
+package's setup guide, since the shape allows no comment field. Fixtures send
+`POST https://<uuid>.link.aurora.internal/` with the slot values as a JSON body and expect the tool;
+any other method is `refused: method_not_allowed`. The reference package is `webhook`
+(`plugins/builtin/webhook`: nine presets for Slack, Mattermost, Google Chat, Discord, Teams
+Workflows, ntfy, Home Assistant, a generic JSON body and IFTTT). Its `send` tool defaults to **Ask**
+(D-320(d)); the manifest has no per-tool default yet, which P5-WEBHOOK-2 adds with the `slots`
+approval decoder.
+
 **`own_server`** (phase 5, P5-CALDAV, D-275, C-845, SEC-109). An app whose **connection**, not the
 package, names the server (a person's own CalDAV server):
 

@@ -111,7 +111,7 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByLabel("Provider endpoint").selectOption("az");
         await expect(page.getByText("No enabled harness speaks this endpoint's API", { exact: false })).toBeVisible();
         await expect(page.getByLabel("Tenant id")).toBeVisible();
-        await expect(page.getByLabel("Client secret")).toBeVisible();
+        await expect(page.getByLabel("Client secret", { exact: true })).toBeVisible();
         await clean(page);
         await page.getByLabel("Provider endpoint").selectOption("vx");
         await expect(page.getByLabel("Service account key (JSON)")).toBeVisible();

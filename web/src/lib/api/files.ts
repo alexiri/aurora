@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { traceRequest } from "@/lib/telemetry";
 
 import { ApiError, api } from "./client";
+import { errorDetail } from "./errors";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -213,8 +214,7 @@ const NOT_EDITABLE: Record<string, string> = {
 };
 
 const detail = (err: ApiError, key: string): string | undefined => {
-  const d = err.details;
-  const v = typeof d === "object" && d !== null ? (d as Record<string, unknown>)[key] : undefined;
+  const v = errorDetail(err, key);
   return typeof v === "string" ? v : undefined;
 };
 
@@ -228,7 +228,7 @@ export function filesErrorMessage(err: unknown): string {
     return state ? `${FILES_ERROR_SENTENCES.sandbox_unavailable} (It is ${state}.)` : FILES_ERROR_SENTENCES.sandbox_unavailable!;
   }
   if (err.code === "files_operation_failed") {
-    const done = typeof err.details === "object" && err.details !== null ? (err.details as Record<string, unknown>).deleted : undefined;
+    const done = errorDetail(err, "deleted");
     return typeof done === "number"
       ? `${FILES_ERROR_SENTENCES.files_operation_failed} ${done} ${done === 1 ? "item was" : "items were"} removed before it stopped.`
       : FILES_ERROR_SENTENCES.files_operation_failed!;

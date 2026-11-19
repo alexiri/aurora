@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
@@ -105,15 +106,13 @@ function AddTokenDialog({
         </Field>
       ) : null}
       <Field id="user-token-value" label="Personal access token" error={text}>
-        <input
+        <SecretInput
           id="user-token-value"
-          className={`${inputClass} font-mono`}
-          type="password"
+          className="font-mono"
+          revealLabel="personal access token"
           value={token}
           maxLength={256}
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(e) => setToken(e.target.value)}
+          onChange={setToken}
         />
       </Field>
       <Field id="user-token-label" label="Name (optional)" hint="Shown in this list.">

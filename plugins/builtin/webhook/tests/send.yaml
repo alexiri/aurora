@@ -1,0 +1,25 @@
+# Send-mode secret link (docs/06 §Secret-link lane, C-909, C-910): each case is one request as the
+# gateway sees it. A request to `<connection id>.link.aurora.internal` selects the app's one send
+# tool whatever path and query the agent sends (the lane ignores them and posts to the stored URL);
+# only the POST of the slot values is served. The rendered body the receiver gets, the dry run, the
+# rate limit and the redirects are the gateway send path's (P5-WEBHOOK-2).
+- name: a POST of the slot values is the send tool
+  request:
+    method: POST
+    url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/"
+    headers: { content-type: application/json }
+    body: '{"text": "Deploy 42 failed on prod"}'
+  expect: { app: webhook, tool: send, summary: { title: "send a message to a webhook" } }
+- name: the agent's path and query are ignored
+  request:
+    method: POST
+    url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/other/path?x=1"
+    headers: { content-type: application/json }
+    body: '{"text": "hi"}'
+  expect: { app: webhook, tool: send }
+- name: "negative send: a GET is refused"
+  request: { method: GET, url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/" }
+  expect: { refused: method_not_allowed }
+- name: "negative send: a DELETE is refused"
+  request: { method: DELETE, url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/" }
+  expect: { refused: method_not_allowed }

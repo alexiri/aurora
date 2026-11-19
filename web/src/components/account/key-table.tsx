@@ -10,8 +10,9 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Notice } from "@/components/ui/notice";
 import type { ApiKey } from "@/lib/api/account";
 import { errorMessage } from "@/lib/api/errors";
+import { fmtDate } from "@/lib/utils";
 
-export const fmtDate = (s?: string | null) => (s ? new Date(s).toLocaleString() : "—");
+export { fmtDate };
 
 function keyStatus(k: ApiKey): string {
   if (k.revoked_at) return "Revoked";
