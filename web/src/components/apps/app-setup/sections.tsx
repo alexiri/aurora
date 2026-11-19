@@ -25,7 +25,7 @@ import {
 } from "@/lib/apps/setup-copy";
 import { orgRoutes } from "@/lib/routes";
 
-const CHIP_TONE: Record<SetupChip, "accent" | "pending" | "neutral"> = { ready: "accent", needs_setup: "pending", admin_only: "neutral" };
+const CHIP_TONE: Record<SetupChip, "accent" | "neutral"> = { ready: "accent", needs_setup: "neutral", admin_only: "neutral" };
 
 export function StatusChip({ chip }: { chip: SetupChip }) {
   return <Badge tone={CHIP_TONE[chip]}>{CHIP_LABEL[chip]}</Badge>;
@@ -190,7 +190,7 @@ export function WhatIsSetUp({
         </SetUpRow>
       ) : null}
       <SetUpRow label={`Available in ${orgName}`}>
-        <Badge tone={setup.available ? "accent" : "pending"}>{setup.available ? "Yes" : "No"}</Badge>
+        <Badge tone={setup.available ? "accent" : "neutral"}>{setup.available ? "Yes" : "No"}</Badge>
         {actions.setAvailability ? (
           <span className="ml-2">
             <Link className="font-medium text-link underline" href={orgRoutes(orgSlug).apps("apps", undefined, "availability")}>

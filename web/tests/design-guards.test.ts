@@ -161,6 +161,29 @@ export const FOCUS_UTILITY = /(?<![\w-])focus:[a-z!\[-]/;
 /** A `:focus` pseudo-class without `-visible` / `-within` in CSS. */
 export const FOCUS_PSEUDO = /:focus(?![-\w])/;
 
+// (P5-POLISH-2, D-384) Amber means "needs you": only `AttentionChip` (which requires an action) is amber; a `Badge` is
+// sentence case and has no amber tone.
+describe("amber guard", () => {
+  const BADGE_PENDING = /<Badge\b[^>]*\btone=\{?["']pending["']/;
+  it("recognises a pending badge", () => {
+    expect(BADGE_PENDING.test('<Badge tone="pending">Held</Badge>')).toBe(true);
+    expect(BADGE_PENDING.test('<Notice tone="pending">x</Notice>')).toBe(false);
+    expect(BADGE_PENDING.test('<Badge tone="accent">x</Badge>')).toBe(false);
+  });
+  it("has no Badge with tone pending (use AttentionChip with an action, LockPill or a neutral Badge)", () => {
+    expect(offenders(BADGE_PENDING)).toEqual([]);
+  });
+  it("keeps the pending tone and uppercase out of badge.tsx", () => {
+    const badge = readFileSync(join(SRC, "components/ui/badge.tsx"), "utf8");
+    expect(badge).not.toMatch(/pending/);
+    expect(badge).not.toMatch(/uppercase|tracking-/);
+  });
+  it("makes AttentionChip require an action or an action id", () => {
+    const chip = readFileSync(join(SRC, "components/ui/attention-chip.tsx"), "utf8");
+    expect(chip).toMatch(/\{ action: ReactNode; actionId\?: undefined \} \| \{ actionId: string; action\?: undefined \}/);
+  });
+});
+
 describe("layer guard", () => {
   it("recognises an unlayered element rule", () => {
     expect(unlayeredElementSelectors("a { color: inherit; }")).toEqual(["a"]);

@@ -313,7 +313,7 @@ function InstanceRow({
         </Badge>
       </Td>
       <Td>
-        <Badge tone={active ? "accent" : "pending"}>{active ? "Active" : "Disabled"}</Badge>
+        <Badge tone={active ? "accent" : "neutral"}>{active ? "Active" : "Disabled"}</Badge>
       </Td>
       <Td className="tabular-nums">{inst.connections}</Td>
       <Td className="text-right">

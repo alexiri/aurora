@@ -51,7 +51,7 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeClean(page)).toEqual([]);
         // Administration › Agents › BYO holds the BYO agents and agent tokens groups.
         await openRoute(page, "/admin/agents?tab=byo", scheme);
-        await expect(page.getByRole("group", { name: "Agent tokens" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Agent tokens" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
       });
@@ -87,7 +87,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByRole("checkbox", { name: "LiteLLM" })).toBeChecked();
         await expect(page.getByRole("checkbox", { name: "OpenAI", exact: true })).not.toBeChecked();
         await expect(page.getByTestId("llm.provider_preference-locked-value")).toContainText("1. LiteLLM");
-        await expect(page.getByText("Managed by Helm")).toBeVisible();
+        await expect(page.getByText("Set in Helm").first()).toBeVisible();
         await expect(page.getByRole("button", { name: "Edit team" })).toBeVisible();
         await expect(page.getByRole("button", { name: "Edit central" })).toHaveCount(0);
         // P4-LLM-6: harness badges, the no-harness notice and the private-address mark with its link to Limits.
@@ -112,7 +112,7 @@ for (const scheme of ["light", "dark"] as const) {
         await openRoute(page, "/admin/settings/sign-in", scheme);
         await expect(page).toHaveURL(/\/admin\/people\?tab=sign-in$/);
         await expect(page.getByRole("heading", { name: "People", level: 1 })).toBeVisible();
-        await expect(page.getByText("Managed by Helm")).toBeVisible();
+        await expect(page.getByText("Set in Helm").first()).toBeVisible();
         await expect(page.getByRole("button", { name: "Edit corp" })).toBeVisible();
         await expect(page.getByRole("button", { name: "Edit helm" })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -167,11 +167,12 @@ for (const scheme of ["light", "dark"] as const) {
         expect(put).toMatchObject({ values: { "hosted.enabled_harnesses": ["claude-code", "goose"], "hosted.default_harness": "goose" } });
       });
 
-      test("the terminal page explains a missing deployment wiring", async ({ page }) => {
+      test("the terminal page shows one Unavailable card for a missing deployment wiring, and no form", async ({ page }) => {
         await openRoute(page, "/admin/settings/terminal", scheme);
         await expect(page).toHaveURL(/\/admin\/agents\?tab=computers$/);
         await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
         await expect(page.getByText(/does not provide the terminal/)).toBeVisible();
+        await expect(page.getByRole("region", { name: "The web terminal isn't available on this Aurora" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
       });
@@ -180,7 +181,7 @@ for (const scheme of ["light", "dark"] as const) {
         await openRoute(page, "/admin/settings/limits", scheme);
         await expect(page).toHaveURL(/\/admin\/platform\?tab=limits$/);
         await expect(page.getByRole("heading", { name: "Platform", level: 1 })).toBeVisible();
-        await expect(page.getByText("Managed by Helm")).toBeVisible();
+        await expect(page.getByText("Set in Helm").first()).toBeVisible();
         await expect(page.getByText(/Private destinations\./)).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);

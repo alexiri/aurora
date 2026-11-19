@@ -45,7 +45,7 @@ export function LibraryBadge({ source }: { source: Source }) {
       <Badge>
         Library · {source.repo} · {shortSha(source.commit_sha)}
       </Badge>
-      {source.update_pending ? <Badge tone="pending">Update available</Badge> : null}
+      {source.update_pending ? <Badge>Update available</Badge> : null}
     </>
   );
 }
@@ -167,7 +167,7 @@ export function UpdateReviewDialog({
         {info.data && update ? (
           <div className="space-y-4">
             <p className="flex flex-wrap items-center gap-2 text-sm text-ink">
-              <Badge tone={update.kind === "changed" ? "pending" : update.kind === "invalid" ? "danger" : "neutral"}>{KIND_LABEL[update.kind] ?? update.kind}</Badge>
+              <Badge tone={update.kind === "invalid" ? "danger" : "neutral"}>{KIND_LABEL[update.kind] ?? update.kind}</Badge>
               <span>
                 <span className="font-mono">{shortSha(info.data.commit_sha)}</span> → <span className="font-mono">{shortSha(update.commit_sha)}</span>
               </span>

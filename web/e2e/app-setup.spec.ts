@@ -75,9 +75,9 @@ for (const scheme of ["light", "dark"] as const) {
       test("an organization admin switches to only the apps switched on below, on the Apps tab, with one Save", async ({ page }) => {
         await openRoute(page, "/o/acme/apps?tab=apps", scheme);
         await expect(page.getByLabel("People can connect every app")).toBeChecked();
-        await expect(page.getByRole("checkbox", { name: "GitHub" })).toHaveCount(0);
+        await expect(page.getByRole("switch", { name: "GitHub" })).toHaveCount(0);
         await page.getByLabel("People can connect only the apps switched on below").check();
-        await page.getByRole("checkbox", { name: "GitHub" }).check();
+        await page.getByRole("switch", { name: "GitHub" }).check();
         const put = page.waitForRequest((r) => r.method() === "PUT" && r.url().endsWith("/app-availability"));
         // Not a pointer click: at 390 px the dev server's own indicator (nextjs-portal) covers the bottom-left of the page.
         await page.getByRole("button", { name: "Save" }).dispatchEvent("click");

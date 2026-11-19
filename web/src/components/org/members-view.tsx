@@ -89,14 +89,13 @@ export function MemberRow({
       <Td>
         {m.status === "pending" ? (
           <Badge
-            tone="pending"
             title="Your identity provider prepared this membership for an existing account. It becomes active at the person's next sign-in."
             className="normal-case tracking-normal"
           >
             Waiting for first sign-in
           </Badge>
         ) : (
-          <Badge tone={m.status === "active" ? "accent" : "pending"}>{m.status}</Badge>
+          <Badge tone={m.status === "active" ? "accent" : "neutral"}>{m.status}</Badge>
         )}
         {m.directory ? (
           <Badge

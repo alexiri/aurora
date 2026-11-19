@@ -16,10 +16,12 @@ import { ChoiceCards } from "@/components/ui/choice-cards";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
-import { FormActions, FormSection } from "@/components/ui/form";
+import { FormActions } from "@/components/ui/form";
+import { LockPill } from "@/components/ui/lock-pill";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow } from "@/components/ui/section";
-import { SettingField, settingControlId } from "@/components/ui/setting-field";
+import { SettingField, SettingsCard, settingControlId } from "@/components/ui/setting-field";
+import { Switch } from "@/components/ui/switch";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { valueWords } from "@/lib/settings-words";
@@ -288,7 +290,7 @@ export function SettingsStackForm({
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} noValidate className="max-w-3xl space-y-5">
+    <form onSubmit={(e) => void submit(e)} noValidate className="space-y-5">
       {saved ? (
         <Notice tone="accent" role="status">
           Saved. Applied to every replica within seconds.
@@ -357,7 +359,11 @@ export function SettingsStackForm({
               const shown = g.keys ? section.settings.filter((s) => g.keys?.includes(s.key)) : section.settings;
               if (shown.length === 0) return null;
               return (
-                <FormSection key={g.title} title={g.title} description={g.description}>
+                <SettingsCard
+                  key={g.title}
+                  title={g.title}
+                  description={g.description}
+                  guide={shown.map((s) => fieldsByKey.get(s.key)?.doc?.title).find((t): t is string => Boolean(t))}>
                   {shown.map((s) => (
                     <SettingRow
                       key={s.key}
@@ -372,7 +378,7 @@ export function SettingsStackForm({
                       custom={part.controls?.[s.key]}
                     />
                   ))}
-                </FormSection>
+                </SettingsCard>
               );
             })}
             {part.below ?? null}
@@ -603,13 +609,7 @@ function SettingRow({
     );
   } else if (kind === "bool" || (!field && s.schema.kind === "bool")) {
     control = (
-      <input
-        id={cid}
-        type="checkbox"
-        className="size-4 accent-accent"
-        checked={current === true}
-        onChange={(e) => setValue(s.key, e.target.checked)}
-      />
+      <Switch id={cid} aria-label={label} checked={current === true} onCheckedChange={(v) => setValue(s.key, v)} />
     );
   } else if (s.schema.kind === "enum") {
     control = (
@@ -735,7 +735,7 @@ function KeyedList({
           {helm.map((e) => (
             <ListRow key={`h-${e.id}`}>
               <span className="font-medium text-ink">{e.id}</span>
-              <Badge tone="pending">Managed by Helm</Badge>
+              <LockPill owner="Set in Helm" />
             </ListRow>
           ))}
           {own.map((e, i) => (

@@ -27,9 +27,9 @@ import {
 } from "@/lib/api/previews";
 import { fmtDate } from "@/components/account/key-table";
 
-const STATUS_TONE: Record<string, "accent" | "pending" | "neutral" | "danger"> = {
+const STATUS_TONE: Record<string, "accent" | "neutral" | "danger"> = {
   listening: "accent",
-  waking: "pending",
+  waking: "neutral",
   not_listening: "neutral",
   paused: "neutral",
   frozen: "neutral",

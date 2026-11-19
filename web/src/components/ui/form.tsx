@@ -23,6 +23,8 @@ export function FormSection({
   );
 }
 
+export { SwitchField } from "./switch";
+
 /** Form with vertical rhythm; max width keeps lines readable. */
 export function Form({ className, ...props }: FormHTMLAttributes<HTMLFormElement>) {
   return <form className={cn("max-w-xl space-y-5", className)} {...props} />;

@@ -132,7 +132,7 @@ function StepCard({ n, id, step, children }: { n: number; id: string; step?: Set
             </h2>
             <p className="mt-0.5 text-sm text-ink-2">{meta.lead}</p>
           </div>
-          {state ? <Badge tone={state.tone}>{state.label}</Badge> : null}
+          {state ? <Badge tone={state.tone === "pending" ? "neutral" : state.tone}>{state.label}</Badge> : null}
         </div>
         {children}
       </Card>

@@ -7,6 +7,7 @@ import { errorMessage } from "@/lib/api/errors";
 import { onlySentence, whoCanOf, type WhoCanValue } from "@/lib/who-can";
 
 import { Button } from "./ui/button";
+import { ScrollIcon } from "./ui/icons";
 import { WhoCan } from "./ui/who-can";
 
 /**
@@ -83,23 +84,64 @@ export function EmptyState({
   when,
   action,
   ask,
+  icon,
 }: {
   title: string;
   children?: ReactNode;
   when?: ReactNode;
   action?: ReactNode;
-  ask?: { whoCan: WhoCanValue; canAct: boolean };
+  /** `onAsk` adds the **Ask** button next to the who-can line (P5-POLISH-2, C6). */
+  ask?: { whoCan: WhoCanValue; canAct: boolean; onAsk?: () => void };
+  /** The icon in the tile; a neutral one by default. */
+  icon?: ReactNode;
 }) {
   return (
-    <div className="rounded-card border border-dashed border-line-strong bg-surface p-8 text-center">
-      <h2 className="font-display text-base font-semibold text-ink">{title}</h2>
+    <div className="rounded-card border border-dashed border-line-strong bg-surface p-6 sm:p-7">
+      <span aria-hidden="true" className="flex size-10 items-center justify-center rounded-control bg-subtle text-ink-2 [&_svg]:size-5">
+        {icon ?? <ScrollIcon />}
+      </span>
+      <h2 className="mt-4 font-display text-base font-semibold text-ink">{title}</h2>
       {children ? <div className="mt-2 text-sm text-ink-2">{children}</div> : null}
       {when ? <div className="mt-1 text-sm text-ink-2">{when}</div> : null}
       {ask && !ask.canAct ? (
-        <WhoCan value={ask.whoCan} lead className="mt-3" />
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-control bg-subtle px-3 py-2">
+          <WhoCan value={ask.whoCan} lead />
+          {ask.onAsk ? (
+            <Button type="button" variant="outline" size="sm" onClick={ask.onAsk}>
+              Ask
+            </Button>
+          ) : null}
+        </div>
       ) : action ? (
-        <div className="mt-4 flex flex-wrap justify-center gap-2">{action}</div>
+        <div className="mt-4 flex flex-wrap gap-2">{action}</div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * (P5-POLISH-2, C6) A list with a detail pane that hides the pane, and its "Select a … to edit it." text, while the list
+ * is empty: an empty list shows only the `empty` state, full width.
+ */
+export function MasterDetail({
+  count,
+  empty,
+  list,
+  detail,
+  className,
+}: {
+  /** How many rows the list has. */
+  count: number;
+  empty: ReactNode;
+  list: ReactNode;
+  detail: ReactNode;
+  className?: string;
+}) {
+  if (count === 0) return <>{empty}</>;
+  return (
+    <div className={className ?? "grid gap-4 md:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]"}>
+      <div className="min-w-0">{list}</div>
+      <div className="min-w-0">{detail}</div>
     </div>
   );
 }

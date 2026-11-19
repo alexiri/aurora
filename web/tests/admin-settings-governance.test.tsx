@@ -116,7 +116,7 @@ describe("Admin › Settings › Governance (SET-2)", () => {
     });
     wrap(<SettingsSectionView slug="governance" />);
     for (const t of ["AI keys", "Internet access", "BYO agents", "Agent tokens", "Where organizations stand"]) {
-      await screen.findByText(t, { selector: "legend" });
+      await screen.findByText(t, { selector: "legend, h3" });
     }
     expect(screen.getByText(/Rules are set per organization and workspace/)).toBeTruthy();
     // The Helm key is locked: read-only, with the "Managed by Helm" marker.
@@ -127,7 +127,7 @@ describe("Admin › Settings › Governance (SET-2)", () => {
     const table = await screen.findByRole("region", { name: "Organizations and their effective governance" });
     expect(within(table).getByText("Acme")).toBeTruthy();
     expect(within(table).getByText("Globex")).toBeTruthy();
-    expect(within(table).getByText("frozen")).toBeTruthy();
+    expect(within(table).getByText("Frozen")).toBeTruthy();
     expect(within(table).getByText("byo.minimum_posture")).toBeTruthy();
     expect(within(table).getByRole("link", { name: "Acme" }).getAttribute("href")).toBe("/o/acme/ai-models");
   });
@@ -152,7 +152,7 @@ describe("Admin › Settings › Governance (SET-2)", () => {
       },
     });
     wrap(<SettingsSectionView slug="governance" />);
-    await screen.findByText("Agent tokens", { selector: "legend" });
+    await screen.findByRole("heading", { name: "Agent tokens" });
     fireEvent.click(document.getElementById("byo.enabled-c") ?? document.getElementById("byo.enabled")!);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const dialog = await screen.findByRole("dialog");
@@ -177,7 +177,7 @@ describe("Org governance pages: the instance link (SET-2, C-783)", () => {
   it("is plain text for everyone else", async () => {
     mockFetch(me(false));
     wrap(<Locked setting="governance.llm.minimum_posture" />);
-    await screen.findByText("enforced by instance");
+    await screen.findByText("Set by Administration");
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole("link")).toBeNull();
   });

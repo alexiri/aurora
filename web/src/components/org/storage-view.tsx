@@ -11,9 +11,9 @@ import { formatBytes } from "@/lib/api/attachments";
 import { StorageFreshness } from "@/components/storage-freshness";
 import { useOrgStorage, useRefreshOrgStorage } from "@/lib/api/org";
 
-const NOTICE: Record<string, { tone: "neutral" | "pending" | "danger"; label: string }> = {
+const NOTICE: Record<string, { tone: "neutral" | "danger"; label: string }> = {
   clear: { tone: "neutral", label: "OK" },
-  warning: { tone: "pending", label: "80 % used" },
+  warning: { tone: "neutral", label: "80 % used" },
   full: { tone: "danger", label: "Full" },
 };
 
