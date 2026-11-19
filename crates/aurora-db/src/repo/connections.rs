@@ -248,6 +248,9 @@ pub struct NewConnection<'a> {
     /// (P5-UX-11, C-990) The limit of a new organization account (`read` | `ask` | `act`); `None`
     /// for a workspace's account and for a reconnect (which keeps the limit it has).
     pub limit_level: Option<&'a str>,
+    /// (P5-WEBHOOK-2, C-909) The configuration of a send-mode connection; a reconnect with `None`
+    /// keeps what the connection has.
+    pub config: Option<&'a serde_json::Value>,
 }
 
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Result<(), DbError> {
@@ -255,9 +258,10 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Re
         "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, \
          label, status, credentials_ref, credentials_expires_at, scopes, metadata, tenant_host, \
          oauth_client_id, connected_by, requested_scopes, instance_id, credential_keys, connect_method, access, \
-         limit_level) \
+         limit_level, config) \
          VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,COALESCE($19,'write'),\
-         CASE WHEN $3 IS NULL THEN COALESCE($20, CASE WHEN COALESCE($19,'write') = 'read' THEN 'read' ELSE 'act' END) END)",
+         CASE WHEN $3 IS NULL THEN COALESCE($20, CASE WHEN COALESCE($19,'write') = 'read' THEN 'read' ELSE 'act' END) END,\
+         $21)",
     )
     .bind(n.id)
     .bind(n.org_id)
@@ -279,6 +283,7 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Re
     .bind(n.connect_method)
     .bind(n.access)
     .bind(n.limit_level)
+    .bind(n.config)
     .execute(exec)
     .await?;
     Ok(())
@@ -321,6 +326,65 @@ pub async fn set_limit<'e, E: PgExecutor<'e>>(
     .await?
     .rows_affected()
         > 0)
+}
+
+/// (P5-WEBHOOK-2, C-909) The core-owned configuration of a send-mode connection (null for others).
+pub async fn config<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<Option<serde_json::Value>, DbError> {
+    Ok(sqlx::query_scalar::<_, Option<serde_json::Value>>(
+        "SELECT config FROM app_connections WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(exec)
+    .await?
+    .flatten())
+}
+
+/// (P5-WEBHOOK-2, C-909) Replaces the configuration (the credential's own version is bumped by the
+/// caller when a secret changed).
+pub async fn set_config<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    config: &serde_json::Value,
+) -> Result<bool, DbError> {
+    Ok(
+        sqlx::query("UPDATE app_connections SET config = $2, updated_at = now() WHERE id = $1")
+            .bind(id)
+            .bind(config)
+            .execute(exec)
+            .await?
+            .rows_affected()
+            > 0,
+    )
+}
+
+/// (P5-WEBHOOK-2, C-909) Compare-and-set of an edit that changed a send-mode connection's sealed
+/// secrets: the new credentials ref, `credentials_version + 1`, the credential key names and the
+/// configuration, together. False when the version moved since it was read.
+pub async fn replace_credentials_and_config<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    read_version: i64,
+    credentials_ref: &str,
+    credential_keys: &[String],
+    config: &serde_json::Value,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE app_connections SET credentials_ref = $3, credentials_version = credentials_version + 1, \
+         credential_keys = $4, config = $5, updated_at = now() \
+         WHERE id = $1 AND credentials_version = $2",
+    )
+    .bind(id)
+    .bind(read_version)
+    .bind(credentials_ref)
+    .bind(credential_keys)
+    .bind(config)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        == 1)
 }
 
 /// (P5-UX-14, C-943; P5-POLISH-3, C-1033) Stores the result of Test: `ok` | `rejected` | `unreachable` |
@@ -367,6 +431,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
          package_id = $9, app_version = $10, connected_by = $11, requested_scopes = $12, \
          credential_keys = $14, connect_method = $15, access = COALESCE($16, access), \
          limit_level = CASE WHEN workspace_id IS NULL THEN COALESCE($17, limit_level) END, \
+         config = COALESCE($18, config), \
          status_reason = CASE WHEN status IN ('reauth_required','orphaned') THEN NULL ELSE status_reason END, \
          status = CASE WHEN status IN ('reauth_required','orphaned') THEN 'active' ELSE status END, \
          reauth_required_at = NULL, last_check_at = NULL, last_check_result = NULL, last_ok_at = NULL, \
@@ -390,6 +455,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
     .bind(n.connect_method)
     .bind(n.access)
     .bind(n.limit_level)
+    .bind(n.config)
     .execute(exec)
     .await?
     .rows_affected()

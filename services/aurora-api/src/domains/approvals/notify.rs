@@ -163,7 +163,11 @@ pub fn approval_mail(external_url: &str, to: &str, u: &repo::Unseen, more: usize
         intro.push_str(&format!("\n(and {more} more in the same batch)"));
     }
     if let Some(rule) = u.rule_name.as_deref().filter(|r| !r.is_empty()) {
-        intro.push_str(&format!("\nRule: {}", clean(rule)));
+        if rule == aurora_policy::eval::PACKAGE_ASK_REASON {
+            intro.push_str(&format!("\n{rule}."));
+        } else {
+            intro.push_str(&format!("\nRule: {}", clean(rule)));
+        }
     }
     intro.push_str(&format!(
         "\nExpires: {}\n\nOpen the approvals page to review it. You need to be signed in to decide.",

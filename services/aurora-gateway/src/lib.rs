@@ -43,6 +43,7 @@ pub mod snapshot;
 pub mod status;
 pub mod summarize_client;
 pub mod upstream;
+pub mod webhook_send;
 pub mod wire;
 
 use bytes::Bytes;

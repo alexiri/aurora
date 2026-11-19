@@ -58,6 +58,7 @@ aurora-llm = { workspace = true }
 aurora-policy = { workspace = true }
 aurora-crypto = { workspace = true }
 aurora-registry = { workspace = true }
+aurora-webhook = { workspace = true, features = ["utoipa"] }
 serde_yaml = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }

@@ -318,6 +318,16 @@ impl Upstream {
     /// strict front doors such as nginx answer 400 before the app sees the
     /// request).
     pub async fn send(&self, p: PreparedRequest) -> Result<Response<Incoming>, ApiError> {
+        self.send_ex(p).await.map_err(|(e, _)| e)
+    }
+
+    /// [`Self::send`] that also says whether the failure happened before anything could have been
+    /// sent (the destination guard, the name lookup or the connect): an outgoing webhook's refusal
+    /// carries `may_have_been_delivered` from it (P5-WEBHOOK-2, C-910).
+    pub async fn send_ex(
+        &self,
+        p: PreparedRequest,
+    ) -> Result<Response<Incoming>, (ApiError, bool)> {
         let v6 = p.host.contains(':');
         let hostpart = if v6 {
             format!("[{}]", p.host)
@@ -334,7 +344,7 @@ impl Upstream {
             .authority(authority)
             .path_and_query(pq)
             .build()
-            .map_err(|_| guidance::ambiguous_path())?;
+            .map_err(|_| (guidance::ambiguous_path(), true))?;
         let mut req = Request::new(p.body);
         *req.method_mut() = p.method;
         *req.uri_mut() = uri;
@@ -353,11 +363,23 @@ impl Upstream {
                 .load(std::sync::atomic::Ordering::Relaxed),
         );
         match tokio::time::timeout(timeout, client.request(req)).await {
-            Err(_) => Err(guidance::upstream_timeout()),
+            Err(_) => Err((guidance::upstream_timeout(), false)),
             Ok(Ok(r)) => Ok(r),
-            Ok(Err(e)) => Err(map_error(&e)),
+            Ok(Err(e)) => Err((map_error(&e), is_dial_error(&e))),
         }
     }
+}
+
+/// Did the request fail in the dialer (guard, lookup, connect), before any byte was sent?
+fn is_dial_error(e: &(dyn std::error::Error + 'static)) -> bool {
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    while let Some(err) = cur {
+        if err.downcast_ref::<DialError>().is_some() {
+            return true;
+        }
+        cur = err.source();
+    }
+    false
 }
 
 fn millis(d: Duration) -> u64 {

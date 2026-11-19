@@ -1,6 +1,6 @@
 package:
   id: caldav
-  version: 1.1.0
+  version: 1.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -75,7 +75,7 @@ apps:
           - { id: create_calendar, name: Create a calendar, description: "Makes a new calendar collection (MKCALENDAR).", host: "{connection}", path: "/**", methods: [MKCALENDAR] }
           - { id: change_calendar, name: Change a calendar's properties, description: "Renames a calendar or changes its settings (PROPPATCH).", host: "{connection}", path: "/**", methods: [PROPPATCH] }
           - { id: move_event, name: Move or copy an event, description: "Moves or copies an event to another calendar (MOVE, COPY).", host: "{connection}", path: "/**", methods: [MOVE, COPY] }
-          - { id: send_scheduling_message, name: Send a scheduling message, description: "Posts to the server's scheduling outbox: it emails the attendees.", host: "{connection}", path: "/**", methods: [POST] }
+          - { id: send_scheduling_message, name: Send a scheduling message, description: "Posts to the server's scheduling outbox: it emails the attendees.", host: "{connection}", path: "/**", methods: [POST], approval: ask }
     approvals:
       put_event:
         title: create or change a calendar event

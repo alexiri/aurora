@@ -389,12 +389,20 @@ pub fn scope_missing(tool_scopes: &[String], known: &[String]) -> bool {
 
 /// The tags the policy evaluator looks at, from the parts of a tool. `write`: the catalogue lists
 /// the tool in the write group (FIX-133).
-pub fn tags(write: bool, graphql: bool, git: bool, scope_missing: bool) -> ToolTags {
+pub fn tags(
+    write: bool,
+    graphql: bool,
+    git: bool,
+    scope_missing: bool,
+    ask_default: bool,
+) -> ToolTags {
     ToolTags {
         scope_missing,
         graphql,
         git,
         write,
+        // (P5-TOOLASK, C-1042) Only a write tool can default to Ask (the linter refuses the rest).
+        ask_default: ask_default && write,
     }
 }
 
@@ -409,5 +417,6 @@ pub fn tool_tags(app: &AppEntry, t: &ToolItem, known_scopes: Option<&[String]>) 
         t.graphql.is_some(),
         t.git.is_some(),
         known_scopes.is_some_and(|k| scope_missing(&t.scopes, k)),
+        t.approval.is_some(),
     )
 }

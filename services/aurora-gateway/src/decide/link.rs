@@ -65,6 +65,7 @@ impl Hops for LinkHops {
 impl PolicyHandler {
     /// `conn_id` is the parsed label of the synthetic host (`None` = not a connection id).
     /// `released` is the second pass of an approved hold: the grant and the policy are read again.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn link_request(
         &self,
         mut ctx: Ctx,
@@ -73,6 +74,8 @@ impl PolicyHandler {
         method: &Method,
         headers: &HeaderMap,
         released: Option<Released>,
+        body: LinkBody,
+        dry_run: bool,
     ) -> Outcome {
         // One answer for "no such connection", "not a link" and "not granted": no enumeration.
         let not_granted = || {
@@ -149,6 +152,47 @@ impl PolicyHandler {
                 );
                 return Outcome::Respond(self.refuse(ctx, &err, "blocked"));
             }
+        }
+        // (P5-WEBHOOK-2, C-910) A send-mode connection (an outgoing webhook) has its own path.
+        if app
+            .and_then(|a| a.secret_link.as_ref())
+            .is_some_and(|s| s.mode() == aurora_registry::manifest::SecretLinkMode::Send)
+        {
+            let mut release = None;
+            let out = self
+                .webhook_request(
+                    ctx,
+                    identity,
+                    &dbc,
+                    app,
+                    &rv,
+                    cred,
+                    fi,
+                    method,
+                    headers,
+                    released,
+                    body,
+                    dry_run,
+                    &mut release,
+                )
+                .await;
+            // An approved send: the second pass reads the grant and the policy again.
+            return match release {
+                Some((again, bytes, c2)) => {
+                    Box::pin(self.link_request(
+                        c2,
+                        identity,
+                        Some(conn_id),
+                        method,
+                        headers,
+                        Some(again),
+                        LinkBody::Collected(bytes),
+                        false,
+                    ))
+                    .await
+                }
+                None => out,
+            };
         }
         let head = *method == Method::HEAD;
         if *method != Method::GET && !head {
@@ -257,6 +301,7 @@ impl PolicyHandler {
                     host: &host,
                     path: "/",
                     rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                    package_ask: d.package_ask,
                     connection_id: Some(dbc.conn.id),
                     app_id: ctx.app_id.as_deref(),
                     tool_id: ctx.tool_id.as_deref(),
@@ -284,6 +329,8 @@ impl PolicyHandler {
                         method,
                         headers,
                         Some(again),
+                        LinkBody::Stream(crate::empty_body()),
+                        false,
                     ))
                     .await;
                 }
@@ -400,7 +447,16 @@ impl PolicyHandler {
                     identity: fi,
                 }),
                 report: Box::new(LinkLog { ctx, log }),
+                send: None,
             }),
         })
     }
 }
+
+/// The agent's request body: the live stream, or what the first pass of a send already read.
+pub(super) enum LinkBody {
+    Stream(crate::Body),
+    Collected(bytes::Bytes),
+}
+
+mod webhook;

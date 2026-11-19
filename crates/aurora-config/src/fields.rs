@@ -963,6 +963,25 @@ pub static FIELDS: &[FieldMeta] = &[
         Some("seconds"),
         TERMINAL,
     ),
+    // ---------------------------------------------------------------- outgoing webhooks
+    f(
+        "outgoing_webhooks.per_minute_max",
+        "Webhook sends a minute",
+        "The most an agent may send through one webhook each minute (1 to 600). An organization or a webhook may set it lower, never higher.",
+        K::Int,
+        "30",
+        Some("sends a minute"),
+        LIMITS_DOC,
+    ),
+    f(
+        "outgoing_webhooks.per_day_max",
+        "Webhook sends a day",
+        "The most an agent may send through one webhook each day (1 to 100,000). An organization or a webhook may set it lower, never higher.",
+        K::Int,
+        "500",
+        Some("sends a day"),
+        LIMITS_DOC,
+    ),
     // ---------------------------------------------------------------- limits
     f(
         "ratelimit.api.multiplier",

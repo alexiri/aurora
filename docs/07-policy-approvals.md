@@ -190,6 +190,28 @@ Under `uncredentialed_default = block`, an explicit allow rule that matches the
 request (e.g. a `network` target) still allows it, because rules are evaluated
 before defaults. Allow-list entries use the policy host/path patterns.
 
+### A package's default of Ask (phase 5, P5-TOOLASK, D-397, C-1042, C-1043)
+
+A catalogue **write** tool may carry `approval: ask` (`09 §3.4`). After both scopes are evaluated
+and combined by strictness, a verdict of **allow** becomes **needs approval** when the matched tool
+has this default, the request is not a `CONNECT`, and **neither scope's matched allow rule names
+that tool** (a target's `tools` lists it: a custom grant's allow list, **Always allow**, a hand rule
+with a tool list). So:
+
+| What decided | Result for a tool whose package default is Ask |
+|---|---|
+| any block (either scope, the Default Rule, a limit) | block, unchanged |
+| a rate limit or an ask rule | unchanged |
+| an allow rule that names the tool (either scope) | allow: the explicit Allow wins |
+| a whole-connection allow (`full` grant, the **Act** level), a broad `network` allow, the Default Rule's allow, or no rule | **needs approval** |
+
+The hold has no rule: the approval's `rule_name` is "This app asks before this action" and
+`rule_logical_id` is null (the card says so, `asked_by.kind = "package"`, C-1043); **Always allow
+is therefore not offered** on it: a person who wants the tool to run without asking sets it to
+Allowed in the account's actions table (a custom grant, which names the tool). The policy simulator
+adds the trace entry `App default: asks first` (`package_default_ask`) and the effective view the
+reason "The app asks before this action." A dry run never holds, as for any ask.
+
 ### Why the Default Rule skips LLM hosts (phase 3, RFE-023, D-66)
 
 A Default Rule of `block` means "block every credentialed request that no rule

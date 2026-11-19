@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 /// The instance-settings sections (C-770). `export` and `import` are never section ids.
-pub const SECTION_IDS: [&str; 13] = [
+pub const SECTION_IDS: [&str; 14] = [
     "governance",
     "llm",
     "sign_in",
@@ -29,6 +29,7 @@ pub const SECTION_IDS: [&str; 13] = [
     "previews",
     "terminal",
     "limits",
+    "outgoing_webhooks",
 ];
 
 /// The test-only section (feature `test-registry` or this crate's unit tests): its keys have no
@@ -322,6 +323,7 @@ impl Registry {
         defs.extend(scim_defs());
         defs.extend(terminal_defs());
         defs.extend(limits_defs());
+        defs.extend(outgoing_webhooks_defs());
         #[cfg(any(test, feature = "test-registry"))]
         defs.extend(test_defs());
         Self { defs }
@@ -434,6 +436,11 @@ pub fn sections() -> &'static [SectionDef] {
                 id: "limits",
                 title: "Limits",
                 description: "Rate limits and gateway limits.",
+            },
+            SectionDef {
+                id: "outgoing_webhooks",
+                title: "Outgoing webhooks",
+                description: "How often agents may call a person's webhook.",
             },
         ];
         #[cfg(any(test, feature = "test-registry"))]
@@ -862,6 +869,21 @@ fn terminal_defs() -> Vec<SettingDef> {
         up(S, "terminal.awake_cap_secs", 2_592_000, 4 * 3600),
         up(S, "terminal.wake_window_secs", 3600, 60),
         up(S, "terminal.wake_wait_secs", 600, 45),
+    ]
+}
+
+/// The `outgoing_webhooks` section (P5-WEBHOOK-2, C-912): the instance ceilings of the per-connection
+/// send limits. Each org and connection may only lower them.
+fn outgoing_webhooks_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "outgoing_webhooks";
+    let n = |key, max, default| {
+        SettingDef::new(S, key, SettingType::Int { min: 1, max }, json!(default))
+            .loosening(Loosening::Number { up_loosens: true })
+    };
+    vec![
+        n("outgoing_webhooks.per_minute_max", 600, 30),
+        n("outgoing_webhooks.per_day_max", 100_000, 500),
     ]
 }
 

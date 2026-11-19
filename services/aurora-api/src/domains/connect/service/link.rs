@@ -120,6 +120,33 @@ pub(super) async fn check(ctx: &Ctx<'_>, g: &mut Gathered) -> Result<(), Connect
         .ok_or_else(invalid_link)?
         .to_owned();
     let url = normalize(&raw, &allow)?;
+    // (P5-WEBHOOK-2, C-909) An outgoing webhook acts when it is called, so connect sends nothing:
+    // the URL's form and its destination are checked (the name must resolve, and only to addresses
+    // the destination guard permits), then it is stored.
+    if sl.mode() == aurora_registry::manifest::SecretLinkMode::Send {
+        if env.override_origin.is_none()
+            && let Some(host) = url.host_str()
+            && host.trim_matches(['[', ']']).parse::<IpAddr>().is_err()
+        {
+            match env.check_destination(host).await {
+                Ok(()) => {}
+                Err(super::super::env::ResolveError::Refused) => return Err(destination_refused()),
+                Err(super::super::env::ResolveError::NotFound) => return Err(invalid_link()),
+            }
+        }
+        g.metadata.insert(
+            "host".into(),
+            Value::String(url.host_str().unwrap_or_default().to_ascii_lowercase()),
+        );
+        g.credentials.insert(
+            sl.credential.clone(),
+            Value::String(url.as_str().to_owned()),
+        );
+        if let Some(name) = g.fields.get("name").and_then(Value::as_str) {
+            g.label = Some(name.trim().to_owned());
+        }
+        return Ok(());
+    }
     let mut cur = url.clone();
     let mut body: Option<Vec<u8>> = None;
     for hop in 0..=HOPS_MAX {

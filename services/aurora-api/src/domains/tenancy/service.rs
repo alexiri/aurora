@@ -284,6 +284,7 @@ pub async fn patch_org(
     req: PatchOrgRequest,
     ev: &crate::audit::AuditEvent,
     previews_ev: Option<&crate::audit::AuditEvent>,
+    webhook_ceiling: (u32, u32),
 ) -> Result<OrgRow, ApiError> {
     let name = req
         .name
@@ -316,6 +317,54 @@ pub async fn patch_org(
                     "calendar_invitations".into(),
                     serde_json::json!({ "enabled": b }),
                 );
+            }
+            // (P5-WEBHOOK-2, C-912) Outgoing webhooks: the switch and the org's lowered ceilings.
+            if p.outgoing_webhooks_enabled.is_some()
+                || p.outgoing_webhooks_per_minute_max.is_some()
+                || p.outgoing_webhooks_per_day_max.is_some()
+            {
+                let mut o = obj
+                    .get("outgoing_webhooks")
+                    .and_then(|v| v.as_object().cloned())
+                    .unwrap_or_default();
+                if let Some(b) = p.outgoing_webhooks_enabled {
+                    o.insert("enabled".into(), b.into());
+                }
+                for (key, v, ceiling) in [
+                    (
+                        "per_minute_max",
+                        p.outgoing_webhooks_per_minute_max,
+                        i64::from(webhook_ceiling.0),
+                    ),
+                    (
+                        "per_day_max",
+                        p.outgoing_webhooks_per_day_max,
+                        i64::from(webhook_ceiling.1),
+                    ),
+                ] {
+                    match v {
+                        None => {}
+                        Some(None) => {
+                            o.remove(key);
+                        }
+                        Some(Some(n)) if n >= 1 && n <= ceiling => {
+                            o.insert(key.into(), n.into());
+                        }
+                        Some(Some(n)) if n >= 1 => {
+                            return Err(ApiError::unprocessable(
+                                "above_instance_ceiling",
+                                format!("The instance allows at most {ceiling} here."),
+                            ));
+                        }
+                        Some(Some(_)) => {
+                            return Err(bad(
+                                &format!("/settings/outgoing_webhooks_{key}"),
+                                "must be at least 1",
+                            ));
+                        }
+                    }
+                }
+                obj.insert("outgoing_webhooks".into(), serde_json::Value::Object(o));
             }
             for (key, v) in [("max_members", p.max_members), ("max_agents", p.max_agents)] {
                 match v {

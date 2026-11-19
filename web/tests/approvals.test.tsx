@@ -124,6 +124,16 @@ describe("approvals", () => {
     expect(screen.getByRole("button", { name: "Allow once" })).toBeInTheDocument();
   });
 
+  it("(P5-TOOLASK) a question held by the app's own default says the app asks, names no rule and offers no Always allow", async () => {
+    const q = mk("a1", { asked_by: { kind: "package", app_id: "caldav", tool_id: "send_scheduling_message" }, can_always_allow: false });
+    routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [q], next_cursor: null });
+    show();
+    expect(await screen.findByTestId("asked-by-package")).toHaveTextContent("This app asks before this action.");
+    expect(screen.queryByTestId("asked-by-rule")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Always allow" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeInTheDocument();
+  });
+
   it("an empty list says nothing is waiting, in the words of the page", async () => {
     routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [], next_cursor: null });
     show();

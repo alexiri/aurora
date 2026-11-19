@@ -11,7 +11,12 @@ workspace = true
 
 # Pure: no IO, no async, no database. The API, the gateway and `aurora-agent` share this one
 # implementation of C-909's model (P5-WEBHOOK-1).
+[features]
+# `ToSchema` on the configuration types, for the API's OpenAPI document (one source of truth).
+utoipa = ["dep:utoipa"]
+
 [dependencies]
+utoipa = { workspace = true, optional = true }
 aurora-core = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }

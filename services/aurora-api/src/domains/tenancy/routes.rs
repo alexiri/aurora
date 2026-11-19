@@ -181,6 +181,8 @@ async fn patch_org(
         "settings": req.settings.is_some(), "previews_enabled": previews_on,
         "calendar_invitations_enabled":
             req.settings.as_ref().and_then(|p| p.calendar_invitations_enabled),
+        "outgoing_webhooks_enabled":
+            req.settings.as_ref().and_then(|p| p.outgoing_webhooks_enabled),
     });
     let ev = event(&c, "org.update")
         .org(org)
@@ -194,7 +196,18 @@ async fn patch_org(
             .target("organization", org)
             .metadata(json!({ "previews_enabled": on }))
     });
-    let row = service::patch_org(&s.pool, org, c.user_id, req, &ev, previews_ev.as_ref()).await?;
+    let ow = &s.ops().outgoing_webhooks;
+    let ceiling = (ow.per_minute_max, ow.per_day_max);
+    let row = service::patch_org(
+        &s.pool,
+        org,
+        c.user_id,
+        req,
+        &ev,
+        previews_ev.as_ref(),
+        ceiling,
+    )
+    .await?;
     Ok(Json(row.into()))
 }
 
