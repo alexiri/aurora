@@ -592,6 +592,8 @@ pub async fn create(
     let (scope, sid) = invalidate_scope(org);
     credentials::notify_gateway_invalidate(&mut *tx, scope, sid).await?;
     tx.commit().await.map_err(DbError::from)?;
+    // (P5-POLISH-4) A new server can make an app ready: re-evaluate the open setup requests.
+    crate::domains::app_setup_requests::service::reevaluate(state, row.org_id).await;
     Ok(row)
 }
 
@@ -628,6 +630,7 @@ pub async fn patch(
     let (scope, sid) = invalidate_scope(updated.org_id);
     credentials::notify_gateway_invalidate(&mut *tx, scope, sid).await?;
     tx.commit().await.map_err(DbError::from)?;
+    crate::domains::app_setup_requests::service::reevaluate(state, updated.org_id).await;
     Ok(updated)
 }
 
@@ -677,5 +680,6 @@ pub async fn delete(
             }
         }
     }
+    crate::domains::app_setup_requests::service::reevaluate(state, row.org_id).await;
     Ok(())
 }

@@ -2227,6 +2227,16 @@ has not expired." / "Aurora could not reach <App> (<host>)." / "<App> answered w
   Every app name in a workspace or an organization links to it. Both views render the setup status of
   C-931. Administration has no setup page: an app name there opens its catalogue entry, which links to
   the OAuth clients tab filtered to the app (§Information architecture).
+- **Asking an admin (P5-POLISH-4, D-386, C-1030, SEC-135).** Where an app needs an organization owner or
+  admin first (no sign-in app registered, no server, or the app switched off), the person who cannot fix
+  it sees **Ask <Name>** instead of a dead end (the journey, P5-POLISH-5; the Apps tab, P5-POLISH-7). The
+  request is per organization and app, a second person's ask joins it, and it holds no free text. Every
+  owner and admin of the organization sees it in the **Needs you** card of the workspace Overview ("Bob and
+  Carol want Google Calendar", one line on what is missing, **Set up** and **Not now**), gets one e-mail
+  (folded per hour) and one push, and the app's row in Organization › Apps shows who asked (P5-POLISH-9).
+  It closes by itself when the app becomes ready for the asker (each asker is told once and their journey
+  offers the app); a person may withdraw it (Undo); **Not now** tells the askers in one sentence who is not
+  setting it up.
 - **Status at the top**, one sentence per way to connect, each with a state chip (Ready / Needs setup /
   Admin only):
   - "People can connect GitHub with a personal access token."

@@ -681,6 +681,38 @@ The gateway database role's column-level `SELECT (id, status, gateway_instance_i
 | mailed_at, pushed_at | timestamptz null | claimed (`now()`) by the e-mail sweeper and the push loop with `FOR UPDATE SKIP LOCKED`, then sent; a null half is open work |
 | index | (created_at) where `mailed_at IS NULL OR pushed_at IS NULL` | the sweepers' work set; rows older than 30 days are pruned hourly |
 
+### `app_setup_requests`
+(phase 5, P5-POLISH-4, D-386, C-1030, SEC-135; migration `20261201000255`) A person's ask that the organization's owners and admins make an app ready. A request is a record and a notice: it gives nothing and changes no availability, OAuth client or access. **No free text anywhere in these three tables.**
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| org_id | uuid FK→organizations (cascade) | |
+| app_id | text | the catalogue app id |
+| status | text CHECK in (`open`,`resolved`,`declined`,`withdrawn`) default `open` | at most one `open` row per `(org_id, app_id)` (partial unique index `app_setup_requests_open`); a second person's ask joins it |
+| needs | jsonb | the `needs` of C-1029 at the last ask (`oauth_client`, `instance`, `admin_material`) |
+| unavailable | boolean | the app is switched off for the organization (nothing in `needs` then) |
+| created_at, updated_at, closed_at | timestamptz | `closed_at` null while open |
+| closed_by | uuid null FK→users (set null) | the decliner; null for `resolved` (the system) and `withdrawn` |
+Closed rows (with their askers and notices) are deleted 90 days after `closed_at` by the hourly sweep (`app_setup_requests::service::spawn`). The gateway role has no grant on them.
+
+### `app_setup_request_askers`
+| Column | Type | Notes |
+|---|---|---|
+| request_id | uuid FK→app_setup_requests (cascade) | pk part |
+| user_id | uuid FK→users (cascade) | pk part: one ask per person |
+| workspace_id | uuid FK→workspaces (cascade) | where the person asked (the resolution link) |
+| asked_at | timestamptz | |
+A person who withdraws, or for whom the app became ready, loses the row; the request closes (`withdrawn` / `resolved`) when none is left.
+
+### `app_setup_request_notices`
+One row per (request, recipient, kind): the claims that keep the e-mail and the Web Push exactly-once across replicas (as `admin_attention_notices`). Kinds: `asked` (each active owner and admin, when the request opens), `more:<yyyymmddhh>` (one digest per hour when others join), `resolved` and `declined` (each asker).
+| Column | Type | Notes |
+|---|---|---|
+| request_id, user_id, kind | uuid, uuid, text | primary key |
+| title, detail, href | text not null | fixed sentences built from the app name and display names, and the dashboard path the notice opens (`/o/<org>/apps?tab=…&app=<id>` or the workspace's `/apps`); never a decision link |
+| created_at | timestamptz | |
+| mailed_at, pushed_at | timestamptz null | claimed (`now()`) by the e-mail sweeper and the push loop with `FOR UPDATE SKIP LOCKED`, then sent; push only for notices younger than an hour |
+
 ### `approval_notifications`
 (phase 2, RFE-011a) One row per (approval, decider) e-mail claim.
 | Column | Type | Notes |
@@ -2164,20 +2196,4 @@ rollout of the API and the terminator; `15 §SSH access`). The gateway database 
 
 (Landed, P5-POLISH-3, D-383, C-1033: the five columns `last_ok_at`, `last_error_at`, `last_error`, `last_test_at`, `last_test_result` are in the `secrets` and `app_connections` sections above, migration `20261201000254_account_use_and_tests.sql`. The gateway writes `last_ok_at` / `last_error_at` / `last_error` for agent calls only, at most once a minute per account and outcome; the Test route writes only `last_test_*`; `last_check_at` and `last_check_result` were backfilled into the use columns (`ok` → `last_ok_at`, otherwise `last_error_at`/`last_error`) and are no longer written, kept until a later cleanup migration. The gateway role's column grant is `UPDATE (…, last_ok_at, last_error_at, last_error)`, never `last_test_*`.)
 
-#### `app_setup_requests`, `app_setup_request_askers` (phase 5, P5-POLISH-4, D-386, C-1030, SEC-135; migration `20261201000255`)
-| Planned table.column | Type | Notes | Phase |
-|---|---|---|---|
-| app_setup_requests.id | uuid pk | | 5 (P5-POLISH-4) |
-| app_setup_requests.org_id | uuid fk organizations on delete cascade | | 5 |
-| app_setup_requests.app_id | text | the catalogue app id | 5 |
-| app_setup_requests.status | text | `open` \| `resolved` \| `declined` \| `withdrawn` (CHECK); at most one `open` row per `(org_id, app_id)` (partial unique index) | 5 |
-| app_setup_requests.needs | jsonb | the `needs` list at the time of the last ask (C-1029) | 5 |
-| app_setup_requests.created_at / closed_at | timestamptz / timestamptz null | | 5 |
-| app_setup_requests.closed_by | uuid null fk users on delete set null | the decliner; null for `resolved` (system) and `withdrawn` | 5 |
-| app_setup_request_askers.request_id | uuid fk app_setup_requests on delete cascade | pk with `user_id` | 5 |
-| app_setup_request_askers.user_id | uuid fk users on delete cascade | | 5 |
-| app_setup_request_askers.workspace_id | uuid fk workspaces on delete cascade | where the person asked (for the resolution link) | 5 |
-| app_setup_request_askers.asked_at | timestamptz | | 5 |
-| app_setup_request_notices | (claims) | one row per (request, recipient, kind) for idempotent mail/push across replicas, like `approval_notifications` | 5 |
-
-No free text anywhere in these tables. Rows of closed requests are purged after 90 days by the existing retention sweep.
+(Landed, P5-POLISH-4, D-386, C-1030, SEC-135: `app_setup_requests`, `app_setup_request_askers` and `app_setup_request_notices` are in their own sections above, migration `20261201000255_app_setup_requests.sql`.)

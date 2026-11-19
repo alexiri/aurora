@@ -70,7 +70,7 @@ function OverviewBody({
     <div className="flex flex-col gap-8">
       <PageHeader title={name} description="Your agents, what they asked for and what they did." className="mb-0" />
 
-      <NeedsYou wsId={wsId} base={base} />
+      <NeedsYou wsId={wsId} base={base} orgId={orgId} />
 
       <Section id="agents" title="Agents">
         {agents.isPending ? <Loading /> : null}
