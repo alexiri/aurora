@@ -11,10 +11,9 @@ import { Avatar } from "@/components/agent-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChevronLeftIcon, MoreIcon } from "@/components/ui/icons";
-import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
-import { StatusDot } from "@/components/ui/status-dot";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
-import { useSandbox } from "@/lib/api/conversations";
+import { useCanApprove } from "@/lib/api/approvals";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 import { useTabParam } from "@/lib/use-tab-param";
 
@@ -35,39 +34,10 @@ import { FilesTab } from "./files-tab";
 import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
 import { AGENT_PAGE_IDS, availableSections, resolvePage, SECTION_OF, type AgentPageId, type SectionId } from "./sections";
-import { computerWord, sandboxLook } from "./status-rail/status-data";
+import { AgentState } from "./agent-state";
 import { SshPage } from "./ssh-page";
 import { TerminalTab } from "./terminal-tab";
 import { useInstance, useOrg } from "@/lib/api/queries";
-
-/** Sandbox state of a hosted agent (existing sandbox endpoint); hidden while unknown or on error. */
-function SandboxPill({ agentId }: { agentId: string }) {
-  const q = useSandbox(agentId);
-  const [showReason, setShowReason] = useState(false);
-  if (!q.data) return null;
-  // (FIX-025, D-158) A failed start is never shown as "starting" forever: the pill says failed and
-  // carries the reason as the title (tooltip); the Computer tab holds the full detail.
-  const look = sandboxLook(q.data);
-  const dot = (
-    <StatusDot tone={look.tone} title={look.title}>
-      Computer: {computerWord(q.data.state)}
-    </StatusDot>
-  );
-  // (P5-UX-1) The state in words; a reason (a failed start) shows on hover and, for a touch screen, on tap.
-  if (!look.title) return dot;
-  return (
-    <span className="inline-flex flex-col gap-1">
-      <button type="button" aria-expanded={showReason} onClick={() => setShowReason((v) => !v)} className="inline-flex rounded-control text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
-        {dot}
-      </button>
-      {showReason ? (
-        <span role="status" className="max-w-sm text-xs text-ink-2">
-          {look.title}
-        </span>
-      ) : null}
-    </span>
-  );
-}
 
 export function AgentPage() {
   const { org, ws, handle } = useParams<{ org: string; ws: string; handle: string }>();
@@ -76,6 +46,7 @@ export function AgentPage() {
   const wsId = resolved.data?.workspace?.id;
   const agents = useAgents(wsId);
   const workspace = useWorkspace(wsId);
+  const canApprove = useCanApprove(wsId);
   // (P4-PRV-1) The Previews tab exists only for hosted agents when the instance runs previews AND
   // the organization has switched Port previews on (docs/14 §Previews): without the org switch the
   // API answers 409 and the Computer tab shows no Share action.
@@ -153,6 +124,34 @@ export function AgentPage() {
   const freezeInMenu = !!freezeProps && canOwn && !agent.frozen;
   const deleteOnlyMenu = !!freezeProps && canOwn && !!agent.frozen;
   const chatPage = tab === "chat" && !byo;
+  // (P5-POLISH-6, D-382) Behaviour and Access are configuration: they live in the … menu, not the tab bar. On one of them no
+  // tab is selected and the button shows the accent outline.
+  const isConfig = sectionId === "behaviour" || sectionId === "access";
+  const barSections = sections.filter((s) => s.id !== "behaviour" && s.id !== "access");
+  const triggerClass = isConfig ? "outline outline-2 outline-accent" : "";
+  const lastBehaviour = lastPage.current.behaviour;
+  const configItems = (
+    <>
+      <MenuItem onSelect={() => choosePage(lastBehaviour ?? "instructions")}>
+        <span>
+          Behaviour
+          <span className="block text-xs text-muted">Name, instructions, model, memory, skills</span>
+        </span>
+      </MenuItem>
+      <MenuItem onSelect={() => choosePage("access")}>
+        <span>
+          Access
+          <span className="block text-xs text-muted">Apps, accounts and the AI key it uses</span>
+        </span>
+      </MenuItem>
+    </>
+  );
+  const backPage: AgentPageId = byo ? "connect" : "chat";
+  const configTitle = sectionId === "access" ? "Access" : "Behaviour";
+  const configLead =
+    sectionId === "access"
+      ? `What ${agent.name} can use: apps, accounts and its AI key.`
+      : `How ${agent.name} works: its name, instructions, model, memory and skills.`;
 
   return (
     // The agent page uses the full content width (FIX-129); long-form panels keep a readable width inside themselves.
@@ -185,7 +184,7 @@ export function AgentPage() {
                 {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
                 {byo ? <Badge>{agent.kind}</Badge> : null}
                 {byo && agent.is_default ? <Badge tone="accent">Default</Badge> : null}
-                {byo ? null : <SandboxPill agentId={agent.id} />}
+                {byo || !wsId ? null : <AgentState agentId={agent.id} wsId={wsId} canOwn={canOwn} canApprove={canApprove} hosted />}
                 {wsId ? <AgentAttentionChip workspaceId={wsId} agentId={agent.id} accessHref={`${base}/agents/${agent.handle}?tab=access`} /> : null}
               </span>
             </div>
@@ -197,26 +196,34 @@ export function AgentPage() {
               Status
             </Button>
           ) : null}
-          {freezeInMenu && freezeProps ? <AgentFreeze {...freezeProps} inMenu menuExtra={deleteItem} /> : null}
-          {deleteOnlyMenu ? (
+          {freezeInMenu && freezeProps ? (
+            <AgentFreeze {...freezeProps} inMenu menuLead={configItems} menuTriggerClassName={triggerClass} menuExtra={deleteItem} />
+          ) : (
             <Menu modal={false}>
               <MenuTrigger asChild>
-                <Button variant="outline" size="sm" aria-label="Agent actions" className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
+                <Button variant="outline" size="sm" aria-label="Agent actions" className={`size-11 min-h-11 px-0 md:size-9 md:min-h-9 ${triggerClass}`}>
                   <MoreIcon width={20} height={20} />
                 </Button>
               </MenuTrigger>
-              <MenuContent align="end">{deleteItem}</MenuContent>
+              <MenuContent align="end">
+                {configItems}
+                {deleteOnlyMenu ? (
+                  <>
+                    <MenuSeparator />
+                    {deleteItem}
+                  </>
+                ) : null}
+              </MenuContent>
             </Menu>
-          ) : null}
+          )}
         </div>
         <div className="order-3 w-full min-w-0 md:order-2 md:w-108 md:shrink">
           <Tabs
-            items={sections.map((s) => ({ value: s.id, label: s.label }))}
-            value={sectionId}
+            items={barSections.map((s) => ({ value: s.id, label: s.label }))}
+            value={isConfig ? "" : sectionId}
             onValueChange={goSection}
             label="Agent sections"
             idBase="agent-section"
-            overflow="menu"
             tabClassName="max-md:min-h-11 max-md:px-1.5"
           />
         </div>
@@ -233,8 +240,30 @@ export function AgentPage() {
           onDeleted={() => router.replace(`${base}/agents`)}
         />
       ) : null}
-      <div role="tabpanel" id={tabPanelId("agent-section", sectionId)} aria-labelledby={tabId("agent-section", sectionId)} className="space-y-3">
-        {section.pages.length > 1 ? (
+      <div
+        {...(isConfig ? {} : { role: "tabpanel", id: tabPanelId("agent-section", sectionId), "aria-labelledby": tabId("agent-section", sectionId) })}
+        className="space-y-3">
+        {isConfig ? (
+          <div className="space-y-1">
+            <button type="button" onClick={() => choosePage(backPage)} className="inline-flex items-center gap-1 text-sm text-ink-2 hover:text-ink">
+              <ChevronLeftIcon className="size-4" aria-hidden="true" />
+              {backPage === "chat" ? "Chat" : "Computer"}
+            </button>
+            <h2 className="font-display text-xl font-semibold text-ink">{configTitle}</h2>
+            <p className="text-sm text-ink-2">{configLead}</p>
+          </div>
+        ) : null}
+        {section.pages.length > 1 && sectionId !== "computer" && sectionId !== "triggers" ? (
+          <Tabs
+            variant="segmented"
+            items={section.pages.map((p) => ({ value: p.id, label: p.label }))}
+            value={tab}
+            onValueChange={(v) => choosePage(v as AgentPageId)}
+            label={`${section.label} pages`}
+            idBase="agent"
+          />
+        ) : null}
+        {section.pages.length > 1 && (sectionId === "computer" || sectionId === "triggers") ? (
           <Tabs
             items={section.pages.map((p) => ({ value: p.id, label: p.label }))}
             value={tab}

@@ -65,21 +65,14 @@ function renderPage(routes: Record<string, Handler>) {
 // FIX-025 (D-158): the header never shows an endless "Sandbox starting": a failed start names the
 // reason in the pill's tooltip, and the Computer tab shows the last start attempt.
 describe("agent header sandbox pill (FIX-025)", () => {
-  it("shows the computer's state in words while starting and the failure reason on failed", async () => {
+  it("never puts the computer's state in the header (P5-POLISH-6): one agent state, even while starting or failed", async () => {
     renderPage(routes({ state: "starting" }));
-    expect(await screen.findByText("Computer: Starting")).toBeTruthy();
+    expect((await screen.findByTestId("agent-state")).textContent).toBe("Ready");
+    expect(screen.queryByText(/Computer: /)).toBeNull();
     cleanup();
-    renderPage(
-      routes({
-        state: "failed",
-        failure_code: "supervisor_unreachable",
-        failure_message:
-          "The agent's computer started, but its supervisor could not reach the runner at aurora-runner.aurora (10.0.0.9):4105 within 60 s.",
-      }),
-    );
-    const pill = await screen.findByText("Computer: Failed");
-    expect(pill.getAttribute("title")).toContain("aurora-runner.aurora (10.0.0.9):4105");
-    expect(pill.getAttribute("title")).toContain("supervisor_unreachable");
+    renderPage(routes({ state: "failed", failure_code: "supervisor_unreachable", failure_message: "The agent's computer started, but its supervisor could not reach the runner." }));
+    expect((await screen.findByTestId("agent-state")).textContent).toBe("Ready");
+    expect(screen.queryByText(/Computer: /)).toBeNull();
   });
 
   it("the Computer tab shows the last start attempt: phase, detail, elapsed and events", async () => {

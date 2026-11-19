@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { MoreIcon } from "@/components/ui/icons";
-import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import { authorityRank, type Frozen } from "@/lib/api/freeze";
@@ -76,7 +76,13 @@ export function FreezeControl({
   unfreeze,
   inMenu = false,
   menuExtra,
+  menuLead,
+  menuTriggerClassName,
 }: {
+  /** (P5-POLISH-6) Entries before Freeze, separated from it by a divider (the agent page's Behaviour and Access). */
+  menuLead?: ReactNode;
+  /** Extra classes of the menu's … button (the accent outline while a configuration page is open). */
+  menuTriggerClassName?: string;
   subject: FreezeSubject;
   name: string;
   frozen: Frozen | null | undefined;
@@ -144,13 +150,22 @@ export function FreezeControl({
         // Non-modal: a modal menu aria-hides the rest of the page while its controls stay focusable (axe).
         <Menu modal={false}>
           <MenuTrigger asChild>
-            <Button variant="outline" size="sm" aria-label={`${SUBJECT_LABEL[subject][0].toUpperCase()}${SUBJECT_LABEL[subject].slice(1)} actions`} className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
+            <Button variant="outline" size="sm" aria-label={`${SUBJECT_LABEL[subject][0].toUpperCase()}${SUBJECT_LABEL[subject].slice(1)} actions`} className={`size-11 min-h-11 px-0 md:size-9 md:min-h-9 ${menuTriggerClassName ?? ""}`}>
               <MoreIcon width={20} height={20} />
             </Button>
           </MenuTrigger>
           <MenuContent align="end">
-            <MenuItem className="text-danger-ink data-[highlighted]:bg-danger-soft" onSelect={() => setOpen(true)}>
-              Freeze {label}…
+            {menuLead ? (
+              <>
+                {menuLead}
+                <MenuSeparator />
+              </>
+            ) : null}
+            <MenuItem className="data-[highlighted]:bg-subtle" onSelect={() => setOpen(true)}>
+              <span>
+                Freeze {menuLead ? name : label}
+                {menuLead ? <span className="block text-xs text-muted">Pauses it until you unfreeze it</span> : "…"}
+              </span>
             </MenuItem>
             {menuExtra}
           </MenuContent>
