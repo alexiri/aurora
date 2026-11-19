@@ -13,7 +13,7 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
@@ -104,11 +104,7 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
         checked={exclusive}
         onChange={setExclusive}
       />
-      {saved ? (
-        <Notice tone="accent" role="status">
-          Directory sync settings saved.
-        </Notice>
-      ) : null}
+      <SavedNotice show={saved}>Directory sync settings saved.</SavedNotice>
       <FormActions>
         <Button type="submit" size="lg" disabled={put.isPending}>
           {put.isPending ? "Saving…" : "Save settings"}

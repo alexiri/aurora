@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { ErrorNotice, SavedNotice } from "@/components/ui/notice";
 import { ScopeLadder, type LadderAbove } from "@/components/ui/scope-ladder";
 import { usePatchWorkspace } from "@/lib/api/account";
 import { fieldErrors } from "@/lib/api/errors";
@@ -99,11 +99,7 @@ function ByoRow({ workspace, above }: { workspace: Workspace; above: Above | nul
               {patch.error && Object.keys(fe).length === 0 ? (
                 <ErrorNotice error={patch.error} />
               ) : null}
-              {saved ? (
-                <Notice tone="accent" role="status">
-                  Saved.
-                </Notice>
-              ) : null}
+              <SavedNotice show={saved}>Saved.</SavedNotice>
               <Button
                 type="button"
                 disabled={patch.isPending || value === own}

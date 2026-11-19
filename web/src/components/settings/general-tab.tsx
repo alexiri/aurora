@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { Select } from "@/components/ui/select";
 import { usePatchWorkspace } from "@/lib/api/account";
 import { fieldErrors } from "@/lib/api/errors";
@@ -64,11 +64,7 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
       {patch.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={patch.error} />
       ) : null}
-      {saved ? (
-        <Notice tone="accent" role="status">
-          Settings saved.
-        </Notice>
-      ) : null}
+      <SavedNotice show={saved}>Settings saved.</SavedNotice>
       {canOwn ? (
         <FormActions>
           <Button type="submit" size="lg" disabled={patch.isPending}>
