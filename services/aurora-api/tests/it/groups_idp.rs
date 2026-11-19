@@ -282,17 +282,7 @@ async fn sec71_d156_idp_members_are_read_only_and_creation_validates_the_provide
     let call = |m: Method, uri: String, body: Option<Value>| {
         let ck = ck.clone();
         let h = &h;
-        async move {
-            let (s, _, v) = h
-                .send(
-                    m,
-                    &uri,
-                    &[("cookie", ck.as_str()), ("origin", ORIGIN)],
-                    body,
-                )
-                .await;
-            (s.as_u16(), v)
-        }
+        async move { h.call(ck.as_str(), m, &uri, body).await }
     };
     let groups = format!("/v1/orgs/{org}/groups");
     // unknown provider / provider without group_claim
@@ -391,17 +381,7 @@ async fn sec71_scim_groups_are_read_only_but_deletable_while_scim_is_off() {
     let call = |m: Method, uri: String, body: Option<Value>| {
         let ck = ck.clone();
         let h = &h;
-        async move {
-            let (s, _, v) = h
-                .send(
-                    m,
-                    &uri,
-                    &[("cookie", ck.as_str()), ("origin", ORIGIN)],
-                    body,
-                )
-                .await;
-            (s.as_u16(), v)
-        }
+        async move { h.call(ck.as_str(), m, &uri, body).await }
     };
     let (s, v) = call(
         Method::PUT,

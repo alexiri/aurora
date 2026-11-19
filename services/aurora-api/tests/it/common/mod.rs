@@ -355,6 +355,32 @@ impl Harness {
         (parts.status, parts.headers, v)
     }
 
+    /// A browser-style request: the `aurora_session=…` cookie value `cookie` plus the CSRF origin
+    /// header; returns the status as a number and the JSON body (replaces the per-file `call` helpers).
+    pub async fn call(
+        &self,
+        cookie: &str,
+        m: Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        let (s, _, v) = self
+            .send(m, uri, &[("cookie", cookie), ("origin", ORIGIN)], body)
+            .await;
+        (s.as_u16(), v)
+    }
+
+    /// [`Self::call`] with a raw session token (as `good_session` returns it).
+    pub async fn call_tok(
+        &self,
+        tok: &str,
+        m: Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        self.call(&crate::common::cookie(tok), m, uri, body).await
+    }
+
     pub async fn get(&self, uri: &str, headers: &[(&str, &str)]) -> (StatusCode, Value) {
         let (s, _, v) = self.send(Method::GET, uri, headers, None).await;
         (s, v)

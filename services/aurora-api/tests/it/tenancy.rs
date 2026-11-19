@@ -20,11 +20,7 @@ impl Who {
 }
 
 async fn call(h: &Harness, who: &Who, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-    let c = cookie(&who.0);
-    let (s, _, v) = h
-        .send(m, uri, &[("cookie", &c), ("origin", ORIGIN)], body)
-        .await;
-    (s.as_u16(), v)
+    h.call_tok(&who.0, m, uri, body).await
 }
 
 async fn count(h: &Harness, sql: &str, id: Uuid) -> i64 {

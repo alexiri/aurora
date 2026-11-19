@@ -182,16 +182,7 @@ impl Rig {
     }
 
     async fn user_call(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(
-                m,
-                uri,
-                &[("cookie", &self.cookie), ("origin", ORIGIN)],
-                body,
-            )
-            .await;
-        (s.as_u16(), v)
+        self.h.call(&self.cookie, m, uri, body).await
     }
 
     /// Multipart upload as `cookie`.

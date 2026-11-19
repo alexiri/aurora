@@ -41,11 +41,7 @@ impl Rig {
     }
 
     async fn call(&self, cookie: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", cookie), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call(cookie, m, uri, body).await
     }
 
     async fn gen_of(&self, agent: Uuid) -> i64 {

@@ -80,16 +80,7 @@ async fn fx() -> Fx {
 
 impl Fx {
     async fn call(&self, w: &Who, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(
-                m,
-                uri,
-                &[("cookie", w.cookie.as_str()), ("origin", ORIGIN)],
-                body,
-            )
-            .await;
-        (s.as_u16(), v)
+        self.h.call(w.cookie.as_str(), m, uri, body).await
     }
 
     async fn as_key(&self, key: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {

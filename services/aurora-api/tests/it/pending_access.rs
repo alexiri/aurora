@@ -2,7 +2,7 @@
 //! P5-UX-5 (D-325, D-328, SEC-128, C-919, C-920): a workspace owner adds people by e-mail; the access waits for the
 //! person's first sign-in and never lets anyone into the organization. Against the in-process mock IdP.
 
-use crate::common::{Harness, ORIGIN, cookie};
+use crate::common::{Harness, cookie};
 use crate::oidc::{PID, authorize, callback, count, has_session, header, location, provider};
 use aurora_config::{RateClassOverride, Redacted, SignupMode};
 use aurora_testkit::oidc::{CLIENT_SECRET, MockIdp};
@@ -62,11 +62,7 @@ async fn env() -> Env {
 
 impl Env {
     async fn call(&self, who: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-        let (s, _, v) = self
-            .h
-            .send(m, uri, &[("cookie", who), ("origin", ORIGIN)], body)
-            .await;
-        (s.as_u16(), v)
+        self.h.call(who, m, uri, body).await
     }
 
     fn who(&self, sub: &str, email: &str, verified: bool) {
