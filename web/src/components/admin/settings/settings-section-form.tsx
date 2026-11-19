@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { inputClass } from "@/components/ui/field";
+import { SecretInput } from "@/components/ui/secret-input";
 import { FormActions, FormSection } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow } from "@/components/ui/section";
@@ -542,14 +543,14 @@ function SettingRow({
       <SettingField id={s.key} label={label} hint={hint} doc={docTitle} source={sd ? "dashboard" : "default"} error={error}>
         <div id={cid} className="flex flex-wrap items-center gap-2">
           {sd?.mode === "replace" ? (
-            <input
-              aria-label={`${label}: new value`}
-              type="password"
-              autoComplete="off"
-              className={`${inputClass} max-w-sm`}
-              value={sd.value}
-              onChange={(e) => setSecret(s.key, { mode: "replace", value: e.target.value })}
-            />
+            <div className="w-full max-w-sm">
+              <SecretInput
+                aria-label={`${label}: new value`}
+                revealLabel={label}
+                value={sd.value}
+                onChange={(v) => setSecret(s.key, { mode: "replace", value: v })}
+              />
+            </div>
           ) : (
             <span className="text-sm text-ink-2">{sd?.mode === "keep" ? "Set" : "Not set"}</span>
           )}

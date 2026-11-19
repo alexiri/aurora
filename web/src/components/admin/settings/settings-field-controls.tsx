@@ -135,7 +135,9 @@ export function ChoiceListEditor({
             const next = new Set(chosen);
             if (on) next.add(c.value);
             else next.delete(c.value);
-            onChange((field.choices ?? []).map((x) => x.value).filter((v) => next.has(v)));
+            const known = (field.choices ?? []).map((x) => x.value);
+            // A stored value that is not a choice is kept, after the chosen ones.
+            onChange([...known.filter((v) => next.has(v)), ...[...next].filter((v) => !known.includes(v))]);
           }}
         />
       ))}

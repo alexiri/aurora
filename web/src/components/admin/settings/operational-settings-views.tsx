@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 
+import { harnessChoices, harnessControls, harnessName, useMovedDefault } from "@/components/admin/settings/harness-controls";
 import {
   SettingsSectionForm,
   SettingsStackForm,
@@ -44,7 +45,7 @@ export const AGENTS_PAGE: OperationalPage = {
     {
       title: "Hosted agents",
       description:
-        "Hosted agents run in sandboxes on the runners. The harness list can only name harnesses a registered runner reports.",
+        "Hosted agents run in sandboxes on the runners. Only programs a registered runner offers can be ticked.",
       keys: ["hosted.enabled", "hosted.default_harness", "hosted.enabled_harnesses"],
     },
     {
@@ -165,7 +166,9 @@ function OperationalView({
   sectionId: string;
   page: OperationalPage;
   notice?: (s: SettingsSection) => ReactNode;
-  controls?: Record<string, (ctx: SettingControlCtx) => ReactNode>;
+  controls?:
+    | Record<string, (ctx: SettingControlCtx) => ReactNode>
+    | ((s: SettingsSection) => Record<string, (ctx: SettingControlCtx) => ReactNode>);
   below?: (s: SettingsSection) => ReactNode;
   /** Part of a topic page's tab (P5-IA-3): no page header of its own, only the titled groups. */
   bare?: boolean;
@@ -188,7 +191,7 @@ function OperationalView({
         key={section.generation}
         section={section}
         groups={page.groups}
-        controls={controls}
+        controls={typeof controls === "function" ? controls(section) : controls}
         onReload={() => void q.refetch()}
       />
       {below ? below(section) : null}
@@ -203,7 +206,13 @@ function OperationalView({
 function OperationalStack({
   parts,
 }: {
-  parts: { sectionId: string; page: OperationalPage; notice?: (s: SettingsSection) => ReactNode; below?: (s: SettingsSection) => ReactNode }[];
+  parts: {
+    sectionId: string;
+    page: OperationalPage;
+    notice?: (s: SettingsSection) => ReactNode;
+    controls?: (s: SettingsSection) => Record<string, (ctx: SettingControlCtx) => ReactNode>;
+    below?: (s: SettingsSection) => ReactNode;
+  }[];
 }) {
   const qs = useSettingsSections(parts.map((p) => p.sectionId));
   const failed = qs.find((q) => q.isError);
@@ -214,7 +223,7 @@ function OperationalStack({
     <SettingsStackForm
       parts={parts.map((p, i) => {
         const s = sections[i] as SettingsSection;
-        return { section: s, groups: p.page.groups, above: p.notice?.(s), below: p.below?.(s) };
+        return { section: s, groups: p.page.groups, controls: p.controls?.(s), above: p.notice?.(s), below: p.below?.(s) };
       })}
       onReload={() => void Promise.all(qs.map((q) => q.refetch()))}
     />
@@ -242,8 +251,9 @@ function cell(v: number | null | undefined): string {
 }
 
 /** The runners' sizes and limits, read-only (D-235(a)): they stay in Helm. */
-function RunnersTable({ section }: { section: SettingsSection }) {
+export function RunnersTable({ section }: { section: SettingsSection }) {
   const runners = runnersOf(section);
+  const choices = harnessChoices(section.fields);
   return (
     <FormSection
       title="Runners and sandbox sizes"
@@ -279,7 +289,7 @@ function RunnersTable({ section }: { section: SettingsSection }) {
                 <Td>{cell(r.sandbox_pids)}</Td>
                 <Td>{cell(r.home_gib)}</Td>
                 <Td>{cell(r.max_sandboxes)}</Td>
-                <Td>{(r.harnesses ?? []).join(", ") || "—"}</Td>
+                <Td>{(r.harnesses ?? []).map((h) => harnessName(choices, h)).join(", ") || "—"}</Td>
               </tr>
             ))}
           </tbody>
@@ -291,7 +301,15 @@ function RunnersTable({ section }: { section: SettingsSection }) {
 
 /** Admin › Settings › Agents & sandboxes (SET-5). */
 export function AgentsSettingsView() {
-  return <OperationalView sectionId="agents" page={AGENTS_PAGE} below={(s) => <RunnersTable section={s} />} />;
+  const [moved, setMoved] = useMovedDefault();
+  return (
+    <OperationalView
+      sectionId="agents"
+      page={AGENTS_PAGE}
+      controls={(s) => harnessControls(s, moved, setMoved)}
+      below={(s) => <RunnersTable section={s} />}
+    />
+  );
 }
 
 /** Admin › Settings › Approvals (SET-5). */
@@ -301,10 +319,16 @@ export function ApprovalsSettingsView() {
 
 /** Administration › Agents › Defaults (C-967): the agents and approvals sections as one run of titled groups. */
 export function AgentsDefaultsView() {
+  const [moved, setMoved] = useMovedDefault();
   return (
     <OperationalStack
       parts={[
-        { sectionId: "agents", page: AGENTS_PAGE, below: (s) => <RunnersTable section={s} /> },
+        {
+          sectionId: "agents",
+          page: AGENTS_PAGE,
+          controls: (s) => harnessControls(s, moved, setMoved),
+          below: (s) => <RunnersTable section={s} />,
+        },
         { sectionId: "approvals", page: APPROVALS_PAGE },
       ]}
     />

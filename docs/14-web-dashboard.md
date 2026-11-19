@@ -1348,7 +1348,7 @@ every other topic is owners/admins and is not listed for a member.)
   Upload errors show "Your organization's attachment storage is full" with the
   link to the usage page; expired attachments render as an "Expired by retention"
   chip (a deleted one as "Removed"), never as a link (C-196).
-- **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged), **Settings** (name, slug, members can create
+- **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged; FIX-171, D-373: each row opens a **Details** view — a settings change as before/after, the other recorded detail, source and ids — and the filters `action` and `critical=1` are in the URL, so a link opens the same view; the workspace Audit tab is the same shared panel), **Settings** (name, slug, members can create
   workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
   for owners).
 
@@ -1380,7 +1380,12 @@ every other topic is owners/admins and is not listed for a member.)
   - **Instructions** — name, brief, avatar, harness (phase 4, P4-HAR: a picker from
     `/v1/harnesses`, shown only when more than one is enabled; unavailable ones are disabled
     with "no runner offers this"; changing it asks for confirmation: "Starts fresh sessions for
-    every conversation of this agent; the transcript is kept"; refused while a turn runs), model (from
+    every conversation of this agent; the transcript is kept"; refused while a turn runs). With one
+    harness enabled the field is its display name as read-only text (the id while the list loads),
+    with "Your administrator chooses which programs agents can run." and, for instance admins, a
+    link to Administration › Agents › Defaults (FIX-172, D-374). **Create agent offers no harness**:
+    a new agent gets `hosted.default_harness` and changing it is an advanced setting here (D-374).
+    The agent also has a model (from
     `/v1/agents/{a}/models`), effort, proactive messaging mode.
     (phase 5, P5-MODELS-3, D-302, D-303, C-876) The model field is labelled **Default model**, with the
     help text "The model the agent starts with. It may use other allowed models on the same endpoint,
@@ -1858,8 +1863,13 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
 - **Keyed lists** (OIDC providers, secret stores, LLM endpoints, rate-limit class overrides) are an
   `ItemList` of entries, each with a source `Badge` ("Managed by Helm" for locked entries, which open
   read-only), edited in a `FormDialog`; an id already used by a Helm entry is shown as an error on
-  the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs, harnesses) are one field edited as
-  a list, locked as a whole.
+  the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs) are one field edited as
+  a list, locked as a whole. **Harnesses** (FIX-172, D-374, C-1028) are never typed: Agents › Defaults › Hosted
+  agents shows `hosted.enabled_harnesses` as a checkbox group by display name (a sentence under each), limited to
+  what registered runners offer (`extra.offered_harnesses`; an unticked one no runner offers is disabled, a ticked
+  one shows a warning, and with no runner registered a `Notice` says offers cannot be checked), and
+  `hosted.default_harness` as a select of the ticked ones (unticking the default moves it to the first ticked, with a
+  hint). Values that are not choices (`fake`) are kept and shown as "Also enabled". The runners table reads names.
 - (phase 5, P4-LLM spec batch, D-260, D-262, C-811) **LLM endpoints**: the endpoint dialog shows
   the chosen provider's own fields (OpenAI organization/project; Azure resource URL and
   deployment names; Bedrock region and optional VPC endpoint URL; Vertex project and location;
@@ -1897,7 +1907,7 @@ each marked added / changed / removed against the active version, under the sent
 use this app can read this text. It is written by the publisher."; a file opens in the shared
 preformatted viewer as plain text, never rendered as Markdown or HTML, long lines scrolling inside
 the viewer only (`24 §9`); reject/disable/uninstall with orphan warnings), **Host
-claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Addon sources** (phase 5,
+claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses; FIX-171, D-373: rows open a **Details** view with the changes as before/after, the other recorded detail, source and ids, and the filters — `action`, `scope`, `org`, `critical`, `since`, `until` — are in the URL, which the instance-settings e-mail's link relies on), **Addon sources** (phase 5,
 P5-ASRC, D-250: third-party app-package repositories at `/admin/addon-sources` —
 list with key fingerprint and check status, add with a preview/trust review of the
 repo's signing key before anything is registered, "Check now", per-source schedule

@@ -40,16 +40,31 @@ describe("Instructions harness picker", () => {
   it("is not shown when only one harness is enabled", async () => {
     mockFetch({ "GET /v1/harnesses": () => json(200, { items: [claude], default: "claude-code" }) });
     wrap(<InstructionsTab agent={agent("hosted")} wsId="w1" />);
-    await waitFor(() => expect(screen.getByLabelText("Harness")).toBeInTheDocument());
-    // Still the read-only field of phase 0-3.
-    expect(screen.getByLabelText("Harness")).toBeDisabled();
-    expect(screen.getByLabelText("Harness").tagName).toBe("INPUT");
+    // FIX-172 (D-374): the display name as read-only text, not an input-looking box.
+    await waitFor(() => expect(document.getElementById("a-harness")).toHaveTextContent("Claude Code"));
+    expect(document.getElementById("a-harness")?.tagName).toBe("P");
+    expect(screen.queryByRole("combobox", { name: "Harness" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Harness" })).toBeNull();
+    expect(screen.getByText(/Your administrator chooses which programs agents can run\./)).toBeInTheDocument();
+    // Not an instance admin: no link to the administration page.
+    expect(screen.queryByRole("link", { name: /Administration › Agents › Defaults/ })).toBeNull();
+  });
+
+  it("links an instance admin to Administration › Agents › Defaults, and shows the id while the list loads", async () => {
+    mockFetch({
+      "GET /v1/me": () => json(200, { user: { id: "u1", is_instance_admin: true } }),
+      "GET /v1/harnesses": () => json(200, { items: [claude], default: "claude-code" }),
+    });
+    wrap(<InstructionsTab agent={agent("hosted")} wsId="w1" />);
+    expect(document.getElementById("a-harness")).toHaveTextContent("claude-code");
+    const link = await screen.findByRole("link", { name: /Administration › Agents › Defaults/ });
+    expect(link.getAttribute("href")).toBe("/admin/agents?tab=defaults");
   });
 
   it("is never shown for a BYO agent", () => {
     const fn = mockFetch({});
     wrap(<InstructionsTab agent={agent("byo", null)} wsId="w1" />);
-    expect(screen.getByLabelText("Harness").tagName).toBe("INPUT");
+    expect(screen.queryByRole("combobox", { name: "Harness" })).toBeNull();
     expect(fn.mock.calls.some(([r]) => String((r as Request).url).includes("/v1/harnesses"))).toBe(false);
   });
 

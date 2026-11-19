@@ -1,11 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { Field } from "@/components/ui/field";
+import { SecretInput } from "@/components/ui/secret-input";
 
-import { Button } from "@/components/ui/button";
-import { Field, inputClass } from "@/components/ui/field";
-
-/** Write-only secret value input (SEC-12): password type, show toggle, never prefilled. */
+/** Write-only secret value input (SEC-12): hidden while typing, Show / Hide, never prefilled (D-375). */
 export function ValueInput({
   id,
   label = "Value",
@@ -19,23 +17,10 @@ export function ValueInput({
   onChange: (v: string) => void;
   error?: string;
 }) {
-  const [show, setShow] = useState(false);
+  // `Field` links its hint and error to the child whose id it has: `SecretInput` passes them on to the input.
   return (
     <Field id={id} label={label} error={error}>
-      <div className="flex gap-2">
-        <input
-          id={id}
-          type={show ? "text" : "password"}
-          autoComplete="new-password"
-          spellCheck={false}
-          className={inputClass}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-        />
-        <Button type="button" variant="outline" size="sm" aria-pressed={show} onClick={() => setShow((s) => !s)}>
-          {show ? "Hide" : "Show"}
-        </Button>
-      </div>
+      <SecretInput id={id} revealLabel={label.toLowerCase()} autoComplete="new-password" value={value} onChange={onChange} />
     </Field>
   );
 }
