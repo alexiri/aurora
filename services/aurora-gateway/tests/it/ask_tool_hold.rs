@@ -53,21 +53,12 @@ impl CredentialResolver for Static {
             return Ok(None);
         }
         let w = self.0;
-        Ok(Some(RequestIdentity {
-            credential_id: Uuid::nil(),
-            kind: CredentialKind::Agent,
-            agent_id: w.agent,
-            workspace_id: w.ws,
-            org_id: w.org,
-            conversation_id: None,
-            turn_id: None,
-            trace_context: None,
-            context_label: None,
-            speaker_user_id: None,
-            speaker_group_ids: Vec::new(),
-            capabilities: vec![],
-            byo: None,
-        }))
+        Ok(Some(crate::common::identity(
+            CredentialKind::Agent,
+            w.agent,
+            w.ws,
+            w.org,
+        )))
     }
 }
 

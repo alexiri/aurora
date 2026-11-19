@@ -69,7 +69,32 @@ pub async fn proxy_parts(
     (pl, proxy, parts)
 }
 
-/// [`proxy_parts`] + `Proxy::new` + a spawned `run`; returns the address and the proxy handle.
+/// The identity most test resolvers answer (P5-DEDUP-1 T7): a nil credential id, no conversation,
+/// turn, speaker, capabilities or BYO controls.
+pub fn identity(
+    kind: aurora_gateway::auth::CredentialKind,
+    agent: uuid::Uuid,
+    ws: uuid::Uuid,
+    org: uuid::Uuid,
+) -> aurora_gateway::auth::RequestIdentity {
+    aurora_gateway::auth::RequestIdentity {
+        credential_id: uuid::Uuid::nil(),
+        kind,
+        agent_id: agent,
+        workspace_id: ws,
+        org_id: org,
+        conversation_id: None,
+        turn_id: None,
+        trace_context: None,
+        context_label: None,
+        speaker_user_id: None,
+        speaker_group_ids: Vec::new(),
+        capabilities: vec![],
+        byo: None,
+    }
+}
+
+/// [`proxy_parts`] +`Proxy::new` + a spawned `run`; returns the address and the proxy handle.
 pub async fn spawn_proxy(
     gw: &GeneratedCa,
     resolver: Arc<dyn aurora_gateway::auth::CredentialResolver>,
