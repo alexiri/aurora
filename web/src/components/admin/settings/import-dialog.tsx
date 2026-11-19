@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { inputClass } from "@/components/ui/field";
-import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { useImportSettings, type ImportResult } from "@/lib/api/settings";
 
 function show(v: unknown): string {
@@ -100,11 +100,7 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           </div>
 
           <ErrorNotice error={error} />
-          {done ? (
-            <Notice tone="accent" role="status">
-              Imported. Applied to every replica within seconds.
-            </Notice>
-          ) : null}
+          <SavedNotice show={done}>Imported. Applied to every replica within seconds.</SavedNotice>
           {errors.map((e, i) => (
             <Notice key={i} tone="danger" role="alert">
               <strong>{e.section}</strong>: {e.message}

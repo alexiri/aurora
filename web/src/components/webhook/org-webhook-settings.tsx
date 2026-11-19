@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { ApiError } from "@/lib/api/client";
 import { usePatchOrg } from "@/lib/api/org";
@@ -88,11 +88,7 @@ function OrgWebhookForm({ org }: { org: Org }) {
         {patch.error && !ceilingRefused ? (
           <ErrorNotice error={patch.error} />
         ) : null}
-        {saved ? (
-          <Notice tone="accent" role="status">
-            Outgoing webhook settings updated.
-          </Notice>
-        ) : null}
+        <SavedNotice show={saved}>Outgoing webhook settings updated.</SavedNotice>
         {owner ? (
           <FormActions>
             <Button type="submit" disabled={patch.isPending}>

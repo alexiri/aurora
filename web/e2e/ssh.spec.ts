@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { mockApi } from "./support/mock-api";
-import { overflow, titled, type Scheme } from "./support/open";
+import { openThemed, overflow } from "./support/open";
 import { serious } from "./support/files";
 
 // P4-SSH-1 (docs/14 §Account › SSH keys and §Agent page › SSH, C-795): the keys page and the agent's SSH page against the
@@ -74,12 +74,7 @@ async function mockSsh(page: Page, over: { terminators?: number; keys?: typeof K
   );
 }
 
-async function open(page: Page, path: string, scheme: Scheme) {
-  await page.emulateMedia({ colorScheme: scheme });
-  await page.goto(path);
-  await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
-  await titled(page);
-}
+const open = openThemed;
 
 for (const scheme of ["light", "dark"] as const) {
   for (const width of [1280, 390]) {

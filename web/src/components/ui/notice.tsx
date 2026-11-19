@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import type { HTMLAttributes } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 
 import { errorMessage } from "@/lib/api/errors";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,16 @@ const noticeVariants = cva("rounded-control border p-3 text-sm", {
  */
 export function Notice({ tone, className, ...props }: HTMLAttributes<HTMLDivElement> & VariantProps<typeof noticeVariants>) {
   return <div className={cn(noticeVariants({ tone }), className)} {...props} />;
+}
+
+/** The "Settings saved." line after a successful save: an accent status notice shown while `show` is true. */
+export function SavedNotice({ show, children }: { show: unknown; children: ReactNode }) {
+  if (!show) return null;
+  return (
+    <Notice tone="accent" role="status">
+      {children}
+    </Notice>
+  );
 }
 
 /**

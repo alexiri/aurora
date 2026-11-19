@@ -16,6 +16,14 @@ export async function titled(page: Page) {
   await expect.poll(() => page.title(), { message: "document.title is set" }).not.toBe("");
 }
 
+/** Opens `path` (mocked by the spec) with the OS colour scheme emulated; resolves once the page is themed and titled. */
+export async function openThemed(page: Page, path: string, scheme: Scheme) {
+  await page.emulateMedia({ colorScheme: scheme });
+  await page.goto(path);
+  await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
+  await titled(page);
+}
+
 /** Opens a route with the API mocked and the OS colour scheme emulated; resolves once the page is themed and hydrated. */
 export async function openRoute(page: Page, path: string, scheme: Scheme) {
   const errors: string[] = [];

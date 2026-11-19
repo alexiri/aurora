@@ -11,7 +11,7 @@ import { ThemeSwitch } from "@/components/theme/theme-switch";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
 import { useUpdateMe } from "@/lib/api/account";
@@ -70,11 +70,7 @@ function ProfileForm({ me }: { me: Me }) {
       {update.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={update.error} />
       ) : null}
-      {saved ? (
-        <Notice tone="accent" role="status">
-          Profile saved.
-        </Notice>
-      ) : null}
+      <SavedNotice show={saved}>Profile saved.</SavedNotice>
       <FormActions>
         <Button type="submit" size="lg" disabled={update.isPending}>
           {update.isPending ? "Saving…" : "Save changes"}

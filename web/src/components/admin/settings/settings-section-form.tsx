@@ -18,7 +18,7 @@ import { inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { FormActions } from "@/components/ui/form";
 import { LockPill } from "@/components/ui/lock-pill";
-import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
 import { SettingField, SettingsCard, settingControlId } from "@/components/ui/setting-field";
@@ -292,11 +292,7 @@ export function SettingsStackForm({
 
   return (
     <form onSubmit={(e) => void submit(e)} noValidate className="space-y-5">
-      {saved ? (
-        <Notice tone="accent" role="status">
-          Saved. Applied to every replica within seconds.
-        </Notice>
-      ) : null}
+      <SavedNotice show={saved}>Saved. Applied to every replica within seconds.</SavedNotice>
 
       {states.map(({ part, draft }) => {
         const section = part.section;

@@ -8,8 +8,9 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { DangerZone, Section } from "@/components/ui/section";
+import { TypeToConfirmDelete } from "@/components/ui/type-to-confirm-delete";
 import { fieldErrors } from "@/lib/api/errors";
 import { deleteOrg, usePatchOrg } from "@/lib/api/org";
 import { useInstance } from "@/lib/api/queries";
@@ -128,11 +129,7 @@ export function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
       {patch.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={patch.error} />
       ) : null}
-      {saved ? (
-        <Notice tone="accent" role="status">
-          Settings saved.
-        </Notice>
-      ) : null}
+      <SavedNotice show={saved}>Settings saved.</SavedNotice>
       {isOwner ? (
         <FormActions>
           <Button type="submit" size="lg" disabled={patch.isPending}>
@@ -210,24 +207,6 @@ export function OrgDangerZone({
   slug: string;
   onDeleted: () => void;
 }) {
-  const [confirm, setConfirm] = useState("");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (confirm !== slug) return;
-    setPending(true);
-    setError(null);
-    try {
-      await deleteOrg(orgId, confirm);
-      onDeleted();
-    } catch (err) {
-      setError(err);
-      setPending(false);
-    }
-  }
-
   return (
     <DangerZone
       id="delete-org"
@@ -239,25 +218,14 @@ export function OrgDangerZone({
         </>
       }
     >
-    <Form onSubmit={(e) => void submit(e)} className="max-w-md">
-      <Field id="del-org" label="Organization URL name">
-        <input
-          id="del-org"
-          className={inputClass}
-          value={confirm}
-          autoComplete="off"
-          onChange={(e) => setConfirm(e.target.value)}
-        />
-      </Field>
-      {error !== null ? (
-        <ErrorNotice error={error} />
-      ) : null}
-      <FormActions>
-        <Button type="submit" variant="danger" disabled={pending || confirm !== slug}>
-          {pending ? "Deleting…" : "Delete organization"}
-        </Button>
-      </FormActions>
-    </Form>
+      <TypeToConfirmDelete
+        id="del-org"
+        fieldLabel="Organization URL name"
+        slug={slug}
+        buttonLabel="Delete organization"
+        remove={(confirm) => deleteOrg(orgId, confirm)}
+        onDeleted={onDeleted}
+      />
     </DangerZone>
   );
 }

@@ -310,4 +310,13 @@ D1 left for later: `apps/app-name.tsx` (a test asserts it, so deleting it remove
 
 Gate: per batch typecheck, eslint on the touched files, vitest `related` to them. After the last merge of master: typecheck and guards run-all (see status). Known not mine: `approvals-view.tsx` has an unused `ActionPending` (P5-POLISH-7), a lint warning; `accounts.test.tsx` "Asks first (app default)" times out on a "What exactly?" button (actions-table, untouched; p5-agent's TOOLASK) — to check at the CI gate. Live diffs of the other lanes were empty for `web/` except p5-polish-a's governance/members files at the start (skipped); re-checked before each batch.
 
-Next: P6 (settings-save feedback, `TypeToConfirmDelete`, `useAsyncAction`) → P7 (admin settings editors; FIX-172 merged) → P8 → P10 (visible changes listed per commit) → P11, T1–T4, E3; S3 done; tier C last.
+**Round 2 (2026-11-19, after batches 1–10 merged; CI Watcher fixed the 17 baseline failures in d83d396f):**
+
+| Batch | Commit | Net lines | Notes |
+|---|---|---|---|
+| P6 + dead `ActionPending` | see `git log` (`P5-DEDUP-2: P6`) | -13 (src -63, new test +50) | `TypeToConfirmDelete` + `useAsyncAction` (org and workspace delete zones, account delete), `SavedNotice` ×11, dead `ActionPending` in approvals-view removed. The shared delete form keeps the `confirm !== slug` guard (bug-looking item 1; benign, button was disabled). vitest related 126 files / 1307 tests green. |
+| T1 + E3 | `P5-DEDUP-2: T1 + E3` | -13 | `RecordingSocket` → `tests/support/terminal.ts`; `openThemed` → `e2e/support/open.ts` for the 2 identical `open()` copies. Playwright (ssh, send-as-me; 4196–4198): 37 passed, 4 failed in ssh "Admin › Overview: the SSH line" — `/admin` no longer renders `ssh-line` (it is in setup-view now); not caused by this change, needs the spec updated by whoever moved it. |
+
+Re-checked and **skipped**: P7 (the sign-in providers list was rewritten by P5-POLISH-10, the two editors no longer share ~120 lines), P8 (schedule/webhook rows diverged: owner-controls, anchor switch, reassign; shared shell would save little), T2 (ORG/T are one-line constants: an import costs the line saved), T3 (clipboard stubs all differ). Not started: P10 (visible changes), P11 (tiny pieces, each −4…−15), T4, tier C, E2.
+
+Earlier "Next" (kept for the record): P6 (settings-save feedback, `TypeToConfirmDelete`, `useAsyncAction`) → P7 (admin settings editors; FIX-172 merged) → P8 → P10 (visible changes listed per commit) → P11, T1–T4, E3; S3 done; tier C last.

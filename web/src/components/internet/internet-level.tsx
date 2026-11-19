@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { inputClass } from "@/components/ui/field";
 import { MainAction } from "@/components/ui/main-action";
-import { Notice } from "@/components/ui/notice";
+import { Notice, SavedNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ScopeLadder, type LadderBelow } from "@/components/ui/scope-ladder";
 import { Section } from "@/components/ui/section";
@@ -398,11 +398,7 @@ export function InternetLevel(p: InternetLevelProps) {
           ) : null}
         </Notice>
       ) : null}
-      {applied ? (
-        <Notice tone="accent" role="status">
-          Changes applied.
-        </Notice>
-      ) : null}
+      <SavedNotice show={applied}>Changes applied.</SavedNotice>
 
       <CommonChanges scopeWords={workspace ? "workspace" : "organization"} onAdd={(r) => ed.edit({ ...state, rules: [...rules, r] })} />
 
