@@ -77,14 +77,15 @@ test.describe("the Administration entry", () => {
 
   test("shows no badge and no section with nothing to attend to", async ({ page }) => {
     await open(page, "/admin", "light", { "/v1/admin/attention": { items: [] } });
-    await expect(page.getByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
+    // The page's own heading (the mock's setup status decides between "Set up Aurora" and "Overview").
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.getByTestId("admin-attention")).toHaveCount(0);
     await expect(page.getByTestId("admin-attention-badge")).toHaveCount(0);
   });
 
   test("a failed fetch shows no badge and no error", async ({ page }) => {
     await open(page, "/admin", "light", { "/v1/admin/attention": { status: 500, body: { error: { code: "internal", message: "x" } } } });
-    await expect(page.getByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.getByTestId("admin-attention-badge")).toHaveCount(0);
     await expect(page.getByTestId("admin-attention")).toHaveCount(0);
   });
