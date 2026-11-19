@@ -2677,7 +2677,12 @@ workspaces' conversations; limits by repository or project inside an account.
   Overview shows "Web Push: off \| on (generated key, N devices) \| on (operator key)".
 - **Policy editor**: draft/publish ("Apply changes"), drag reorder with
   stale-revision detection, identity and target pickers (apps/tools from the
-  catalogue, connections, secrets, network patterns), conditions, modifiers,
+  catalogue, connections, secrets, network patterns), (FIX-184, D-400) the **App tools** target
+  (an app picker from `GET /v1/apps`, then a checkbox per tool from `GET /v1/apps/{app}`, tools with a
+  package default of Ask badged "asks first by default"; it writes the existing `app` target with
+  `tools`, no API change) so an organization owner or admin can allow one named tool of
+  `google-workspace`, `microsoft-365` and the like from the organization's Internet access rules,
+  conditions, modifiers,
   (phase 2, RFE-011a) a "Approval timeout" field on require-approval rules and on
   *ask* tools of custom grants (bounded by the instance maximum, shown with the
   default),

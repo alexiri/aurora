@@ -1,6 +1,6 @@
 package:
   id: microsoft-365
-  version: 1.2.0
+  version: 1.3.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -115,9 +115,9 @@ apps:
           - { id: get_shared_drive_item_content, description: "Downloads a file from a document library.", name: Download a file from a document library, host: graph.microsoft.com, path: "/v1.0/drives/*/items/*/content", methods: [GET] }
       write:
         items:
-          - { id: send_mail, description: "Sends an email.", name: Send mail, host: graph.microsoft.com, path: /v1.0/me/sendMail, methods: [POST] }
-          - { id: create_event, description: "Creates an event in your default calendar.", name: Create a calendar event, host: graph.microsoft.com, path: /v1.0/me/events, methods: [POST] }
-          - { id: create_calendar_event, description: "Creates an event in one calendar.", name: Create an event in one calendar, host: graph.microsoft.com, path: "/v1.0/me/calendars/*/events", methods: [POST] }
+          - { id: send_mail, description: "Sends an email.", name: Send mail, host: graph.microsoft.com, path: /v1.0/me/sendMail, methods: [POST], approval: ask }
+          - { id: create_event, description: "Creates an event in your default calendar.", name: Create a calendar event, host: graph.microsoft.com, path: /v1.0/me/events, methods: [POST], approval: ask }
+          - { id: create_calendar_event, description: "Creates an event in one calendar.", name: Create an event in one calendar, host: graph.microsoft.com, path: "/v1.0/me/calendars/*/events", methods: [POST], approval: ask }
           - { id: upload_drive_item_content, description: "Uploads a file to OneDrive, or replaces a file's content.", name: Upload or replace file content, host: graph.microsoft.com, path: "/v1.0/me/drive/items/*/content", methods: [PUT] }
           - { id: create_drive_root_folder, description: "Creates a folder at the top of your OneDrive.", name: Create a folder in the OneDrive root, host: graph.microsoft.com, path: /v1.0/me/drive/root/children, methods: [POST] }
           - { id: create_drive_item_folder, description: "Creates a folder inside another folder.", name: Create a folder inside a folder, host: graph.microsoft.com, path: "/v1.0/me/drive/items/*/children", methods: [POST] }

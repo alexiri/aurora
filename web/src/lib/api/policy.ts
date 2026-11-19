@@ -241,7 +241,7 @@ export const TARGET_TYPES: { type: TargetType; label: string; disabled?: boolean
   { type: "network", label: "Network host" },
   { type: "secret", label: "Secret" },
   { type: "secrets", label: "Secrets (by scope)" },
-  { type: "app", label: "App (coming with apps)", disabled: true },
+  { type: "app", label: "App tools" },
   { type: "connection", label: "Connection (coming with apps)", disabled: true },
   { type: "app_connections", label: "App connections (coming with apps)", disabled: true },
 ];
