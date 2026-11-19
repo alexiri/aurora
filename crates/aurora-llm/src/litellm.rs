@@ -13,6 +13,44 @@ const DEFAULT_DIALECTS: [Dialect; 3] = [
     Dialect::AnthropicMessages,
 ];
 
+/// (D-372) Whether a LiteLLM `model_info.mode` can serve a chat turn: `chat` and `responses`.
+/// (LiteLLM's other modes are `completion`, `embedding`, `image_generation`, `audio_transcription`,
+/// `audio_speech`, `moderation`, `rerank`, `ocr`, `search`, `video_generation`, …)
+#[must_use]
+pub fn is_chat_mode(mode: &str) -> bool {
+    matches!(mode, "chat" | "responses")
+}
+
+/// `model_name` → `model_info.mode` from a `GET /model/info` answer. Only the public alias
+/// `model_name` is read, never `litellm_params.model` (the backend id). A name served by several
+/// deployments counts as chat when any of them is; a deployment without a mode adds nothing.
+#[must_use]
+pub fn modes_from_model_info(v: &serde_json::Value) -> std::collections::HashMap<String, String> {
+    let mut out: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for d in v
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let (Some(name), Some(mode)) = (
+            d.get("model_name").and_then(serde_json::Value::as_str),
+            d.get("model_info")
+                .and_then(|i| i.get("mode"))
+                .and_then(serde_json::Value::as_str),
+        ) else {
+            continue;
+        };
+        match out.get(name) {
+            Some(m) if is_chat_mode(m) => {}
+            _ => {
+                out.insert(name.to_owned(), mode.to_owned());
+            }
+        }
+    }
+    out
+}
+
 /// LiteLLM proxy (operator-configured base URL).
 ///
 /// Pinned calls: models `GET <base>/v1/models`; team origin `GET <base>/key/info` called
@@ -109,6 +147,16 @@ impl LlmProvider for LitellmProvider {
     ) -> Result<Vec<ModelInfo>> {
         Self::fetch_models(ep, key, http).await
     }
+    async fn model_modes(
+        &self,
+        ep: &Endpoint,
+        key: &Secret<String>,
+        http: &reqwest::Client,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let url = format!("{}/model/info", ep.base());
+        let resp = check(send(http.get(url).bearer_auth(key.expose())).await?)?;
+        Ok(modes_from_model_info(&json(resp).await?))
+    }
     fn default_model(&self, ep: &Endpoint) -> Option<String> {
         ep.default_model.clone()
     }
@@ -198,6 +246,24 @@ impl LlmProvider for LitellmProvider {
 mod tests {
     use super::*;
     use http::Method;
+
+    /// (D-372) Only the public alias is read; a name with one chat deployment is chat; a deployment without a mode adds nothing.
+    #[test]
+    fn modes_read_the_alias_and_never_the_backend_id() {
+        let v = serde_json::json!({"data": [
+            {"model_name": "emb", "litellm_params": {"model": "hosted_vllm/e"}, "model_info": {"mode": "embedding"}},
+            {"model_name": "both", "litellm_params": {"model": "x"}, "model_info": {"mode": "embedding"}},
+            {"model_name": "both", "litellm_params": {"model": "y"}, "model_info": {"mode": "responses"}},
+            {"model_name": "both", "litellm_params": {"model": "z"}, "model_info": {"mode": "embedding"}},
+            {"model_name": "nomode", "litellm_params": {"model": "hosted_vllm/n"}, "model_info": {}},
+            {"litellm_params": {"model": "hosted_vllm/orphan"}, "model_info": {"mode": "chat"}},
+        ]});
+        let m = modes_from_model_info(&v);
+        assert_eq!(m.get("emb").map(String::as_str), Some("embedding"));
+        assert_eq!(m.get("both").map(String::as_str), Some("responses"));
+        assert!(!m.contains_key("nomode") && !m.contains_key("hosted_vllm/orphan"));
+        assert!(is_chat_mode("chat") && is_chat_mode("responses") && !is_chat_mode("embedding"));
+    }
 
     fn ep(base: &str, allowed: &[&str]) -> Endpoint {
         Endpoint {

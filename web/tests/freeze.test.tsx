@@ -1,32 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { FreezeControl } from "@/components/freeze/freeze-panel";
 import { AgentFreeze } from "@/components/freeze/freeze-sections";
 import { authorityRank, type Frozen } from "@/lib/api/freeze";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-type Handler = (req: Request) => Response | Promise<Response>;
-function mockFetch(routes: Record<string, Handler>) {
-  const fn = vi.fn(async (input: Request | string | URL) => {
-    const req = input as Request;
-    const url = new URL(req.url, "http://localhost");
-    const h = routes[`${req.method} ${url.pathname}`];
-    return h ? h(req) : json(404, { error: { code: "not_found", message: "nf" } });
-  });
-  vi.stubGlobal("fetch", fn);
-  return fn;
-}
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
+import { wrap } from "./support/render";
+import { json, mockFetch } from "./support/api";
 
 const frozen = (over: Partial<Frozen> = {}): Frozen => ({
   at: "2026-01-02T03:04:05Z",

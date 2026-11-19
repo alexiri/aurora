@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { ApprovalCard } from "@/components/chat/approval-card";
 import type { TranscriptEvent } from "@/lib/api/conversations";
@@ -17,11 +17,6 @@ import {
 
 const ev = (seq: number | null, type: string, payload: Record<string, unknown>): TranscriptEvent => ({
   seq, type, ts: "2026-01-01T00:00:00Z", payload,
-});
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 describe("transcript reducer", () => {

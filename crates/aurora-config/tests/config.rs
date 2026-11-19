@@ -735,31 +735,25 @@ baseline_allowlist = [ {{ host = "pypi.org" }}, {{ host = "*.githubusercontent.c
     assert!(e.has_key("llm.endpoints[0].key_origin"), "{e}");
 }
 
-// FIX-019 (D-136): the owner's endpoint shape starts, with a warning naming the endpoint.
+// FIX-019 (D-136), FIX-170 (D-372): the owner's endpoint shape (only `base_url`) starts; its agents use the first
+// allowed chat model their key serves, so there is nothing to warn about.
 #[test]
-fn litellm_endpoint_without_default_model_warns_but_starts() {
+fn litellm_endpoint_without_default_model_starts() {
     let toml = format!(
         "{BASE}[[llm.endpoints]]\nid = \"aigw\"\nprovider = \"litellm\"\nbase_url = \"https://aigw.example.org\"\nkey_origin = {{ method = \"endpoint\" }}\n"
     );
     let raw = load_with(&toml, &[]).unwrap();
     raw.api_config().unwrap();
+    assert!(
+        llm_endpoint_warnings(&raw.llm).is_empty(),
+        "litellm picks from the key's list"
+    );
+    // The other live-listing providers still warn: nothing picks a model for them.
+    let compat = toml.replace("litellm", "openai_compatible");
+    let raw = load_with(&compat, &[]).unwrap();
     let w = llm_endpoint_warnings(&raw.llm);
     assert_eq!(w.len(), 1, "{w:?}");
-    assert!(
-        w[0].contains("`aigw`")
-            && w[0].contains("default_model")
-            && w[0].contains("no_default_model")
-    );
-
-    let with = toml.replace(
-        "key_origin",
-        "default_model = \"claude-sonnet\"\nkey_origin",
-    );
-    let raw = load_with(&with, &[]).unwrap();
-    assert!(llm_endpoint_warnings(&raw.llm).is_empty());
-    // The built-in provider is not live-listing: no warning.
-    let raw = load_with(BASE, &[]).unwrap();
-    assert!(llm_endpoint_warnings(&raw.llm).is_empty());
+    assert!(w[0].contains("`aigw`") && w[0].contains("no_default_model"));
 }
 
 #[test]

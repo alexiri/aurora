@@ -1,9 +1,9 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 import { agent, id, mockApi } from "./support/mock-api";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // FIX-136 (D-241; docs/14 §Connect window): connect Indico with a personal token → "Which scopes did you give this
 // token?" (detect read scopes, or tick them) → "Give agents access" lists the tools the token cannot serve collapsed with
@@ -42,13 +42,6 @@ const indico = {
   credentials: [], hosts: [], metadata: [], oauth_clients: [], tools,
 };
 const CONN = id(92);
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 for (const scheme of ["light", "dark"] as const) {
   for (const width of [1280, 390]) {

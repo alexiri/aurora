@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { json } from "./support/api";
 
 const replace = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -11,9 +12,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 import Home from "@/app/page";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 /** The placement request of an instance administrator stays pending until the returned function is called. */
 function stubApi(opts: { admin: boolean; saved: boolean }) {
@@ -49,9 +47,7 @@ function mount() {
 }
 
 afterEach(() => {
-  cleanup();
   replace.mockReset();
-  vi.unstubAllGlobals();
 });
 
 describe("the root page of an administrator with no organization (P5-UX-1)", () => {

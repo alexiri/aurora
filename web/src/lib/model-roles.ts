@@ -22,9 +22,12 @@ export function roleLabel(role: Role, harnessId: string | undefined): string {
   return harnessId === "claude-code" ? `${ROLE_LABEL[role]} (${CLAUDE_CODE_ALIAS[role]})` : ROLE_LABEL[role];
 }
 
-/** A role's readiness warning (`role_unset` | `role_not_allowed`) in words. */
+/** A role's readiness warning (`role_unset` | `role_not_allowed` | `role_not_served`) in words. */
 export function roleWarning(role: Role, warning: string, model?: string | null): string {
   const name = ROLE_LABEL[role];
+  if (warning === "role_not_served") {
+    return `${name}${model ? ` (${model})` : ""} is not in your key's model list. It is still used.`;
+  }
   if (warning === "role_not_allowed") {
     return `${name}${model ? ` (${model})` : ""} is not allowed for your organization, so it counts as not set.`;
   }

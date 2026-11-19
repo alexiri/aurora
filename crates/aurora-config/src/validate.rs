@@ -2563,11 +2563,18 @@ pub fn nearest_origin_method(given: &str) -> Option<&'static str> {
 
 /// Start-up warnings about LLM endpoints that start but will not work as the operator may
 /// expect (FIX-019, D-136). The caller logs each at `warn`.
+///
+/// (FIX-170, D-372) A `litellm` endpoint without `default_model` is not one: its agents use the first allowed
+/// chat model their key serves. The other providers that list models live do not pick one automatically.
 pub fn llm_endpoint_warnings(l: &LlmSection) -> Vec<String> {
     l.endpoints
         .iter()
-        // `litellm` lists its models live; the listing is never used to pick one (08).
-        .filter(|e| e.provider == "litellm" && e.default_model.is_none())
+        .filter(|e| {
+            matches!(
+                e.provider.as_str(),
+                "openai" | "bedrock" | "openai_compatible"
+            ) && e.default_model.is_none()
+        })
         .map(|e| {
             format!(
                 "llm endpoint `{}` has no `default_model`: hosted agents using it need a model \

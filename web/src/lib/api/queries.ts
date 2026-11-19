@@ -1,8 +1,10 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
@@ -24,16 +26,11 @@ export const queryKeys = {
   agents: (wsId: string) => ["workspaces", wsId, "agents"] as const,
 };
 
-/** Do not retry on definitive client errors. */
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
-
 export function useOrgs() {
   return useQuery({
     queryKey: queryKeys.orgs,
     queryFn: () => unwrap(api.GET("/v1/orgs")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -42,7 +39,7 @@ export function useOrg(orgId: string | undefined) {
     queryKey: queryKeys.org(orgId ?? ""),
     queryFn: () => unwrap(api.GET("/v1/orgs/{org}", { params: { path: { org: orgId! } } })),
     enabled: !!orgId,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -59,7 +56,7 @@ export function useWorkspaces(orgId: string | undefined) {
         ),
       ),
     enabled: !!orgId,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -68,7 +65,7 @@ export function useWorkspace(wsId: string | undefined) {
     queryKey: queryKeys.workspace(wsId ?? ""),
     queryFn: () => unwrap(api.GET("/v1/workspaces/{ws}", { params: { path: { ws: wsId! } } })),
     enabled: !!wsId,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -79,7 +76,7 @@ export function useResolve(orgSlug: string | undefined, wsSlug?: string) {
     queryFn: () =>
       unwrap(api.GET("/v1/resolve", { params: { query: { org: orgSlug!, workspace: wsSlug } } })),
     enabled: !!orgSlug,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -89,25 +86,17 @@ export function useAgents(wsId: string | undefined) {
     queryFn: () =>
       unwrap(api.GET("/v1/workspaces/{ws}/agents", { params: { path: { ws: wsId! } } })),
     enabled: !!wsId,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function useCreateOrg() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateOrgRequest) => unwrap(api.POST("/v1/orgs", { body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.orgs }),
-  });
+  return useInvalidatingMutation((body: CreateOrgRequest) => unwrap(api.POST("/v1/orgs", { body })), queryKeys.orgs);
 }
 
 export function useCreateWorkspace(orgId: string | undefined) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateWorkspaceRequest) =>
-      unwrap(api.POST("/v1/orgs/{org}/workspaces", { params: { path: { org: orgId! } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.workspaces(orgId ?? "") }),
-  });
+  return useInvalidatingMutation((body: CreateWorkspaceRequest) =>
+    unwrap(api.POST("/v1/orgs/{org}/workspaces", { params: { path: { org: orgId! } }, body })), queryKeys.workspaces(orgId ?? ""));
 }
 
 /** `POST /v1/auth/logout` (not in the generated schema until BE-011 lands). */
@@ -148,7 +137,7 @@ export function useInstance(enabled = true) {
     queryKey: ["instance"] as const,
     queryFn: () => unwrap(api.GET("/v1/instance")),
     enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 

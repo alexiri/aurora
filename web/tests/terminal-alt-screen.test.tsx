@@ -1,6 +1,6 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useRef } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalPane } from "@/components/agents/terminal-tab";
 
@@ -78,10 +78,6 @@ beforeEach(() => {
   Object.assign(core, { alt: false, tracking: 0, appKeys: false });
   vi.stubGlobal("WebSocket", Socket as unknown as typeof WebSocket);
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 async function mount() {

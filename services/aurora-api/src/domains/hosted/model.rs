@@ -9,6 +9,9 @@ use aurora_llm::{AuthMode, Dialect, Endpoint, ModelRef, ProviderRegistry};
 use aurora_protocol::runner::{ModelChoice, ModelMeta, ModelRoleIds};
 use serde_json::Value;
 use sqlx::PgConnection;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// Dialects each harness speaks, **in preference order** (`12 §Harness selection and adapter
@@ -103,6 +106,212 @@ mod dialect_tests {
     }
 }
 
+#[cfg(test)]
+mod listing_tests {
+    //! (FIX-170, D-372) The resolution order of `08 §Model selection`, step by step.
+    use super::*;
+
+    fn ep(default: Option<&str>, models: &[&str]) -> Endpoint {
+        Endpoint {
+            id: "aigw".into(),
+            provider: "litellm".into(),
+            display_name: String::new(),
+            base_url: "http://x".into(),
+            dialects: vec![],
+            default_model: default.map(str::to_owned),
+            models: models.iter().map(|m| (*m).to_owned()).collect(),
+            allowed_models: vec![],
+            key_origin: None,
+            allowed_paths: vec![],
+            organization: None,
+            project: None,
+            auth_header: None,
+            models_path: None,
+            region: None,
+            project_id: None,
+            location: None,
+            model_roles: Default::default(),
+            model_info: Default::default(),
+        }
+    }
+
+    fn listing(models: &[&str], modes: &[(&str, &str)]) -> KeyListing {
+        KeyListing {
+            models: models.iter().map(|m| (*m).to_owned()).collect(),
+            modes: Some(
+                modes
+                    .iter()
+                    .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+                    .collect(),
+            ),
+        }
+    }
+
+    fn pick(
+        e: &Endpoint,
+        allowed: &[&str],
+        l: Option<&KeyListing>,
+    ) -> (Option<(String, Source)>, bool) {
+        let allowed: Vec<String> = allowed.iter().map(|m| (*m).to_owned()).collect();
+        let p = pick_default(e, e.default_model.clone(), &allowed, l);
+        (p.pick, p.not_served)
+    }
+
+    #[test]
+    fn a_served_default_is_used() {
+        let l = listing(&["a", "b"], &[]);
+        let (p, warn) = pick(&ep(Some("b"), &[]), &[], Some(&l));
+        assert_eq!(p, Some(("b".into(), Source::EndpointDefault)));
+        assert!(!warn);
+    }
+
+    #[test]
+    fn a_default_the_key_does_not_serve_is_skipped_with_a_warning() {
+        // The owner's case: `hosted_vllm/glm53-flash-int4` is the other namespace's name.
+        let l = listing(&["glm-5.3-flash-int4", "b"], &[]);
+        let (p, warn) = pick(
+            &ep(Some("hosted_vllm/glm53-flash-int4"), &[]),
+            &[],
+            Some(&l),
+        );
+        assert_eq!(p, Some(("glm-5.3-flash-int4".into(), Source::KeyListing)));
+        assert!(warn);
+    }
+
+    #[test]
+    fn the_listing_order_is_kept_and_the_allow_list_filters_it() {
+        let l = listing(&["z", "m", "a"], &[]);
+        let e = ep(None, &[]);
+        assert_eq!(
+            pick(&e, &[], Some(&l)).0,
+            Some(("z".into(), Source::KeyListing))
+        );
+        assert_eq!(
+            pick(&e, &["a", "m"], Some(&l)).0,
+            Some(("m".into(), Source::KeyListing))
+        );
+    }
+
+    #[test]
+    fn a_non_chat_model_is_skipped_and_an_unknown_mode_counts_as_chat() {
+        let e = ep(None, &[]);
+        let l = listing(
+            &["emb", "chat-a"],
+            &[("emb", "embedding"), ("chat-a", "chat")],
+        );
+        assert_eq!(
+            pick(&e, &[], Some(&l)).0,
+            Some(("chat-a".into(), Source::KeyListing))
+        );
+        // `/model/info` failed (no modes): the first allowed model is taken.
+        let no_modes = KeyListing {
+            models: vec!["emb".into(), "chat-a".into()],
+            modes: None,
+        };
+        assert_eq!(
+            pick(&e, &[], Some(&no_modes)).0,
+            Some(("emb".into(), Source::KeyListing))
+        );
+        // Not covered by `/model/info`: chat.
+        let partial = listing(&["x", "y"], &[("x", "image_generation")]);
+        assert_eq!(
+            pick(&e, &[], Some(&partial)).0,
+            Some(("y".into(), Source::KeyListing))
+        );
+        let responses = listing(&["r"], &[("r", "responses")]);
+        assert_eq!(
+            pick(&e, &[], Some(&responses)).0,
+            Some(("r".into(), Source::KeyListing))
+        );
+    }
+
+    #[test]
+    fn a_listing_with_no_allowed_chat_model_resolves_nothing_even_with_a_static_list() {
+        let e = ep(None, &["static"]);
+        let l = listing(&["emb"], &[("emb", "embedding")]);
+        assert_eq!(pick(&e, &[], Some(&l)).0, None);
+        assert_eq!(pick(&e, &["other"], Some(&listing(&["a"], &[]))).0, None);
+    }
+
+    #[test]
+    fn an_unreadable_listing_falls_back_to_the_allow_list_then_the_static_list_then_nothing() {
+        let e = ep(None, &["static"]);
+        assert_eq!(
+            pick(&e, &["al"], None).0,
+            Some(("al".into(), Source::AllowList))
+        );
+        assert_eq!(
+            pick(&e, &[], None).0,
+            Some(("static".into(), Source::StaticList))
+        );
+        assert_eq!(pick(&ep(None, &[]), &[], None).0, None);
+        // An unknown listing never marks the default as not served.
+        assert_eq!(
+            pick(&ep(Some("d"), &[]), &[], None),
+            (Some(("d".into(), Source::EndpointDefault)), false)
+        );
+    }
+
+    #[test]
+    fn only_litellm_uses_a_listing() {
+        let mut e = ep(None, &[]);
+        e.provider = "openai_compatible".into();
+        // Another provider's listing is never read, so none is passed; the order is unchanged.
+        assert_eq!(pick(&e, &[], None).0, None);
+    }
+
+    fn key<'a>(name: &str, ws: bool, ep: &'a Endpoint) -> KeyState<'a> {
+        KeyState {
+            secret: LlmCandidate {
+                id: Uuid::now_v7(),
+                name: name.into(),
+                status: "active".into(),
+                workspace_id: ws.then(Uuid::now_v7),
+                llm_provider: "litellm".into(),
+                llm_endpoint_id: ep.id.clone(),
+                llm_auth_mode: None,
+                origin: None,
+                value_version: 1,
+            },
+            ep: Some(ep),
+            reason: None,
+            dialect: None,
+            listing: None,
+        }
+    }
+
+    #[test]
+    fn on_one_endpoint_the_workspace_key_comes_first_like_the_gateways_pick() {
+        let (a, mut b) = (ep(None, &[]), ep(None, &[]));
+        b.id = "other".into();
+        // Oldest first: org key of A, key of B, workspace key of A.
+        let keys = vec![
+            key("org-a", false, &a),
+            key("b", true, &b),
+            key("ws-a", true, &a),
+        ];
+        let names: Vec<String> = prefer_workspace_keys(keys)
+            .into_iter()
+            .map(|k| k.secret.name)
+            .collect();
+        // A's two keys keep A's positions (0 and 2), workspace first; B stays between them.
+        assert_eq!(names, ["ws-a", "b", "org-a"]);
+        // Two keys of one scope stay oldest first.
+        let keys = vec![key("old", false, &a), key("new", false, &a)];
+        let names: Vec<String> = prefer_workspace_keys(keys)
+            .into_iter()
+            .map(|k| k.secret.name)
+            .collect();
+        assert_eq!(names, ["old", "new"]);
+    }
+
+    #[test]
+    fn the_listing_reads_the_alias_only() {
+        let l = listing(&["glm-5.3-flash-int4"], &[]);
+        assert!(l.serves("glm-5.3-flash-int4") && !l.serves("hosted_vllm/glm53-flash-int4"));
+    }
+}
+
 /// Registry of the harnesses this build knows, `(id, display name)`; `hosted.enabled_harnesses`
 /// selects among them (`fake` only with `hosted.allow_fake_harness`).
 pub const HARNESSES: [(&str, &str); 6] = [
@@ -145,8 +354,8 @@ pub enum Selection {
     },
     /// No usable key. The message lists reason counts, never key names (C-501).
     NoKey { message: String },
-    /// A usable key but no model resolves (D-136).
-    NoDefaultModel,
+    /// A usable key but no model resolves (D-136, D-372); the message says why.
+    NoDefaultModel { message: String },
 }
 
 impl Selection {
@@ -155,11 +364,18 @@ impl Selection {
         match self {
             Self::Chosen { .. } => None,
             Self::NoKey { message } => Some(("no_model_key", message.clone())),
-            Self::NoDefaultModel => Some(("no_default_model", NO_DEFAULT_MODEL_MSG.to_owned())),
+            Self::NoDefaultModel { message } => Some(("no_default_model", message.clone())),
         }
     }
 }
 
+/// (D-372) No model resolves and the key's listing could not be read (the endpoint is unreachable or refused it).
+pub const NO_DEFAULT_MODEL_LISTING_FAILED_MSG: &str = "No model is chosen for this agent, its endpoint has no usable default, \
+     and the endpoint's model list could not be read with this agent's key.";
+/// (D-372) No model resolves and the key's listing has no allowed chat model.
+pub const NO_DEFAULT_MODEL_NONE_SERVED_MSG: &str = "No model is chosen for this agent, and the models this agent's key serves \
+     include no allowed chat model.";
+/// (D-372) No model resolves on a provider whose models are not picked automatically.
 pub const NO_DEFAULT_MODEL_MSG: &str = "An LLM key is usable but no model is chosen for this agent \
                                         and its endpoint has no default model.";
 
@@ -196,6 +412,30 @@ pub struct KeyState<'a> {
     pub reason: Option<Reason>,
     /// First dialect both the harness and the endpoint speak (set when usable).
     pub dialect: Option<Dialect>,
+    /// (D-372) What the key serves, for the key the gateway injects on a `litellm` endpoint (the first
+    /// usable key of the endpoint); `None` = not read (other providers, other keys, or the read failed).
+    pub listing: Option<Arc<KeyListing>>,
+}
+
+/// (D-372) The models one key serves, in the order the provider returned them, and, for LiteLLM, the
+/// `mode` of each public model name (`None` = `/model/info` could not be read: every model counts as chat).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeyListing {
+    pub models: Vec<String>,
+    pub modes: Option<HashMap<String, String>>,
+}
+
+impl KeyListing {
+    pub fn serves(&self, model: &str) -> bool {
+        self.models.iter().any(|m| m == model)
+    }
+    /// A model whose mode is known and is not chat-capable is not a chat model.
+    pub fn chat(&self, model: &str) -> bool {
+        self.modes
+            .as_ref()
+            .and_then(|m| m.get(model))
+            .is_none_or(|mode| aurora_llm::is_chat_mode(mode))
+    }
 }
 
 /// Where the default model came from.
@@ -204,6 +444,8 @@ pub enum Source {
     Override,
     EndpointDefault,
     ProviderDefault,
+    /// (D-372) The first allowed chat model of the key's own listing (`litellm` only).
+    KeyListing,
     AllowList,
     StaticList,
 }
@@ -214,6 +456,7 @@ impl Source {
             Self::Override => "override",
             Self::EndpointDefault => "endpoint_default",
             Self::ProviderDefault => "provider_default",
+            Self::KeyListing => "key_listing",
             Self::AllowList => "allow_list",
             Self::StaticList => "static_list",
         }
@@ -239,6 +482,11 @@ pub struct Readiness<'a> {
     pub effort: String,
     /// (P5-MODELS-1, C-878) The role resolution of the default selection (`None` with no default).
     pub roles: Option<RoleResolution>,
+    /// (D-372) Readiness warning `default_model_not_served`: the endpoint's default is allowed but the key's
+    /// known listing does not contain it, so it was skipped.
+    pub default_not_served: bool,
+    /// (D-372) Readiness warning `override_not_served`: the override is kept (never re-pointed).
+    pub override_not_served: bool,
 }
 
 /// (C-878) One role: its model, where it came from, and why it is not sent.
@@ -247,7 +495,7 @@ pub struct RoleView {
     pub model_id: Option<String>,
     /// `agent` | `endpoint` | `none`.
     pub source: &'static str,
-    /// `role_unset` | `role_not_allowed`.
+    /// `role_unset` | `role_not_allowed` | `role_not_served` (D-372: the key's known listing lacks it; still sent).
     pub warning: Option<&'static str>,
 }
 
@@ -313,6 +561,7 @@ fn resolve_roles(
     default_model: &str,
     agent_roles: Option<&Value>,
     subagent_model: &str,
+    listing: Option<&KeyListing>,
 ) -> RoleResolution {
     let maps_roles = !aurora_protocol::runner::harness_model_roles(harness).is_empty();
     let (ep_roles, info) = (&ep.model_roles, &ep.model_info);
@@ -355,6 +604,12 @@ fn resolve_roles(
                 views[i].warning = Some("role_unset");
             }
             None => {}
+        }
+        // (D-372) A role the key's known listing does not contain: warned, still sent, never re-pointed.
+        if let (Some(m), Some(l)) = (views[i].model_id.as_deref(), listing)
+            && !l.serves(m)
+        {
+            views[i].warning = Some("role_not_served");
         }
     }
     let stored_after_drop = (!dropped.is_empty()).then(|| {
@@ -561,12 +816,48 @@ fn keys_of<'a>(
                     ep,
                     reason,
                     dialect,
+                    listing: None,
                 },
             )
         })
         .collect();
     out.sort_by_key(|(r, _)| *r); // stable: oldest key first within a provider
-    out.into_iter().map(|(_, k)| k).collect()
+    prefer_workspace_keys(out.into_iter().map(|(_, k)| k).collect())
+}
+
+/// (D-372 step 0) On one endpoint the gateway injects the workspace-scoped key over the organization's
+/// (`06` step 6), so that key comes first among the endpoint's keys here, too: readiness, the model lists
+/// and the dispatcher read the key whose value the gateway will inject. The endpoint's keys keep the
+/// positions they had, so the order across endpoints (provider preference, oldest first) is unchanged.
+fn prefer_workspace_keys(keys: Vec<KeyState<'_>>) -> Vec<KeyState<'_>> {
+    let ids: Vec<Option<String>> = keys.iter().map(|k| k.ep.map(|e| e.id.clone())).collect();
+    let mut slots: Vec<Option<KeyState<'_>>> = keys.into_iter().map(Some).collect();
+    let mut out: Vec<Option<KeyState<'_>>> = (0..slots.len()).map(|_| None).collect();
+    let mut done: Vec<&String> = Vec::new();
+    for id in ids.iter().flatten() {
+        if done.contains(&id) {
+            continue;
+        }
+        done.push(id);
+        let at: Vec<usize> = ids
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.as_ref() == Some(id))
+            .map(|(i, _)| i)
+            .collect();
+        let mut group: Vec<KeyState<'_>> = at.iter().filter_map(|i| slots[*i].take()).collect();
+        // Stable: workspace keys first, each group still oldest first.
+        group.sort_by_key(|k| k.secret.workspace_id.is_none());
+        for (slot, k) in at.iter().zip(group) {
+            out[*slot] = Some(k);
+        }
+    }
+    for (o, s) in out.iter_mut().zip(slots.iter_mut()) {
+        if o.is_none() {
+            *o = s.take();
+        }
+    }
+    out.into_iter().flatten().collect()
 }
 
 fn model_ok(eff: &EffectiveGovernance, ep: &str, model: &str) -> bool {
@@ -580,29 +871,155 @@ fn default_model(
     llm: &ProviderRegistry,
     eff: &EffectiveGovernance,
     ep: &Endpoint,
-) -> Option<(String, Source)> {
-    let provider = llm.provider_for(ep)?;
+    listing: Option<&KeyListing>,
+) -> DefaultPick {
+    let none = DefaultPick::default();
+    let Some(provider) = llm.provider_for(ep) else {
+        return none;
+    };
     let allowed = eff
         .endpoints
         .get(&ep.id)
         .map(|e| e.allowed_models.clone())
         .unwrap_or_default();
+    pick_default(ep, provider.default_model(ep), &allowed, listing)
+}
+
+/// The order of `08 §Model selection` (D-372), without the registry: the endpoint's default, the provider
+/// default, the first allowed chat model of the key's listing (`litellm`), the allow-list, the static list.
+fn pick_default(
+    ep: &Endpoint,
+    provider_default: Option<String>,
+    allowed: &[String],
+    listing: Option<&KeyListing>,
+) -> DefaultPick {
+    let none = DefaultPick::default();
     let ok = |m: &String| allowed.is_empty() || allowed.contains(m);
+    // (D-372) Only a `litellm` key's listing is used; for the others `listing` is never set.
+    let litellm = ep.provider == "litellm";
+    let served = |m: &String| listing.is_none_or(|l| l.serves(m));
+    let mut not_served = false;
+    // 1. The endpoint's default, unless the key's known listing lacks it (warning, not a failure).
     if let Some(m) = ep.default_model.clone().filter(ok) {
-        return Some((m, Source::EndpointDefault));
+        if served(&m) {
+            return DefaultPick::of(m, Source::EndpointDefault, false);
+        }
+        not_served = true;
     }
-    if let Some(m) = provider.default_model(ep).filter(ok) {
-        return Some((m, Source::ProviderDefault));
+    // 2. The provider default (for `litellm` the same field).
+    if let Some(m) = provider_default.filter(ok).filter(served) {
+        return DefaultPick::of(m, Source::ProviderDefault, not_served);
     }
+    // 3. The first allowed chat model of the key's listing, in the provider's order.
+    if litellm && let Some(l) = listing {
+        return match l.models.iter().find(|m| ok(m) && l.chat(m)) {
+            Some(m) => DefaultPick::of(m.clone(), Source::KeyListing, not_served),
+            None => DefaultPick { not_served, ..none },
+        };
+    }
+    // 4. Listing unknown (or another provider): the allow-list, then the static list.
     if let Some(m) = allowed.first() {
-        return Some((m.clone(), Source::AllowList));
+        return DefaultPick::of(m.clone(), Source::AllowList, not_served);
     }
-    ep.models.first().map(|m| (m.clone(), Source::StaticList))
+    match ep.models.first() {
+        Some(m) => DefaultPick::of(m.clone(), Source::StaticList, not_served),
+        None => DefaultPick { not_served, ..none },
+    }
+}
+
+/// What [`default_model`] found.
+#[derive(Default)]
+struct DefaultPick {
+    pick: Option<(String, Source)>,
+    /// The endpoint's default was skipped because the key's listing does not contain it.
+    not_served: bool,
+}
+
+impl DefaultPick {
+    fn of(model: String, source: Source, not_served: bool) -> Self {
+        Self {
+            pick: Some((model, source)),
+            not_served,
+        }
+    }
+}
+
+// ---- (D-372) what a key serves: one read per (key, value version), cached like the model lists ----
+
+type ListingKey = (Uuid, i32, String);
+type ListingMap = HashMap<ListingKey, (Instant, Option<Arc<KeyListing>>)>;
+
+/// A failed read is remembered briefly so an unreachable endpoint is not asked once per agent per poll.
+const LISTING_FAILED_TTL: Duration = Duration::from_secs(30);
+
+fn listings() -> &'static Mutex<ListingMap> {
+    static C: std::sync::OnceLock<Mutex<ListingMap>> = std::sync::OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn listing_key(c: &LlmCandidate) -> ListingKey {
+    (c.id, c.value_version, c.llm_endpoint_id.clone())
+}
+
+/// `Some(Some(l))` cached, `Some(None)` a recent failure, `None` unknown.
+fn listing_cached(k: &ListingKey) -> Option<Option<Arc<KeyListing>>> {
+    let mut m = listings().lock().unwrap_or_else(|p| p.into_inner());
+    match m.get(k) {
+        Some((at, v)) => {
+            let ttl = if v.is_some() {
+                crate::domains::secrets::service::MODEL_CACHE_TTL
+            } else {
+                LISTING_FAILED_TTL
+            };
+            if at.elapsed() < ttl {
+                return Some(v.clone());
+            }
+            m.remove(k);
+            None
+        }
+        None => None,
+    }
+}
+
+fn listing_put(k: ListingKey, v: Option<Arc<KeyListing>>) {
+    let mut m = listings().lock().unwrap_or_else(|p| p.into_inner());
+    if m.len() > 1_000 {
+        m.retain(|_, (at, _)| at.elapsed() < crate::domains::secrets::service::MODEL_CACHE_TTL);
+    }
+    m.insert(k, (Instant::now(), v));
+}
+
+/// What the key serves: from the cache; with `fetch`, read from the endpoint with the key (on a miss) and
+/// cached. Never called with a transaction open when `fetch` is set (D-372); `None` = unknown.
+async fn key_listing(state: &AppState, c: &LlmCandidate, fetch: bool) -> Option<Arc<KeyListing>> {
+    let k = listing_key(c);
+    if let Some(hit) = listing_cached(&k) {
+        return hit;
+    }
+    if !fetch {
+        return None;
+    }
+    let read = async {
+        let row = aurora_db::repo::secrets::get(&state.pool, c.id)
+            .await
+            .ok()??;
+        crate::domains::secrets::service::fetch_listing(state, &row)
+            .await
+            .ok()
+    }
+    .await
+    .map(|(models, modes)| Arc::new(KeyListing { models, modes }));
+    listing_put(k, read.clone());
+    read
 }
 
 /// The one readiness function (D-136, `08 §Model readiness`): every granted key's `usable`
 /// or first failing reason, plus the default selection with its source. Keeps the selection
 /// semantics: the override first, never re-pointed, dropped when no longer usable.
+///
+/// (D-372) For `litellm` this reads what the endpoint's gateway key serves, from the cache or, in this
+/// variant, from the endpoint. Use [`readiness_cached`] while a database transaction is open: it never
+/// makes a network call.
 pub async fn readiness<'a>(
     state: &AppState,
     llm: &'a ProviderRegistry,
@@ -612,13 +1029,60 @@ pub async fn readiness<'a>(
     workspace: Uuid,
     harness: &str,
 ) -> Result<Readiness<'a>, ApiError> {
+    readiness_with(state, llm, conn, agent, org, workspace, harness, true).await
+}
+
+/// [`readiness`] that reads the key listings from the cache only (a miss is "listing unknown"), for callers
+/// that hold a transaction. The dispatcher's poll warms the cache before it opens its transaction.
+pub async fn readiness_cached<'a>(
+    state: &AppState,
+    llm: &'a ProviderRegistry,
+    conn: &mut PgConnection,
+    agent: Uuid,
+    org: Uuid,
+    workspace: Uuid,
+    harness: &str,
+) -> Result<Readiness<'a>, ApiError> {
+    readiness_with(state, llm, conn, agent, org, workspace, harness, false).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn readiness_with<'a>(
+    state: &AppState,
+    llm: &'a ProviderRegistry,
+    conn: &mut PgConnection,
+    agent: Uuid,
+    org: Uuid,
+    workspace: Uuid,
+    harness: &str,
+    fetch: bool,
+) -> Result<Readiness<'a>, ApiError> {
     let eff = gov::effective_for(state, org).await?;
     let cands = hosted::granted_llm_secrets(conn, agent, org, workspace).await?;
     let (prov, epid, mid, effort) = hosted::model_prefs(conn, agent).await?;
+    let (agent_roles, subagent_model) = hosted::model_role_prefs(conn, agent).await?;
     let effort = effort.unwrap_or_else(|| "medium".to_owned());
-    let keys = keys_of(state, llm, &eff, harness, cands);
+    let mut keys = keys_of(state, llm, &eff, harness, cands);
+    // (D-372 step 0) The key the gateway injects is the first usable one of its endpoint: read what it serves.
+    let mut seen: Vec<&str> = Vec::new();
+    let mut first_of_endpoint = vec![false; keys.len()];
+    for (i, k) in keys.iter().enumerate() {
+        if let (None, Some(ep)) = (k.reason, k.ep)
+            && !seen.contains(&ep.id.as_str())
+        {
+            seen.push(ep.id.as_str());
+            first_of_endpoint[i] = true;
+        }
+    }
+    for (i, k) in keys.iter_mut().enumerate() {
+        if first_of_endpoint[i] && k.ep.is_some_and(|ep| ep.provider == "litellm") {
+            k.listing = key_listing(state, &k.secret, fetch).await;
+        }
+    }
     let mut override_dropped = None;
+    let mut override_not_served = false;
     let mut default = None;
+    let mut default_not_served = false;
     if let (Some(p), Some(e), Some(m)) = (prov, epid, mid) {
         // An explicit model is stamped with provider + endpoint; never re-pointed.
         let hit = keys.iter().position(|k| {
@@ -626,6 +1090,8 @@ pub async fn readiness<'a>(
         });
         match hit {
             Some(i) if model_ok(&eff, &e, &m) => {
+                // (D-372) Warned when the key's known listing lacks it; the override is still used.
+                override_not_served = keys[i].listing.as_ref().is_some_and(|l| !l.serves(&m));
                 default = Some(Resolved {
                     key: i,
                     model: m,
@@ -640,7 +1106,12 @@ pub async fn readiness<'a>(
             let (None, Some(ep)) = (k.reason, k.ep) else {
                 continue;
             };
-            if let Some((model, source)) = default_model(llm, &eff, ep) {
+            if !first_of_endpoint[i] {
+                continue;
+            }
+            let found = default_model(llm, &eff, ep, k.listing.as_deref());
+            if let Some((model, source)) = found.pick {
+                default_not_served = found.not_served;
                 default = Some(Resolved {
                     key: i,
                     model,
@@ -648,19 +1119,20 @@ pub async fn readiness<'a>(
                 });
                 break;
             }
+            default_not_served |= found.not_served;
         }
     }
     // (P5-MODELS-1) Roles of the default selection: the same function serves the dispatcher and the report.
-    let (agent_roles, subagent_model) = hosted::model_role_prefs(conn, agent).await?;
     let roles = default.as_ref().and_then(|d| {
-        let ep = keys.get(d.key)?.ep?;
+        let k = keys.get(d.key)?;
         Some(resolve_roles(
             &eff,
-            ep,
+            k.ep?,
             harness,
             &d.model,
             agent_roles.as_ref(),
             &subagent_model,
+            k.listing.as_deref(),
         ))
     });
     Ok(Readiness {
@@ -669,7 +1141,74 @@ pub async fn readiness<'a>(
         override_dropped,
         effort,
         roles,
+        default_not_served,
+        override_not_served,
     })
+}
+
+impl Readiness<'_> {
+    /// (D-372) Why no model resolves (call only when [`Self::default`] is `None` and a key is usable): the
+    /// listing could not be read, or the key serves no allowed chat model.
+    pub fn no_default_message(&self) -> String {
+        let first = self
+            .keys
+            .iter()
+            .find(|k| k.reason.is_none() && k.ep.is_some_and(|e| e.provider == "litellm"));
+        match first {
+            Some(k) if k.listing.is_none() => NO_DEFAULT_MODEL_LISTING_FAILED_MSG.to_owned(),
+            Some(_) => NO_DEFAULT_MODEL_NONE_SERVED_MSG.to_owned(),
+            None => NO_DEFAULT_MODEL_MSG.to_owned(),
+        }
+    }
+}
+
+/// (D-372) Reads what each usable `litellm` key of the agents with queued hosted turns serves into the
+/// cache, **before** the dispatcher's poll opens its transaction (no database transaction spans the network
+/// call). One read per (key, value version) per cache lifetime, however many agents share the key.
+pub async fn prewarm_queued(state: &AppState, pages: usize, page: i64) -> Result<(), ApiError> {
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(aurora_db::DbError::from)?;
+    let mut cursor = None;
+    let mut agents: Vec<Uuid> = Vec::new();
+    for _ in 0..pages {
+        let batch = hosted::queued_hosted_agents(&mut conn, cursor, page).await?;
+        let Some(last) = batch.last().copied() else {
+            break;
+        };
+        cursor = Some((last.1, last.0));
+        agents.extend(batch.iter().map(|p| p.0));
+        if (batch.len() as i64) < page {
+            break;
+        }
+    }
+    let llm = state.llm();
+    for agent in agents {
+        let Some(a) = aurora_db::repo::agents::get(&mut *conn, agent).await? else {
+            continue;
+        };
+        let harness = a
+            .harness
+            .clone()
+            .unwrap_or_else(|| state.ops().hosted.default_harness.clone());
+        // A failure here is the same failure the dispatcher's own pass reports; it must not stop the poll.
+        if let Err(e) = readiness(
+            state,
+            &llm,
+            &mut conn,
+            agent,
+            a.org_id,
+            a.workspace_id,
+            &harness,
+        )
+        .await
+        {
+            tracing::warn!(%agent, error = %e.code(), "model listing prewarm skipped");
+        }
+    }
+    Ok(())
 }
 
 fn choice(
@@ -734,18 +1273,23 @@ pub async fn select(
         });
     }
     let llm = state.llm();
-    let r = readiness(state, &llm, conn, agent, org, workspace, harness).await?;
+    // (D-372) `conn` may be the poll's transaction: the listings come from the cache the poll warmed first.
+    let r = readiness_cached(state, &llm, conn, agent, org, workspace, harness).await?;
     if !r.any_usable() {
         return Ok(Selection::NoKey {
             message: r.no_key_message(),
         });
     }
     let Some(d) = &r.default else {
-        return Ok(Selection::NoDefaultModel);
+        return Ok(Selection::NoDefaultModel {
+            message: r.no_default_message(),
+        });
     };
     let k = &r.keys[d.key];
     let (Some(ep), Some(dialect)) = (k.ep, k.dialect) else {
-        return Ok(Selection::NoDefaultModel);
+        return Ok(Selection::NoDefaultModel {
+            message: r.no_default_message(),
+        });
     };
     let mut notices = Vec::new();
     if let Some(m) = &r.override_dropped {

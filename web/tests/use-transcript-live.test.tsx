@@ -1,5 +1,5 @@
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setRateNotice, type RateNotice } from "@/lib/api/rate-limit";
 import { useTranscript } from "@/lib/chat/use-transcript";
@@ -56,10 +56,6 @@ beforeEach(() => {
     "fetch",
     vi.fn(async () => new Response(JSON.stringify({ items: [], last_seq: 0 }), { status: 200, headers: { "content-type": "application/json" } })),
   );
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 describe("useTranscript live pill", () => {

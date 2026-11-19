@@ -723,8 +723,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     keys** tab (`?tab=llm`), plus "Agent access" for workspace owners;
     (phase 4, FIX-021, D-136) `no_default_model`: "This agent has an LLM key
     but no model is chosen." with "Choose a model" → the agent's Instructions
-    tab ((phase 5, FIX-170, D-372) the failing agent's page built with the route helper, never the
-    current path, landing on the Default model field; the copy names the cause the server gives:
+    tab ((phase 5, FIX-170, D-372) the copy is now "This agent has an LLM key, but Aurora could not
+    pick a model for it." and the link is the failing agent's page built with the route helper
+    (`?tab=instructions#a-model`), never the current path, landing on the Default model field, which takes
+    focus; "Fix it in the guide" is dropped for this code (the direct link is the fix), and "Agent access"
+    goes to that agent's page too; the server message below the copy names the cause:
     the key's model list could not be read, or the key serves no allowed chat model. Since FIX-170 a
     `litellm` agent without a model uses the first chat model its key serves, so this is rare; the
     Default model field shows "Automatic: <model> (the first model your key serves)" then); the

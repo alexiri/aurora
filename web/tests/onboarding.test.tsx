@@ -1,7 +1,7 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "ops" }),
@@ -17,8 +17,6 @@ import { Tour } from "@/components/onboarding/tour";
 import { startTour } from "@/components/onboarding/tour-events";
 import { EmptyState } from "@/components/states";
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 let calls: { key: string; body: unknown }[];
 let routes: Record<string, Handler>;
@@ -42,15 +40,8 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The getting-started guide
@@ -270,9 +261,9 @@ const setupStatus = (over: Record<string, unknown> = {}) => ({
   steps: [
     { id: "roles", status: "ok", reason: "roles_ok", checks: [check("role_mappings", "ok", "role_mappings_set", "Roles in the sign-in token decide who is an admin.", { helm: "auth.oidc_providers[].role_mappings" })] },
     { id: "placement", status: "ok", reason: "placement_saved", checks: [] },
-    { id: "llm", status: "warning", reason: "no_default_model", checks: [
+    { id: "llm", status: "ok", reason: "llm_ok", checks: [
       check("endpoint:litellm", "ok", "endpoint_reachable", "AIGW answers.", { value: "https://aigw.example.org" }),
-      check("default_model:litellm", "warning", "no_default_model", "AIGW has no default model.", { helm: "llm.endpoints[].default_model" }),
+      check("default_model:litellm", "ok", "default_model_automatic", "AIGW: agents use the first model each key serves unless you set one.", { helm: "llm.endpoints[].default_model" }),
       check("org_key", "ok", "org_key_present", "Users has an LLM key.", { value: "1" }),
       check("starter_grant", "todo", "no_starter_grant", "New users' agents get no key yet."),
     ] },
@@ -304,10 +295,9 @@ describe("instance setup wizard (D-141)", () => {
     expect(screen.getByText("→ instance admin")).toBeInTheDocument();
     expect(screen.getByText("→ member of users")).toBeInTheDocument();
     expect(screen.getByText("→ not mapped to anything")).toBeInTheDocument();
-    // The FIX-019 warning in words, with the Helm value to change and the fix.
-    expect(screen.getByText("AIGW has no default model.")).toBeInTheDocument();
-    expect(screen.getByText("llm.endpoints[].default_model")).toBeInTheDocument();
-    expect(screen.getByText("Set a default model so agents need not choose one by one.")).toBeInTheDocument();
+    // (FIX-170, D-372) A LiteLLM endpoint without a default model is an OK state, not a warning, with no fix.
+    expect(screen.getByText("AIGW: agents use the first model each key serves unless you set one.")).toBeInTheDocument();
+    expect(screen.queryByText("Set a default model so agents need not choose one by one.")).toBeNull();
     // Runners: the failure in words with the fix.
     expect(screen.getByText("No runner is registered, so no agent can start.")).toBeInTheDocument();
     expect(screen.getByText(/The operator guide on runners explains how\./)).toBeInTheDocument();

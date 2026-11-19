@@ -1,4 +1,3 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
@@ -7,6 +6,7 @@ import {
   type Ev, type Fixture,
 } from "./support/chat-mock";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // P2-UI-5 (docs/14 §Visual design › Agent chat, D-102): the messaging layout. Every state is opened in both
 // themes at 1280 px and 390 px, screenshotted (outside the repo) and checked with axe (no rule disabled, nothing
@@ -15,13 +15,6 @@ import { overflow } from "./support/open";
 
 const SHOTS = "/tmp/aurora-screens/p2-ui-5";
 mkdirSync(SHOTS, { recursive: true });
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 const working = { ...MINE, active_turn: { id: "t1" } };
 const fixtures: Record<string, Fixture> = {
@@ -81,7 +74,7 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
     prepare: async (page) => {
       // FIX-021: the link opens the LLM keys tab, owners also get "Agent access", the reason counts show under the copy.
       await expect(page.getByRole("link", { name: "Open LLM keys" })).toHaveAttribute("href", /\/apps\?tab=accounts&kind=ai-key$/);
-      await expect(page.getByRole("link", { name: "Agent access" })).toHaveAttribute("href", /\?tab=access$/);
+      await expect(page.getByRole("link", { name: "Agent access" })).toHaveAttribute("href", /\/agents\/[^/?]+\?tab=access$/);
       await expect(page.getByText("1 granted key not usable (origin_unverified)")).toBeVisible();
     },
   },
@@ -90,8 +83,10 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
     fx: fixtures.noModel,
     query: () => `?c=${MINE.id}`,
     prepare: async (page) => {
-      await expect(page.getByText("This agent has an LLM key but no model is chosen.")).toBeVisible();
-      await expect(page.getByRole("link", { name: "Choose a model" })).toHaveAttribute("href", /\?tab=instructions$/);
+      await expect(page.getByText("This agent has an LLM key, but Aurora could not pick a model for it.")).toBeVisible();
+      // (FIX-170) The failing agent's own Default model field, not a path relative to the chat; the guide link is gone.
+      await expect(page.getByRole("link", { name: "Choose a model" })).toHaveAttribute("href", /\/o\/[^/]+\/w\/[^/]+\/agents\/[^/?]+\?tab=instructions#a-model$/);
+      await expect(page.getByRole("link", { name: "Fix it in the guide" })).toHaveCount(0);
       // The named `error` event must not flip the pill to "Reconnecting…" (the chat mock stream stays open).
       await expect(page.getByText("Reconnecting")).toHaveCount(0);
     },

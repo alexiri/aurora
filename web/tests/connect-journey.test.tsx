@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ConnectJourney } from "@/components/apps/connect-journey/connect-journey";
@@ -18,6 +18,7 @@ import {
 } from "@/components/apps/connect-journey/logic";
 import { ApiError } from "@/lib/api/client";
 import type { ConnectMethod } from "@/lib/api/apps";
+import { json } from "./support/api";
 
 // P5-UX-3 (C-914, `14 §3`): the connect journey: its steps and skips, the Done sentences, the payload of each access
 // choice, blocked tiles and methods, the grant_failed retry and the deep-link entry (an app given, an agent fixed).
@@ -138,9 +139,6 @@ describe("words and payloads", () => {
 
 // ---- the component ----
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-
 class FakeChannel {
   static open = new Set<FakeChannel>();
   onmessage: ((ev: { data: unknown }) => void) | null = null;
@@ -232,10 +230,8 @@ beforeEach(() => {
   vi.stubGlobal("open", openSpy);
 });
 afterEach(() => {
-  cleanup();
   openSpy.mockReset();
   FakeChannel.open.clear();
-  vi.unstubAllGlobals();
 });
 
 describe("the journey for a fixed agent and a given app", () => {

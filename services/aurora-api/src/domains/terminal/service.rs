@@ -398,7 +398,7 @@ async fn terminal_models(
                 choice: None,
                 unavailable: Some(TerminalModelUnavailable::NoKey),
             },
-            Ok(Selection::NoDefaultModel) => TerminalModel {
+            Ok(Selection::NoDefaultModel { .. }) => TerminalModel {
                 choice: None,
                 unavailable: Some(TerminalModelUnavailable::NoModel),
             },

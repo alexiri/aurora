@@ -3,6 +3,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -42,29 +43,17 @@ export function useScheduleRuns(agent: string, id: string, enabled: boolean) {
 }
 
 export function useCreateSchedule(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateScheduleRequest) =>
-      unwrap(api.POST("/v1/agents/{agent}/schedules", { params: { path: { agent } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: scheduleKeys.list(agent) }),
-  });
+  return useInvalidatingMutation((body: CreateScheduleRequest) =>
+    unwrap(api.POST("/v1/agents/{agent}/schedules", { params: { path: { agent } }, body })), scheduleKeys.list(agent));
 }
 
 export function useUpdateSchedule(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: UpdateScheduleRequest }) =>
-      unwrap(api.PATCH("/v1/schedules/{id}", { params: { path: { id } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: scheduleKeys.list(agent) }),
-  });
+  return useInvalidatingMutation(({ id, body }: { id: string; body: UpdateScheduleRequest }) =>
+    unwrap(api.PATCH("/v1/schedules/{id}", { params: { path: { id } }, body })), scheduleKeys.list(agent));
 }
 
 export function useDeleteSchedule(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => unwrap(api.DELETE("/v1/schedules/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: scheduleKeys.list(agent) }),
-  });
+  return useInvalidatingMutation((id: string) => unwrap(api.DELETE("/v1/schedules/{id}", { params: { path: { id } } })), scheduleKeys.list(agent));
 }
 
 export function useRunScheduleNow(agent: string) {

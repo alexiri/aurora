@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,6 +13,8 @@ import {
 import { decisionBadge, hasProblem, mergeNeeds, sandboxLook, type AgentStatus } from "@/components/agents/status-rail/status-data";
 import type { ActionApproval } from "@/lib/api/action-approvals";
 import type { Approval } from "@/lib/api/approvals";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // D-201: the status rail: parts, indicators with accessible names, persistence (storage may throw), approver gating,
 // the Needs-you pop-over, the overlay mode.
@@ -59,8 +60,6 @@ const ctxOf = (over: Partial<RailContext> = {}, s: Partial<AgentStatus> = {}): R
 });
 const needs = (...n: Parameters<typeof mergeNeeds>[0]) => mergeNeeds(n, [], (id) => (id === "c1" ? "Direct chat" : null));
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 interface Call { method: string; path: string; body: unknown }
 function mock(routes: Record<string, () => Response> = {}) {
   const calls: Call[] = [];
@@ -76,10 +75,6 @@ function mock(routes: Record<string, () => Response> = {}) {
     }),
   );
   return calls;
-}
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 /** A rail with its own expanded state, as the chat panel holds it. */
 function Harness({ ctx, start = false, overlay = false, onChange }: { ctx: RailContext; start?: boolean; overlay?: boolean; onChange?: (e: boolean) => void }) {
@@ -99,8 +94,6 @@ function Harness({ ctx, start = false, overlay = false, onChange }: { ctx: RailC
 
 beforeEach(() => window.localStorage.clear());
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/settings/agents",
@@ -24,8 +25,6 @@ import { withFields } from "./support/settings-fields";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- request bodies are inspected loosely
 type Json = Record<string, any>;
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal(
@@ -38,10 +37,6 @@ function mockFetch(routes: Record<string, Handler>) {
     }),
   );
 }
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const schema = (kind: string, o: Json = {}) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null, ...o });
 const base = { locked: false, helm_key: "config.x", list: null, id_field: null, entries: null, default: null, secret: null };

@@ -3,6 +3,8 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import { unwrap } from "./unwrap";
@@ -18,10 +20,6 @@ export type GroupAccessBinding = components["schemas"]["GroupAccessBinding"];
 export type DerivedMember = components["schemas"]["Page_DerivedMemberView"]["items"][number];
 export type AccessSource = components["schemas"]["AccessSourceView"];
 export type WorkspaceRole = "owner" | "approver" | "member";
-
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
 
 export const groupKeys = {
   list: (org: string) => ["orgs", org, "groups"] as const,
@@ -54,7 +52,7 @@ export function useGroups(orgId: string | undefined, q = "") {
         ),
       ),
     enabled: !!orgId,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -62,7 +60,7 @@ export function useGroup(id: string) {
   return useQuery({
     queryKey: groupKeys.one(id),
     queryFn: () => unwrap(api.GET("/v1/groups/{id}", { params: { path: { id } } })),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -77,7 +75,7 @@ export function useGroupMembers(id: string) {
         }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -92,7 +90,7 @@ export function useGroupWorkspaces(id: string) {
           }),
         ),
       ),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -125,12 +123,8 @@ export function useGroupImpact(
 }
 
 export function useCreateGroup(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateGroupRequest) =>
-      unwrap(api.POST("/v1/orgs/{org}/groups", { params: { path: { org: orgId } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: groupKeys.list(orgId) }),
-  });
+  return useInvalidatingMutation((body: CreateGroupRequest) =>
+    unwrap(api.POST("/v1/orgs/{org}/groups", { params: { path: { org: orgId } }, body })), groupKeys.list(orgId));
 }
 
 export function usePatchGroup(id: string, orgId: string) {

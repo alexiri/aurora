@@ -369,7 +369,8 @@ async fn judge_check(
 ) -> Result<JudgeCheck, ApiError> {
     let llm = s.llm();
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
-    let r = model::readiness(
+    // (D-372) Only the keys' reasons are read here: no key listing is fetched.
+    let r = model::readiness_cached(
         s,
         &llm,
         &mut conn,
@@ -531,8 +532,10 @@ pub async fn current_fingerprint(s: &AppState, a: &AgentRow) -> Result<EvalFinge
     let llm = s.llm();
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let roles = {
+        // (D-372) Role ids do not depend on a key listing: cache only.
         let r =
-            model::readiness(s, &llm, &mut conn, a.id, a.org_id, a.workspace_id, &harness).await?;
+            model::readiness_cached(s, &llm, &mut conn, a.id, a.org_id, a.workspace_id, &harness)
+                .await?;
         r.roles.map(|r| r.role_ids())
     };
     let roles = roles.unwrap_or_default();

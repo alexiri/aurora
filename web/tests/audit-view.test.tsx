@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OrgAuditView } from "@/components/org/audit-view";
@@ -30,9 +30,8 @@ const entry = (id: string, action: string, critical: boolean) => ({
   created_at: "2026-11-08T10:00:00Z",
 });
 
+// (cleanup and unstubAllGlobals come from tests/setup.ts)
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   nav.search = "";
   nav.replace.mockClear();
 });

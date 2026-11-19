@@ -7,6 +7,7 @@ import { wsRoutes } from "@/lib/routes";
 import { traceAction } from "@/lib/telemetry";
 
 import { api, ApiError } from "./client";
+import { useInvalidatingMutation } from "./mutations";
 import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
@@ -66,33 +67,21 @@ export function useAppInstances(scope: InstanceScope | undefined) {
 }
 
 export function useCreateAppInstance(scope: InstanceScope) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateAppInstanceRequest) =>
-      scope.kind === "organization"
-        ? unwrap(api.POST("/v1/orgs/{org}/app-instances", { params: { path: { org: scope.id } }, body }))
-        : unwrap(api.POST("/v1/admin/app-instances", { body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-instances"] }),
-  });
+  return useInvalidatingMutation((body: CreateAppInstanceRequest) =>
+    scope.kind === "organization"
+      ? unwrap(api.POST("/v1/orgs/{org}/app-instances", { params: { path: { org: scope.id } }, body }))
+      : unwrap(api.POST("/v1/admin/app-instances", { body })), ["app-instances"]);
 }
 
 /** Make an organization's registration instance-wide (instance admin, FIX-132). */
 export function usePromoteAppInstance() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      unwrap(api.POST("/v1/admin/app-instances/{id}/promote", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-instances"] }),
-  });
+  return useInvalidatingMutation((id: string) =>
+    unwrap(api.POST("/v1/admin/app-instances/{id}/promote", { params: { path: { id } } })), ["app-instances"]);
 }
 
 export function usePatchAppInstance() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...body }: { id: string } & components["schemas"]["PatchAppInstanceRequest"]) =>
-      unwrap(api.PATCH("/v1/app-instances/{id}", { params: { path: { id } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-instances"] }),
-  });
+  return useInvalidatingMutation(({ id, ...body }: { id: string } & components["schemas"]["PatchAppInstanceRequest"]) =>
+    unwrap(api.PATCH("/v1/app-instances/{id}", { params: { path: { id } }, body })), ["app-instances"]);
 }
 
 export function useDeleteAppInstance() {

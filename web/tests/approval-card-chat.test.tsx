@@ -1,14 +1,13 @@
 // (P5-UX-16, C-982, C-983) The approval card in the conversation: the question while it waits, who it waits for when
 // the viewer may not answer, and the answer the transcript carries (Always allow says what it changed).
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { ApprovalCard } from "@/components/chat/approval-card";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { applyEvents, emptyTranscript } from "@/lib/chat/transcript";
-
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 const ev = (seq: number, type: string, payload: Record<string, unknown>): TranscriptEvent => ({ seq, type, ts: "2026-01-01T00:00:00Z", payload });
 
@@ -52,11 +51,6 @@ function show(events: TranscriptEvent[]) {
 const pendingEvent = ev(1, "approval.pending", {
   approval_id: "ap1", summary: "Daneel wants to comment on an issue in Linear", parked: false,
   agent_name: "Daneel", agent_handle: "daneel", action: "comment on an issue", app_name: "Linear",
-});
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 describe("the approval card in the conversation", () => {

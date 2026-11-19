@@ -1,18 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { ConflictGroup } from "@/components/admin/host-claims-view";
 import { PluginReview } from "@/components/admin/plugin-detail-view";
 import { UploadForm } from "@/components/admin/plugins-view";
 import type { HostClaimConflict, PluginPackage } from "@/lib/api/plugins";
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 interface Call {
   method: string;
@@ -45,16 +39,6 @@ function mockFetch(handler: (c: Call) => Response) {
   );
   return calls;
 }
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const plugin: PluginPackage = {
   id: "p1",

@@ -49469,7 +49469,8 @@
         "required": [
           "harness",
           "keys",
-          "override_dropped"
+          "override_dropped",
+          "warnings"
         ],
         "properties": {
           "default": {
@@ -49496,6 +49497,13 @@
           "override_dropped": {
             "type": "boolean",
             "description": "An agent model override exists but is not usable (the next turn drops it with a notice)."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(C-1026, D-372) Readiness warnings, empty when none: `default_model_not_served` (the endpoint's\ndefault is not served by the key and was skipped), `override_not_served` (the agent's model is not\nin the key's list; it is still used). Additive: clients ignore unknown values."
           }
         }
       },
@@ -58851,7 +58859,7 @@
               "string",
               "null"
             ],
-            "description": "`role_unset` | `role_not_allowed`; null when none."
+            "description": "`role_unset` | `role_not_allowed` | `role_not_served` (C-1026); null when none."
           }
         }
       },

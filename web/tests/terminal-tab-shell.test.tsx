@@ -1,10 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ComputerTab } from "@/components/agents/computer-tab";
 import { TerminalTab } from "@/components/agents/terminal-tab";
+import { wrap } from "./support/render";
 
 // FIX-138 (D-246): the terminal's shell. The choice lives on the agent's Computer page (owner 2026-11-14), remembered
 // per browser and agent. bash is the server's default, so the default socket URL carries no query; zsh names itself
@@ -50,19 +49,10 @@ class UrlSocket {
   close() {}
 }
 
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
 beforeEach(() => {
   vi.stubGlobal("WebSocket", UrlSocket as unknown as typeof WebSocket);
   UrlSocket.urls = [];
   window.localStorage.clear();
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 describe("terminal pane reads the shell (FIX-138)", () => {

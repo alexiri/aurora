@@ -171,10 +171,10 @@ export const setupStatus = {
     { id: "roles", status: "ok", reason: "roles_ok", checks: [setupCheck("role_mappings", "ok", "role_mappings_set", "Roles in the sign-in token decide who is an admin.", { helm: "auth.oidc_providers[].role_mappings" })] },
     { id: "placement", status: "todo", reason: "placement_unsaved", checks: [setupCheck("placement", "todo", "placement_unsaved", "Choose where new users land.")] },
     {
-      id: "llm", status: "warning", reason: "no_default_model",
+      id: "llm", status: "ok", reason: "llm_ok",
       checks: [
         setupCheck("endpoint:litellm", "ok", "endpoint_reachable", "AIGW answers.", { value: "https://aigw.example.org" }),
-        setupCheck("default_model:litellm", "warning", "no_default_model", "AIGW has no default model. Agents would need a model chosen one by one.", { helm: "llm.endpoints[].default_model" }),
+        setupCheck("default_model:litellm", "ok", "default_model_automatic", "AIGW: agents use the first model each key serves unless you set one.", { helm: "llm.endpoints[].default_model" }),
       ],
     },
     { id: "runners", status: "ok", reason: "runners_ok", checks: [setupCheck("runners", "ok", "runner_online", "1 runner(s) online.", { value: "1" }), setupCheck("gateway", "ok", "gateway_online", "The gateway is up: agents reach the internet through it.", { value: "1" })] },

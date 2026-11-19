@@ -286,7 +286,8 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
             .value(e.base_url.clone())
             .helm("llm.endpoints[].base_url")
         });
-        // FIX-019: a LiteLLM endpoint without a default model leaves agents without a model.
+        // (FIX-170, D-372) A LiteLLM endpoint without a default model is fine: agents use the first allowed chat
+        // model each key serves, unless one is set. (The old warning code `no_default_model` is no longer used here.)
         if e.provider == "litellm" {
             llm.push(match &e.default_model {
                 Some(m) => check(
@@ -298,10 +299,10 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
                 .value(m.clone()),
                 None => check(
                     format!("default_model:{}", e.id),
-                    SetupState::Warning,
-                    "no_default_model",
+                    SetupState::Ok,
+                    "default_model_automatic",
                     format!(
-                        "{name} has no default model. Agents would need a model chosen one by one."
+                        "{name}: agents use the first model each key serves unless you set one."
                     ),
                 )
                 .helm("llm.endpoints[].default_model"),

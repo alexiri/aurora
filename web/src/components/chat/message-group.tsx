@@ -291,19 +291,19 @@ function BlockView({
         return retryProps ? (
           <TurnErrorWithRetry code={code} message={s(p.message)} base={base} wsId={wsId} {...retryProps} />
         ) : (
-          <TurnError code={code} message={s(p.message)} base={base} wsId={wsId} />
+          <TurnError code={code} message={s(p.message)} base={base} wsId={wsId} agentId={agentId} />
         );
       }
       const code = s(p.error_code);
-      return retryProps ? <TurnErrorWithRetry code={code} base={base} wsId={wsId} {...retryProps} /> : <TurnError code={code} base={base} wsId={wsId} />;
+      return retryProps ? <TurnErrorWithRetry code={code} base={base} wsId={wsId} {...retryProps} /> : <TurnError code={code} base={base} wsId={wsId} agentId={agentId} />;
     }
   }
 }
 
 /** The error block, with the owner-only links ("Agent access") decided from the caller's role in the workspace. */
-function TurnError({ code, message, base, wsId }: { code: string; message?: string; base: string; wsId: string }) {
+function TurnError({ code, message, base, wsId, agentId }: { code: string; message?: string; base: string; wsId: string; agentId?: string }) {
   const ws = useWorkspace(wsId);
-  return <ErrorBlock code={code} message={message} base={base} canOwn={ws.data?.my_role === "owner"} />;
+  return <ErrorBlock code={code} message={message} base={base} agentId={agentId} canOwn={ws.data?.my_role === "owner"} />;
 }
 
 /** The error block with **Retry now** (FIX-029, C-615): the chat's start-failure codes, agent-side. */
@@ -333,10 +333,10 @@ function TurnErrorWithRetry({
   const [repostErr, setRepostErr] = useState<string | null>(null);
   // (C-615) Only the start-failure codes the retry endpoint accepts get the button (C-585, C-610).
   if (!isRetryableCode(code)) {
-    return <ErrorBlock code={code} message={message} base={base} canOwn={ws.data?.my_role === "owner"} />;
+    return <ErrorBlock code={code} message={message} base={base} agentId={agentId} canOwn={ws.data?.my_role === "owner"} />;
   }
   return (
-    <ErrorBlock code={code} message={message} base={base} canOwn={ws.data?.my_role === "owner"}>
+    <ErrorBlock code={code} message={message} base={base} agentId={agentId} canOwn={ws.data?.my_role === "owner"}>
       <RetryStart
         agentId={agentId}
         // (C-615) The failed turn stays failed; the re-posted text opens the next turn.

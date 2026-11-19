@@ -9617,6 +9617,12 @@ export interface components {
             keys: components["schemas"]["KeyReadiness"][];
             /** @description An agent model override exists but is not usable (the next turn drops it with a notice). */
             override_dropped: boolean;
+            /**
+             * @description (C-1026, D-372) Readiness warnings, empty when none: `default_model_not_served` (the endpoint's
+             *     default is not served by the key and was skipped), `override_not_served` (the agent's model is not
+             *     in the key's list; it is still used). Additive: clients ignore unknown values.
+             */
+            warnings: string[];
         };
         /**
          * @description (P5-MODELS-1, C-876) The agent's role models; `endpoint_id` is the endpoint they were chosen for.
@@ -12478,7 +12484,7 @@ export interface components {
             model_id?: string | null;
             /** @description `agent` | `endpoint` | `none`. */
             source: string;
-            /** @description `role_unset` | `role_not_allowed`; null when none. */
+            /** @description `role_unset` | `role_not_allowed` | `role_not_served` (C-1026); null when none. */
             warning?: string | null;
         };
         RolesView: {

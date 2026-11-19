@@ -7,6 +7,7 @@ import { traceAction } from "@/lib/telemetry";
 
 import { ACTION_POLL_MS, actionApprovalKeys } from "./action-approvals";
 import { api, ApiError } from "./client";
+import { retryUnlessClientError } from "./errors";
 import { useWorkspace } from "./queries";
 import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import { setRateNotice } from "./rate-limit";
@@ -18,10 +19,6 @@ export type Approval = S["Approval"];
 export type ApprovalEvent = S["ApprovalEvent"];
 export type RequestLogEntry = S["RequestLogEntry"];
 export type Decision = S["Decision"];
-
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
 
 export const approvalKeys = {
   all: (ws: string) => ["approvals", ws] as const,
@@ -81,7 +78,7 @@ export function useCanApprove(wsId: string | undefined): boolean {
 }
 
 export function usePendingApprovals(wsId: string, enabled = true) {
-  return useQuery({ queryKey: approvalKeys.pending(wsId), queryFn: () => fetchPending(wsId), enabled: !!wsId && enabled, retry });
+  return useQuery({ queryKey: approvalKeys.pending(wsId), queryFn: () => fetchPending(wsId), enabled: !!wsId && enabled, retry: retryUnlessClientError });
 }
 
 /**
@@ -100,7 +97,7 @@ export function useAgentPendingApprovals(wsId: string, agentId: string, enabled 
         ),
       ),
     enabled: !!wsId && !!agentId && enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -225,7 +222,7 @@ export function useApprovalHistory(wsId: string, status: string) {
         }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -249,7 +246,7 @@ export function useActivity(wsId: string, f: { agent: string; decision: string; 
         }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 

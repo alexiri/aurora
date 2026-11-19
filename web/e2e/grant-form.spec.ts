@@ -1,9 +1,9 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 import { agent, id, mockApi } from "./support/mock-api";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // FIX-147 (D-233; docs/14 §Visual design › Permission groups): connect Indico (a custom-only app) → "Give agents
 // access" shows the Access tab's grant form → "Allow all Read" in one click → Give access sends one grant. Both
@@ -33,13 +33,6 @@ const indico = {
   credentials: [], hosts: [], metadata: [], oauth_clients: [], tools,
 };
 const CONN = id(90);
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 for (const scheme of ["light", "dark"] as const) {
   for (const width of [1280, 390]) {
