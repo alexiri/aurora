@@ -8,6 +8,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { Select } from "@/components/ui/select";
 import { effectiveMax, limitsHint } from "@/lib/approval-limits";
+import { useApp, useApps } from "@/lib/api/apps";
 import {
   newTarget,
   normalizeRule,
@@ -142,6 +143,7 @@ function TargetRow({
           </fieldset>
         </div>
       ) : null}
+      {value.type === "app" ? <AppTargetFields value={value} onChange={onChange} /> : null}
       {value.type === "secret" ? (
         <Select aria-label="Account" value={value.id} placeholder="Select an account…" onChange={(v) => onChange({ ...value, id: v })} options={data.secrets.map((o) => ({ value: o.id, label: o.label }))} />
       ) : null}
@@ -152,6 +154,48 @@ function TargetRow({
         </div>
       ) : null}
     </li>
+  );
+}
+
+/**
+ * (FIX-184, D-400) An `app` target naming tools: how an organization owner or admin lifts an app's
+ * "asks first" default for one tool (07 §A package's default of Ask). No tool ticked = the whole app.
+ */
+function AppTargetFields({ value, onChange }: { value: Extract<Target, { type: "app" }>; onChange: (v: Target) => void }) {
+  const apps = useApps(undefined);
+  const app = useApp(value.app_id || undefined, undefined);
+  const tools = app.data?.tools ?? [];
+  const picked = value.tools ?? [];
+  return (
+    <div className="space-y-2">
+      <Select
+        aria-label="App"
+        value={value.app_id}
+        placeholder="Select an app…"
+        onChange={(v) => onChange({ type: "app", app_id: v, tools: null })}
+        options={(apps.data?.items ?? []).map((a) => ({ value: a.app_id, label: a.name }))}
+      />
+      {value.app_id ? (
+        <fieldset className="space-y-1 text-sm">
+          <legend className="text-xs text-muted">Tools (none ticked = every tool of the app)</legend>
+          {app.isPending ? <p className="text-xs text-muted">Loading tools…</p> : null}
+          {tools.map((t) => (
+            <label key={t.id} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={picked.includes(t.id)}
+                onChange={(e) => {
+                  const next = e.target.checked ? [...picked, t.id] : picked.filter((x) => x !== t.id);
+                  onChange({ type: "app", app_id: value.app_id, tools: next.length ? next : null });
+                }}
+              />
+              <span>{t.name}</span>
+              {t.approval === "ask" ? <Badge tone="accent">asks first by default</Badge> : null}
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 package:
   id: google-workspace
-  version: 1.3.0
+  version: 1.4.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -92,9 +92,9 @@ apps:
           - { id: get_label, description: "Reads one label.", name: Get a label, host: gmail.googleapis.com, path: "/gmail/v1/users/*/labels/*", methods: [GET] }
       write:
         items:
-          - { id: send_message, description: "Sends an email.", name: Send mail, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/send", methods: [POST] }
+          - { id: send_message, description: "Sends an email.", name: Send mail, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/send", methods: [POST], approval: ask }
           - { id: create_draft, description: "Saves an email as a draft without sending it.", name: Create a draft, host: gmail.googleapis.com, path: "/gmail/v1/users/*/drafts", methods: [POST] }
-          - { id: send_draft, description: "Sends a saved draft.", name: Send a draft, host: gmail.googleapis.com, path: "/gmail/v1/users/*/drafts/send", methods: [POST] }
+          - { id: send_draft, description: "Sends a saved draft.", name: Send a draft, host: gmail.googleapis.com, path: "/gmail/v1/users/*/drafts/send", methods: [POST], approval: ask }
           - { id: modify_message, description: "Adds or removes labels on a message, such as marking it read.", name: Add or remove labels on a message, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/*/modify", methods: [POST] }
     approvals:
       # Every recipient (all To/Cc/Bcc lines), a clamped body preview and the attachment count:
@@ -214,8 +214,8 @@ apps:
         items:
           # freeBusy.query is a read over POST; read tools must be GET, so it is held for approval (D-93).
           - { id: query_freebusy, description: "Checks when people or calendars are free or busy. It reads data only, even though it is sent as a POST.", name: Query free and busy times (a read over POST), host: www.googleapis.com, path: /calendar/v3/freeBusy, methods: [POST] }
-          - { id: create_event, description: "Creates a calendar event.", name: Create an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events", methods: [POST] }
-          - { id: update_event, description: "Changes a calendar event.", name: Change an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [PATCH] }
+          - { id: create_event, description: "Creates a calendar event.", name: Create an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events", methods: [POST], approval: ask }
+          - { id: update_event, description: "Changes a calendar event.", name: Change an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [PATCH], approval: ask }
           - { id: delete_event, description: "Deletes a calendar event.", name: Delete an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [DELETE] }
     approvals:
       query_freebusy:

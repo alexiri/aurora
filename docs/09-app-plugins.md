@@ -212,7 +212,9 @@ hash of every package that does not use it). On a `read` tool it is `tool_approv
 holds the request unless a rule that names the tool allows it or any rule blocks it (`07 §A package's
 default of Ask`); the tool row in the account's actions table says "Asks first (app default)" and
 choosing Allowed there is the workspace's override. Built-in users: `caldav`
-(`send_scheduling_message`, 1.2.0) and `webhook` (`send`). It never widens: `widens()` ignores it.
+(`send_scheduling_message`, 1.2.0), `webhook` (`send`), `google-workspace` (1.4.0: `send_message` and
+`send_draft` of Gmail, `create_event` and `update_event` of Google Calendar) and `microsoft-365` (1.3.0:
+`send_mail`, `create_event`, `create_calendar_event`; FIX-184, D-400). It never widens: `widens()` ignores it.
 
 **Tool scopes (FIX-136, D-241, C-741).** `tools[].scopes: [scope ids]` (any of; absent = no
 requirement) names the scopes a tool needs; each must be declared by one of the app's connect

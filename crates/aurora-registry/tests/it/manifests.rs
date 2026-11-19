@@ -266,6 +266,46 @@ fn caldav_scheduling_messages_and_webhook_sends_default_to_ask() {
     }
 }
 
+/// (FIX-184, D-400) `google-workspace` and `microsoft-365` lint clean and ask first for exactly the
+/// write tools that send mail or invitations to other people, and for no read tool.
+#[test]
+fn google_workspace_and_microsoft_365_ask_first_for_mail_and_invitations_only() {
+    use aurora_registry::manifest::ToolDefaultApproval::Ask;
+    let cases: [(&str, &[&str]); 2] = [
+        (
+            "google-workspace",
+            &["create_event", "send_draft", "send_message", "update_event"],
+        ),
+        (
+            "microsoft-365",
+            &["create_calendar_event", "create_event", "send_mail"],
+        ),
+    ];
+    for (pkg, expected) in cases {
+        let y = std::fs::read_to_string(format!(
+            "{}/../../plugins/builtin/{pkg}/plugin.yaml",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let m = Manifest::parse(&y, RUNNING).unwrap();
+        assert!(validate::manifest(&m).is_empty(), "{pkg}");
+        let mut asked: Vec<&str> = Vec::new();
+        for app in &m.apps {
+            let tools = app.tools.as_ref().unwrap();
+            for item in tools.write.iter().flat_map(|g| g.items.iter()) {
+                if item.approval == Some(Ask) {
+                    asked.push(item.id.as_str());
+                }
+            }
+            for item in tools.read.iter().flat_map(|g| g.items.iter()) {
+                assert!(item.approval.is_none(), "{pkg}: read tool {}", item.id);
+            }
+        }
+        asked.sort_unstable();
+        assert_eq!(asked, expected, "{pkg}: the tools that ask first");
+    }
+}
+
 #[test]
 fn connect_method_rules_reject_each_invalid_case() {
     let cases = [
