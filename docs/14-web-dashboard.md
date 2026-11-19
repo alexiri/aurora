@@ -1086,7 +1086,10 @@ D-360, C-1004) Activity has two tabs, `?tab=requests|usage` (§Usage). Notes on 
   tab under People holds providers, role mapping and directory sync. Its **Computers** tab under Agents
   holds the terminal and previews settings.
 - The organization's AI models page holds the model rules, with a notice when AI keys no longer comply.
-  AI keys themselves are accounts.
+  AI keys themselves are accounts. A member's view of that page lists each key with "default <model>"
+  (`default_model`, C-1048; nothing when unknown). Organization › Accounts says "New agents get this key
+  automatically." on the key the instance's starter grants give every new agent (`starter`, C-1049;
+  read-only here, instance admins change it).
 
 Every old route redirects to its new place with its tab (C-960). Deep links in mail, gateway errors and
 guides keep working.

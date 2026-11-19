@@ -38898,6 +38898,13 @@
               }
             ]
           },
+          "default_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-APIGAP-3, C-1048) An AI key only: the model an agent gets on this key with no override (D-372);\nnull when unknown and on every other kind."
+          },
           "given": {
             "type": [
               "boolean",
@@ -38948,6 +38955,13 @@
           "scope": {
             "type": "string",
             "description": "`workspace` | `organization`."
+          },
+          "starter": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(P5-APIGAP-3, C-1049) An organization's AI key in the organization list only: the instance's starter\ngrants give it to every new agent of the organization."
           },
           "status_reason": {
             "type": [
@@ -52389,6 +52403,13 @@
                     }
                   ]
                 },
+                "default_model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(P5-APIGAP-3, C-1048) An AI key only: the model an agent gets on this key with no override (D-372);\nnull when unknown and on every other kind."
+                },
                 "given": {
                   "type": [
                     "boolean",
@@ -52439,6 +52460,13 @@
                 "scope": {
                   "type": "string",
                   "description": "`workspace` | `organization`."
+                },
+                "starter": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "(P5-APIGAP-3, C-1049) An organization's AI key in the organization list only: the instance's starter\ngrants give it to every new agent of the organization."
                 },
                 "status_reason": {
                   "type": [

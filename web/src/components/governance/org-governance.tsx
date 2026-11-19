@@ -338,7 +338,11 @@ function MemberAiModels({ org }: { org: Org }) {
             <li key={k.ref.id} className="flex items-center gap-3 px-4 py-3">
               <AiKeyTile />
               <div className="min-w-0">
-                <p className="font-medium text-ink">{k.name}</p>
+                <p className="font-medium text-ink">
+                  {k.name}
+                  {/* (P5-APIGAP-3, C-1048) The model an agent gets on this key with no override. */}
+                  {k.default_model ? <span className="font-normal text-ink-2" data-testid="key-default-model"> · default {k.default_model}</span> : null}
+                </p>
                 <p className="text-sm text-ink-2">{models.length === 0 ? "Any model the gateway serves" : listWords(models)}</p>
               </div>
             </li>

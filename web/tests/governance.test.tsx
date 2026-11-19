@@ -144,6 +144,19 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     expect(screen.queryByLabelText("Allowed models")).toBeNull();
   });
 
+  it("a member's key row says its default model, and nothing when it is unknown (P5-APIGAP-3, C-1048)", async () => {
+    mockFetch(routes({
+      "GET /v1/workspaces/w1/accounts": () =>
+        json(200, { items: [
+          { kind: "ai_key", scope: "organization", name: "Users AI gateway", default_model: "glm-5.3", ref: { type: "secret", id: "k1" }, agents: [], levels: [] },
+          { kind: "ai_key", scope: "organization", name: "Spare key", default_model: null, ref: { type: "secret", id: "k2" }, agents: [], levels: [] },
+        ], next_cursor: null }),
+    }));
+    wrap(<OrgAiModels org={{ ...ORG, my_role: "member" }} />);
+    expect((await screen.findByTestId("key-default-model")).textContent).toBe(" · default glm-5.3");
+    expect(screen.getAllByTestId("key-default-model")).toHaveLength(1);
+  });
+
   it("has one page: no tabs, no Egress, no Apps, no Compliance", async () => {
     mockFetch(routes());
     wrap(<OrgAiModels org={ORG} />);
