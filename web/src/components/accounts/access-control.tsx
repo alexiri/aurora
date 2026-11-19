@@ -147,7 +147,7 @@ export function AccessControl({
       ) : (
         <select
           aria-label={`${entry.agent.name}'s access to ${account.name}`}
-          className={cn("h-9 rounded-control border border-line-strong bg-surface px-2 text-sm text-ink", inRow ? "w-auto max-w-[14rem]" : "w-full max-w-xs")}
+          className={cn("h-9 rounded-control border border-line-strong bg-surface px-2 text-sm text-ink", inRow ? "w-auto max-w-56" : "w-full max-w-xs")}
           disabled={put.isPending}
           value={entry.level === "custom" ? CUSTOM : (level ?? "")}
           onChange={(e) => {
