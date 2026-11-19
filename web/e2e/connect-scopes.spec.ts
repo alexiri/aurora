@@ -72,7 +72,7 @@ for (const scheme of ["light", "dark"] as const) {
         const journey = page.getByTestId("ws-connect-journey");
         await journey.getByRole("checkbox", { name: `Give ${agent.name} access` }).uncheck();
         await journey.getByRole("button", { name: "Next" }).click();
-        await journey.getByLabel("Personal API token").fill("not-a-real-token");
+        await journey.getByLabel("Personal API token", { exact: true }).fill("not-a-real-token");
         await journey.getByText(/^Advanced: other ways to connect/).click();
         const scopes = page.getByRole("group", { name: "Which scopes did you give this token?" });
         await expect(scopes.getByText("Aurora checks each read scope")).toBeVisible();

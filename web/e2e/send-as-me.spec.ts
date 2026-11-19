@@ -67,7 +67,7 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByRole("button", { name: "Add token" }).first().click();
         const add = page.getByRole("dialog", { name: "Add token" });
         await expect(add).toBeVisible();
-        await expect(add.getByLabel("Personal access token")).toHaveAttribute("type", "password");
+        await expect(add.getByLabel("Personal access token", { exact: true })).toHaveAttribute("type", "password");
         await expect(add.getByText(/Profile › Security › Personal Access Tokens/)).toBeVisible();
         expect(await serious(page)).toEqual([]);
         if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);

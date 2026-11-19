@@ -577,7 +577,21 @@ async fn update_is_audited_with_a_diff_and_every_admin_is_told_by_key_name_only(
         "{}",
         m.body
     );
-    assert!(m.link.ends_with("/admin/audit?action=instance_settings"));
+    // D-373: the link lists that UTC day's instance-settings rows; the body points at each row's Details.
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    assert!(
+        m.link.ends_with(&format!(
+            "/admin/data?tab=audit&action=instance_settings.&since={today}"
+        )) || m.link.ends_with(&format!(
+            "/admin/data?tab=audit&action=instance_settings.&since={yesterday}"
+        )),
+        "{}",
+        m.link
+    );
+    assert!(m.body.contains("open the row's Details"), "{}", m.body);
 }
 
 #[tokio::test]

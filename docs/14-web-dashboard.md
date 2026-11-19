@@ -104,8 +104,8 @@ them, starts there.
 - **The look it sets** (on top of this section, not instead of it): a navy navigation rail in both
   themes (a dark-theme island carrying the dark lockup, a scope switcher and the topics of
   §Information architecture); every topic page opening with a sentence that says what is true now; the
-  access choice drawn as one three-way switch everywhere; amber for anything that needs a person, teal
-  for allowed, works and selected. Colours, type, radii and spacing stay the tokens of this section.
+  access choice drawn as one three-way switch everywhere; amber for anything that needs a person (since
+  D-384: only where that person has an action), teal for allowed, works and selected. Colours, type, radii and spacing stay the tokens of this section.
 - **Shared classes:** the canvas's `aurora-ui.css` uses only the tokens; each class names a primitive
   to build once in `web/src/components/ui` (or `components/accounts`) and reuse. Do not copy the
   canvas's HTML or class names into the code.
@@ -116,6 +116,30 @@ them, starts there.
   canvas of §Agent page (phase 5) as their reference.
 - **Keeping it current:** a spec change that changes a screen updates its board in the same change
   (the canvas is edited by whoever owns the spec batch).
+
+**UX fixes (phase 5, P5-POLISH, D-380..D-393).** UX review 4 walked the finished redesign
+(<https://claude.ai/artifact/33oHaXQpCU3oSVRVmgtY5Z>, 100 screens) and the owner accepted thirty
+before/after proposals, **“Aurora UX fixes”** (<https://claude.ai/artifact/WXbcpcrkbCLuxMSurpkuQW>,
+IDs A1..F3, with the owner's comments applied). It is the reference for the P5-POLISH briefs and,
+where it differs from a canvas board, wins over the board. Workers who cannot open artifacts read the
+copy at `/home/alex/orca/workspaces/aurora/design-ux-fixes/` (`after/<id>.png` renders every mockup,
+`before/` the screenshots, `README.txt` the layout). Precedence: this document and `API_CONTRACTS.md`,
+then the brief, then the mockup. Yellow dashed labels in a mockup are commentary, not design. Rules it
+adds to this section, for every screen:
+- **Dialogs** are three rows (header with title, close and an optional stepper; body, the only part
+  that scrolls; footer with Back on the left and the step's one action on the right). Below 640 px a
+  multi-step dialog is a full-screen sheet. No sticky header (D-393).
+- **Amber** (the pending styles) only on an item with an action for the viewer. Who owns or locks a
+  value is a neutral **lock pill** ("Set by Users", "Set in Helm") that names who can change it on
+  hover. At most one chip per card, sentence case; a thing's kind is its icon (D-384).
+- **Health lines** say only what a real call proved: "Worked 5 min ago", "Failed 2 min ago: <reason>"
+  with its fix, "Not used yet"; a test shows as "Test passed …", never as working (D-383).
+- **Members** see a sentence and who can change it, never an owner's form with disabled controls
+  (D-390). An unavailable feature is one **Unavailable** card, never a disabled form (D-392).
+- **Settings** are full-width cards of rows: label and help left, control right, switches for
+  booleans, one guide link per card (D-392).
+- **Focus** is one ring from `:focus-visible`; a container with a focused field changes its border;
+  menus and popovers have no outline (D-393).
 
 **Scope: the whole dashboard.** This section is the dashboard's visual
 identity, not a restyle of individual screens. **Every** screen MUST follow
@@ -440,6 +464,15 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     (C-506) and `?c=<id>` open what they open today; the section is derived from
     the page. A hosted agent opens on Chat, a BYO agent on Instructions. The
     Delete zone under Instructions is removed (Delete is in Agent actions).
+  - (phase 5, P5-POLISH-6, D-382, C-1036) **Behaviour and Access are configuration, reached from the …
+    menu.** The tab bar shows **Chat · Triggers · Computer** (BYO: Computer). The … menu (Agent
+    actions) lists **Behaviour** ("Name, instructions, model, memory, skills"), **Access** ("Apps,
+    accounts and the AI key it uses"), a separator, **Freeze <Agent>** ("Pauses it until you unfreeze
+    it") and **Delete <Agent>…** (danger). On a Behaviour or Access page no tab is selected, the …
+    button is marked, and under the header a back link **Chat**, the page name and one sentence name
+    the page; Behaviour keeps its Instructions · Memory · Skills · Evals row. `?tab=` ids are
+    unchanged. A BYO agent (no Chat) opens on Behaviour as before. This replaces the five-section order
+    above wherever they disagree.
   - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
     page (Triggers section), bound to `narration_cards` (off by default). Help text: "Posts one message
     per reply that lists the steps the agent takes, updated as they run and shrunk to one line when the answer
@@ -1315,7 +1348,7 @@ every other topic is owners/admins and is not listed for a member.)
   Upload errors show "Your organization's attachment storage is full" with the
   link to the usage page; expired attachments render as an "Expired by retention"
   chip (a deleted one as "Removed"), never as a link (C-196).
-- **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged), **Settings** (name, slug, members can create
+- **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged; FIX-171, D-373: each row opens a **Details** view — a settings change as before/after, the other recorded detail, source and ids — and the filters `action` and `critical=1` are in the URL, so a link opens the same view; the workspace Audit tab is the same shared panel), **Settings** (name, slug, members can create
   workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
   for owners).
 
@@ -1347,7 +1380,12 @@ every other topic is owners/admins and is not listed for a member.)
   - **Instructions** — name, brief, avatar, harness (phase 4, P4-HAR: a picker from
     `/v1/harnesses`, shown only when more than one is enabled; unavailable ones are disabled
     with "no runner offers this"; changing it asks for confirmation: "Starts fresh sessions for
-    every conversation of this agent; the transcript is kept"; refused while a turn runs), model (from
+    every conversation of this agent; the transcript is kept"; refused while a turn runs). With one
+    harness enabled the field is its display name as read-only text (the id while the list loads),
+    with "Your administrator chooses which programs agents can run." and, for instance admins, a
+    link to Administration › Agents › Defaults (FIX-172, D-374). **Create agent offers no harness**:
+    a new agent gets `hosted.default_harness` and changing it is an advanced setting here (D-374).
+    The agent also has a model (from
     `/v1/agents/{a}/models`), effort, proactive messaging mode.
     (phase 5, P5-MODELS-3, D-302, D-303, C-876) The model field is labelled **Default model**, with the
     help text "The model the agent starts with. It may use other allowed models on the same endpoint,
@@ -1825,8 +1863,13 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
 - **Keyed lists** (OIDC providers, secret stores, LLM endpoints, rate-limit class overrides) are an
   `ItemList` of entries, each with a source `Badge` ("Managed by Helm" for locked entries, which open
   read-only), edited in a `FormDialog`; an id already used by a Helm entry is shown as an error on
-  the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs, harnesses) are one field edited as
-  a list, locked as a whole.
+  the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs) are one field edited as
+  a list, locked as a whole. **Harnesses** (FIX-172, D-374, C-1028) are never typed: Agents › Defaults › Hosted
+  agents shows `hosted.enabled_harnesses` as a checkbox group by display name (a sentence under each), limited to
+  what registered runners offer (`extra.offered_harnesses`; an unticked one no runner offers is disabled, a ticked
+  one shows a warning, and with no runner registered a `Notice` says offers cannot be checked), and
+  `hosted.default_harness` as a select of the ticked ones (unticking the default moves it to the first ticked, with a
+  hint). Values that are not choices (`fake`) are kept and shown as "Also enabled". The runners table reads names.
 - (phase 5, P4-LLM spec batch, D-260, D-262, C-811) **LLM endpoints**: the endpoint dialog shows
   the chosen provider's own fields (OpenAI organization/project; Azure resource URL and
   deployment names; Bedrock region and optional VPC endpoint URL; Vertex project and location;
@@ -1864,7 +1907,7 @@ each marked added / changed / removed against the active version, under the sent
 use this app can read this text. It is written by the publisher."; a file opens in the shared
 preformatted viewer as plain text, never rendered as Markdown or HTML, long lines scrolling inside
 the viewer only (`24 §9`); reject/disable/uninstall with orphan warnings), **Host
-claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Addon sources** (phase 5,
+claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses; FIX-171, D-373: rows open a **Details** view with the changes as before/after, the other recorded detail, source and ids, and the filters — `action`, `scope`, `org`, `critical`, `since`, `until` — are in the URL, which the instance-settings e-mail's link relies on), **Addon sources** (phase 5,
 P5-ASRC, D-250: third-party app-package repositories at `/admin/addon-sources` —
 list with key fingerprint and check status, add with a preview/trust review of the
 repo's signing key before anything is registered, "Check now", per-source schedule

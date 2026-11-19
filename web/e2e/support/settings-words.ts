@@ -20,6 +20,13 @@ const CHOICES: Record<string, { value: string; label: string; description: strin
     { value: "sso_jit", label: "Anyone with a verified e-mail", description: "They join at their first sign-in through your identity provider." },
     { value: "open", label: "Anyone", description: "Anyone who can reach this address may create an account." },
   ],
+  "hosted.enabled_harnesses": [
+    { value: "claude-code", label: "Claude Code", description: "Anthropic, Bedrock and Vertex directly; anything else through LiteLLM." },
+    { value: "codex", label: "OpenAI Codex", description: "Endpoints that serve the OpenAI Responses API." },
+    { value: "pi", label: "Pi", description: "Any endpoint that serves Anthropic Messages, OpenAI Responses or OpenAI chat." },
+    { value: "goose", label: "goose", description: "Anthropic, and endpoints that serve OpenAI chat completions." },
+    { value: "opencode", label: "OpenCode", description: "Any endpoint that serves Anthropic Messages, OpenAI Responses or OpenAI chat." },
+  ],
   "auth.org_creation": [
     { value: "instance_admins", label: "Aurora administrators only", description: "Only Aurora administrators create organizations." },
     { value: "anyone", label: "Anyone who is signed in", description: "Every person may create an organization of their own." },
@@ -46,7 +53,8 @@ const WORDS: Record<string, [label: string, help: string, kind: string, defaultD
   "email.smtp_username": ["User name", "The account Aurora signs in with on the mail server.", "text", "Not set"],
   "email.smtp_password": ["Password", "Sent only to the mail server and never shown again once set.", "secret", "Not set"],
   "agents.default_name": ["Name of a new person's agent", "The name an agent gets unless its creator picks another.", "text", "Daneel"],
-  "hosted.enabled_harnesses": ["Agent programs agents may run", "One per line; each must be offered by a runner.", "list", "claude-code"],
+  "hosted.default_harness": ["Agent program new agents use", "The program a new agent starts with. It must be one of the ticked programs.", "enum", "Claude Code"],
+  "hosted.enabled_harnesses": ["Agent programs agents may run", "Tick the programs agents may run. Only programs a registered runner offers can be ticked.", "list", "Claude Code"],
   "hosted.idle_stop_secs": ["Stop an idle computer after", "How long a computer may sit without activity.", "duration", "30 minutes", "minutes"],
   "hosted.turn_ceiling_secs": ["Longest one turn may run", "At least the longest a question may wait plus 15 minutes.", "duration", "6 hours", "hours"],
 };
@@ -61,7 +69,7 @@ function fieldFor(s: Json): Json {
     label: w?.[0] ?? `Setting ${key}`,
     help: w?.[1] ?? `About ${key}.`,
     kind,
-    choices: CHOICES[key] ?? null,
+    choices: CHOICES[key] ?? (key === "hosted.default_harness" ? CHOICES["hosted.enabled_harnesses"] : null),
     default_display: w?.[3] ?? "Default",
     unit: w?.[4] ?? null,
     doc: null,

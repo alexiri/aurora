@@ -28,7 +28,17 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(dialog.getByRole("option", { name: "Linear — for Sign in with Linear" })).toHaveCount(1);
         await expect(dialog.getByText("https://aurora.example.org/v1/oauth/callback")).toBeVisible();
         await dialog.getByLabel("Client ID").fill("lin_abc");
-        await dialog.getByLabel("Client secret").fill("lin_secret");
+        await dialog.getByLabel("Client secret", { exact: true }).fill("lin_secret");
+        // (D-375) Show reveals what was typed; the button stays beside the input and nothing scrolls sideways.
+        await dialog.getByRole("button", { name: "Show Client secret" }).click();
+        await expect(dialog.getByLabel("Client secret", { exact: true })).toHaveValue("lin_secret");
+        await expect(dialog.getByLabel("Client secret", { exact: true })).toHaveAttribute("type", "text");
+        const box = await dialog.getByLabel("Client secret", { exact: true }).boundingBox();
+        const btn = await dialog.getByRole("button", { name: "Hide Client secret" }).boundingBox();
+        expect(box && btn && btn.x >= box.x + box.width - 1 && Math.abs(btn.y - box.y) < box.height).toBe(true);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        await dialog.getByRole("button", { name: "Hide Client secret" }).click();
+        await expect(dialog.getByLabel("Client secret", { exact: true })).toHaveAttribute("type", "password");
         await dialog.getByRole("button", { name: "Add" }).click();
         await expect(dialog).toBeHidden();
 

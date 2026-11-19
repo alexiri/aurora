@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { SecretInput } from "@/components/ui/secret-input";
 import { Notice } from "@/components/ui/notice";
 import { Segmented } from "@/components/ui/segmented";
 import type { EffectiveRate, SigningEdit, WebhookConfig } from "@/lib/api/webhook";
@@ -200,14 +201,12 @@ export function ExtrasStep({
               ) : null}
               {!r.existing || r.replacing ? (
                 <Field id={`wh-sv-${i}`} label={r.existing ? `New value of ${r.name}` : "Value"} error={problems[`secret_values.${i}.value`]}>
-                  <input
+                  <SecretInput
                     id={`wh-sv-${i}`}
-                    type="password"
+                    revealLabel={r.existing ? `new value of ${r.name}` : "value"}
                     autoComplete="new-password"
-                    spellCheck={false}
-                    className={inputClass}
                     value={r.value}
-                    onChange={(e) => setSecret(i, { value: e.target.value })}
+                    onChange={(v) => setSecret(i, { value: v })}
                   />
                 </Field>
               ) : null}
@@ -287,7 +286,13 @@ export function ExtrasStep({
         />
         {extras.signing === "provided" ? (
           <Field id="wh-signing" label="Signing secret" error={err("signing")}>
-            <input id="wh-signing" type="password" autoComplete="new-password" spellCheck={false} className={inputClass} value={extras.signingValue} onChange={(e) => onExtras({ ...extras, signingValue: e.target.value })} />
+            <SecretInput
+              id="wh-signing"
+              revealLabel="signing secret"
+              autoComplete="new-password"
+              value={extras.signingValue}
+              onChange={(v) => onExtras({ ...extras, signingValue: v })}
+            />
           </Field>
         ) : null}
         {extras.signing === "generate" ? <p className="text-sm text-ink-2">Aurora makes the secret when you save, and shows it once.</p> : null}

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -13,8 +14,9 @@ import { ApiError } from "@/lib/api/client";
 import { useModelReadiness } from "@/lib/api/credential-grants";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useModels } from "@/lib/api/conversations";
-import type { Agent } from "@/lib/api/queries";
+import { useMe, type Agent } from "@/lib/api/queries";
 import { errorTarget, ROLES } from "@/lib/model-roles";
+import { adminRoutes } from "@/lib/routes";
 
 import { AvatarField } from "./avatar-field";
 import { automaticModelText, READINESS_WARNING_COPY } from "./model-readiness";
@@ -22,6 +24,7 @@ import { EMPTY_ROLES, ModelRolesFields, type RoleDraft, type RoleFieldErrors } f
 
 export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string }) {
   const patch = usePatchAgent(wsId, agent.id);
+  const isAdmin = useMe().data?.user.is_instance_admin === true;
   const [name, setName] = useState(agent.name);
   const [brief, setBrief] = useState(agent.brief);
   const [effort, setEffort] = useState(agent.effort ?? "");
@@ -136,7 +139,23 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         id="a-harness"
         label="Harness"
         error={fe.harness}
-        hint={showPicker ? "Changing it starts fresh sessions for every conversation of this agent." : undefined}
+        hint={
+          showPicker ? (
+            "Changing it starts fresh sessions for every conversation of this agent."
+          ) : (
+            <>
+              Your administrator chooses which programs agents can run.
+              {isAdmin ? (
+                <>
+                  {" "}
+                  <Link href={adminRoutes.agents("defaults")} className="underline">
+                    Administration › Agents › Defaults
+                  </Link>
+                </>
+              ) : null}
+            </>
+          )
+        }
       >
         {showPicker ? (
           <select id="a-harness" className={inputClass} value={chosenHarness} onChange={(e) => setHarness(e.target.value)}>
@@ -148,7 +167,13 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
             ))}
           </select>
         ) : (
-          <input id="a-harness" className={inputClass} value={agent.harness ?? ""} readOnly disabled />
+          // Read-only text, not an input-looking box (D-374): the display name, or the id while the list loads.
+          <p id="a-harness" className="text-sm text-ink">
+            {options.find((h) => h.id === (agent.harness ?? harnesses.data?.default))?.display_name ??
+              agent.harness ??
+              harnesses.data?.default ??
+              "—"}
+          </p>
         )}
       </Field>
       <Field

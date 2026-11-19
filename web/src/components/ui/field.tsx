@@ -23,7 +23,7 @@ export function Field({
   id: string;
   label: string;
   error?: string;
-  hint?: string;
+  hint?: ReactNode;
   children: ReactNode;
 }) {
   const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
