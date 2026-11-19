@@ -11,7 +11,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
 import { ArrowLeftIcon, CheckIcon } from "@/components/ui/icons";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { LEVEL_LABEL, LEVEL_ORDER, preselectAgents } from "@/lib/accounts";
 import { savedButText } from "@/lib/account-health";
 import { accountKeys, useAccounts, usePutAccess, useTestAccount, type Account, type Level } from "@/lib/api/accounts";
@@ -360,7 +360,7 @@ export function ConnectJourney({
             { value: "new", label: "Connect another account" },
           ]}
         />
-        {error ? <Notice tone="danger" role="alert">{errorMessage(error)}</Notice> : null}
+        <ErrorNotice error={error} />
         <Footer
           onBack={back}
           onNext={useExisting && levels.length === 0 ? () => void saveExisting() : () => afterNext("account")}
@@ -383,7 +383,7 @@ export function ConnectJourney({
           legend={`What may ${who} do in ${appName}?`}
         />
         <p className="text-xs text-muted">You can change this at any time on {chosenAgents.length === 1 ? `${who}'s` : "each agent's"} Access tab.</p>
-        {error ? <Notice tone="danger" role="alert">{errorMessage(error)}</Notice> : null}
+        <ErrorNotice error={error} />
         <Footer
           onBack={back}
           onNext={useExisting ? () => void saveExisting() : () => afterNext("access")}
@@ -444,7 +444,7 @@ export function ConnectJourney({
             <Notice tone="pending" role="alert">
               {errorMessage({ code: done.grantFailed })} <span className="text-ink-2">The account is kept; you can try the access again.</span>
             </Notice>
-            {error ? <Notice tone="danger" role="alert">{errorMessage(error)}</Notice> : null}
+            <ErrorNotice error={error} />
             <Button size="sm" disabled={busy} onClick={() => void retryGrant()}>
               {busy ? "Saving…" : "Give access"}
             </Button>

@@ -1,6 +1,6 @@
 import type { Conversation, TranscriptEvent } from "@/lib/api/conversations";
 
-import { activeTurnId, type PurgeReason, type TranscriptState } from "./transcript";
+import { activeTurnId, type TranscriptState } from "./transcript";
 
 // Pure helpers behind the chat layout (D-102): sender grouping, day dividers, list ordering and
 // filtering, and the folded tool-call summary. No React, no clock: callers pass `now`.
@@ -288,6 +288,3 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
   }
   return rows;
 }
-
-/** The purge reason of an attachment id, for the "Expired" chip. */
-export const purgedReason = (state: TranscriptState, id: string): PurgeReason | undefined => state.purged?.[id];

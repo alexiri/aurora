@@ -1,9 +1,8 @@
 "use client";
 
-import { useState } from "react";
-
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { useConnectorTypes, useDeleteConnector, useRotateConnectorToken, type ConnectorAdmin } from "@/lib/api/connectors";
 import { plural } from "@/lib/utils";
 
@@ -22,7 +21,6 @@ export function ConnectorCard({
 }) {
   const rotate = useRotateConnectorToken();
   const del = useDeleteConnector();
-  const [confirmDel, setConfirmDel] = useState(false);
   const hosts = c.host_status.length;
   // A managed connector of a type the live hosts announced unsigned (dev only, D-142). The
   // catalogue is the source: the connector row carries no signature state of its own.
@@ -67,20 +65,7 @@ export function ConnectorCard({
               >
                 Rotate token
               </Button>
-              {confirmDel ? (
-                <>
-                  <Button variant="danger" size="sm" disabled={del.isPending} onClick={() => del.mutate(c.id)}>
-                    Confirm delete
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => setConfirmDel(false)}>
-                    Cancel
-                  </Button>
-                </>
-              ) : (
-                <Button variant="danger" size="sm" onClick={() => setConfirmDel(true)}>
-                  Delete
-                </Button>
-              )}
+              <ConfirmButton size="sm" pending={del.isPending} onConfirm={() => del.mutate(c.id)} />
             </div>
             <ConnectorError error={rotate.error ?? del.error} />
           </>

@@ -14,13 +14,12 @@ import { Card } from "@/components/ui/card";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckCircleIcon } from "@/components/ui/icons";
 import { LinkCard } from "@/components/ui/link-card";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { WhoCan } from "@/components/ui/who-can";
 import { usePatchAgent } from "@/lib/api/agents";
 import { grantKeys } from "@/lib/api/credential-grants";
 import { useModels } from "@/lib/api/conversations";
-import { errorMessage } from "@/lib/api/errors";
 import { useMeOnboarding, usePatchOnboarding } from "@/lib/api/onboarding";
 import { useAgents, type Agent } from "@/lib/api/queries";
 import { HELLO_MESSAGE, type GuideStep, type GuideStepId } from "@/lib/onboarding/guide";
@@ -315,7 +314,7 @@ function ModelStep({ agent, wsId }: { agent: Agent; wsId: string }) {
       <p>
         The key works, but no model is chosen yet. A model is the specific AI that answers. Pick one of the models your key serves.
       </p>
-      {models.isError ? <Notice tone="danger" role="alert">{errorMessage(models.error)}</Notice> : null}
+      {models.isError ? <ErrorNotice error={models.error} /> : null}
       <Field id="guide-model-select" label="Model">
         <select id="guide-model-select" className={inputClass} value={choice} onChange={(e) => setChoice(e.target.value)} disabled={items.length === 0}>
           <option value="">{items.length === 0 ? "No models available" : "Select a model"}</option>
@@ -326,7 +325,7 @@ function ModelStep({ agent, wsId }: { agent: Agent; wsId: string }) {
           ))}
         </select>
       </Field>
-      {patch.error ? <Notice tone="danger" role="alert">{errorMessage(patch.error)}</Notice> : null}
+      <ErrorNotice error={patch.error} />
       <Button
         size="sm"
         disabled={!choice || patch.isPending}

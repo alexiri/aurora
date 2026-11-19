@@ -22,11 +22,8 @@ export type FileText = S["FileText"];
 
 /** The scope of the page (C-899): nothing outside it is shown or requested. */
 export const WORKSPACE_ROOT = "/workspace";
-/** `FILES_UPLOAD_MAX` (C-898). */
-export const UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
-/** `FILES_LIST_MAX` and `FILES_DELETE_MAX` (C-898), for the words only; the API enforces them. */
+/** `FILES_LIST_MAX` (C-898), for the words only; the API enforces it. */
 export const LIST_MAX = 5000;
-export const DELETE_MAX = 10000;
 /** C-621 / C-904: a parked sandbox is retried at most this many times, every `WAKE_RETRY_MS` (`retry-after: 2`, C-900). */
 export const WAKE_ATTEMPTS = 12;
 export const WAKE_RETRY_MS = 2000;

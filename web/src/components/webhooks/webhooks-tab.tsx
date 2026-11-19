@@ -11,10 +11,12 @@ import { DataTable, Td } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { LoadMore } from "@/components/ui/load-more";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import {
   useCreateWebhook,
   useDeleteWebhook,
@@ -46,11 +48,7 @@ function Deliveries({ agentId, id }: { agentId: string; id: string }) {
           ))}
         </tbody>
       </DataTable>
-      {q.hasNextPage ? (
-        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={q} />
     </div>
   );
 }
@@ -110,13 +108,7 @@ export function WebhookForm({
         <textarea id="wh-instr" className={inputClass} rows={3} value={instructions} required onChange={(e) => setInstructions(e.target.value)} />
       </Field>
       <Field id="wh-kind" label="Verification" error={fe.verification}>
-        <select id="wh-kind" className={inputClass} value={kind} onChange={(e) => setKind(e.target.value)}>
-          {KINDS.map((k) => (
-            <option key={k} value={k}>
-              {k}
-            </option>
-          ))}
-        </select>
+        <Select id="wh-kind" value={kind} onChange={setKind} options={KINDS.map((k) => ({ value: k, label: k }))} />
       </Field>
       {kind !== "none" ? (
         <div className="grid gap-4 sm:grid-cols-2">
@@ -132,9 +124,7 @@ export function WebhookForm({
         <CheckboxField id="wh-anchored" label="Anchor to workspace (outlives any single member)" checked={anchored} onChange={setAnchored} />
       ) : null}
       {mut.error && Object.keys(fe).length === 0 ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(mut.error)}
-        </Notice>
+        <ErrorNotice error={mut.error} />
       ) : null}
       <FormActions className="gap-2">
         <Button type="submit" disabled={mut.isPending}>
@@ -186,11 +176,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
       {reassigning && wsId ? (
         <ReassignPanel agentId={agentId} wsId={wsId} kind="webhook" id={w.id} name={w.name} creatorId={w.created_by?.id} disabledReason={w.disabled_reason} onClose={() => setReassigning(false)} />
       ) : null}
-      {err ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(err)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={err} />
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
           Edit

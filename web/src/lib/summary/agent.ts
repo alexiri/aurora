@@ -99,8 +99,3 @@ export function agentSummary({ agent, agentId, accounts, internet }: AgentSummar
   }
   return out;
 }
-
-/** The summary as one paragraph. */
-export function agentSummaryText(input: AgentSummaryInput): string {
-  return agentSummary(input).join(" ");
-}

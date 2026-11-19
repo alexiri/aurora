@@ -9,9 +9,10 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import {
   checkSummary,
@@ -29,24 +30,17 @@ import {
   type AddonSourceCheckResult,
   type Interval,
 } from "@/lib/api/addon-sources";
-import { errorMessage } from "@/lib/api/errors";
+import { copyLabel, useCopy } from "@/lib/use-copy";
 
 function Fingerprint({ value, label = "Signing key fingerprint" }: { value: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
+  const { state, copy } = useCopy();
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <code aria-label={label} className="rounded-control bg-subtle px-2 py-0.5 font-mono text-xs text-ink">
         {value}
       </code>
-      <Button
-        size="sm"
-        variant="outline"
-        aria-label={`Copy ${label.toLowerCase()}`}
-        onClick={() => {
-          void navigator.clipboard?.writeText(value).then(() => setCopied(true));
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
+      <Button size="sm" variant="outline" aria-label={`Copy ${label.toLowerCase()}`} onClick={() => copy(value)}>
+        {copyLabel(state)}
       </Button>
     </span>
   );
@@ -88,13 +82,7 @@ function AddonList({ addons }: { addons: AddonEntry[] }) {
 
 function IntervalSelect({ id, value, onChange }: { id: string; value: Interval; onChange: (v: Interval) => void }) {
   return (
-    <select id={id} className={inputClass} value={value} onChange={(e) => onChange(e.target.value as Interval)}>
-      {INTERVALS.map((i) => (
-        <option key={i} value={i}>
-          {intervalLabel(i)}
-        </option>
-      ))}
-    </select>
+    <Select id={id} value={value} onChange={(v) => onChange(v as Interval)} options={INTERVALS.map((i) => ({ value: i, label: intervalLabel(i) }))} />
   );
 }
 
@@ -150,9 +138,7 @@ export function AddSourceDialog({ open, onOpenChange }: { open: boolean; onOpenC
             What a repository publishes is described in the add-on repository format documentation.
           </p>
           {preview.isError ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(preview.error)}
-            </Notice>
+            <ErrorNotice error={preview.error} />
           ) : null}
           {!p ? (
             <div className="flex justify-end">
@@ -205,9 +191,7 @@ export function AddSourceDialog({ open, onOpenChange }: { open: boolean; onOpenC
               <IntervalSelect id="addon-interval" value={interval} onChange={setIntervalValue} />
             </Field>
             {add.isError ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(add.error)}
-              </Notice>
+              <ErrorNotice error={add.error} />
             ) : null}
             <div className="flex flex-wrap justify-end gap-2">
               <DialogClose asChild>
@@ -259,9 +243,7 @@ function ConfirmKeyDialog({ source, onClose }: { source: AddonSource | null; onC
               publisher <code>{source.publisher}</code> to the new key, and the repository is checked again.
             </Notice>
             {confirm.isError ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(confirm.error)}
-              </Notice>
+              <ErrorNotice error={confirm.error} />
             ) : null}
             <div className="flex flex-wrap justify-end gap-2">
               <DialogClose asChild>
@@ -317,9 +299,7 @@ function ScheduleDialog({ source, onClose }: { source: AddonSource | null; onClo
             </Field>
             <p className="text-xs text-muted">“Check now” works whatever the schedule is.</p>
             {update.isError ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(update.error)}
-              </Notice>
+              <ErrorNotice error={update.error} />
             ) : null}
             <div className="flex flex-wrap justify-end gap-2">
               <DialogClose asChild>
@@ -403,9 +383,7 @@ export function AddonSourcesView() {
         </Notice>
       ) : null}
       {check.isError ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(check.error)}
-        </Notice>
+        <ErrorNotice error={check.error} />
       ) : null}
       <Section id="addon-list" title="Sources">
         {q.isPending ? <Loading /> : null}
@@ -520,9 +498,7 @@ export function AddonSourcesView() {
         onConfirm={() => removing && remove.mutate(removing.id, { onSuccess: () => setRemoving(null) })}
       >
         {remove.isError ? (
-          <Notice tone="danger" role="alert" className="mb-2">
-            {errorMessage(remove.error)}
-          </Notice>
+          <ErrorNotice error={remove.error} className="mb-2" />
         ) : null}
       </ConfirmDialog>
     </div>

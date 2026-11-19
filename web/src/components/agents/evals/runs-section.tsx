@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
+import { LoadMore } from "@/components/ui/load-more";
 import { Meter } from "@/components/ui/meter";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
@@ -182,11 +183,7 @@ export function RunsSection({
               </ListRow>
             ))}
           </ItemList>
-          {runsQ.hasNextPage ? (
-            <Button variant="outline" disabled={runsQ.isFetchingNextPage} onClick={() => void runsQ.fetchNextPage()}>
-              Load more runs
-            </Button>
-          ) : null}
+          <LoadMore query={runsQ} label="Load more runs" />
         </>
       )}
       <ConfirmDialog

@@ -1,6 +1,7 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { HTMLAttributes } from "react";
 
+import { errorMessage } from "@/lib/api/errors";
 import { cn } from "@/lib/utils";
 
 const noticeVariants = cva("rounded-control border p-3 text-sm", {
@@ -21,4 +22,25 @@ const noticeVariants = cva("rounded-control border p-3 text-sm", {
  */
 export function Notice({ tone, className, ...props }: HTMLAttributes<HTMLDivElement> & VariantProps<typeof noticeVariants>) {
   return <div className={cn(noticeVariants({ tone }), className)} {...props} />;
+}
+
+/**
+ * The danger `Notice` for a failed request or mutation: the error's own words (`errorMessage`, or
+ * `format` where a screen has its own code table), announced as an alert. Renders nothing without an error.
+ */
+export function ErrorNotice({
+  error,
+  format = errorMessage,
+  className,
+}: {
+  error: unknown;
+  format?: (error: unknown) => string;
+  className?: string;
+}) {
+  if (!error) return null;
+  return (
+    <Notice tone="danger" role="alert" className={className}>
+      {format(error)}
+    </Notice>
+  );
 }

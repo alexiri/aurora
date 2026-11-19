@@ -9,11 +9,10 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
-import { errorMessage } from "@/lib/api/errors";
 import {
   useAddTrustedKey,
   useRevokeTrustedKey,
@@ -52,9 +51,7 @@ function AddKeyForm() {
         <input id="tk-key" required className={`${inputClass} font-mono`} value={key} onChange={(e) => setKey(e.target.value)} />
       </Field>
       {add.isError ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(add.error)}
-        </Notice>
+        <ErrorNotice error={add.error} />
       ) : null}
       <FormActions>
         <Button type="submit" size="lg" disabled={add.isPending}>
@@ -124,9 +121,7 @@ export function TrustedKeysView() {
         onConfirm={() => target && revoke.mutate(target.id, { onSuccess: () => setTarget(null) })}
       >
         {revoke.isError ? (
-          <Notice tone="danger" role="alert" className="mb-2">
-            {errorMessage(revoke.error)}
-          </Notice>
+          <ErrorNotice error={revoke.error} className="mb-2" />
         ) : null}
       </ConfirmDialog>
     </div>

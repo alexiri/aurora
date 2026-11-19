@@ -12,8 +12,9 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import {
   useAppInstances,
   useApps,
@@ -79,9 +80,7 @@ function HostConflictNotice({
   const c = hostConflict(error);
   if (!c) {
     return (
-      <Notice tone="danger" role="alert">
-        {errorMessage(error)}
-      </Notice>
+      <ErrorNotice error={error} />
     );
   }
   const isAdmin = me.data?.user.is_instance_admin === true;
@@ -200,20 +199,7 @@ function RegisterDialog({
       onSubmit={(e) => void submit(e)}
     >
       <Field id="ai-app" label="App" error={errs.app_id}>
-        <select
-          id="ai-app"
-          className={inputClass}
-          value={appId}
-          onChange={(e) => setAppId(e.target.value)}
-          required
-        >
-          <option value="">Select…</option>
-          {bound.map((a) => (
-            <option key={a.app_id} value={a.app_id}>
-              {appDisplayName(a)}
-            </option>
-          ))}
-        </select>
+        <Select id="ai-app" value={appId} required placeholder="Select…" onChange={setAppId} options={bound.map((a) => ({ value: a.app_id, label: appDisplayName(a) }))} />
       </Field>
       <Field
         id="ai-host"
@@ -337,9 +323,7 @@ function InstanceRow({
               onConfirm={() => promote.mutate(inst.id, { onSuccess: () => setConfirmPromote(false) })}
             >
               {promote.isError ? (
-                <Notice tone="danger" role="alert">
-                  {errorMessage(promote.error)}
-                </Notice>
+                <ErrorNotice error={promote.error} />
               ) : null}
             </ConfirmDialog>
           </>
@@ -376,9 +360,7 @@ function InstanceRow({
           onConfirm={() => del.mutate(inst.id, { onSuccess: () => setConfirm(false) })}
         >
           {del.isError ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(del.error)}
-            </Notice>
+            <ErrorNotice error={del.error} />
           ) : null}
         </ConfirmDialog>
       </Td>

@@ -3,7 +3,6 @@
 import type { ReactNode } from "react";
 
 import {
-  useAdminFreezeOrg,
   useFreezeAgent,
   useFreezeAuthority,
   useFreezeOrg,
@@ -85,10 +84,4 @@ export function OrgFreeze({ orgId, name, frozen }: { orgId: string; name: string
       <FreezeControl subject="org" name={name} frozen={frozen} callerRank={rank} freeze={m.freeze} unfreeze={m.unfreeze} />
     </DangerZone>
   );
-}
-
-/** Instance administration: freeze or lift an organization as the operator (rank 3). */
-export function AdminOrgFreeze({ orgId, name, frozen }: { orgId: string; name: string; frozen: Frozen | null | undefined }) {
-  const m = useAdminFreezeOrg(orgId);
-  return <FreezeControl subject="org" name={name} frozen={frozen} callerRank={3} freeze={m.freeze} unfreeze={m.unfreeze} />;
 }

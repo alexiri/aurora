@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { inputClass } from "@/components/ui/field";
@@ -136,9 +136,7 @@ function CheckForUpdates() {
         {checkAll.isPending ? "Checking…" : "Check for updates"}
       </Button>
       {checkAll.isError ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(checkAll.error)}
-        </Notice>
+        <ErrorNotice error={checkAll.error} />
       ) : null}
       {checkAll.data ? (
         <Notice tone="neutral" role="status" aria-label="Update check results">

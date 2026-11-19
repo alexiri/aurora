@@ -2,6 +2,7 @@
 
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
+import { Select } from "@/components/ui/select";
 import type { Slot } from "@/lib/api/webhook";
 import { cn } from "@/lib/utils";
 
@@ -33,13 +34,7 @@ export function SlotValues({
         if (s.type === "enum") {
           return (
             <Field key={s.name} id={id} label={label} hint={hint} error={errors[s.name]}>
-              <select id={id} className={inputClass} value={value} onChange={(e) => onChange(s.name, e.target.value)}>
-                {(s.enum ?? []).map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
+              <Select id={id} value={value} onChange={(v) => onChange(s.name, v)} options={(s.enum ?? []).map((o) => ({ value: o, label: o }))} />
             </Field>
           );
         }

@@ -10,11 +10,11 @@ import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { Field } from "@/components/ui/field";
+import { ErrorNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { Select } from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api/client";
-import { errorMessage } from "@/lib/api/errors";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clockTime } from "@/lib/chat/layout";
 
@@ -192,18 +192,10 @@ export function AdminRunnersView() {
         onConfirm={() => rotating && rotate.mutate({ id: rotating.id, graceSecs: grace })}
       >
         <Field id="runner-grace" label="Grace period for the old token">
-          <select id="runner-grace" className={inputClass} value={grace} onChange={(e) => setGrace(Number(e.target.value))}>
-            {GRACES.map((g) => (
-              <option key={g.secs} value={g.secs}>
-                {g.label}
-              </option>
-            ))}
-          </select>
+          <Select id="runner-grace" value={grace} onChange={(v) => setGrace(Number(v))} options={GRACES.map((g) => ({ value: String(g.secs), label: g.label }))} />
         </Field>
         {rotate.isError ? (
-          <Notice tone="danger" role="alert" className="mt-3">
-            {errorMessage(rotate.error)}
-          </Notice>
+          <ErrorNotice error={rotate.error} className="mt-3" />
         ) : null}
       </ConfirmDialog>
       <OneTimeKeyDialog
@@ -233,9 +225,7 @@ function StartDiagnostics({ agentId, open, onOpenChange }: { agentId: string; op
         {q.isPending ? (
           <Loading />
         ) : q.isError ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(q.error)}
-          </Notice>
+          <ErrorNotice error={q.error} />
         ) : q.data.items.length === 0 ? (
           <p className="text-sm text-muted">No start failures in the last 30 days.</p>
         ) : (
@@ -283,9 +273,7 @@ function StartFailures({ runnerId }: { runnerId: string }) {
   if (q.isPending) return <Loading />;
   if (q.isError) {
     return (
-      <Notice tone="danger" role="alert" className="mt-3">
-        {errorMessage(q.error)}
-      </Notice>
+      <ErrorNotice error={q.error} className="mt-3" />
     );
   }
   if (q.data.items.length === 0) {

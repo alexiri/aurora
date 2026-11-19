@@ -5,6 +5,7 @@ import { useState } from "react";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { CheckboxField } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
@@ -125,7 +126,6 @@ function IntegrationRow({
   const patch = usePatchIntegration(orgId);
   const del = useDeleteIntegration(orgId);
   const [links, setLinks] = useState(false);
-  const [confirmDel, setConfirmDel] = useState(false);
   const disabled = integration.status === "disabled";
   return (
     <li className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
@@ -178,20 +178,7 @@ function IntegrationRow({
         <Button variant="outline" size="sm" aria-expanded={links} onClick={() => setLinks((v) => !v)}>
           {links ? "Hide user links" : "User links"}
         </Button>
-        {confirmDel ? (
-          <>
-            <Button variant="danger" size="sm" disabled={del.isPending} onClick={() => del.mutate(integration.id)}>
-              Confirm remove
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setConfirmDel(false)}>
-              Cancel
-            </Button>
-          </>
-        ) : (
-          <Button variant="danger" size="sm" onClick={() => setConfirmDel(true)}>
-            Remove
-          </Button>
-        )}
+        <ConfirmButton label="Remove" confirmLabel="Confirm remove" size="sm" pending={del.isPending} onConfirm={() => del.mutate(integration.id)} />
       </div>
       <MutationError error={patch.error ?? del.error} />
       {links ? <UserLinks integration={integration} /> : null}

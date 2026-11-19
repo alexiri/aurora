@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Field, inputClass } from "@/components/ui/field";
+import { Field } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
+import { Select } from "@/components/ui/select";
 import { useAttachPresence, type ChannelIntegration } from "@/lib/api/channels";
 import type { ConnectorInfo } from "@/lib/api/connectors";
 import { useAgents, useWorkspaces } from "@/lib/api/queries";
@@ -59,31 +60,13 @@ function AttachPicker({ orgId, integrationId, botLabel }: { orgId: string; integ
   return (
     <div className="space-y-3">
       <Field id="done-ws" label="Workspace">
-        <select
-          id="done-ws"
-          className={inputClass}
-          value={wsId}
-          onChange={(e) => {
-            setWs(e.target.value);
+        <Select id="done-ws" value={wsId} onChange={(v) => {
+            setWs(v);
             setAgent("");
-          }}
-        >
-          {list.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name}
-            </option>
-          ))}
-        </select>
+          }} options={list.map((w) => ({ value: w.id, label: w.name }))} />
       </Field>
       <Field id="done-agent" label="Agent">
-        <select id="done-agent" className={inputClass} value={agent} onChange={(e) => setAgent(e.target.value)}>
-          <option value="">Select…</option>
-          {items.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </select>
+        <Select id="done-agent" value={agent} placeholder="Select…" onChange={setAgent} options={items.map((a) => ({ value: a.id, label: a.name }))} />
       </Field>
       {agents.isSuccess && items.length === 0 ? (
         <p className="text-sm text-muted">This workspace has no agents yet.</p>

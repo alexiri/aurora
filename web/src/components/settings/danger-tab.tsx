@@ -5,10 +5,9 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { DangerZone } from "@/components/ui/section";
 import { deleteWorkspace } from "@/lib/api/account";
-import { errorMessage } from "@/lib/api/errors";
 
 export function DangerTab({
   wsId,
@@ -58,9 +57,7 @@ export function DangerTab({
           />
         </Field>
         {error !== null ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(error)}
-          </Notice>
+          <ErrorNotice error={error} />
         ) : null}
         <FormActions>
           <Button type="submit" variant="danger" size="lg" disabled={pending || confirm !== slug}>

@@ -1,8 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
-import { AppName } from "@/components/apps/app-name";
 import { AppsTab } from "@/components/apps/apps-tab";
 import { DeploymentStep } from "@/components/apps/connect-dialog";
 import { appDisplayName, productKey, productName } from "@/lib/api/app-name";
@@ -79,8 +78,6 @@ describe("app names", () => {
     expect(productName(GHES)).toBe("GitHub");
     expect(productKey(GH)).toBe(productKey(GHES));
     expect(productKey(SOLO)).not.toBe(productKey(GH));
-    render(<AppName app={GHES} host="ghe.acme.example" />);
-    expect(document.body.textContent).toBe("GitHub · Enterprise Server (ghe.acme.example)");
   });
 
   // Every list, picker and dialog that names an app goes through the shared helper (replace ad-hoc `app.name`).

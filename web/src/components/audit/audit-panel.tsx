@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
+import { LoadMore } from "@/components/ui/load-more";
 import { PageHeader } from "@/components/ui/page-header";
 import type { components } from "@/lib/api/schema";
 
@@ -116,11 +117,7 @@ export function AuditPanel({
           </tbody>
         </DataTable>
       ) : null}
-      {feed.hasNextPage ? (
-        <Button variant="outline" disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={feed} />
     </div>
   );
 }

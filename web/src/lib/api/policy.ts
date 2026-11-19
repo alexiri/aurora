@@ -166,30 +166,6 @@ export function useGrants(agentId: string) {
   });
 }
 
-export function useEffective(agentId: string) {
-  return useQuery({
-    queryKey: policyKeys.effective(agentId),
-    queryFn: () => unwrap(api.GET("/v1/agents/{agent}/effective", { params: { path: { agent: agentId } } })),
-    retry: false,
-  });
-}
-
-export function useToggleGrant(agentId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ secretId, grant }: { secretId: string; grant: boolean }) => {
-      const params = { params: { path: { agent: agentId, secret: secretId } } };
-      if (grant) return void (await unwrap(api.PUT("/v1/agents/{agent}/grants/secrets/{secret}", params)));
-      const { error, response } = await api.DELETE("/v1/agents/{agent}/grants/secrets/{secret}", params);
-      if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: policyKeys.grants(agentId) });
-      void qc.invalidateQueries({ queryKey: policyKeys.effective(agentId) });
-    },
-  });
-}
-
 // ---- pure helpers (unit tested) ----
 
 export interface DraftState {

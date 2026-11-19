@@ -18,8 +18,9 @@ import { inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { FormActions } from "@/components/ui/form";
 import { LockPill } from "@/components/ui/lock-pill";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList, ListRow } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { SettingField, SettingsCard, settingControlId } from "@/components/ui/setting-field";
 import { Switch } from "@/components/ui/switch";
 import { ApiError } from "@/lib/api/client";
@@ -335,9 +336,7 @@ export function SettingsStackForm({
               </Notice>
             ) : null}
             {error && !["stale_revision", "setting_locked", "settings_invalid"].includes(code ?? "") ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(error)}
-              </Notice>
+              <ErrorNotice error={error} />
             ) : null}
             {code === "settings_invalid" ? (
               <Notice tone="danger" role="alert">
@@ -613,13 +612,7 @@ function SettingRow({
     );
   } else if (s.schema.kind === "enum") {
     control = (
-      <select id={cid} className={inputClass} value={String(current ?? "")} onChange={(e) => setValue(s.key, e.target.value)}>
-        {(s.schema.options ?? []).map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
+      <Select id={cid} value={String(current ?? "")} onChange={(v) => setValue(s.key, v)} options={(s.schema.options ?? []).map((o) => ({ value: o, label: o }))} />
     );
   } else if (field && (kind === "int" || kind === "float" || kind === "duration")) {
     // A decimal setting (the rate multiplier) offers no lower bound: the schema's bounds are whole numbers and the

@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ErrorState, Loading } from "@/components/states";
 import { ApiError } from "@/lib/api/client";
@@ -415,11 +415,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           Approved. {reconnectLine(act.data.connections_reauth)}: their owners see a Reconnect action on the connections page.
         </Notice>
       ) : null}
-      {uninstallErr ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(uninstallErr)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={uninstallErr} />
 
       <Dialog open={rejecting} onOpenChange={setRejecting}>
         <DialogContent title="Reject plugin" description="Optionally tell others why.">

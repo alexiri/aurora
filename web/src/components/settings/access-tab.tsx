@@ -11,9 +11,10 @@ import { sourceText } from "@/lib/api/groups";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { matchesFilter, PickerFilter } from "@/components/ui/picker-filter";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
   useAccess,
@@ -26,7 +27,6 @@ import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
 import { AddPeople, WaitingList } from "./add-people";
 import { GroupAccess } from "./group-access";
 import { useWorkspaceOffboarding } from "@/lib/api/automations";
-import { errorMessage } from "@/lib/api/errors";
 
 type Role = "owner" | "approver" | "member";
 
@@ -90,25 +90,12 @@ function AddBinding({
           </select>
         </Field>
         <Field id="acc-add-role" label="Role">
-          <select
-            id="acc-add-role"
-            className={cn(inputClass, "w-40 max-w-full")}
-            value={role}
-            onChange={(e) => setRole(e.target.value as Role)}
-          >
-            <option value="member">member</option>
-            <option value="approver">approver</option>
-            <option value="owner">owner</option>
-          </select>
+          <Select id="acc-add-role" value={role} className="w-40 max-w-full" onChange={(v) => setRole(v as Role)} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
         </Field>
         <Button type="submit" disabled={!user || put.isPending} className="sm:mt-label-offset">
           Add
         </Button>
-        {put.error ? (
-          <Notice tone="danger" role="alert" className="basis-full">
-            {errorMessage(put.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={put.error} className="basis-full" />
       </form>
     </Section>
   );
@@ -261,11 +248,7 @@ export function AccessTab({
           />
         </div>
       ) : null}
-      {err ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(err)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={err} />
       {items.length === 0 && inherited.length === 0 ? (
         <EmptyState title="No one has access yet" />
       ) : (

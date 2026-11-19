@@ -4,10 +4,10 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ScopeLadder, type LadderAbove } from "@/components/ui/scope-ladder";
 import { usePatchWorkspace } from "@/lib/api/account";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import { byoOptionsFrom, useEffectiveGovernance, type ByoPosture } from "@/lib/api/governance";
 import type { Workspace } from "@/lib/api/queries";
 import { whoCanFromContacts } from "@/lib/who-can";
@@ -97,9 +97,7 @@ function ByoRow({ workspace, above }: { workspace: Workspace; above: Above | nul
                 </select>
               </Field>
               {patch.error && Object.keys(fe).length === 0 ? (
-                <Notice tone="danger" role="alert">
-                  {errorMessage(patch.error)}
-                </Notice>
+                <ErrorNotice error={patch.error} />
               ) : null}
               {saved ? (
                 <Notice tone="accent" role="status">

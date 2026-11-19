@@ -2,11 +2,10 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
-import { errorMessage } from "@/lib/api/errors";
 import { useDecideHostClaim, useHostClaims, type HostClaimConflict } from "@/lib/api/plugins";
 
 export function ConflictGroup({ c }: { c: HostClaimConflict }) {
@@ -65,9 +64,7 @@ export function ConflictGroup({ c }: { c: HostClaimConflict }) {
         })}
       </ItemList>
       {decide.isError ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(decide.error)}
-        </Notice>
+        <ErrorNotice error={decide.error} />
       ) : null}
     </li>
   );

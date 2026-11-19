@@ -8,6 +8,8 @@ import rehypeSlug from "rehype-slug";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
+import { useCopy, copyLabel } from "@/lib/use-copy";
+
 import { rehypeAlerts, rehypeFragmentLinks, sanitizeSchema } from "./markdown-pipeline";
 
 type Plugins = NonNullable<Options["remarkPlugins"]>;
@@ -122,19 +124,10 @@ function MdImg({ src, alt }: ComponentProps<"img"> & { node?: unknown }) {
 }
 
 function CopyButton({ text }: { text: string }) {
-  const [done, setDone] = useState(false);
+  const { state, copy } = useCopy(1500);
   return (
-    <button
-      type="button"
-      className="rounded px-1.5 py-0.5 text-xs text-muted hover:text-ink"
-      onClick={() => {
-        void navigator.clipboard?.writeText(text).then(() => {
-          setDone(true);
-          window.setTimeout(() => setDone(false), 1500);
-        });
-      }}
-    >
-      {done ? "Copied" : "Copy"}
+    <button type="button" className="rounded px-1.5 py-0.5 text-xs text-muted hover:text-ink" onClick={() => copy(text)}>
+      {copyLabel(state)}
     </button>
   );
 }

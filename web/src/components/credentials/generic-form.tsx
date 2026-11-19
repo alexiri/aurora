@@ -1,6 +1,7 @@
 "use client";
 
 import { Field, inputClass } from "@/components/ui/field";
+import { Select } from "@/components/ui/select";
 import { RECIPE_KINDS, type RecipeFields, type RecipeKind } from "@/lib/api/secrets";
 
 /** Per-kind recipe inputs; shared by create and metadata edit. */
@@ -27,13 +28,7 @@ export function RecipeFieldsInput({
   return (
     <>
       <Field id={`${idp}-kind`} label="Injection method">
-        <select id={`${idp}-kind`} className={inputClass} value={kind} onChange={(e) => onKind(e.target.value as RecipeKind)}>
-          {RECIPE_KINDS.map((k) => (
-            <option key={k.kind} value={k.kind}>
-              {k.label}
-            </option>
-          ))}
-        </select>
+        <Select id={`${idp}-kind`} value={kind} onChange={(v) => onKind(v as RecipeKind)} options={RECIPE_KINDS.map((k) => ({ value: k.kind, label: k.label }))} />
       </Field>
       {kind === "header" || kind === "query" ? (
         <>

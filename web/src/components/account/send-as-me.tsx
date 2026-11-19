@@ -13,8 +13,9 @@ import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { errorMessage } from "@/lib/api/errors";
 import type { UserLink } from "@/lib/api/channels";
 import {
@@ -91,18 +92,7 @@ function AddTokenDialog({
     >
       {integrations.length > 1 ? (
         <Field id="user-token-integration" label="Chat workspace">
-          <select
-            id="user-token-integration"
-            className={inputClass}
-            value={chosen}
-            onChange={(e) => setIntegration(e.target.value)}
-          >
-            {integrations.map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.label}
-              </option>
-            ))}
-          </select>
+          <Select id="user-token-integration" value={chosen} onChange={setIntegration} options={integrations.map((i) => ({ value: i.id, label: i.label }))} />
         </Field>
       ) : null}
       <Field id="user-token-value" label="Personal access token" error={text}>
@@ -168,11 +158,7 @@ function GrantDialog({
             ))}
           </ul>
         )}
-        {grant.error ? (
-          <Notice tone="danger" role="alert" className="mt-3">
-            {errorMessage(grant.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={grant.error} className="mt-3" />
         <div className="mt-4 flex justify-end">
           <DialogClose asChild>
             <Button variant="outline">Done</Button>
@@ -275,11 +261,7 @@ export function SendAsMeSection({ links, agents }: { links: UserLink[]; agents: 
         actions={tokens.data.length > 0 ? addButton : undefined}
       >
         <div className="space-y-3">
-          {revoke.error ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(revoke.error)}
-            </Notice>
-          ) : null}
+          <ErrorNotice error={revoke.error} />
           {tokens.data.length === 0 ? (
             <EmptyState
               title="Agents post as themselves unless you add a token."

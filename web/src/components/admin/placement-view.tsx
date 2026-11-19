@@ -12,6 +12,7 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Segmented } from "@/components/ui/segmented";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useAdminOrgs } from "@/lib/api/freeze";
 import { adminRoutes } from "@/lib/routes";
@@ -202,10 +203,7 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
                 </Field>
               ) : null}
               <Field id="pl-org-role" label="New users join as">
-                <select id="pl-org-role" className={inputClass} value={orgRole} onChange={(e) => setOrgRole(e.target.value as OrgRole)}>
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
-                </select>
+                <Select id="pl-org-role" value={orgRole} onChange={(v) => setOrgRole(v as OrgRole)} options={[{ value: "member", label: "Member" }, { value: "admin", label: "Admin" }]} />
               </Field>
             </FormSection>
 
@@ -262,16 +260,7 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
               {personal ? (
                 <>
                   <Field id="pl-personal-role" label="Their role in it">
-                    <select
-                      id="pl-personal-role"
-                      className={inputClass}
-                      value={personalRole}
-                      onChange={(e) => setPersonalRole(e.target.value as PersonalRole)}
-                    >
-                      <option value="owner">Owner</option>
-                      <option value="approver">Approver</option>
-                      <option value="member">Member</option>
-                    </select>
+                    <Select id="pl-personal-role" value={personalRole} onChange={(v) => setPersonalRole(v as PersonalRole)} options={[{ value: "owner", label: "Owner" }, { value: "approver", label: "Approver" }, { value: "member", label: "Member" }]} />
                   </Field>
                   <Field
                     id="pl-template"
