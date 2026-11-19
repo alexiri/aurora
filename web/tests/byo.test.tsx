@@ -143,8 +143,10 @@ describe("BYO tab of the governance page", () => {
     expect((screen.getByLabelText("Who may create BYO agents") as HTMLSelectElement).disabled).toBe(true);
     unmount();
     wrap(<OrgByo org={{ ...ORG, my_role: "member" }} />);
-    await screen.findByLabelText("Who may create BYO agents");
-    expect((screen.getByLabelText("Default source CIDR list") as HTMLTextAreaElement).disabled).toBe(true);
+    // (P5-POLISH-9, D-390) A member reads a sentence and who changes it: no form, not even a disabled one.
+    expect(await screen.findByTestId("member-byo")).toHaveTextContent(/Only workspace owners can run agents outside Aurora\./);
+    expect(screen.queryByLabelText("Who may create BYO agents")).toBeNull();
+    expect(screen.queryByLabelText("Default source CIDR list")).toBeNull();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 });

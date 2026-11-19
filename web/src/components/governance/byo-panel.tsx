@@ -27,6 +27,13 @@ const POSTURE_LABEL: Record<ByoPosture, string> = {
   disabled: "Disabled: no BYO agents; existing tokens are refused until it is loosened",
 };
 
+/** (P5-POLISH-9) A stored value in words, for the sentences and badges: "Owners only", not `owners_only`. */
+export const POSTURE_WORDS: Record<string, string> = { enabled: "Everyone", owners_only: "Owners only", disabled: "Disabled" };
+/** Where a value comes from, in words ("Administration" is the instance). */
+export const SOURCE_WORDS: Record<string, string> = { instance: "Administration", org: "this organization", workspace: "this workspace", default: "the default" };
+export const postureWords = (v: string) => POSTURE_WORDS[v] ?? v;
+export const sourceWords = (s: string) => SOURCE_WORDS[s] ?? s;
+
 const errorText = (m: string[]) => (m.length ? m.join(" ") : undefined);
 
 /**
@@ -75,8 +82,8 @@ export function ByoPanel({
         <h2 className="text-base font-semibold text-ink">BYO agents</h2>
         <p className="text-sm text-ink-2">
           Effective posture:{" "}
-          <Badge tone={effective.posture.value === "disabled" ? "danger" : "accent"}>{effective.posture.value}</Badge>{" "}
-          <span className="text-muted">set by {effective.posture.source}</span>
+          <Badge tone={effective.posture.value === "disabled" ? "danger" : "accent"}>{postureWords(effective.posture.value)}</Badge>{" "}
+          <span className="text-muted">set by {sourceWords(effective.posture.source)}</span>
         </p>
         <Field
           id="byo-posture"
@@ -91,7 +98,7 @@ export function ByoPanel({
             disabled={readOnly || postureLocked}
             onChange={(e) => set({ posture: e.target.value as ByoForm["posture"] })}
           >
-            <option value="">Inherit the instance floor ({b.floor})</option>
+            <option value="">Same as Administration ({postureWords(b.floor)})</option>
             {options.map((p) => (
               <option key={p} value={p}>
                 {POSTURE_LABEL[p]}
@@ -108,7 +115,7 @@ export function ByoPanel({
           <Badge tone={age.value == null ? "neutral" : "accent"} data-testid="effective-max-age">
             {age.value == null ? "No limit" : `${age.value} days`}
           </Badge>{" "}
-          <span className="text-muted">set by {age.source}</span>
+          <span className="text-muted">set by {sourceWords(age.source)}</span>
           {b.instanceMaxAgeDays != null ? (
             <>
               {" "}
