@@ -195,3 +195,10 @@ must not change meaning.
 - **#5 done.** Workspace slugs dropped from the organization home.
 - **Open:** the **Ask** button next to the who-can line (no contact/mention path for a button exists; the line names the
   owners as text) and "default <model>" on the key row (no API field for the default model).
+
+### Pass-2 fixes (lane b, P5-POLISH-11 pass 2, 2026-11-19)
+
+- **#1.** A member's AI models key row uses the "AI" tile of the Accounts rows, not the robot icon
+  (`governance/org-governance.tsx`).
+- **#2.** Organization home sorts the workspaces by name (personal ones were already by owner name).
+- Tests: vitest files around the touched code (27 files, 400 passed); typecheck and eslint green.

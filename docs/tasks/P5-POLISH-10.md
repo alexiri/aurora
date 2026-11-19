@@ -285,3 +285,17 @@ Gates: `pnpm typecheck` clean; eslint on the touched files clean; vitest `setup-
 `polish-11-review-fixes` green. Playwright (`--project mocked`, port 4217): `p5-polish-10`, `placement`,
 `admin-settings`, `onboarding-journeys`, `fix-127-mattermost` — 101 passed.
 
+
+### Pass-2 fixes (lane b, P5-POLISH-11 pass 2, 2026-11-19)
+
+- **#1 flow.** A done AI-key row shows the existing `BackfillOffer` (new `afterKey` wording: "1 person signed in before
+  the key." + "Give their agent the key too", pluralised) when `/v1/admin/setup` reports
+  `personal_workspaces_without_starter > 0`; the toast after adding a key carries the same offer (and stays until
+  dismissed while an offer is shown). One component, no copy.
+- **#2.** Dropped `-mt-3` on the checklist header; "n of 5" is `whitespace-nowrap`.
+- **#3.** Health view: one "Apps people can't sign in to yet" heading: the token line moves into the Needs-you group
+  (the stand-alone section remains only when nothing is blocked).
+- **#4.** A done AI-key row has no button (no "Add another"); done rows use ghost (plain text) buttons.
+- **#5** not done (owner decision).
+- Tests: `tests/setup-checklist.test.tsx` (new case) and the 27 vitest files around the touched code, 400 passed;
+  `pnpm typecheck` and eslint on touched files green. Playwright not run.

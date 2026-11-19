@@ -66,7 +66,7 @@ describe("tab values", () => {
 describe("error links", () => {
   it("no_model_key opens LLM keys and offers Agent access to owners; no_default_model opens Instructions", () => {
     const a = errorCopy("no_model_key");
-    expect(a.link).toMatchObject({ label: "Open LLM keys", path: "credentials", tab: "llm" });
+    expect(a.link).toMatchObject({ label: "Open AI keys", path: "credentials", tab: "llm" });
     expect(a.extra).toMatchObject({ label: "Agent access", path: "access", ownerOnly: true });
     const b = errorCopy("no_default_model");
     expect(b.message).toBe("This agent has an LLM key, but Aurora could not pick a model for it.");

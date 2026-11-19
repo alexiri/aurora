@@ -205,14 +205,14 @@ describe("transcript", () => {
     mock();
     pane();
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("no usable LLM key");
+    expect(alert.textContent).toContain("no usable AI key");
     expect(alert.textContent).toContain("1 granted key not usable (origin_unverified)");
-    expect(within(alert).getByRole("link", { name: "Open LLM keys" }).getAttribute("href")).toBe("/o/x/w/y/apps?tab=accounts&kind=ai-key");
+    expect(within(alert).getByRole("link", { name: "Open AI keys" }).getAttribute("href")).toBe("/o/x/w/y/apps?tab=accounts&kind=ai-key");
     // Not an owner (the workspace did not load): no "Agent access" link.
     expect(within(alert).queryByRole("link", { name: "Agent access" })).toBeNull();
   });
 
-  it("gives workspace owners the Agent access link next to Open LLM keys", async () => {
+  it("gives workspace owners the Agent access link next to Open AI keys", async () => {
     st.events = [e(1, "error", { turn_id: "t1", code: "no_model_key", message: "No LLM key is granted to this agent." })];
     mock({ "GET /v1/workspaces/w": () => json(200, { id: "w", org_id: "o", my_role: "owner" }) });
     pane();

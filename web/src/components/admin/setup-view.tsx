@@ -38,6 +38,12 @@ import { SshLine } from "./ssh-line";
 /** How many steps there are (D-391): builtin apps arrive approved, so there is no approval step. */
 export const SETUP_STEPS = 5;
 
+/** The toast after a key is added: what happened, and how many people signed in before the key (the backfill offer). */
+interface Toast {
+  text: string;
+  waiting: number;
+}
+
 type StepId = "signin" | "placement" | "key" | "try" | "email";
 
 interface Row {
@@ -115,7 +121,7 @@ function putWithStarters(v: Placement, starters: { kind: "secret" | "connection"
 const startersAllowed = (p: Placement) => p.saved && p.mode === "shared_org" && p.personal_workspace.enabled;
 
 /** (C-922) People who signed in before the starter grant existed: one click gives them the key too. Idempotent. */
-function BackfillOffer({ waiting }: { waiting: number }) {
+function BackfillOffer({ waiting, afterKey = false }: { waiting: number; afterKey?: boolean }) {
   const backfill = useBackfillStarterGrants();
   if (backfill.data) {
     return (
@@ -129,10 +135,14 @@ function BackfillOffer({ waiting }: { waiting: number }) {
   return (
     <div className="space-y-2">
       <p className="text-sm text-ink-2">
-        {waiting === 1 ? "1 person signed in before and their agent can't use the key yet." : `${waiting} people signed in before and their agents can't use the key yet.`}
+        {afterKey
+          ? `${waiting === 1 ? "1 person signed in" : `${waiting} people signed in`} before the key.`
+          : waiting === 1
+            ? "1 person signed in before and their agent can't use the key yet."
+            : `${waiting} people signed in before and their agents can't use the key yet.`}
       </p>
       <Button variant="outline" size="sm" disabled={backfill.isPending} onClick={() => backfill.mutate()}>
-        Also give it to the {waiting} {waiting === 1 ? "person" : "people"} who signed in before
+        {afterKey ? `Give their ${waiting === 1 ? "agent" : "agents"} the key too` : `Also give it to the ${waiting} ${waiting === 1 ? "person" : "people"} who signed in before`}
       </Button>
       <ErrorNotice error={backfill.error} />
     </div>
@@ -203,7 +213,7 @@ function ChecklistRow({ n, row, action, primary }: { n: number; row: Row; action
 }
 
 /** The checklist: five rows, each one state and one button. */
-function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup: SetupStatus; tryIt: ReturnType<typeof useTryIt>; toast: string | null; onKeyAdded: () => void; onDismissToast: () => void }) {
+function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup: SetupStatus; tryIt: ReturnType<typeof useTryIt>; toast: Toast | null; onKeyAdded: () => void; onDismissToast: () => void }) {
   const placement = usePlacement();
   const org = placement.data?.default_org ?? null;
   // (P5-POLISH-11) No request before the placement names an organization (it was GET /v1/orgs//secrets → 400).
@@ -213,6 +223,7 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
   const uploaded = usePlugins("pending_approval");
   const waiting = (uploaded.data?.items ?? []).filter((p) => p.origin !== "aurora").length;
   const you = setup.you;
+  const unserved = setup.personal_workspaces_without_starter ?? 0;
   const placed = setup.placement_saved && stepOf(setup, "placement")?.status !== "todo";
 
   const rows: Row[] = [
@@ -230,7 +241,16 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
       id: "key",
       title: "AI key",
       done: keyDone(setup),
-      summary: keyDone(setup) ? `${orgKey?.name ?? "The organization's key"} · every new agent gets it` : org ? "Add an organization AI key" : "Choose where new people land first",
+      summary: keyDone(setup) ? (
+        <>
+          {`${orgKey?.name ?? "The organization's key"} · every new agent gets it`}
+          {unserved > 0 ? (
+            <span className="mt-2 block" data-testid="key-backfill">
+              <BackfillOffer waiting={unserved} afterKey />
+            </span>
+          ) : null}
+        </>
+      ) : org ? "Add an organization AI key" : "Choose where new people land first",
     },
     { id: "try", title: "Try it", done: tryIt.replied, summary: "Say hello to your own agent" },
     {
@@ -243,7 +263,9 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
   ];
   const first = rows.findIndex((r) => !r.done && !r.optional);
   // The current step's button is filled, the others are outline (`after/e4.png`).
-  const linkButton = (i: number) => (i === first ? cn(buttonVariants({ variant: "primary", size: "sm" }), "text-on-primary!") : rowButton);
+  // A done row's button is plain text (Review, Change).
+  const linkButton = (i: number) =>
+    i === first ? cn(buttonVariants({ variant: "primary", size: "sm" }), "text-on-primary!") : rows[i]!.done ? cn(buttonVariants({ variant: "ghost", size: "sm" })) : rowButton;
   const actions: Record<StepId, ReactNode> = {
     signin: (
       <Link href={adminRoutes.signIn()} className={linkButton(0)}>
@@ -255,9 +277,9 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
         {placed ? "Change" : "Choose"}
       </Link>
     ),
-    key: (
+    key: rows[2]!.done ? null : (
       <Button variant={first === 2 ? "primary" : "outline"} size="sm" disabled={!org || !placement.data?.saved} onClick={() => setKeyOpen(true)}>
-        {rows[2]!.done ? "Add another" : "Add key"}
+        Add key
       </Button>
     ),
     try: (
@@ -266,7 +288,7 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
       </Link>
     ),
     email: (
-      <Link href={adminRoutes.platform("email")} className={rowButton}>
+      <Link href={adminRoutes.platform("email")} className={rows[4]!.done ? cn(buttonVariants({ variant: "ghost", size: "sm" })) : rowButton}>
         {rows[4]!.done ? "Review" : "Set up"}
       </Link>
     ),
@@ -276,15 +298,18 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
     <div className="space-y-4">
       {toast ? (
         <Notice tone="accent" role="status" className="flex items-center justify-between gap-3" data-testid="setup-toast">
-          <span>{toast}</span>
+          <span className="space-y-2">
+            <span className="block">{toast.text}</span>
+            {toast.waiting > 0 ? <BackfillOffer waiting={toast.waiting} afterKey /> : null}
+          </span>
           <button type="button" className="text-sm font-medium underline" onClick={onDismissToast}>
             Dismiss
           </button>
         </Notice>
       ) : null}
-      <div className="-mt-3 flex items-center justify-between gap-3 text-sm text-ink-2">
+      <div className="flex items-center justify-between gap-3 text-sm text-ink-2">
         <span>Five steps from a fresh install to your first answer.</span>
-        <span id="setup-progress-label">{`${done} of ${SETUP_STEPS}`}</span>
+        <span id="setup-progress-label" className="whitespace-nowrap">{`${done} of ${SETUP_STEPS}`}</span>
       </div>
       <Meter ratio={done / SETUP_STEPS} role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={SETUP_STEPS} aria-valuenow={done} />
       <Card className="overflow-hidden p-0 sm:p-0">
@@ -385,7 +410,7 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
             </h2>
             <p className="text-sm text-ink-2">Each item says what is missing and opens the page that fixes it.</p>
           </div>
-          <SignInGaps gaps={blocked} where={{ level: "admin", orgSlug }} />
+          <SignInGaps gaps={blocked.length > 0 ? gaps : blocked} where={{ level: "admin", orgSlug }} />
           {noMail ? (
             <div data-reason="email_not_configured">
               <StatusLine
@@ -402,7 +427,7 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
           ) : null}
         </section>
       ) : null}
-      {gaps.some((g) => g.tokenOnly) ? <SignInGaps gaps={gaps.filter((g) => g.tokenOnly)} where={{ level: "admin", orgSlug }} /> : null}
+      {blocked.length === 0 && gaps.some((g) => g.tokenOnly) ? <SignInGaps gaps={gaps.filter((g) => g.tokenOnly)} where={{ level: "admin", orgSlug }} /> : null}
       <Card className="p-0">
         <h2 className="px-4 pt-4 font-display text-base font-semibold text-ink">Health</h2>
         <ul aria-label="Health" className="divide-y divide-line">
@@ -463,9 +488,9 @@ export function SetupView() {
   const tryIt = useTryIt();
   // `null` = automatic: the health view when the required steps are done. A choice (or a step just finished) pins it.
   const [view, setView] = useState<View | null>(params.get("setup") === "1" ? "checklist" : null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || toast.waiting > 0) return;
     const t = window.setTimeout(() => setToast(null), 8000);
     return () => window.clearTimeout(t);
   }, [toast]);
@@ -477,7 +502,7 @@ export function SetupView() {
     setView("checklist");
     await qc.invalidateQueries({ queryKey: onboardingKeys.setup });
     const fresh = qc.getQueryData<SetupStatus>(onboardingKeys.setup);
-    setToast(fresh ? `AI key added. ${doneCount(fresh, tryIt.replied)} of ${SETUP_STEPS} done.` : "AI key added.");
+    setToast({ text: fresh ? `AI key added. ${doneCount(fresh, tryIt.replied)} of ${SETUP_STEPS} done.` : "AI key added.", waiting: fresh?.personal_workspaces_without_starter ?? 0 });
   }
 
   return (

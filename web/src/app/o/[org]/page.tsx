@@ -19,7 +19,7 @@ export default function OrgPage() {
   if (resolved.isPending) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
   const items = workspaces.data?.items ?? [];
-  const shared = items.filter((w) => !w.personal_of);
+  const shared = items.filter((w) => !w.personal_of).sort((a, b) => workspaceDisplayName(a, me.data?.user).localeCompare(workspaceDisplayName(b, me.data?.user)));
   const personal = items.filter((w) => !!w.personal_of).sort((a, b) => (a.personal_of?.name ?? "").localeCompare(b.personal_of?.name ?? ""));
   const row = (w: (typeof items)[number]) => (
     <ListRow key={w.id} className="p-0 sm:px-0">

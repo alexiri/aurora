@@ -201,3 +201,11 @@ changes are small but must be checked everywhere they show.
   input, textarea or select of the body, else the dialog; Close is no longer the autofocus target. A caller's own
   `onOpenAutoFocus` still runs first and wins by `preventDefault()`. Test: `tests/polish-11-review-fixes.test.tsx`
   (field focused, Close not; no field → the dialog).
+
+### Pass-2 fixes (lane b, P5-POLISH-11 pass 2, 2026-11-19)
+
+- **#1.** `ui/menu.tsx`'s `Menu` is a wrapper over the Radix root with `modal={false}` by default (no more
+  `aria-hidden` on the focusable page); a caller passing `modal` keeps it. Esc and focus return are Radix's, unchanged.
+- **Words.** The chat error for an agent without a key reads "This agent has no usable AI key." and "Open AI keys"
+  (links kept); specs in `chat-v2`, `credential-access` and `e2e/chat-v2.spec.ts` updated.
+- Tests: the same 27 vitest files (400 passed), typecheck and eslint green. Playwright not run.

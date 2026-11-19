@@ -134,6 +134,15 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     expect(done.dataset.done).toBe("true");
   });
 
+  it("a done AI key row has no button, and offers the backfill when people signed in before the key (P5-POLISH-11 pass 2)", async () => {
+    world({ status: keyOk(setupStatus({ personal_workspaces_without_starter: 1 })), keys: [llmSecret("k9", "Users AI gateway")] });
+    wrap(<SetupView />);
+    const done = await row("key");
+    expect(await within(done).findByText("1 person signed in before the key.")).toBeInTheDocument();
+    expect(within(done).getByRole("button", { name: "Give their agent the key too" })).toBeEnabled();
+    expect(within(done).queryByRole("button", { name: "Add another" })).toBeNull();
+  });
+
   it("Try it is done once the admin's agent has answered", async () => {
     world({ replied: true });
     wrap(<SetupView />);
