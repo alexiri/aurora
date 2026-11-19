@@ -1,9 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AgentPage } from "@/components/agents/agent-page";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // The Terminal tab (P4-TERM, C-622): tab gating (hosted + `features.terminal` only), the
 // freeze notice, and the CSP's `'wasm-unsafe-eval'` in `script-src` (proxy.ts). The wterm
@@ -85,12 +85,6 @@ const org = {
   settings: { previews_enabled: true },
 };
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-
 function mockFetch(features: { terminal: boolean }) {
   const fn = vi.fn(async (input: Request | string | URL) => {
     const req = input instanceof Request ? input : new Request(new URL(String(input), "http://localhost"));
@@ -114,16 +108,9 @@ function mockFetch(features: { terminal: boolean }) {
   return fn;
 }
 
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
 afterEach(() => {
-  cleanup();
   // Switching sections writes `?tab=` to the URL; the next test starts on the default page.
   window.history.replaceState(null, "", "/");
-  vi.unstubAllGlobals();
 });
 
 describe("Terminal tab gating (C-622)", () => {

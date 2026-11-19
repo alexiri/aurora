@@ -1,8 +1,8 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { mockApi, readinessEmpty } from "./support/mock-api";
 import { overflow, type Scheme } from "./support/open";
+import { serious } from "./support/axe";
 
 // P4-ONB-2 (D-141): the instance setup wizard, the Welcome page and guide, and the tour, with the API mocked
 // (no backend). Screenshots of each screen in both themes at 1280 and 390 px go to test-results/ (testInfo.outputPath);
@@ -16,13 +16,6 @@ async function settle(page: Page) {
     await document.fonts.ready;
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   });
-}
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
 }
 
 type Scenario = "wizard" | "welcome-key" | "welcome-ready" | "overview-guide";

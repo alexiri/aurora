@@ -1,16 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { OrgRetentionForm } from "@/components/org/retention-form";
+import { json } from "./support/api";
 
 interface Call {
   method: string;
   path: string;
   body: unknown;
 }
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 function mock(routes: Record<string, () => Response>) {
   const calls: Call[] = [];
@@ -46,11 +45,6 @@ const RETENTION = {
   attachment_quota_mib_max: 102400,
   attachment_quota_mib_effective: 51200,
 };
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("organization retention form (P5-IA-4, C-969)", () => {
   it("shows Administration's maximums above one form", async () => {

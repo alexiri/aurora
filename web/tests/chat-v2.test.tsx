@@ -1,9 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPane, ChatTab } from "@/components/agents/chat-tab";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // D-102 / P2-UI-5: the messaging layout. Behaviours that existed before (RFE-009/010/012/015, follow-ups, Stop,
 // the live line, door chips, `no_model_key`) are covered here against the new markup; the pure grouping,
@@ -25,8 +25,6 @@ vi.mock("@/lib/chat/use-transcript", () => ({
   }),
 }));
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const conv = (id: string, kind: string, over: Record<string, unknown> = {}) => ({
   id, agent_id: "a1", kind, external_ref: id, title: null, direct_user_id: null, direct_user: null, origin_conversation_id: null,
   last_seq: 0, app_turn_streak: 0, app_turn_capped: false, active_turn: null, last_activity_at: null, archived_at: null,
@@ -48,10 +46,6 @@ function mock(routes: Record<string, () => Response> = {}) {
   );
   return calls;
 }
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 const pane = (props: Record<string, unknown> = {}) =>
   wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} agent={{ id: "a1", name: "Daneel", handle: "daneel", brief: "Triage the team's pull requests." }} {...props} />);
 
@@ -66,8 +60,6 @@ beforeEach(() => {
   st.live = true;
 });
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   window.history.replaceState(null, "", "/");
 });
 

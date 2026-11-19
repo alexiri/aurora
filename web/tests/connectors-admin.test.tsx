@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(""),
@@ -12,8 +14,6 @@ vi.mock("next/navigation", () => ({
 import { AddConnectorFlow } from "@/components/connectors/add-connector";
 import { ConnectorsAdminView } from "@/components/connectors/connectors-admin-view";
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const err = (status: number, code: string, message = code, details?: unknown) =>
   json(status, { error: { code, message, details } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
@@ -35,14 +35,6 @@ function mockFetch(routes: Record<string, Handler>) {
   );
   return calls;
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const T = "2026-01-01T00:00:00Z";
 

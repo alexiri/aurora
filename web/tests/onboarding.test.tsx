@@ -1,7 +1,7 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "ops" }),
@@ -17,8 +17,6 @@ import { Tour } from "@/components/onboarding/tour";
 import { startTour } from "@/components/onboarding/tour-events";
 import { EmptyState } from "@/components/states";
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 let calls: { key: string; body: unknown }[];
 let routes: Record<string, Handler>;
@@ -42,15 +40,8 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The getting-started guide

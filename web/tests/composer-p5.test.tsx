@@ -1,14 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Composer, pastedName } from "@/components/chat/composer";
 import { clearDrafts, draftKey, loadDraft, saveDraft } from "@/components/chat/composer/drafts";
 import type { TranscriptState } from "@/lib/chat/transcript";
+import { json } from "./support/api";
 
 // P5-CHAT-3: formatting, shortcuts, fence-aware Enter, list continuation, Preview, emoji, files-only send, drafts.
 
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const state = { events: [], deltas: {}, activity: {}, purged: {}, lastSeq: 0 } as unknown as TranscriptState;
 const ATT = {
   id: "att1",
@@ -62,8 +62,6 @@ beforeEach(() => {
   mock();
 });
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 

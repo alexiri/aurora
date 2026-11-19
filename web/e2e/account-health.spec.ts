@@ -1,19 +1,12 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { agent, id, mockApi, now, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // P5-UX-14 (D-335, D-350, C-943..C-945, C-985; docs/14 §Agents, accounts and access §7): the health line on an account's
 // row with its fix, Test in the row's menu replacing the line, and the agent's header counting the accounts that need
 // attention. Both themes at 1280 px and 390 px, no horizontal scroll, axe (serious and critical) clean.
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 const C_PG = id(51);
 const C_AWS = id(52);

@@ -1,20 +1,18 @@
 // (FIX-154, D-306(c), C-897) Credential-free apps: the agent's Access tab lists them with Give access (saved through
 // PUT …/grants/apps/{app}); the connect dialog has no form and connects and grants in one action.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccountsList } from "@/components/accounts/accounts-list";
 import { ConnectDialog } from "@/components/apps/connect-dialog";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main" }),
   useSearchParams: () => new URLSearchParams(""),
 }));
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 let calls: { key: string; body: unknown }[];
 let routes: Record<string, Handler>;
@@ -37,14 +35,6 @@ beforeEach(() => {
     }),
   );
 });
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 
 const now = "2026-01-01T00:00:00Z";
 const AGENT = "a0000000-0000-4000-8000-000000000011";

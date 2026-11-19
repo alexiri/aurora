@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError } from "./client";
+import { retryUnlessClientError } from "./errors";
 import type { components } from "./schema";
 
 type Schemas = components["schemas"];
@@ -43,10 +44,6 @@ async function call<T>(url: string, method: string, body?: unknown): Promise<T> 
   return (await res.json()) as T;
 }
 
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
-
 export const scimKeys = {
   settings: (org: string) => ["orgs", org, "scim"] as const,
   tokens: (org: string) => ["orgs", org, "scim", "tokens"] as const,
@@ -58,7 +55,7 @@ export function useScimSettings(orgId: string | undefined) {
     queryKey: scimKeys.settings(orgId ?? ""),
     queryFn: () => call<ScimSettings>(`/v1/orgs/${orgId}/scim`, "GET"),
     enabled: !!orgId,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -67,7 +64,7 @@ export function useScimTokens(orgId: string | undefined, enabled: boolean) {
     queryKey: scimKeys.tokens(orgId ?? ""),
     queryFn: () => call<{ tokens: ScimTokenEntry[] }>(`/v1/orgs/${orgId}/scim/tokens`, "GET"),
     enabled: !!orgId && enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -76,7 +73,7 @@ export function useScimStatus(orgId: string | undefined, enabled: boolean) {
     queryKey: scimKeys.status(orgId ?? ""),
     queryFn: () => call<ScimStatus>(`/v1/orgs/${orgId}/scim/status`, "GET"),
     enabled: !!orgId && enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 

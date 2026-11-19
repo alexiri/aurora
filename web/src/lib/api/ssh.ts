@@ -6,6 +6,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, api } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -29,42 +31,27 @@ export const sshSessions = {
   terminators: ["admin", "terminators"] as const,
 };
 
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) && count < 1;
-
 /** The caller's keys, newest first. */
 export function useSshKeys(enabled = true) {
   return useQuery({
     queryKey: sshKeys.list,
     queryFn: async () => (await unwrap(api.GET("/v1/me/ssh-keys"))).keys,
     enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function useAddSshKey() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: S["CreateSshKeyRequest"]) => unwrap(api.POST("/v1/me/ssh-keys", { body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: sshKeys.list }),
-  });
+  return useInvalidatingMutation((body: S["CreateSshKeyRequest"]) => unwrap(api.POST("/v1/me/ssh-keys", { body })), sshKeys.list);
 }
 
 export function useRenameSshKey() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, name }: { id: string; name: string }) =>
-      unwrap(api.PATCH("/v1/me/ssh-keys/{id}", { params: { path: { id } }, body: { name } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: sshKeys.list }),
-  });
+  return useInvalidatingMutation(({ id, name }: { id: string; name: string }) =>
+    unwrap(api.PATCH("/v1/me/ssh-keys/{id}", { params: { path: { id } }, body: { name } })), sshKeys.list);
 }
 
 export function useDeleteSshKey() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => unwrap(api.DELETE("/v1/me/ssh-keys/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: sshKeys.list }),
-  });
+  return useInvalidatingMutation((id: string) => unwrap(api.DELETE("/v1/me/ssh-keys/{id}", { params: { path: { id } } })), sshKeys.list);
 }
 
 /** Address, certificate lifetime and the terminators' host keys (`terminators_live` is 0 until one registers). */
@@ -73,7 +60,7 @@ export function useSshFacts(enabled = true) {
     queryKey: sshKeys.facts,
     queryFn: () => unwrap(api.GET("/v1/ssh")),
     enabled,
-    retry,
+    retry: retryUnlessClientError,
     // A terminator may register while the page is open.
     refetchInterval: 30_000,
   });
@@ -99,7 +86,7 @@ export function useMySshSessions(enabled = true) {
     queryKey: sshSessions.mine,
     queryFn: async () => (await unwrap(api.GET("/v1/me/ssh-sessions"))).sessions,
     enabled,
-    retry,
+    retry: retryUnlessClientError,
     refetchInterval: SESSIONS_REFRESH_MS,
   });
 }
@@ -110,7 +97,7 @@ export function useAgentSshSessions(agent: string, enabled = true) {
     queryKey: sshSessions.agent(agent),
     queryFn: async () => (await unwrap(api.GET("/v1/agents/{agent}/ssh-sessions", { params: { path: { agent } } }))).sessions,
     enabled,
-    retry,
+    retry: retryUnlessClientError,
     refetchInterval: SESSIONS_REFRESH_MS,
   });
 }
@@ -133,7 +120,7 @@ export function useTerminators(enabled = true) {
     queryKey: sshSessions.terminators,
     queryFn: async () => (await unwrap(api.GET("/v1/admin/terminators"))).terminators,
     enabled,
-    retry,
+    retry: retryUnlessClientError,
     refetchInterval: 30_000,
   });
 }

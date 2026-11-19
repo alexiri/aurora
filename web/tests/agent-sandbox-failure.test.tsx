@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "ops", handle: "scout" }),
@@ -15,8 +16,6 @@ vi.mock("@/components/agents/delete-zone", () => ({ DeleteAgentDialog: () => nul
 import { AgentPage } from "@/components/agents/agent-page";
 import { ComputerTab } from "@/components/agents/computer-tab";
 
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req?: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   // `openapi-fetch` passes a Request; `chatApi` (sandbox/restart) passes a string + init.
@@ -30,10 +29,6 @@ function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal("fetch", fn);
   return fn;
 }
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const agent = {
   id: "a1", handle: "scout", name: "Scout", kind: "hosted", is_default: false, avatar_url: null, brief: null,

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { OrgAuditView } from "@/components/org/audit-view";
 
@@ -20,11 +20,6 @@ const entry = (id: string, action: string, critical: boolean) => ({
   metadata: {},
   critical,
   created_at: "2026-11-08T10:00:00Z",
-});
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 describe("OrgAuditView (RFE-008)", () => {

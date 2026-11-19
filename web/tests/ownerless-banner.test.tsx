@@ -1,11 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { OwnerlessBanner } from "@/components/admin/ownerless-banner";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 function mockOverview(body: unknown) {
   vi.stubGlobal(
@@ -13,16 +11,6 @@ function mockOverview(body: unknown) {
     vi.fn(async () => json(200, body)),
   );
 }
-
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 // FIX-050 (C-630): the Admin warning banner names the ownerless organizations and how to repair
 // them, and stays hidden when there are none (the field is absent on such responses).

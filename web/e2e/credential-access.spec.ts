@@ -1,9 +1,9 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 import { agent, id, mockApi, now } from "./support/mock-api";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // FIX-021 (D-136, D-137; docs/14 §Credentials, §Agent page › Access): the "Give agents access" step after creating
 // an LLM key, the row Access dialog, and the Model readiness section. Both themes at 1280 px and 390 px, no
@@ -11,13 +11,6 @@ import { overflow } from "./support/open";
 
 const SHOTS = "/tmp/aurora-screens/fix-021";
 mkdirSync(SHOTS, { recursive: true });
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 const second = { ...agent, id: id(12), handle: "giskard", name: "Giskard", is_default: false };
 const llmKey = {

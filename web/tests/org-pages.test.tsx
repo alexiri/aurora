@@ -1,20 +1,14 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { InviteForm } from "@/components/org/invite-dialog";
 import { MemberRow } from "@/components/org/members-view";
 import { OrgDangerZone } from "@/components/org/settings-view";
 import { canManageMember, roleOptions, validateInvite } from "@/lib/api/org";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 function mockFetch(routes: Record<string, () => Response>) {
   const fn = vi.fn(async (input: Request | string | URL) => {
@@ -26,16 +20,6 @@ function mockFetch(routes: Record<string, () => Response>) {
   vi.stubGlobal("fetch", fn);
   return fn;
 }
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("role-change options", () => {
   it("owner viewer may assign any role", () => {

@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -10,10 +12,6 @@ export type PluginPackage = components["schemas"]["PluginPackage"];
 export type PluginViolation = components["schemas"]["PluginViolation"];
 export type HostClaimConflict = components["schemas"]["HostClaimConflict"];
 export type TrustedKey = components["schemas"]["TrustedKey"];
-
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
 
 export const pluginKeys = {
   all: ["admin", "plugins"] as const,
@@ -32,7 +30,7 @@ export function usePlugins(status: string) {
           params: { query: { ...(status ? { status } : {}), limit: 200 } },
         }),
       ),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -40,7 +38,7 @@ export function usePlugin(id: string) {
   return useQuery({
     queryKey: pluginKeys.one(id),
     queryFn: () => unwrap(api.GET("/v1/admin/plugins/{id}", { params: { path: { id } } })),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -105,23 +103,19 @@ export function usePluginAction(id: string) {
 }
 
 export function useUninstallPlugin(id: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (force: boolean) =>
-      unwrap(
-        api.DELETE("/v1/admin/plugins/{id}", {
-          params: { path: { id }, query: force ? { force: true } : {} },
-        }),
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: pluginKeys.all }),
-  });
+  return useInvalidatingMutation((force: boolean) =>
+    unwrap(
+      api.DELETE("/v1/admin/plugins/{id}", {
+        params: { path: { id }, query: force ? { force: true } : {} },
+      }),
+    ), pluginKeys.all);
 }
 
 export function useHostClaims() {
   return useQuery({
     queryKey: pluginKeys.claims,
     queryFn: () => unwrap(api.GET("/v1/admin/host-claims")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -152,7 +146,7 @@ export function useTrustedKeys() {
   return useQuery({
     queryKey: pluginKeys.keys,
     queryFn: () => unwrap(api.GET("/v1/admin/trusted-keys", { params: { query: { limit: 200 } } })),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -166,10 +160,6 @@ export function useAddTrustedKey() {
 }
 
 export function useRevokeTrustedKey() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      unwrap(api.DELETE("/v1/admin/trusted-keys/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin"] }),
-  });
+  return useInvalidatingMutation((id: string) =>
+    unwrap(api.DELETE("/v1/admin/trusted-keys/{id}", { params: { path: { id } } })), ["admin"]);
 }

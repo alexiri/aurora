@@ -7,6 +7,7 @@ import { AccountsList } from "@/components/accounts/accounts-list";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import RedirectPage from "../src/app/o/[org]/w/[ws]/apps/[app]/connect/page";
+import { json } from "./support/api";
 
 // FIX-149 (D-272, C-842): Connect and Reconnect are real dialogs on the page; every dialog has a close icon; the OAuth
 // sign-in is the one separate window, and its result comes back over a BroadcastChannel.
@@ -48,9 +49,6 @@ class FakeChannel {
 }
 const emit = (data: unknown) => act(() => new FakeChannel("aurora-connect").postMessage(data));
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-
 function wrap(ui: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return { qc, ...render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>) };
@@ -63,14 +61,12 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/o/acme/w/main/credentials");
 });
 afterEach(() => {
-  cleanup();
   search = "";
   replace.mockReset();
   openSpy.mockReset();
   FakeChannel.open.clear();
   FakeChannel.sent = [];
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
 describe("every dialog has a close icon", () => {

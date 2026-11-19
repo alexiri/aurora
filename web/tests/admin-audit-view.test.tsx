@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { AdminAuditView } from "@/components/admin/audit-view";
 
@@ -21,11 +21,6 @@ const entry = (id: string, action: string, org: string | null) => ({
   metadata: {},
   critical: action === "trusted_key.create",
   created_at: "2026-11-08T10:00:00Z",
-});
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 describe("AdminAuditView (FIX-125)", () => {

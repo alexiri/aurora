@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -15,15 +15,13 @@ import { useBlockedHosts } from "@/lib/api/governance";
 import { useInvitations, useOrgKeys } from "@/lib/api/org";
 import { fetchAllPages, MAX_PAGES } from "@/lib/api/paging";
 import { useWorkspaces } from "@/lib/api/queries";
+import { json } from "./support/api";
 
 // FIX-117: every list hook follows `next_cursor`; a two-page mock must yield both pages' rows.
 
 vi.mock("@/lib/chat/use-transcript", () => ({
   useTranscript: () => ({ state: { events: [], deltas: {}, activity: {}, lastSeq: 0 }, loading: false, error: null, live: true }),
 }));
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 /** Serves `path` as two pages: no cursor → page 1 (`next_cursor: "c2"`), `cursor=c2` → page 2. Records every URL. */
 function twoPages(path: string, mk: (page: 1 | 2) => Record<string, unknown>) {
@@ -57,8 +55,6 @@ const rows = (page: 1 | 2, extra: (id: string) => Record<string, unknown>, prefi
 });
 
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   window.history.replaceState(null, "", "/");
 });
 

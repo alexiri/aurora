@@ -1,12 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { RenamesNotice } from "@/components/onboarding/renames-notice";
 import { movedRows, RENAMES_NOTICE, showWhatMoved } from "@/lib/moved";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 const calls: { key: string; body?: unknown }[] = [];
 function mockFetch(routes: Record<string, (body?: unknown) => Response>) {
@@ -33,11 +31,6 @@ function wrap() {
     </QueryClientProvider>,
   );
 }
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const onboarding = (notices_seen: string[]) => ({ welcome_seen: true, guide_dismissed: [], notices_seen, tour_completed_at: null });
 const world = (notices: string[], opts: { admin?: boolean; orgRole?: string; wsRole?: string } = {}) => {

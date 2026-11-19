@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LimitControl } from "@/components/accounts/limit-control";
 import { ConnectInWorkspaceDialog } from "@/components/apps/org-apps-list";
@@ -8,13 +8,13 @@ import { buildJourneyConnect, orgDoneSentence, orgStepsOf } from "@/components/a
 import { loweringSentences, splitWorkspaces } from "@/lib/accounts";
 import type { Account } from "@/lib/api/accounts";
 import type { ConnectMethod } from "@/lib/api/apps";
+import { json } from "./support/api";
 
 // (P5-UX-11, C-936, C-937, C-947, C-990) The organization's journey, its limit, the lowering confirmation and the
 // chooser's order.
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), useParams: () => ({ org: "acme" }) }));
 
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 let calls: { key: string; body: unknown }[];
 let routes: Record<string, Handler>;
@@ -35,10 +35,6 @@ beforeEach(() => {
       return h ? h(req, body) : json(404, { error: { code: "not_found", message: "nf" } });
     }),
   );
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 const wrap = (ui: React.ReactElement) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
 

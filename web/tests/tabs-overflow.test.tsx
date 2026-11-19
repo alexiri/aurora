@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -83,8 +83,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   if (original.offsetWidth) Object.defineProperty(HTMLElement.prototype, "offsetWidth", original.offsetWidth);
   else Reflect.deleteProperty(HTMLElement.prototype, "offsetWidth");
   if (original.clientWidth) Object.defineProperty(Element.prototype, "clientWidth", original.clientWidth);

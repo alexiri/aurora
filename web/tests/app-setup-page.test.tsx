@@ -1,7 +1,8 @@
 // (P5-UX-9, C-932, C-933, C-946) The per-app setup page in its two views, and the links from the lists to it.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { json } from "./support/api";
 
 const params = vi.hoisted(() => ({ value: {} as Record<string, string> }));
 vi.mock("next/navigation", () => ({
@@ -15,8 +16,6 @@ import { OrgAppSetupPage, WorkspaceAppSetupPage } from "@/components/apps/app-se
 import { AppsTab } from "@/components/apps/apps-tab";
 import { AppLink } from "@/components/apps/app-link";
 
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   const calls: { method: string; path: string; body?: unknown }[] = [];
@@ -38,8 +37,6 @@ const wrap = (ui: React.ReactElement) => {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 };
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   params.value = {};
 });
 

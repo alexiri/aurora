@@ -1,15 +1,14 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { RevisionHistory } from "@/components/memory/memory-tab";
 import { SizeMeter } from "@/components/memory/size-meter";
 import { SkillsEditor } from "@/components/skills/skills-view";
 import { canRedact, meter, type Memory, type MemoryRevision } from "@/lib/api/memory";
 import { buildTree, validateSkillName, validateSkillPath } from "@/lib/api/skills";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   const fn = vi.fn(async (input: Request | string | URL) => {
@@ -21,14 +20,6 @@ function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal("fetch", fn);
   return fn;
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const rev = (n: number, over: Partial<MemoryRevision> = {}): MemoryRevision => ({
   revision: n, author_kind: "user", author_label: "Ann", provenance: "dashboard", redacted: false,
