@@ -412,6 +412,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/llm-endpoint-warnings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Which model roles each configured LLM endpoint leaves unset, from the same resolution as an agent's
+         *     turn (C-1034). Only endpoints with at least one warning are listed; agents' own overrides are not
+         *     considered. Instance admins only.
+         */
+        get: operations["adminListLlmEndpointWarnings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/oauth-clients": {
         parameters: {
             query?: never;
@@ -6626,6 +6647,13 @@ export interface components {
             reason?: components["schemas"]["ToolReason"] | null;
             tool_id: string;
         };
+        /** @description (C-1029) An account of an app, with the agents that already use it. */
+        AppAccountRef: {
+            agent_ids: string[];
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         AppAvailability: {
             allow: components["schemas"]["AllowEntry"][];
             /** @description `open` | `restricted`. */
@@ -6734,6 +6762,13 @@ export interface components {
              */
             used_by_methods: components["schemas"]["MethodRef"][];
         };
+        /** @description (C-1029) An app's readiness in the catalogue. */
+        AppReadiness: {
+            /** @description The union of what the blocking methods need (empty when the app is switched off). */
+            needs?: components["schemas"]["SetupNeed"][];
+            state: components["schemas"]["ReadinessState"];
+            who_can?: components["schemas"]["WhoCan"] | null;
+        };
         /**
          * @description (phase 4, P4-GRANTS, D-123, C-410) The app's manifest restrictions, so clients can explain
          *     them: `custom_only` (no `full` grants) and `block_untooled` (requests matching no catalogue
@@ -6758,6 +6793,11 @@ export interface components {
             values: components["schemas"]["SetupValues"];
         };
         AppSummary: {
+            /**
+             * @description (C-1029) The workspace's accounts of this app the caller may give to an agent; only in the catalogue
+             *     list with a `workspace_id`.
+             */
+            accounts: components["schemas"]["AppAccountRef"][];
             app_id: string;
             /**
              * @description (phase 4, P4-GRANTS, D-123, C-414) the manifest's `grants` flags, so the dashboard can
@@ -6780,6 +6820,7 @@ export interface components {
             name: string;
             package_id: string;
             package_version: string;
+            readiness?: components["schemas"]["AppReadiness"] | null;
             /**
              * @description (phase 4, P4-GSL, D-149) the app declares a `library` block: it can serve a git skill
              *     library (the dashboard offers its org-scoped connections when connecting a repository).
@@ -8253,6 +8294,16 @@ export interface components {
             error_code?: string | null;
             sent: boolean;
         };
+        /**
+         * @description (P5-POLISH-3, D-385, C-1034) A role an endpoint leaves unset (or not allowed), for the endpoint's row in
+         *     Administration › AI models.
+         */
+        EndpointRoleWarning: {
+            /** @description `large` | `medium` | `small`. */
+            role: string;
+            /** @description `role_unset` | `role_not_allowed`. */
+            warning: string;
+        };
         /** @description Request body (C-779). */
         EndpointTestRequest: {
             /** @description One endpoint entry, as in `llm.endpoints` (TOML shape as JSON). */
@@ -8273,6 +8324,11 @@ export interface components {
              * @description The HTTP status of the answer.
              */
             status?: number | null;
+        };
+        /** @description An endpoint with at least one role warning. */
+        EndpointWarnings: {
+            endpoint_id: string;
+            roles: components["schemas"]["EndpointRoleWarning"][];
         };
         ErrorBody: {
             /** @description snake_case machine code. */
@@ -8813,17 +8869,38 @@ export interface components {
             /** @description (P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none. */
             model_roles: string[];
         };
-        /** @description C-944. Until P5-UX-14 adds the check fields: `sign_in_expired`, `disabled`, else `unknown`. */
+        /** @description C-944, amended by C-1033: `state` follows the account's status and what agents' real calls showed. */
         Health: {
-            /** Format: date-time */
-            checked_at?: string | null;
+            /**
+             * @description For `failing`: the word of what the app refuses (`token`, `password`, `key`) when `last_error` is
+             *     `rejected`; the host when it is `unreachable` (filled in by the caller).
+             */
             detail?: string | null;
+            last_error?: string | null;
+            /**
+             * Format: date-time
+             * @description The last failed agent call, and why (`rejected | unreachable | unexpected | expired`).
+             */
+            last_error_at?: string | null;
+            /**
+             * Format: date-time
+             * @description The last successful agent call through the account.
+             */
+            last_ok_at?: string | null;
             /** Format: date-time */
             last_used_at?: string | null;
             state: components["schemas"]["HealthState"];
+            test?: components["schemas"]["HealthTest"] | null;
         };
         /** @enum {string} */
-        HealthState: "ok" | "rejected" | "sign_in_expired" | "unreachable" | "disabled" | "unknown";
+        HealthState: "sign_in_expired" | "disabled" | "failing" | "working" | "not_used";
+        /** @description What the last Test said (C-1033). Shown as "Test passed … ago", never as the account working. */
+        HealthTest: {
+            /** Format: date-time */
+            at: string;
+            /** @description `ok` | `rejected` | `unreachable` | `unexpected`. */
+            result: string;
+        };
         HookAccepted: {
             /** Format: uuid */
             delivery_id: string;
@@ -10862,9 +10939,21 @@ export interface components {
                 /** Format: uuid */
                 id: string;
                 impact?: components["schemas"]["PluginImpact"] | null;
+                /**
+                 * @description (P5-POLISH-3, C-1032) Where the package came from, in the words the list shows: `aurora` (shipped
+                 *     with Aurora), `uploaded`, `directory` or `addon`.
+                 */
+                origin: string;
                 package_id: string;
                 permissions: components["schemas"]["PluginPermissions"];
                 publisher: string;
+                /** @description (C-1032) The hosts the package's apps reach (host claims, deduplicated, sorted), at most five. */
+                reaches: string[];
+                /**
+                 * Format: int32
+                 * @description (C-1032) How many more hosts there are than `reaches` lists.
+                 */
+                reaches_more: number;
                 signer: components["schemas"]["PluginSigner"];
                 /** @description `builtin` | `directory` | `upload` | `addon` (P5-ASRC). */
                 source: string;
@@ -11759,9 +11848,21 @@ export interface components {
             /** Format: uuid */
             id: string;
             impact?: components["schemas"]["PluginImpact"] | null;
+            /**
+             * @description (P5-POLISH-3, C-1032) Where the package came from, in the words the list shows: `aurora` (shipped
+             *     with Aurora), `uploaded`, `directory` or `addon`.
+             */
+            origin: string;
             package_id: string;
             permissions: components["schemas"]["PluginPermissions"];
             publisher: string;
+            /** @description (C-1032) The hosts the package's apps reach (host claims, deduplicated, sorted), at most five. */
+            reaches: string[];
+            /**
+             * Format: int32
+             * @description (C-1032) How many more hosts there are than `reaches` lists.
+             */
+            reaches_more: number;
             signer: components["schemas"]["PluginSigner"];
             /** @description `builtin` | `directory` | `upload` | `addon` (P5-ASRC). */
             source: string;
@@ -12278,6 +12379,11 @@ export interface components {
         };
         /** @enum {string} */
         ReachState: "pending" | "approved" | "blocked" | "left" | "expired";
+        /**
+         * @description (C-1029) Whether the connect plan's suggested method is ready for people here.
+         * @enum {string}
+         */
+        ReadinessState: "ready" | "needs_admin";
         /** @description `PUT /schedules/{id}/creator` and `PUT /webhooks/{id}/creator`. */
         ReassignCreatorRequest: {
             /** @description Re-enable an item that was disabled for `authorization` (default false). */
@@ -16054,6 +16160,51 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListLlmEndpointWarnings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointWarnings"][];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

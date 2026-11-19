@@ -43,20 +43,40 @@ pub struct AccountApp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HealthState {
-    Ok,
-    Rejected,
+    /// Status `reauth_required`.
     SignInExpired,
-    Unreachable,
+    /// Status `disabled`.
     Disabled,
-    Unknown,
+    /// An agent's call failed (`last_error_at`) and none has succeeded since.
+    Failing,
+    /// An agent's call succeeded (`last_ok_at`) after the last failure, if any.
+    Working,
+    /// No agent's call has shown anything yet. A Test never changes this (C-1033).
+    NotUsed,
 }
 
-/// C-944. Until P5-UX-14 adds the check fields: `sign_in_expired`, `disabled`, else `unknown`.
+/// What the last Test said (C-1033). Shown as "Test passed … ago", never as the account working.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct HealthTest {
+    pub at: DateTime<Utc>,
+    /// `ok` | `rejected` | `unreachable` | `unexpected`.
+    pub result: String,
+}
+
+/// C-944, amended by C-1033: `state` follows the account's status and what agents' real calls showed.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Health {
     pub state: HealthState,
+    /// For `failing`: the word of what the app refuses (`token`, `password`, `key`) when `last_error` is
+    /// `rejected`; the host when it is `unreachable` (filled in by the caller).
     pub detail: Option<String>,
-    pub checked_at: Option<DateTime<Utc>>,
+    /// The last successful agent call through the account.
+    pub last_ok_at: Option<DateTime<Utc>>,
+    /// The last failed agent call, and why (`rejected | unreachable | unexpected | expired`).
+    pub last_error_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    /// The last Test, apart from use.
+    pub test: Option<HealthTest>,
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
@@ -179,7 +199,7 @@ pub enum AccountTestResult {
 }
 
 impl AccountTestResult {
-    /// The stored form (`last_check_result`); `not_testable` is never stored.
+    /// The stored form (`last_test_result`); `not_testable` is never stored.
     pub fn stored(self) -> Option<&'static str> {
         match self {
             Self::Ok => Some("ok"),

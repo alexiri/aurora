@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -49,6 +50,20 @@ pub struct AppSummary {
     /// instances or database; every connect method is a `fields` method with no fields): an agent
     /// is given access in one step. Derived from the installed manifest, not stored.
     pub credential_free: bool,
+    /// (P5-POLISH-3, D-388, C-1029) Whether the connect journey can start now for the caller; only in the
+    /// catalogue list with a `workspace_id` (`null` otherwise).
+    pub readiness: Option<super::setup::AppReadiness>,
+    /// (C-1029) The workspace's accounts of this app the caller may give to an agent; only in the catalogue
+    /// list with a `workspace_id`.
+    pub accounts: Vec<AppAccountRef>,
+}
+
+/// (C-1029) An account of an app, with the agents that already use it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AppAccountRef {
+    pub id: Uuid,
+    pub name: String,
+    pub agent_ids: Vec<Uuid>,
 }
 
 /// `about.family` of an app (C-744): the catalogue and every picker show one product, named

@@ -127,12 +127,14 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
     stmts.push(format!(
         "GRANT UPDATE (credentials_ref, credentials_version, credentials_expires_at, status, \
          status_reason, reauth_required_at, last_used_at, updated_at, credential_keys, \
-         last_check_at, last_check_result) \
+         last_check_at, last_check_result, last_ok_at, last_error_at, last_error) \
          ON {s}.app_connections TO {r}"
     ));
-    // (P5-UX-14, C-985) Health from real use: `last_check_at`, `last_check_result`.
+    // (P5-UX-14, C-985; P5-POLISH-3, C-1033) Health from real use: `last_ok_at`, `last_error_at`,
+    // `last_error` (never `last_test_*`, which only the API's Test route writes).
     stmts.push(format!(
-        "GRANT UPDATE (last_used_at, origin, last_check_at, last_check_result) ON {s}.secrets TO {r}"
+        "GRANT UPDATE (last_used_at, origin, last_check_at, last_check_result, last_ok_at, \
+         last_error_at, last_error) ON {s}.secrets TO {r}"
     ));
     // (RFE-013, C-316) The churn column of token use tracking.
     stmts.push(format!(

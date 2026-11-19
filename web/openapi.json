@@ -2417,6 +2417,63 @@
         ]
       }
     },
+    "/v1/admin/llm-endpoint-warnings": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Which model roles each configured LLM endpoint leaves unset, from the same resolution as an agent's\nturn (C-1034). Only endpoints with at least one warning are listed; agents' own overrides are not\nconsidered. Instance admins only.",
+        "operationId": "adminListLlmEndpointWarnings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EndpointWarnings"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/oauth-clients": {
       "get": {
         "tags": [
@@ -39655,6 +39712,31 @@
           }
         }
       },
+      "AppAccountRef": {
+        "type": "object",
+        "description": "(C-1029) An account of an app, with the agents that already use it.",
+        "required": [
+          "id",
+          "name",
+          "agent_ids"
+        ],
+        "properties": {
+          "agent_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "AppAvailability": {
         "type": "object",
         "required": [
@@ -40024,6 +40106,36 @@
           }
         }
       },
+      "AppReadiness": {
+        "type": "object",
+        "description": "(C-1029) An app's readiness in the catalogue.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "needs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupNeed"
+            },
+            "description": "The union of what the blocking methods need (empty when the app is switched off)."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReadinessState"
+          },
+          "who_can": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhoCan",
+                "description": "Who can fix it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "AppRestrictions": {
         "type": "object",
         "description": "(phase 4, P4-GRANTS, D-123, C-410) The app's manifest restrictions, so clients can explain\nthem: `custom_only` (no `full` grants) and `block_untooled` (requests matching no catalogue\ntool are blocked). Both `false` for an app without `grants`.",
@@ -40126,9 +40238,17 @@
           "has_dark_icon",
           "app_restrictions",
           "serves_library",
-          "credential_free"
+          "credential_free",
+          "accounts"
         ],
         "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppAccountRef"
+            },
+            "description": "(C-1029) The workspace's accounts of this app the caller may give to an agent; only in the catalogue\nlist with a `workspace_id`."
+          },
           "app_id": {
             "type": "string"
           },
@@ -40178,6 +40298,17 @@
           },
           "package_version": {
             "type": "string"
+          },
+          "readiness": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppReadiness",
+                "description": "(P5-POLISH-3, D-388, C-1029) Whether the connect journey can start now for the caller; only in the\ncatalogue list with a `workspace_id` (`null` otherwise)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "serves_library": {
             "type": "boolean",
@@ -44831,6 +44962,24 @@
           }
         }
       },
+      "EndpointRoleWarning": {
+        "type": "object",
+        "description": "(P5-POLISH-3, D-385, C-1034) A role an endpoint leaves unset (or not allowed), for the endpoint's row in\nAdministration › AI models.",
+        "required": [
+          "role",
+          "warning"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "`large` | `medium` | `small`."
+          },
+          "warning": {
+            "type": "string",
+            "description": "`role_unset` | `role_not_allowed`."
+          }
+        }
+      },
       "EndpointTestRequest": {
         "type": "object",
         "description": "Request body (C-779).",
@@ -44879,6 +45028,25 @@
             "format": "int32",
             "description": "The HTTP status of the answer.",
             "minimum": 0
+          }
+        }
+      },
+      "EndpointWarnings": {
+        "type": "object",
+        "description": "An endpoint with at least one role warning.",
+        "required": [
+          "endpoint_id",
+          "roles"
+        ],
+        "properties": {
+          "endpoint_id": {
+            "type": "string"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EndpointRoleWarning"
+            }
           }
         }
       },
@@ -46606,23 +46774,39 @@
       },
       "Health": {
         "type": "object",
-        "description": "C-944. Until P5-UX-14 adds the check fields: `sign_in_expired`, `disabled`, else `unknown`.",
+        "description": "C-944, amended by C-1033: `state` follows the account's status and what agents' real calls showed.",
         "required": [
           "state"
         ],
         "properties": {
-          "checked_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
           "detail": {
             "type": [
               "string",
               "null"
+            ],
+            "description": "For `failing`: the word of what the app refuses (`token`, `password`, `key`) when `last_error` is\n`rejected`; the host when it is `unreachable` (filled in by the caller)."
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
             ]
+          },
+          "last_error_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The last failed agent call, and why (`rejected | unreachable | unexpected | expired`)."
+          },
+          "last_ok_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The last successful agent call through the account."
           },
           "last_used_at": {
             "type": [
@@ -46633,19 +46817,47 @@
           },
           "state": {
             "$ref": "#/components/schemas/HealthState"
+          },
+          "test": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HealthTest",
+                "description": "The last Test, apart from use."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
       "HealthState": {
         "type": "string",
         "enum": [
-          "ok",
-          "rejected",
           "sign_in_expired",
-          "unreachable",
           "disabled",
-          "unknown"
+          "failing",
+          "working",
+          "not_used"
         ]
+      },
+      "HealthTest": {
+        "type": "object",
+        "description": "What the last Test said (C-1033). Shown as \"Test passed … ago\", never as the account working.",
+        "required": [
+          "at",
+          "result"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "result": {
+            "type": "string",
+            "description": "`ok` | `rejected` | `unreachable` | `unexpected`."
+          }
+        }
       },
       "HookAccepted": {
         "type": "object",
@@ -53444,6 +53656,9 @@
                 "digest",
                 "signer",
                 "source",
+                "origin",
+                "reaches",
+                "reaches_more",
                 "status",
                 "violations",
                 "apps",
@@ -53515,6 +53730,10 @@
                     }
                   ]
                 },
+                "origin": {
+                  "type": "string",
+                  "description": "(P5-POLISH-3, C-1032) Where the package came from, in the words the list shows: `aurora` (shipped\nwith Aurora), `uploaded`, `directory` or `addon`."
+                },
                 "package_id": {
                   "type": "string"
                 },
@@ -53523,6 +53742,19 @@
                 },
                 "publisher": {
                   "type": "string"
+                },
+                "reaches": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "(C-1032) The hosts the package's apps reach (host claims, deduplicated, sorted), at most five."
+                },
+                "reaches_more": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "(C-1032) How many more hosts there are than `reaches` lists.",
+                  "minimum": 0
                 },
                 "signer": {
                   "$ref": "#/components/schemas/PluginSigner"
@@ -56534,6 +56766,9 @@
           "digest",
           "signer",
           "source",
+          "origin",
+          "reaches",
+          "reaches_more",
           "status",
           "violations",
           "apps",
@@ -56605,6 +56840,10 @@
               }
             ]
           },
+          "origin": {
+            "type": "string",
+            "description": "(P5-POLISH-3, C-1032) Where the package came from, in the words the list shows: `aurora` (shipped\nwith Aurora), `uploaded`, `directory` or `addon`."
+          },
           "package_id": {
             "type": "string"
           },
@@ -56613,6 +56852,19 @@
           },
           "publisher": {
             "type": "string"
+          },
+          "reaches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(C-1032) The hosts the package's apps reach (host claims, deduplicated, sorted), at most five."
+          },
+          "reaches_more": {
+            "type": "integer",
+            "format": "int32",
+            "description": "(C-1032) How many more hosts there are than `reaches` lists.",
+            "minimum": 0
           },
           "signer": {
             "$ref": "#/components/schemas/PluginSigner"
@@ -58287,6 +58539,14 @@
           "blocked",
           "left",
           "expired"
+        ]
+      },
+      "ReadinessState": {
+        "type": "string",
+        "description": "(C-1029) Whether the connect plan's suggested method is ready for people here.",
+        "enum": [
+          "ready",
+          "needs_admin"
         ]
       },
       "ReassignCreatorRequest": {

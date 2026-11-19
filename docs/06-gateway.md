@@ -70,7 +70,7 @@ library fetch (API replicas only, never a sandbox); per-organization limiter as 
   the API's probe does not judge a stale one. A mint or refresh that asks for re-authorization is `rejected`
   (and marks the connection, as it always does).
 
-The route writes no health itself: the API stores the result (`last_check_*`). It answers 404
+The route writes no health itself: the API stores the result (`last_test_*`, C-1033). It answers 404
 `connection_not_found` for a connection outside the named organization and 400 for a malformed request.
 
 ### Proxy listener TLS (phase 1, RFE-002)
@@ -812,12 +812,15 @@ minted.
     - Upstream 401/403 where **nothing was injected** → replace with guidance
       (below), preserving the status.
     - Upstream 401 with a recorded tenant/host mismatch → 421 `host_mismatch`.
-    - (phase 5, P5-UX-14, D-350, C-985, SEC-129) **Account health from real use.** The response is passed
-      through unchanged; when a credential was injected, an upstream 401 records `rejected` and a later
-      2xx or 3xx records `ok` on the account (`last_check_result`, `last_check_at`; connection or
-      secret). A 403 records nothing. The write is spawned off the request path, only on a change of
-      state (the statement skips a row that already holds the result), at most once a minute per
-      account per replica, and never touches `status`, `updated_at` or anything an agent's access reads.
+    - (phase 5, P5-UX-14, D-350, C-985, SEC-129; P5-POLISH-3, D-383, C-1033) **Account health from real
+      use.** The response is passed through unchanged; when a credential was injected, an upstream 2xx or
+      3xx writes `last_ok_at` and an upstream 401 or 403 writes `last_error_at` with `last_error =
+      'rejected'` on the account (connection or secret); any other status records nothing. Only agent calls
+      reach this path; a Test is recorded apart by the API (`last_test_*`). The write is spawned off the
+      request path, at most once a minute per account **and outcome** per replica (a failure is written
+      even inside the minute after a success, so it is never hidden), and never touches `status`,
+      `updated_at` or anything an agent's access reads. The gateway role may update only `last_ok_at`,
+      `last_error_at` and `last_error` among these columns.
     - **LLM origin backstop** (`08 §11.3`): for an injected LLM key whose
       endpoint has a key-origin rule, the account the provider reports in the
       response headers must comply; otherwise the response is replaced with

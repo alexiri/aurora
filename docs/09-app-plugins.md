@@ -1171,9 +1171,9 @@ snapshot carrying them and keeps the previous one (`06 §Registry snapshot loadi
 
 | Source | Behaviour |
 |--------|-----------|
-| `builtin` | Packages under `/usr/share/aurora/plugins` in the API image (the eleven packages of `plugins/builtin`). Signed with the project key; activated automatically on first sight and on upgrade **unless permissions widened** relative to the previously approved version. |
-| `directory` | `plugins.dir` scanned at startup and every 60 s. |
-| `upload` | `POST /v1/admin/plugins` (multipart). |
+| `builtin` | Packages under `/usr/share/aurora/plugins` in the API image (`plugins.builtin_dir`; the packages of `plugins/builtin`). Signed with the project key; (phase 5, P5-POLISH-3, D-381, C-1032, SEC-136) **activated automatically on first sight and at every later version or digest change, a widening of permissions included**, with the audit row `plugin.auto_approved { version, previous_version, reason: "builtin_release" }`: the packages are part of the release the admin chose to install. With `plugins.allow_unsigned = true` (dev values only; the chart refuses it unless `externalUrl` is a loopback origin) an **unsigned** package in the same directory is treated the same way, audited with `reason: "builtin_dev_unsigned"`; the dev and kind images install their packages there, so a dev install shows them active like a release one. Otherwise an unsigned or other-key package in this directory fails closed (D-75). The holds that protect identity and data still apply to a builtin: `claim_conflict`, `publisher_changed`, `builtin_id_reserved`, `version_downgrade`, `breaks_connections` and `converts_grants`. The organization's switch (D-344) still decides whether people may connect an app. |
+| `directory` | `plugins.dir` scanned at startup and every 60 s. Reviewed like an upload (SEC-136). |
+| `upload` | `POST /v1/admin/plugins` (multipart). Reviewed by an instance admin (SEC-136). |
 | `addon` | (phase 5, P5-ASRC, D-250) ingested from a registered addon source (`09 §10` above; format doc `22-addon-repos.md`): the repo's manifest lists versions, the poll job or "Check now" ingests newer ones; the first version of every addon package is `pending_approval` — third-party permissions are never auto-activated; a version whose `min_core` exceeds the running core is listed but not ingested. |
 
 States: `pending_approval` → `active` (→ `superseded` by a newer active version)
@@ -1181,7 +1181,7 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
 
 - **First install** and any **widening** (new hook, new egress host, new
   context variable, new host claim, new reserved-adjacent zone) require
-  instance-admin approval. Upgrades with an identical or narrower permission
+  instance-admin approval, except for the `builtin` source above (P5-POLISH-3, SEC-136). Upgrades with an identical or narrower permission
   set activate automatically; the previous version stays active until the new
   one is. (FIX-107, D-187) A version is **also a first install** — and needs
   instance-admin approval, with the reason shown on the approval screen — when its

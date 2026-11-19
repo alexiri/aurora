@@ -218,7 +218,8 @@ async fn list(
             r.account.given = Some(r.account.agents.iter().any(|x| x.agent.id == a.id));
         }
         // The host an unreachable account could not be reached at (its health line names it).
-        if r.account.health.state == HealthState::Unreachable
+        if r.account.health.state == HealthState::Failing
+            && r.account.health.last_error.as_deref() == Some("unreachable")
             && r.account.reference.kind == AccountRefType::Connection
         {
             r.account.health.detail = super::test::unreachable_host(state, id).await;
@@ -305,9 +306,14 @@ fn connection_row(
         .then(|| levels::connection_limit(c.limit_level.as_deref(), &c.access));
     let health = health::health(
         Some(c.status.as_str()),
-        c.last_check_result.as_deref(),
-        c.last_check_at,
-        c.last_used_at,
+        health::Recorded {
+            last_ok_at: c.last_ok_at,
+            last_error_at: c.last_error_at,
+            last_error: c.last_error.as_deref(),
+            last_test_at: c.last_test_at,
+            last_test_result: c.last_test_result.as_deref(),
+            last_used_at: c.last_used_at,
+        },
         health::refused_word(entry),
     );
     let account = Account {
@@ -381,9 +387,14 @@ fn secret_row(
             levels: Vec::new(),
             health: health::health(
                 None,
-                s.last_check_result.as_deref(),
-                s.last_check_at,
-                s.last_used_at,
+                health::Recorded {
+                    last_ok_at: s.last_ok_at,
+                    last_error_at: s.last_error_at,
+                    last_error: s.last_error.as_deref(),
+                    last_test_at: s.last_test_at,
+                    last_test_result: s.last_test_result.as_deref(),
+                    last_used_at: s.last_used_at,
+                },
                 if kind == AccountKind::AiKey {
                     "key"
                 } else {

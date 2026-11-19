@@ -652,6 +652,7 @@ const ROWS: &[Row] = &[
         true,
     ),
     r("POST", "/v1/admin/settings/email/test", G::Inst, true),
+    r("GET", "/v1/admin/llm-endpoint-warnings", G::Inst, false),
     r("GET", "/v1/admin/secret-stores", G::Inst, true),
     r("PUT", "/v1/admin/secret-stores/{id}", G::Inst, true),
     r("DELETE", "/v1/admin/secret-stores/{id}", G::Inst, true),

@@ -61,7 +61,7 @@ const conn = (appId: string) => ({
 
 const account = (appId: string) => ({
   ref: { type: "connection", id: CONN }, kind: "app", name: "CERN directory", scope: "workspace", levels: ["read", "ask", "act"],
-  app: { app_id: appId, name: "CERN Phonebook", custom_only: false }, health: { state: "unknown" }, agents: [], given: false,
+  app: { app_id: appId, name: "CERN Phonebook", custom_only: false }, health: { state: "not_used" }, agents: [], given: false,
   can: { give_access: true, change_access: true, manage: true },
 });
 function setupAccess(accounts: unknown[] = []) {

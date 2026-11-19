@@ -38,7 +38,7 @@ async function mockAws(page: Page, agents: "one" | "two") {
         items: [
           {
             ref: { type: "connection", id: C_AWS }, kind: "app", name: "platform-prod", scope: "workspace", levels: ["read", "ask", "act"],
-            app: { app_id: "aws-keys", name: "AWS", custom_only: false }, health: { state: "unknown", last_used_at: now },
+            app: { app_id: "aws-keys", name: "AWS", custom_only: false }, health: { state: "not_used", last_used_at: now },
             agents: agents === "one" ? [daneel] : [daneel, { ...who(second), level: "act" }], can,
           },
         ],

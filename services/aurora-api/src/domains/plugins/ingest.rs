@@ -196,10 +196,15 @@ async fn decide(
         return Ok(pending("claim_conflict"));
     }
     let prev = plugins::previous_approved(&state.pool, &m.package.id).await?;
+    // (P5-POLISH-3, D-381, C-1032, SEC-136) A package shipped with Aurora — from `plugins.builtin_dir`,
+    // signed by the project key, or unsigned where `plugins.allow_unsigned` is on (dev values only;
+    // `ingest_inner` rejects it otherwise) — arrives approved, at first install and at every later version,
+    // widening permissions included. The holds below that protect data and identity still apply.
+    let shipped = builtin_reason(source, signer).is_some();
     let Some(prev) = prev else {
         // (P5-ASRC, D-250(b)) addon packages are never auto-activated on first sight:
         // third-party permissions always need the ordinary instance-admin approval.
-        return Ok(if source == Source::Builtin && *signer == Signer::Project {
+        return Ok(if shipped {
             activate
         } else {
             pending("first_install")
@@ -227,11 +232,25 @@ async fn decide(
         (None, _) => return Ok(pending("version_downgrade")),
         _ => {}
     }
-    Ok(if widens(&old, m).is_empty() {
+    Ok(if shipped || widens(&old, m).is_empty() {
         activate
     } else {
         pending("permissions_widened")
     })
+}
+
+/// (SEC-136) Why a package from the builtin source is approved without review: `builtin_release` (signed by
+/// the project key) or `builtin_dev_unsigned` (unsigned, which only `plugins.allow_unsigned` lets through).
+/// `None` for every other source, and for a builtin whose signer is anyone else.
+fn builtin_reason(source: Source, signer: &Signer) -> Option<&'static str> {
+    if source != Source::Builtin {
+        return None;
+    }
+    match signer {
+        Signer::Project => Some("builtin_release"),
+        Signer::Unsigned => Some("builtin_dev_unsigned"),
+        Signer::Trusted { .. } => None,
+    }
 }
 
 /// Ordering key of a semantic version: `(major, minor, patch, is_release)` — a pre-release
@@ -283,10 +302,11 @@ async fn ingest_inner(
     let source_id = addon.map(|a| a.source.id);
     let pkg = Package::read(bytes, &Limits::default()).map_err(|v| reject(&v))?;
     let trust = keys::trust_store(&state.pool).await?;
-    // The builtin source is fail-closed (09 §10): never unsigned, and only the project key counts.
-    let allow_unsigned = state.config.plugins.allow_unsigned && source != Source::Builtin;
+    // The builtin source is fail-closed (09 §10): only the project key counts, and an unsigned package
+    // only where `plugins.allow_unsigned` is on (dev values; SEC-136 audits it `builtin_dev_unsigned`).
+    let allow_unsigned = state.config.plugins.allow_unsigned;
     let signer = signature::verify(&pkg, &trust, allow_unsigned).map_err(|v| reject(&[v]))?;
-    if source == Source::Builtin && signer != Signer::Project {
+    if source == Source::Builtin && builtin_reason(source, &signer).is_none() {
         return Err(reject(&[Violation::new(
             "builtin_not_project_signed",
             "SIGNATURE",
@@ -420,6 +440,19 @@ async fn ingest_inner(
         }
     }
     let auto = decision.status == "active";
+    // (SEC-136) The reason a shipped package was approved without review, and the version it replaces.
+    let auto_approved = if auto {
+        builtin_reason(source, &signer)
+    } else {
+        None
+    };
+    let previous_version = if auto_approved.is_some() {
+        plugins::previous_approved(&state.pool, &package_id)
+            .await?
+            .map(|p| p.version)
+    } else {
+        None
+    };
     // (P5-GUIDE-2, C-648) Apps whose agent guide differs from the version this one replaces.
     let mut guide_changed: Vec<String> = Vec::new();
     if auto {
@@ -545,6 +578,43 @@ async fn ingest_inner(
         );
         registry::request_compile(state).await?;
     }
+    if let Some(reason) = auto_approved {
+        audit::record(
+            state,
+            AuditEvent::new(actor.clone(), "plugin.auto_approved", Outcome::Success)
+                .target("plugin_package", new_id)
+                .metadata(json!({"package_id": package_id, "version": version,
+                    "previous_version": previous_version, "reason": reason})),
+        );
+    }
     let row = service::get_row(state, new_id).await?;
     Ok(Ingested { row, created: true })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SEC-136: only the builtin source skips review, and only for the project key (or, dev only, unsigned).
+    #[test]
+    fn only_the_builtin_source_is_approved_without_review() {
+        let trusted = Signer::Trusted {
+            key_id: "k".to_owned(),
+            publisher: "acme".to_owned(),
+        };
+        assert_eq!(
+            builtin_reason(Source::Builtin, &Signer::Project),
+            Some("builtin_release")
+        );
+        assert_eq!(
+            builtin_reason(Source::Builtin, &Signer::Unsigned),
+            Some("builtin_dev_unsigned")
+        );
+        assert_eq!(builtin_reason(Source::Builtin, &trusted), None);
+        for source in [Source::Directory, Source::Upload, Source::Addon] {
+            for signer in [&Signer::Project, &Signer::Unsigned, &trusted] {
+                assert_eq!(builtin_reason(source, signer), None, "{source:?}");
+            }
+        }
+    }
 }

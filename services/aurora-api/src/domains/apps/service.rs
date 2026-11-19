@@ -16,9 +16,18 @@ pub struct Avail {
     restricted: bool,
     allowed: HashSet<String>,
     counts: HashMap<String, i64>,
+    /// The workspace level the availability was read for, with what the caller may do (C-1029).
+    view: Option<super::setup::SetupView>,
 }
 
 impl Avail {
+    pub fn view(&self) -> Option<super::setup::SetupView> {
+        self.view
+    }
+    /// The caller may switch apps on and off here (organization owner or admin).
+    pub fn can_change_availability(&self) -> bool {
+        self.view.is_some_and(|v| v.org_admin)
+    }
     pub fn is_available(&self, app_id: &str) -> bool {
         !self.restricted || self.allowed.contains(app_id)
     }
@@ -37,6 +46,7 @@ pub async fn avail(
             restricted: false,
             allowed: HashSet::new(),
             counts: HashMap::new(),
+            view: None,
         });
     };
     let auth = caller.workspace(state, ws).await?;
@@ -49,6 +59,11 @@ pub async fn avail(
         restricted,
         allowed: ids.into_iter().collect(),
         counts,
+        view: Some(super::setup::SetupView {
+            org: auth.org_id,
+            workspace: Some(ws),
+            org_admin: auth.org_role.is_admin(),
+        }),
     })
 }
 
@@ -63,7 +78,38 @@ pub async fn availability_of(
         restricted,
         allowed: ids.into_iter().collect(),
         counts: HashMap::new(),
+        view: None,
     })
+}
+
+/// (C-1029) The workspace's app accounts the caller may give to an agent, by app: the list of
+/// `GET …/accounts?kind=app` (one pass for all apps), with the agents that already use each.
+pub async fn accounts_by_app(
+    state: &AppState,
+    caller: &Caller,
+    workspace: Uuid,
+) -> Result<HashMap<String, Vec<AppAccountRef>>, ApiError> {
+    let q = crate::domains::accounts::dto::AccountsQuery {
+        agent_id: None,
+        kind: Some("app".to_owned()),
+        app_id: None,
+    };
+    let page =
+        crate::domains::accounts::service::list_workspace(state, caller, workspace, &q).await?;
+    let mut out: HashMap<String, Vec<AppAccountRef>> = HashMap::new();
+    for a in page.items {
+        let (true, Some(app)) = (a.can.give_access, a.app.as_ref()) else {
+            continue;
+        };
+        out.entry(app.app_id.clone())
+            .or_default()
+            .push(AppAccountRef {
+                id: a.reference.id,
+                name: a.name.clone(),
+                agent_ids: a.agents.iter().map(|g| g.agent.id).collect(),
+            });
+    }
+    Ok(out)
 }
 
 /// The active snapshot, or an empty catalogue.
@@ -110,6 +156,8 @@ pub async fn summary(state: &AppState, a: &AppEntry, p: &PackageEntry, av: &Avai
             instance_bound: a.instances.is_some(),
         }),
         credential_free: aurora_registry::credential_free::entry_is_credential_free(a),
+        readiness: None,
+        accounts: Vec::new(),
     }
 }
 

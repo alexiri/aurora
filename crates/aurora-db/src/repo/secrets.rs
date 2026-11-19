@@ -31,6 +31,12 @@ pub struct SecretRow {
     /// (P5-UX-14, C-944) When the account's health was last recorded, and what it was.
     pub last_check_at: Option<DateTime<Utc>>,
     pub last_check_result: Option<String>,
+    /// (P5-POLISH-3, C-1033) What an agent's real calls showed (the gateway), and what Test said, apart.
+    pub last_ok_at: Option<DateTime<Utc>>,
+    pub last_error_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub last_test_at: Option<DateTime<Utc>>,
+    pub last_test_result: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -38,7 +44,8 @@ pub struct SecretRow {
 const SELECT: &str = "SELECT s.id, s.org_id, s.workspace_id, s.name, s.kind, s.llm_provider, \
     s.llm_auth_mode, s.llm_endpoint_id, s.host_pattern, s.path_pattern, s.injection, \
     s.value_source, s.value_ref, s.status, s.origin, s.value_version, s.proposed_by_agent_id, \
-    s.created_by, u.display_name AS created_by_name, s.last_used_at, s.last_check_at, s.last_check_result, s.created_at, s.updated_at \
+    s.created_by, u.display_name AS created_by_name, s.last_used_at, s.last_check_at, s.last_check_result, \
+    s.last_ok_at, s.last_error_at, s.last_error, s.last_test_at, s.last_test_result, s.created_at, s.updated_at \
     FROM secrets s LEFT JOIN users u ON u.id = s.created_by";
 
 pub const NAME_CONSTRAINT: &str = "secrets_scope_name_uq";
@@ -167,7 +174,8 @@ pub async fn replace_value<'e, E: PgExecutor<'e>>(
 ) -> Result<bool, DbError> {
     let r = sqlx::query(
         "UPDATE secrets SET value_ref = $4, value_source = $5, value_version = value_version + 1, \
-         origin = $6, last_check_at = NULL, last_check_result = NULL, updated_at = now() \
+         origin = $6, last_check_at = NULL, last_check_result = NULL, last_ok_at = NULL, \
+         last_error_at = NULL, last_error = NULL, last_test_at = NULL, last_test_result = NULL, updated_at = now() \
          WHERE id = $1 AND value_ref = $2 AND value_version = $3 AND status = 'active'",
     )
     .bind(id)
@@ -181,14 +189,14 @@ pub async fn replace_value<'e, E: PgExecutor<'e>>(
     Ok(r.rows_affected() == 1)
 }
 
-/// (P5-UX-14, C-943) Stores the result of Test: `ok` | `rejected` | `unreachable` | `unexpected`.
-/// A churn-style write: `updated_at` is untouched.
+/// (P5-UX-14, C-943; P5-POLISH-3, C-1033) Stores the result of Test: `ok` | `rejected` | `unreachable` |
+/// `unexpected`, in `last_test_*` only. A churn-style write: `updated_at` is untouched.
 pub async fn set_check<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
     result: &str,
 ) -> Result<(), DbError> {
-    sqlx::query("UPDATE secrets SET last_check_at = now(), last_check_result = $2 WHERE id = $1")
+    sqlx::query("UPDATE secrets SET last_test_at = now(), last_test_result = $2 WHERE id = $1")
         .bind(id)
         .bind(result)
         .execute(exec)

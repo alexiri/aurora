@@ -132,7 +132,7 @@ const CONN = {
 /** The accounts-list row of CONN (C-917). */
 const ACCOUNT = {
   ref: { type: "connection", id: "c1" }, kind: "app", name: "me@acme.io", scope: "workspace", levels: ["read", "ask", "act"],
-  app: { app_id: "github", name: "GitHub", custom_only: false }, health: { state: "unknown" }, agents: [],
+  app: { app_id: "github", name: "GitHub", custom_only: false }, health: { state: "not_used" }, agents: [],
   can: { give_access: true, change_access: true, manage: true },
 };
 const list = () => <AccountsList scope={{ kind: "workspace", id: "w1" }} orgId="o1" canOwn />;

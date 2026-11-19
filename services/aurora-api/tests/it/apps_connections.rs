@@ -177,8 +177,12 @@ async fn catalogue_availability_and_counts() {
     l.listen("aurora_gateway_invalidate").await.unwrap();
     assert_eq!(w.call(&w.owner, Method::PUT, &p, put).await.0, 200);
     assert!(l.recv().await.is_ok());
+    // (P5-POLISH-3, C-1029) A switched-off app is not returned to a member, who cannot change availability;
+    // the owner who switched it off still gets it, `available: false`.
     let (_, v) = w.call(&w.member, Method::GET, &uri, None).await;
-    assert_eq!(v["items"][0]["available"], false);
+    assert_eq!(v["items"], json!([]), "{v}");
+    let (_, v) = w.call(&w.owner, Method::GET, &uri, None).await;
+    assert_eq!(v["items"][0]["available"], false, "{v}");
     let put = Some(
         json!({"posture": "restricted", "allow": [{"app_id": "acme_app", "workspace_id": null}]}),
     );
