@@ -155,6 +155,15 @@ pub trait PolicySource: Send + Sync + 'static {
     async fn instances(&self, _org: Uuid) -> Result<Vec<InstanceHostRow>, String> {
         Ok(Vec::new())
     }
+    /// (P5-WEBHOOK-2, C-909) A send-mode connection's stored configuration and its org's
+    /// `settings.outgoing_webhooks`, read at every send (default: none).
+    async fn webhook_config(
+        &self,
+        _org: Uuid,
+        _id: Uuid,
+    ) -> Result<(Option<serde_json::Value>, Option<serde_json::Value>), String> {
+        Ok((None, None))
+    }
     /// One connection by id (database lane login; default: none).
     async fn connection(
         &self,
@@ -202,6 +211,15 @@ impl PolicySource for DbSource {
     }
     async fn instances(&self, org: Uuid) -> Result<Vec<InstanceHostRow>, String> {
         repo::visible_instances(&self.0, org)
+            .await
+            .map_err(|e| crate::health::db_err(&e))
+    }
+    async fn webhook_config(
+        &self,
+        org: Uuid,
+        id: Uuid,
+    ) -> Result<(Option<serde_json::Value>, Option<serde_json::Value>), String> {
+        repo::webhook_config(&self.0, org, id)
             .await
             .map_err(|e| crate::health::db_err(&e))
     }
@@ -512,6 +530,19 @@ impl Resolver {
     /// (phase 2, P2-DBL-1) The database connection `id` as seen by `identity`: the connection
     /// row (workspace's or organization's, any status), whether the org's app posture removes
     /// its app, and the current registry snapshot. Resolution is by connection id only.
+    /// (P5-WEBHOOK-2) The stored configuration of a send-mode connection and the org's webhook
+    /// settings (both `None` when there is none).
+    pub async fn webhook_config(
+        &self,
+        org: Uuid,
+        id: Uuid,
+    ) -> Result<(Option<serde_json::Value>, Option<serde_json::Value>), ResolveFailure> {
+        self.source
+            .webhook_config(org, id)
+            .await
+            .map_err(ResolveFailure)
+    }
+
     pub async fn db_connection(
         &self,
         id: &RequestIdentity,

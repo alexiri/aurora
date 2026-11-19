@@ -669,6 +669,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::apps::router())
         .merge(domains::connections::router())
         .merge(domains::accounts::router())
+        .merge(domains::outgoing_webhooks::router())
         .merge(domains::conversations::router())
         .merge(domains::attachments::router())
         .merge(domains::hosted::router())

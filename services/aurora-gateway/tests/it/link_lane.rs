@@ -605,7 +605,7 @@ async fn the_canaries_appear_in_no_response_error_or_log_row() {
 }
 
 /// The id, workspace and summary of the one pending approval of connection `conn`.
-async fn pending_for(pool: &sqlx::PgPool, conn: Uuid) -> (Uuid, Uuid, Value) {
+pub(super) async fn pending_for(pool: &sqlx::PgPool, conn: Uuid) -> (Uuid, Uuid, Value) {
     for _ in 0..100 {
         if let Some(row) = sqlx::query_as::<_, (Uuid, Uuid, Value)>(
             "SELECT id, workspace_id, summary FROM approvals WHERE connection_id=$1 AND status='pending'",
@@ -623,7 +623,7 @@ async fn pending_for(pool: &sqlx::PgPool, conn: Uuid) -> (Uuid, Uuid, Value) {
 }
 
 /// Applies a decision the way the API does: first decision wins, then NOTIFY.
-async fn decide(pool: &sqlx::PgPool, id: Uuid, status: &str, ws: Uuid) {
+pub(super) async fn decide(pool: &sqlx::PgPool, id: Uuid, status: &str, ws: Uuid) {
     sqlx::query(
         "UPDATE approvals SET status=$2, decided_at=now() WHERE id=$1 AND status='pending'",
     )

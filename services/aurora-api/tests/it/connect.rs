@@ -113,6 +113,10 @@ mod account_test;
 #[path = "link_connect.rs"]
 mod link_connect;
 
+// (P5-WEBHOOK-2, D-320) The outgoing webhook's connect, edit, preview, presets and send test.
+#[path = "outgoing_webhooks.rs"]
+mod outgoing_webhooks;
+
 // (P5-CALDAV, D-275) The own-server app's connect (discovery).
 #[path = "caldav_connect.rs"]
 mod caldav_connect;
@@ -132,6 +136,16 @@ async fn world(hook_url: Option<String>) -> W {
 
 /// [`world`] with another package manifest (`hooks`: ship the fixture hook component with it).
 async fn world_with(hook_url: Option<String>, yaml: &str, hooks: bool) -> W {
+    world_with_files(hook_url, yaml, hooks, &[]).await
+}
+
+/// [`world_with`] plus archive files (the presets of an outgoing webhook, P5-WEBHOOK-2).
+async fn world_with_files(
+    hook_url: Option<String>,
+    yaml: &str,
+    hooks: bool,
+    files: &[(String, Vec<u8>)],
+) -> W {
     let oauth = MockOAuth::start().await;
     let h = Harness::with_config(|c| {
         if let Some(u) = hook_url {
@@ -160,6 +174,9 @@ async fn world_with(hook_url: Option<String>, yaml: &str, hooks: bool) -> W {
     if hooks {
         let wasm = hooks_wasm();
         b.set_file("hooks.wasm", &wasm);
+    }
+    for (path, data) in files {
+        b.set_file(path, data);
     }
     b.sign(&key, &PackageBuilder::key_id(&key));
     let boundary = "XB";

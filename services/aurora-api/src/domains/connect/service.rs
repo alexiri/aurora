@@ -33,6 +33,7 @@ use uuid::Uuid;
 // (P5-ICS, D-273) The secret-link apps' connect check: validate, fetch once, check the prefix.
 mod link;
 mod own_server;
+mod webhook;
 
 pub enum ConnectErr {
     Api(ApiError),
@@ -391,6 +392,8 @@ struct Gathered {
     expires_at: Option<i64>,
     fields: Map<String, Value>,
     client: Option<Uuid>,
+    /// (P5-WEBHOOK-2) An outgoing webhook's configuration, stored beside the credential.
+    webhook: Option<webhook::Gathered>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -532,7 +535,13 @@ impl Ctx<'_> {
         kind: Kind,
         g: Gathered,
     ) -> Result<(ConnectionRow, Vec<String>, Applied), ConnectErr> {
-        let declared = |n: &str| self.app.credentials.iter().any(|c| c.name == n);
+        // (P5-WEBHOOK-2, C-909) The core adds an outgoing webhook's secret values and signing secret
+        // to the sealed credential beside the URL.
+        let webhook = g.webhook.is_some();
+        let declared = |n: &str| {
+            self.app.credentials.iter().any(|c| c.name == n)
+                || (webhook && matches!(n, "secret_values" | "signing_secret"))
+        };
         if g.credentials.keys().any(|k| !declared(k))
             || g.metadata
                 .keys()
@@ -647,6 +656,7 @@ impl Ctx<'_> {
             connect_method: Some(method_id),
             access: self.access.as_deref(),
             limit_level: self.limit.as_deref(),
+            config: g.webhook.as_ref().and_then(|w| w.config_json.as_ref()),
         };
         let (old, applied) = match self.write(caller, &n).await {
             Ok(o) => o,
@@ -894,6 +904,7 @@ fn gathered_from_hook(c: Connected, client: Option<Uuid>) -> Gathered {
         expires_at: c.expires_at,
         fields: Map::new(),
         client,
+        webhook: None,
     }
 }
 
@@ -1072,6 +1083,7 @@ pub async fn start(
             let mut g = from_fields(p);
             // (P5-ICS, D-273, C-843) A secret-link app's URL is validated, fetched once and
             // stored as the credential (its host as metadata); no probe runs for it.
+            webhook::prepare(&ctx, &mut g, req.webhook.as_ref()).await?;
             link::check(&ctx, &mut g).await?;
             // (P5-CALDAV, D-275, C-845) An own-server app's address is discovered (principal →
             // calendar home) and pinned, with the origins used, before anything is stored.
@@ -1095,8 +1107,13 @@ pub async fn start(
                     None => ctx.probe_declared_scopes(f, &g).await,
                 });
             }
+            let generated = g.webhook.as_ref().and_then(|w| w.generated.clone());
             let (row, missing, applied) = ctx.finalize(caller, method, Kind::Fields, g).await?;
-            Ok(connected(row, missing, applied, &snap))
+            let mut started = connected(row, missing, applied, &snap);
+            if let ConnectResponse::Connected { signing_secret, .. } = &mut started.response {
+                *signing_secret = generated;
+            }
+            Ok(started)
         }
         Connect::Oauth2(o) => start_oauth(&ctx, o, &req).await,
         Connect::Hook(h) => {
@@ -1277,6 +1294,7 @@ pub async fn ensure_credential_free_in_tx(
         connect_method: Some(method.id()),
         access: None,
         limit_level: None,
+        config: None,
     };
     let extra = json!({"via": "agent_grant", "agent_id": agent_id});
     let ev = match ctx.write_in_tx(tx, caller, &n, Some(extra)).await {
@@ -1318,6 +1336,7 @@ fn connected(
             connection: Box::new(Connection::new(row, Some(snap))),
             missing_scopes: missing,
             grants: applied.grants,
+            signing_secret: None,
         },
         cookie: None,
     }

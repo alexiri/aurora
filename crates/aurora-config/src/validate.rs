@@ -245,6 +245,8 @@ pub struct ApiConfig {
     pub push: PushSection,
     /// (phase 4, P4-TERM, D-161) validated `[terminal]` (off means every route 404s).
     pub terminal: TerminalSection,
+    /// (P5-WEBHOOK-2, C-912) validated `[outgoing_webhooks]`.
+    pub outgoing_webhooks: OutgoingWebhooksSection,
     pub plugins: PluginsSection,
     pub retention: RetentionSection,
     pub attachments: AttachmentsSection,
@@ -620,6 +622,13 @@ impl RawConfig {
         if self.terminal.wake_window_secs == 0 {
             c.err("terminal.wake_window_secs", "must be greater than 0");
         }
+        // (P5-WEBHOOK-2, C-912) the instance ceilings of the outgoing-webhook send limits.
+        if !(1..=600).contains(&self.outgoing_webhooks.per_minute_max) {
+            c.err("outgoing_webhooks.per_minute_max", "must be 1–600");
+        }
+        if !(1..=100_000).contains(&self.outgoing_webhooks.per_day_max) {
+            c.err("outgoing_webhooks.per_day_max", "must be 1–100000");
+        }
         if self.terminal.wake_wait_secs == 0 {
             c.err("terminal.wake_wait_secs", "must be greater than 0");
         }
@@ -761,6 +770,7 @@ impl RawConfig {
             previews,
             push: self.push.clone(),
             terminal: self.terminal.clone(),
+            outgoing_webhooks: self.outgoing_webhooks.clone(),
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
             attachments: self.attachments.clone(),

@@ -567,6 +567,44 @@ full resync. Never on disk, never shared between replicas (each fetches once).
 synthetic host, the connection id, the app and tool, and at most the real host: the real path and
 query appear nowhere.
 
+### Send mode: outgoing webhooks (phase 5, P5-WEBHOOK-2, D-320, C-909, C-910, SEC-127)
+
+A `secret_link` app with `mode: send` makes the same host a **send** lane: the agent posts the **slot
+values** (a JSON object) and the gateway posts the message the person's template renders to the stored
+URL. Code: `src/decide/link/webhook.rs` (admission), `src/webhook_send.rs` (the post), the pure model in
+`crates/aurora-webhook`. The order is fixed:
+
+1. admission as above (grant, status, Read only, the policy verdict for `<method> /`), then the org
+   switch (403 `outgoing_webhooks_disabled`);
+2. the configured method only (405), `Content-Type: application/json` (415 `webhook_content_type`), a
+   body ≤ `WEBHOOK_VALUES_MAX` (413 `values_too_large`);
+3. the values against the slots (422 `invalid_slot { slot, rule }`), **before any approval exists**;
+4. `X-Aurora-Dry-Run: 1`: the masked body (200, `dry_run: true`), nothing sent, not rate-counted, never
+   held by an `ask` verdict (a deny still refuses; the header is remembered by the hygiene step like the
+   other `x-aurora-*` ones and never forwarded);
+5. the approval hold (the summary lists the slot values by name: `aurora_summary::slots`), re-reading the
+   grant and policy on release;
+6. the rate take: both fixed windows (`gw:wh:<connection>:minute|day`) in one all-or-nothing consume on the
+   shared counters (D-119), at the lowest of the instance (live `outgoing_webhooks.*` settings), the org's
+   `settings.outgoing_webhooks` and the connection's `config.rate`; 429 `webhook_rate_limited`;
+7. the render, the only point where the sealed URL, secret values and signing secret are opened (413
+   `rendered_too_large`);
+8. the post: `Content-Type`, `User-Agent: Aurora-Webhook/1`, `X-Aurora-Delivery`, the configured headers
+   (only to the stored origin, never to a host a redirect names) and `X-Aurora-Signature` when signing is
+   on. Nothing from the agent's request. `307`/`308` resend the method, body and a fresh signature;
+   `301`/`302`/`303` continue as a body-less `GET`; ≤ 3 `https` hops, destination guard and egress policy
+   on each. `WEBHOOK_TIMEOUT` (15 s), **no retry, no cache**.
+
+The answer: the receiver's status (404/410 become 404 `link_not_found`), `Content-Type` and `Retry-After`,
+`X-Aurora-Delivery`, the body cut at `WEBHOOK_RESPONSE_MAX` with `X-Aurora-Truncated: 1`, the echo check
+(the URL, its path-with-query raw and percent-encoded, every secret value and the signing secret of at
+least 6 characters; a hit is 502 `upstream_echoed_credential`). A gateway refusal carries the `Errors` body
+and `X-Aurora-Error: <code>`: 403 `link_destination_refused`, 502 `link_unreachable
+{ may_have_been_delivered: false }` (nothing was sent: the guard, the lookup or the connect failed),
+504 `webhook_timeout { may_have_been_delivered: true }`. The **request-log row** has no column for a send's
+facts, so its `path` is the synthetic `/?delivery_id=<uuid>&slots=a,b&bytes=<n>&dry_run=0|1`: slot
+**names**, the rendered size and the delivery id, never a value, a header, the path or the URL.
+
 ## MITM lane: connect-time resolution
 
 On `CONNECT host:port` the gateway builds a **ResolvedHost** for

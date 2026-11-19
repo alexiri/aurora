@@ -113,6 +113,8 @@ pub struct RawConfig {
     pub terminator: TerminatorSection,
     /// (phase 4, P4-TERM, D-161) the dashboard's web terminal: master switch and clocks.
     pub terminal: TerminalSection,
+    /// (phase 5, P5-WEBHOOK-2, C-912) instance ceilings of the outgoing-webhook send limits.
+    pub outgoing_webhooks: OutgoingWebhooksSection,
     /// (phase 5, P4-SSH-1, D-239) SSH access to sandboxes: master switch, the public address
     /// people connect to, the certificate lifetime and the retired CA public keys.
     pub ssh: SshSection,
@@ -827,6 +829,25 @@ impl Default for TerminalSection {
             awake_cap_secs: 4 * 3600,
             wake_window_secs: 60,
             wake_wait_secs: 45,
+        }
+    }
+}
+
+/// `[outgoing_webhooks]` (phase 5, P5-WEBHOOK-2, C-912): the instance ceilings of the per-connection
+/// send limits (an org and a connection may only lower them).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OutgoingWebhooksSection {
+    /// Sends per minute per connection, 1–600.
+    pub per_minute_max: u32,
+    /// Sends per day per connection, 1–100,000.
+    pub per_day_max: u32,
+}
+impl Default for OutgoingWebhooksSection {
+    fn default() -> Self {
+        Self {
+            per_minute_max: 30,
+            per_day_max: 500,
         }
     }
 }

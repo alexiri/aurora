@@ -57,7 +57,7 @@ apps:
     tools:
       write:
         items:
-          - { id: send, name: Send to the webhook, description: "Sends the message you defined for this webhook to its URL, with the values the agent fills in. Asks you first by default.", host: "*.link.aurora.internal", path: /, methods: [POST] }
+          - { id: send, name: Send to the webhook, description: "Sends the message you defined for this webhook to its URL, with the values the agent fills in. Asks you first by default.", host: "*.link.aurora.internal", path: /, methods: [POST, PUT] }
     approvals:
       # The summary lists the slot values by name; the `slots` decoder (C-910) that builds it
       # arrives with the gateway send path (P5-WEBHOOK-2). Until then the title is all it shows.

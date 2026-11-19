@@ -54,6 +54,8 @@ hosted.turn_stall_secs
 llm.enabled_providers
 llm.endpoints
 llm.provider_preference
+outgoing_webhooks.per_day_max
+outgoing_webhooks.per_minute_max
 previews.awake_cap_secs
 previews.bytes_per_share_day
 previews.session_idle_secs

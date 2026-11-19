@@ -2418,6 +2418,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/webhook/webhook-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Render a configuration for sample values with no network; secret values appear as
+         *     `«secret:name»` (C-909). Needs a session.
+         */
+        post: operations["previewWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app}": {
         parameters: {
             query?: never;
@@ -2520,6 +2540,23 @@ export interface paths {
          *     what is missing and who can fix it (C-931).
          */
         get: operations["getAppSetup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app}/webhook-presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The presets of the installed package version of a send-mode app (C-909). */
+        get: operations["listWebhookPresets"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2834,6 +2871,54 @@ export interface paths {
         get: operations["previewConnectionLimit"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/connections/{id}/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The configuration of an outgoing webhook (C-909): the template, slots, headers, limits, the
+         *     host and the **names** of its secret values. Never the URL, a secret value or the signing
+         *     secret. `can_own` of the connection's workspace (owner/admin for an organization's).
+         */
+        get: operations["getConnectionWebhook"];
+        /**
+         * Replace the configuration (C-909). `secret_values`: a value sets, `null` deletes, an absent name
+         *     is kept. `signing_secret.mode`: `keep`, `generate`, `provided` or `off`. A change of secrets bumps
+         *     the credential version; any change reaches the gateway at once. Audited
+         *     `connection.webhook.update`.
+         */
+        put: operations["putConnectionWebhook"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/connections/{id}/webhook/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send the webhook now, or with `dry_run` show the stored configuration's rendering (C-909). The
+         *     person is the actor; the same renderer, destination guard, redirect rule and rate counters as the
+         *     gateway. The answer is capped at 4 KiB and echo-checked. Audited `webhook.test_sent`.
+         */
+        post: operations["testConnectionWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7332,6 +7417,7 @@ export interface components {
              *     probes. Each must be one of the method's scopes.
              */
             scopes?: string[] | null;
+            webhook?: components["schemas"]["WebhookConnectBody"] | null;
             /** Format: uuid */
             workspace_id?: string | null;
         };
@@ -7347,6 +7433,11 @@ export interface components {
             /** @enum {string} */
             kind: "connected";
             missing_scopes: string[];
+            /**
+             * @description (P5-WEBHOOK-2, C-909) A signing secret Aurora generated for an outgoing webhook: shown
+             *     here once and never again.
+             */
+            signing_secret?: string | null;
         };
         ConnectedBy: {
             display_name: string;
@@ -7629,6 +7720,8 @@ export interface components {
             proxy_url: string;
             stubs: components["schemas"]["StubFile"][];
         };
+        /** @enum {string} */
+        ContentType: "application/json" | "application/x-www-form-urlencoded" | "text/plain";
         ContextCredential: {
             credential: string;
             /** Format: date-time */
@@ -8196,6 +8289,15 @@ export interface components {
         EffectiveLlm: {
             endpoints: components["schemas"]["EffectiveEndpoint"][];
             posture: components["schemas"]["Sourced_String"];
+        };
+        /** @description The effective send limit and who lowered it. */
+        EffectiveRateDto: {
+            /** Format: int32 */
+            per_day: number;
+            /** Format: int32 */
+            per_minute: number;
+            /** @description `instance` | `org` | `connection`. */
+            source: string;
         };
         EffectiveSkill: {
             /** @description Always true: a disabled skill never wins. */
@@ -8812,6 +8914,11 @@ export interface components {
             id: string;
             /** @description (P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none. */
             model_roles: string[];
+        };
+        /** @description A header sent to the receiver: a constant value, or one with `{{secret:name}}`. */
+        HeaderTemplate: {
+            name: string;
+            value: string;
         };
         /** @description C-944. Until P5-UX-14 adds the check fields: `sign_in_expired`, `disabled`, else `unknown`. */
         Health: {
@@ -9564,6 +9671,8 @@ export interface components {
             turn?: components["schemas"]["Turn"] | null;
         };
         /** @enum {string} */
+        Method: "POST" | "PUT";
+        /** @enum {string} */
         MethodAudience: "person" | "admin";
         MethodRef: {
             id: string;
@@ -9903,6 +10012,19 @@ export interface components {
             /** Format: int64 */
             max_members?: number | null;
             members_can_create_workspaces: boolean;
+            /**
+             * @description (phase 5, P5-WEBHOOK-2, D-320, C-912) Outgoing webhooks for the organization (default
+             *     `true`); stored as `settings.outgoing_webhooks.enabled`.
+             */
+            outgoing_webhooks_enabled: boolean;
+            /** Format: int64 */
+            outgoing_webhooks_per_day_max?: number | null;
+            /**
+             * Format: int64
+             * @description The org's own send ceilings (`null` = the instance's), stored as
+             *     `settings.outgoing_webhooks.per_minute_max` / `.per_day_max`.
+             */
+            outgoing_webhooks_per_minute_max?: number | null;
             /** @description (phase 4, P4-PRV-1, C-549) Port previews for this organization (default `false`). */
             previews_enabled: boolean;
         };
@@ -9917,6 +10039,16 @@ export interface components {
              */
             max_members?: number | null;
             members_can_create_workspaces?: boolean | null;
+            /** @description (phase 5, P5-WEBHOOK-2, C-912) The outgoing-webhook switch; audited with `org.update`. */
+            outgoing_webhooks_enabled?: boolean | null;
+            /** Format: int64 */
+            outgoing_webhooks_per_day_max?: number | null;
+            /**
+             * Format: int64
+             * @description The org's send ceilings. Absent = unchanged, `null` = the instance's; above the instance's →
+             *     422 `above_instance_ceiling`.
+             */
+            outgoing_webhooks_per_minute_max?: number | null;
             /**
              * @description (phase 4, P4-PRV-1, C-549) Port previews for the organization; audited
              *     `org.previews.update` (security-critical).
@@ -11934,6 +12066,13 @@ export interface components {
         PreviewAddonSourceRequest: {
             url: string;
         };
+        /**
+         * @description The configuration of a preview: the configuration and `secret_value_names`, the names of the secret
+         *     values the person will enter.
+         */
+        PreviewConfig: components["schemas"]["WebhookConfig"] & {
+            secret_value_names: string[];
+        };
         PreviewCreatedBy: {
             /** Format: uuid */
             id?: string | null;
@@ -11945,6 +12084,19 @@ export interface components {
             /** Format: int32 */
             exit_code?: number | null;
             tail?: string | null;
+        };
+        PreviewRequest: {
+            config: components["schemas"]["PreviewConfig"];
+            /** @description The slot values. */
+            values: unknown;
+        };
+        PreviewResponse: {
+            /** @description The rendered body, secrets shown as `«secret:name»`. */
+            body: string;
+            content_type: string;
+            /** @description Header names only. */
+            headers: string[];
+            method: string;
         };
         /** @description One preview share of a hosted agent: `https://<label>.<previews.domain>/`. */
         PreviewShare: {
@@ -12234,6 +12386,25 @@ export interface components {
              *     `{ "$secret": "keep" }` to keep the stored one.
              */
             store: Record<string, never>;
+        };
+        /** @description `PUT /v1/connections/{id}/webhook` request: the configuration plus the edits of the secrets. */
+        PutWebhookRequest: components["schemas"]["WebhookConfig"] & {
+            /** @description A value sets, `null` deletes, an absent name is kept. */
+            secret_values?: {
+                [key: string]: string | null;
+            } | null;
+            signing_secret?: components["schemas"]["SigningInput"] | null;
+        };
+        /** @description The answer of an edit: the view, and the signing secret when one was generated (once). */
+        PutWebhookResponse: components["schemas"]["WebhookView"] & {
+            signing_secret?: string | null;
+        };
+        /** @description The connection's own send limits (`null` = the ceiling). */
+        Rate: {
+            /** Format: int32 */
+            per_day?: number | null;
+            /** Format: int32 */
+            per_minute?: number | null;
         };
         RateLimit: {
             /** Format: int32 */
@@ -13225,6 +13396,13 @@ export interface components {
             equals: string;
             field: string;
         };
+        /** @description How a signing secret is set on connect. */
+        SigningInput: {
+            /** @description Connect: `generate` | `provided`. Edit: `keep` | `generate` | `provided` | `off`. */
+            mode: string;
+            /** @description The secret, for `provided`. */
+            value?: string | null;
+        };
         /** @description (FIX-159, C-930) What the request was recognized as. */
         SimApp: {
             app_id: string;
@@ -13395,6 +13573,30 @@ export interface components {
             repo?: string | null;
             update_pending: boolean;
         };
+        /** @description One typed blank of the template that the agent fills in. */
+        Slot: {
+            description?: string;
+            /** @description `enum`: the allowed values. */
+            enum?: string[] | null;
+            example?: unknown;
+            /**
+             * Format: int32
+             * @description `string_list`: at most this many items.
+             */
+            max_items?: number | null;
+            /**
+             * Format: int32
+             * @description `string` and `string_list` items: at most this many Unicode scalar values.
+             */
+            max_length?: number | null;
+            name: string;
+            required: boolean;
+            /** @description `json`: the schema subset of C-909. */
+            schema?: unknown;
+            type: components["schemas"]["SlotType"];
+        };
+        /** @enum {string} */
+        SlotType: "string" | "integer" | "number" | "boolean" | "string_list" | "enum" | "json";
         Sourced_Option_Vec_String: {
             instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
@@ -13731,6 +13933,25 @@ export interface components {
         };
         TerminatorList: {
             terminators: components["schemas"]["TerminatorInfo"][];
+        };
+        TestRequest: {
+            dry_run?: boolean;
+            values?: unknown;
+        };
+        /** @description The answer of a send test, or with `dry_run` the preview of the stored configuration. */
+        TestResponse: {
+            /** @description The receiver's answer (≤ 4 KiB, echo-checked), or the masked body of a dry run. */
+            body?: string | null;
+            content_type?: string | null;
+            delivery_id?: string | null;
+            headers?: string[] | null;
+            method?: string | null;
+            /**
+             * Format: int32
+             * @description The receiver's status (a real send).
+             */
+            status?: number | null;
+            truncated?: boolean | null;
         };
         /** @description `POST /v1/admin/secret-stores/test` (C-746). */
         TestResult: {
@@ -14133,6 +14354,28 @@ export interface components {
             url_prefix: string;
             verification: components["schemas"]["VerificationView"];
         };
+        WebhookConfig: {
+            content_type: components["schemas"]["ContentType"];
+            /** @description The person's note for the agent (≤ 1,000 characters). */
+            description?: string;
+            headers?: components["schemas"]["HeaderTemplate"][];
+            method: components["schemas"]["Method"];
+            preset?: string | null;
+            rate?: components["schemas"]["Rate"];
+            signing?: boolean;
+            slots?: components["schemas"]["Slot"][];
+            template: string;
+            /** Format: int32 */
+            version: number;
+        };
+        /** @description `webhook` of a connect: the configuration and the secrets the person enters. */
+        WebhookConnectBody: components["schemas"]["WebhookConfig"] & {
+            /** @description Secret values by name; each ≤ 4 KiB. */
+            secret_values?: {
+                [key: string]: string;
+            } | null;
+            signing_secret?: components["schemas"]["SigningInput"] | null;
+        };
         WebhookCreator: {
             display_name: string;
             /** Format: uuid */
@@ -14155,6 +14398,23 @@ export interface components {
             status: string;
             /** Format: uuid */
             turn_id?: string | null;
+        };
+        /**
+         * @description A preset file of a package (C-909): holds no secret value; the names say which ones the person
+         *     must enter.
+         */
+        WebhookPreset: {
+            config: components["schemas"]["WebhookConfig"];
+            id: string;
+            name: string;
+            secret_value_names?: string[];
+            suggest_for_hosts?: string[];
+        };
+        /** @description `GET /v1/connections/{id}/webhook`: never a URL, a secret value or the signing secret. */
+        WebhookView: components["schemas"]["WebhookConfig"] & {
+            effective_rate: components["schemas"]["EffectiveRateDto"];
+            host: string;
+            secret_value_names: string[];
         };
         /** @description Returned by create and rotate: the URL embeds the token and is shown once. */
         WebhookWithUrl: {
@@ -24804,6 +25064,55 @@ export interface operations {
             };
         };
     };
+    previewWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewResponse"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getApp: {
         parameters: {
             query?: {
@@ -25185,6 +25494,54 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWebhookPresets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookPreset"][];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -26553,6 +26910,222 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getConnectionWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connection id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookView"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putConnectionWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connection id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutWebhookRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PutWebhookResponse"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `webhook_config_invalid` with `fields[{path, code}]` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    testConnectionWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connection id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestResponse"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };

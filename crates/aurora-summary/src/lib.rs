@@ -3,6 +3,7 @@
 //! call (`summarize: hook`) is made by the caller before [`template::summarize`].
 #![forbid(unsafe_code)]
 
+pub mod slots;
 pub mod template;
 
 use aurora_core::limits::{

@@ -864,6 +864,14 @@ which emails the attendees, without asking. A workspace that wants approval for 
 level gives the agent a **custom grant** on that connection with `send_scheduling_message` in
 `ask_tools`. A per-tool default would be a new manifest key; it is not built.
 
+**`slots` summary** (phase 5, P5-WEBHOOK-2, C-910): the approval of a send to an outgoing webhook is built
+by the gateway from the **checked slot values** (`aurora_summary::slots::summary`), not by a manifest
+template: title `Send to <connection name>`, fields `Host`, `Method` and each given slot as `name: value`
+(each clamped to 500 characters with the full length shown; a `json` value pretty-printed; slots past the
+field limit go to `text`). It shows no fixed template part, header, secret value or URL. The manifest's
+`approvals.send` (a title only) exists because the package check requires a template for every write tool;
+the gateway's summary replaces it.
+
 **`ical` decoder** (an approval summary step, `§5`): `{ ical: SUMMARY }` yields every value of that
 property of the `VEVENT`s in an iCalendar body, joined with `, `. A `DTSTART`/`DTEND`/`DUE` carries its
 `TZID` (or `UTC` for a `Z` time) and an `ATTENDEE`/`ORGANIZER` its common name before the address, so an

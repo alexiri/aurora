@@ -940,6 +940,26 @@ pub async fn snapshot_body<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P5-WEBHOOK-2, C-909) The core-owned configuration of a send-mode connection, and the org's
+/// `settings.outgoing_webhooks` (the switch and the lowered ceilings), read at every send so a
+/// change applies at once.
+pub async fn webhook_config(
+    pool: &sqlx::PgPool,
+    org_id: Uuid,
+    id: Uuid,
+) -> Result<(Option<serde_json::Value>, Option<serde_json::Value>), DbError> {
+    let row: Option<(Option<serde_json::Value>, Option<serde_json::Value>)> = sqlx::query_as(
+        "SELECT c.config, o.settings -> 'outgoing_webhooks' \
+         FROM app_connections c JOIN organizations o ON o.id = c.org_id \
+         WHERE c.id = $1 AND c.org_id = $2",
+    )
+    .bind(id)
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.unwrap_or((None, None)))
+}
+
 /// An app connection as the gateway needs it (never the credentials).
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AppConnectionRow {
