@@ -36,7 +36,9 @@ export function StatusLine({
   className?: string;
 }) {
   return (
-    <p data-testid={testId} className={cn("flex flex-wrap items-center gap-x-2 gap-y-1 text-sm", TEXT[tone], className)}>
+    // items-baseline: the dot (no text, so its baseline is its bottom edge) sits on the first line's baseline, not in the
+    // middle of a wrapped block (P5-POLISH-11 pass 2); an action button lines up by its text too.
+    <p data-testid={testId} className={cn("flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm", TEXT[tone], className)}>
       <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", DOT[tone])} />
       <span className="min-w-0 flex-1">{children}</span>
       {action}
