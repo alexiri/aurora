@@ -96,9 +96,9 @@ describe("agent header sandbox pill (FIX-025)", () => {
     expect(screen.getByText(/aurora-runner.aurora \(10.0.0.9\):4105/)).toBeTruthy();
     expect(screen.getByText("65 s after start")).toBeTruthy();
     expect(screen.getByText("BackOff: restarting failed container")).toBeTruthy();
-    // The failure notice carries the human reason too.
-    const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("could not reach the runner");
+    // The top card says it in words: the computer couldn't start, and why.
+    expect(screen.getByTestId("computer-state").textContent).toBe("Scout's computer couldn't start");
+    expect(screen.getByRole("region", { name: "Computer" }).textContent).toContain("could not reach the runner");
   });
 });
 
@@ -125,7 +125,7 @@ describe("Computer tab start log and retry (FIX-029)", () => {
     expect(screen.getByText("Recent start failures")).toBeTruthy();
   });
 
-  it("shows Retry now on a retryable failure, disabled as 'Start in flight…' once the retry answered", async () => {
+  it("shows Try again on a retryable failure, disabled as 'Start in flight…' once the retry answered", async () => {
     const calls: string[] = [];
     // A deferred POST: the pending state is observable.
     let release: (v: Response) => void = () => undefined;    const rts: Record<string, Handler> = {
@@ -149,7 +149,7 @@ describe("Computer tab start log and retry (FIX-029)", () => {
         <ComputerTab agentId="a1" />
       </QueryClientProvider>,
     );
-    const btn = await screen.findByRole("button", { name: "Retry now" });
+    const btn = await screen.findByRole("button", { name: "Try again" });
     fireEvent.click(btn);
     await waitFor(() => expect(calls).toContain("retry"));
     // While the POST is in flight the button is disabled ("Start in flight…", C-615).
@@ -164,15 +164,15 @@ describe("Computer tab start log and retry (FIX-029)", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("button", { name: "Start in flight…" })).toBeNull());
-    expect(screen.queryByRole("button", { name: "Retry now" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("hides Retry now when the sandbox is not retryable (another state or frozen)", async () => {
+  it("hides Try again when the sandbox is not retryable (another state or frozen)", async () => {
     renderPage(routes({ state: "starting", retryable: false }));
     fireEvent.click(await screen.findByRole("tab", { name: "Computer" }));
     await screen.findByText("Start log");
-    expect(screen.queryByRole("button", { name: "Retry now" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 
   const renderTab = (sandbox: Record<string, unknown>, frozen = false) => {
@@ -184,24 +184,39 @@ describe("Computer tab start log and retry (FIX-029)", () => {
     );
   };
 
-  // FIX-049 (C-626): Restart answers 409 where there is nothing to restart, so the button is disabled
-  // there; from `failed` it performs the retry recovery, so it is enabled.
-  it.each(["stopping", "stopped", "unprovisioned"])("disables Restart when the computer is %s", async (state) => {
+  // (P5-POLISH-6, C5) The top card says the state in one sentence with the action that fits it: Restart only while awake
+  // (the API answers 409 elsewhere, FIX-049), Try again after a failed start.
+  it.each([
+    ["stopping", "is asleep"],
+    ["stopped", "is asleep"],
+    ["unprovisioned", "is asleep"],
+    ["starting", "is starting"],
+  ])("offers no Restart when the computer is %s", async (state, words) => {
     renderTab({ state });
-    await screen.findByText("State:", { exact: false });
-    expect((screen.getByRole("button", { name: "Restart" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((await screen.findByTestId("computer-state")).textContent).toContain(words);
+    expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
   });
 
-  it.each(["starting", "running", "failed"])("enables Restart when the computer is %s", async (state) => {
-    renderTab({ state, failure_code: state === "failed" ? "pod_failed" : null });
-    await screen.findByText("State:", { exact: false });
+  it("offers Restart when the computer is awake", async () => {
+    renderTab({ state: "running" });
+    expect((await screen.findByTestId("computer-state")).textContent).toContain("is awake");
     expect((screen.getByRole("button", { name: "Restart" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("hides Retry now and disables Restart on a failed computer of a frozen agent", async () => {
+  it("offers Try again after a failed start, and nothing for a frozen agent (the API would answer 423)", async () => {
+    renderTab({ state: "failed", failure_code: "pod_failed", retryable: true });
+    expect((await screen.findByTestId("computer-state")).textContent).toContain("couldn't start");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    cleanup();
     renderTab({ state: "failed", failure_code: "pod_failed", retryable: true }, true);
-    await screen.findByText("State:", { exact: false });
-    expect(screen.queryByRole("button", { name: "Retry now" })).toBeNull();
-    expect((screen.getByRole("button", { name: "Restart" }) as HTMLButtonElement).disabled).toBe(true);
+    await screen.findByTestId("computer-state");
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("keeps the engine's details collapsed and says which pages are not set up, and who can turn them on", async () => {
+    renderTab({ state: "stopped" });
+    const details = (await screen.findByTestId("technical-details")) as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(screen.getByTestId("missing-pages").textContent).toMatch(/Terminal, Files, Previews and SSH aren't set up on this Aurora\. An Aurora administrator can set this up\./);
   });
 });

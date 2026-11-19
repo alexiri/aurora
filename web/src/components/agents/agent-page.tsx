@@ -309,7 +309,7 @@ export function AgentPage() {
           ) : null}
           {tab === "channels" && !byo && workspace.isPending ? <Loading /> : null}
           {tab === "computer" && !byo ? (
-            <ComputerTab agentId={agent.id} workspaceId={workspace.data?.id} frozen={agent.frozen !== null} terminal={terminalEnabled} />
+            <ComputerTab agentId={agent.id} agentName={agent.name} workspaceId={workspace.data?.id} frozen={agent.frozen !== null} terminal={terminalEnabled} />
           ) : null}
           {tab === "terminal" && !byo && terminalEnabled ? <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "files" && !byo && terminalEnabled ? <FilesTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
