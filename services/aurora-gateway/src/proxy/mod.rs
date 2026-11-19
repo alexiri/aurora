@@ -1,6 +1,7 @@
 //! Proxy listener (4102): CONNECT (MITM / open lane) and absolute-form HTTP.
 
 mod absolute;
+mod body_idle;
 mod connect;
 mod database;
 mod listener;
@@ -92,6 +93,9 @@ pub struct Proxy {
     connect_log: SourceLimiter,
     /// (phase 2, P2-DBL-1) Cancel keys of live database sessions.
     db_cancel: crate::db::pg::CancelRegistry,
+    /// (FIX-180) Idle limit of a request body, milliseconds (`GATEWAY_BODY_IDLE_TIMEOUT`;
+    /// overridden by tests only).
+    body_idle_ms: std::sync::atomic::AtomicU64,
 }
 
 /// Per-connection routing context.
@@ -152,7 +156,55 @@ impl Proxy {
             refusals: crate::byo::RefusalLimiter::default(),
             connect_log: SourceLimiter::default(),
             db_cancel: crate::db::pg::CancelRegistry::default(),
+            body_idle_ms: std::sync::atomic::AtomicU64::new(
+                u64::try_from(aurora_core::limits::GATEWAY_BODY_IDLE_TIMEOUT.as_millis())
+                    .unwrap_or(u64::MAX),
+            ),
         }))
+    }
+
+    /// (FIX-180) Replace the request-body idle limit; for tests, which cannot wait 60 s.
+    pub fn set_body_idle_timeout(&self, d: Duration) {
+        self.body_idle_ms.store(
+            u64::try_from(d.as_millis()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+    }
+
+    /// (FIX-180, D-395, C-1040) A request body that stopped arriving: `408 request_body_timeout`,
+    /// the connection closed after it (HTTP/1), one request-log row (through the decision's hook
+    /// when it already ran, else through the handler).
+    fn answer_stalled(
+        &self,
+        t: &Target,
+        hook: Option<Box<dyn crate::pipeline::PostHook>>,
+        method: &str,
+        http1: bool,
+    ) -> Response<Body> {
+        metrics::counter!("aurora_gateway_request_body_timeout_total").increment(1);
+        let err = ApiError::new(
+            http::StatusCode::REQUEST_TIMEOUT,
+            "request_body_timeout",
+            "The request body stopped arriving, so the request was ended.",
+        );
+        match hook {
+            Some(h) => h.on_error(&err),
+            None => self.handler.body_stalled(
+                &t.identity,
+                if t.lane == Lane::Mitm { "mitm" } else { "open" },
+                method,
+                &t.host,
+                &err,
+            ),
+        }
+        let mut res = guidance::response(&err);
+        if http1 {
+            res.headers_mut().insert(
+                http::header::CONNECTION,
+                http::HeaderValue::from_static("close"),
+            );
+        }
+        res
     }
 
     /// (RFE-025) BYO admission checks 1 (posture) and 2 (source address): counted, logged at
@@ -356,7 +408,14 @@ impl Proxy {
                 return guidance::response(&guidance::ambiguous_path());
             }
         };
-        let body: Body = body.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync();
+        // (FIX-180) A body that delivers nothing for the idle limit ends the request: 408.
+        let stall = Arc::new(body_idle::Stall::default());
+        let body: Body = body_idle::IdleBody::new(
+            body,
+            Duration::from_millis(self.body_idle_ms.load(Ordering::Relaxed)),
+            stall.clone(),
+        )
+        .boxed_unsync();
         if let Some(h) = &wire_headers {
             *wire = Wire::received(
                 if t.lane == Lane::Mitm { "mitm" } else { "open" },
@@ -381,6 +440,9 @@ impl Proxy {
             c = crate::byo::closed_by(&mut closed_by) => {
                 return self.answer_closed(t, &c, &method_name, http1);
             }
+            () = stall.tripped() => {
+                return self.answer_stalled(t, None, &method_name, http1);
+            }
             o = self.handler.handle(PipelineRequest {
                 identity: t.identity.clone(),
                 lane: t.lane,
@@ -396,6 +458,9 @@ impl Proxy {
                 body,
             }) => o,
         };
+        if stall.is_set() {
+            return self.answer_stalled(t, None, &method_name, http1);
+        }
         let prepared = match outcome {
             Outcome::Respond(r) => return r,
             Outcome::Forward(p) => p,
@@ -435,9 +500,23 @@ impl Proxy {
             &decided,
         );
         wire.started();
-        let resp = match self.upstream.send(prepared).await {
-            Ok(r) => r,
-            Err(e) => {
+        // (FIX-180) The request body streams upstream while `send` runs: a stall ends it with 408.
+        let sent = tokio::select! {
+            biased;
+            () = stall.tripped() => None,
+            r = self.upstream.send(prepared) => Some(r),
+        };
+        let resp = match sent {
+            None => {
+                wire.replaced("request_body_timeout");
+                return self.answer_stalled(t, hook, &method_name, http1);
+            }
+            Some(Err(_)) if stall.is_set() => {
+                wire.replaced("request_body_timeout");
+                return self.answer_stalled(t, hook, &method_name, http1);
+            }
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
                 wire.replaced("upstream_error");
                 if let Some(h) = hook {
                     h.on_error(&e);

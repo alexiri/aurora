@@ -291,6 +291,8 @@ impl Default for Opts {
 }
 
 struct Env {
+    /// (FIX-180) The proxy, for its test override of the body idle limit.
+    px: Arc<Proxy>,
     proxy: SocketAddr,
     llm: SocketAddr,
     plain: SocketAddr,
@@ -760,8 +762,10 @@ async fn start(o: Opts) -> Env {
         egress_proxy: None,
     })
     .unwrap();
+    let px = p.clone();
     tokio::spawn(p.run(pl, std::future::pending()));
     Env {
+        px,
         proxy,
         llm: llm_addr,
         plain,
@@ -912,6 +916,79 @@ async fn wait_writes(env: &Env, n: usize) -> Vec<(Uuid, Value, String)> {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     panic!("origin write-back did not happen");
+}
+
+// ---- FIX-180: request body idle limit ----
+
+/// Sends the head of a `POST /v1/messages` with `Content-Length: len` and returns the client stream.
+async fn open_post(
+    env: &Env,
+    len: usize,
+) -> tokio_rustls::client::TlsStream<tokio::net::TcpStream> {
+    let mut s = crate::common::connect(env.proxy).await;
+    let head = format!(
+        "POST http://{t}/v1/messages HTTP/1.1\r\nHost: {t}\r\n{}Content-Type: application/json\r\nContent-Length: {len}\r\n\r\n",
+        auth("agent"),
+        t = env.llm
+    );
+    s.write_all(head.as_bytes()).await.unwrap();
+    s
+}
+
+/// (FIX-180, D-395, C-1040) A client that sends half a body and stops is answered 408
+/// `request_body_timeout` after the idle limit, the connection is closed, and the log row says so.
+#[tokio::test]
+async fn a_stalled_request_body_is_answered_408_and_the_connection_closes() {
+    let env = start(Opts::default()).await;
+    env.px.set_body_idle_timeout(Duration::from_millis(300));
+    let body = hello().to_string();
+    let mut s = open_post(&env, body.len()).await;
+    crate::common::write_flushed(&mut s, &body.as_bytes()[..body.len() / 2]).await;
+    let mut out = Vec::new();
+    // Bounded: before the fix nothing ever answered and this read hit the 10 s bound.
+    let ended = tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut out)).await;
+    let text = String::from_utf8_lossy(&out).into_owned();
+    assert!(
+        ended.is_ok(),
+        "the connection stayed open after the idle limit: {text}"
+    );
+    assert!(text.starts_with("HTTP/1.1 408"), "{text}");
+    assert!(text.contains("request_body_timeout"), "{text}");
+    assert!(text.to_ascii_lowercase().contains("connection: close"));
+    env.log.flush().await;
+    let rows = env.captured.0.lock().unwrap().clone();
+    assert!(
+        rows.iter()
+            .any(|r| r.status == 408 && r.error_code.as_deref() == Some("request_body_timeout")),
+        "{rows:?}"
+    );
+    assert_eq!(env.counters.messages.load(Ordering::SeqCst), 0);
+}
+
+/// (FIX-180) The limit is idle time, not total time: a body that keeps moving, slower in total than
+/// the limit, is not cut.
+#[tokio::test]
+async fn a_slow_but_moving_request_body_is_not_cut() {
+    let env = start(Opts::default()).await;
+    env.px.set_body_idle_timeout(Duration::from_millis(600));
+    let body = hello().to_string();
+    let mut s = open_post(&env, body.len()).await;
+    let started = std::time::Instant::now();
+    for chunk in body.as_bytes().chunks(4) {
+        crate::common::write_flushed(&mut s, chunk).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    assert!(
+        started.elapsed() > Duration::from_millis(600),
+        "the body must take longer than the idle limit"
+    );
+    let mut out = vec![0u8; 4096];
+    let n = tokio::time::timeout(Duration::from_secs(10), s.read(&mut out))
+        .await
+        .unwrap()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out[..n]).into_owned();
+    assert!(text.starts_with("HTTP/1.1 200"), "{text}");
 }
 
 // ---- step 6a ----

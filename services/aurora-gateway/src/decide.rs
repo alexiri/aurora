@@ -2400,6 +2400,37 @@ impl RequestHandler for PolicyHandler {
             .record(ctx.row(err.status().as_u16(), None, Some(err.code())));
     }
 
+    fn body_stalled(
+        &self,
+        identity: &Arc<Ident>,
+        lane: &'static str,
+        method: &str,
+        host: &str,
+        err: &ApiError,
+    ) {
+        let ctx = Ctx {
+            identity: identity.clone(),
+            lane,
+            method: method.to_owned(),
+            host: host.to_owned(),
+            path: "/".into(),
+            started: Instant::now(),
+            secret_id: None,
+            decision: "blocked",
+            rule: None,
+            injected: 0,
+            app_id: None,
+            tool_id: None,
+            llm_model: None,
+            connection_id: None,
+            counter_fallback: false,
+            approval_id: None,
+            resumed: false,
+        };
+        self.log
+            .record(ctx.row(err.status().as_u16(), None, Some(err.code())));
+    }
+
     async fn open_lane_check(&self, identity: &Ident, host: &str, port: u16) -> OpenLaneDecision {
         let ctx = Ctx {
             identity: Arc::new(identity.clone()),
