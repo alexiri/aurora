@@ -401,3 +401,14 @@ Gate as above (clippy on touched crates, module-filtered tests, guards; GitHub C
 
 Dead tests removed: none. P4 list left (and why): `ImportPlan` (`settings/service.rs`, p5-agent), `reject_public` (`plugins/ingest.rs`, p5-polish-b), `regenerate_agent_token` (aurora-client: a published client surface, owner decides), `turn_controls`, `addon_sources/poll.rs actor()`, `role_str` (still used), aurora-db unreferenced repo fns, `dash_paths.rs`, `repo/policy.rs workspace_org`, `groups role_str`, runner/supervisor test `next_data`.
 Left from the first list: T6 `with_byo` variants and `proxy.rs` tails; T7 other `RequestIdentity` literals (differing fields). Next: T8, T9, T11, T12–T17, P2, P1, P3.
+
+### Part B, third round (2026-11-19)
+| Batch | Δ lines | Tests run |
+|---|---:|---|
+| P2 `ApiError::invalid_field(message, path, detail)` (aurora-core) replaces 99 single-field `invalid_request(.., vec![FieldError::new(..)])` sites in aurora-api (parser-based rewrite, reviewed; JSON body identical) | −69 | openapi drift + 175 it tests, aurora-core lib 82 |
+| P5 seven hand-written `hex()` in aurora-api become `use ::hex::encode as hex` | −49 | 186 it tests |
+| P6 six char-boundary `clip` loops use `str::floor_char_boundary` | −36 | 136 it tests |
+| **Net** | **−154** | |
+
+`regenerate_agent_token` kept (client surface, owner). `ImportPlan`, `reject_public`: skipped (other lanes' files at the time). T16 (testkit `axum::serve` tail, six sites of four lines) judged not worth a helper (net ≈ −10). `outgoing_webhooks::the_send_test_posts_…` failed once on a tree merged with an older master (no `webhook.test_sent` audit row) and passed after merging current master; not related to these batches.
+Left: T8, T9, T11–T15, T17, P1, P3, P7, P8–P21; X tier untouched.
