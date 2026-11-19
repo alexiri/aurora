@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent};
 use crate::domains::agents::dto::Agent;
 use crate::domains::automations::service::{Acting, To, reassign_all};
 use crate::http::auth::{Caller, Principal, SessionCaller, require_own};
@@ -38,7 +38,7 @@ fn ws_role(a: &WorkspaceAuth) -> WorkspaceRole {
 }
 
 fn event(c: &Caller, action: &str) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
 }
 
 async fn begin(pool: &PgPool) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, ApiError> {

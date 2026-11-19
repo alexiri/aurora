@@ -1,6 +1,6 @@
 use super::dto::{AgentLink, LinkPeer, LinkPolicy, LinkSelf, SetPolicyBody};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::conversations::service::load_agent;
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
@@ -96,18 +96,14 @@ pub async fn set_policy(
     let out = view(&mut *tx, &row, b.agent_id).await?;
     audit::commit_critical(
         tx,
-        &AuditEvent::new(
-            AuditActor::from_caller(c),
-            "agent_link.policy",
-            Outcome::Success,
-        )
-        .org(agent.org_id)
-        .workspace(agent.workspace_id)
-        .target("agent_link", id)
-        .metadata(
-            json!({"agent_id": b.agent_id, "from": cur.policy_of(b.agent_id),
+        &AuditEvent::by(c, "agent_link.policy")
+            .org(agent.org_id)
+            .workspace(agent.workspace_id)
+            .target("agent_link", id)
+            .metadata(
+                json!({"agent_id": b.agent_id, "from": cur.policy_of(b.agent_id),
             "to": b.policy.as_str()}),
-        ),
+            ),
     )
     .await?;
     Ok(out)

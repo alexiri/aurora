@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::{fire, service};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent};
 use crate::domains::automations::{
     dto::ReassignCreatorRequest,
     service::{self as auto, Acting, To},
@@ -54,7 +54,7 @@ async fn authorized(
 fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, r: &ScheduleRow, action: &str) {
     audit::record(
         s,
-        AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+        AuditEvent::by(c, action)
             .org(a.org_id)
             .workspace(a.workspace_id)
             .target("schedule", r.id)

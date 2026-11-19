@@ -115,8 +115,8 @@ fn event(
     row: &ConnectionRow,
     extra: serde_json::Value,
 ) -> crate::audit::AuditEvent {
-    use crate::audit::{AuditActor, AuditEvent, Outcome};
-    let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+    use crate::audit::AuditEvent;
+    let mut ev = AuditEvent::by(caller, action)
         .org(row.org_id)
         .target("connection", row.id)
         .metadata(serde_json::json!({

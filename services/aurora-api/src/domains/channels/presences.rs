@@ -492,7 +492,7 @@ fn audit_presence(
 ) {
     audit::record(
         s,
-        AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+        AuditEvent::by(c, action)
             .org(agent.org_id)
             .workspace(agent.workspace_id)
             .target("channel_presence", id)

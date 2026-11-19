@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::{gov, llm};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::{Caller, require_own};
 use crate::http::pagination::Pagination;
 use aurora_core::{ApiError, Secret as Plain};
@@ -20,7 +20,7 @@ const MAX_VALUE: usize = 16 * 1024;
 /// Security-critical audit event of a secret change (RFE-008): committed with the change.
 /// Never carries a value, only names and versions.
 fn event(caller: &Caller, action: &str, row: &SecretRow, extra: Value) -> AuditEvent {
-    let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+    let mut ev = AuditEvent::by(caller, action)
         .org(row.org_id)
         .target("secret", row.id)
         .metadata(serde_json::json!({

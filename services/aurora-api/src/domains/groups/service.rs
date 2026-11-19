@@ -3,7 +3,7 @@
 //! Nothing here decides access: roles come from `aurora_db::authz`.
 use super::dto::*;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
 use aurora_db::DbError;
@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 pub fn event(c: &Caller, action: &str) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {

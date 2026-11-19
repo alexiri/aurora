@@ -431,20 +431,16 @@ pub async fn put(
     }
     aurora_db::repo::credentials::notify_gateway_invalidate(&mut *tx, "connection", id).await?;
     let names: Vec<&String> = edited.secrets.keys().collect();
-    let ev = crate::audit::AuditEvent::new(
-        crate::audit::AuditActor::from_caller(caller),
-        "connection.webhook.update",
-        crate::audit::Outcome::Success,
-    )
-    .org(row.org_id)
-    .target("connection", id)
-    .metadata(json!({
-        "app_id": row.app_id, "label": row.label,
-        "secret_value_names": names,
-        "secrets_changed": edited.secrets_changed,
-        "signing": edited.signing.is_some(),
-        "signing_secret_generated": edited.generated.is_some(),
-    }));
+    let ev = crate::audit::AuditEvent::by(caller, "connection.webhook.update")
+        .org(row.org_id)
+        .target("connection", id)
+        .metadata(json!({
+            "app_id": row.app_id, "label": row.label,
+            "secret_value_names": names,
+            "secrets_changed": edited.secrets_changed,
+            "signing": edited.signing.is_some(),
+            "signing_secret_generated": edited.generated.is_some(),
+        }));
     crate::audit::commit_critical(tx, &ev).await?;
     if let Some((ctx, old)) = discard {
         discard_sealed(state, &ctx, &old).await;
@@ -696,16 +692,12 @@ pub async fn test(
             "The receiver answered with the webhook's address or a secret, so the response was withheld.",
         ));
     }
-    let ev = crate::audit::AuditEvent::new(
-        crate::audit::AuditActor::from_caller(caller),
-        "webhook.test_sent",
-        crate::audit::Outcome::Success,
-    )
-    .org(row.org_id)
-    .target("connection", id)
-    .metadata(json!({
-        "connection_id": id, "status": reply.status, "delivery_id": delivery.to_string(),
-    }));
+    let ev = crate::audit::AuditEvent::by(caller, "webhook.test_sent")
+        .org(row.org_id)
+        .target("connection", id)
+        .metadata(json!({
+            "connection_id": id, "status": reply.status, "delivery_id": delivery.to_string(),
+        }));
     crate::audit::record(state, ev);
     Ok(TestResponse {
         status: Some(reply.status),

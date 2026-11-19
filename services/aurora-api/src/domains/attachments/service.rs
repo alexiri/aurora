@@ -2,7 +2,7 @@ use super::blob;
 use super::dto::Attachment;
 use super::{quota, sweep};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::conversations::service as conv;
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
@@ -270,18 +270,14 @@ pub async fn delete(state: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiErr
         sweep::remove_blobs(&state.pool, std::slice::from_ref(&p)).await;
         audit::record(
             state,
-            AuditEvent::new(
-                AuditActor::from_caller(c),
-                "attachment.delete",
-                Outcome::Success,
-            )
-            .org(auth.org_id)
-            .workspace(conv_row.workspace_id)
-            .target("attachment", id)
-            .metadata(serde_json::json!({
-                "conversation_id": row.conversation_id, "direction": row.direction,
-                "size_bytes": p.size_bytes,
-            })),
+            AuditEvent::by(c, "attachment.delete")
+                .org(auth.org_id)
+                .workspace(conv_row.workspace_id)
+                .target("attachment", id)
+                .metadata(serde_json::json!({
+                    "conversation_id": row.conversation_id, "direction": row.direction,
+                    "size_bytes": p.size_bytes,
+                })),
         );
     }
     Ok(())

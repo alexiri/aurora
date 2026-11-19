@@ -147,15 +147,11 @@ async fn create_agent(
     let created = service::create(&state, &caller, &a, a.org_id, ws, req).await?;
     audit::record(
         &state,
-        AuditEvent::new(
-            AuditActor::from_caller(&caller),
-            "agent.create",
-            Outcome::Success,
-        )
-        .org(a.org_id)
-        .workspace(ws)
-        .target("agent", created.agent.id)
-        .metadata(json!({"handle": created.agent.handle, "kind": created.agent.kind})),
+        AuditEvent::by(&caller, "agent.create")
+            .org(a.org_id)
+            .workspace(ws)
+            .target("agent", created.agent.id)
+            .metadata(json!({"handle": created.agent.handle, "kind": created.agent.kind})),
     );
     let (container_config, agent) = match &created.token {
         Some(t) => {
@@ -224,14 +220,10 @@ async fn patch_agent(
     let row = service::patch(&state, &caller, id, &req).await?;
     audit::record(
         &state,
-        AuditEvent::new(
-            AuditActor::from_caller(&caller),
-            "agent.update",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .workspace(before.workspace_id)
-        .target("agent", id),
+        AuditEvent::by(&caller, "agent.update")
+            .org(row.org_id)
+            .workspace(before.workspace_id)
+            .target("agent", id),
     );
     Ok(Json(with_byo(&state, row).await?))
 }
@@ -258,15 +250,11 @@ async fn delete_agent(
     service::delete(&state, id).await?;
     audit::record(
         &state,
-        AuditEvent::new(
-            AuditActor::from_caller(&caller),
-            "agent.delete",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .workspace(row.workspace_id)
-        .target("agent", id)
-        .metadata(json!({"handle": row.handle})),
+        AuditEvent::by(&caller, "agent.delete")
+            .org(row.org_id)
+            .workspace(row.workspace_id)
+            .target("agent", id)
+            .metadata(json!({"handle": row.handle})),
     );
     Ok(StatusCode::NO_CONTENT)
 }

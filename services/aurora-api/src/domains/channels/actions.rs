@@ -14,7 +14,7 @@
 use super::cards::{self, fanout};
 use super::dto::{ReachDecision, ReachDecisionRequest};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::action_approvals::dto::ActionDecision;
 use crate::domains::agent_links::dto::{LinkPolicy, SetPolicyBody};
 use crate::domains::approvals::dto::Decision as GateDecision;
@@ -426,15 +426,11 @@ impl Click<'_> {
                 }
                 audit::record(
                     s,
-                    AuditEvent::new(
-                        AuditActor::from_caller(c),
-                        "space_binding.create",
-                        Outcome::Success,
-                    )
-                    .org(agent.org_id)
-                    .workspace(agent.workspace_id)
-                    .target("space_binding", agent.id)
-                    .metadata(json!({"integration_id": self.integ.id, "space_ref": space,
+                    AuditEvent::by(c, "space_binding.create")
+                        .org(agent.org_id)
+                        .workspace(agent.workspace_id)
+                        .target("space_binding", agent.id)
+                        .metadata(json!({"integration_id": self.integ.id, "space_ref": space,
                         "agent_id": agent.id, "via": "channel"})),
                 );
                 Ok(Done::card(
@@ -465,15 +461,11 @@ impl Click<'_> {
                 dm_defaults::upsert(&s.pool, self.integ.id, &self.ev.clicker_ref, agent.id).await?;
                 audit::record(
                     s,
-                    AuditEvent::new(
-                        AuditActor::from_caller(c),
-                        "dm_default.set",
-                        Outcome::Success,
-                    )
-                    .org(agent.org_id)
-                    .workspace(agent.workspace_id)
-                    .target("agent", agent.id)
-                    .metadata(json!({"integration_id": self.integ.id, "via": "channel"})),
+                    AuditEvent::by(c, "dm_default.set")
+                        .org(agent.org_id)
+                        .workspace(agent.workspace_id)
+                        .target("agent", agent.id)
+                        .metadata(json!({"integration_id": self.integ.id, "via": "channel"})),
                 );
                 Ok(Done::card(
                     "dm_default.choose",

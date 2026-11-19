@@ -180,14 +180,10 @@ pub async fn approve(
     if !cli_logins::approve(&mut *tx, login.id, c.user_id, req.workspace_id).await? {
         return Err(nf());
     }
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(c),
-        "cli_login.approve",
-        Outcome::Success,
-    )
-    .org(a.org_id)
-    .workspace(req.workspace_id)
-    .target("cli_login", login.id);
+    let ev = AuditEvent::by(c, "cli_login.approve")
+        .org(a.org_id)
+        .workspace(req.workspace_id)
+        .target("cli_login", login.id);
     audit::commit_critical(tx, &ev).await?;
     Ok((login.id, a.org_id))
 }

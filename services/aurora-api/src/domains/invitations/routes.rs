@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent};
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -23,7 +23,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 }
 
 fn event(c: &Caller, action: &str) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
 }
 
 /// List an organization's invitations (owner/admin).

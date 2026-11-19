@@ -2,7 +2,7 @@
 
 use super::dto::*;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::conversations::service::load_agent;
 use crate::http::auth::{Caller, require_own};
 use crate::http::pagination::{Page, Pagination};
@@ -127,15 +127,13 @@ pub async fn decide(
     // RFE-008: the decision commits with its audit row, or does not happen.
     audit::commit_critical(
         tx,
-        &AuditEvent::new(
-            AuditActor::from_caller(c),
-            "reach_grant.decide",
-            Outcome::Success,
-        )
-        .org(agent.org_id)
-        .workspace(agent.workspace_id)
-        .target("reach_grant", id)
-        .metadata(json!({"decision": state, "listen": listen, "subject_kind": cur.subject_kind})),
+        &AuditEvent::by(c, "reach_grant.decide")
+            .org(agent.org_id)
+            .workspace(agent.workspace_id)
+            .target("reach_grant", id)
+            .metadata(
+                json!({"decision": state, "listen": listen, "subject_kind": cur.subject_kind}),
+            ),
     )
     .await?;
     let row = repo::get(&s.pool, id).await?.ok_or_else(not_found)?;

@@ -567,11 +567,7 @@ pub async fn disconnect(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiErr
     repo::request_revoke(&s.pool, id, reason).await?;
     audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "ssh_session.disconnect",
-            Outcome::Success,
-        )
+        AuditEvent::by(c, "ssh_session.disconnect")
         .org(row.org_id)
         .workspace(row.workspace_id)
         .target("agent", row.agent_id)

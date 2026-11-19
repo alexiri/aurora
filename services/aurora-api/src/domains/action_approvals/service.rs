@@ -4,7 +4,7 @@
 use super::dto::{ActionApproval, ActionDecision, STATUSES};
 use super::handlers::{self, ActionContext};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::conversations::service::{self as conv, NewMessage};
 use crate::http::auth::Caller;
 use aurora_core::{ApiError, limits, sanitize};
@@ -136,15 +136,11 @@ async fn report_outcome(
 }
 
 fn decision_event(c: &Caller, org: Uuid, row: &ActionApprovalRow, decision: &str) -> AuditEvent {
-    AuditEvent::new(
-        AuditActor::from_caller(c),
-        "action_approval.decide",
-        Outcome::Success,
-    )
-    .org(org)
-    .workspace(row.workspace_id)
-    .target("action_approval", row.id)
-    .metadata(json!({"decision": decision, "action_key": row.action_key,
+    AuditEvent::by(c, "action_approval.decide")
+        .org(org)
+        .workspace(row.workspace_id)
+        .target("action_approval", row.id)
+        .metadata(json!({"decision": decision, "action_key": row.action_key,
         "agent_id": row.agent_id, "status": row.status}))
 }
 

@@ -1,6 +1,6 @@
 use super::dto::*;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
 use aurora_core::token::{self, TokenPrefix};
@@ -416,14 +416,10 @@ pub async fn regenerate(
     let max = super::byo::token_max_age_days(state, &mut tx, row.org_id).await?;
     credentials::revoke_for_agent(&mut *tx, agent_id, false).await?;
     let (t, expires_at) = mint_agent_token(&mut tx, agent_id, max).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(caller),
-        "agent.token_regenerate",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .workspace(row.workspace_id)
-    .target("agent", agent_id);
+    let ev = AuditEvent::by(caller, "agent.token_regenerate")
+        .org(row.org_id)
+        .workspace(row.workspace_id)
+        .target("agent", agent_id);
     audit::insert_tx(&mut tx, &ev).await.map_err(|e| {
         tracing::error!(error = %e, "agent.token_regenerate audit write failed");
         ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")
@@ -459,20 +455,16 @@ pub async fn put_byo(
     let updated = agents::set_byo_settings(&mut *tx, row.id, list.as_deref(), req.require_context)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(caller),
-        "agent.byo_settings.update",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .workspace(row.workspace_id)
-    .target("agent", row.id)
-    .metadata(serde_json::json!({
-        "source_cidrs": list,
-        "previous_source_cidrs": row.byo_source_cidrs,
-        "require_context": req.require_context,
-        "previous_require_context": row.byo_require_context,
-    }));
+    let ev = AuditEvent::by(caller, "agent.byo_settings.update")
+        .org(row.org_id)
+        .workspace(row.workspace_id)
+        .target("agent", row.id)
+        .metadata(serde_json::json!({
+            "source_cidrs": list,
+            "previous_source_cidrs": row.byo_source_cidrs,
+            "require_context": req.require_context,
+            "previous_require_context": row.byo_require_context,
+        }));
     audit::insert_tx(&mut tx, &ev).await.map_err(|e| {
         tracing::error!(error = %e, "agent.byo_settings.update audit write failed");
         ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")

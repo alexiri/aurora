@@ -22,7 +22,7 @@ use super::dto::{
 };
 use super::{CachedListing, LibraryEnv};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::plugins::registry;
 use crate::http::auth::Caller;
 
@@ -259,17 +259,13 @@ pub async fn create(
         e => e.into(),
     })?;
     repo::record_head(&mut tx, row.id, &head).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(caller),
-        "skill_library.create",
-        Outcome::Success,
-    )
-    .org(org)
-    .target("skill_library", row.id)
-    .metadata(
-        json!({"label": row.label, "repo": row.repo, "ref": row.reference,
+    let ev = AuditEvent::by(caller, "skill_library.create")
+        .org(org)
+        .target("skill_library", row.id)
+        .metadata(
+            json!({"label": row.label, "repo": row.repo, "ref": row.reference,
             "path": row.path, "connection_id": brief.id, "app_id": row.app_id}),
-    );
+        );
     audit::commit_critical(tx, &ev).await?;
     Ok(row)
 }
@@ -438,14 +434,10 @@ pub async fn patch(
     if let Some(h) = p.head_sha {
         repo::record_head(&mut tx, id, h).await?;
     }
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(caller),
-        "skill_library.update",
-        Outcome::Success,
-    )
-    .org(cur.org_id)
-    .target("skill_library", id)
-    .metadata(json!({"change": changed, "label": row.label}));
+    let ev = AuditEvent::by(caller, "skill_library.update")
+        .org(cur.org_id)
+        .target("skill_library", id)
+        .metadata(json!({"change": changed, "label": row.label}));
     audit::commit_critical(tx, &ev).await?;
     state.library.forget(id);
     Ok(row)
@@ -460,14 +452,10 @@ pub async fn delete(state: &AppState, caller: &Caller, id: Uuid) -> Result<u64, 
         .ok_or_else(|| ApiError::not_found("Skill library not found."))?;
     let detached = repo::detach_all(&mut tx, id).await?;
     repo::delete_library(&mut tx, id).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(caller),
-        "skill_library.delete",
-        Outcome::Success,
-    )
-    .org(cur.org_id)
-    .target("skill_library", id)
-    .metadata(json!({"label": cur.label, "repo": cur.repo, "skills_detached": detached}));
+    let ev = AuditEvent::by(caller, "skill_library.delete")
+        .org(cur.org_id)
+        .target("skill_library", id)
+        .metadata(json!({"label": cur.label, "repo": cur.repo, "skills_detached": detached}));
     audit::commit_critical(tx, &ev).await?;
     state.library.forget(id);
     Ok(detached)

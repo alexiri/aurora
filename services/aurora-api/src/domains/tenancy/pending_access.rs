@@ -97,7 +97,7 @@ impl From<repo::PendingRow> for PendingAccess {
 }
 
 fn event(c: &Caller, action: &str) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
 }
 
 /// Whether anyone who signs in lands in this organization: open sign-up with a shared-organization placement whose

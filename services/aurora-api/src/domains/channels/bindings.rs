@@ -4,7 +4,7 @@
 use super::dto::*;
 use super::inbox::send::{self, Ctx};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::connectors::ops::{self, CORRELATED_WAIT, CorrelatedError, NewOp};
 use crate::domains::conversations::service::load_agent;
 use crate::http::auth::{Caller, require_own};
@@ -86,18 +86,14 @@ pub async fn patch(
     .await?;
     audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "space_binding.update",
-            Outcome::Success,
-        )
-        .org(agent.org_id)
-        .workspace(agent.workspace_id)
-        .target("space_binding", id)
-        .metadata(json!({
-            "listen": req.listen.map(Listen::as_str),
-            "followups_need_mention": req.followups_need_mention,
-        })),
+        AuditEvent::by(c, "space_binding.update")
+            .org(agent.org_id)
+            .workspace(agent.workspace_id)
+            .target("space_binding", id)
+            .metadata(json!({
+                "listen": req.listen.map(Listen::as_str),
+                "followups_need_mention": req.followups_need_mention,
+            })),
     );
     let row = repo::get(&s.pool, id)
         .await?
@@ -110,15 +106,11 @@ pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> 
     repo::delete(&s.pool, id).await?;
     audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "space_binding.delete",
-            Outcome::Success,
-        )
-        .org(agent.org_id)
-        .workspace(agent.workspace_id)
-        .target("space_binding", id)
-        .metadata(json!({"integration_id": row.integration_id, "space_ref": row.space_ref})),
+        AuditEvent::by(c, "space_binding.delete")
+            .org(agent.org_id)
+            .workspace(agent.workspace_id)
+            .target("space_binding", id)
+            .metadata(json!({"integration_id": row.integration_id, "space_ref": row.space_ref})),
     );
     Ok(())
 }
@@ -440,11 +432,7 @@ pub async fn create(
     }
     audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "space_binding.create",
-            Outcome::Success,
-        )
+        AuditEvent::by(c, "space_binding.create")
         .org(agent.org_id)
         .workspace(agent.workspace_id)
         .target("space_binding", agent.id)

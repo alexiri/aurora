@@ -3,7 +3,7 @@ use super::service::{self, Source};
 use super::validate::Scope;
 use super::{simulate, warnings};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -76,7 +76,7 @@ fn event(caller: &Caller, action: &str, s: Scope, meta: Value) -> AuditEvent {
         Some(w) => ("workspace", w),
         None => ("organization", s.org),
     };
-    let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+    let mut ev = AuditEvent::by(caller, action)
         .org(s.org)
         .target(kind, id)
         .metadata(meta);

@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::{Caller, Principal, SessionCaller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -62,14 +62,10 @@ async fn create_org_key(
     c.org(&s, org).await?.require_admin()?;
     let mut tx = audit::begin(&s).await?;
     let (row, key) = service::create(&mut tx, &c, org, None, req).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(&c),
-        "api_key.create",
-        Outcome::Success,
-    )
-    .org(org)
-    .target("api_key", row.id)
-    .metadata(json!({"name": row.name, "scope": "org"}));
+    let ev = AuditEvent::by(&c, "api_key.create")
+        .org(org)
+        .target("api_key", row.id)
+        .metadata(json!({"name": row.name, "scope": "org"}));
     audit::commit_critical(tx, &ev).await?;
     Ok((
         StatusCode::CREATED,
@@ -115,15 +111,11 @@ async fn create_workspace_key(
     require_own(&a)?;
     let mut tx = audit::begin(&s).await?;
     let (row, key) = service::create(&mut tx, &c, a.org_id, Some(ws), req).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(&c),
-        "api_key.create",
-        Outcome::Success,
-    )
-    .org(a.org_id)
-    .workspace(ws)
-    .target("api_key", row.id)
-    .metadata(json!({"name": row.name, "scope": "workspace"}));
+    let ev = AuditEvent::by(&c, "api_key.create")
+        .org(a.org_id)
+        .workspace(ws)
+        .target("api_key", row.id)
+        .metadata(json!({"name": row.name, "scope": "workspace"}));
     audit::commit_critical(tx, &ev).await?;
     Ok((
         StatusCode::CREATED,
@@ -178,14 +170,10 @@ async fn revoke_my_key(c: Caller, State(s): State<AppState>) -> Result<StatusCod
         .ok_or_else(|| ApiError::unauthenticated("API key is no longer valid."))?;
     let mut tx = audit::begin(&s).await?;
     if api_keys::revoke(&mut tx, id).await? {
-        let mut ev = AuditEvent::new(
-            AuditActor::from_caller(&c),
-            "api_key.revoke",
-            Outcome::Success,
-        )
-        .org(org_id)
-        .target("api_key", id)
-        .metadata(json!({"name": k.name, "self": true}));
+        let mut ev = AuditEvent::by(&c, "api_key.revoke")
+            .org(org_id)
+            .target("api_key", id)
+            .metadata(json!({"name": k.name, "self": true}));
         if let Some(ws) = workspace_id {
             ev = ev.workspace(ws);
         }
@@ -211,14 +199,10 @@ async fn revoke_key(
     service::authorize_revoke(&s, &c, &k).await?;
     let mut tx = audit::begin(&s).await?;
     if api_keys::revoke(&mut tx, id).await? {
-        let mut ev = AuditEvent::new(
-            AuditActor::from_caller(&c),
-            "api_key.revoke",
-            Outcome::Success,
-        )
-        .org(k.org_id)
-        .target("api_key", id)
-        .metadata(json!({"name": k.name}));
+        let mut ev = AuditEvent::by(&c, "api_key.revoke")
+            .org(k.org_id)
+            .target("api_key", id)
+            .metadata(json!({"name": k.name}));
         if let Some(ws) = k.workspace_id {
             ev = ev.workspace(ws);
         }

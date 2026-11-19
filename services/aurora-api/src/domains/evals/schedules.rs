@@ -7,7 +7,7 @@ use super::dto::{CreateEvalSchedule, EvalSchedule, EvalScheduleList, PatchEvalSc
 use super::runs::{run_audit, start_tx};
 use super::service::{current_fingerprint, visible_agent};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent};
 use crate::domains::schedules::cron;
 use crate::http::auth::{Caller, require_own};
 use aurora_core::{ApiError, limits};
@@ -68,7 +68,7 @@ fn sched_audit(
     action: &str,
     meta: serde_json::Value,
 ) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
         .org(a.org_id)
         .workspace(a.workspace_id)
         .target("eval_schedule", id)
