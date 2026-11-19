@@ -13,11 +13,10 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { CheckIcon } from "@/components/ui/icons";
 import { Meter } from "@/components/ui/meter";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusLine, type StatusTone } from "@/components/ui/status-line";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
-import { errorMessage } from "@/lib/api/errors";
 import { onboardingKeys, useAdminSetup, type SetupCheck, type SetupStatus, type SetupStep } from "@/lib/api/onboarding";
 import { formatBytes } from "@/lib/api/attachments";
 import { useAdminStorage } from "@/lib/api/org";
@@ -132,11 +131,7 @@ function BackfillOffer({ waiting }: { waiting: number }) {
       <Button variant="outline" size="sm" disabled={backfill.isPending} onClick={() => backfill.mutate()}>
         Also give it to the {waiting} {waiting === 1 ? "person" : "people"} who signed in before
       </Button>
-      {backfill.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(backfill.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={backfill.error} />
     </div>
   );
 }

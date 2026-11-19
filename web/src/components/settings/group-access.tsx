@@ -7,11 +7,10 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import type { components } from "@/lib/api/schema";
-import { errorMessage } from "@/lib/api/errors";
 import {
   useDeleteGroupAccess,
   useGroupImpact,
@@ -123,11 +122,7 @@ function AddGroup({ wsId, orgId, bound }: { wsId: string; orgId: string; bound: 
         <Button type="submit" disabled={!group || put.isPending} className="sm:mt-label-offset">
           Add
         </Button>
-        {put.error ? (
-          <Notice tone="danger" role="alert" className="basis-full">
-            {errorMessage(put.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={put.error} className="basis-full" />
       </form>
     </Section>
   );
@@ -142,11 +137,7 @@ export function GroupAccess({ wsId, orgId, canOwn, data }: { wsId: string; orgId
     <div className="space-y-6">
       <Section id="acc-groups" title="Groups" description="Groups bound to this workspace and the role each gives its members.">
         <div className="space-y-3">
-          {err ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(err)}
-            </Notice>
-          ) : null}
+          <ErrorNotice error={err} />
           {bindings.length === 0 ? (
             <p className="text-sm text-ink-2">No group is bound to this workspace.</p>
           ) : (

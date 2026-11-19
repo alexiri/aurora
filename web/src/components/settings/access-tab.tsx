@@ -11,7 +11,7 @@ import { sourceText } from "@/lib/api/groups";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { matchesFilter, PickerFilter } from "@/components/ui/picker-filter";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
@@ -26,7 +26,6 @@ import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
 import { AddPeople, WaitingList } from "./add-people";
 import { GroupAccess } from "./group-access";
 import { useWorkspaceOffboarding } from "@/lib/api/automations";
-import { errorMessage } from "@/lib/api/errors";
 
 type Role = "owner" | "approver" | "member";
 
@@ -104,11 +103,7 @@ function AddBinding({
         <Button type="submit" disabled={!user || put.isPending} className="sm:mt-label-offset">
           Add
         </Button>
-        {put.error ? (
-          <Notice tone="danger" role="alert" className="basis-full">
-            {errorMessage(put.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={put.error} className="basis-full" />
       </form>
     </Section>
   );
@@ -261,11 +256,7 @@ export function AccessTab({
           />
         </div>
       ) : null}
-      {err ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(err)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={err} />
       {items.length === 0 && inherited.length === 0 ? (
         <EmptyState title="No one has access yet" />
       ) : (

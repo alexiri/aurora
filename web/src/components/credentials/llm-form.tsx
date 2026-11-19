@@ -9,7 +9,7 @@ import { ChoiceCards } from "@/components/ui/choice-cards";
 import { CopyValue } from "@/components/ui/copy-value";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import { preselectAgents } from "@/lib/accounts";
 import { useAgents, useOrg } from "@/lib/api/queries";
@@ -168,7 +168,7 @@ export function LlmKeyForm({
 
   if (providers.isPending) return <Loading />;
   if (providers.isError)
-    return <Notice tone="danger" role="alert">{errorMessage(providers.error)}</Notice>;
+    return <ErrorNotice error={providers.error} />;
   if (endpoints.length === 0)
     return <Notice role="status">Your organization&apos;s governance does not permit any LLM endpoints.</Notice>;
 
