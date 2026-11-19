@@ -180,8 +180,8 @@ test.describe("every old route lands on its new page (C-960)", () => {
     await mockApi(page);
     await page.goto("/o/acme/w/main/credentials?tab=apps&connect=github");
     await expect(page).toHaveURL(/\/o\/acme\/w\/main\/apps\?tab=apps&connect=github$/);
-    // The connect journey (P5-UX-3): "Give Daneel GitHub", the workspace's one agent preselected.
-    await expect(page.getByRole("dialog", { name: "Give Daneel GitHub" })).toBeVisible();
+    // The connect journey (P5-UX-3; titled "<App> for <Agent>" since P5-POLISH-5), the workspace's one agent preselected.
+    await expect(page.getByRole("dialog", { name: "GitHub for Daneel" })).toBeVisible();
   });
 
   test("a reconnect link opens the Reconnect dialog on Accounts", async ({ page }) => {

@@ -72,7 +72,7 @@ for (const scheme of ["light", "dark"] as const) {
         await openChat(page, scheme, DEFAULT, `?c=${MINE.id}`);
         const banner = page.getByRole("list", { name: "Accounts that need attention" });
         await expect(banner).toContainText("Daneel can't use Linear: the sign-in expired.");
-        await expect(banner.getByRole("link", { name: "Reconnect" })).toHaveAttribute("href", /\/agents\/[^?]+\?tab=access&reconnect=/);
+        await expect(banner.getByRole("link", { name: "Sign in again" })).toHaveAttribute("href", /\/agents\/[^?]+\?tab=access&reconnect=/);
         // Above the message box, not below it.
         const above = await page.evaluate(() => {
           const b = document.querySelector('[aria-label="Accounts that need attention"]');
@@ -89,7 +89,7 @@ for (const scheme of ["light", "dark"] as const) {
         const block = page.getByRole("region", { name: /^Needs you/ });
         await expect(block).toContainText("Product team");
         await expect(block).toContainText("Sign-in expired");
-        await expect(block.getByRole("link", { name: "Reconnect" })).toHaveAttribute("href", /\/apps\?tab=accounts&reconnect=/);
+        await expect(block.getByRole("link", { name: "Sign in again" })).toHaveAttribute("href", /\/apps\?tab=accounts&reconnect=/);
         await check(page);
       });
     });

@@ -83,14 +83,16 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByRole("link", { name: "Give Daneel an app" }).click();
         const dialog = page.getByTestId("ws-connect-journey");
         await expect(page.getByRole("dialog", { name: "Give Daneel an app" })).toBeVisible();
-        await dialog.getByRole("button", { name: /^GitHub/ }).click();
+        await dialog.getByRole("button", { name: "GitHub", exact: true }).click();
         await dialog.getByText("Ask before changes", { exact: true }).click();
         await dialog.getByRole("button", { name: "Next" }).click();
         await dialog.getByLabel("Personal access token", { exact: true }).fill("not-a-real-token");
         await dialog.getByRole("button", { name: "Connect", exact: true }).click();
-        await expect(dialog.getByText("Daneel can now read GitHub, and asks you before each change.")).toBeVisible();
+        // (P5-POLISH-5) The Done sentence names the account (connect-journey.spec does the same).
+        await expect(dialog.getByText("Daneel can now read acme, and asks you before each change.")).toBeVisible();
         expect(saved[0]!.body).toMatchObject({ grant: { level: "ask" } });
-        await dialog.getByRole("button", { name: "Done" }).click();
+        // (P5-POLISH-5) The Done step's footer closes with "Close" (the last one; the header has ×).
+        await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
 
         // The Access tab (where the journey ran), above the accounts list.
         const box = page.getByRole("region", { name: "What Daneel can do" });

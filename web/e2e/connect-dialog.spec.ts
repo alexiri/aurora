@@ -18,7 +18,8 @@ for (const scheme of ["light", "dark"] as const) {
         context.on("page", (p) => opened.push(p.url()));
         page.on("popup", (p) => opened.push(p.url()));
         await openRoute(page, APPS, scheme);
-        await page.getByRole("button", { name: "Connect GitHub" }).click();
+        // (P5-POLISH-7) GitHub already has an account in the mock: its card offers "Connect another".
+        await page.getByRole("button", { name: "Connect another GitHub" }).click();
         // The connect journey (P5-UX-3): its name follows the steps, so hold on to the dialog itself. The workspace has one
         // agent, so the Agent step comes first with Daneel chosen.
         const dialog = page.getByTestId("ws-connect-journey");
@@ -33,7 +34,7 @@ for (const scheme of ["light", "dark"] as const) {
         await dialog.getByRole("button", { name: "Close" }).click();
         await expect(dialog).toBeHidden();
 
-        await page.getByRole("button", { name: "Connect GitHub" }).click();
+        await page.getByRole("button", { name: "Connect another GitHub" }).click();
         await expect(dialog).toBeVisible();
         await page.keyboard.press("Escape");
         await expect(dialog).toBeHidden();
@@ -72,10 +73,10 @@ test.describe("× stays reachable at 390 px", () => {
     await openRoute(page, `${APPS}&connect=github`, "light");
     const dialog = page.getByTestId("ws-connect-journey");
     await expect(dialog).toBeVisible();
-    // Go to the sign-in step and open Advanced so the form is long enough to scroll.
+    // Go to the sign-in step and open More options so the form is long enough to scroll.
     await dialog.getByRole("button", { name: "Give Daneel access" }).click();
     await dialog.getByRole("button", { name: "Next" }).click();
-    await dialog.getByText(/^Advanced: other ways to connect/).click();
+    await dialog.getByText("More options", { exact: true }).click();
     // (P5-POLISH-1, D-393) The dialog never scrolls as a whole: its body row is the only scrolling element, between the
     // fixed header (with ×) and footer.
     const scrollable = await dialog.evaluate((el) => {

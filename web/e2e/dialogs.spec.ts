@@ -23,6 +23,9 @@ async function checkDialog(page: Page, dialog: Locator) {
   await expect(dialog).toBeVisible();
   const header = dialog.locator("> div").first();
   const body = dialog.locator("> div").nth(1);
+  // Measure from the top of the body: filling a field scrolls it into view (the sign-in step is long since P5-POLISH-5),
+  // and what scrolled up is clipped by the body, not drawn over the header.
+  await body.evaluate((el) => el.scrollTo(0, 0));
   const headerBox = (await header.boundingBox())!;
   const firstVisible = body.locator(":scope > *").first();
   const first = (await firstVisible.boundingBox())!;
@@ -30,7 +33,8 @@ async function checkDialog(page: Page, dialog: Locator) {
   const bodyBox = (await body.boundingBox())!;
   expect(bodyBox.y, "the body starts below the header").toBeGreaterThanOrEqual(headerBox.y + headerBox.height - 0.5);
   await body.evaluate((el) => el.scrollTo(0, el.scrollHeight));
-  const close = dialog.getByRole("button", { name: "Close" });
+  // The header's × (the Done step's footer has a "Close" button too since P5-POLISH-5).
+  const close = dialog.getByRole("button", { name: "Close" }).first();
   await expect(close).toBeVisible();
   const box = (await close.boundingBox())!;
   const vp = page.viewportSize()!;
@@ -51,8 +55,9 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByRole("button", { name: "Give Daneel an app" }).first().click();
         const dialog = page.getByTestId("ws-connect-journey");
         await checkDialog(page, dialog);
-        await dialog.getByRole("button", { name: /^GitHub/ }).click();
-        await expect(page.getByRole("dialog", { name: "Give Daneel GitHub" })).toBeVisible();
+        // (P5-POLISH-5, D-388) The journey's title is "<App> for <Agent>" (connect-journey.spec does the same).
+        await dialog.getByRole("button", { name: "GitHub", exact: true }).click();
+        await expect(page.getByRole("dialog", { name: "GitHub for Daneel" })).toBeVisible();
         const steps = dialog.getByRole("list", { name: "Steps" });
         await expect(steps).toBeVisible();
         await checkDialog(page, dialog);
@@ -60,10 +65,10 @@ for (const scheme of ["light", "dark"] as const) {
         await dialog.getByLabel("Personal access token", { exact: true }).fill("not-a-real-token");
         await checkDialog(page, dialog);
         await dialog.getByRole("button", { name: "Connect", exact: true }).click();
-        await expect(dialog.getByText("Daneel can now read GitHub.")).toBeVisible();
+        await expect(dialog.getByText("Daneel can now read acme.")).toBeVisible();
         await checkDialog(page, dialog);
-        // The Done step's "Open chat" link has readable text: its colour is not its background.
-        const open = dialog.getByRole("link", { name: "Open chat" });
+        // The Done step's "Try it in chat" link has readable text: its colour is not its background.
+        const open = dialog.getByRole("link", { name: "Try it in chat" });
         await expect(open).toBeVisible();
         const [fg, bg] = await open.evaluate((el) => {
           const s = getComputedStyle(el);

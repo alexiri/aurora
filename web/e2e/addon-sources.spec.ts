@@ -60,6 +60,8 @@ test.describe("the plugins list carries provenance and the check button", () => 
               digest: "d", signer: { kind: "trusted_key", name: "CERN addons signing key" }, source: "addon",
               source_id: "00000000-0000-0000-0000-000000000320", source_name: "CERN addons", update_available: true,
               status: "active", status_reason: null, approved_at: null, created_at: new Date().toISOString(),
+              // Required by openapi `PluginPackage` (C-1032): the list renders origin, reaches and the app name.
+              origin: "addon", reaches: [], reaches_more: 0, violations: [], apps: [], permissions: {}, host_claims: [], widenings: [],
             },
           ],
           next_cursor: null,
@@ -74,7 +76,9 @@ test.describe("the plugins list carries provenance and the check button", () => 
       }),
     );
     await page.goto("/admin/plugins");
-    await expect(page.getByRole("link", { name: "CERN addons" })).toBeVisible();
+    // (P5-POLISH-10) The row's origin line names the addon source as text (the sources are linked from the update notice).
+    await expect(page.getByText("CERN addons", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "See the addon sources" })).toBeVisible();
     await expect(page.getByText("Update available").first()).toBeVisible();
     await page.getByRole("button", { name: "Check for updates" }).click();
     await expect(page.getByLabel("Update check results")).toBeVisible();
