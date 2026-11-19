@@ -143,6 +143,8 @@ for (const scheme of ["light", "dark"] as const) {
       test("Admin › Overview: the SSH line", async ({ page }) => {
         await mockSsh(page);
         await open(page, "/admin", scheme);
+        // (P5-POLISH-10) The SSH line is on the Overview's Health view (the checklist shows until setup is done).
+        await page.getByRole("tablist", { name: "Overview view" }).getByRole("tab", { name: "Health" }).click();
         const line = page.getByTestId("ssh-line");
         await expect(line).toBeVisible();
         await expect(line).toContainText("Terminator up");
