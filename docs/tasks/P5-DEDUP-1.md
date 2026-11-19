@@ -384,3 +384,20 @@ Scripted bulk rewrites (stated in each commit, diffs reviewed): T2 line-range de
 
 Left, and why: `webhooks.rs`, `tools.rs` rigs (P5-WEBHOOK-2, P5-GUIDE-7); `app_setup.rs`, `apps_connections.rs`, `plugins*.rs`, `secrets.rs`, `permission_matrix.rs`, `model_roles.rs` (p5-polish-b), `settings.rs`, `settings_ops.rs` (p5-agent) skipped by T3/T4; `attachments.rs` rig and `fix_029.rs`/`runner_plane.rs` partial rigs (different shape: own `Live`, second runner, admin cookie; need a parameterised rig, next); hosted `agent()` with grant rows and the `$1::text`-handle (11) and `'ada'` (8) agent shapes (T4 remainder); inline conversation/turn seed rows (T4 rest); T3's 67 inline `.send(` blocks. Next: T5 runner test support, T16/T17, T6–T11 gateway test support, then the P clusters (P4 dead code first).
 FIX-182 (priority, separate commit 52d1602b) is not a dedup batch; its report is in `docs/tasks/FIX-182.md`.
+
+### Part B, second round (2026-11-19, same lane)
+Gate as above (clippy on touched crates, module-filtered tests, guards; GitHub CI is the full gate).
+
+| Batch | Commit message prefix | Δ lines | Tests run |
+|---|---|---:|---|
+| T5 runner stream test support: `tests/it/stream_support.rs` (dial, next_msg, silent, close_code_slow, frame, data, next_leg) | `P5-DEDUP-1: T5` | −77 | files_streams + ssh_streams: 19 passed |
+| T6 gateway boot tail: `common::proxy_parts`/`spawn_proxy`, eight files | `T6` | −74 | 8 modules: 191 passed, 1 failed — see below |
+| T7 `common::identity` replaces the 15-field `RequestIdentity` literal in five resolvers | `T7` | −25 | 24 passed |
+| T10 `common::Capture` replaces five identical LogWriter stubs | `T10` | −40 | 91 passed |
+| P4 dead code, first slice: 18 unreferenced items in api, counters, registry, channels, testkit, mattermost, runner | `P4` | −163 | openapi drift + previews + scim: 122 passed |
+| **Net** | | **−379** | |
+
+**Finding (not mine, present on master):** `apps::wire_framing::wire_log_shows_framing_and_never_a_value` fails when run in one process with `pipeline::` (filter `apps:: pipeline::`: 107 passed, 1 failed, identical with and without my change; it passes alone and in the module filters I ran). Its log assertion counts events across tests; whether the full binary run in CI is affected depends on scheduling.
+
+Dead tests removed: none. P4 list left (and why): `ImportPlan` (`settings/service.rs`, p5-agent), `reject_public` (`plugins/ingest.rs`, p5-polish-b), `regenerate_agent_token` (aurora-client: a published client surface, owner decides), `turn_controls`, `addon_sources/poll.rs actor()`, `role_str` (still used), aurora-db unreferenced repo fns, `dash_paths.rs`, `repo/policy.rs workspace_org`, `groups role_str`, runner/supervisor test `next_data`.
+Left from the first list: T6 `with_byo` variants and `proxy.rs` tails; T7 other `RequestIdentity` literals (differing fields). Next: T8, T9, T11, T12–T17, P2, P1, P3.
