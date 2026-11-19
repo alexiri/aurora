@@ -121,18 +121,8 @@ async fn activity(
         host: q.host,
         app_id: q.app_id,
     };
-    let rows = request_log::list_activity(
-        &s.pool,
-        c.user_id,
-        ws,
-        &f,
-        p.after.map(|a| (a.t, a.id)),
-        p.fetch(),
-    )
-    .await?;
+    let rows =
+        request_log::list_activity(&s.pool, c.user_id, ws, &f, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.ts, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(RequestLogEntry::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(RequestLogEntry::from)))
 }

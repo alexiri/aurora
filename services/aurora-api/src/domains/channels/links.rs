@@ -51,13 +51,7 @@ pub async fn list_for_integration(
     p: Pagination,
 ) -> Result<Page<UserLink>, ApiError> {
     load_admin(s, c, integration).await?;
-    let rows = repo::page_for_integration(
-        &s.pool,
-        integration,
-        p.after.map(|a| (a.t, a.id)),
-        p.fetch(),
-    )
-    .await?;
+    let rows = repo::page_for_integration(&s.pool, integration, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Page {
         items: page.items.iter().map(view).collect(),

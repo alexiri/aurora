@@ -250,14 +250,9 @@ async fn list_runs(
 ) -> Result<Json<Page<ScheduleRun>>, ApiError> {
     authorized(&c, &s, id).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    let rows =
-        aurora_db::repo::schedules::list_runs(&s.pool, id, p.after.map(|c| (c.t, c.id)), p.fetch())
-            .await?;
+    let rows = aurora_db::repo::schedules::list_runs(&s.pool, id, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(ScheduleRun::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(ScheduleRun::from)))
 }
 
 /// Fire the schedule now, outside its cadence; 409 `schedule_busy` while a run is active.

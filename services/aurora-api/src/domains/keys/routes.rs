@@ -25,10 +25,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 
 fn page(rows: Vec<api_keys::ApiKeyRow>, limit: u32) -> Page<ApiKey> {
     let p = Page::from_rows(rows, limit, |r| (r.created_at, r.id));
-    Page {
-        items: p.items.into_iter().map(Into::into).collect(),
-        next_cursor: p.next_cursor,
-    }
+    p.map(Into::into)
 }
 
 /// List organization API keys.
@@ -45,7 +42,7 @@ async fn list_org_keys(
 ) -> Result<Json<Page<ApiKey>>, ApiError> {
     c.org(&s, org).await?.require_admin()?;
     let p = q.resolve()?;
-    let rows = api_keys::list_org(&s.pool, org, p.after.map(|a| (a.t, a.id)), p.fetch()).await?;
+    let rows = api_keys::list_org(&s.pool, org, p.after_key(), p.fetch()).await?;
     Ok(Json(page(rows, p.limit)))
 }
 
@@ -97,8 +94,7 @@ async fn list_workspace_keys(
 ) -> Result<Json<Page<ApiKey>>, ApiError> {
     require_own(&c.workspace(&s, ws).await?)?;
     let p = q.resolve()?;
-    let rows =
-        api_keys::list_workspace(&s.pool, ws, p.after.map(|a| (a.t, a.id)), p.fetch()).await?;
+    let rows = api_keys::list_workspace(&s.pool, ws, p.after_key(), p.fetch()).await?;
     Ok(Json(page(rows, p.limit)))
 }
 
@@ -150,8 +146,7 @@ async fn list_my_keys(
     Query(q): Query<PageParams>,
 ) -> Result<Json<Page<ApiKey>>, ApiError> {
     let p = q.resolve()?;
-    let rows = api_keys::list_for_user(&s.pool, c.user_id, p.after.map(|a| (a.t, a.id)), p.fetch())
-        .await?;
+    let rows = api_keys::list_for_user(&s.pool, c.user_id, p.after_key(), p.fetch()).await?;
     Ok(Json(page(rows, p.limit)))
 }
 

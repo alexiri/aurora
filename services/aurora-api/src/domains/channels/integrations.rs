@@ -61,7 +61,7 @@ pub async fn list(
     p: Pagination,
 ) -> Result<Page<ChannelIntegration>, ApiError> {
     c.org(s, org).await?.require_admin()?;
-    let rows = repo::page_for_org(&s.pool, org, p.after.map(|a| (a.t, a.id)), p.fetch()).await?;
+    let rows = repo::page_for_org(&s.pool, org, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Page {
         items: page.items.iter().map(view).collect(),

@@ -44,15 +44,12 @@ async fn list_invitations(
         &s.pool,
         org,
         q.status.map(InvitationStatus::as_str),
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(Invitation::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(Invitation::from)))
 }
 
 /// Invite someone by email (owner/admin). Re-inviting a pending email rotates the token.

@@ -47,6 +47,11 @@ pub struct Pagination {
 }
 
 impl Pagination {
+    /// The cursor as the `(created_at, id)` key the keyset queries take.
+    pub fn after_key(&self) -> Option<(DateTime<Utc>, Uuid)> {
+        self.after.map(|c| (c.t, c.id))
+    }
+
     pub fn new(limit: Option<u32>, cursor: Option<&str>) -> Result<Self, ApiError> {
         let limit = limit.unwrap_or(DEFAULT_LIMIT);
         if !(1..=MAX_LIMIT).contains(&limit) {
@@ -84,6 +89,14 @@ pub struct Page<T> {
 }
 
 impl<T> Page<T> {
+    /// The same page with each item converted (the cursor is kept).
+    pub fn map<U>(self, f: impl FnMut(T) -> U) -> Page<U> {
+        Page {
+            items: self.items.into_iter().map(f).collect(),
+            next_cursor: self.next_cursor,
+        }
+    }
+
     /// Build from up to `limit + 1` rows; `key` yields `(created_at, id)`.
     pub fn from_rows(
         mut rows: Vec<T>,

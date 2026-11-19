@@ -156,15 +156,12 @@ pub async fn list(
         ws,
         q.kind.as_deref(),
         q.status.as_deref(),
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;
     let page = crate::http::pagination::Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(crate::http::pagination::Page {
-        items: page.items.into_iter().map(Secret::from).collect(),
-        next_cursor: page.next_cursor,
-    })
+    Ok(page.map(Secret::from))
 }
 
 fn clean_name(n: &str) -> Result<String, ApiError> {

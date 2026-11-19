@@ -166,14 +166,7 @@ pub async fn generations(
     p: crate::http::pagination::Pagination,
 ) -> Result<crate::http::pagination::Page<PolicyGenerationSummary>, ApiError> {
     ensure(state, s).await?;
-    let rows = repo::list_generations(
-        &state.pool,
-        s.org,
-        s.ws,
-        p.after.map(|c| (c.t, c.id)),
-        p.fetch(),
-    )
-    .await?;
+    let rows = repo::list_generations(&state.pool, s.org, s.ws, p.after_key(), p.fetch()).await?;
     let page = crate::http::pagination::Page::from_rows(rows, p.limit, |r| {
         (r.generation.created_at, r.generation.id)
     });

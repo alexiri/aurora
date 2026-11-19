@@ -52,8 +52,7 @@ async fn list_agents(
 ) -> Result<Json<Page<Agent>>, ApiError> {
     let p = params.resolve()?;
     let a = caller.workspace(&state, ws).await?;
-    let rows = agents::list_for_workspace(&state.pool, ws, p.after.map(|c| (c.t, c.id)), p.fetch())
-        .await?;
+    let rows = agents::list_for_workspace(&state.pool, ws, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     let refs: Vec<&agents::AgentRow> = page.items.iter().collect();
     let views = super::byo::views(&state, a.org_id, ws, &refs).await?;
@@ -483,15 +482,12 @@ async fn agent_token_page(
         org,
         q.stale,
         q.expiring_within_days,
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.credential_id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(AgentTokenEntry::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(AgentTokenEntry::from)))
 }
 
 /// Live BYO agent tokens of a workspace with expiry and use (workspace owner).

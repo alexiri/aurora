@@ -55,8 +55,7 @@ pub async fn list(
     p: Pagination,
 ) -> Result<Page<ReachGrant>, ApiError> {
     load_agent(s, c, agent).await?;
-    let rows =
-        repo::page_for_agent(&s.pool, agent, p.after.map(|a| (a.t, a.id)), p.fetch()).await?;
+    let rows = repo::page_for_agent(&s.pool, agent, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Page {
         items: page.items.iter().map(view).collect(),

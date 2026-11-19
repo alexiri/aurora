@@ -88,15 +88,12 @@ async fn list(
         q.action.as_deref(),
         q.actor_id,
         q.critical.unwrap_or(false),
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(AuditEntry::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(AuditEntry::from)))
 }
 
 /// An audit row with the organization it concerns (instance view).
@@ -162,38 +159,31 @@ async fn instance_audit(
             since: q.since,
             until: q.until,
         },
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page
-            .items
-            .into_iter()
-            .map(|r| InstanceAuditEntry {
-                org_slug: r.org_slug.clone(),
-                entry: AuditEntry::from(AuditRow {
-                    id: r.id,
-                    org_id: r.org_id,
-                    workspace_id: r.workspace_id,
-                    actor_kind: r.actor_kind,
-                    actor_id: r.actor_id,
-                    actor_label: r.actor_label,
-                    action: r.action,
-                    target_kind: r.target_kind,
-                    target_id: r.target_id,
-                    outcome: r.outcome,
-                    source: r.source,
-                    ip: r.ip,
-                    metadata: r.metadata,
-                    critical: r.critical,
-                    created_at: r.created_at,
-                }),
-            })
-            .collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(|r| InstanceAuditEntry {
+        org_slug: r.org_slug.clone(),
+        entry: AuditEntry::from(AuditRow {
+            id: r.id,
+            org_id: r.org_id,
+            workspace_id: r.workspace_id,
+            actor_kind: r.actor_kind,
+            actor_id: r.actor_id,
+            actor_label: r.actor_label,
+            action: r.action,
+            target_kind: r.target_kind,
+            target_id: r.target_id,
+            outcome: r.outcome,
+            source: r.source,
+            ip: r.ip,
+            metadata: r.metadata,
+            critical: r.critical,
+            created_at: r.created_at,
+        }),
+    })))
 }
 
 /// Organization audit log (owner/admin).
