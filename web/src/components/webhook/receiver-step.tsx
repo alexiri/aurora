@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { CodeField } from "@/components/ui/code-field";
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
+import { Select } from "@/components/ui/select";
 import { useWebhookPresets, type ContentType, type WebhookConfig } from "@/lib/api/webhook";
 import { configFromPreset, CONTENT_TYPES, firstMessage, LIMITS, suggestPreset, unmatchedIssues, type Issue } from "@/lib/webhook/logic";
 
@@ -106,13 +107,7 @@ export function ReceiverStep({
           The template
         </h3>
         <Field id="wh-ct" label="Content type" error={firstMessage(issues, "content_type")}>
-          <select id="wh-ct" className={inputClass} value={config.content_type} onChange={(e) => onConfig({ ...config, content_type: e.target.value as ContentType })}>
-            {CONTENT_TYPES.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
+          <Select id="wh-ct" value={config.content_type} onChange={(v) => onConfig({ ...config, content_type: v as ContentType })} options={CONTENT_TYPES.map((c) => ({ value: c.value, label: c.label }))} />
         </Field>
         <CodeField
           label="Template"

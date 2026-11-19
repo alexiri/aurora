@@ -10,9 +10,10 @@ import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Field, inputClass } from "@/components/ui/field";
+import { Field } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { Select } from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clockTime } from "@/lib/chat/layout";
@@ -191,13 +192,7 @@ export function AdminRunnersView() {
         onConfirm={() => rotating && rotate.mutate({ id: rotating.id, graceSecs: grace })}
       >
         <Field id="runner-grace" label="Grace period for the old token">
-          <select id="runner-grace" className={inputClass} value={grace} onChange={(e) => setGrace(Number(e.target.value))}>
-            {GRACES.map((g) => (
-              <option key={g.secs} value={g.secs}>
-                {g.label}
-              </option>
-            ))}
-          </select>
+          <Select id="runner-grace" value={grace} onChange={(v) => setGrace(Number(v))} options={GRACES.map((g) => ({ value: String(g.secs), label: g.label }))} />
         </Field>
         {rotate.isError ? (
           <ErrorNotice error={rotate.error} className="mt-3" />

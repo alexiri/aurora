@@ -13,6 +13,7 @@ import { SecretInput } from "@/components/ui/secret-input";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { StatusDot } from "@/components/ui/status-dot";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
@@ -520,13 +521,7 @@ function Migration({ status, onReload }: { status: StoresStatus; onReload: () =>
     >
       <div className="flex flex-wrap items-end gap-3">
         <Field id="ss-target" label="Move values to">
-          <select id="ss-target" className={inputClass} value={target} onChange={(e) => { setTarget(e.target.value); setDry(null); }}>
-            {targets.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.id}
-              </option>
-            ))}
-          </select>
+          <Select id="ss-target" value={target} onChange={(v) => { setTarget(v); setDry(null); }} options={targets.map((s) => ({ value: s.id, label: s.id }))} />
         </Field>
         <Button
           type="button"

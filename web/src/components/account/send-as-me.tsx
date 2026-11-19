@@ -15,6 +15,7 @@ import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { errorMessage } from "@/lib/api/errors";
 import type { UserLink } from "@/lib/api/channels";
 import {
@@ -91,18 +92,7 @@ function AddTokenDialog({
     >
       {integrations.length > 1 ? (
         <Field id="user-token-integration" label="Chat workspace">
-          <select
-            id="user-token-integration"
-            className={inputClass}
-            value={chosen}
-            onChange={(e) => setIntegration(e.target.value)}
-          >
-            {integrations.map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.label}
-              </option>
-            ))}
-          </select>
+          <Select id="user-token-integration" value={chosen} onChange={setIntegration} options={integrations.map((i) => ({ value: i.id, label: i.label }))} />
         </Field>
       ) : null}
       <Field id="user-token-value" label="Personal access token" error={text}>

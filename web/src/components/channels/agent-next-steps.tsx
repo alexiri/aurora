@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
+import { Select } from "@/components/ui/select";
 import {
   useCreateSpaceBinding,
   useIntegrations,
@@ -82,10 +83,7 @@ function ChannelPicker({ agentId, integrationId, botLabel }: { agentId: string; 
             </select>
           </Field>
           <Field id="bind-listen" label="Listen">
-            <select id="bind-listen" className={inputClass} value={listen} onChange={(e) => setListen(e.target.value as Listen)}>
-              <option value="mentions">Only when mentioned</option>
-              <option value="all">Every message</option>
-            </select>
+            <Select id="bind-listen" value={listen} onChange={(v) => setListen(v as Listen)} options={[{ value: "mentions", label: "Only when mentioned" }, { value: "all", label: "Every message" }]} />
           </Field>
         </>
       ) : null}

@@ -9,6 +9,7 @@ import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { Select } from "@/components/ui/select";
 import { StatusDot } from "@/components/ui/status-dot";
 import { useTestProvider, type ProviderTestResult } from "@/lib/api/settings";
 
@@ -378,11 +379,7 @@ export function ProviderDialog({
           </Field>
         </div>
         <Field id="op-link" label="Link existing users" hint="Whether a first sign-in may join an account created through another provider with the same e-mail.">
-          <select id="op-link" className={inputClass} value={d.link_existing_users} onChange={(e) => set("link_existing_users", e.target.value as Draft["link_existing_users"])}>
-            <option value="default">Default (yes, unless trusted domains are used)</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
+          <Select id="op-link" value={d.link_existing_users} onChange={(v) => set("link_existing_users", v as Draft["link_existing_users"])} options={[{ value: "default", label: "Default (yes, unless trusted domains are used)" }, { value: "yes", label: "Yes" }, { value: "no", label: "No" }]} />
         </Field>
       </Fieldset>
 
@@ -392,10 +389,7 @@ export function ProviderDialog({
             <input id="op-role-claim" className={inputClass} value={d.role_claim} onChange={(e) => set("role_claim", e.target.value)} />
           </Field>
           <Field id="op-role-source" label="Role claim source">
-            <select id="op-role-source" className={inputClass} value={d.role_claim_source} onChange={(e) => set("role_claim_source", e.target.value)}>
-              <option value="id_token">ID token</option>
-              <option value="userinfo">Userinfo</option>
-            </select>
+            <Select id="op-role-source" value={d.role_claim_source} onChange={(v) => set("role_claim_source", v)} options={[{ value: "id_token", label: "ID token" }, { value: "userinfo", label: "Userinfo" }]} />
           </Field>
         </div>
         <CheckboxField id="op-require-role" label="Require a mapped role" hint="A sign-in whose claim maps to nothing is refused." checked={d.require_role} onChange={(v) => set("require_role", v)} />
@@ -417,11 +411,7 @@ export function ProviderDialog({
                   <input id={`op-map-${i}-org`} className={inputClass} value={m.org_slug} onChange={(e) => setMapping(i, { org_slug: e.target.value })} />
                 </Field>
                 <Field id={`op-map-${i}-orole`} label={`Mapping ${i + 1}: organization role`}>
-                  <select id={`op-map-${i}-orole`} className={inputClass} value={m.org_role} onChange={(e) => setMapping(i, { org_role: e.target.value })}>
-                    <option value="member">member</option>
-                    <option value="admin">admin</option>
-                    <option value="owner">owner</option>
-                  </select>
+                  <Select id={`op-map-${i}-orole`} value={m.org_role} onChange={(v) => setMapping(i, { org_role: v })} options={[{ value: "member", label: "member" }, { value: "admin", label: "admin" }, { value: "owner", label: "owner" }]} />
                 </Field>
                 <Field id={`op-map-${i}-ws`} label={`Mapping ${i + 1}: workspaces`} hint="slug:role per line (owner, approver, member).">
                   <textarea id={`op-map-${i}-ws`} rows={2} spellCheck={false} className={`${inputClass} font-mono`} value={m.workspaces} onChange={(e) => setMapping(i, { workspaces: e.target.value })} />
@@ -449,10 +439,7 @@ export function ProviderDialog({
             <input id="op-group-claim" className={inputClass} value={d.group_claim} onChange={(e) => set("group_claim", e.target.value)} />
           </Field>
           <Field id="op-group-source" label="Group claim source">
-            <select id="op-group-source" className={inputClass} value={d.group_claim_source} onChange={(e) => set("group_claim_source", e.target.value)}>
-              <option value="id_token">ID token</option>
-              <option value="userinfo">Userinfo</option>
-            </select>
+            <Select id="op-group-source" value={d.group_claim_source} onChange={(v) => set("group_claim_source", v)} options={[{ value: "id_token", label: "ID token" }, { value: "userinfo", label: "Userinfo" }]} />
           </Field>
         </div>
       </Fieldset>
@@ -465,19 +452,13 @@ export function ProviderDialog({
               <input id="op-jit-org" className={inputClass} value={d.jit_org} onChange={(e) => set("jit_org", e.target.value)} />
             </Field>
             <Field id="op-jit-role" label="Organization role">
-              <select id="op-jit-role" className={inputClass} value={d.jit_role} onChange={(e) => set("jit_role", e.target.value)}>
-                <option value="member">member</option>
-                <option value="admin">admin</option>
-              </select>
+              <Select id="op-jit-role" value={d.jit_role} onChange={(v) => set("jit_role", v)} options={[{ value: "member", label: "member" }, { value: "admin", label: "admin" }]} />
             </Field>
             <Field id="op-jit-ws" label="Workspaces" hint="Workspace slugs, one per line.">
               <textarea id="op-jit-ws" rows={2} spellCheck={false} className={`${inputClass} font-mono`} value={d.jit_workspaces} onChange={(e) => set("jit_workspaces", e.target.value)} />
             </Field>
             <Field id="op-jit-wrole" label="Workspace role">
-              <select id="op-jit-wrole" className={inputClass} value={d.jit_workspace_role} onChange={(e) => set("jit_workspace_role", e.target.value)}>
-                <option value="member">member</option>
-                <option value="approver">approver</option>
-              </select>
+              <Select id="op-jit-wrole" value={d.jit_workspace_role} onChange={(v) => set("jit_workspace_role", v)} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }]} />
             </Field>
           </div>
         ) : null}

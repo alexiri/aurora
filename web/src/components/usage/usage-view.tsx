@@ -11,6 +11,7 @@ import { FilterChip } from "@/components/ui/filter-chip";
 import { Segmented } from "@/components/ui/segmented";
 import { StatTile } from "@/components/ui/stat-tile";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { errorMessage } from "@/lib/api/errors";
 import { useAdminOrgs } from "@/lib/api/freeze";
 import { useAgents, useWorkspaces } from "@/lib/api/queries";
@@ -316,37 +317,16 @@ export function UsageView({ level }: { level: UsageLevel }) {
         />
       ) : (
         <Field id="usage-agent" label="Agent">
-          <select id="usage-agent" className={cn(inputClass, "w-48 max-w-full")} value={filter} onChange={(e) => setParams({ filter: e.target.value })}>
-            <option value="">All agents</option>
-            {agents.data?.items.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
+          <Select id="usage-agent" value={filter} className="w-48 max-w-full" placeholder="All agents" onChange={(v) => setParams({ filter: v })} options={agents.data?.items.map((a) => ({ value: a.id, label: a.name }))} />
         </Field>
       )
     ) : level.kind === "org" ? (
       <Field id="usage-workspace" label="Workspace">
-        <select id="usage-workspace" className={cn(inputClass, "w-48 max-w-full")} value={filter} onChange={(e) => setParams({ filter: e.target.value })}>
-          <option value="">All workspaces</option>
-          {workspaces.data?.items.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name}
-            </option>
-          ))}
-        </select>
+        <Select id="usage-workspace" value={filter} className="w-48 max-w-full" placeholder="All workspaces" onChange={(v) => setParams({ filter: v })} options={workspaces.data?.items.map((w) => ({ value: w.id, label: w.name }))} />
       </Field>
     ) : (
       <Field id="usage-org" label="Organization">
-        <select id="usage-org" className={cn(inputClass, "w-48 max-w-full")} value={filter} onChange={(e) => setParams({ filter: e.target.value })}>
-          <option value="">All organizations</option>
-          {orgs.data?.items.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-        </select>
+        <Select id="usage-org" value={filter} className="w-48 max-w-full" placeholder="All organizations" onChange={(v) => setParams({ filter: v })} options={orgs.data?.items.map((o) => ({ value: o.id, label: o.name }))} />
       </Field>
     );
 

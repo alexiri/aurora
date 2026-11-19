@@ -7,6 +7,7 @@ import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { Select } from "@/components/ui/select";
 import { StatusDot } from "@/components/ui/status-dot";
 import { useTestLlmEndpoint, type LlmEndpointTestResult } from "@/lib/api/settings";
 import { MODEL_ID_PATTERN, ROLES, type Role } from "@/lib/model-roles";
@@ -381,12 +382,7 @@ export function EndpointDialog({
           {f.extra.map((k) => (
             <Field key={k} id={`ep-${k}`} label={EXTRA_LABEL[k]!.label} hint={EXTRA_LABEL[k]!.hint} error={errors[k]}>
               {k === "auth_header" ? (
-                <select id={`ep-${k}`} className={inputClass} value={d.extra[k] ?? ""} onChange={(e) => set("extra", { ...d.extra, [k]: e.target.value })}>
-                  <option value="">authorization (default)</option>
-                  <option value="authorization">authorization</option>
-                  <option value="api-key">api-key</option>
-                  <option value="x-api-key">x-api-key</option>
-                </select>
+                <Select id={`ep-${k}`} value={d.extra[k] ?? ""} placeholder="authorization (default)" onChange={(v) => set("extra", { ...d.extra, [k]: v })} options={[{ value: "authorization", label: "authorization" }, { value: "api-key", label: "api-key" }, { value: "x-api-key", label: "x-api-key" }]} />
               ) : (
                 <input id={`ep-${k}`} className={inputClass} value={d.extra[k] ?? ""} onChange={(e) => set("extra", { ...d.extra, [k]: e.target.value })} />
               )}
@@ -423,14 +419,7 @@ export function EndpointDialog({
       <fieldset className="space-y-3 rounded-control border border-line p-3">
         <legend className="px-1 text-sm font-medium text-ink">Key origin</legend>
         <Field id="ep-method" label="Method" error={errors["key_origin/method"] ?? errors.key_origin} hint="Which account a key must belong to before it may carry prompts.">
-          <select id="ep-method" className={inputClass} value={d.method} onChange={(e) => set("method", e.target.value)}>
-            <option value="">No rule</option>
-            {methods.map((m) => (
-              <option key={m} value={m}>
-                {ORIGIN_LABEL[m] ?? m}
-              </option>
-            ))}
-          </select>
+          <Select id="ep-method" value={d.method} placeholder="No rule" onChange={(v) => set("method", v)} options={methods.map((m) => ({ value: m, label: ORIGIN_LABEL[m] ?? m }))} />
         </Field>
         {d.method ? (
           <div className="grid gap-3 sm:grid-cols-3">

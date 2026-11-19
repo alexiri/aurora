@@ -12,6 +12,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import {
   checkSummary,
@@ -87,13 +88,7 @@ function AddonList({ addons }: { addons: AddonEntry[] }) {
 
 function IntervalSelect({ id, value, onChange }: { id: string; value: Interval; onChange: (v: Interval) => void }) {
   return (
-    <select id={id} className={inputClass} value={value} onChange={(e) => onChange(e.target.value as Interval)}>
-      {INTERVALS.map((i) => (
-        <option key={i} value={i}>
-          {intervalLabel(i)}
-        </option>
-      ))}
-    </select>
+    <Select id={id} value={value} onChange={(v) => onChange(v as Interval)} options={INTERVALS.map((i) => ({ value: i, label: intervalLabel(i) }))} />
   );
 }
 

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { Select } from "@/components/ui/select";
 import { fieldErrors } from "@/lib/api/errors";
 import { useCreateGroup, type CreateGroupRequest } from "@/lib/api/groups";
 import { orgRoutes } from "@/lib/routes";
@@ -84,18 +85,7 @@ function CreateForm({ orgId, orgSlug, onDone }: { orgId: string; orgSlug: string
       {linked ? (
         <>
           <Field id="grp-provider" label="Sign-in provider">
-            <select
-              id="grp-provider"
-              className={inputClass}
-              value={provider || providers[0]?.id || ""}
-              onChange={(e) => setProvider(e.target.value)}
-            >
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.display_name}
-                </option>
-              ))}
-            </select>
+            <Select id="grp-provider" value={provider || providers[0]?.id || ""} onChange={setProvider} options={providers.map((p) => ({ value: p.id, label: p.display_name }))} />
           </Field>
           <Field
             id="grp-value"
@@ -119,16 +109,7 @@ function CreateForm({ orgId, orgSlug, onDone }: { orgId: string; orgSlug: string
         label="Organization role (optional)"
         hint="Members act as this role in the whole organization. Never Owner."
       >
-        <select
-          id="grp-role"
-          className={inputClass}
-          value={orgRole}
-          onChange={(e) => setOrgRole(e.target.value as "" | "member" | "admin")}
-        >
-          <option value="">None</option>
-          <option value="member">Member</option>
-          <option value="admin">Admin</option>
-        </select>
+        <Select id="grp-role" value={orgRole} placeholder="None" onChange={(v) => setOrgRole(v as "" | "member" | "admin")} options={[{ value: "member", label: "Member" }, { value: "admin", label: "Admin" }]} />
       </Field>
       {orgRole === "admin" ? (
         <Notice tone="pending" role="status">

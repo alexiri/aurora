@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
+import { Select } from "@/components/ui/select";
 import type { ContentType, Slot, SlotType } from "@/lib/api/webhook";
 import { firstMessage, LIMITS, SLOT_TYPES, type Issue } from "@/lib/webhook/logic";
 import { cn } from "@/lib/utils";
@@ -90,12 +91,8 @@ function SlotCard({
         <input id={`${id}-name`} className={inputClass} spellCheck={false} value={slot.name} onChange={(e) => set({ name: e.target.value })} />
       </Field>
       <Field id={`${id}-type`} label="Kind of value" error={firstMessage(issues, `${p}.type`) ?? (jsonNotAllowed ? "Any JSON needs the JSON content type." : undefined)}>
-        <select
-          id={`${id}-type`}
-          className={inputClass}
-          value={slot.type}
-          onChange={(e) => {
-            const type = e.target.value as SlotType;
+        <Select id={`${id}-type`} value={slot.type} onChange={(v) => {
+            const type = v as SlotType;
             const next: Slot = { ...slot, type };
             // Limits and lists belong to one type each.
             if (type !== "string" && type !== "string_list") delete next.max_length;
@@ -104,14 +101,7 @@ function SlotCard({
             else next.enum = slot.enum?.length ? slot.enum : [""];
             if (type !== "json") delete next.schema;
             onChange(next);
-          }}
-        >
-          {SLOT_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
+          }} options={SLOT_TYPES.map((t) => ({ value: t.value, label: t.label }))} />
       </Field>
       <Field id={`${id}-desc`} label="What the agent should put here (optional)" hint="Up to 300 characters. The agent reads it." error={firstMessage(issues, `${p}.description`)}>
         <input id={`${id}-desc`} className={inputClass} maxLength={LIMITS.slotDescription} value={slot.description} onChange={(e) => set({ description: e.target.value })} />

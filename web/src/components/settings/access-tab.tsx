@@ -14,6 +14,7 @@ import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { matchesFilter, PickerFilter } from "@/components/ui/picker-filter";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
   useAccess,
@@ -89,16 +90,7 @@ function AddBinding({
           </select>
         </Field>
         <Field id="acc-add-role" label="Role">
-          <select
-            id="acc-add-role"
-            className={cn(inputClass, "w-40 max-w-full")}
-            value={role}
-            onChange={(e) => setRole(e.target.value as Role)}
-          >
-            <option value="member">member</option>
-            <option value="approver">approver</option>
-            <option value="owner">owner</option>
-          </select>
+          <Select id="acc-add-role" value={role} className="w-40 max-w-full" onChange={(v) => setRole(v as Role)} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
         </Field>
         <Button type="submit" disabled={!user || put.isPending} className="sm:mt-label-offset">
           Add

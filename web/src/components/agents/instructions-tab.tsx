@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/notice";
+import { Select } from "@/components/ui/select";
 import { SwitchField } from "@/components/ui/switch";
 import { useHarnesses, usePatchAgent } from "@/lib/api/agents";
 import { ApiError } from "@/lib/api/client";
@@ -272,14 +273,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
               />
             ) : null}
             <Field id="a-effort" label="Effort" error={fe.effort}>
-              <select id="a-effort" className={inputClass} value={effort} onChange={(e) => setEffort(e.target.value)}>
-                <option value="">Default</option>
-                {["low", "medium", "high", "max"].map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
+              <Select id="a-effort" value={effort} placeholder="Default" onChange={setEffort} options={["low", "medium", "high", "max"].map((o) => ({ value: o, label: o }))} />
             </Field>
           </div>
         </details>

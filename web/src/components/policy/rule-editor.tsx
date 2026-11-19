@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { Select } from "@/components/ui/select";
 import { effectiveMax, limitsHint } from "@/lib/approval-limits";
 import {
   newTarget,
@@ -59,14 +60,7 @@ function IdentityRow({
         {data.groups !== undefined ? <option value="group">When a member of a group is speaking</option> : null}
       </select>
       {options.length > 0 ? (
-        <select aria-label="Identity" className={inputClass} value={value.id} onChange={(e) => onChange({ ...value, id: e.target.value })}>
-          <option value="">Select…</option>
-          {options.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        <Select aria-label="Identity" value={value.id} placeholder="Select…" onChange={(v) => onChange({ ...value, id: v })} options={options.map((o) => ({ value: o.id, label: o.label }))} />
       ) : (
         <input aria-label="Identity id" className={inputClass} placeholder="ID" value={value.id} onChange={(e) => onChange({ ...value, id: e.target.value })} />
       )}
@@ -149,27 +143,12 @@ function TargetRow({
         </div>
       ) : null}
       {value.type === "secret" ? (
-        <select aria-label="Account" className={inputClass} value={value.id} onChange={(e) => onChange({ ...value, id: e.target.value })}>
-          <option value="">Select an account…</option>
-          {data.secrets.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        <Select aria-label="Account" value={value.id} placeholder="Select an account…" onChange={(v) => onChange({ ...value, id: v })} options={data.secrets.map((o) => ({ value: o.id, label: o.label }))} />
       ) : null}
       {value.type === "secrets" ? (
         <div className="grid grid-cols-2 gap-2">
-          <select aria-label="Secret scope" className={inputClass} value={value.scope} onChange={(e) => onChange({ ...value, scope: e.target.value as "any" })}>
-            <option value="any">Any scope</option>
-            <option value="workspace">Workspace</option>
-            <option value="organization">Organization</option>
-          </select>
-          <select aria-label="Secret kind" className={inputClass} value={value.kind ?? ""} onChange={(e) => onChange({ ...value, kind: (e.target.value || null) as "generic" | "llm" | null })}>
-            <option value="">All kinds</option>
-            <option value="generic">Generic</option>
-            <option value="llm">LLM keys</option>
-          </select>
+          <Select aria-label="Secret scope" value={value.scope} onChange={(v) => onChange({ ...value, scope: v as "any" })} options={[{ value: "any", label: "Any scope" }, { value: "workspace", label: "Workspace" }, { value: "organization", label: "Organization" }]} />
+          <Select aria-label="Secret kind" value={value.kind ?? ""} placeholder="All kinds" onChange={(v) => onChange({ ...value, kind: (v || null) as "generic" | "llm" | null })} options={[{ value: "generic", label: "Generic" }, { value: "llm", label: "LLM keys" }]} />
         </div>
       ) : null}
     </li>
@@ -187,11 +166,7 @@ function ConditionRow({
 }) {
   return (
     <li className="flex gap-2">
-      <select aria-label="Condition operator" className={inputClass} value={value.op} onChange={(e) => onChange({ ...value, op: e.target.value as Condition["op"] })}>
-        <option value="contains">body contains</option>
-        <option value="not_contains">body does not contain</option>
-        <option value="equals">body equals</option>
-      </select>
+      <Select aria-label="Condition operator" value={value.op} onChange={(v) => onChange({ ...value, op: v as Condition["op"] })} options={[{ value: "contains", label: "body contains" }, { value: "not_contains", label: "body does not contain" }, { value: "equals", label: "body equals" }]} />
       <input aria-label="Condition value" className={inputClass} value={value.value} onChange={(e) => onChange({ ...value, value: e.target.value })} />
       <input aria-label="JSON pointer" className={inputClass} placeholder="/json/pointer (optional)" value={value.json_pointer ?? ""} onChange={(e) => onChange({ ...value, json_pointer: e.target.value || null })} />
       <Button type="button" variant="ghost" size="sm" onClick={onRemove} aria-label="Remove condition">
@@ -286,10 +261,7 @@ export function RuleEditorDialog({
           </section>
 
           <Field id="rule-action" label="Action">
-            <select id="rule-action" className={inputClass} value={rule.action} onChange={(e) => patch({ action: e.target.value as RuleInput["action"] })}>
-              <option value="allow">Allow</option>
-              <option value="block">Block</option>
-            </select>
+            <Select id="rule-action" value={rule.action} onChange={(v) => patch({ action: v as RuleInput["action"] })} options={[{ value: "allow", label: "Allow" }, { value: "block", label: "Block" }]} />
           </Field>
           {allow ? (
             <fieldset className="space-y-2" aria-label="Modifiers">

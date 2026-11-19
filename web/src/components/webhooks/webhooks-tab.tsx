@@ -13,6 +13,7 @@ import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField, FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { fieldErrors } from "@/lib/api/errors";
 import {
@@ -110,13 +111,7 @@ export function WebhookForm({
         <textarea id="wh-instr" className={inputClass} rows={3} value={instructions} required onChange={(e) => setInstructions(e.target.value)} />
       </Field>
       <Field id="wh-kind" label="Verification" error={fe.verification}>
-        <select id="wh-kind" className={inputClass} value={kind} onChange={(e) => setKind(e.target.value)}>
-          {KINDS.map((k) => (
-            <option key={k} value={k}>
-              {k}
-            </option>
-          ))}
-        </select>
+        <Select id="wh-kind" value={kind} onChange={setKind} options={KINDS.map((k) => ({ value: k, label: k }))} />
       </Field>
       {kind !== "none" ? (
         <div className="grid gap-4 sm:grid-cols-2">

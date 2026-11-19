@@ -8,9 +8,9 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { inputClass } from "@/components/ui/field";
 import { MoreNotShown } from "@/components/ui/more-not-shown";
 import { PageHeader } from "@/components/ui/page-header";
+import { Select } from "@/components/ui/select";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import {
@@ -354,13 +354,7 @@ function ActionHistory({ wsId }: { wsId: string }) {
     <div className="space-y-3">
       <label className="flex max-w-xs items-center gap-2 text-sm">
         Action status
-        <select className={inputClass} value={status} onChange={(e) => setStatus(e.target.value)}>
-          {ACTION_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s || "All"}
-            </option>
-          ))}
-        </select>
+        <Select value={status} onChange={setStatus} options={ACTION_STATUSES.map((s) => ({ value: s, label: s || "All" }))} />
       </label>
       {q.isPending ? <Loading /> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => void q.refetch()} /> : null}
@@ -413,13 +407,7 @@ function HistoryTab({ wsId }: { wsId: string }) {
     <div className="space-y-4">
       <label className="flex max-w-xs items-center gap-2 text-sm">
         Status
-        <select className={inputClass} value={status} onChange={(e) => setStatus(e.target.value)}>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s || "All"}
-            </option>
-          ))}
-        </select>
+        <Select value={status} onChange={setStatus} options={STATUSES.map((s) => ({ value: s, label: s || "All" }))} />
       </label>
       {q.isPending ? <Loading /> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}

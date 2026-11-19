@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/notice";
-import { cn } from "@/lib/utils";
+import { Select } from "@/components/ui/select";
 import { fieldErrors } from "@/lib/api/errors";
 import { useCreateInvitation, validateInvite } from "@/lib/api/org";
 import { useWorkspaces } from "@/lib/api/queries";
@@ -45,15 +45,7 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
         />
       </Field>
       <Field id="inv-role" label="Role" error={fe.role}>
-        <select
-          id="inv-role"
-          className={inputClass}
-          value={role}
-          onChange={(e) => setRole(e.target.value as "admin" | "member")}
-        >
-          <option value="member">member</option>
-          <option value="admin">admin</option>
-        </select>
+        <Select id="inv-role" value={role} onChange={(v) => setRole(v as "admin" | "member")} options={[{ value: "member", label: "member" }, { value: "admin", label: "admin" }]} />
       </Field>
       {workspaces.data && workspaces.data.items.length > 0 ? (
         <fieldset className="space-y-2">
@@ -68,20 +60,10 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
                 <label htmlFor={`inv-ws-${w.id}`} className="min-w-0 truncate text-ink">
                   {w.name}
                 </label>
-                <select
-                  id={`inv-ws-${w.id}`}
-                  className={cn(inputClass, "w-40 shrink-0")}
-                  value={level}
-                  onChange={(e) => {
-                    const v = e.target.value;
+                <Select id={`inv-ws-${w.id}`} value={level} className="w-40 shrink-0" onChange={(v) => {
                     setWsIds((cur) => cur.filter((x) => x !== w.id).concat(v === "member" ? [w.id] : []));
                     setApproverIds((cur) => cur.filter((x) => x !== w.id).concat(v === "approver" ? [w.id] : []));
-                  }}
-                >
-                  <option value="none">No access</option>
-                  <option value="member">Member</option>
-                  <option value="approver">Approver</option>
-                </select>
+                  }} options={[{ value: "none", label: "No access" }, { value: "member", label: "Member" }, { value: "approver", label: "Approver" }]} />
               </div>
             );
           })}

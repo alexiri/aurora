@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { PageHeader } from "@/components/ui/page-header";
 import { Field, inputClass } from "@/components/ui/field";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useActivity } from "@/lib/api/approvals";
 import { useAgents } from "@/lib/api/queries";
@@ -74,33 +75,10 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
         }}
       >
         <Field id="act-agent" label="Agent">
-          <select
-            id="act-agent"
-            className={cn(inputClass, "w-48 max-w-full")}
-            value={agent}
-            onChange={(e) => setAgent(e.target.value)}
-          >
-            <option value="">All agents</option>
-            {agents.data?.items.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
+          <Select id="act-agent" value={agent} className="w-48 max-w-full" placeholder="All agents" onChange={setAgent} options={agents.data?.items.map((a) => ({ value: a.id, label: a.name }))} />
         </Field>
         <Field id="act-decision" label="Decision">
-          <select
-            id="act-decision"
-            className={cn(inputClass, "w-52 max-w-full")}
-            value={decision}
-            onChange={(e) => setDecision(e.target.value)}
-          >
-            {DECISIONS.map((d) => (
-              <option key={d} value={d}>
-                {d || "All decisions"}
-              </option>
-            ))}
-          </select>
+          <Select id="act-decision" value={decision} className="w-52 max-w-full" onChange={setDecision} options={DECISIONS.map((d) => ({ value: d, label: d || "All decisions" }))} />
         </Field>
         <Field id="act-host" label="Host">
           <input

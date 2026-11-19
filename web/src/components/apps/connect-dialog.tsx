@@ -8,7 +8,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Field, inputClass } from "@/components/ui/field";
+import { Field } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { appDisplayName } from "@/lib/api/app-name";
@@ -36,6 +36,7 @@ import { OAuthClientField, RequestedScopes, TokenScopes } from "./connect-journe
 import { useSignInWindow } from "./connect-journey/use-sign-in-window";
 import { DynamicForm } from "./dynamic-form";
 import { Markdown, safeHref } from "@/components/ui/markdown";
+import { Select } from "@/components/ui/select";
 
 /**
  * (FIX-135, D-242) The first question for an app of a family: where does it run? The hosted
@@ -325,11 +326,7 @@ function ConnectForm({
           <DynamicForm fields={method.fields} values={values} errors={errors} onChange={(n, v) => setValues((s) => ({ ...s, [n]: v }))} />
           {method.access_levels.length > 0 ? (
             <Field id="cm-access" label="Access level">
-              <select id="cm-access" className={inputClass} value={access} onChange={(e) => setAccess(e.target.value)}>
-                {method.access_levels.map((a) => (
-                  <option key={a.id} value={a.id}>{a.label}</option>
-                ))}
-              </select>
+              <Select id="cm-access" value={access} onChange={setAccess} options={method.access_levels.map((a) => ({ value: a.id, label: a.label }))} />
             </Field>
           ) : null}
           {method.scopes.length > 0 && method.kind !== "fields" ? (

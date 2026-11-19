@@ -14,6 +14,7 @@ import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { matchesFilter, PickerFilter } from "@/components/ui/picker-filter";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useOrgMembers } from "@/lib/api/account";
 import { errorMessage } from "@/lib/api/errors";
@@ -250,21 +251,10 @@ function OrgRole({ g, orgId }: { g: Group; orgId: string }) {
     <Section id="grp-role" title="Organization role" card>
       <div className="space-y-3">
         <Field id="gr-role" label="Members act as">
-          <select
-            id="gr-role"
-            className={cn(inputClass, "w-48")}
-            value={g.org_role ?? ""}
-            disabled={patch.isPending}
-            onChange={(e) => {
-              const v = e.target.value;
+          <Select id="gr-role" value={g.org_role ?? ""} disabled={patch.isPending} className="w-48" placeholder="None" onChange={(v) => {
               if (v === "admin") setPending("admin");
               else apply(v === "member" ? "member" : null);
-            }}
-          >
-            <option value="">None</option>
-            <option value="member">Member</option>
-            <option value="admin">Admin</option>
-          </select>
+            }} options={[{ value: "member", label: "Member" }, { value: "admin", label: "Admin" }]} />
         </Field>
         <p className="text-sm text-ink-2">
           {g.org_role
@@ -341,26 +331,10 @@ function Workspaces({ g, orgId }: { g: Group; orgId: string }) {
         >
           <PickerFilter id="gw-filter" label="Find a workspace" count={unbound.length} value={filter} onChange={setFilter} />
           <Field id="gw-ws" label="Workspace">
-            <select id="gw-ws" className={cn(inputClass, "w-64 max-w-full")} value={ws} onChange={(e) => setWs(e.target.value)}>
-              <option value="">Select a workspace…</option>
-              {candidates.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                </option>
-              ))}
-            </select>
+            <Select id="gw-ws" value={ws} className="w-64 max-w-full" placeholder="Select a workspace…" onChange={setWs} options={candidates.map((w) => ({ value: w.id, label: w.name }))} />
           </Field>
           <Field id="gw-role" label="Role">
-            <select
-              id="gw-role"
-              className={cn(inputClass, "w-40")}
-              value={role}
-              onChange={(e) => setRole(e.target.value as WorkspaceRole)}
-            >
-              <option value="member">member</option>
-              <option value="approver">approver</option>
-              <option value="owner">owner</option>
-            </select>
+            <Select id="gw-role" value={role} className="w-40" onChange={(v) => setRole(v as WorkspaceRole)} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
           </Field>
           <Button type="submit" disabled={!ws || put.isPending}>
             Add
@@ -389,17 +363,7 @@ function BindingRow({
     <tr>
       <Td className="font-medium">{b.workspace.name}</Td>
       <Td>
-        <select
-          aria-label={`Role in ${b.workspace.name}`}
-          className={cn(inputClass, "w-36")}
-          value={b.role}
-          disabled={put.isPending}
-          onChange={(e) => put.mutate({ group: g.id, role: e.target.value as WorkspaceRole }, { onError })}
-        >
-          <option value="member">member</option>
-          <option value="approver">approver</option>
-          <option value="owner">owner</option>
-        </select>
+        <Select aria-label={`Role in ${b.workspace.name}`} value={b.role} disabled={put.isPending} className="w-36" onChange={(v) => put.mutate({ group: g.id, role: v as WorkspaceRole }, { onError })} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
       </Td>
       <Td className="text-right">
         <Button variant="outline" size="sm" aria-label={`Remove access to ${b.workspace.name}`} onClick={() => setConfirm(true)}>

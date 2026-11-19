@@ -13,6 +13,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { useUpdateMe } from "@/lib/api/account";
 import { fieldErrors } from "@/lib/api/errors";
 import { usePatchOnboarding } from "@/lib/api/onboarding";
@@ -62,21 +63,9 @@ function ProfileForm({ me }: { me: Me }) {
         hint="Where you land after signing in."
         error={fe.default_org_id}
       >
-        <select
-          id="acc-org"
-          className={inputClass}
-          value={org}
-          onChange={(e) => setOrg(e.target.value)}
-        >
-          <option value="">No default</option>
-          {me.memberships
+        <Select id="acc-org" value={org} placeholder="No default" onChange={setOrg} options={me.memberships
             .filter((m) => m.status === "active")
-            .map((m) => (
-              <option key={m.org.id} value={m.org.id}>
-                {m.org.name}
-              </option>
-            ))}
-        </select>
+            .map((m) => ({ value: m.org.id, label: m.org.name }))} />
       </Field>
       {update.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={update.error} />

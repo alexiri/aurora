@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { LockPill } from "@/components/ui/lock-pill";
 import { inputClass } from "@/components/ui/field";
+import { Select } from "@/components/ui/select";
 import { useMe } from "@/lib/api/queries";
 import { adminRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -46,11 +47,7 @@ export function PostureSelect<T extends string>({
   return (
     <label className="block text-sm font-medium text-ink">
       <span>{label}{locked ? <Locked setting={setting} /> : null}</span>
-      <select className={cn(inputClass, "mt-1.5 max-w-lg")} value={value} disabled={locked || readOnly} onChange={(e) => onChange(e.target.value as T)}>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
+      <Select value={value} disabled={locked || readOnly} className="mt-1.5 max-w-lg" onChange={(v) => onChange(v as T)} options={options.map((o) => ({ value: o.value, label: o.label }))} />
     </label>
   );
 }
