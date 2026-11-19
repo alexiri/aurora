@@ -859,9 +859,7 @@ async fn agent_delete_removes_its_grant_derived_rules() {
     let v = setup_org(&h, &ot, "Org").await;
     let org = id(&v["org"]["id"]);
     let ws = id(&v["workspace"]["id"]);
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let agent = h.byo_agent(org, ws, "bot", "Bot").await;
     let conn = Uuid::now_v7();
     sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'acme_app','acme','1.0.0','c','active','x')")
         .bind(conn).bind(org).bind(ws).execute(h.pool()).await.unwrap();
@@ -933,10 +931,7 @@ async fn webhook_with_secret(h: &Harness, org: Uuid, ws: Uuid, agent: Uuid) -> (
 }
 
 async fn plain_agent(h: &Harness, org: Uuid, ws: Uuid, handle: &str) -> Uuid {
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,$4,'Bot','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).bind(handle).execute(h.pool()).await.unwrap();
-    agent
+    h.byo_agent(org, ws, handle, "Bot").await
 }
 
 async fn integration_with_credentials(h: &Harness, org: Uuid, tenant: &str) -> (Uuid, String) {

@@ -75,9 +75,7 @@ pub(crate) async fn world_with(yaml: &str) -> W {
     h.bind_ws(ws, m, "member").await;
     let (_, ot) = h.good_session(o).await;
     let (_, mt) = h.good_session(m).await;
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let agent = h.byo_agent(org, ws, "bot", "Bot").await;
     W {
         agent,
         h,

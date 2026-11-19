@@ -114,10 +114,7 @@ impl W {
     }
 
     async fn agent(h: &Harness, org: Uuid, ws: Uuid, handle: &str) -> Uuid {
-        let id = Uuid::now_v7();
-        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,$4,$4,'byo','medium','')")
-            .bind(id).bind(org).bind(ws).bind(handle).execute(h.pool()).await.unwrap();
-        id
+        h.byo_agent(org, ws, handle, handle).await
     }
 
     fn pool(&self) -> &sqlx::PgPool {

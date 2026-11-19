@@ -31,9 +31,7 @@ pub(crate) async fn fixture_with(mutate: impl FnOnce(&mut aurora_config::ApiConf
     let h = Harness::with_config(mutate).await;
     let org = h.org().await;
     let ws = h.workspace(org).await;
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let agent = h.byo_agent(org, ws, "bot", "Bot").await;
     async fn person(
         h: &Harness,
         org: Uuid,
@@ -844,8 +842,7 @@ async fn retention_sweep_deletes_only_idle_conversations_through_the_delete_path
     // another org is untouched by this org's window
     let other_org = f.h.org().await;
     let other_ws = f.h.workspace(other_org).await;
-    let oa = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'o','O','byo','medium','')").bind(oa).bind(other_org).bind(other_ws).execute(f.h.pool()).await.unwrap();
+    let oa = f.h.byo_agent(other_org, other_ws, "o", "O").await;
     let oc = Uuid::now_v7();
     sqlx::query("INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at) VALUES ($1,$2,$3,'group','x', now() - interval '900 days')").bind(oc).bind(oa).bind(other_ws).execute(f.h.pool()).await.unwrap();
 

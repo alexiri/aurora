@@ -189,10 +189,7 @@ impl W {
     }
 
     async fn agent(&self, handle: &str) -> Uuid {
-        let id = Uuid::now_v7();
-        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,$4,$4,'hosted','fake')")
-            .bind(id).bind(self.org).bind(self.ws).bind(handle).execute(self.h.pool()).await.unwrap();
-        id
+        self.h.hosted_agent(self.org, self.ws, handle).await
     }
 
     async fn presence(&self, integ: Uuid, agent: Uuid, mode: &str, bot: Option<&str>) -> Uuid {

@@ -304,10 +304,7 @@ impl W {
     }
 
     async fn agent(&self, handle: &str) -> Uuid {
-        let agent = Uuid::now_v7();
-        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,$4,$4,'hosted','fake')")
-            .bind(agent).bind(self.org).bind(self.ws).bind(handle).execute(self.h.pool()).await.unwrap();
-        agent
+        self.h.hosted_agent(self.org, self.ws, handle).await
     }
 
     async fn sync_gen(&self, agent: Uuid) -> i64 {
@@ -2259,10 +2256,7 @@ impl W {
     }
 
     async fn agent_in(&self, ws: Uuid, handle: &str) -> Uuid {
-        let agent = Uuid::now_v7();
-        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,$4,$4,'hosted','fake')")
-            .bind(agent).bind(self.org).bind(ws).bind(handle).execute(self.h.pool()).await.unwrap();
-        agent
+        self.h.hosted_agent(self.org, ws, handle).await
     }
 }
 

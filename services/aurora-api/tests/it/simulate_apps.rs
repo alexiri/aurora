@@ -106,9 +106,7 @@ async fn world(h: &Harness) -> W<'_> {
     h.member(org, o, "owner", "active").await;
     h.bind_ws(ws, o, "owner").await;
     let (_, ot) = h.good_session(o).await;
-    let agent = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'daneel','Daneel','byo','medium','')")
-        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let agent = h.byo_agent(org, ws, "daneel", "Daneel").await;
     W {
         h,
         org,

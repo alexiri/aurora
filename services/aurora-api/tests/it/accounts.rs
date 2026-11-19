@@ -89,10 +89,7 @@ async fn secret(w: &W, ws: Option<Uuid>, name: &str, kind: &str) -> Uuid {
 }
 
 async fn second_agent(w: &W) -> Uuid {
-    let id = Uuid::now_v7();
-    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot2','Bot Two','byo','medium','')")
-        .bind(id).bind(w.org).bind(w.ws).execute(w.h.pool()).await.unwrap();
-    id
+    w.h.byo_agent(w.org, w.ws, "bot2", "BotTwo").await
 }
 
 fn put_url(agent: Uuid, conn: Uuid) -> String {
