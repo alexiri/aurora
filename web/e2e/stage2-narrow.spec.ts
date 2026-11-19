@@ -24,7 +24,13 @@ async function mockApi(page: Page) {
     if (p.includes("/stream")) return route.abort();
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
     if (p === "/v1/me") {
-      return json({ user: { id: id(99), display_name: "Ada", email: "ada@example.test", is_instance_admin: false }, memberships: [{ org, status: "active" }], default_org_id: id(1) });
+      // A membership always lists its workspaces (openapi `MeMembership`: `workspaces` is required); the scope switcher
+      // (P5-POLISH-8) reads them, and a membership without them made the page throw.
+      const membership = {
+        org, role: "owner", status: "active", sources: [],
+        workspaces: [{ id: ws.id, slug: ws.slug, name: ws.name, my_role: "owner", personal: false }],
+      };
+      return json({ user: { id: id(99), display_name: "Ada", email: "ada@example.test", is_instance_admin: false }, memberships: [membership], default_org_id: id(1) });
     }
     if (p === "/v1/orgs") return json({ items: [org] });
     if (p === "/v1/resolve") return json({ org, workspace: ws });
