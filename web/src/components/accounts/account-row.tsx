@@ -150,7 +150,8 @@ export function AccountRow({
   };
   const canFix = (kind: HealthFix) => account.can.manage && (kind === "test" || kind === "turn_on" || kind === "replace" && account.ref.type === "secret" || !!onReconnect);
   return (
-    <li className="space-y-3 rounded-card border border-line bg-surface p-4" aria-label={account.name}>
+    // On an agent's page the rows share one Card with dividers (the list owns the frame); elsewhere each is a card.
+    <li className={agent ? "space-y-3 p-4" : "space-y-3 rounded-card border border-line bg-surface p-4"} aria-label={account.name}>
       <div className="flex flex-wrap items-start gap-3">
         {account.app ? (
           <AppIcon appId={account.app.app_id} name={account.app.name} size={32} />
@@ -205,6 +206,10 @@ export function AccountRow({
           {/* (P5-UX-11, C-937) The limit of the organization's account, for the people who manage it. */}
           {scope.kind === "organization" && account.scope === "organization" && account.can.manage ? <LimitControl account={account} orgId={orgId} /> : null}
         </div>
+        {/* (C1) The agent's level sits in the right cluster just before the … button; its details wrap below. */}
+        {agent && mine ? (
+          <AccessControl account={account} entry={mine} workspaceId={ws} canChange={account.can.change_access} startOpen={false} orgName={org.data?.name} inRow />
+        ) : null}
         {account.can.manage ? (
           <AccountMenu
             account={account}
@@ -223,7 +228,6 @@ export function AccountRow({
         <div className="space-y-2">
           {mine ? (
             <>
-              <AccessControl account={account} entry={mine} workspaceId={ws} canChange={account.can.change_access} startOpen={false} orgName={org.data?.name} />
               {mine.model ? (
                 <p className="text-sm text-ink-2">
                   {shared ? "Shared by your organization · " : ""}

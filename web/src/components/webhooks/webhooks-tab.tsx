@@ -240,7 +240,7 @@ export function WebhooksTab({ agentId, wsId, canOwn }: { agentId: string; wsId?:
     <Section
       id="webhooks"
       title="Webhooks"
-      description="Give an external system a URL that wakes the agent."
+      description={q.data.items.length > 0 || creating ? "Give an external system a URL that wakes the agent." : undefined}
       actions={
         // (P5-POLISH-11, C6) While there is none, the empty state's button is the only one.
         !creating && q.data.items.length > 0 ? (

@@ -252,6 +252,16 @@ All paths are under `web/src/`.
 - Tests: vitest `polish-7` (sentences, activity line), `account-settings`; Playwright `accounts`, `credential-access`,
   `p5-polish-10`, `onboarding-journeys`.
 
+### Pass-2 fixes (lane a, 2026-11-19)
+
+- **#1 done.** The Accounts **Add** menu is `align="end"` (`accounts-list.tsx`).
+- **#2 done.** **Add people** is in the People page's `PageHeader` actions (`PeopleBody` in `workspace-topics.tsx`;
+  `hasApprover` from the shared `useAccess` query); `AccessTab` no longer renders its own row.
+- **#3 done.** The People list sorts you first, then by name (`access-tab.tsx`).
+- Tests run: vitest `add-people`, `people-table`, `polish-7`, `accounts`, `groups`, `credential-access`,
+  `polish-11-review-fixes` and others touching these files (129 pass), `pnpm typecheck`, eslint on touched files. No new
+  test for the sort order; Playwright `add-people*` find the button by role, unchanged.
+
 ## Suggested agent/model and reason
 
 Sonnet (`nextjs-developer`). Several pages, each moderate, sharing the account pieces built in

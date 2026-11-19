@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { WhoCan } from "@/components/ui/who-can";
 import { type Account, type AgentAccess, type Level, usePutAccess } from "@/lib/api/accounts";
 import { useGrants } from "@/lib/api/policy";
+import { cn } from "@/lib/utils";
 import { isLimited, LEVEL_LABEL, LEVEL_ORDER } from "@/lib/accounts";
 
 import { ActionsTable } from "./actions-table";
@@ -25,6 +26,7 @@ export function AccessControl({
   canChange,
   startOpen = false,
   orgName,
+  inRow = false,
 }: {
   account: Account;
   entry: AgentAccess;
@@ -34,13 +36,15 @@ export function AccessControl({
   startOpen?: boolean;
   /** The organization that limits the account, for "Limited by <org>". */
   orgName?: string;
+  /** In an account row's header: the level is its own item before the menu, the rest wraps below (P5-POLISH-11, C1). */
+  inRow?: boolean;
 }) {
   const put = usePutAccess();
   const grants = useGrants(entry.agent.id);
   const [table, setTable] = useState(startOpen);
   if (account.ref.type !== "connection") return null;
   // (P5-POLISH-11) An app with no write tools has no choice, but the row still says what the agent may do.
-  if (account.levels.length === 0) return <p className="text-sm text-ink">Read only</p>;
+  if (account.levels.length === 0) return <p className={cn("text-sm text-ink", inRow && "whitespace-nowrap")}>Read only</p>;
   const level = entry.level === "read" || entry.level === "ask" || entry.level === "act" ? entry.level : null;
   const always = entry.always_allowed ?? [];
 
@@ -110,6 +114,18 @@ export function AccessControl({
   );
 
   if (!canChange) {
+    if (inRow)
+      return (
+        <>
+          {level ? <p className="whitespace-nowrap text-sm text-ink">{LEVEL_LABEL[level]}</p> : null}
+          <div className="order-last w-full basis-full space-y-2 text-sm text-ink-2">
+            {alwaysList}
+            {customNote}
+            {exactly}
+            {details}
+          </div>
+        </>
+      );
     return (
       <div className="space-y-2 text-sm text-ink-2">
         {level ? <p>{LEVEL_LABEL[level]}</p> : null}
@@ -125,14 +141,13 @@ export function AccessControl({
   const levels = LEVEL_ORDER.filter((l) => account.levels.includes(l));
   const CUSTOM = "__custom";
   const EXACTLY = "__exactly";
-  return (
-    <div className="w-full space-y-2">
-      {levels.length === 1 ? (
-        <p className="text-sm text-ink">{LEVEL_LABEL[levels[0]!]}</p>
+  const picker =
+      levels.length === 1 ? (
+        <p className={cn("text-sm text-ink", inRow && "whitespace-nowrap")}>{LEVEL_LABEL[levels[0]!]}</p>
       ) : (
         <select
           aria-label={`${entry.agent.name}'s access to ${account.name}`}
-          className="h-9 w-full max-w-xs rounded-control border border-line-strong bg-surface px-2 text-sm text-ink"
+          className={cn("h-9 rounded-control border border-line-strong bg-surface px-2 text-sm text-ink", inRow ? "w-auto max-w-[14rem]" : "w-full max-w-xs")}
           disabled={put.isPending}
           value={entry.level === "custom" ? CUSTOM : (level ?? "")}
           onChange={(e) => {
@@ -149,7 +164,9 @@ export function AccessControl({
           <option value={CUSTOM}>Custom…</option>
           <option value={EXACTLY}>What exactly?</option>
         </select>
-      )}
+      );
+  const rest = (
+    <>
       {isLimited(account) ? (
         <div className="text-sm text-ink-2">
           <p>Limited by {orgName ?? "your organization"}.</p>
@@ -160,6 +177,19 @@ export function AccessControl({
       {customNote}
       {put.isError ? <ErrorState error={put.error} /> : null}
       {details}
+    </>
+  );
+  if (inRow)
+    return (
+      <>
+        {picker}
+        <div className="order-last w-full basis-full space-y-2">{rest}</div>
+      </>
+    );
+  return (
+    <div className="w-full space-y-2">
+      {picker}
+      {rest}
     </div>
   );
 }
