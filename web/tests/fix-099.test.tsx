@@ -112,7 +112,11 @@ describe("composer draft (WEBA-20)", () => {
     window.history.replaceState(null, "", "/o/acme/w/ops/agents/scout?tab=chat&draft=Say%20hello");
     mockFetch({});
     wrap(<Composer convId="c1" agentId="a1" base="/o/acme/w/ops" agentName="Scout" activeTurn={null} state={emptyTranscript} />);
-    expect(await screen.findByDisplayValue("Say hello")).toBeInTheDocument();
+    const box = await screen.findByDisplayValue("Say hello");
+    expect(box).toBeInTheDocument();
+    // (P5-POLISH-5, C-1035) The suggestion is focused for the person to read and send; nothing was sent.
+    await waitFor(() => expect(box).toHaveFocus());
+    expect(vi.mocked(fetch).mock.calls.some((c) => String((c[0] as Request).method ?? "GET") === "POST")).toBe(false);
     await waitFor(() => expect(window.location.search).toBe("?tab=chat"));
     cleanup();
     wrap(<Composer convId="c1" agentId="a1" base="/o/acme/w/ops" agentName="Scout" activeTurn={null} state={emptyTranscript} />);

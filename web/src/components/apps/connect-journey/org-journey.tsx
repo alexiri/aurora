@@ -6,7 +6,7 @@ import { OrgGiveAccessDialog } from "@/components/accounts/org-give-access";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { ArrowLeftIcon } from "@/components/ui/icons";
 import { LEVEL_LABEL, LEVEL_ORDER } from "@/lib/accounts";
 import { accountKeys, useAccounts, type Level } from "@/lib/api/accounts";
 import { appDisplayName } from "@/lib/api/app-name";
@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { AppStep, type AppChoice } from "./app-step";
+import { BackNext, JourneyFrame, StepFooter } from "./frame";
 import { levelsForApp, ORG_STEP_LABEL, orgDoneSentence, orgStepsOf, type OrgStepId } from "./logic";
 import { SignInStep } from "./sign-in-step";
 
@@ -162,14 +163,14 @@ export function OrgConnectJourney({ orgId, appId, onClose }: { orgId: string; ap
     body = (
       <div role="status" className="space-y-3 text-sm">
         <p className="text-base font-medium text-ink">{orgDoneSentence(done.appName, orgName)}</p>
-        <div className="flex flex-wrap gap-2 pt-1">
-          <Button size="sm" onClick={() => setGiving(true)}>
+        <StepFooter>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          <Button type="button" size="lg" className="ml-auto" onClick={() => setGiving(true)}>
             Give access
           </Button>
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            Done
-          </Button>
-        </div>
+        </StepFooter>
         {giving && givenAccount ? (
           <OrgGiveAccessDialog
             account={givenAccount}
@@ -193,40 +194,38 @@ export function OrgConnectJourney({ orgId, appId, onClose }: { orgId: string; ap
   } else body = <Loading />;
 
   const title = appName ? `Connect ${appName} for ${orgName}` : `Connect an app or website for ${orgName}`;
+  const previousStep = steps.indexOf(current) > 0 && current !== "done" ? steps[steps.indexOf(current) - 1] : undefined;
   return (
-    <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
-      <DialogContent
-        size="lg"
-        title={title}
-        data-testid="org-connect-journey"
-        header={
-          current !== "done" ? (
-            <ol className="flex gap-1.5 text-xs font-semibold uppercase tracking-wider" aria-label="Steps">
-              {steps.map((s) => (
-                <li key={s} aria-current={s === current ? "step" : undefined} className={cn("flex-1 border-t-4 pt-1.5", s === current ? "border-accent text-ink" : "border-line text-muted")}>
-                  {ORG_STEP_LABEL[s]}
-                </li>
-              ))}
-            </ol>
-          ) : null
-        }>
-        {body}
-      </DialogContent>
-    </Dialog>
+    <JourneyFrame
+      title={title}
+      testId="org-connect-journey"
+      footer={current !== "app"}
+      onClose={onClose}
+      back={
+        previousStep ? (
+          <button
+            type="button"
+            aria-label="Back"
+            onClick={() => back(current)}
+            className="inline-flex size-9 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink sm:hidden pointer-coarse:size-11"
+          >
+            <ArrowLeftIcon className="size-5" />
+          </button>
+        ) : null
+      }
+      stepper={
+        <ol className="flex gap-1.5 text-xs font-semibold uppercase tracking-wider" aria-label="Steps">
+          {steps.map((s) => (
+            <li key={s} aria-current={s === current ? "step" : undefined} className={cn("flex-1 border-t-4 pt-1.5", s === current ? "border-accent text-ink" : "border-line text-muted")}>
+              {ORG_STEP_LABEL[s]}
+            </li>
+          ))}
+        </ol>
+      }
+    >
+      {body}
+    </JourneyFrame>
   );
 }
 
-function Footer({ onBack, onNext }: { onBack?: () => void; onNext: () => void }) {
-  return (
-    <div className="flex flex-wrap justify-end gap-2 pt-2">
-      {onBack ? (
-        <Button type="button" variant="ghost" onClick={onBack}>
-          Back
-        </Button>
-      ) : null}
-      <Button type="button" size="lg" onClick={onNext}>
-        Next
-      </Button>
-    </div>
-  );
-}
+const Footer = BackNext;

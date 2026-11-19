@@ -87,10 +87,52 @@ export function doneSentence({ agent, app, level, agentChosen }: { agent: string
   }
 }
 
+/**
+ * (P5-POLISH-5, D-388) The title: "Give <Agent> an app" on the App step, "<App> for <Agent>" on the later steps. The
+ * host is not in it (the Sign in step shows the deployment when a family has several).
+ */
+export function journeyTitle({ step, app, agent, website }: { step: StepId; app?: string; agent?: string; website?: boolean }): string {
+  if (step === "app") return agent ? `Give ${agent} an app` : "Connect an app or website";
+  const what = website ? "Website or API" : app;
+  if (!what) return agent ? `Give ${agent} an app` : "Connect an app or website";
+  return agent ? `${what} for ${agent}` : `Connect ${what}`;
+}
+
+/** "Alice Admin" → "Alice"; the first name in a `who_can`, for "Ask Alice". */
+export function firstName(full: string | null | undefined): string | null {
+  const first = (full ?? "").trim().split(/\s+/)[0];
+  return first ? first : null;
+}
+
+/** The sign-in provider an app shares with others of its package, named for people: "Google", "Microsoft". */
+export function signInProvider(app: { package_id: string; name: string; family?: { name: string } | null }): string {
+  if (app.package_id.startsWith("google")) return "Google";
+  if (app.package_id.startsWith("microsoft")) return "Microsoft";
+  return app.family ? app.family.name : app.name;
+}
+
+/** Why an app waits for an admin, in one line (B1): who sets what up, or that the sign-in is shared. */
+export function needsReason(needs: readonly string[] | undefined, who: string | null, provider: string, shared: boolean): string {
+  const first = needs?.[0];
+  if (first === "oauth_client") return shared ? `Same ${provider} sign-in` : `${who ?? "An admin"} needs to set up ${provider} sign-in`;
+  if (first === "instance") return "An admin needs to add a server";
+  return "Needs setup by an admin";
+}
+
 /** The permissions to tick on the app's token page for the chosen access: "repo (read), read:org". */
 export function tickList(method: Pick<ConnectMethod, "scopes" | "scope_presets">, level: Level | null): string[] {
   const ids = level === "read" || level === null ? method.scope_presets.read : method.scope_presets.write;
   return ids.map((id) => method.scopes.find((s) => s.scope === id)?.name ?? id);
+}
+
+/**
+ * (P5-POLISH-5, C-1031) The permissions to give the token for the chosen access, in the app's own words: the method's
+ * `permission_hints` for that level, else the tick line of `scope_presets` (the older packages).
+ */
+export function permissionHints(method: Pick<ConnectMethod, "scopes" | "scope_presets" | "permission_hints">, level: Level | null): string[] {
+  const id = level === "read" || level === null ? "read" : "write";
+  const hinted = (method.permission_hints ?? []).find((h) => h.level === id)?.hints;
+  return hinted && hinted.length > 0 ? hinted : tickList(method, level);
 }
 
 /** The scopes the request asks for at the chosen access (`scope_presets`, C-956); an Advanced edit wins. */
@@ -183,10 +225,11 @@ export function buildJourneyConnect(i: SubmitInput): ConnectRequest {
 export function connectFailure(err: unknown, app: string): string {
   if (err instanceof ApiError && err.code === "connect_probe_failed") {
     const d = (err.details ?? {}) as { cause?: unknown; host?: unknown; upstream_status?: unknown };
-    if (d.cause === "rejected") return `${app} did not accept this token. Check that it is complete and has not expired.`;
-    if (d.cause === "unreachable") return `Aurora could not reach ${app}${typeof d.host === "string" ? ` (${d.host})` : ""}.`;
-    if (d.cause === "unexpected") return `${app} answered with an unexpected error${d.upstream_status != null ? ` (${String(d.upstream_status)})` : ""}.`;
+    if (d.cause === "rejected") return `${app} refused this token: it may be incomplete, expired or missing a permission. Create a new one and paste it here.`;
+    if (d.cause === "unreachable") return `Aurora could not reach ${app}${typeof d.host === "string" ? ` (${d.host})` : ""}. Check the address, then try again.`;
+    if (d.cause === "unexpected") return `${app} answered with an unexpected error${d.upstream_status != null ? ` (${String(d.upstream_status)})` : ""}. Try again in a moment.`;
   }
+  if (err instanceof TypeError) return "Aurora could not be reached. Check your connection, then try again.";
   return errorMessage(err);
 }
 

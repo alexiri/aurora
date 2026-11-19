@@ -10,15 +10,19 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
 import { CopyValue } from "@/components/ui/copy-value";
 import { Field, inputClass } from "@/components/ui/field";
-import { Form, FormActions } from "@/components/ui/form";
-import { Markdown, safeHref } from "@/components/ui/markdown";
+import { Form } from "@/components/ui/form";
+import { LinkIcon } from "@/components/ui/icons";
+import { safeHref } from "@/components/ui/markdown";
 import { Notice } from "@/components/ui/notice";
 import { WhoCan } from "@/components/ui/who-can";
+import { LEVEL_LABEL } from "@/lib/accounts";
 import { accountKeys, type Level } from "@/lib/api/accounts";
+import { useAskSetup, useWithdrawSetup } from "@/lib/api/app-setup-requests";
 import {
   connectApp,
   defaultValues,
   useAppGuide,
+  useApps,
   useAppInstances,
   useOAuthClients,
   validateFields,
@@ -38,19 +42,22 @@ import {
 } from "@/lib/api/secrets";
 import { useOrg } from "@/lib/api/queries";
 import { wsRoutes } from "@/lib/routes";
-import { askSentence, onlySentence, type WhoCanValue } from "@/lib/who-can";
+import type { WhoCanValue } from "@/lib/who-can";
 import { useParams } from "next/navigation";
 
 import { WebhookSignInStep } from "@/components/webhook/webhook-connect-step";
 
 import { DynamicForm } from "../dynamic-form";
 import { InstanceField, OAuthClientField, RequestedScopes, TokenScopes } from "./advanced-fields";
-import { buildJourneyConnect, connectFailure, hostOf, suggestedMethod, tickList, tokenPage } from "./logic";
+import { BackNext, StepFooter } from "./frame";
+import { buildJourneyConnect, connectFailure, firstName, hostOf, permissionHints, suggestedMethod, tokenPage } from "./logic";
 import { useSignInWindow } from "./use-sign-in-window";
 
 /** What the step reports when the account exists. `granted` are the agents the access was saved for. */
 export interface SignInResult {
   accountId: string;
+  /** The account's name, when the connect answer carries it (Done names it). */
+  accountName?: string;
   granted: string[];
   grantFailed: string | null;
   missing: string[];
@@ -58,9 +65,6 @@ export interface SignInResult {
   scopes?: string[];
   methodId?: string;
 }
-
-const reason = (w: WhoCanValue | null | undefined) =>
-  w ? `${onlySentence(w)}${w.people.length > 0 ? ` ${askSentence(w, false)}` : ""}` : "Not set up yet.";
 
 /** The values the person must copy into the other service (C-942), above the method's fields. */
 function ShowContext({ method, orgId }: { method: ConnectMethod; orgId: string }) {
@@ -72,8 +76,9 @@ function ShowContext({ method, orgId }: { method: ConnectMethod; orgId: string }
 }
 
 /**
- * **Sign in** (`14 §3` step 4): only the suggested method, with one primary action; an **Advanced** disclosure holds the
- * other methods (blocked ones turned off, with the reason), the scopes, the OAuth client and a self-hosted server.
+ * **Sign in** (`14 §3` step 4, P5-POLISH-5, B4): the suggested method with numbered steps for a token (create it, the
+ * permissions to give it for the chosen access, paste it); a choice at the top only when several ways work; **More
+ * options** holds the scopes, the OAuth client and a self-hosted server. A failure is said under its field, with the value kept.
  */
 export function SignInStep(props: ComponentProps<typeof GenericSignInStep>) {
   // (P5-WEBHOOK-4, C-913) The Outgoing webhook app's sign-in is its three connect steps.
@@ -219,8 +224,11 @@ function GenericSignInStep({
       }
       signIn.close();
       refresh();
+      // Secrets live in this component's state only and go when the account exists (or the dialog closes).
+      setValues(defaultValues([]));
       onResult({
         accountId: res.connection.id,
+        accountName: res.connection.label ?? undefined,
         granted: res.grants.map((g) => g.agent_id),
         grantFailed: null,
         missing: res.missing_scopes,
@@ -231,13 +239,9 @@ function GenericSignInStep({
       signIn.close();
       setError(err);
     } finally {
+      // (P5-POLISH-5, D-388) Typed values survive a failed connect, secrets included: they stay in this component's
+      // state (masked, with Show), never in storage or the URL, and are dropped when the dialog closes.
       setBusy(false);
-      // Secrets never linger in state after a submit attempt.
-      setValues((v) => {
-        const next = { ...v };
-        for (const f of method.fields) if (f.type === "secret") next[f.name] = "";
-        return next;
-      });
     }
   }
 
@@ -263,95 +267,115 @@ function GenericSignInStep({
   const fields = method ? method.fields.map((f) => (f.help_url && safeHref(f.help_url) === help ? { ...f, help_url: null } : f)) : [];
   const blockedWho = plan.available_who_can ?? plan.methods.find((m) => m.who_can)?.who_can ?? null;
   const verb = method?.kind === "oauth2" ? `Sign in to ${app.name}` : "Connect";
-  const ticks = method && method.kind === "fields" ? tickList(method, level) : [];
+  const hints = method && method.kind === "fields" ? permissionHints(method, level) : [];
   const family = app.family;
+  // More than one way that works for people: the choice sits at the top of the step.
+  const usable = plan.methods.filter((m) => m.ready && m.audience !== "admin");
+  const secretField = method?.fields.find((f) => f.type === "secret")?.name;
+  // A failed connect is said under the field it concerns, with the value kept (B4); other kinds below the form.
+  const failure = error ? connectFailure(error, app.name) : null;
+  const underField = !!failure && method?.kind === "fields" && !!secretField;
+  const shownErrors = underField ? { ...errors, [secretField!]: failure! } : errors;
+  const guideHref = ws ? wsRoutes(org, ws).app(app.app_id) : `/o/${org}/apps?tab=apps&app=${encodeURIComponent(app.app_id)}`;
+  const moreOptions =
+    (method && method.scopes.length > 0) ||
+    (instanceBound && !fixedInstanceId) ||
+    (method?.kind === "oauth2" && !!method.client_key) ||
+    (family && !family.instance_bound);
+  const needsInstance = instanceBound && !fixedInstanceId && !app.instances?.default_host;
+
+  // A way in that nobody here can use yet: the same ask as the App step, not a disabled Connect (B2).
+  if (!method)
+    return <NeedsAdmin app={app} who={blockedWho} workspaceId={workspaceId} onBack={onBack} />;
 
   return (
-    <Form onSubmit={(e) => void submit(e)} aria-label={`Sign in to ${app.name}`} noValidate>
-      {method ? (
-        <>
-          {app.connect_note && !help ? <Notice>{app.connect_note.text}</Notice> : null}
-          {method.kind === "fields" && help ? (
-            <div className="space-y-2">
-              <p className="text-sm text-ink">Paste {app.name}&apos;s access token.</p>
+    <Form id="journey-signin" onSubmit={(e) => void submit(e)} aria-label={`Sign in to ${app.name}`} noValidate>
+      {family && (family.instance_bound || app.instances) ? <p className="text-xs text-muted">{family.name} · {family.variant_label}</p> : null}
+      {usable.length > 1 ? (
+        <ChoiceCards
+          legend="Sign in with:"
+          value={method.id}
+          onChange={pick}
+          options={app.connect
+            .filter((m) => usable.some((u) => u.id === m.id))
+            .map((m) => ({
+              value: m.id,
+              label: m.label ?? m.id,
+              description: m.description ?? undefined,
+              badge: m.id === plan.suggested_method ? "Suggested" : undefined,
+            }))}
+        />
+      ) : null}
+      {app.connect_note && !help ? <Notice>{app.connect_note.text}</Notice> : null}
+      {method.kind === "fields" && help ? (
+        <ol className="space-y-4 text-sm text-ink">
+          <li>
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span>
+                <b>1.</b> Create a token on {app.name}
+              </span>
               <a className={buttonVariants({ variant: "outline", size: "sm" })} href={help} target="_blank" rel="noopener noreferrer">
-                Create a token on {app.name}
+                Open {app.name}
+                <LinkIcon className="size-4" aria-hidden="true" />
               </a>
-              {ticks.length > 0 ? (
-                <p className="text-sm text-ink-2">
-                  {level === "read" || level === null ? "For Read only, tick" : "Tick"}: <span className="font-medium text-ink">{ticks.join(", ")}</span>
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-          {method.kind === "oauth2" ? <p className="text-sm text-ink-2">A sign-in window opens at {app.name}. Nothing is shared until you approve.</p> : null}
-          <ShowContext method={method} orgId={orgId} />
-          <DynamicForm fields={fields} values={values} errors={errors} onChange={(n, v) => setValues((s) => ({ ...s, [n]: v }))} />
-        </>
-      ) : (
-        <div className="space-y-1">
-          <p className="text-sm font-medium text-ink">{app.name} cannot be connected yet.</p>
-          {blockedWho ? <WhoCan value={blockedWho} lead /> : <p className="text-sm text-ink-2">Sign-in is not set up for {app.name}.</p>}
-        </div>
-      )}
-
-      <details className="rounded-control border border-line p-3">
-        <summary className="min-h-9 cursor-pointer text-sm font-semibold text-ink">Advanced: other ways to connect, scopes</summary>
-        <div className="mt-3 space-y-4">
-          {app.connect.length > 1 ? (
-            <ChoiceCards
-              legend="How do you want to connect?"
-              value={method?.id ?? ""}
-              onChange={pick}
-              options={app.connect.map((m) => {
-                const setup = plan.methods.find((x) => x.id === m.id);
-                const blocked = setup ? !setup.ready : false;
-                return {
-                  value: m.id,
-                  label: m.label ?? m.id,
-                  description: blocked ? reason(setup?.who_can) : (m.description ?? undefined),
-                  badge: m.id === plan.suggested_method ? "Suggested" : undefined,
-                  disabled: blocked,
-                };
-              })}
-            />
-          ) : null}
-          {method && method.scopes.length > 0 && method.kind !== "fields" ? (
-            <RequestedScopes method={method} selected={scopes ?? method.default_scopes} onChange={setScopes} disabled={busy} />
-          ) : null}
-          {method && method.scopes.length > 0 && method.kind === "fields" ? (
-            <TokenScopes method={method} mode={scopeMode} onMode={setScopeMode} selected={scopes ?? method.default_scopes} onChange={setScopes} disabled={busy} />
-          ) : null}
-          {instanceBound && !fixedInstanceId ? (
-            <InstanceField
-              label={app.instances?.label ?? "Instance"}
-              error={errors.__instance}
-              value={instanceId}
-              onChange={(v) => {
-                setInstanceId(v);
-                setClientId("");
-              }}
-              defaultHost={app.instances?.default_host ?? null}
-              builtin={choices.filter((i) => i.builtin)}
-              registered={choices.filter((i) => !i.builtin)}
-            />
-          ) : null}
-          {method?.kind === "oauth2" && method.client_key ? <OAuthClientField value={clientId} onChange={setClientId} clients={matching} /> : null}
-          {family && !family.instance_bound ? (
-            <p className="text-sm">
-              <Link href={wsRoutes(org, ws).app(app.app_id)} className="font-medium text-link underline">
-                Use a self-hosted {family.name}
-              </Link>
             </p>
+          </li>
+          {hints.length > 0 ? (
+            <li className="space-y-2">
+              <p>
+                <b>2.</b> Give it these permissions, for <b>{level ? LEVEL_LABEL[level] : "Read only"}</b>:
+              </p>
+              <pre aria-label="Permissions to give the token" className="whitespace-pre-wrap rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink">
+                {hints.join("\n")}
+              </pre>
+            </li>
           ) : null}
-          {guide.data ? (
-            <details className="rounded-control border border-line p-3">
-              <summary className="min-h-9 cursor-pointer text-sm font-semibold text-ink">Setup guide</summary>
-              <div className="mt-2"><Markdown source={guide.data} /></div>
-            </details>
-          ) : null}
-        </div>
-      </details>
+          <li>
+            <p>
+              <b>{hints.length > 0 ? "3." : "2."}</b> Paste the token
+            </p>
+          </li>
+        </ol>
+      ) : null}
+      {method.kind === "oauth2" ? <p className="text-sm text-ink-2">A sign-in window opens at {app.name}. Nothing is shared until you approve.</p> : null}
+      <ShowContext method={method} orgId={orgId} />
+      <DynamicForm fields={fields} values={values} errors={shownErrors} onChange={(n, v) => setValues((s) => ({ ...s, [n]: v }))} />
+
+      {moreOptions ? (
+        <details open={needsInstance || undefined} className="rounded-control border border-line p-3">
+          <summary className="min-h-9 cursor-pointer text-sm font-semibold text-ink">More options</summary>
+          <div className="mt-3 space-y-4">
+            {method.scopes.length > 0 && method.kind !== "fields" ? (
+              <RequestedScopes method={method} selected={scopes ?? method.default_scopes} onChange={setScopes} disabled={busy} />
+            ) : null}
+            {method.scopes.length > 0 && method.kind === "fields" ? (
+              <TokenScopes method={method} mode={scopeMode} onMode={setScopeMode} selected={scopes ?? method.default_scopes} onChange={setScopes} disabled={busy} />
+            ) : null}
+            {instanceBound && !fixedInstanceId ? (
+              <InstanceField
+                label={app.instances?.label ?? "Instance"}
+                error={errors.__instance}
+                value={instanceId}
+                onChange={(v) => {
+                  setInstanceId(v);
+                  setClientId("");
+                }}
+                defaultHost={app.instances?.default_host ?? null}
+                builtin={choices.filter((i) => i.builtin)}
+                registered={choices.filter((i) => !i.builtin)}
+              />
+            ) : null}
+            {method.kind === "oauth2" && method.client_key ? <OAuthClientField value={clientId} onChange={setClientId} clients={matching} /> : null}
+            {family && !family.instance_bound ? (
+              <p className="text-sm">
+                <Link href={wsRoutes(org, ws).app(app.app_id)} className="font-medium text-link underline">
+                  Use a self-hosted {family.name}
+                </Link>
+              </p>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
 
       {signIn.notice ? <Notice tone={signIn.notice.tone} role="alert">{signIn.notice.text}</Notice> : null}
       {signIn.blocked ? (
@@ -359,18 +383,57 @@ function GenericSignInStep({
           Your browser blocked the sign-in window. Allow pop-ups for this site, then try again.
         </Notice>
       ) : null}
-      {error ? <Notice tone="danger" role="alert">{connectFailure(error, app.name)}</Notice> : null}
-      <FormActions>
+      {failure && !underField ? <Notice tone="danger" role="alert">{failure}</Notice> : null}
+      {guide.data ? (
+        <p className="text-sm">
+          <Link href={guideHref} target="_blank" rel="noopener noreferrer" className="font-medium text-link underline">
+            Step-by-step guide
+          </Link>
+        </p>
+      ) : null}
+      <BackNext form="journey-signin" onBack={onBack} nextLabel={signIn.blocked ? "Try again" : verb} busy={busy} busyLabel="Connecting…" />
+    </Form>
+  );
+}
+
+/**
+ * (P5-POLISH-5, D-386, B2) The Sign in step of an app nobody here can sign in to yet (a deep link): the reason, who can fix
+ * it and **Ask <Name>**; once asked, the asked state with **Undo**. Not a disabled Connect.
+ */
+function NeedsAdmin({ app, who, workspaceId, onBack }: { app: AppDetail; who: WhoCanValue | null; workspaceId: string; onBack?: () => void }) {
+  const apps = useApps(workspaceId);
+  const ask = useAskSetup(workspaceId);
+  const withdraw = useWithdrawSetup(workspaceId);
+  const [local, setLocal] = useState<"now" | "no" | null>(null);
+  const mine = local ? local === "now" : !!apps.data?.items.find((a) => a.app_id === app.app_id)?.readiness?.requested?.by_me;
+  const name = firstName(who?.people[0]?.name);
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="font-medium text-ink">{app.name} needs an admin to set it up first.</p>
+      {who ? <WhoCan value={who} lead /> : <p className="text-ink-2">Sign-in is not set up for {app.name}.</p>}
+      {mine ? (
+        <p className="flex items-start gap-2 text-ink-2">
+          <span aria-hidden="true" className="mt-1.5 size-2 shrink-0 rounded-full bg-accent" />
+          <span>Asked{local === "now" ? " just now" : ""}. You&apos;ll get a notice when it&apos;s ready.</span>
+        </p>
+      ) : null}
+      <StepFooter>
         {onBack ? (
           <Button type="button" variant="ghost" onClick={onBack}>
             Back
           </Button>
         ) : null}
-        <Button type="submit" size="lg" disabled={busy || !method}>
-          {busy ? "Connecting…" : signIn.blocked ? "Try again" : verb}
-        </Button>
-      </FormActions>
-    </Form>
+        {mine ? (
+          <Button type="button" variant="ghost" className="ml-auto" disabled={withdraw.isPending} onClick={() => withdraw.mutate(app.app_id, { onSuccess: () => setLocal("no") })}>
+            Undo
+          </Button>
+        ) : (
+          <Button type="button" size="lg" className="ml-auto" disabled={ask.isPending} onClick={() => ask.mutate(app.app_id, { onSuccess: () => setLocal("now") })}>
+            {name ? `Ask ${name}` : "Ask an admin"}
+          </Button>
+        )}
+      </StepFooter>
+    </div>
   );
 }
 
@@ -417,15 +480,15 @@ export function WebsiteStep({
     };
     try {
       const made = await create.mutateAsync(buildGenericCreate(state));
-      onResult({ accountId: made.id, granted: agentIds, grantFailed: null, missing: [], name: made.name });
-    } catch {
-      // The name and the website stay; the token does not.
       setValue("");
+      onResult({ accountId: made.id, accountName: made.name, granted: agentIds, grantFailed: null, missing: [], name: made.name });
+    } catch {
+      // The name, the website and the token all stay (masked); the error is said under the field.
     }
   }
 
   return (
-    <Form onSubmit={(e) => void submit(e)} aria-label="Another website or API" noValidate>
+    <Form id="journey-signin" onSubmit={(e) => void submit(e)} aria-label="Another website or API" noValidate>
       <Field id="jw-name" label="Name" hint="So you can tell accounts apart." error={fe.name}>
         <input id="jw-name" className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
@@ -447,16 +510,7 @@ export function WebsiteStep({
           {clientErr || errorMessage(create.error)}
         </Notice>
       ) : null}
-      <FormActions>
-        {onBack ? (
-          <Button type="button" variant="ghost" onClick={onBack}>
-            Back
-          </Button>
-        ) : null}
-        <Button type="submit" size="lg" disabled={create.isPending}>
-          {create.isPending ? "Connecting…" : "Connect"}
-        </Button>
-      </FormActions>
+      <BackNext form="journey-signin" onBack={onBack} nextLabel="Connect" busy={create.isPending} busyLabel="Connecting…" />
     </Form>
   );
 }

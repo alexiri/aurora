@@ -176,7 +176,7 @@ for (const scheme of ["light", "dark"] as const) {
         expect(new Set(state.puts.map((x) => x.agent))).toEqual(new Set([giskard.id, hari.id]));
 
         // The organization's row says who can use it, in both workspaces.
-        await dialog.getByRole("button", { name: "Done", exact: true }).click();
+        await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
         const rowItem = page.getByRole("listitem", { name: "platform-prod" });
         await expect(rowItem.getByText("Agents may at most:")).toBeVisible();
         await expect(rowItem.getByRole("button", { name: "Giskard · Read only: change access" })).toBeVisible();
