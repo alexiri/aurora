@@ -14,7 +14,7 @@ import {
 import type { Agent } from "@/lib/api/queries";
 
 /** Avatar upload / preview / remove for the Instructions tab (acts immediately, not on Save). */
-export function AvatarField({ agent, wsId }: { agent: Agent; wsId: string }) {
+export function AvatarField({ agent, wsId, compact = false }: { agent: Agent; wsId: string; compact?: boolean }) {
   const upload = useUploadAvatar(wsId, agent.id);
   const remove = useRemoveAvatar(wsId, agent.id);
   const input = useRef<HTMLInputElement>(null);
@@ -41,6 +41,52 @@ export function AvatarField({ agent, wsId }: { agent: Agent; wsId: string }) {
       });
       if (input.current) input.current.value = "";
     }
+  }
+
+  // (P5-POLISH-6, C3) Compact: the avatar is the button that changes it; Remove is a small link under it.
+  if (compact) {
+    return (
+      <div className="flex shrink-0 flex-col items-center gap-1">
+        <input
+          ref={input}
+          id="a-avatar"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="sr-only"
+          aria-label="Avatar file"
+          disabled={busy}
+          onChange={(e) => void onPick(e.target.files?.[0])}
+        />
+        <button
+          type="button"
+          disabled={busy}
+          aria-label={agent.avatar_url ? "Change avatar" : "Upload avatar"}
+          title="PNG, JPEG or WebP, up to 512 KiB"
+          onClick={() => input.current?.click()}
+          className="rounded-full">
+          <AgentAvatar name={agent.name} url={preview ?? agent.avatar_url} size={56} />
+        </button>
+        {agent.avatar_url ? (
+          <button
+            type="button"
+            disabled={busy}
+            aria-label="Remove avatar"
+            className="text-xs text-muted underline hover:text-ink"
+            onClick={() => {
+              setProblem("");
+              upload.reset();
+              remove.mutate();
+            }}>
+            {remove.isPending ? "Removing…" : "Remove"}
+          </button>
+        ) : null}
+        {problem || serverError ? (
+          <p role="alert" className="max-w-40 text-xs text-danger-ink">
+            {problem || avatarErrorMessage(serverError)}
+          </p>
+        ) : null}
+      </div>
+    );
   }
 
   return (

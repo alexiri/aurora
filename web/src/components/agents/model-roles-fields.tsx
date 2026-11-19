@@ -3,7 +3,7 @@
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import type { components } from "@/lib/api/schema";
-import { droppedRoleWarning, ROLES, roleLabel, roleWarning, subagentWarning, type Role, ROLE_LABEL } from "@/lib/model-roles";
+import { ROLES, roleLabel, type Role, ROLE_LABEL } from "@/lib/model-roles";
 
 type DefaultModel = components["schemas"]["DefaultModel"];
 
@@ -57,18 +57,7 @@ export function ModelRolesFields({
       </Notice>
     );
   }
-  const dropped = readiness?.roles_dropped ?? [];
-  const warnings: string[] = [];
-  for (const role of ROLES) {
-    const v = readiness?.roles[role];
-    // Readiness judges what is saved: an unsaved choice has no warning yet.
-    const saved = v?.source === "agent" ? (v.model_id ?? "") : "";
-    if (v?.warning && roles[role] === saved) warnings.push(roleWarning(role, v.warning, v.model_id));
-  }
-  for (const r of dropped) warnings.push(droppedRoleWarning(r));
-  if (readiness?.subagent_warning && subagent === readiness.subagent_model) {
-    warnings.push(subagentWarning(readiness.subagent_model, readiness.subagent_warning));
-  }
+  // (P5-POLISH-6, D-385) The role warnings are not on this page; the endpoint shows them (P5-POLISH-10, C-1034).
   return (
     <div className="space-y-4" role="group" aria-labelledby="a-roles-title">
       <div className="space-y-1">
@@ -125,11 +114,6 @@ export function ModelRolesFields({
           ))}
         </select>
       </Field>
-      {warnings.map((w) => (
-        <Notice key={w} tone="pending" role="status" data-testid="role-warning">
-          {w}
-        </Notice>
-      ))}
     </div>
   );
 }

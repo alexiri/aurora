@@ -317,7 +317,7 @@ export function AgentPage() {
           {tab === "ssh" && !byo && sshEnabled ? <SshPage agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "instructions" ? <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} /> : null}
           {tab === "access" && workspace.data ? (
-            <AccessTab agentId={agent.id} agentName={agent.name} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} />
+            <AccessTab agentId={agent.id} agentName={agent.name} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} agentBase={`${base}/agents/${agent.handle}`} />
           ) : null}
           {tab === "access" && workspace.isPending ? <Loading /> : null}
           {tab === "connect" && byo ? <ConnectTab agent={agent} wsId={wsId} canOwn={canOwn} /> : null}
