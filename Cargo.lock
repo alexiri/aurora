@@ -859,6 +859,7 @@ dependencies = [
  "aurora-core",
  "aurora-crypto",
  "aurora-policy",
+ "aurora-webhook",
  "base64 0.23.1",
  "ed25519-dalek",
  "flate2",

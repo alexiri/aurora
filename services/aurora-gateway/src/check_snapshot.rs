@@ -296,7 +296,8 @@ fn execute(
     }
 
     // (P5-ICS) A secret-link request: the synthetic request of the secret-link lane.
-    if let Some(obs) = link_case(l, &host, &path, method.as_str()) {
+    if let Some(mut obs) = link_case(l, &host, &path, method.as_str()) {
+        link_summary(l, &mut obs, &host, body);
         return Ok(obs);
     }
 
@@ -673,22 +674,40 @@ fn link_case(l: &Loaded, host: &str, path: &str, method: &str) -> Option<Value> 
     let id = aurora_registry::manifest::SecretLink::id_label(host)?;
     uuid::Uuid::parse_str(id).ok()?;
     let first = l.snapshot.apps.iter().find(|a| a.secret_link.is_some())?;
-    if !matches!(method, "GET" | "HEAD") {
+    // (P5-WEBHOOK-1, C-909) A send-mode app (an outgoing webhook) serves `POST`/`PUT` instead; the
+    // rendered send itself is P5-WEBHOOK-2's.
+    let send = |a: &aurora_registry::snapshot::AppEntry| {
+        a.secret_link
+            .as_ref()
+            .is_some_and(|s| s.mode() == aurora_registry::manifest::SecretLinkMode::Send)
+    };
+    let sending = send(first);
+    let served = if sending {
+        matches!(method, "POST" | "PUT")
+    } else {
+        matches!(method, "GET" | "HEAD")
+    };
+    if !served {
         return Some(json!({
             "app": first.app_id, "tool": null,
             "refused": {
                 "code": "method_not_allowed",
-                "message": "A calendar link can only be read with GET or HEAD."
+                "message": if sending {
+                    "An outgoing webhook can only be sent with POST or PUT."
+                } else {
+                    "A calendar link can only be read with GET or HEAD."
+                }
             }
         }));
     }
-    // The agent's path is ignored by the lane: the request is always `GET /`.
+    // The agent's path is ignored by the lane: the request is always `<method> /`.
     let _ = path;
+    let id_method = if sending { method } else { "GET" };
     let found = l
         .snapshot
         .apps
         .iter()
-        .filter(|a| a.secret_link.is_some())
+        .filter(|a| a.secret_link.is_some() && send(a) == sending)
         .find_map(|a| {
             crate::apps::identify_tool_in(
                 a,
@@ -697,7 +716,7 @@ fn link_case(l: &Loaded, host: &str, path: &str, method: &str) -> Option<Value> 
                 443,
                 "/",
                 None,
-                "GET",
+                id_method,
                 &[],
                 false,
                 &[],
@@ -709,6 +728,42 @@ fn link_case(l: &Loaded, host: &str, path: &str, method: &str) -> Option<Value> 
         "app": found.map_or(first.app_id.as_str(), |(a, _)| a),
         "tool": found.map(|(_, t)| t),
     }))
+}
+
+/// (P5-WEBHOOK-1) The approval summary of a link case whose tool the app gives a template (a
+/// send-mode app's `send`): the template over the request's body, as for an HTTP request. The
+/// lane's `slots` decoder replaces it in P5-WEBHOOK-2.
+fn link_summary(l: &Loaded, obs: &mut Value, host: &str, body: &[u8]) {
+    use aurora_summary::template;
+    let (Some(app_id), Some(tool)) = (obs["app"].as_str(), obs["tool"].as_str()) else {
+        return;
+    };
+    let Some(app) = l.snapshot.app(app_id) else {
+        return;
+    };
+    let Some(approval) = app.approvals.get(tool) else {
+        return;
+    };
+    let summary = template::summarize(
+        approval,
+        &template::Input {
+            host,
+            path: "/",
+            query: None,
+            header: &|_| None,
+            body_prefix: body,
+            truncated: false,
+            declared_hosts: &[],
+            web_hosts: &app.about.web_hosts,
+            injected_headers: &[],
+        },
+    );
+    if let Some(o) = obs.as_object_mut() {
+        o.insert(
+            "summary".into(),
+            serde_json::to_value(&summary).unwrap_or(Value::Null),
+        );
+    }
 }
 
 /// Token lifecycle through the gateway's own refresh functions (`refresh::build_exchange`,

@@ -21,6 +21,7 @@ pub mod superseded;
 pub mod template;
 pub mod upgrade;
 pub mod validate;
+pub mod webhook;
 
 pub use manifest::Manifest;
 pub use package::{Limits, Package};

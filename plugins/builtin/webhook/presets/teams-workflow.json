@@ -1,0 +1,32 @@
+{
+  "id": "teams-workflow",
+  "name": "Microsoft Teams (Workflows)",
+  "secret_value_names": [],
+  "config": {
+    "version": 1,
+    "method": "POST",
+    "content_type": "application/json",
+    "template": "{\"type\": \"message\", \"attachments\": [{\"contentType\": \"application/vnd.microsoft.card.adaptive\", \"contentUrl\": null, \"content\": {\"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\", \"type\": \"AdaptiveCard\", \"version\": \"1.4\", \"body\": [{\"type\": \"TextBlock\", \"size\": \"Medium\", \"weight\": \"Bolder\", \"wrap\": true, \"text\": {{title}}}, {\"type\": \"TextBlock\", \"wrap\": true, \"text\": {{text}}}]}}]}",
+    "slots": [
+      {
+        "name": "title",
+        "type": "string",
+        "required": true,
+        "description": "The card's heading.",
+        "max_length": 200
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "required": true,
+        "description": "The card's text. Basic Markdown is supported.",
+        "max_length": 8000
+      }
+    ],
+    "headers": [],
+    "description": "",
+    "signing": false,
+    "rate": { "per_minute": null, "per_day": null },
+    "preset": "teams-workflow"
+  }
+}

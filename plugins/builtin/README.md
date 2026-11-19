@@ -10,6 +10,7 @@ plugins/builtin/<package>/
   docs/setup.md          setup guide (CommonMark, no raw HTML); the package format fixes this path
   assets/icon.png        PNG, square, >= 64 px, <= 256 KiB (assets/icon-dark.png optional)
   tests/*.yaml           fixtures (docs/09 §12)
+  presets/*.json         webhook presets, only for a send-mode `secret_link` app (`webhook`)
   hooks/                 only when permissions.hooks is non-empty: the hook guest crate (below)
 ```
 

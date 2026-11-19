@@ -1,0 +1,26 @@
+{
+  "id": "google-chat",
+  "name": "Google Chat",
+  "suggest_for_hosts": ["chat.googleapis.com"],
+  "secret_value_names": [],
+  "config": {
+    "version": 1,
+    "method": "POST",
+    "content_type": "application/json",
+    "template": "{\"text\": {{text}}}",
+    "slots": [
+      {
+        "name": "text",
+        "type": "string",
+        "required": true,
+        "description": "The message. Google Chat text formatting is supported (*bold*, _italic_, `code`).",
+        "max_length": 4000
+      }
+    ],
+    "headers": [],
+    "description": "",
+    "signing": false,
+    "rate": { "per_minute": null, "per_day": null },
+    "preset": "google-chat"
+  }
+}
