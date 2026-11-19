@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
 import type { CurrentValue, FieldInfo } from "@/lib/api/settings";
-import { unitSecs } from "@/lib/settings-words";
+import { editUnit } from "@/lib/settings-words";
 
 /** A number with its unit beside it. A duration stays in seconds on the wire and is shown in `unit`. */
 export function UnitNumberControl({
@@ -31,7 +31,7 @@ export function UnitNumberControl({
   onChange: (v: number) => void;
   onClear: () => void;
 }) {
-  const size = unitSecs(field);
+  const { size, label } = editUnit(field);
   const shown = typeof value === "number" ? value / size : null;
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -46,7 +46,7 @@ export function UnitNumberControl({
         value={shown === null ? "" : String(Math.round(shown * 1000) / 1000)}
         onChange={(e) => (e.target.value === "" ? onClear() : onChange(Math.round(Number(e.target.value) * size * 1000) / 1000))}
       />
-      {field.unit ? <span className="text-sm text-ink-2">{field.unit}</span> : null}
+      {label ? <span className="text-sm text-ink-2">{label}</span> : null}
     </div>
   );
 }

@@ -55,8 +55,11 @@ const stepOf = (setup: SetupStatus, id: string): SetupStep | undefined => setup.
 /** The count of a step's checks by id, for the health lines. */
 const checkOf = (setup: SetupStatus, stepId: string, id: string): SetupCheck | undefined => stepOf(setup, stepId)?.checks.find((c) => c.id === id);
 
-/** Sign-in is done when the roles step has no open item. */
-const signInDone = (setup: SetupStatus) => stepOf(setup, "roles")?.status === "ok";
+/**
+ * Sign-in is done when a provider exists and the admin signed in with it (`you`), or the roles step has no open item.
+ * A missing role mapping is a warning for the health view, not an open step (P5-POLISH-11).
+ */
+const signInDone = (setup: SetupStatus) => !!setup.you || stepOf(setup, "roles")?.status === "ok";
 
 /** An organization AI key exists: the `org_key` check, else the whole LLM step being fine. */
 function keyDone(setup: SetupStatus): boolean {
@@ -237,14 +240,16 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
     },
   ];
   const first = rows.findIndex((r) => !r.done && !r.optional);
+  // The current step's button is filled, the others are outline (`after/e4.png`).
+  const linkButton = (i: number) => (i === first ? cn(buttonVariants({ variant: "primary", size: "sm" }), "text-on-primary!") : rowButton);
   const actions: Record<StepId, ReactNode> = {
     signin: (
-      <Link href={adminRoutes.signIn()} className={rowButton}>
-        {rows[0]!.done ? "Review" : "Set up"}
+      <Link href={adminRoutes.signIn()} className={linkButton(0)}>
+        Review
       </Link>
     ),
     placement: (
-      <Link href={adminRoutes.people("new-users")} className={rowButton}>
+      <Link href={adminRoutes.people("new-users")} className={linkButton(1)}>
         {placed ? "Change" : "Choose"}
       </Link>
     ),
@@ -254,7 +259,7 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
       </Button>
     ),
     try: (
-      <Link href={tryIt.href} className={cn(buttonVariants({ variant: first === 3 ? "primary" : "outline", size: "sm" }), first === 3 && "text-on-primary!")}>
+      <Link href={tryIt.href} className={linkButton(3)}>
         Open chat
       </Link>
     ),
@@ -275,11 +280,12 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
           </button>
         </Notice>
       ) : null}
-      <div className="flex items-center justify-between gap-3 text-sm text-ink-2">
+      <div className="-mt-3 flex items-center justify-between gap-3 text-sm text-ink-2">
+        <span>Five steps from a fresh install to your first answer.</span>
         <span id="setup-progress-label">{`${done} of ${SETUP_STEPS}`}</span>
       </div>
       <Meter ratio={done / SETUP_STEPS} role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={SETUP_STEPS} aria-valuenow={done} />
-      <Card className="p-0">
+      <Card className="overflow-hidden p-0 sm:p-0">
         <ol aria-label="Setup steps" className="divide-y divide-line">
           {rows.map((r, i) => (
             <ChecklistRow key={r.id} n={i + 1} row={r} action={actions[r.id]} primary={i === first} />
@@ -342,6 +348,7 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
   const blocked = gaps.filter((g) => !g.tokenOnly);
   const noMail = !emailDone(setup);
   const orgSlug = placement.data?.default_org?.slug;
+  const roles = stepOf(setup, "roles");
   const llm = stepOf(setup, "llm");
   const endpoints = llm?.checks.filter((c) => c.id.startsWith("endpoint:")) ?? [];
   const down = endpoints.filter((c) => c.status !== "ok");
@@ -397,6 +404,11 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
       <Card className="p-0">
         <h2 className="px-4 pt-4 font-display text-base font-semibold text-ink">Health</h2>
         <ul aria-label="Health" className="divide-y divide-line">
+          {roles && roles.status !== "ok" ? (
+            <HealthRow tone="attention" title="Sign-in" href={adminRoutes.signIn()} hrefLabel="Open sign-in">
+              {roles.checks.find((c) => c.status !== "ok")?.message ?? "Role mapping needs a look."}
+            </HealthRow>
+          ) : null}
           <HealthRow tone={tone(runner?.status)} title="Runners" href={adminRoutes.platform("runners")} hrefLabel="Open runners">
             {runner?.message ? pluralRunners(runner.message, runner.value) : (stepOf(setup, "runners")?.reason ?? "No runner is registered.")}
           </HealthRow>
@@ -470,7 +482,7 @@ export function SetupView() {
     <div className="max-w-page space-y-6">
       <PageHeader
         title={shown === "health" ? "Overview" : "Set up Aurora"}
-        description={shown === "health" ? "What needs you, and whether Aurora is healthy." : "Five steps from a fresh install to your first answer."}
+        description={shown === "health" ? "What needs you, and whether Aurora is healthy." : undefined}
         className="mb-0"
         actions={
           <Tabs

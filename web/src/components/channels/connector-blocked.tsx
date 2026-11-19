@@ -66,6 +66,16 @@ export function ConnectorBlocked({
     );
   }
   const head = (HEAD[item.setup_state] ?? HEAD.not_added!)(name);
+  if (!isInstanceAdmin) {
+    // (P5-POLISH-11, F1) Nothing here the viewer can act on (there is no way to ask for a platform): a neutral card, not an amber notice.
+    return (
+      <li data-testid={`blocked-${item.type_id}`}>
+        <Unavailable title={head} fixer={<>Ask: {adminNames(admins)}.</>}>
+          Until then, {name} can&apos;t be connected.
+        </Unavailable>
+      </li>
+    );
+  }
   return (
     <li>
       <Notice tone="pending" role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2">

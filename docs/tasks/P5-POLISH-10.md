@@ -256,3 +256,32 @@ Commits: part 1 `f0821d1a`, part 2 `7c376498`, part 3 `b8100399`, part 4 `460bdb
 - BYO "no raw enum values" (value-to-words, shared with P5-POLISH-9) was **not done**: it depends on P5-POLISH-9's mapping, which is not merged.
 - The "Add Mattermost" button on the Chat platforms page is unchanged (still where an admin can act).
 - A guide link on the new Chat platforms card is the admin's "Open Administration › Chat platforms" link; no separate operator-guide link was added.
+
+### Review fixes (P5-POLISH-11 pass 1, lane `p5-polish-c`, 2026-11-19)
+
+1. **Sign-in step never done: done.** Sign-in counts as done when the status carries `you` (a provider is registered and
+   the admin signed in with it) or the roles step is `ok`. The no-role-mappings warning is a "Sign-in" row (amber, with
+   **Open sign-in**) in the health view. The button is always **Review**.
+2. **Checklist layout: done.** The card kept the base `sm:p-5` (so the rows were inset): `sm:p-0` plus `overflow-hidden`,
+   so the amber band is full-bleed. "n of 5" sits right-aligned on the line of "Five steps from a fresh install…"
+   (the page header has no description on the checklist). The current step's button is filled, whatever step it is.
+3. **Health "Needs you" repeats: done.** Apps of one package are one row ("People can't sign in to Google Calendar,
+   Google Drive and Gmail yet", one **Register an OAuth client**) with the app's icon instead of letters
+   (`groupGaps` in `sign-in-gaps.tsx`; the same component serves the organization's list).
+4. **New users form: done.** Placement uses `SettingsCard` and `SettingField` rows at full page width (no 3xl column).
+5. **"Default: …" chips: done.** Moved into the help text in `SettingField` (see P5-POLISH-2).
+6. **Computers: done.** The previews note is full width; byte settings read "5 GB" (value, default) and edit in GB/MB
+   (unit by the setting's default), `bytesWords`/`editUnit` in `lib/settings-words.ts`.
+7. **Chat platforms: partly done.** The connector row shows the status as its one chip, "Managed"/"Self-hosted" as plain
+   text and no raw id; the shared-bootstrap-token notice is neutral (informational). The organization page's amber
+   "An instance administrator needs to add Mattermost first. Ask: alice." is now a neutral card: **an Ask button is open**
+   (no route asks an administrator to add a chat platform; the setup-request API is for apps).
+8. **Dev egress to `aurora-dev-mock`: open** (deploy/kind values, owner to place).
+9. **"needs a token / Google sign-in" on From Aurora rows: open** (the admin list API carries no sign-in method).
+
+Gates: `pnpm typecheck` clean; eslint on the touched files clean; vitest `setup-checklist`, `polish-2-primitives`,
+`placement`, `connectors-admin`, `channels-guided`, `admin-settings`, `admin-settings-governance`,
+`settings-in-words`, `onboarding`, `harness-controls`, `connect-dialog`, `webhook-dialogs` and the new
+`polish-11-review-fixes` green. Playwright (`--project mocked`, port 4217): `p5-polish-10`, `placement`,
+`admin-settings`, `onboarding-journeys`, `fix-127-mattermost` — 101 passed.
+

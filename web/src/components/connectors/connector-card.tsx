@@ -7,7 +7,7 @@ import { useConnectorTypes, useDeleteConnector, useRotateConnectorToken, type Co
 import { plural } from "@/lib/utils";
 
 import { ApprovalPanel } from "./approval-panel";
-import { ConnectorError, ConnectorIcon, ConnectorStatusChip, ManagedBadge, UnsignedBadge } from "./shared";
+import { ConnectorError, ConnectorIcon, ConnectorStatusChip, UnsignedBadge } from "./shared";
 
 /** One connector in the list: identity, status, counts, and either Manage (managed) or the self-hosted actions. */
 export function ConnectorCard({
@@ -32,10 +32,10 @@ export function ConnectorCard({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <ConnectorIcon id={c.id} name={c.display_name} size={32} />
           <h3 className="font-display text-base font-semibold text-ink">{c.display_name}</h3>
-          <code className="font-mono text-xs text-muted">{c.id}</code>
-          <ManagedBadge managed={c.managed} />
-          {unsigned ? <UnsignedBadge /> : null}
+          {/* (P5-POLISH-11, F2) One chip, the status; who runs it is plain text, and the raw id is not shown. */}
           <ConnectorStatusChip c={c} />
+          {unsigned ? <UnsignedBadge /> : null}
+          <span className="text-xs text-muted">{c.managed ? "Managed" : "Self-hosted"}</span>
           {c.version ? <span className="text-xs text-muted">v{c.version}</span> : null}
           <span className="text-xs text-muted sm:ml-auto">
             {plural(c.integration_count, "integration")} ·{" "}

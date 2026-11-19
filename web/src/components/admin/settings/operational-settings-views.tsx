@@ -375,7 +375,7 @@ export function PreviewsSettingsView({ bare = false }: { bare?: boolean }) {
 
 function previewsNotice(bare: boolean): ReactNode {
   return (
-    <Notice tone="neutral" role="status" className="max-w-3xl">
+    <Notice tone="neutral" role="status">
       Whether previews are on and their domain are set in Helm (<code className="font-mono">relay.enabled</code>,{" "}
       <code className="font-mono">relay.domain</code>); {bare ? "these are" : "this page sets"} their limits.
     </Notice>

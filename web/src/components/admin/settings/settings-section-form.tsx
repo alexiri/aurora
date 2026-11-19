@@ -25,7 +25,7 @@ import { SettingField, SettingsCard, settingControlId } from "@/components/ui/se
 import { Switch } from "@/components/ui/switch";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
-import { valueWords } from "@/lib/settings-words";
+import { defaultInWords, valueWords } from "@/lib/settings-words";
 import {
   useSettingsSaver,
   type FieldInfo,
@@ -671,7 +671,7 @@ function SettingRow({
       source={source}
       helmKey={s.helm_key}
       lockedValue={formatValue(s, field)}
-      defaultLabel={field?.default_display}
+      defaultLabel={field ? defaultInWords(field.default_display) : undefined}
       doc={docTitle}
       onReset={() => resetValue(s.key)}
       error={error}
