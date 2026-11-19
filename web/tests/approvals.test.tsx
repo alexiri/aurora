@@ -137,8 +137,8 @@ describe("approvals", () => {
   it("an empty list says nothing is waiting, in the words of the page", async () => {
     routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [], next_cursor: null });
     show();
-    expect(await screen.findByText("Nothing is waiting for you.")).toBeInTheDocument();
-    expect(screen.getByText("Agents ask here when their access is Ask before changes, or when a rule says so.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Nothing is waiting for you." })).toBeInTheDocument();
+    expect(screen.getByText("When an agent asks before a change, the request appears here and on Overview.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "History" }));
     expect(await screen.findByText("No questions have been answered yet.")).toBeInTheDocument();
   });

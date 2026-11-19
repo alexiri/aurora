@@ -83,7 +83,7 @@ describe("AccountsList: one row per kind", () => {
     list();
     const aws = await screen.findByRole("listitem", { name: "AWS prod" });
     expect(within(aws).getByText("App")).toBeInTheDocument();
-    expect(within(aws).getByRole("button", { name: "Daneel · Read only: change access" })).toBeInTheDocument();
+    expect(within(aws).getByRole("button", { name: "Daneel · Read only" })).toBeInTheDocument();
     expect(within(screen.getByRole("listitem", { name: "Stripe API" })).getByText("Website")).toBeInTheDocument();
     expect(within(screen.getByRole("listitem", { name: "Team key" })).getByText("AI key")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /^More for / })).toHaveLength(3);

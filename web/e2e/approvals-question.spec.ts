@@ -76,7 +76,7 @@ for (const scheme of ["light", "dark"] as const) {
 
     test("empty Waiting and History say what they mean", async ({ page }) => {
       await open(page, scheme, []);
-      await expect(page.getByText("Nothing is waiting for you.")).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Nothing is waiting for you." })).toBeVisible();
       await page.getByRole("tab", { name: "History" }).click();
       await expect(page.getByText("No questions have been answered yet.")).toBeVisible();
     });

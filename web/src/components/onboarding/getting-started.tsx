@@ -13,6 +13,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckCircleIcon } from "@/components/ui/icons";
+import { LinkCard } from "@/components/ui/link-card";
 import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { WhoCan } from "@/components/ui/who-can";
@@ -383,10 +384,10 @@ export function OptionalNext(props: { org: string; ws: string; handle?: string; 
       <ul className="grid gap-3 sm:grid-cols-2">
         {items.map((i) => (
           <li key={i.href}>
-            <Link href={i.href} className="block h-full rounded-card border border-line bg-surface p-4 shadow-card hover:border-line-strong">
-              <span className="block text-sm font-semibold text-ink">{i.label}</span>
-              <span className="mt-1 block text-sm text-ink-2">{i.text}</span>
-            </Link>
+            {/* (P5-POLISH-7, D4) A card that is a link: title, one line, arrow, hover and focus. */}
+            <LinkCard href={i.href} title={i.label} className="h-full">
+              {i.text}
+            </LinkCard>
           </li>
         ))}
       </ul>
