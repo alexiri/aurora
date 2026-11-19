@@ -213,6 +213,9 @@ bind = "BIND"
 
 [runner]
 ops_bind = "{ops_ip}"
+# The host the API dials for the runner's stream listener (:4108: web terminal, previews). The
+# default `aurora-runner` resolves only inside sandboxes (/etc/hosts), not for the API process.
+advertised_host = "{bridge}"
 backend = "podman"
 api_url = "http://{api_ip}:4101"
 podman_socket = "{sock}"
@@ -690,6 +693,38 @@ impl Api {
             .get(format!("{}{p}", self.base))
             .header("cookie", &self.cookie)
             .header("origin", &request_origin())
+    }
+
+    /// (P4-TERM, C-616) Opens `agent`'s web terminal as the dashboard does: the WebSocket upgrade
+    /// with the session cookie and the same-origin `Origin`; `shell` is `bash` or `zsh`. Binary
+    /// messages are PTY bytes both ways. Retries while the upgrade is refused (a waking sandbox
+    /// answers 202 first), for up to 60 s. Needs `[terminal] enabled = true` in the stack config.
+    pub async fn terminal(
+        &self,
+        agent: &str,
+        shell: &str,
+    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
+    {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
+        let url = format!(
+            "{}/v1/agents/{agent}/terminal?shell={shell}",
+            self.base.replacen("http", "ws", 1)
+        );
+        let end = Instant::now() + Duration::from_secs(60);
+        loop {
+            let mut req = url.as_str().into_client_request().unwrap();
+            req.headers_mut()
+                .insert("cookie", self.cookie.parse().unwrap());
+            req.headers_mut()
+                .insert("origin", request_origin().parse().unwrap());
+            match tokio_tungstenite::connect_async(req).await {
+                Ok((ws, _)) => return ws,
+                Err(e) => {
+                    assert!(Instant::now() < end, "terminal upgrade: {e}");
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+            }
+        }
     }
 
     /// Raw request with the session cookie and redirects disabled — the preview authorize
