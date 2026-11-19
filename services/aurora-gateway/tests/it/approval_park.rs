@@ -5,6 +5,7 @@
 //! `07 §Park and resume` has a positive and a negative case here; the grant side is
 //! `approval_grants.rs`, which reuses this harness.
 
+use crate::common::Capture;
 use async_trait::async_trait;
 use aurora_config::{LlmEndpoint, LlmSection, SecretsSection};
 use aurora_db::repo::gateway::{AppConnectionRow, RequestLogRow, ScopePolicyRows, SecretMetaRow};
@@ -17,7 +18,7 @@ use aurora_gateway::invalidation::{Hub, Invalidatable};
 use aurora_gateway::park::ParkConfig;
 use aurora_gateway::plaintext::PlaintextCache;
 use aurora_gateway::proxy::{Proxy, ProxyParts};
-use aurora_gateway::reqlog::{LogWriter, RequestLog};
+use aurora_gateway::reqlog::RequestLog;
 use aurora_gateway::resolve::{PolicySource, ResolveCache, Resolver};
 use aurora_gateway::snapshot::{SnapshotStore, parse};
 use aurora_secrets::{MemoryStore, SecretRef, SecretVault, StoreRegistry};
@@ -138,17 +139,6 @@ impl PolicySource for Src {
     }
     async fn app_availability(&self, _o: Uuid, _w: Uuid) -> Result<(bool, Vec<String>), String> {
         Ok((false, vec![]))
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct Capture(pub Mutex<Vec<RequestLogRow>>);
-
-#[async_trait]
-impl LogWriter for Capture {
-    async fn write(&self, rows: &[RequestLogRow]) -> Result<(), String> {
-        self.0.lock().unwrap().extend_from_slice(rows);
-        Ok(())
     }
 }
 

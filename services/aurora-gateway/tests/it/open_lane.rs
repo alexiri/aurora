@@ -2,16 +2,17 @@
 //! P1-003 (RFE-003, SEC-41): open-lane admission (credential capability), the open-lane
 //! posture layered over instance / org / workspace, and CONNECT-time rule semantics.
 
+use crate::common::Capture;
 use async_trait::async_trait;
 use aurora_config::{EgressEntry, LlmSection, OpenLanePosture as CfgPosture};
-use aurora_db::repo::gateway::{PolicyRuleRow, RequestLogRow, ScopePolicyRows, SecretMetaRow};
+use aurora_db::repo::gateway::{PolicyRuleRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
 use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
 use aurora_gateway::governance::{GovSource, Governance, instance_from_config};
 use aurora_gateway::plaintext::PlaintextCache;
 
-use aurora_gateway::reqlog::{LogWriter, RequestLog};
+use aurora_gateway::reqlog::RequestLog;
 use aurora_gateway::resolve::{PolicySource, Resolver};
 use aurora_secrets::{SecretVault, StoreRegistry};
 use base64::Engine;
@@ -96,17 +97,6 @@ impl GovSource for Gov {
         Ok(Some(self.0.clone()))
     }
     async fn write_origin(&self, _id: Uuid, _origin: Value, _status: &'static str) {}
-}
-
-#[derive(Default)]
-struct Capture(Mutex<Vec<RequestLogRow>>);
-
-#[async_trait]
-impl LogWriter for Capture {
-    async fn write(&self, rows: &[RequestLogRow]) -> Result<(), String> {
-        self.0.lock().unwrap().extend_from_slice(rows);
-        Ok(())
-    }
 }
 
 struct Opts {

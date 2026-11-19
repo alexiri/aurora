@@ -3,9 +3,10 @@
 //! The mock provider is Anthropic-style: `GET /v1/models` reports the key's account in
 //! `anthropic-organization-id`, `POST /v1/messages` does too.
 
+use crate::common::Capture;
 use async_trait::async_trait;
 use aurora_config::{EgressEntry, LlmEndpoint, LlmSection, SecretsSection};
-use aurora_db::repo::gateway::{PolicyRuleRow, RequestLogRow, ScopePolicyRows, SecretMetaRow};
+use aurora_db::repo::gateway::{PolicyRuleRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
 use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
@@ -14,7 +15,7 @@ use aurora_gateway::guard::Guard;
 use aurora_gateway::invalidation::{Invalidatable, Invalidate, Scope};
 use aurora_gateway::plaintext::PlaintextCache;
 use aurora_gateway::proxy::Proxy;
-use aurora_gateway::reqlog::{LogWriter, RequestLog};
+use aurora_gateway::reqlog::RequestLog;
 use aurora_gateway::resolve::{PolicySource, Resolver};
 use aurora_secrets::{MemoryStore, SecretRef, SecretVault, StoreRegistry};
 use base64::Engine;
@@ -112,17 +113,6 @@ impl GovSource for TestGov {
             .lock()
             .unwrap()
             .push((id, origin, status.to_owned()));
-    }
-}
-
-#[derive(Default)]
-struct Capture(Mutex<Vec<RequestLogRow>>);
-
-#[async_trait]
-impl LogWriter for Capture {
-    async fn write(&self, rows: &[RequestLogRow]) -> Result<(), String> {
-        self.0.lock().unwrap().extend_from_slice(rows);
-        Ok(())
     }
 }
 

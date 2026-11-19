@@ -2,11 +2,10 @@
 //! P2-DBL-1: the database lane against a real PostgreSQL (the testkit database is both the
 //! policy/approval store and the target of the stored connection).
 
+use crate::common::Capture;
 use async_trait::async_trait;
 use aurora_config::{LlmSection, SecretsSection};
-use aurora_db::repo::gateway::{
-    AppConnectionRow, PolicyRuleRow, RequestLogRow, ScopePolicyRows, SecretMetaRow,
-};
+use aurora_db::repo::gateway::{AppConnectionRow, PolicyRuleRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
 use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
@@ -14,7 +13,7 @@ use aurora_gateway::hold::Holds;
 use aurora_gateway::invalidation::Hub;
 use aurora_gateway::plaintext::PlaintextCache;
 
-use aurora_gateway::reqlog::{LogWriter, RequestLog};
+use aurora_gateway::reqlog::RequestLog;
 use aurora_gateway::resolve::{PolicySource, Resolver};
 use aurora_gateway::snapshot::{SnapshotStore, parse};
 use aurora_secrets::{MemoryStore, SecretRef, SecretVault, StoreRegistry};
@@ -104,17 +103,6 @@ impl PolicySource for Src {
     ) -> Result<Option<AppConnectionRow>, String> {
         let r = self.0.lock().unwrap();
         Ok((r.conn.id == id).then(|| r.conn.clone()))
-    }
-}
-
-#[derive(Default)]
-struct Capture(Mutex<Vec<RequestLogRow>>);
-
-#[async_trait]
-impl LogWriter for Capture {
-    async fn write(&self, rows: &[RequestLogRow]) -> Result<(), String> {
-        self.0.lock().unwrap().extend_from_slice(rows);
-        Ok(())
     }
 }
 

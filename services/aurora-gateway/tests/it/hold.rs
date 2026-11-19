@@ -1,10 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! GW-004 approval holds against a real database; the policy source is in memory.
 
+use crate::common::Capture;
 use async_trait::async_trait;
 use aurora_config::{LlmSection, SecretsSection};
 use aurora_core::Secret;
-use aurora_db::repo::gateway::{PolicyRuleRow, RequestLogRow, ScopePolicyRows, SecretMetaRow};
+use aurora_db::repo::gateway::{PolicyRuleRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
 use aurora_gateway::byo::TunnelRegistry;
 use aurora_gateway::ca;
@@ -14,7 +15,7 @@ use aurora_gateway::hold::Holds;
 use aurora_gateway::invalidation::Hub;
 use aurora_gateway::plaintext::PlaintextCache;
 use aurora_gateway::proxy::{ByoParts, Proxy, ProxyParts};
-use aurora_gateway::reqlog::{LogWriter, RequestLog};
+use aurora_gateway::reqlog::RequestLog;
 use aurora_gateway::resolve::{PolicySource, Resolver};
 use aurora_secrets::{
     MemoryStore, Purpose, SealContext, SecretRef, SecretStore, SecretVault, StoreCapabilities,
@@ -130,17 +131,6 @@ impl SecretStore for Counting {
     }
     async fn health(&self) -> StoreHealth {
         self.inner.health().await
-    }
-}
-
-#[derive(Default)]
-struct Capture(Mutex<Vec<RequestLogRow>>);
-
-#[async_trait]
-impl LogWriter for Capture {
-    async fn write(&self, rows: &[RequestLogRow]) -> Result<(), String> {
-        self.0.lock().unwrap().extend_from_slice(rows);
-        Ok(())
     }
 }
 
