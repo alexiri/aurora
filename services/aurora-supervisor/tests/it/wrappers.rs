@@ -135,6 +135,36 @@ impl Rig {
         self.run_with_path("/usr/bin:/bin")
     }
 
+    /// The wrapper with the person's own arguments and environment (FIX-169).
+    fn run_as(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
+        let mut vars = vec![("PATH", "/usr/bin:/bin")];
+        vars.extend_from_slice(env);
+        command("sh", vars)
+            .arg(&self.wrapper)
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    /// A rig with `file` as harness.env, run as `run_as`, returning the "binary"'s arguments.
+    fn started(
+        which: &str,
+        file: &str,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> (Self, Vec<String>) {
+        let rig = Self::new(which);
+        rig.write_env(file);
+        let out = rig.run_as(args, env);
+        assert!(
+            out.status.success(),
+            "{which} {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let seen = rig.seen_args().expect("the binary ran");
+        (rig, seen)
+    }
+
     fn write_env(&self, text: &str) {
         std::fs::write(&self.envfile, text).unwrap();
     }
@@ -641,4 +671,133 @@ fn a_model_a_harness_cannot_use_is_a_refusal_and_not_a_configuration() {
         assert!(String::from_utf8_lossy(&out.stderr).contains("cannot be used with"));
         assert!(rig.seen_env().is_none(), "{which}: the CLI ran");
     }
+}
+
+/// (FIX-169, D-371, C-1025) `claude` starts in bypass mode like a turn, unless the person chose a mode.
+#[test]
+fn the_claude_wrapper_defaults_to_bypass_mode_and_keeps_the_persons_choice() {
+    let file = golden(true);
+    let bypass = ["--permission-mode", "bypassPermissions"];
+    // No choice: bypass first, then exactly the person's arguments (prompt, -p, -c, --resume, a
+    // subcommand, --version, --help, and a prompt after `--`).
+    for args in [
+        vec![],
+        vec!["write a file"],
+        vec!["-p", "hi"],
+        vec!["-c"],
+        vec!["--resume", "abc"],
+        vec!["mcp", "list"],
+        vec!["doctor"],
+        vec!["--version"],
+        vec!["--help"],
+        vec!["--", "--permission-mode"],
+    ] {
+        let (_, seen) = Rig::started("claude", &file, &args, &[]);
+        let mut want: Vec<String> = bypass.iter().map(|s| (*s).to_owned()).collect();
+        want.extend(args.iter().map(|s| (*s).to_owned()));
+        assert_eq!(seen, want, "{args:?}");
+    }
+    // An explicit choice passes through unchanged: no second mode, no default.
+    for args in [
+        vec!["--permission-mode", "default"],
+        vec!["--permission-mode=plan", "-p", "x"],
+        vec!["-p", "x", "--permission-mode", "acceptEdits"],
+        vec!["--dangerously-skip-permissions"],
+        vec!["--allow-dangerously-skip-permissions", "-c"],
+    ] {
+        let (_, seen) = Rig::started("claude", &file, &args, &[]);
+        assert_eq!(seen, args, "{args:?}");
+    }
+}
+
+/// `codex`: the turn's approval and sandbox settings in both branches (with and without a gateway
+/// endpoint); the person's dedicated flags and later `-c` keep what they chose.
+#[test]
+fn the_codex_wrapper_defaults_to_no_approvals_and_no_own_sandbox() {
+    let ask = "approval_policy=\"never\"";
+    let boxed = "sandbox_mode=\"danger-full-access\"";
+    let with_base = golden(false);
+    let without_base = "HARNESSES_ENABLED='codex'\n";
+    for (label, file) in [
+        ("with a gateway endpoint", with_base.as_str()),
+        ("without", without_base),
+    ] {
+        let (_, seen) = Rig::started("codex", file, &["exec", "make a file"], &[]);
+        let has = |v: &str| seen.windows(2).any(|w| w[0] == "-c" && w[1] == v);
+        assert!(has(ask) && has(boxed), "{label}: {seen:?}");
+        assert!(
+            seen.ends_with(&["exec".into(), "make a file".into()]),
+            "{label}: {seen:?}"
+        );
+        // Our defaults come before the person's arguments, so a later `-c` of theirs wins.
+        let (_, seen) = Rig::started("codex", file, &["-c", "approval_policy=\"untrusted\""], &[]);
+        let ours = seen.iter().position(|a| a == ask).expect("default present");
+        let theirs = seen
+            .iter()
+            .position(|a| a == "approval_policy=\"untrusted\"")
+            .unwrap();
+        assert!(ours < theirs, "{label}: {seen:?}");
+    }
+    // A dedicated flag: the default it covers is not added.
+    let count = |seen: &[String], v: &str| seen.iter().filter(|a| a.as_str() == v).count();
+    for (args, want_ask, want_box) in [
+        (vec!["-a", "on-request"], 0, 1),
+        (vec!["--ask-for-approval=untrusted"], 0, 1),
+        (vec!["-s", "read-only"], 1, 0),
+        (vec!["--sandbox=workspace-write"], 1, 0),
+        (vec!["--full-auto"], 0, 0),
+        (vec!["--dangerously-bypass-approvals-and-sandbox"], 0, 0),
+        (vec!["-a", "never", "-s", "read-only"], 0, 0),
+    ] {
+        let (_, seen) = Rig::started("codex", without_base, &args, &[]);
+        assert_eq!(count(&seen, ask), want_ask, "{args:?}: {seen:?}");
+        assert_eq!(count(&seen, boxed), want_box, "{args:?}: {seen:?}");
+        assert!(
+            seen.ends_with(&args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>()),
+            "{args:?}: {seen:?}"
+        );
+    }
+}
+
+/// `goose`: `GOOSE_MODE=auto` like a turn; a mode in the environment the wrapper received is kept, and
+/// harness.env never supplies one.
+#[test]
+fn the_goose_wrapper_defaults_to_auto_mode_and_keeps_the_persons_choice() {
+    let file = terminal_file("goose", GOLDEN_MODEL, "anthropic_messages");
+    let mode = |rig: &Rig| rig.seen_env().unwrap().get("GOOSE_MODE").cloned();
+    let (rig, _) = Rig::started("goose", &file, &[], &[]);
+    assert_eq!(mode(&rig).as_deref(), Some("auto"));
+    let (rig, _) = Rig::started("goose", &file, &[], &[("GOOSE_MODE", "approve")]);
+    assert_eq!(mode(&rig).as_deref(), Some("approve"));
+    // The file has no such key and must not be able to set one: the default still applies.
+    let (rig, _) = Rig::started("goose", &format!("{file}GOOSE_MODE='chat'\n"), &[], &[]);
+    assert_eq!(mode(&rig).as_deref(), Some("auto"));
+    // A mode saved with `goose configure` is not overridden by an environment default.
+    let rig = Rig::new("goose");
+    rig.write_env(&file);
+    let cfg = rig.state.join("config");
+    std::fs::create_dir_all(&cfg).unwrap();
+    std::fs::write(
+        cfg.join("config.yaml"),
+        "GOOSE_PROVIDER: x\nGOOSE_MODE: smart_approve\n",
+    )
+    .unwrap();
+    assert!(rig.run_as(&[], &[]).status.success());
+    assert_eq!(mode(&rig), None);
+}
+
+/// `opencode` already behaves like a turn: its terminal config allows every tool.
+#[test]
+fn the_opencode_terminal_config_allows_every_tool() {
+    let rig = Rig::new("opencode");
+    rig.write_env(&terminal_file(
+        "opencode",
+        GOLDEN_MODEL,
+        "anthropic_messages",
+    ));
+    assert!(rig.run().status.success());
+    let seen = rig.seen_env().unwrap();
+    let cfg: serde_json::Value =
+        serde_json::from_str(seen.get("OPENCODE_CONFIG_CONTENT").expect("inline config")).unwrap();
+    assert_eq!(cfg["permission"]["*"], "allow");
 }
