@@ -8,5 +8,6 @@ mod podman;
 mod preview_streams_flow;
 mod runner;
 mod ssh_streams;
+mod stream_support;
 mod streams;
 mod terminal_streams;

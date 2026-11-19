@@ -15,107 +15,19 @@
     clippy::indexing_slicing
 )]
 
-use std::time::Duration;
-
-use futures::{SinkExt, StreamExt};
+use futures::SinkExt;
 use serde_json::{Value, json};
-use tokio::net::TcpStream;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
-use tokio_tungstenite::tungstenite::{Error as WsError, Message, handshake::client::Request};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use std::time::Duration;
+use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 use uuid::Uuid;
 use wiremock::MockServer;
 
+use crate::stream_support::{close_code_slow, data, dial, frame, next_leg, next_msg, silent};
 use crate::terminal_streams::{
     Client, WINDOW, close_code, connect_supervisor, mount_runner_api, next_text, rig,
 };
 
 const SHELL: &str = r#"{"kind":"exec.open","mode":"shell","env":{}}"#;
-
-async fn dial(
-    st_addr: std::net::SocketAddr,
-    token: &str,
-) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, WsError> {
-    let mut req: Request = format!("ws://{st_addr}/v1/preview-stream")
-        .into_client_request()
-        .unwrap();
-    req.headers_mut()
-        .insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
-    match tokio::time::timeout(Duration::from_secs(10), connect_async(req)).await {
-        Ok(r) => r.map(|(ws, _)| ws),
-        Err(_) => panic!("dial timed out"),
-    }
-}
-
-async fn next_msg(sup: &mut Client) -> Message {
-    loop {
-        match tokio::time::timeout(Duration::from_secs(5), sup.next())
-            .await
-            .expect("supervisor message timed out")
-        {
-            Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
-            Some(Ok(Message::Text(t))) if t.contains(r#""kind":"ack""#) => {}
-            Some(Ok(m)) => return m,
-            other => panic!("supervisor stream ended: {other:?}"),
-        }
-    }
-}
-
-async fn silent(sup: &mut Client, d: Duration) -> bool {
-    let end = tokio::time::Instant::now() + d;
-    loop {
-        let left = end.saturating_duration_since(tokio::time::Instant::now());
-        if left.is_zero() {
-            return true;
-        }
-        match tokio::time::timeout(left, sup.next()).await {
-            Err(_) => return true,
-            Ok(Some(Ok(Message::Ping(_) | Message::Pong(_)))) => {}
-            Ok(Some(Ok(Message::Text(t)))) if t.contains(r#""kind":"ack""#) => {}
-            Ok(_) => return false,
-        }
-    }
-}
-
-async fn close_code_slow(ws: &mut Client) -> u16 {
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(15), ws.next())
-            .await
-            .expect("close timed out")
-            .unwrap()
-            .unwrap();
-        match &m {
-            Message::Ping(_) | Message::Pong(_) => continue,
-            Message::Close(c) => return c.as_ref().map_or(0, |c| u16::from(c.code)),
-            _ => {}
-        }
-    }
-}
-
-fn frame(kind: &str, body: Value) -> Message {
-    Message::text(json!({"seq": 0, "ack": 0, "kind": kind, "body": body}).to_string())
-}
-
-fn data(tag: u8, id: u32, payload: &[u8]) -> Message {
-    let mut b = vec![tag];
-    b.extend_from_slice(&id.to_be_bytes());
-    b.extend_from_slice(payload);
-    Message::binary(b)
-}
-
-async fn next_leg(c: &mut Client) -> Message {
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(5), c.next())
-            .await
-            .expect("leg message timed out")
-            .expect("leg ended")
-            .expect("leg error");
-        if !matches!(m, Message::Ping(_) | Message::Pong(_)) {
-            return m;
-        }
-    }
-}
 
 /// Dials, sends `first`, answers the supervisor's `exec.open` with `exec.opened`; returns the
 /// terminator's leg, the allocated id and the `exec.open` body the supervisor saw.
