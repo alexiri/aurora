@@ -30,7 +30,7 @@ const DESCRIPTION_MAX: usize = 200;
 const FIELD_MAX: usize = 200;
 
 /// One account of the agent on the app: a granted, active connection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GuideAccount {
     pub id: String,
     pub label: String,
@@ -39,6 +39,19 @@ pub struct GuideAccount {
     /// libpq service name of a database connection (`psql service=<name>`, C-231).
     pub service: Option<String>,
     pub access: GrantAccess,
+    /// (P5-WEBHOOK-3, C-911) The webhook of a send-mode connection: what the agent may know of it.
+    pub webhook: Option<GuideWebhook>,
+}
+
+/// (P5-WEBHOOK-3, C-911) The render input of one send-mode account: the name, the person's note,
+/// the method and the typed slots. **Never** the template, the headers, the URL or any secret
+/// value: this type has no field for them (a test serializes it and checks the keys).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct GuideWebhook {
+    pub name: String,
+    pub description: String,
+    pub method: String,
+    pub slots: Vec<aurora_webhook::Slot>,
 }
 
 /// The grant row's mode (`grants.mode`, `allow_tools`, `ask_tools`).
@@ -264,6 +277,84 @@ fn grant_word(g: &GrantAccess) -> &'static str {
     }
 }
 
+/// (P5-WEBHOOK-3, C-911) One section per webhook account: its note, its slots and the `curl`
+/// example to its `base_url` (the fallback without `aurora-agent`). Only what the render input
+/// holds: never the template, headers, URL or secret values.
+fn webhooks_md(o: &mut String, accounts: &[GuideAccount]) {
+    let ids = api_json::webhook_ids(accounts);
+    for (i, (a, id)) in accounts.iter().zip(ids).enumerate() {
+        let (Some(w), Some(id)) = (&a.webhook, id) else {
+            continue;
+        };
+        let _ = write!(
+            o,
+            "\n## Webhook: {} (account {}, `{id}`)\n",
+            inline(&w.name, 80),
+            letter(i)
+        );
+        let notes = inline(&w.description, 1000);
+        if !notes.is_empty() {
+            let _ = writeln!(o, "\n{notes}");
+        }
+        if w.slots.is_empty() {
+            o.push_str("\nNo slots: the message is fixed.\n");
+        } else {
+            o.push_str("\n| slot | type | required | notes |\n|---|---|---|---|\n");
+            for s in &w.slots {
+                let ty = match s.ty {
+                    aurora_webhook::SlotType::StringList => "string list",
+                    aurora_webhook::SlotType::Enum => "enum",
+                    aurora_webhook::SlotType::Json => "json",
+                    aurora_webhook::SlotType::Integer => "integer",
+                    aurora_webhook::SlotType::Number => "number",
+                    aurora_webhook::SlotType::Boolean => "boolean",
+                    aurora_webhook::SlotType::String => "string",
+                };
+                let mut notes = api_json::slot_description(s);
+                if let Some(v) = &s.r#enum {
+                    let vs: Vec<String> = v.iter().map(|x| inline(x, 40)).collect();
+                    if !notes.is_empty() {
+                        notes.push_str("; ");
+                    }
+                    let _ = write!(notes, "one of {}", vs.join(", "));
+                }
+                let _ = writeln!(
+                    o,
+                    "| `{}` | {ty} | {} | {} |",
+                    inline(&s.name, 64).replace('|', "/"),
+                    if s.required { "yes" } else { "no" },
+                    notes.replace('|', "/")
+                );
+            }
+        }
+        let body: String = w
+            .slots
+            .iter()
+            .filter(|s| s.required)
+            .map(|s| {
+                let v = match s.ty {
+                    aurora_webhook::SlotType::Integer | aurora_webhook::SlotType::Number => "1",
+                    aurora_webhook::SlotType::Boolean => "true",
+                    aurora_webhook::SlotType::StringList => "[\"…\"]",
+                    aurora_webhook::SlotType::Json => "{}",
+                    _ => "\"…\"",
+                };
+                format!(
+                    "\"{}\":{v}",
+                    inline(&s.name, 64).replace(['"', '\\', '\''], "")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let _ = write!(
+            o,
+            "\n```\ncurl -sS -X {} https://{}/ -H 'Content-Type: application/json' -d '{{{body}}}'\n```\nAdd `-H 'X-Aurora-Dry-Run: 1'` to check the body without sending.\n",
+            inline(&w.method, 8),
+            api_json::webhook_host(&a.id)
+        );
+    }
+}
+
 fn tools_md(app: &AppEntry, lost_hosts: &[&HostEntry], accounts: &[GuideAccount]) -> String {
     let name = inline(&app.about.name, NAME_MAX);
     let mut o = format!(
@@ -282,6 +373,7 @@ fn tools_md(app: &AppEntry, lost_hosts: &[&HostEntry], accounts: &[GuideAccount]
             );
         }
     }
+    webhooks_md(&mut o, accounts);
     let (read, write) = catalogue(app);
     let hosts: BTreeSet<&str> = read.iter().chain(&write).map(|t| t.host.as_str()).collect();
     let show_host = hosts.len() > 1;

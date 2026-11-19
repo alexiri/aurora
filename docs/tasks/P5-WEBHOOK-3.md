@@ -88,3 +88,27 @@ D-320, C-911, SEC-127. No migration.
 ## Suggested agent/model and reason
 `rust-developer` (Sonnet). A renderer extension and CLI behaviour, in code the same lane will have
 just written for P5-GUIDE-6.
+
+## Completion report
+Done (2026-11-19, lane `p5-apps`; commits `6d6c90be` part 1 and the follow-up).
+- **Migration (deviation from "No migration").** The home-bump trigger on `app_connections` fired
+  on label/status/app changes only, so a config-only `PUT …/webhook` did not re-render. Migration
+  `20261201000256_connections_home_bump_config.sql` adds `config` to its condition (function only,
+  no table change: docs/03 untouched; `extract-schema --check` clean). Connect, delete (status) and
+  grant changes already bump through the existing triggers; a reconnect that changes no config
+  renders the same files.
+- **home.rs / db.** `HomeAppConn` gains `config`; `webhook_input` builds `GuideAccount.webhook`
+  (name = the connection label, note, method, slots) for send-mode apps only; `links` keeps
+  fetch-mode connections only.
+- **Package snippet.** `plugins/builtin/webhook/plugin.yaml`: the dry run is `X-Aurora-Dry-Run=1` to
+  `aurora-agent call` (the header form is for `curl`), and a `json` field is `field:=<json>`.
+- **Tests.** `a_webhook_is_an_agent_operation_that_follows_its_edits` (API IT): a granted agent's
+  `api.json`/`tools.md` have the operation and slots, no URL/secret/header/template text, `links`
+  empty, a slot-only PUT moves the home generation and the next render shows the new slot, revoking
+  the grant removes it. Seen failing without the migration ("a config-only edit moves the home
+  generation"). Registry snapshots, `aurora-agent` ITs: see part 1.
+- **Gates run.** fmt, clippy (registry, supervisor, api, db, cli), guards, `extract-schema --check`,
+  `aurora-registry` full, supervisor `agent_cli`, api `outgoing_webhooks`/`link_connect`/
+  `home_agent_guides`. `the_send_test_posts_the_rendered_body_…` (P5-WEBHOOK-2's) failed in 2 of 4
+  runs (the `webhook.test_sent` audit row was not yet there) and passed in the others: a timing
+  flake in that test, not touched here. Not run: the dev-stack end-to-end (CI/Orchestrator).

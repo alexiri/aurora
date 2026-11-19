@@ -31,11 +31,13 @@ expression: "api(Some(OPS), &a)"
         "A": "allowed",
         "B": "allowed"
       },
+      "account": null,
       "body": null,
       "host": null,
       "id": "list_things",
       "items": "$.data",
       "method": "GET",
+      "notes": null,
       "pagination": {
         "param": "page",
         "start": 1,
@@ -62,11 +64,13 @@ expression: "api(Some(OPS), &a)"
         "A": "allowed",
         "B": "blocked"
       },
+      "account": null,
       "body": null,
       "host": null,
       "id": "fetch_thing",
       "items": null,
       "method": "GET",
+      "notes": null,
       "pagination": null,
       "params": [
         {
@@ -89,6 +93,7 @@ expression: "api(Some(OPS), &a)"
         "A": "allowed",
         "B": "blocked"
       },
+      "account": null,
       "body": {
         "content_type": "application/json",
         "fields": [
@@ -102,6 +107,7 @@ expression: "api(Some(OPS), &a)"
       "id": "poke",
       "items": null,
       "method": "POST",
+      "notes": null,
       "pagination": null,
       "params": [],
       "path": "/v1/poke",
@@ -115,11 +121,13 @@ expression: "api(Some(OPS), &a)"
         "A": "allowed",
         "B": "approval"
       },
+      "account": null,
       "body": null,
       "host": "api.example.test",
       "id": "make_thing",
       "items": null,
       "method": "POST",
+      "notes": null,
       "pagination": null,
       "params": [],
       "path": "/v1/things",

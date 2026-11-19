@@ -361,6 +361,11 @@ workspace and organization policy can be stricter than this list, never looser.
   rate limits and the speaker are not evaluated, because the effective view depends on who is
   speaking and policy publication does not resync homes. The header says so. The table can
   therefore be more permissive than the gateway and never less (SEC-91).
+- **Webhooks (P5-WEBHOOK-3, C-911).** For each account that is an outgoing webhook, a section
+  `## Webhook: <name> (account <letter>, `<operation id>`)` follows the account list: the
+  person's note, a table of the slots (name, type, required, limits), and a `curl` example to the
+  account's `base_url` with the dry-run header. Only the render input is used (name, note,
+  method, slots): the template, headers, URL and secret values are never given to the renderer.
 - An app with no catalogue tools gets a `tools.md` that says so and carries only the last
   section. A database app lists its four class tools (`/read`, `/write`, `/ddl`, `/admin`).
 
@@ -417,6 +422,18 @@ the platform. Format `aurora.app-api/1`:
 - **`access`**: per account, the vocabulary and the grant-row rule of §5.2 applied to `tool`;
   an operation without a tool takes the `untooled` state. Advisory exactly as `tools.md` is
   (SEC-91).
+  - `source: "connection"` (P5-WEBHOOK-3, C-911): one operation per outgoing-webhook account,
+    from the account's render input (never the template, headers, URL or secrets). `id` =
+    `send_<slug of the name>` (`[a-z0-9_]`, at most 40; `_2`, `_3`… for duplicates in account
+    order), `host` = `<connection id>.link.aurora.internal` (also the account's `base_url`),
+    `path: "/"`, the dry-run header parameter `X-Aurora-Dry-Run` (`enum: ["1"]`), and a JSON
+    body with one field per slot: `string`/`enum` → `string` (+`enum`), `integer`, `number`,
+    `boolean`, `string_list` → `array`, `json` → **`json`** (the only type that exists in
+    rendered operations only: passed as `name:=<json>`); limits go into the field description.
+    `tool: "send"`, `access` for its own letter only.
+- **`account` and `notes`** (P5-WEBHOOK-3): two keys of every operation. `account` is the letter
+  an operation is bound to (a webhook), else `null`; `notes` is the person's note for the agent
+  (at most 1,000 characters), else `null`. Package and catalogue operations carry `null`.
 - **`recipes`**: the recipe entries that were projected.
 - Keys appear in the order shown; arrays keep file order; the output is deterministic
   (snapshot-testable) and at most `AGENT_API_JSON_MAX` bytes. When the operations would exceed
@@ -690,6 +707,14 @@ through the proxy environment it inherits, exactly like `curl`.
     or expired, `egress` posture) is printed in full with its reason and exits 3; an upstream
     HTTP error prints the status and the first lines of the body and exits 1. A request held for
     approval waits as `curl` would (`07 §Approvals`), printing one line that it is waiting.
+- **Account-bound operations (P5-WEBHOOK-3, C-911)**: an operation with `account` (an outgoing
+  webhook) is called on that account without `--account`; `--account` naming another is refused
+  (exit 2) and other accounts of the app are no ambiguity. A `json` field takes only
+  `name:=<json>`: `name=value` is refused with a hint (exit 2). `X-Aurora-Dry-Run=1` is the one
+  `X-Aurora-*` header that may be set (it shows the rendered body, sends nothing). `describe`
+  prints the notes, the slots and two example lines (send and dry run); `search` also covers the
+  notes and slot names. A response with `X-Aurora-Error` or the `06 §Errors` body is a gateway
+  refusal (exit 3, with `may_have_been_delivered` when present); the receiver's 4xx/5xx is exit 1.
 - **Attribution**: requests go through `HTTPS_PROXY` as inherited, so a call made from a
   harness's shell carries the turn's context credential and is attributed to the conversation
   and turn like any other request (`12 §Loopback proxies`).
