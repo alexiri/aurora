@@ -1059,6 +1059,7 @@ impl RawConfig {
                 None
             }
         };
+        check_dev_switches(&mut c, self);
         check_common(&mut c, &self.tls, &self.telemetry);
         c.finish()?;
         Ok(ConnectorConfig {
@@ -1082,9 +1083,7 @@ impl RawConfig {
         };
         check_dev_switches(&mut c, self);
         let h = &self.connector_host;
-        if !(h.api_url.starts_with("http://") || h.api_url.starts_with("https://")) {
-            c.err("connector_host.api_url", "must be an http(s) URL");
-        }
+        check_url(&mut c, "connector_host.api_url", Some(&h.api_url));
         if h.listen
             .rsplit_once(':')
             .is_none_or(|(_, p)| p.parse::<u16>().is_err())
@@ -1118,10 +1117,9 @@ impl RawConfig {
                 None
             }
         };
+        check_dev_switches(&mut c, self);
         let r = &self.relay;
-        if !(r.api_url.starts_with("http://") || r.api_url.starts_with("https://")) {
-            c.err("relay.api_url", "must be an http(s) URL");
-        }
+        check_url(&mut c, "relay.api_url", Some(&r.api_url));
         if r.listen
             .rsplit_once(':')
             .is_none_or(|(_, p)| p.parse::<u16>().is_err())
@@ -1218,10 +1216,9 @@ impl RawConfig {
                 None
             }
         };
+        check_dev_switches(&mut c, self);
         let t = &self.terminator;
-        if !(t.api_url.starts_with("http://") || t.api_url.starts_with("https://")) {
-            c.err("terminator.api_url", "must be an http(s) URL");
-        }
+        check_url(&mut c, "terminator.api_url", Some(&t.api_url));
         if t.listen
             .rsplit_once(':')
             .is_none_or(|(_, p)| p.parse::<u16>().is_err())

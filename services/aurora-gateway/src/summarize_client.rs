@@ -151,7 +151,6 @@ impl Summarizer for HttpSummarizer {
                 ))
                 .bearer_auth(&self.secret)
                 .headers(crate::key_id_headers(self.key_id.as_deref()))
-                .headers(crate::key_id_headers(self.key_id.as_deref()))
                 .json(&body)
                 .send_internal("aurora-hookhost")
                 .await
