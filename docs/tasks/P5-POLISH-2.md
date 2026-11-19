@@ -177,3 +177,9 @@ All paths are under `web/src/`.
 
 Sonnet (`nextjs-developer`). Several primitives plus a sweep through shared settings components; the
 call sites are many, but each change is mechanical once the primitive exists.
+
+## Review fixes (P5-POLISH-11 pass 1, lane `p5-polish-c`, 2026-11-19)
+
+- **`StatusLine` wrap (#1): done.** The text span is `min-w-0 flex-1`, so a long line wraps beside the dot.
+- **`SettingField` "Default: …" (P5-POLISH-10 #5, the primitive's half): done.** The default is a help line under the
+  hint (same `data-testid`, same text), not a chip beside the label; only the "Dashboard" badge stays as a chip.

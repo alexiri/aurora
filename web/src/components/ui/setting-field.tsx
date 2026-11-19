@@ -114,21 +114,17 @@ export function SettingField({
               {label}
             </label>
           )}
-          {source === "default" && !locked && defaultLabel ? (
-            // "Default: 15 minutes" — the default in words, not a bare "DEFAULT" badge (D-341).
-            <span
-              data-testid={`${id}-default`}
-              className="inline-flex h-5 items-center rounded-full border border-line-strong px-2 text-label font-medium leading-none text-muted"
-            >
-              Default: {defaultLabel}
-            </span>
-          ) : source === "dashboard" ? (
-            <Badge tone="accent">Dashboard</Badge>
-          ) : null}
+          {source === "dashboard" ? <Badge tone="accent">Dashboard</Badge> : null}
         </div>
         {hint && !error ? (
           <p id={`${controlId}-hint`} className="text-xs text-muted">
             {hint}
+          </p>
+        ) : null}
+        {source === "default" && !locked && defaultLabel ? (
+          // "Default: 15 minutes" in the help text, in words (D-341); a row carries no chip for it (F2, P5-POLISH-11).
+          <p data-testid={`${id}-default`} className="text-xs text-muted">
+            Default: {defaultLabel}
           </p>
         ) : null}
       </div>

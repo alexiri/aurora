@@ -38,7 +38,7 @@ export function StatusLine({
   return (
     <p data-testid={testId} className={cn("flex flex-wrap items-center gap-x-2 gap-y-1 text-sm", TEXT[tone], className)}>
       <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", DOT[tone])} />
-      <span className="min-w-0">{children}</span>
+      <span className="min-w-0 flex-1">{children}</span>
       {action}
     </p>
   );
