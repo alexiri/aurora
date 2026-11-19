@@ -63,6 +63,9 @@ pub struct LinkFetch {
     pub cache: Arc<LinkCache>,
     pub hops: Box<dyn Hops>,
     pub report: Box<dyn Report>,
+    /// (P5-WEBHOOK-2) A send-mode connection's request, rendered and ready: the lane posts it
+    /// (`webhook_send`) instead of fetching.
+    pub send: Option<crate::webhook_send::SendPlan>,
 }
 
 impl std::fmt::Debug for LinkFetch {
@@ -75,14 +78,14 @@ impl std::fmt::Debug for LinkFetch {
 
 /// `https` destination parsed from a stored URL or a redirect `Location`.
 #[derive(Debug, Clone)]
-struct Dest {
-    host: String,
-    port: u16,
-    path: String,
-    query: Option<String>,
+pub(crate) struct Dest {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    pub(crate) path: String,
+    pub(crate) query: Option<String>,
 }
 
-fn parse_dest(uri: &Uri) -> Option<Dest> {
+pub(crate) fn parse_dest(uri: &Uri) -> Option<Dest> {
     if uri.scheme_str()? != "https" {
         return None;
     }
@@ -99,14 +102,14 @@ fn parse_dest(uri: &Uri) -> Option<Dest> {
     })
 }
 
-enum Next {
+pub(crate) enum Next {
     Go(Dest),
     /// A hop that is not `https` (or not parseable): refused.
     Refused,
 }
 
 /// Where a redirect `Location` leads, relative to the current hop.
-fn follow(cur: &Dest, location: &str) -> Next {
+pub(crate) fn follow(cur: &Dest, location: &str) -> Next {
     let abs = |s: &str| {
         s.parse::<Uri>()
             .ok()
@@ -194,7 +197,7 @@ fn map_send(e: &ApiError) -> ApiError {
 
 /// The needles of the echo check: the whole URL and its path-with-query, raw and percent-encoded
 /// (never single path segments: a calendar id legitimately appears in the body).
-fn needles(url: &str, d: &Dest) -> Vec<Vec<u8>> {
+pub(crate) fn needles(url: &str, d: &Dest) -> Vec<Vec<u8>> {
     let pq = match &d.query {
         Some(q) => format!("{}?{q}", d.path),
         None => d.path.clone(),
@@ -372,7 +375,10 @@ impl LinkFetch {
 }
 
 /// Answers an admitted secret-link request; the request-log row is written here, once.
-pub async fn answer(up: &Upstream, f: LinkFetch) -> Response<Body> {
+pub async fn answer(up: &Upstream, mut f: LinkFetch) -> Response<Body> {
+    if let Some(plan) = f.send.take() {
+        return crate::webhook_send::answer(up, f, plan).await;
+    }
     let served = f.serve(up).await;
     let LinkFetch {
         if_none_match,

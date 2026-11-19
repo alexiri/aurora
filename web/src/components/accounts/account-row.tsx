@@ -6,7 +6,8 @@ import { AppLink } from "@/components/apps/app-link";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Avatar } from "@/components/agent-avatar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ErrorState } from "@/components/states";
 import { WhoCan } from "@/components/ui/who-can";
 import { useQueryClient } from "@tanstack/react-query";
@@ -30,29 +31,51 @@ import { ConnectionDetails } from "./connection-details";
 function AgentEntry({ account, entry, workspaceId, canChange, orgName }: { account: Account; entry: AgentAccess; workspaceId: string; canChange: boolean; orgName?: string }) {
   const [open, setOpen] = useState(false);
   const remove = useRemoveAccess();
-  if (!canChange) return <li className="text-sm text-ink">{entryText(entry)}</li>;
+  // (P5-POLISH-7, D1) A pill: the agent and its access level. For someone who may change it, pressing it opens the access
+  // select in a popover (not a dialog); Remove access stays there for the accounts that have no levels.
+  const pill = "inline-flex min-h-9 items-center gap-2 rounded-full border border-line bg-surface px-2.5 py-1 text-sm text-ink";
+  const avatar = (
+    <span aria-hidden="true" className="inline-flex">
+      <Avatar name={entry.agent.name} tintKey={entry.agent.id} size={20} />
+    </span>
+  );
+  if (!canChange) {
+    return (
+      <li className={pill}>
+        {avatar}
+        {entryText(entry)}
+      </li>
+    );
+  }
   return (
     <li>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)} aria-label={`${entryText(entry)}: change access`}>
-        {entryText(entry)}
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent size="lg" title={`${entry.agent.name} and ${account.name}`}>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button type="button" className={`${pill} hover:bg-subtle`}>
+            {avatar}
+            {entryText(entry)}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-96 space-y-3">
           {open ? (
-            <div className="space-y-4">
+            <>
+              <p className="text-sm font-medium text-ink">
+                {entry.agent.name} and {account.name}
+              </p>
               <AccessControl account={account} entry={entry} workspaceId={workspaceId} canChange orgName={orgName} />
               {remove.isError ? <ErrorState error={remove.error} /> : null}
               <Button
                 variant="outline"
+                size="sm"
                 disabled={remove.isPending}
                 onClick={() => remove.mutate({ agentId: entry.agent.id, account }, { onSuccess: () => setOpen(false) })}
               >
-                Remove access
+                Remove from {entry.agent.name}
               </Button>
-            </div>
+            </>
           ) : null}
-        </DialogContent>
-      </Dialog>
+        </PopoverContent>
+      </Popover>
     </li>
   );
 }
@@ -181,7 +204,10 @@ export function AccountRow({
               ) : null}
             </>
           ) : account.can.give_access ? (
-            <GiveOne account={account} agent={agent} />
+            <>
+              {shared ? <p className="text-sm text-ink-2">Shared by {org.data?.name ?? "your organization"}</p> : null}
+              <GiveOne account={account} agent={agent} />
+            </>
           ) : null}
         </div>
       ) : account.agents.length === 0 ? (

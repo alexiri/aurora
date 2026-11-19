@@ -10,6 +10,9 @@ pub struct AuroraHeaders {
     pub batch_id: Option<String>,
     pub batch_label: Option<String>,
     pub batch_total: Option<u32>,
+    /// (P5-WEBHOOK-2, C-910) `X-Aurora-Dry-Run: 1`: an outgoing webhook is checked and rendered, not
+    /// sent. Like every `x-aurora-*` header it is never forwarded upstream.
+    pub dry_run: bool,
 }
 
 fn valid_value(h: &HeaderValue) -> Option<String> {
@@ -101,6 +104,7 @@ pub fn strip_request_headers(headers: &mut HeaderMap) -> AuroraHeaders {
         batch_id: get(headers, "x-aurora-batch-id"),
         batch_label: get(headers, "x-aurora-batch-label"),
         batch_total: get(headers, "x-aurora-batch-total").and_then(|s| s.parse().ok()),
+        dry_run: get(headers, "x-aurora-dry-run").as_deref() == Some("1"),
     };
     let aurora: Vec<HeaderName> = headers
         .keys()

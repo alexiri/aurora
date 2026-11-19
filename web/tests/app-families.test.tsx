@@ -107,8 +107,10 @@ describe("catalogue and connect window", () => {
     expect(tiles).toHaveLength(2);
     expect(within(list).getByText("GitHub")).toBeInTheDocument();
     expect(within(list).queryByText("GitHub Enterprise Server")).toBeNull();
-    expect(within(list).getByText("3 connections")).toBeInTheDocument();
-    expect(within(list).getByRole("button", { name: "Connect GitHub" })).toBeInTheDocument();
+    // (P5-POLISH-7) A status line instead of "3 connections", and the button that follows it.
+    expect(within(list).getByText("Connected · 3 accounts")).toBeInTheDocument();
+    expect(within(list).queryByText(/connections/)).toBeNull();
+    expect(within(list).getByRole("button", { name: "Connect another GitHub" })).toBeInTheDocument();
   });
 
   const step = (onPick: (w: { appId: string; instanceId?: string }) => void = () => {}) =>

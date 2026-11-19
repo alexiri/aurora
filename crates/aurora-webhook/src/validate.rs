@@ -273,6 +273,30 @@ pub fn validate(
     }
 }
 
+/// The secret value names a stored configuration uses: every `{{secret:name}}` of the template and
+/// the headers, in first-seen order. `validate` requires the declared names and the used ones to be
+/// the same set, so the gateway can validate a stored configuration without opening the sealed
+/// credential first.
+#[must_use]
+pub fn secret_names_used(config: &WebhookConfig) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let texts = std::iter::once(config.template.as_str())
+        .chain(config.headers.iter().map(|h| h.value.as_str()));
+    for t in texts {
+        let mut rest = t;
+        while let Some(p) = rest.find("{{secret:") {
+            let after = &rest[p + "{{secret:".len()..];
+            let Some(end) = after.find("}}") else { break };
+            let name = &after[..end];
+            if template::name_ok(name) && !out.iter().any(|n| n == name) {
+                out.push(name.to_owned());
+            }
+            rest = &after[end..];
+        }
+    }
+    out
+}
+
 /// The slot values that passed [`check_values`], in declaration order. Holds values: do not log it.
 #[derive(Clone)]
 pub struct CheckedValues {

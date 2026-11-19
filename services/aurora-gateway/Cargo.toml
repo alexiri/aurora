@@ -29,6 +29,7 @@ aurora-secrets = { workspace = true }
 aurora-llm = { workspace = true }
 aurora-summary = { workspace = true }
 aurora-registry = { workspace = true }
+aurora-webhook = { workspace = true }
 arc-swap = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }

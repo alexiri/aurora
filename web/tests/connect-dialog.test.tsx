@@ -321,7 +321,7 @@ describe("Reconnect on the Accounts tab", () => {
     stub();
     wrap(list());
     fireEvent.keyDown(await screen.findByRole("button", { name: "More for me@acme.io" }), { key: "Enter" });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Reconnect" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Sign in again" }));
     const dialog = await screen.findByRole("dialog", { name: "Reconnect GitHub" });
     await waitFor(() => expect(within(dialog).getByRole("radio", { name: /Sign in/ })).toBeChecked());
     expect(openSpy).not.toHaveBeenCalled();

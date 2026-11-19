@@ -1105,6 +1105,13 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/connections/{id}", G::WsOwn, false),
     r("PATCH", "/v1/connections/{id}", G::WsOwn, false),
     r("DELETE", "/v1/connections/{id}", G::WsOwn, false),
+    // (P5-WEBHOOK-2, C-909) An outgoing webhook's configuration: `can_own` of the workspace (owner
+    // or admin for an organization's); the preview and the presets need a signed-in caller.
+    r("GET", "/v1/connections/{id}/webhook", G::WsOwn, false),
+    r("PUT", "/v1/connections/{id}/webhook", G::WsOwn, false),
+    r("POST", "/v1/connections/{id}/webhook/test", G::WsOwn, false),
+    r("POST", "/v1/apps/webhook/webhook-preview", G::Auth, false),
+    r("GET", "/v1/apps/{app}/webhook-presets", G::Auth, false),
     r("GET", "/v1/connections/{id}/grants", G::WsOwn, false),
     // (P5-UX-11, C-990) who a lower limit would change: workspace `can_own`, or org owner/admin
     // for an organization's account (a workspace's account has no limit: 400).

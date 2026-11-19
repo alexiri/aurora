@@ -571,8 +571,8 @@ pub static FIELDS: &[FieldMeta] = &[
     ),
     f(
         "hosted.enabled",
-        "Agents Aurora runs for people",
-        "Turn it off to stop new hosted agents and sandbox starts; agents people run themselves are unaffected.",
+        "Run agents on Aurora's computers",
+        "On: Aurora gives each agent its own computer to work on. Off: people can only connect agents that run on their own machines.",
         K::Bool,
         "On",
         None,
@@ -962,6 +962,25 @@ pub static FIELDS: &[FieldMeta] = &[
         "45 seconds",
         Some("seconds"),
         TERMINAL,
+    ),
+    // ---------------------------------------------------------------- outgoing webhooks
+    f(
+        "outgoing_webhooks.per_minute_max",
+        "Webhook sends a minute",
+        "The most an agent may send through one webhook each minute (1 to 600). An organization or a webhook may set it lower, never higher.",
+        K::Int,
+        "30",
+        Some("sends a minute"),
+        LIMITS_DOC,
+    ),
+    f(
+        "outgoing_webhooks.per_day_max",
+        "Webhook sends a day",
+        "The most an agent may send through one webhook each day (1 to 100,000). An organization or a webhook may set it lower, never higher.",
+        K::Int,
+        "500",
+        Some("sends a day"),
+        LIMITS_DOC,
     ),
     // ---------------------------------------------------------------- limits
     f(

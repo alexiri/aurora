@@ -353,9 +353,8 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
   it("shows the harnesses each endpoint serves as badges, and a notice for one that serves none (D-260(a))", async () => {
     await open({}, { harnesses: { central: ["claude_code", "codex"], team: [] } });
     const rows = within(screen.getByRole("list", { name: "Endpoints" })).getAllByRole("listitem");
-    const badges = within(rows[0]!).getByLabelText("Harnesses this endpoint serves");
-    expect(within(badges).getByText("Claude Code")).toBeTruthy();
-    expect(within(badges).getByText("Codex")).toBeTruthy();
+    const line = within(rows[0]!).getByLabelText("Harnesses this endpoint serves");
+    expect(line.textContent).toBe("Works with Claude Code, Codex");
     expect(within(rows[0]!).queryByText(/No enabled harness speaks this API/)).toBeNull();
     expect(within(rows[1]!).getByText("No enabled harness speaks this API. Put a LiteLLM endpoint in front to translate.")).toBeTruthy();
   });
@@ -573,16 +572,40 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
       expect(within(dialog).getByText("context_window out of range")).toBeTruthy();
     });
 
-    it("tells a non-Anthropic row without roles to set them, and Anthropic that roles come from the provider", async () => {
-      await open({}, {
-        entries: [
-          { id: "central", value: central, source: "helm" },
-          { id: "anth", value: { id: "anth", provider: "anthropic" }, source: "dashboard" },
-        ],
-      });
+    it("shows an endpoint's role warning once, with its fix: Set roles on a dashboard row, the Helm path on a Helm row, nothing on one without a warning (C-1034, D-385)", async () => {
+      await open(
+        {
+          "GET /v1/admin/llm-endpoint-warnings": () =>
+            json(200, [
+              { endpoint_id: "central", roles: [{ role: "large", warning: "role_unset" }, { role: "medium", warning: "role_unset" }, { role: "small", warning: "role_unset" }] },
+              { endpoint_id: "glm", roles: [{ role: "small", warning: "role_unset" }] },
+            ]),
+        },
+        {
+          entries: [
+            { id: "central", value: central, source: "helm" },
+            { id: "glm", value: { id: "glm", provider: "openai_compatible", base_url: "https://glm.test/v1" }, source: "dashboard" },
+            { id: "anth", value: { id: "anth", provider: "anthropic" }, source: "dashboard" },
+          ],
+        },
+      );
       const rows = within(screen.getByRole("list", { name: "Endpoints" })).getAllByRole("listitem");
-      expect(within(rows[0]!).getByTestId("no-roles-notice")).toHaveTextContent("Agents on this endpoint will ask for Claude model names");
-      expect(within(rows[1]!).getByText("Roles from the provider")).toBeTruthy();
+      // Helm: neutral, says where, no button, no chip beyond "Set in Helm".
+      const helm = await within(rows[0]!).findByTestId("endpoint-role-warning");
+      expect(helm.textContent).toContain("Set the Large, Medium and Small roles in the Helm values under llm.endpoints.central.roles");
+      expect(within(helm).queryByRole("button")).toBeNull();
+      expect(within(rows[0]!).getByText("LiteLLM gateway")).toBeTruthy();
+      // Dashboard: one line with Set roles, which opens the editor.
+      const own = await within(rows[1]!).findByTestId("endpoint-role-warning");
+      expect(own.textContent).toContain("set the Small role.");
+      fireEvent.click(within(own).getByRole("button", { name: "Set roles of glm" }));
+      expect(await screen.findByRole("dialog")).toBeTruthy();
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      // No warning from the server: nothing, and Anthropic's roles come from the provider.
+      expect(within(rows[2]!).queryByTestId("endpoint-role-warning")).toBeNull();
+      expect(within(rows[2]!).getByText("Roles from the provider")).toBeTruthy();
+      // The per-endpoint "Agents on this endpoint will ask for Claude model names" notice is gone.
+      expect(screen.queryByText(/Agents on this endpoint will ask for Claude model names/)).toBeNull();
     });
   });
 });

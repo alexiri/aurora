@@ -1,0 +1,16 @@
+description: P5-TOOLASK an explicit workspace allow of the tool wins over the package default ask
+org: {ordered_rules: []}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: allow-send, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1, tools: [send_scheduling_message]}]}]}
+facts:
+  host: dav.example.org
+  port: 443
+  path: /dav/outbox/
+  method: POST
+  app_id: caldav
+  tool_id: send_scheduling_message
+  tool_tags: {write: true, ask_default: true}
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: caldav, scope: workspace}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect:
+  verdict: allow
+  trace_via: {organization: nothing, workspace: rule}

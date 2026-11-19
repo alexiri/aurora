@@ -126,10 +126,14 @@ test.describe("tour from the keyboard", () => {
     await expect(page.locator("[data-tour-active]")).toHaveCount(0);
   });
 
-  test("the wizard says what is ready now and what Helm value changes it", async ({ page }) => {
+  test("the checklist is five rows with one state line and one button each, and no embedded form (D-391)", async ({ page }) => {
     await open(page, "/admin/setup", "light", "wizard");
-    await expect(page.getByRole("list", { name: "Setup steps" })).toBeVisible();
-    await expect(page.getByText("CERN SSO")).toBeVisible();
-    await expect(page.getByText("llm.endpoints[].default_model")).toBeVisible();
+    const steps = page.getByRole("list", { name: "Setup steps" });
+    await expect(steps).toBeVisible();
+    for (const id of ["signin", "placement", "key", "try", "email"]) await expect(steps.locator(`#setup-${id}`)).toHaveCount(1);
+    // The sign-in row names the provider the admin signed in with; placement is a link, not a form.
+    await expect(steps.locator("#setup-signin")).toContainText("CERN SSO");
+    await expect(steps.locator("#setup-placement").getByRole("link", { name: /Choose|Change/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save placement" })).toHaveCount(0);
   });
 });

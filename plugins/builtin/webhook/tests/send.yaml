@@ -17,6 +17,13 @@
     headers: { content-type: application/json }
     body: '{"text": "hi"}'
   expect: { app: webhook, tool: send }
+- name: a PUT of the slot values is the send tool too (a webhook configured for PUT)
+  request:
+    method: PUT
+    url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/"
+    headers: { content-type: application/json }
+    body: '{"text": "hi"}'
+  expect: { app: webhook, tool: send }
 - name: "negative send: a GET is refused"
   request: { method: GET, url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/" }
   expect: { refused: method_not_allowed }

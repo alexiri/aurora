@@ -141,7 +141,11 @@ describe("a workspace's Internet access page", () => {
     expect(screen.getByText("No rules yet. Until you add one, requests follow the limits and defaults below.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Requests without an account")).toBeNull();
     expect(screen.getByRole("button", { name: "Tighten…" })).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("heading", { name: "Check what would happen" })).toBeInTheDocument();
+    // (P5-POLISH-7) The simulator is a button that opens it in a dialog.
+    expect(screen.queryByRole("heading", { name: "Check what would happen", level: 2 })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Check what would happen" }));
+    expect(await screen.findByRole("dialog", { name: "Check what would happen" })).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     // Nothing is pending: no bar.
     expect(screen.queryByRole("region", { name: "Changes not applied" })).toBeNull();
   });

@@ -7,6 +7,8 @@ import { IdpRolesList } from "@/components/identity/idp-roles-list";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { MoreIcon } from "@/components/ui/icons";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/notice";
@@ -27,12 +29,17 @@ export function NotFoundPage() {
 export function UsersTable({
   users,
   selfId,
+  complete = false,
 }: {
   users: AdminUser[];
   selfId?: string;
+  /** The list is every user (no search, no further page): then the only instance admin cannot be removed. */
+  complete?: boolean;
 }) {
   const patch = usePatchAdminUser();
   const [err, setErr] = useState<{ id: string; error: unknown } | null>(null);
+  const [showRoles, setShowRoles] = useState<string | null>(null);
+  const admins = users.filter((x) => x.is_instance_admin && !x.disabled_at);
 
   function change(u: AdminUser, body: { is_instance_admin?: boolean; disabled?: boolean }) {
     setErr(null);
@@ -54,6 +61,9 @@ export function UsersTable({
         {users.map((u) => {
           const disabled = !!u.disabled_at;
           const isSelf = u.id === selfId;
+          const lastAdmin = complete && u.is_instance_admin && admins.length === 1 && admins[0]!.id === u.id;
+          const canAdmin = !isSelf && !(u.is_instance_admin && lastAdmin);
+          const canDisable = !isSelf;
           return (
             <tr key={u.id}>
               <Td>
@@ -69,40 +79,46 @@ export function UsersTable({
                   {u.instance_admin_idp_value ? <IdpRoleBadge value={u.instance_admin_idp_value} /> : null}
                   {disabled ? <Badge tone="danger">disabled</Badge> : null}
                 </div>
-                {u.idp_roles ? (
-                  <details className="mt-1.5 text-xs">
-                    <summary className="cursor-pointer text-muted">
-                      Role values ({u.idp_roles.values.length})
-                    </summary>
-                    <div className="mt-1.5 min-w-60">
-                      <IdpRolesList roles={u.idp_roles} />
-                    </div>
-                  </details>
+                {u.idp_roles && showRoles === u.id ? (
+                  <div className="mt-1.5 min-w-60 text-xs" data-testid="idp-role-values">
+                    <IdpRolesList roles={u.idp_roles} />
+                  </div>
                 ) : null}
               </Td>
               <Td className="space-y-1">
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={patch.isPending || !!u.instance_admin_idp_value}
-                    title={u.instance_admin_idp_value ? "Granted by an identity provider role" : undefined}
-                    onClick={() => change(u, { is_instance_admin: !u.is_instance_admin })}
-                    aria-label={`${u.is_instance_admin ? "Remove admin from" : "Make admin"} ${u.email}`}
-                  >
-                    {u.is_instance_admin ? "Remove admin" : "Make admin"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={patch.isPending}
-                    onClick={() => change(u, { disabled: !disabled })}
-                    aria-label={`${disabled ? "Turn on" : "Turn off"} ${u.email}`}
-                  >
-                    {disabled ? "Turn on" : "Turn off"}
-                  </Button>
-                </div>
+                {/* (P5-POLISH-10) Your own row offers neither "Remove admin" nor "Turn off", and the last instance admin
+                    cannot be removed (the server refuses both already): they are not offered. Role values live here too. */}
                 {isSelf ? <p className="text-xs text-muted">This is you.</p> : null}
+                {canAdmin || canDisable || u.idp_roles ? (
+                  <Menu>
+                    <MenuTrigger asChild>
+                      <Button variant="ghost" size="sm" aria-label={`More for ${u.email}`}>
+                        <MoreIcon aria-hidden="true" className="size-4" />
+                      </Button>
+                    </MenuTrigger>
+                    <MenuContent align="end">
+                      {u.idp_roles ? (
+                        <MenuItem onSelect={() => setShowRoles(showRoles === u.id ? null : u.id)}>
+                          {showRoles === u.id ? "Hide" : "Show"} role values ({u.idp_roles.values.length})
+                        </MenuItem>
+                      ) : null}
+                      {canAdmin ? (
+                        <MenuItem
+                          disabled={patch.isPending || !!u.instance_admin_idp_value}
+                          title={u.instance_admin_idp_value ? "Granted by an identity provider role" : undefined}
+                          onSelect={() => change(u, { is_instance_admin: !u.is_instance_admin })}
+                        >
+                          {u.is_instance_admin ? "Remove admin" : "Make admin"}
+                        </MenuItem>
+                      ) : null}
+                      {canDisable ? (
+                        <MenuItem disabled={patch.isPending} onSelect={() => change(u, { disabled: !disabled })}>
+                          {disabled ? "Turn on" : "Turn off"}
+                        </MenuItem>
+                      ) : null}
+                    </MenuContent>
+                  </Menu>
+                ) : null}
                 {err?.id === u.id ? (
                   <ErrorNotice error={err.error} className="max-w-xs p-2 text-xs" />
                 ) : null}
@@ -154,6 +170,7 @@ export function AdminUsersView() {
         <UsersTable
           users={users.data.pages.flatMap((p) => p.items)}
           selfId={session.data.user.id}
+          complete={q === "" && !users.hasNextPage}
         />
       ) : null}
       {users.hasNextPage ? (

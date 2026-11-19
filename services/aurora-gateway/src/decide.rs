@@ -75,6 +75,9 @@ pub struct PolicyHandler {
     /// (P5-ICS, D-273) Bodies of secret links, answered after admission (registered with the
     /// invalidation hub by the binary).
     link_cache: Arc<crate::seclink::LinkCache>,
+    /// (P5-WEBHOOK-2, C-912) The instance ceilings of the outgoing-webhook send limits (per
+    /// minute, per day); replaced live when the `outgoing_webhooks` settings change.
+    webhook_ceiling: Arc<arc_swap::ArcSwap<(u32, u32)>>,
 }
 
 mod link;
@@ -569,7 +572,15 @@ impl PolicyHandler {
             insecure_loopback_injection: false,
             llm_mint: None,
             link_cache: Arc::new(crate::seclink::LinkCache::default()),
+            webhook_ceiling: Arc::new(arc_swap::ArcSwap::from_pointee((30, 500))),
         }
+    }
+
+    /// (P5-WEBHOOK-2) The live cell of the instance send ceilings (the binary wires it to the
+    /// settings); tests set it directly.
+    #[must_use]
+    pub fn webhook_ceiling(&self) -> Arc<arc_swap::ArcSwap<(u32, u32)>> {
+        self.webhook_ceiling.clone()
     }
 
     /// (P5-ICS) The secret-link body cache (the binary registers it with the invalidation hub).
@@ -1153,7 +1164,16 @@ impl PolicyHandler {
             // The agent's path and query are ignored by the lane and so never logged either.
             ctx.path = "/".to_owned();
             return self
-                .link_request(ctx, &identity, conn_id, &method, &headers, released)
+                .link_request(
+                    ctx,
+                    &identity,
+                    conn_id,
+                    &method,
+                    &headers,
+                    released,
+                    link::LinkBody::Stream(body),
+                    aurora_headers.dry_run,
+                )
                 .await;
         }
         let rv = match self.resolver.resolve(&identity, &host, port).await {
@@ -1614,6 +1634,7 @@ impl PolicyHandler {
                 host: &host,
                 path: &red_path,
                 rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                package_ask: d.package_ask,
                 connection_id: ctx.connection_id,
                 app_id: ctx.app_id.as_deref(),
                 tool_id: ctx.tool_id.as_deref(),
@@ -2934,6 +2955,7 @@ impl DbSession {
                     host: &self.host,
                     path: &path,
                     rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                    package_ask: false,
                     connection_id: Some(self.conn.id),
                     app_id: None,
                     tool_id: None,

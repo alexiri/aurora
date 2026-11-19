@@ -245,7 +245,8 @@ describe("links to the setup page (C-933)", () => {
     wrap(<AppsTab workspaceId="w1" orgId="o1" canOwn />);
     const details = await screen.findByRole("link", { name: "Details of Linear" });
     expect(details).toHaveAttribute("href", "/o/acme/w/ops/apps/linear");
-    expect(screen.getByRole("link", { name: "Linear" })).toHaveAttribute("href", "/o/acme/w/ops/apps/linear");
+    // (P5-POLISH-7) The app's name is the link to Details: no second Details button.
+    expect(screen.getAllByRole("link", { name: /Linear/ })).toHaveLength(1);
     // Details is a link now (no dialog to open)
     expect(screen.queryByRole("button", { name: "Details of Linear" })).toBeNull();
   });

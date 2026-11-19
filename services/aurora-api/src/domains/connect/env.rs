@@ -187,6 +187,16 @@ impl Env {
             .store(std::sync::Arc::new(PrivateAllow::new(entries)));
     }
 
+    /// (P5-WEBHOOK-2, C-909) Resolve `host` and run the destination guard (private ranges only under
+    /// `gateway.allowed_private`) without sending anything: an outgoing webhook is not called at
+    /// connect.
+    pub async fn check_destination(&self, host: &str) -> Result<(), ResolveError> {
+        let allow = self.allow.load_full();
+        resolve_guarded(host, |ip| allow.permits(ip, host))
+            .await
+            .map(|_| ())
+    }
+
     /// The registration probe's timeout.
     pub fn probe_timeout(&self) -> Duration {
         Duration::from_millis(

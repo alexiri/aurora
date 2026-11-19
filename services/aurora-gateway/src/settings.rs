@@ -16,7 +16,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The sections the gateway reads (`03 §instance_settings`).
-pub const SECTIONS: [&str; 5] = ["governance", "llm", "approvals", "limits", "secrets"];
+pub const SECTIONS: [&str; 6] = [
+    "governance",
+    "llm",
+    "approvals",
+    "limits",
+    "secrets",
+    "outgoing_webhooks",
+];
 
 /// Is `section` one the gateway reads (the test sections too where the registry has them)?
 fn reads(section: &str) -> bool {
@@ -230,6 +237,21 @@ impl Settings {
         apply(&self.snapshot().effective);
         self.on_swap(Arc::new(move |old, new| {
             if section_changed(old, new, &["gateway.allowed_private", "llm."]) {
+                apply(new);
+            }
+        }));
+    }
+
+    /// (P5-WEBHOOK-2, C-912) The instance ceilings of the outgoing-webhook send limits follow the
+    /// `outgoing_webhooks` settings live: a lowered ceiling applies to the next send.
+    pub fn apply_webhook_ceiling_on_change(&self, cell: Arc<ArcSwap<(u32, u32)>>) {
+        let apply = move |e: &Effective| {
+            let w = &e.raw.outgoing_webhooks;
+            cell.store(Arc::new((w.per_minute_max, w.per_day_max)));
+        };
+        apply(&self.snapshot().effective);
+        self.on_swap(Arc::new(move |old, new| {
+            if section_changed(old, new, &["outgoing_webhooks."]) {
                 apply(new);
             }
         }));
