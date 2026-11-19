@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useId } from "react";
 
+import { useCopy } from "@/lib/use-copy";
 import { cn } from "@/lib/utils";
 
 import { Button } from "./button";
@@ -24,12 +25,7 @@ export function CopyValue({
   className?: string;
 }) {
   const id = useId();
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  useEffect(() => {
-    if (state === "idle") return;
-    const t = setTimeout(() => setState("idle"), 2000);
-    return () => clearTimeout(t);
-  }, [state]);
+  const { state, copy } = useCopy();
   return (
     <div className={cn("space-y-1.5", className)} data-testid="copy-value">
       <p id={`${id}-label`} className="text-sm font-medium text-ink">
@@ -48,14 +44,7 @@ export function CopyValue({
           variant="outline"
           size="sm"
           aria-label={`Copy ${label}`}
-          onClick={() => {
-            const write = navigator.clipboard?.writeText(value);
-            if (!write) return setState("failed");
-            write.then(
-              () => setState("copied"),
-              () => setState("failed"),
-            );
-          }}
+          onClick={() => copy(value)}
         >
           {state === "copied" ? "Copied" : "Copy"}
         </Button>

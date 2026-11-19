@@ -17,6 +17,7 @@ import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
+import { copyLabel, useCopy } from "@/lib/use-copy";
 import {
   lastActivityText,
   useCreateScimToken,
@@ -37,18 +38,10 @@ const parseDomains = (text: string) =>
     .filter(Boolean);
 
 function CopyUrlButton({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false);
+  const { state, copy } = useCopy();
   return (
-    <Button
-      type="button"
-      variant="outline"
-      aria-label="Copy base URL"
-      onClick={() => {
-        void navigator.clipboard?.writeText(url);
-        setCopied(true);
-      }}
-    >
-      {copied ? "Copied" : "Copy"}
+    <Button type="button" variant="outline" aria-label="Copy base URL" onClick={() => copy(url)}>
+      {copyLabel(state)}
     </Button>
   );
 }
@@ -131,7 +124,7 @@ function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
   const create = useCreateScimToken(orgId);
   const revoke = useRevokeScimToken(orgId);
   const [name, setName] = useState("");
-  const [copied, setCopied] = useState(false);
+  const tokenCopy = useCopy();
   const [toRevoke, setToRevoke] = useState<ScimTokenEntry | null>(null);
   const err = create.error ?? revoke.error;
   const fe = err ? errorMessage(err) : undefined;
@@ -143,7 +136,6 @@ function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    setCopied(false);
     create.mutate({ name: name.trim() }, { onSuccess: () => setName("") });
   }
 
@@ -183,15 +175,8 @@ function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
             <code className="block min-w-0 max-w-full flex-1 break-all rounded bg-surface-2 px-2 py-1 font-mono text-xs">
               {created}
             </code>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                if (created) void navigator.clipboard?.writeText(created);
-                setCopied(true);
-              }}
-            >
-              {copied ? "Copied" : "Copy"}
+            <Button variant="outline" size="sm" onClick={() => tokenCopy.copy(created ?? "")}>
+              {copyLabel(tokenCopy.state)}
             </Button>
           </div>
           <div className="mt-4 flex justify-end">

@@ -14,6 +14,7 @@ import { Form, FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { appDisplayName } from "@/lib/api/app-name";
 import { errorMessage } from "@/lib/api/errors";
+import { copyLabel, useCopy } from "@/lib/use-copy";
 import {
   buildClientPatchFields,
   useApp,
@@ -81,20 +82,13 @@ function useDefinitions(scope: CredScope) {
 }
 
 function RedirectUri({ uri }: { uri: string }) {
-  const [copied, setCopied] = useState(false);
+  const { state, copy } = useCopy();
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
       <span className="font-medium">Redirect URI:</span>
       <code className="break-all rounded-control border border-line bg-subtle px-1.5 py-0.5 font-mono text-ink">{uri}</code>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={() => {
-          void navigator.clipboard?.writeText(uri).then(() => setCopied(true));
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
+      <Button type="button" size="sm" variant="outline" onClick={() => copy(uri)}>
+        {copyLabel(state)}
       </Button>
     </div>
   );

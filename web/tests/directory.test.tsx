@@ -206,8 +206,10 @@ describe("Directory sync page", () => {
       false,
     );
     const dlg = screen.getByRole("dialog");
+    // "Copied" only when the browser took the write; a refused one says so (the shared copy helper).
+    vi.stubGlobal("navigator", { clipboard: { writeText: async () => {} } });
     fireEvent.click(within(dlg).getByRole("button", { name: "Copy" }));
-    expect(within(dlg).getByText("Copied")).toBeInTheDocument();
+    expect(await within(dlg).findByText("Copied")).toBeInTheDocument();
     fireEvent.click(within(dlg).getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByText("aud_NEW1234567890abcdef")).not.toBeInTheDocument());
   });

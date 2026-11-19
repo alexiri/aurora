@@ -8,6 +8,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
+import { useCopy } from "@/lib/use-copy";
 import { cn } from "@/lib/utils";
 import {
   agentSnippets,
@@ -23,22 +24,18 @@ import { AgentRevealDialog, type Revealed } from "./reveal";
 import { TokenBadges } from "./token-badges";
 
 function Snippet({ label, text }: { label: string; text: string }) {
-  const [copied, setCopied] = useState(false);
+  const { state, copy } = useCopy();
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium text-ink">{label}</p>
       <pre className="overflow-auto rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink">{text}</pre>
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void navigator.clipboard?.writeText(text).then(() => setCopied(true))}
-        >
+        <Button variant="outline" size="sm" onClick={() => copy(text)}>
           Copy {label}
         </Button>
-        {copied ? (
-          <span role="status" className="text-sm text-accent-ink">
-            Copied
+        {state !== "idle" ? (
+          <span role="status" className={state === "copied" ? "text-sm text-accent-ink" : "text-sm text-danger-ink"}>
+            {state === "copied" ? "Copied" : "Your browser blocked copying; select the text instead."}
           </span>
         ) : null}
       </div>

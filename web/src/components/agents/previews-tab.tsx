@@ -17,6 +17,7 @@ import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { fieldErrors } from "@/lib/api/errors";
 import { useSandbox } from "@/lib/api/conversations";
+import { copyLabel, useCopy } from "@/lib/use-copy";
 import {
   useCreatePreview,
   useDeletePreview,
@@ -190,17 +191,14 @@ function ShareRow({ agentId, s, frozen }: { agentId: string; s: PreviewShare; fr
   const [confirming, setConfirming] = useState(false);
   const [lastStart, setLastStart] = useState(false);
   const err = del.error ?? start.error ?? upd.error;
+  const urlCopy = useCopy();
   return (
     <tr>
       <Td className="max-w-64">
         <span className="block break-all font-mono text-xs text-ink-2">{s.hostname}</span>
         <span className="mt-1 flex gap-2 text-xs text-muted">
-          <button
-            type="button"
-            className="text-link underline"
-            onClick={() => void navigator.clipboard.writeText(s.url)}
-          >
-            Copy
+          <button type="button" className="text-link underline" onClick={() => urlCopy.copy(s.url)}>
+            {copyLabel(urlCopy.state)}
           </button>
           <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-link underline">
             Open

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
+import { copyLabel, useCopy } from "@/lib/use-copy";
 import { onlySentence, whoCanOf, type WhoCanValue } from "@/lib/who-can";
 
 import { Button } from "./ui/button";
@@ -15,7 +16,7 @@ import { WhoCan } from "./ui/who-can";
  * characters with a copy button for the whole id. Nothing for an error without one (network failure, no header).
  */
 export function RequestReference({ error }: { error: unknown }) {
-  const [copied, setCopied] = useState(false);
+  const { state, copy } = useCopy();
   const id = error instanceof ApiError ? error.requestId : undefined;
   if (!id) return null;
   return (
@@ -28,11 +29,9 @@ export function RequestReference({ error }: { error: unknown }) {
         size="sm"
         className="min-h-8 px-2 text-xs"
         aria-label={`Copy reference ${id}`}
-        onClick={() => {
-          void navigator.clipboard?.writeText(id).then(() => setCopied(true));
-        }}
+        onClick={() => copy(id)}
       >
-        {copied ? "Copied" : "Copy"}
+        {copyLabel(state)}
       </Button>
     </p>
   );

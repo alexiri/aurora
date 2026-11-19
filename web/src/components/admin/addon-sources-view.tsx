@@ -30,23 +30,17 @@ import {
   type AddonSourceCheckResult,
   type Interval,
 } from "@/lib/api/addon-sources";
+import { copyLabel, useCopy } from "@/lib/use-copy";
 
 function Fingerprint({ value, label = "Signing key fingerprint" }: { value: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
+  const { state, copy } = useCopy();
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <code aria-label={label} className="rounded-control bg-subtle px-2 py-0.5 font-mono text-xs text-ink">
         {value}
       </code>
-      <Button
-        size="sm"
-        variant="outline"
-        aria-label={`Copy ${label.toLowerCase()}`}
-        onClick={() => {
-          void navigator.clipboard?.writeText(value).then(() => setCopied(true));
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
+      <Button size="sm" variant="outline" aria-label={`Copy ${label.toLowerCase()}`} onClick={() => copy(value)}>
+        {copyLabel(state)}
       </Button>
     </span>
   );
