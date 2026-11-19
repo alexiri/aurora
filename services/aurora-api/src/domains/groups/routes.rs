@@ -6,7 +6,7 @@ use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, PageParams, Pagination};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::groups as repo;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -41,9 +41,10 @@ fn if_match(h: &HeaderMap) -> Result<Option<i64>, ApiError> {
         .and_then(|s| s.trim().trim_matches('"').parse::<i64>().ok())
         .map(Some)
         .ok_or_else(|| {
-            ApiError::invalid_request(
+            ApiError::invalid_field(
                 "Invalid If-Match.",
-                vec![FieldError::new("/if-match", "must be the group's revision")],
+                "/if-match",
+                "must be the group's revision",
             )
         })
 }
@@ -76,9 +77,10 @@ async fn list_groups(
     if let Some(src) = q.source.as_deref()
         && !matches!(src, "manual" | "scim" | "idp")
     {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid source.",
-            vec![FieldError::new("/source", "manual, scim or idp")],
+            "/source",
+            "manual, scim or idp",
         ));
     }
     let rows = repo::list(
@@ -247,12 +249,10 @@ async fn members_batch(
     Json(req): Json<MembersBatchRequest>,
 ) -> Result<Json<MembersBatchResult>, ApiError> {
     if req.add.len() > BATCH_MAX || req.remove.len() > BATCH_MAX {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/add",
-                "at most 100 `add` and 100 `remove`",
-            )],
+            "/add",
+            "at most 100 `add` and 100 `remove`",
         ));
     }
     Ok(Json(

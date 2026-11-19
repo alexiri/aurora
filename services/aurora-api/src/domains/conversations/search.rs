@@ -7,7 +7,7 @@ use crate::app::AppState;
 use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::search::{self, Archived, AuthorFilter, Cursor, Params, Scope};
 use aurora_db::repo::workspaces;
@@ -96,7 +96,7 @@ pub struct SearchResponse {
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid request.", path, msg)
 }
 
 /// 422 `search_query_invalid` (also the tools' `search_query_invalid`).

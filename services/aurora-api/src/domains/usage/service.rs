@@ -1,6 +1,6 @@
 //! The one aggregation behind the workspace, organization and instance usage routes.
+use aurora_core::ApiError;
 use aurora_core::limits::{USAGE_RANGE_MAX_DAYS, USAGE_TOP_MAX};
-use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
 use aurora_db::repo::usage::{self, Counters, Dim, Group, ModelGroup, Scope};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
@@ -146,12 +146,10 @@ pub struct OrgUsage {
 }
 
 fn bad_date(field: &str) -> ApiError {
-    ApiError::invalid_request(
+    ApiError::invalid_field(
         "Invalid usage query.",
-        vec![FieldError::new(
-            format!("/{field}"),
-            format!("{field} must be a date, YYYY-MM-DD"),
-        )],
+        format!("/{field}"),
+        format!("{field} must be a date, YYYY-MM-DD"),
     )
 }
 

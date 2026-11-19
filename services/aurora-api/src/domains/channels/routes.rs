@@ -5,7 +5,7 @@ use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, PageParams};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use axum::body::Bytes;
 use axum::extract::State;
 use http::StatusCode;
@@ -287,10 +287,7 @@ async fn reattach_presence(
         ReattachRequest::default()
     } else {
         serde_json::from_slice(&body).map_err(|_| {
-            ApiError::invalid_request(
-                "Invalid request body.",
-                vec![FieldError::new("", "expected {\"fields\"?: {…}}")],
-            )
+            ApiError::invalid_field("Invalid request body.", "", "expected {\"fields\"?: {…}}")
         })?
     };
     Ok(Json(presences::reattach(&s, &c, id, req.fields).await?))

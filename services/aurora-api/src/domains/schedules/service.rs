@@ -1,7 +1,7 @@
 //! Schedule CRUD shared by the routes and the agent tools. Authorization is the caller's job.
 
 use super::cron;
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::schedules::{self as repo, NewSchedule, ScheduleRow};
 use aurora_db::repo::{agents::AgentRow, workspaces};
 use chrono::Utc;
@@ -16,7 +16,7 @@ const GATE_DESCRIPTION_MAX: usize = 200;
 const PER_AGENT_MAX: i64 = 50;
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid schedule.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid schedule.", path, msg)
 }
 
 pub fn not_found() -> ApiError {

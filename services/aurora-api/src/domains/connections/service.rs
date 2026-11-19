@@ -5,7 +5,7 @@ use crate::domains::grants::levels;
 use crate::domains::plugins::registry;
 use crate::http::auth::{Caller, require_own};
 use crate::http::pagination::{Page, Pagination};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::approvals;
 use aurora_db::repo::connections::{self as repo, ConnectionRow};
 use aurora_db::repo::credentials;
@@ -82,9 +82,10 @@ pub async fn list(
             "active" | "reauth_required" | "disabled" | "orphaned"
         )
     {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid status.",
-            vec![FieldError::new("/status", "unknown status")],
+            "/status",
+            "unknown status",
         ));
     }
     let rows = repo::list_scope(
@@ -145,9 +146,10 @@ pub async fn patch(
     if let Some(l) = &req.label
         && let Err(e) = aurora_core::names::clean(l, LABEL_MAX)
     {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid label.",
-            vec![FieldError::new("/label", e.to_string())],
+            "/label",
+            e.to_string(),
         ));
     }
     let status = match req.status.as_deref() {
@@ -170,9 +172,10 @@ pub async fn patch(
             (row.status != s).then_some(s)
         }
         Some(_) => {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Invalid status.",
-                vec![FieldError::new("/status", "must be active or disabled")],
+                "/status",
+                "must be active or disabled",
             ));
         }
     };
@@ -180,9 +183,10 @@ pub async fn patch(
         None => None,
         Some(a @ ("read" | "write")) => (row.access != a).then_some(a),
         Some(_) => {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Invalid access.",
-                vec![FieldError::new("/access", "must be read or write")],
+                "/access",
+                "must be read or write",
             ));
         }
     };
@@ -191,24 +195,20 @@ pub async fn patch(
     let current_limit = levels::connection_limit(row.limit_level.as_deref(), &row.access);
     let new_limit: Option<levels::Level> = if row.workspace_id.is_some() {
         if req.limit.is_some() {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Invalid limit.",
-                vec![FieldError::new(
-                    "/limit",
-                    "only an organization's account has a limit",
-                )],
+                "/limit",
+                "only an organization's account has a limit",
             ));
         }
         None
     } else {
         match (req.limit, req.access.as_deref()) {
             (Some(_), Some(_)) => {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_field(
                     "Invalid limit.",
-                    vec![FieldError::new(
-                        "/access",
-                        "follows the limit; send one of them",
-                    )],
+                    "/access",
+                    "follows the limit; send one of them",
                 ));
             }
             (Some(l), None) => Some(l),
@@ -258,12 +258,10 @@ pub async fn patch(
                 })
                 .unwrap_or_default();
             if declared.is_empty() || s.iter().any(|x| !declared.contains(&x.as_str())) {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_field(
                     "Invalid scopes.",
-                    vec![FieldError::new(
-                        "/scopes",
-                        "only the declared scopes of a token connection can be edited",
-                    )],
+                    "/scopes",
+                    "only the declared scopes of a token connection can be edited",
                 ));
             }
             Some(s.as_slice())

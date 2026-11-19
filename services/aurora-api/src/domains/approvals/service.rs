@@ -4,7 +4,7 @@ use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::grants::levels::{self, Level};
 use crate::http::auth::{Caller, Principal};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::authz;
 use aurora_db::repo::approvals::{self, ApprovalRow, RuleOrigin};
 use aurora_db::repo::connections;
@@ -32,9 +32,10 @@ fn via(c: &Caller) -> &'static str {
 
 pub fn validate_status(status: Option<&str>) -> Result<(), ApiError> {
     match status {
-        Some(s) if !STATUSES.contains(&s) => Err(ApiError::invalid_request(
+        Some(s) if !STATUSES.contains(&s) => Err(ApiError::invalid_field(
             "Invalid status.",
-            vec![FieldError::new("/status", "unknown status")],
+            "/status",
+            "unknown status",
         )),
         _ => Ok(()),
     }

@@ -11,7 +11,7 @@ use crate::domains::connectors::ops::{self, CORRELATED_WAIT, CorrelatedError, Ne
 use crate::http::auth::{Caller, SessionCaller};
 use aurora_channels::Capability;
 use aurora_core::limits::USER_TOKENS_PER_PERSON;
-use aurora_core::{ApiError, FieldError, sanitize};
+use aurora_core::{ApiError, sanitize};
 use aurora_db::repo::{agents, channel_integrations, connectors, user_links, user_tokens as repo};
 use aurora_db::{DbError, conflict_code};
 use aurora_protocol::connector::UserTokenVerifyResult;
@@ -36,9 +36,10 @@ fn unsupported() -> ApiError {
 fn clean_label(label: Option<&str>) -> Result<Option<String>, ApiError> {
     let Some(l) = label else { return Ok(None) };
     if l.chars().count() > LABEL_MAX {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new("/label", "must be at most 80 characters")],
+            "/label",
+            "must be at most 80 characters",
         ));
     }
     let l = sanitize::one_line(l, LABEL_MAX);
@@ -71,9 +72,10 @@ pub async fn create(
 ) -> Result<UserToken, ApiError> {
     let token = req.token.trim();
     if token.is_empty() || token.chars().count() > TOKEN_MAX {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new("/token", "must be 1 to 256 characters")],
+            "/token",
+            "must be 1 to 256 characters",
         ));
     }
     let label = clean_label(req.label.as_deref())?;

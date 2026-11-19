@@ -10,7 +10,7 @@ use crate::domains::connectors::integration_seal_ctx;
 use crate::domains::connectors::ops::{self, CORRELATED_WAIT, CorrelatedError, NewOp};
 use crate::http::auth::Caller;
 use crate::http::pagination::{Page, Pagination};
-use aurora_core::{ApiError, FieldError, Secret};
+use aurora_core::{ApiError, Secret};
 use aurora_db::conflict_code;
 use aurora_db::repo::channel_integrations::{self as repo, IntegrationRow, NewIntegration};
 use aurora_db::repo::channel_ops;
@@ -74,7 +74,7 @@ pub async fn get(s: &AppState, c: &Caller, id: Uuid) -> Result<ChannelIntegratio
 }
 
 fn invalid_field(path: &str, m: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, m)])
+    ApiError::invalid_field("Invalid request.", path, m)
 }
 
 fn check_config(config: &Value) -> Result<Value, ApiError> {
@@ -412,9 +412,10 @@ pub async fn patch(
 ) -> Result<ChannelIntegration, ApiError> {
     let row = load_admin(s, c, id).await?;
     if req.config.is_none() && req.credentials.is_none() && req.status.is_none() {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Nothing to change.",
-            vec![FieldError::new("", "give config, credentials or status")],
+            "",
+            "give config, credentials or status",
         ));
     }
     let new_config = req.config.as_ref().map(check_config).transpose()?;

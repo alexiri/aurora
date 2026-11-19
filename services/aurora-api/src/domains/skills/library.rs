@@ -5,9 +5,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use aurora_core::ApiError;
 use aurora_core::limits;
 use aurora_core::sanitize::one_line;
-use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
 use aurora_db::repo::skill_libraries::{self as repo, Source, UpdateRow};
 use aurora_db::repo::skills::{self as skills_repo, SkillRow};
@@ -165,12 +165,10 @@ pub async fn add(
         )
     })?;
     aurora_registry::library::check_hex_id(commit, "sha").map_err(|_| {
-        ApiError::invalid_request(
+        ApiError::invalid_field(
             "Invalid skill.",
-            vec![FieldError::new(
-                "/from_library/commit_sha",
-                "a full commit id (40 to 64 lowercase hex characters)",
-            )],
+            "/from_library/commit_sha",
+            "a full commit id (40 to 64 lowercase hex characters)",
         )
     })?;
     if from.path.is_empty()
@@ -180,12 +178,10 @@ pub async fn add(
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
     {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid skill.",
-            vec![FieldError::new(
-                "/from_library/path",
-                "the skill's directory name as the library lists it",
-            )],
+            "/from_library/path",
+            "the skill's directory name as the library lists it",
         ));
     }
     let lib = lib_service::get(state, from.library_id).await?;
@@ -634,12 +630,10 @@ async fn approve_update(
     let cur = service::row(&s.pool, id).await?;
     authorize(&c, &s, &cur, true).await?;
     let quoted = content::parse_hex(&req.content_sha256).ok_or_else(|| {
-        ApiError::invalid_request(
+        ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/content_sha256",
-                "64 hexadecimal characters",
-            )],
+            "/content_sha256",
+            "64 hexadecimal characters",
         )
     })?;
     let mut tx = audit::begin(&s).await?;

@@ -1,6 +1,6 @@
 use super::dto::MemoryRevision;
 use crate::app::AppState;
-use aurora_core::{ApiError, FieldError, limits};
+use aurora_core::{ApiError, limits};
 use aurora_db::DbError;
 use aurora_db::repo::memory::{self as repo, NewRevision};
 use aurora_db::repo::{agents, runners::RunnerRow, sandboxes};
@@ -61,7 +61,7 @@ pub struct Write<'a> {
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid memory.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid memory.", path, msg)
 }
 
 pub fn validate_key(key: &str) -> Result<(), ApiError> {

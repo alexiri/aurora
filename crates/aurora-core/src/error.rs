@@ -161,6 +161,15 @@ impl ApiError {
             .with_details(json!({ "fields": fields }))
     }
 
+    /// [`Self::invalid_request`] for the common case of one bad field (P5-DEDUP-1 P2).
+    pub fn invalid_field(
+        message: impl Into<String>,
+        path: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::invalid_request(message, vec![FieldError::new(path, detail)])
+    }
+
     pub fn unauthenticated(message: impl Into<String>) -> Self {
         Self::new(StatusCode::UNAUTHORIZED, "unauthenticated", message)
     }
@@ -289,7 +298,7 @@ mod tests {
 
     #[test]
     fn invalid_request_fields() {
-        let e = ApiError::invalid_request("Bad.", vec![FieldError::new("/name", "too long")]);
+        let e = ApiError::invalid_field("Bad.", "/name", "too long");
         assert_eq!(e.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             j(&e),

@@ -12,11 +12,11 @@ use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::attachments::{blob, quota};
 use crate::domains::governance::dto::InstanceSetting;
 use crate::http::auth::Caller;
+use aurora_core::ApiError;
 use aurora_core::limits::{
     EXPORT_MAX_BYTES, EXPORT_MAX_EVENTS, RETENTION_MAX_DAYS, RETENTION_MIN_DAYS,
     RETENTION_SWEEP_BATCH, RETENTION_SWEEP_PER_ORG,
 };
-use aurora_core::{ApiError, FieldError};
 use aurora_db::authz::WorkspaceAuth;
 use aurora_db::repo::conversations::{self as convs, ConversationRow};
 use aurora_db::repo::lifecycle::{self, Deleted};
@@ -168,12 +168,10 @@ fn clean_reason(r: Option<&str>) -> Result<Option<String>, ApiError> {
         return Ok(None);
     };
     if r.chars().count() > REASON_MAX || r.chars().any(char::is_control) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/reason",
-                "must be at most 500 characters without control characters",
-            )],
+            "/reason",
+            "must be at most 500 characters without control characters",
         ));
     }
     Ok(Some(r.to_owned()))
@@ -569,9 +567,10 @@ pub async fn export(
 ) -> Result<Exported, ApiError> {
     let after = after_seq.unwrap_or(0);
     if after < 0 {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new("/after_seq", "must be >= 0")],
+            "/after_seq",
+            "must be >= 0",
         ));
     }
     let (row, auth) = load_conversation_auth(state, c, id).await?;

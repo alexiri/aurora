@@ -17,7 +17,7 @@ use crate::domains::plugins::registry;
 use crate::http::auth::Caller;
 use crate::http::pagination::Page;
 use crate::http::who_can::{WhoCan, WhoCanRole};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::grants::{self, AccountGrantRow};
 use aurora_db::repo::{connections, contacts, secrets};
@@ -29,7 +29,7 @@ use uuid::Uuid;
 const SCOPE_MAX: i64 = 1000;
 
 fn bad(field: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(field, msg)])
+    ApiError::invalid_field("Invalid request.", field, msg)
 }
 
 struct Scope {

@@ -5,7 +5,7 @@ use crate::domains::connections::service as conn_service;
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::{gateway, grants};
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -132,18 +132,17 @@ async fn agent_effective(
         Some("none") => None,
         Some(v) => {
             let id = Uuid::parse_str(v).map_err(|_| {
-                ApiError::invalid_request(
+                ApiError::invalid_field(
                     "Invalid request.",
-                    vec![FieldError::new("/speaker", "must be a user id or \"none\"")],
+                    "/speaker",
+                    "must be a user id or \"none\"",
                 )
             })?;
             if !gateway::can_use(&state.pool, a.workspace_id, id).await? {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_field(
                     "Invalid request.",
-                    vec![FieldError::new(
-                        "/speaker",
-                        "not a member with access to this workspace",
-                    )],
+                    "/speaker",
+                    "not a member with access to this workspace",
                 ));
             }
             Some(id)

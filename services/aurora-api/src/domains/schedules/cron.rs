@@ -1,7 +1,7 @@
 //! Cron evaluation (docs/10 §Schedules): 5-field expressions evaluated with `croner` in an IANA
 //! timezone; the next real occurrence strictly after an instant (DST-safe).
 
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use croner::Cron;
@@ -11,7 +11,7 @@ use croner::parser::CronParser;
 pub const MIN_INTERVAL: Duration = Duration::minutes(5);
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid schedule.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid schedule.", path, msg)
 }
 
 pub fn parse_tz(tz: &str) -> Result<Tz, ApiError> {

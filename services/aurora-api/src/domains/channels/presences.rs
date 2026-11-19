@@ -12,7 +12,7 @@ use crate::domains::connectors::ops::{self, CORRELATED_WAIT, NewOp};
 use crate::domains::connectors::presence_seal_ctx;
 use crate::domains::conversations::service::load_agent;
 use crate::http::auth::Caller;
-use aurora_core::{ApiError, FieldError, Secret};
+use aurora_core::{ApiError, Secret};
 use aurora_db::repo::channel_integrations as integ_repo;
 use aurora_db::repo::channel_ops;
 use aurora_db::repo::channel_presences::{self as repo, NewPresence, PresenceRow};
@@ -214,7 +214,7 @@ async fn load_presence(
 // ----------------------------------------------------------------------- attach
 
 fn unprocessable_field(path: &str, m: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, m)])
+    ApiError::invalid_field("Invalid request.", path, m)
 }
 
 /// `presence_setup.dedicated.fields` of the connector's manifest.

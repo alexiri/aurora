@@ -7,7 +7,7 @@ use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::conversations::service::{self as conv, NewMessage};
 use crate::http::auth::Caller;
-use aurora_core::{ApiError, FieldError, limits, sanitize};
+use aurora_core::{ApiError, limits, sanitize};
 use aurora_db::repo::action_approvals::{self as repo, ActionApprovalRow, NewActionApproval};
 use aurora_db::repo::{conversations as convs, turns};
 use aurora_db::{DbError, PgPool};
@@ -22,9 +22,10 @@ const SWEEP_BATCH: i64 = 100;
 
 pub fn validate_status(status: Option<&str>) -> Result<(), ApiError> {
     match status {
-        Some(s) if !STATUSES.contains(&s) => Err(ApiError::invalid_request(
+        Some(s) if !STATUSES.contains(&s) => Err(ApiError::invalid_field(
             "Invalid status.",
-            vec![FieldError::new("/status", "unknown status")],
+            "/status",
+            "unknown status",
         )),
         _ => Ok(()),
     }

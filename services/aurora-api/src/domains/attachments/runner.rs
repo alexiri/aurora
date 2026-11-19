@@ -4,10 +4,10 @@
 use super::blob;
 use super::service::{self, NewBlob, sanitize_filename};
 use crate::app::AppState;
+use aurora_core::ApiError;
 use aurora_core::limits::{
     ATTACH_CAPTION_MAX, ATTACH_OUT_COUNT, ATTACH_OUT_DAILY_PER_CONVERSATION, ATTACH_OUT_FILE_MAX,
 };
-use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
 use aurora_db::repo::attachments;
 use aurora_db::repo::conversations as convs;
@@ -28,9 +28,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 fn bad_header(name: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request(
+    ApiError::invalid_field(
         "Invalid attachment headers.",
-        vec![FieldError::new(format!("/headers/{name}"), msg)],
+        format!("/headers/{name}"),
+        msg,
     )
 }
 
@@ -124,10 +125,7 @@ pub async fn upload(
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| {
-            ApiError::invalid_request(
-                "Body could not be read.",
-                vec![FieldError::new("/", "body read failed")],
-            )
+            ApiError::invalid_field("Body could not be read.", "/", "body read failed")
         })?;
         if (buf.len() + chunk.len()) as u64 > ATTACH_OUT_FILE_MAX {
             return Err(too_large());

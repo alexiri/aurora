@@ -1,7 +1,7 @@
 //! Cursor pagination: `?limit=` (default 50, max 200), opaque `?cursor=`,
 //! order `created_at desc, id desc`; fetch `limit + 1` rows and call [`Page::from_rows`].
 
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -50,18 +50,16 @@ impl Pagination {
     pub fn new(limit: Option<u32>, cursor: Option<&str>) -> Result<Self, ApiError> {
         let limit = limit.unwrap_or(DEFAULT_LIMIT);
         if !(1..=MAX_LIMIT).contains(&limit) {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Invalid limit.",
-                vec![FieldError::new("/limit", "must be between 1 and 200")],
+                "/limit",
+                "must be between 1 and 200",
             ));
         }
         let after = match cursor {
             None => None,
             Some(c) => Some(Cursor::decode(c).ok_or_else(|| {
-                ApiError::invalid_request(
-                    "Invalid cursor.",
-                    vec![FieldError::new("/cursor", "malformed cursor")],
-                )
+                ApiError::invalid_field("Invalid cursor.", "/cursor", "malformed cursor")
             })?),
         };
         Ok(Self { limit, after })

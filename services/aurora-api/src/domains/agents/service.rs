@@ -2,8 +2,8 @@ use super::dto::*;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::Caller;
+use aurora_core::ApiError;
 use aurora_core::token::{self, TokenPrefix};
-use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::agents::{self, AgentPatch, AgentRow, NewAgent};
 use aurora_db::repo::{credentials, hosted};
 use aurora_db::{DbError, conflict_code};
@@ -15,7 +15,7 @@ const EFFORTS: [&str; 4] = ["low", "medium", "high", "max"];
 const PROACTIVE: [&str; 3] = ["ask", "allow", "off"];
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid agent.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid agent.", path, msg)
 }
 
 fn name_ok(n: &str) -> Result<String, ApiError> {
@@ -666,9 +666,10 @@ pub fn sanitize_label(l: &str) -> Result<String, ApiError> {
     let s: String = l.chars().filter(|c| !c.is_control()).collect();
     let s = s.trim().to_owned();
     if !(1..=128).contains(&s.chars().count()) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid context credential.",
-            vec![FieldError::new("/label", "must be 1-128 characters")],
+            "/label",
+            "must be 1-128 characters",
         ));
     }
     Ok(s)
@@ -682,9 +683,10 @@ pub async fn mint_context(
     let label = sanitize_label(&req.label)?;
     let ttl = req.ttl_secs.unwrap_or(3600);
     if !(60..=86400).contains(&ttl) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid context credential.",
-            vec![FieldError::new("/ttl_secs", "must be between 60 and 86400")],
+            "/ttl_secs",
+            "must be between 60 and 86400",
         ));
     }
     if let Some(conv) = req.conversation_id

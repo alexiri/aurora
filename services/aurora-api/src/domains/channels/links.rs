@@ -5,8 +5,8 @@ use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::pagination::{Page, Pagination};
+use aurora_core::ApiError;
 use aurora_core::token;
-use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::user_links::{self as repo, UserLinkRow};
 use aurora_db::repo::{agents, channel_integrations as integ_repo, channel_presences, dm_defaults};
 use aurora_db::repo::{link_requests, reach_grants};
@@ -74,24 +74,20 @@ pub async fn admin_create(
     let integ = load_admin(s, c, integration).await?;
     let refl = req.platform_user_ref.trim();
     if refl.is_empty() || refl.chars().count() > REF_MAX {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/platform_user_ref",
-                "must be 1-512 characters",
-            )],
+            "/platform_user_ref",
+            "must be 1-512 characters",
         ));
     }
     let member = authz::org_membership(&s.pool, req.user_id, integ.org_id)
         .await?
         .is_some_and(|m| m.is_active());
     if !member {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/user_id",
-                "not an active member of the organization",
-            )],
+            "/user_id",
+            "not an active member of the organization",
         ));
     }
     let mut tx = audit::begin(s).await?;

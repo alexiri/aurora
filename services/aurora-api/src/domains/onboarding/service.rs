@@ -4,7 +4,7 @@ use super::dto::*;
 use crate::app::AppState;
 use crate::domains::admin::dto::IdpRoles;
 use crate::domains::placement::service as placement;
-use aurora_core::{ApiError, FieldError, limits};
+use aurora_core::{ApiError, limits};
 use aurora_db::repo::onboarding as repo;
 use aurora_db::repo::{idp_roles, runners};
 use chrono::Utc;
@@ -49,12 +49,10 @@ pub async fn patch_me(
             let mut seen = HashSet::new();
             let list: Vec<Uuid> = list.into_iter().filter(|id| seen.insert(*id)).collect();
             if list.len() > MAX_DISMISSED {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_field(
                     "Too many dismissed guides.",
-                    vec![FieldError::new(
-                        "/guide_dismissed",
-                        "must have at most 200 entries",
-                    )],
+                    "/guide_dismissed",
+                    "must have at most 200 entries",
                 ));
             }
             Some(list)
@@ -67,22 +65,18 @@ pub async fn patch_me(
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
         if !shape_ok {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Not a notice key.",
-                vec![FieldError::new(
-                    "/notice_seen",
-                    "must be 1 to 64 lowercase letters, digits or dashes",
-                )],
+                "/notice_seen",
+                "must be 1 to 64 lowercase letters, digits or dashes",
             ));
         }
         let seen = view(repo::get(&state.pool, user).await?).notices_seen;
         if !seen.contains(key) && seen.len() >= limits::ONBOARDING_NOTICES_MAX {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Too many notices.",
-                vec![FieldError::new(
-                    "/notice_seen",
-                    "at most 50 notices are remembered",
-                )],
+                "/notice_seen",
+                "at most 50 notices are remembered",
             ));
         }
     }

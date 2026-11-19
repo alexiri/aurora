@@ -4,7 +4,7 @@
 use super::dto::{Offboarding, OffboardingItem};
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::schedules::cron;
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::authz;
 use aurora_db::repo::automations as repo;
@@ -42,7 +42,7 @@ pub struct Acting<'a> {
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid request.", path, msg)
 }
 
 fn unauthorized_target() -> ApiError {
