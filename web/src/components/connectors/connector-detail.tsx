@@ -19,9 +19,10 @@ import {
   type PatchConnectorRequest,
   type SetupField,
 } from "@/lib/api/connectors";
+import { fmtDate, plural } from "@/lib/utils";
 
 import { ApprovalPanel } from "./approval-panel";
-import { ConnectorError, ConnectorIcon, ConnectorStatusChip, ManagedBadge, count, fmtWhen, settingErrors } from "./shared";
+import { ConnectorError, ConnectorIcon, ConnectorStatusChip, ManagedBadge, settingErrors } from "./shared";
 import { initialValues, isSecretField, requiredErrors, settingText, typedValue } from "./setup-values";
 
 type Staged = "replace" | "clear";
@@ -34,7 +35,7 @@ function HostStatus({ c }: { c: ConnectorAdmin }) {
       ) : (
         <ItemList aria-label="Connector hosts">
           {c.host_status.map((h) => (
-            <ListRow key={h.host_instance} actions={<span className="text-xs text-muted">{fmtWhen(h.at)}</span>}>
+            <ListRow key={h.host_instance} actions={<span className="text-xs text-muted">{fmtDate(h.at)}</span>}>
               <Badge tone={h.state === "running" ? "accent" : "danger"}>{h.state === "running" ? "Running" : "Error"}</Badge>
               <code className="font-mono text-xs text-muted">{h.host_instance.slice(0, 8)}</code>
               {h.message ? <span className="min-w-0 break-words text-sm text-ink-2">{h.message}</span> : null}
@@ -79,7 +80,7 @@ function SecretRow({
       </div>
     );
   }
-  const state = staged === "clear" ? "Will be cleared when you save" : info?.set ? `${generated ? "Generated automatically" : "Set"} · updated ${fmtWhen(info.updated_at)}` : generated ? "Generated automatically" : "Not set";
+  const state = staged === "clear" ? "Will be cleared when you save" : info?.set ? `${generated ? "Generated automatically" : "Set"} · updated ${fmtDate(info.updated_at)}` : generated ? "Generated automatically" : "Not set";
   return (
     <div role="group" aria-labelledby={labelId} data-testid={`secret-${f.name}`} className="space-y-1.5">
       <p id={labelId} className="text-sm font-medium text-ink">
@@ -274,7 +275,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
             <ManagedBadge managed />
             <ConnectorStatusChip c={c} />
             <span>
-              {count(c.integration_count, "integration")}{c.version ? ` · v${c.version}` : ""}
+              {plural(c.integration_count, "integration")}{c.version ? ` · v${c.version}` : ""}
             </span>
           </span>
         }
@@ -303,7 +304,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
         title="Delete connector"
         description={
           inUse
-            ? `${count(c.integration_count, "integration")} still ${c.integration_count === 1 ? "uses" : "use"} this connector. Remove ${c.integration_count === 1 ? "it" : "them"} first.`
+            ? `${plural(c.integration_count, "integration")} still ${c.integration_count === 1 ? "uses" : "use"} this connector. Remove ${c.integration_count === 1 ? "it" : "them"} first.`
             : "Removes the connector and its stored settings and secrets."
         }
       >

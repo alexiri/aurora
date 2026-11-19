@@ -13,8 +13,7 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import { useDisconnectSshSession, type SshSession } from "@/lib/api/ssh";
-
-const fmtDate = (s?: string | null) => (s ? new Date(s).toLocaleString() : "—");
+import { fmtDate } from "@/lib/utils";
 
 /** The key a session used: its name, or the fingerprint once the key was deleted. */
 function keyLabel(s: SshSession): string {

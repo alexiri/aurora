@@ -12,7 +12,7 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ErrorState, Loading } from "@/components/states";
 import { ApiError } from "@/lib/api/client";
-import { errorMessage } from "@/lib/api/errors";
+import { errorDetail, errorMessage } from "@/lib/api/errors";
 import { adminRoutes } from "@/lib/routes";
 import {
   usePlugin,
@@ -133,7 +133,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
       },
       onError: (e) => {
         if (e instanceof ApiError && e.status === 409 && e.code === "live_connections") {
-          const c = (e.details as { count?: number } | null)?.count;
+          const c = errorDetail(e, "count");
           setLiveCount(typeof c === "number" ? c : 0);
         }
       },
