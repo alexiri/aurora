@@ -224,3 +224,13 @@ in several places:
 
 Sonnet (`rust-developer`). It spans the API, gateway, registry and a migration, and has security
 weight (SEC-136, SEC-129). Not Haiku.
+
+## Review fixes (P5-POLISH-11 pass 1, lane `p5-polish-c`, 2026-11-19)
+
+- **One "G" icon for Google Calendar, Drive and Gmail (#1): open, needs an API/package change.** The three apps are
+  one package (`plugins/builtin/google-workspace`), and icons are per package: `GET /v1/apps/{app}/icon` serves the
+  package's `assets/icon.png` (`apps/routes.rs` `app_icon`, `package.rs` `ICON`). Product icons need an optional
+  per-app icon in the manifest (`apps[].icon`, with a dark variant), the package check for it and the route to serve
+  it by app, plus the Simple Icons `googlecalendar`, `googledrive` and `gmail` glyphs (D-99 pins 16.37.0, CC0; or
+  Google's own). The web already asks the route per app id, so no web change is needed once the API does it.
+  Owner to decide; nothing invented here.
