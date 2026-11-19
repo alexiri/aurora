@@ -55,7 +55,8 @@ describe("action approvals", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Allow once" }).at(-1)!);
     await waitFor(() => expect(decided).toEqual({ decision: "approve" }));
     await waitFor(() => expect(lists).toBeGreaterThanOrEqual(2));
-    expect(await screen.findByText("No pending action approvals")).toBeTruthy();
+    // One list (P5-POLISH-7): when the last request is decided the page says nothing is waiting.
+    expect(await screen.findByText("Nothing is waiting for you.", { selector: "h2" })).toBeTruthy();
   });
 
   it("history queries by status", async () => {

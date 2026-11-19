@@ -103,14 +103,41 @@ export function groupApprovals(items: Approval[]): Group[] {
   return groups;
 }
 
+/** "3 requests are waiting for you." / "1 request is waiting for you." / "Nothing is waiting for you." */
+export function approvalsSentence(n: number): string {
+  if (n === 0) return "Nothing is waiting for you.";
+  return n === 1 ? "1 request is waiting for you." : `${n} requests are waiting for you.`;
+}
+
+/** The gateway's approvals and the action approvals as one list, newest first. */
+export function mergePending(
+  gateway: Approval[],
+  actions: ActionApproval[],
+): ({ kind: "gateway"; item: Approval } | { kind: "action"; item: ActionApproval })[] {
+  return [
+    ...gateway.map((item) => ({ kind: "gateway" as const, item })),
+    ...actions.map((item) => ({ kind: "action" as const, item })),
+  ].sort((x, y) => Date.parse(y.item.created_at) - Date.parse(x.item.created_at));
+}
+
 function PendingTab({ wsId }: { wsId: string }) {
   const q = usePendingApprovals(wsId);
   const { live } = useApprovalsStream(wsId);
   const now = useNow();
   const decide = useDecide(wsId);
   const batch = useDecideBatch(wsId);
+  const actions = usePendingActionApprovals(wsId);
+  const decideAction = useDecideAction(wsId);
+  const actionItems = actions.data?.items ?? [];
   const [messages, setMessages] = useState<Record<string, string>>({});
   const [batchError, setBatchError] = useState<string | null>(null);
+  function onDecideAction(id: string, decision: Decision) {
+    setMessages((m) => ({ ...m, [id]: "" }));
+    decideAction.mutate(
+      { id, decision },
+      { onError: (err) => setMessages((m) => ({ ...m, [id]: actionAlreadyDecided(err) ? "Already decided by someone else." : errorMessage(err) })) },
+    );
+  }
   // A notification's link (in-tab or push) opens `…/approvals?focus=<id>`.
   const focus = useSearchParams()?.get("focus") ?? null;
 
@@ -139,9 +166,15 @@ function PendingTab({ wsId }: { wsId: string }) {
   // `?focus=<id>` puts that question first (C-983).
   const items = focus ? [...q.data.items].sort((x, y) => Number(y.id === focus) - Number(x.id === focus)) : q.data.items;
   const groups = groupApprovals(items);
+  // (P5-POLISH-7, D3) One list: the requests of the gateway and the action approvals together, newest first. Batches stay grouped.
+  const batched = groups.filter((g) => g.batchId && g.agentId);
+  const loose = groups.filter((g) => !(g.batchId && g.agentId)).flatMap((g) => g.items);
+  const merged = mergePending(loose, actionItems);
+  const total = items.length + actionItems.length;
   return (
     <div className="space-y-4">
-      <p role="status">
+      <p role="status" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-2">
+        <span data-testid="approvals-sentence">{approvalsSentence(total)}</span>
         <StatusDot tone={live ? "accent" : "pending"}>{live ? "Live" : "Reconnecting…"}</StatusDot>
       </p>
       {batchError ? (
@@ -166,10 +199,37 @@ function PendingTab({ wsId }: { wsId: string }) {
         </section>
       ) : null}
       {q.data.truncated ? <MoreNotShown what="pending approvals" narrow="Decide the ones shown; the rest appear as these are decided." /> : null}
-      {groups.length === 0 ? (
-        <EmptyState title="Nothing is waiting for you.">Agents ask here when their access is Ask before changes, or when a rule says so.</EmptyState>
+      {total === 0 ? (
+        <EmptyState title="Nothing is waiting for you.">
+          When an agent asks before a change, the request appears here and on Overview.
+        </EmptyState>
       ) : null}
-      {groups.map((g) => (
+      {merged.length > 0 ? (
+        <ul className="space-y-2" aria-label="Waiting for you">
+          {merged.map((m) =>
+            m.kind === "gateway" ? (
+              <ApprovalCard
+                key={m.item.id}
+                approval={m.item}
+                now={now}
+                pending={decide.isPending && decide.variables?.id === m.item.id}
+                message={messages[m.item.id]}
+                focused={focus === m.item.id}
+                onDecide={(d, al) => onDecide(m.item, d, al === true)}
+              />
+            ) : (
+              <ActionApprovalCard
+                key={m.item.id}
+                a={m.item}
+                pending={decideAction.isPending && decideAction.variables?.id === m.item.id}
+                message={messages[m.item.id]}
+                onDecide={(d) => onDecideAction(m.item.id, d)}
+              />
+            ),
+          )}
+        </ul>
+      ) : null}
+      {batched.map((g) => (
         <section key={g.key} aria-label={g.label ?? undefined} className="space-y-2">
           {g.batchId && g.agentId ? (
             <div className="flex flex-wrap items-center gap-2 rounded-control bg-subtle px-3 py-2">
@@ -432,10 +492,13 @@ export function ApprovalsView({ wsId }: { wsId: string }) {
       <div role="tabpanel" id={tabPanelId("approvals", tab)} aria-labelledby={tabId("approvals", tab)} className="space-y-8">
         {tab === "pending" ? <OwnSendApprovals /> : null}
         {tab === "pending" ? <PendingTab wsId={wsId} /> : <HistoryTab wsId={wsId} />}
-        <section aria-label="Action approvals" className="space-y-3">
-          <h2 className="text-lg font-semibold text-ink">Action approvals</h2>
-          {tab === "pending" ? <ActionPending wsId={wsId} /> : <ActionHistory wsId={wsId} />}
-        </section>
+        {/* The waiting action approvals are in the one list above; their history keeps its own section. */}
+        {tab === "history" ? (
+          <section aria-label="Action approvals" className="space-y-3">
+            <h2 className="text-lg font-semibold text-ink">Action approvals</h2>
+            <ActionHistory wsId={wsId} />
+          </section>
+        ) : null}
       </div>
     </div>
   );
