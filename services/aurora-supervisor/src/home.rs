@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::harvest::{INDEX_FILE, MEMORY_DIR, seal, verify};
-use crate::instructions::{RenderInputs, render};
+use crate::instructions::{RenderInputs, render_with};
 use crate::pg::PgDatabase;
 
 /// The `databases` of an installed `render_inputs.json`.
@@ -66,6 +66,9 @@ pub struct HomeConfig {
     /// Loopback port of the database relay; when set, the `databases` of the render inputs become
     /// a libpq service file under `.aurora/pg` (`crate::pg`, P2-DBL-2).
     pub pg: Option<u16>,
+    /// (P5-GUIDE-6, C-653) The sandbox has the `aurora-agent` wrapper: the instruction file then
+    /// carries its sentences. Decided by the supervisor at start, never by the API.
+    pub agent_cli: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -481,6 +484,58 @@ impl HomeProjector {
         Ok(())
     }
 
+    /// (P5-GUIDE-7, C-654) The bridge of a new harness session lists only the core tools: the
+    /// installed render inputs say `on_demand` and the sandbox has `aurora-agent`. Anything else
+    /// (no inputs, an older API, mode `all`, no command) lists everything, as before.
+    pub fn bridge_core_only(&self) -> bool {
+        let path = self.cfg.root.join(AURORA_DIR).join("render_inputs.json");
+        let Ok(Some(raw)) = crate::harvest::read_bounded(&path, RENDER_INPUTS_READ_MAX) else {
+            return false;
+        };
+        serde_json::from_slice::<RenderInputs>(&raw).is_ok_and(|i| {
+            crate::instructions::PlatformToolsInfo::on_demand(
+                i.platform_tools.as_ref(),
+                self.cfg.agent_cli,
+            )
+        })
+    }
+
+    /// (P5-GUIDE-7, C-654) What a harness session captured at its start: the tool descriptors its
+    /// bridge lists (the core ones when the bridge is core-only, else all) and the rendered
+    /// instruction files. A change of this value is what releases idle sessions; an on-demand
+    /// tool changing in a core-only sandbox does not move it. `None` when nothing is installed.
+    pub fn catalogue_digest(&self) -> Option<String> {
+        use sha2::{Digest, Sha256};
+        let aurora = self.cfg.root.join(AURORA_DIR);
+        let tools: Vec<Value> =
+            crate::harvest::read_bounded(&aurora.join("tools.json"), STAGED_READ_MAX)
+                .ok()
+                .flatten()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or_default();
+        let core_only = self.bridge_core_only();
+        let listed: Vec<&Value> = tools
+            .iter()
+            .filter(|t| !core_only || t.get("exposure").and_then(Value::as_str) == Some("core"))
+            .collect();
+        let mut h = Sha256::new();
+        h.update(serde_json::to_vec(&listed).ok()?);
+        let mut any = !listed.is_empty();
+        for name in &self.cfg.instruction_files {
+            let Some(rel) = clean_rel(name) else { continue };
+            if let Ok(Some(b)) =
+                crate::harvest::read_bounded(&self.cfg.root.join(rel), RENDER_INPUTS_READ_MAX)
+            {
+                any = true;
+                h.update([0u8]);
+                h.update(name.as_bytes());
+                h.update([0u8]);
+                h.update(&b);
+            }
+        }
+        any.then(|| h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    }
+
     /// Re-renders instruction files from the installed render inputs (boot and every sync).
     pub fn render_installed(&self) -> Result<(), HomeError> {
         let path = self.cfg.root.join(AURORA_DIR).join("render_inputs.json");
@@ -508,7 +563,7 @@ impl HomeProjector {
         {
             tracing::warn!(error = %e, "servers.json not written");
         }
-        let text = render(&inputs);
+        let text = render_with(&inputs, self.cfg.agent_cli);
         for name in &self.cfg.instruction_files {
             let Some(rel) = clean_rel(name) else {
                 tracing::warn!("instruction file name refused");

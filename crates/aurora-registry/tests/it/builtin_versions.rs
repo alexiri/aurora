@@ -103,5 +103,5 @@ fn sentry_2_0_0_replaces_1_0_2_without_widening_and_takes_over_the_old_apps() {
 
 #[test]
 fn indico_1_2_0_replaces_1_1_1_without_widening() {
-    check("indico", "1.1.1", "1.3.0");
+    check("indico", "1.1.1", "1.4.0");
 }

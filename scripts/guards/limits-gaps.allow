@@ -105,16 +105,6 @@ TERMINAL_PTY_OPEN_TIMEOUT no-row
 TERMINALS_PER_AGENT no-row
 TERMINALS_PER_USER no-row
 TERMINAL_WAKE_WAIT no-row
-# P5-GUIDE-6 adds the operations and aurora-agent limits:
-AGENT_OPERATIONS_MAX doc-only
-AGENT_OPERATIONS_FILE_MAX doc-only
-AGENT_API_JSON_MAX doc-only
-AGENT_CLI_PREVIEW_MAX doc-only
-AGENT_CLI_PAGES_DEFAULT doc-only
-AGENT_CLI_PAGES_MAX doc-only
-AGENT_CLI_SAVE_MAX doc-only
-# P5-GUIDE-7 adds PLATFORM_TOOLS_CORE_MAX:
-PLATFORM_TOOLS_CORE_MAX doc-only
 # P5-WEBHOOK-1 adds the outgoing-webhook limits; the gateway send path (P5-WEBHOOK-2) reads these three:
 WEBHOOK_VALUES_MAX unread
 WEBHOOK_RESPONSE_MAX unread

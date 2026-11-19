@@ -1,0 +1,141 @@
+{
+  "format": "aurora.operations/1",
+  "operations": [
+    {
+      "id": "create_a",
+      "method": "POST",
+      "path": "/a",
+      "summary": "Create an item",
+      "tags": [
+        "items"
+      ],
+      "params": [],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          {
+            "name": "title",
+            "required": true,
+            "type": "string",
+            "description": "The title."
+          },
+          {
+            "name": "tags",
+            "type": "array"
+          }
+        ]
+      },
+      "pagination": null,
+      "tool": "create_a"
+    },
+    {
+      "id": "search_a",
+      "method": "GET",
+      "path": "/a/search",
+      "summary": "Search items",
+      "tags": [
+        "items"
+      ],
+      "params": [
+        {
+          "name": "page",
+          "in": "query",
+          "type": "integer",
+          "description": "Page number, starting at 1."
+        },
+        {
+          "name": "q",
+          "in": "query",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "body": null,
+      "pagination": {
+        "style": "page_param",
+        "param": "page"
+      },
+      "tool": "search_a"
+    },
+    {
+      "id": "get_a",
+      "method": "GET",
+      "path": "/a/{id}",
+      "summary": "Read an item",
+      "tags": [
+        "items"
+      ],
+      "params": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "body": null,
+      "pagination": null,
+      "tool": "get_a"
+    },
+    {
+      "id": "update_a",
+      "method": "PUT",
+      "path": "/a/{id}",
+      "summary": "Replace an item",
+      "tags": [
+        "items"
+      ],
+      "params": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          {
+            "name": "title",
+            "required": true,
+            "type": "string",
+            "description": "The title."
+          },
+          {
+            "name": "tags",
+            "type": "array"
+          }
+        ]
+      },
+      "pagination": null,
+      "tool": "update_a"
+    },
+    {
+      "id": "get_reports_daily",
+      "method": "GET",
+      "path": "/reports/daily",
+      "summary": "Daily report",
+      "tags": [
+        "reports"
+      ],
+      "params": [],
+      "body": null,
+      "pagination": null,
+      "tool": "get_reports_daily"
+    },
+    {
+      "id": "get_status",
+      "method": "GET",
+      "path": "/status",
+      "summary": "Service status",
+      "tags": [
+        "other"
+      ],
+      "params": [],
+      "body": null,
+      "pagination": null,
+      "tool": "get_status"
+    }
+  ]
+}

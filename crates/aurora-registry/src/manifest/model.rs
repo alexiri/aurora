@@ -1102,6 +1102,10 @@ pub struct Agent {
     /// (P5-GUIDE-1) Reference files and recipes of `agent/<app_id>/`, in listing order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guide: Vec<GuideEntry>,
+    /// (P5-GUIDE-6, `docs/24 §3.5`, C-640) One `.json` file of `agent/<app_id>/` with the app's
+    /// HTTP operations (C-651); it is not listed in `guide`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operations: Option<String>,
     #[serde(default)]
     pub env: Vec<EnvVar>,
     #[serde(default)]

@@ -107,7 +107,7 @@ async fn bridge_supervisor_runner_round_trip() {
     // The harness side: an MCP client over a duplex pipe.
     let (client, server) = tokio::io::duplex(1 << 16);
     let (sr, sw) = tokio::io::split(server);
-    tokio::spawn(mcp_bridge::run(CONV.into(), sock.clone(), sr, sw));
+    tokio::spawn(mcp_bridge::run(CONV.into(), sock.clone(), false, sr, sw));
     let (cr, mut cw) = tokio::io::split(client);
     let mut lines = BufReader::new(cr).lines();
     let rpc = |v: Value| {
@@ -183,6 +183,117 @@ async fn bridge_supervisor_runner_round_trip() {
             .as_str()
             .unwrap()
             .contains("not available")
+    );
+}
+
+/// (P5-GUIDE-7, C-654, SEC-119) `tools/list` is the core descriptors when the bridge is core-only
+/// and everything otherwise (an older API's descriptors carry no `exposure`: everything); a call
+/// by name reaches the runner in both modes with the same frame. Also records the sizes of the
+/// two lists (chars / 4) for the completion report.
+#[tokio::test]
+async fn the_bridge_lists_core_only_or_all_and_calls_any_tool_by_name() {
+    let d = TempDir::new();
+    let root = d.path().to_path_buf();
+    fs::create_dir_all(root.join(".aurora")).unwrap();
+    let schema = json!({"type": "object", "properties": {"key": {"type": "string"}}});
+    let descs = json!([
+        {"name": "complete_task", "description": "Finish.", "input_schema": schema, "family": "tasks", "exposure": "core"},
+        {"name": "memory_save", "description": "Save a note.", "input_schema": schema, "family": "memory", "exposure": "on_demand"},
+        {"name": "memory_get", "description": "Read a note.", "input_schema": schema, "family": "memory"},
+    ]);
+    fs::write(
+        root.join(".aurora/tools.json"),
+        serde_json::to_vec(&descs).unwrap(),
+    )
+    .unwrap();
+    let sock = root.join("tools.sock");
+    let (hub, mut out_rx) = hub(&root, ToolsConfig::default());
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), Some(Uuid::now_v7()));
+    tokio::spawn(hub.clone().serve_owned(sock.clone()));
+    timeout(T, async {
+        while !sock.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .unwrap();
+
+    let mut sizes = Vec::new();
+    for core_only in [true, false] {
+        let (client, server) = tokio::io::duplex(1 << 16);
+        let (sr, sw) = tokio::io::split(server);
+        tokio::spawn(mcp_bridge::run(
+            CONV.into(),
+            sock.clone(),
+            core_only,
+            sr,
+            sw,
+        ));
+        let (cr, mut cw) = tokio::io::split(client);
+        let mut lines = BufReader::new(cr).lines();
+        let rpc = |v: Value| {
+            let mut b = v.to_string().into_bytes();
+            b.push(b'\n');
+            b
+        };
+        cw.write_all(&rpc(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"})))
+            .await
+            .unwrap();
+        let raw = lines.next_line().await.unwrap().unwrap();
+        let list: Value = serde_json::from_str(&raw).unwrap();
+        let mut names: Vec<String> = list["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_owned())
+            .collect();
+        names.sort();
+        if core_only {
+            // The supervisor's own `send_file` is local and core too; the registry's core tool
+            // is listed, no on-demand one (not the process tools either).
+            assert_eq!(
+                names,
+                vec!["complete_task", "send_file"],
+                "core only: {names:?}"
+            );
+        } else {
+            for n in [
+                "complete_task",
+                "send_file",
+                "memory_save",
+                "memory_get",
+                "process_start",
+            ] {
+                assert!(names.iter().any(|x| x == n), "all lists {n}: {names:?}");
+            }
+        }
+        sizes.push((core_only, raw.chars().count()));
+
+        // An on-demand tool is served by name in both modes: the same frame reaches the runner.
+        cw.write_all(&rpc(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"memory_save","arguments":{"key":"k"}}}))).await.unwrap();
+        let SupervisorToRunner::ToolCall(call) = next_matching(&mut out_rx, |m| {
+            matches!(m, SupervisorToRunner::ToolCall(_))
+        })
+        .await
+        else {
+            unreachable!()
+        };
+        assert_eq!(call.tool, "memory_save");
+        assert_eq!(call.args, json!({"key": "k"}));
+        assert_eq!(call.conversation_id, Uuid::parse_str(CONV).unwrap());
+        hub.on_result(ToolResult::success(
+            call.call_id,
+            vec![ToolContent::Text(TextContent { text: "ok".into() })],
+        ));
+        let res: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(res["result"]["isError"], false, "core_only={core_only}");
+    }
+    eprintln!(
+        "tools/list sizes (chars; chars/4 = tokens): {:?}",
+        sizes
+            .iter()
+            .map(|(c, n)| (if *c { "core-only" } else { "all" }, *n, *n / 4))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -662,6 +773,7 @@ fn skill_exec_bit_selects_0555_or_0444() {
         skills_dir: Some(".claude/skills".into()),
         instruction_files: vec!["AGENTS.md".into()],
         pg: None,
+        agent_cli: false,
     });
     let part = |i: u32, kind: &str, entries: Value| -> HomeSync {
         serde_json::from_value(json!({"generation":1,"part_index":i,"part_count":5,"part":{"kind":kind,"entries":entries}})).unwrap()
@@ -921,4 +1033,235 @@ async fn a_call_after_the_turn_ended_is_no_active_turn() {
     assert_eq!(text.as_deref(), Some("no_active_turn"), "{v}");
     assert!(rx.try_recv().is_err());
     assert_eq!(hub.refused_calls(), 0);
+}
+
+// ---- P5-GUIDE-7 (D-297, SEC-119, SEC-121): `aurora-agent … aurora` over the same socket ----
+
+fn agent_env(
+    sock: &std::path::Path,
+    session: Option<&str>,
+) -> aurora_supervisor::agent_cli::call::Env {
+    aurora_supervisor::agent_cli::call::Env {
+        client: reqwest::Client::new(),
+        out_dir: std::env::temp_dir().join(format!("aurora-agent-platform-{}", std::process::id())),
+        protected: vec![],
+        cwd: std::env::temp_dir(),
+        wait_notice: Duration::from_secs(60),
+        tools_socket: sock.to_path_buf(),
+        session: session.map(str::to_owned),
+    }
+}
+
+fn agent_call(rest: &[&str]) -> aurora_supervisor::agent_cli::Verb {
+    aurora_supervisor::agent_cli::Verb::Call {
+        target: "aurora".into(),
+        rest: rest.iter().map(|s| (*s).to_owned()).collect(),
+        account: None,
+        all: false,
+        max_pages: None,
+        path: None,
+        method: None,
+        body: None,
+        out: None,
+        raw: false,
+    }
+}
+
+fn out_text(o: &aurora_supervisor::agent_cli::call::Outcome) -> String {
+    String::from_utf8_lossy(&o.out).into_owned()
+}
+
+#[tokio::test]
+async fn the_aurora_target_lists_describes_searches_and_calls_over_the_tools_socket() {
+    use aurora_supervisor::agent_cli::{self, Verb};
+    let d = TempDir::new();
+    let tools = json!([{
+        "name": "memory_save", "description": "Save a note.\nSecond line.",
+        "family": "memory", "exposure": "on_demand",
+        "input_schema": {"type": "object", "required": ["key"], "properties": {
+            "key": {"type": "string", "description": "the note key"},
+            "count": {"type": "integer"}, "flag": {"type": "boolean"},
+            "tags": {"type": "array"}}}
+    }]);
+    fs::create_dir_all(d.path().join(".aurora")).unwrap();
+    fs::write(d.path().join(".aurora/tools.json"), tools.to_string()).unwrap();
+    let (hub, mut rx) = hub(d.path(), ToolsConfig::default());
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), Some(Uuid::now_v7()));
+    let sock = d.path().join("agent.sock");
+    tokio::spawn(hub.clone().serve_owned(sock.clone()));
+    timeout(T, async {
+        while !sock.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .unwrap();
+    let env = agent_env(&sock, Some(CONV));
+    let apps = d.path().join("apps");
+
+    let l = agent_cli::execute(
+        &env,
+        &apps,
+        Verb::List {
+            target: Some("aurora".into()),
+        },
+    )
+    .await;
+    assert_eq!(l.code, 0, "{}", l.err);
+    assert!(
+        out_text(&l).contains("memory_save [memory] — Save a note."),
+        "{}",
+        out_text(&l)
+    );
+    let desc = agent_cli::execute(
+        &env,
+        &apps,
+        Verb::Describe {
+            target: "aurora".into(),
+            name: "memory_save".into(),
+        },
+    )
+    .await;
+    assert_eq!(desc.code, 0, "{}", desc.err);
+    let t = out_text(&desc);
+    assert!(t.contains("key (string, required) — the note key"), "{t}");
+    assert!(t.contains("count (integer)"), "{t}");
+    assert!(
+        t.contains("example: aurora-agent call aurora memory_save key=<text>"),
+        "{t}"
+    );
+    let s = agent_cli::execute(
+        &env,
+        &apps,
+        Verb::Search {
+            words: vec!["memory".into()],
+            target: None,
+            limit: 15,
+        },
+    )
+    .await;
+    assert!(
+        out_text(&s).contains("aurora memory_save [memory]"),
+        "{}",
+        out_text(&s)
+    );
+
+    // `name=value` is coerced by the schema's type; `name:=<json>` is taken as given.
+    let run = tokio::spawn({
+        let env = agent_env(&sock, Some(CONV));
+        let apps = apps.clone();
+        async move {
+            agent_cli::execute(
+                &env,
+                &apps,
+                agent_call(&[
+                    "memory_save",
+                    "key=k",
+                    "count=3",
+                    "flag=true",
+                    "tags:=[\"a\"]",
+                ]),
+            )
+            .await
+        }
+    });
+    let SupervisorToRunner::ToolCall(call) =
+        next_matching(&mut rx, |m| matches!(m, SupervisorToRunner::ToolCall(_))).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(call.conversation_id, Uuid::parse_str(CONV).unwrap());
+    assert_eq!(call.tool, "memory_save");
+    assert_eq!(
+        call.args,
+        json!({"key":"k","count":3,"flag":true,"tags":["a"]})
+    );
+    hub.on_result(ToolResult::success(
+        call.call_id,
+        vec![ToolContent::Text(TextContent {
+            text: "saved".into(),
+        })],
+    ));
+    let o = timeout(T, run).await.unwrap().unwrap();
+    assert_eq!((o.code, out_text(&o).as_str()), (0, "saved\n"), "{}", o.err);
+
+    // A tool's own error result is exit 1 with its code and message.
+    let run = tokio::spawn({
+        let env = agent_env(&sock, Some(CONV));
+        let apps = apps.clone();
+        async move { agent_cli::execute(&env, &apps, agent_call(&["memory_save", "key=k"])).await }
+    });
+    let SupervisorToRunner::ToolCall(call) =
+        next_matching(&mut rx, |m| matches!(m, SupervisorToRunner::ToolCall(_))).await
+    else {
+        unreachable!()
+    };
+    hub.on_result(ToolResult::failure(
+        call.call_id,
+        aurora_protocol::tools::ToolError {
+            code: aurora_supervisor::process::code("invalid_argument"),
+            message: "key is too long".into(),
+        },
+    ));
+    let o = timeout(T, run).await.unwrap().unwrap();
+    assert_eq!(o.code, 1, "{}", o.err);
+    assert!(o.err.contains("key is too long"), "{}", o.err);
+
+    // Local refusals, nothing sent: a bad coercion, and no session.
+    let bad = agent_cli::execute(&env, &apps, agent_call(&["memory_save", "count=three"])).await;
+    assert_eq!(bad.code, 2, "{}", bad.err);
+    assert!(bad.err.contains("not an integer"), "{}", bad.err);
+    let none = agent_env(&sock, None);
+    let o = agent_cli::execute(&none, &apps, agent_call(&["memory_save", "key=k"])).await;
+    assert_eq!(o.code, 2);
+    assert!(o.err.contains("inside a conversation turn"), "{}", o.err);
+    assert!(rx.try_recv().is_err(), "nothing further reached the runner");
+    // The socket not being there is a transport failure: exit 4.
+    let gone = agent_env(&d.path().join("absent.sock"), Some(CONV));
+    let o = agent_cli::execute(&gone, &apps, agent_call(&["memory_save", "key:=\"k\""])).await;
+    assert_eq!(o.code, 4, "{}", o.err);
+}
+
+/// SEC-121 for the CLI: the command is bound like the MCP bridge. A process that is not below the
+/// conversation's harness is refused `session_not_caller` (exit 2), whichever verb it uses, and no
+/// frame reaches the runner.
+#[tokio::test]
+async fn the_aurora_target_from_a_process_outside_the_harness_is_session_not_caller() {
+    use aurora_supervisor::agent_cli::{self, Verb};
+    let (d, hub, mut rx, sock, registry) = caller_rig().await;
+    // A harness exists for CONV (a sibling), but this process is not below it.
+    let mut sibling =
+        aurora_supervisor::spawn::tokio_command("sleep", std::iter::empty::<(&str, &str)>())
+            .arg("30")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+    let _g = registry
+        .register(sibling.id().unwrap(), CONV.parse().unwrap())
+        .unwrap();
+    let env = agent_env(&sock, Some(CONV));
+    let apps = d.path().join("apps");
+    for v in [
+        agent_call(&["memory_get"]),
+        Verb::List {
+            target: Some("aurora".into()),
+        },
+        Verb::Describe {
+            target: "aurora".into(),
+            name: "memory_get".into(),
+        },
+        Verb::Search {
+            words: vec!["memory".into()],
+            target: Some("aurora".into()),
+            limit: 5,
+        },
+    ] {
+        let o = agent_cli::execute(&env, &apps, v).await;
+        assert_eq!(o.code, 2, "{}", o.err);
+        assert!(o.err.starts_with("session_not_caller:"), "{}", o.err);
+        assert!(!o.err.contains(CONV), "{}", o.err);
+    }
+    assert!(rx.try_recv().is_err(), "nothing reached the runner");
+    assert_eq!(hub.refused_calls(), 4);
+    let _ = sibling.kill().await;
 }

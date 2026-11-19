@@ -102,6 +102,23 @@ pub struct ToolDescriptor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub input_schema: Value,
+    /// (P5-GUIDE-7, C-654) The tool's family (`memory`, `schedules`, …). Absent from an older API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// (P5-GUIDE-7, C-654) Absent means [`Exposure::OnDemand`]; an older API sends neither field
+    /// and its supervisor lists every tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure: Option<Exposure>,
+}
+
+/// (P5-GUIDE-7, C-654) Whether the bridge lists a tool to the harness (`core`) or only the
+/// `aurora-agent` command finds it (`on_demand`). It changes what is listed, never what is allowed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Exposure {
+    Core,
+    #[default]
+    OnDemand,
 }
 
 impl Validate for ToolCallBody {

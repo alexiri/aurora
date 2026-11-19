@@ -759,10 +759,16 @@ fn event_of<'a>(p: &'a Parsed, repeat: Option<&'a Value>) -> Event<'a> {
 // ---------------------------------------------------------------------------------------------
 // Tools
 
+/// (P5-GUIDE-7, C-654) The family of every tool of this file (P5-CALINV).
+const FAMILY: &str = "calendar";
+
 macro_rules! common {
     ($name:expr, $desc:expr, $schema:expr) => {
         fn name(&self) -> &'static str {
             $name
+        }
+        fn family(&self) -> &'static str {
+            FAMILY
         }
         fn description(&self, _: &ToolContext) -> String {
             $desc.into()

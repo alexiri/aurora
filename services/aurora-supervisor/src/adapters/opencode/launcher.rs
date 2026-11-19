@@ -119,7 +119,11 @@ impl Launcher for ProcessLauncher {
         });
         let (kill_tx, kill_rx) = oneshot::channel::<()>();
         let (exit_tx, exit_rx) = oneshot::channel::<Option<i32>>();
+        // (FIX-151, FIX-176) Platform-tool calls from this process's descendants act for this
+        // conversation; the registration ends when the process does.
+        let registration = crate::adapters::register_harness(&child, spec.conversation_id);
         tokio::spawn(async move {
+            let _registration = registration;
             tokio::select! {
                 st = child.wait() => { let _ = exit_tx.send(st.ok().and_then(|s| s.code())); }
                 _ = kill_rx => { let _ = child.kill().await; let _ = exit_tx.send(None); }

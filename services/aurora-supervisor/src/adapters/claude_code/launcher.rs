@@ -11,6 +11,8 @@ use tokio::sync::{mpsc, oneshot};
 use super::config::LaunchSpec;
 use crate::harness::HarnessError;
 
+pub use crate::adapters::codex::launcher::{MAX_LINE_BYTES, OVERLONG_LINE, forward_lines};
+
 /// Default install location (`images/sandbox/Containerfile`).
 pub const DEFAULT_BIN: &str = "/opt/aurora/harness/claude-code/node_modules/.bin/claude";
 
@@ -77,14 +79,7 @@ impl Launcher for ProcessLauncher {
             }
         });
         let (out_tx, out_rx) = mpsc::channel::<String>(256);
-        tokio::spawn(async move {
-            let mut r = BufReader::new(stdout).lines();
-            while let Ok(Some(l)) = r.next_line().await {
-                if out_tx.send(l).await.is_err() {
-                    break;
-                }
-            }
-        });
+        tokio::spawn(forward_lines(stdout, MAX_LINE_BYTES, out_tx));
         tokio::spawn(async move {
             let mut r = BufReader::new(stderr).lines();
             while let Ok(Some(l)) = r.next_line().await {
@@ -94,9 +89,7 @@ impl Launcher for ProcessLauncher {
         let (kill_tx, kill_rx) = oneshot::channel::<()>();
         // (FIX-151) Platform-tool calls from this process's descendants act for this conversation;
         // the registration ends when the process does.
-        let registration = child.id().and_then(|pid| {
-            crate::proc_ancestry::HarnessRegistry::global().register(pid, spec.conversation_id)
-        });
+        let registration = crate::adapters::register_harness(&child, spec.conversation_id);
         tokio::spawn(async move {
             let _registration = registration;
             tokio::select! {

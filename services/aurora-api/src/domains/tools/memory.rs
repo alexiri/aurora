@@ -63,6 +63,9 @@ impl PlatformTool for Save {
     fn name(&self) -> &'static str {
         "memory_save"
     }
+    fn family(&self) -> &'static str {
+        "memory"
+    }
     fn description(&self, _: &ToolContext) -> String {
         format!(
             "Create or replace one of your memories (content at most {} characters). {KEY_NOTE}",
@@ -121,6 +124,9 @@ impl PlatformTool for Get {
     fn name(&self) -> &'static str {
         "memory_get"
     }
+    fn family(&self) -> &'static str {
+        "memory"
+    }
     fn description(&self, _: &ToolContext) -> String {
         "Read one of your memories by key.".into()
     }
@@ -153,6 +159,9 @@ struct List;
 impl PlatformTool for List {
     fn name(&self) -> &'static str {
         "memory_list"
+    }
+    fn family(&self) -> &'static str {
+        "memory"
     }
     fn description(&self, _: &ToolContext) -> String {
         "List your memories (key, title, index line).".into()
@@ -209,6 +218,9 @@ impl PlatformTool for Search {
     fn name(&self) -> &'static str {
         "memory_search"
     }
+    fn family(&self) -> &'static str {
+        "memory"
+    }
     fn description(&self, _: &ToolContext) -> String {
         format!(
             "Search your memories (best matches first, at most {}). Phrase the query in the \
@@ -248,6 +260,9 @@ struct Delete;
 impl PlatformTool for Delete {
     fn name(&self) -> &'static str {
         "memory_delete"
+    }
+    fn family(&self) -> &'static str {
+        "memory"
     }
     fn description(&self, _: &ToolContext) -> String {
         "Delete one of your memories and its history. Deleting its file does not delete it.".into()

@@ -204,6 +204,10 @@ impl Supervisor {
                 skills_dir: caps.skills_dir.clone(),
                 instruction_files: caps.instruction_files.clone(),
                 pg: cfg.pg,
+                // (C-653) A supervisor-local fact, computed once at start: the wrapper is there.
+                agent_cli: crate::agent_cli::agent_cli_available(std::path::Path::new(
+                    crate::agent_cli::WRAPPER,
+                )),
             }),
             harvester: Harvester::new(&cfg.working_dir),
         }));
@@ -377,6 +381,32 @@ impl Supervisor {
         }
     }
 
+    /// Releases one conversation's harness session; one with a running turn is never interrupted.
+    async fn release_session(&mut self, conversation_id: Uuid) {
+        if self
+            .turns
+            .values()
+            .any(|t| t.conversation_id == conversation_id)
+        {
+            return;
+        }
+        if let Some(e) = self.sessions.remove(&conversation_id)
+            && let Ok(m) = Arc::try_unwrap(e.session)
+        {
+            let _ = m.into_inner().release().await;
+        }
+    }
+
+    /// (P5-GUIDE-7, C-654) A sync changed what new sessions are told (core descriptors or the
+    /// instruction files): every idle session is released and picks the new list up at its next
+    /// message; a session with a turn running keeps its own until then.
+    async fn release_idle_sessions(&mut self) {
+        let ids: Vec<Uuid> = self.sessions.keys().copied().collect();
+        for id in ids {
+            self.release_session(id).await;
+        }
+    }
+
     async fn handle(&mut self, msg: RunnerToSupervisor, done_tx: &mpsc::UnboundedSender<Uuid>) {
         match msg {
             RunnerToSupervisor::TurnDeliver(d) => self.deliver(*d, done_tx).await,
@@ -390,18 +420,7 @@ impl Supervisor {
                 }
             }
             RunnerToSupervisor::SessionRelease(r) => {
-                if self
-                    .turns
-                    .values()
-                    .any(|t| t.conversation_id == r.conversation_id)
-                {
-                    return; // a running turn is never interrupted for a release
-                }
-                if let Some(e) = self.sessions.remove(&r.conversation_id)
-                    && let Ok(m) = Arc::try_unwrap(e.session)
-                {
-                    let _ = m.into_inner().release().await;
-                }
+                self.release_session(r.conversation_id).await;
             }
             RunnerToSupervisor::SessionPurge(p) => {
                 self.purge(p.conversation_id, p.session_ref, p.harness)
@@ -642,11 +661,19 @@ impl Supervisor {
         let committed = tokio::task::spawn_blocking(move || {
             home.lock()
                 .map_err(|_| "home state poisoned".to_owned())
-                .and_then(|mut g| g.projector.commit(generation).map_err(|e| e.to_string()))
+                .and_then(|mut g| {
+                    let before = g.projector.catalogue_digest();
+                    g.projector.commit(generation).map_err(|e| e.to_string())?;
+                    // A first install has no sessions to release (`before` is `None`).
+                    Ok(before.is_some() && before != g.projector.catalogue_digest())
+                })
         })
         .await;
         match committed {
-            Ok(Ok(())) => {
+            Ok(Ok(changed)) => {
+                if changed {
+                    self.release_idle_sessions().await;
+                }
                 // Deleted conversations' session files go before the sandbox can run any turn.
                 self.run_pending_purges().await;
                 self.sync_db_relay().await;
@@ -845,6 +872,17 @@ impl Supervisor {
             env.extend(crate::pg::env(&self.cfg.working_dir));
         }
         env.extend(d.model.client_env.iter().cloned());
+        // (P5-GUIDE-7, C-655) The conversation the harness serves: `aurora-agent … aurora` names
+        // it on the tools socket (the socket still decides by the caller's process, FIX-151).
+        // Set only for harness processes: the terminal, SSH and `process_start` environments are
+        // built elsewhere and strip `AURORA_*`.
+        env.push(("AURORA_SESSION".into(), d.conversation_id.to_string()));
+        let core_only = self
+            .home
+            .lock()
+            .map(|h| h.projector.bridge_core_only())
+            .unwrap_or(false);
+        // The tools the harness does not see are found with `aurora-agent` (C-654).
         // The terminal's `claude`/`codex` wrappers reach the LLM with the same model the agent
         // uses (placeholders only, no secret; `crate::harness_env`).
         if let Some(h) = &self.cfg.harness_env
@@ -866,6 +904,9 @@ impl Supervisor {
                     } else {
                         let mut c = self.cfg.mcp_bridge_command.clone();
                         c.extend(["--session".to_owned(), d.conversation_id.to_string()]);
+                        if core_only {
+                            c.push("--core-only".to_owned());
+                        }
                         c
                     },
                 },

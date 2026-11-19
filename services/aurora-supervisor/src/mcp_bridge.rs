@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use aurora_protocol::tools::{ToolContent, ToolDescriptor, ToolResult};
+use aurora_protocol::tools::{Exposure, ToolContent, ToolDescriptor, ToolResult};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -63,7 +63,7 @@ fn render(r: ToolResult) -> Value {
     }
 }
 
-async fn handle(session: &str, socket: &Path, msg: &Value) -> Option<Value> {
+async fn handle(session: &str, socket: &Path, core_only: bool, msg: &Value) -> Option<Value> {
     let id = msg.get("id").cloned()?; // notifications have no id
     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
@@ -96,7 +96,9 @@ async fn handle(session: &str, socket: &Path, msg: &Value) -> Option<Value> {
                 }) => serde_json::from_value(v).unwrap_or_default(),
                 _ => Vec::new(),
             };
-            ok(json!({ "tools": tools.into_iter().map(|t| json!({
+            ok(json!({ "tools": tools.into_iter()
+                .filter(|t| !core_only || t.exposure.unwrap_or_default() == Exposure::Core)
+                .map(|t| json!({
                 "name": t.name,
                 "description": t.description.unwrap_or_default(),
                 "inputSchema": t.input_schema,
@@ -190,7 +192,12 @@ pub async fn next_line_bounded<R: tokio::io::AsyncBufRead + Unpin>(
 }
 
 /// Serves MCP on `input`/`output` until `input` closes.
-pub async fn run<R, W>(session: String, socket: PathBuf, input: R, mut output: W)
+///
+/// `core_only` (P5-GUIDE-7, C-654): `tools/list` returns the descriptors whose exposure is `core`;
+/// `tools/call` forwards any name either way, so exposure changes what is listed, never what is
+/// allowed. A descriptor without an exposure counts as on-demand (C-654); an older API never
+/// gets here, because without `platform_tools` in the render inputs `core_only` is false.
+pub async fn run<R, W>(session: String, socket: PathBuf, core_only: bool, input: R, mut output: W)
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -225,7 +232,7 @@ where
                 };
                 let (session, socket, tx) = (session.clone(), socket.clone(), tx.clone());
                 tasks.spawn(async move {
-                    if let Some(resp) = handle(&session, &socket, &msg).await {
+                    if let Some(resp) = handle(&session, &socket, core_only, &msg).await {
                         let _ = tx.send(resp).await;
                     }
                 });
