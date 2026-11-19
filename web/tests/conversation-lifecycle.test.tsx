@@ -138,6 +138,8 @@ describe("conversation actions", () => {
       "POST /v1/agents/a1/conversations/direct": () => json(200, conv("mine", "direct", { direct_user_id: "me" })),
       "GET /v1/agents/a1/conversations": () => json(200, { items: [conv("old", "group", { title: "Old room", archived_at: "2026-02-01T00:00:00Z" })], next_cursor: null }),
       "GET /v1/orgs/o1/retention": () => json(200, { conversations_days: 90, conversations_days_max: null }),
+      // The retention rule is read only for an organization owner or admin (a member gets 403; P5-POLISH-6 review fixes).
+      "GET /v1/orgs/o1": () => json(200, { id: "o1", slug: "x", name: "X", external_id: null, app_posture: "open", settings: {}, my_role: "admin", created_at: "2026-01-01T00:00:00Z" }),
     });
     wrap(<ChatTab agentId="a1" wsId="w" base="/o/x/w/y" orgId="o1" />);
     expect(await screen.findByText(/Deleted after 90 days without activity/)).toBeTruthy();
