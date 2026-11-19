@@ -104,8 +104,8 @@ them, starts there.
 - **The look it sets** (on top of this section, not instead of it): a navy navigation rail in both
   themes (a dark-theme island carrying the dark lockup, a scope switcher and the topics of
   §Information architecture); every topic page opening with a sentence that says what is true now; the
-  access choice drawn as one three-way switch everywhere; amber for anything that needs a person, teal
-  for allowed, works and selected. Colours, type, radii and spacing stay the tokens of this section.
+  access choice drawn as one three-way switch everywhere; amber for anything that needs a person (since
+  D-384: only where that person has an action), teal for allowed, works and selected. Colours, type, radii and spacing stay the tokens of this section.
 - **Shared classes:** the canvas's `aurora-ui.css` uses only the tokens; each class names a primitive
   to build once in `web/src/components/ui` (or `components/accounts`) and reuse. Do not copy the
   canvas's HTML or class names into the code.
@@ -116,6 +116,30 @@ them, starts there.
   canvas of §Agent page (phase 5) as their reference.
 - **Keeping it current:** a spec change that changes a screen updates its board in the same change
   (the canvas is edited by whoever owns the spec batch).
+
+**UX fixes (phase 5, P5-POLISH, D-380..D-393).** UX review 4 walked the finished redesign
+(<https://claude.ai/artifact/33oHaXQpCU3oSVRVmgtY5Z>, 100 screens) and the owner accepted thirty
+before/after proposals, **“Aurora UX fixes”** (<https://claude.ai/artifact/WXbcpcrkbCLuxMSurpkuQW>,
+IDs A1..F3, with the owner's comments applied). It is the reference for the P5-POLISH briefs and,
+where it differs from a canvas board, wins over the board. Workers who cannot open artifacts read the
+copy at `/home/alex/orca/workspaces/aurora/design-ux-fixes/` (`after/<id>.png` renders every mockup,
+`before/` the screenshots, `README.txt` the layout). Precedence: this document and `API_CONTRACTS.md`,
+then the brief, then the mockup. Yellow dashed labels in a mockup are commentary, not design. Rules it
+adds to this section, for every screen:
+- **Dialogs** are three rows (header with title, close and an optional stepper; body, the only part
+  that scrolls; footer with Back on the left and the step's one action on the right). Below 640 px a
+  multi-step dialog is a full-screen sheet. No sticky header (D-393).
+- **Amber** (the pending styles) only on an item with an action for the viewer. Who owns or locks a
+  value is a neutral **lock pill** ("Set by Users", "Set in Helm") that names who can change it on
+  hover. At most one chip per card, sentence case; a thing's kind is its icon (D-384).
+- **Health lines** say only what a real call proved: "Worked 5 min ago", "Failed 2 min ago: <reason>"
+  with its fix, "Not used yet"; a test shows as "Test passed …", never as working (D-383).
+- **Members** see a sentence and who can change it, never an owner's form with disabled controls
+  (D-390). An unavailable feature is one **Unavailable** card, never a disabled form (D-392).
+- **Settings** are full-width cards of rows: label and help left, control right, switches for
+  booleans, one guide link per card (D-392).
+- **Focus** is one ring from `:focus-visible`; a container with a focused field changes its border;
+  menus and popovers have no outline (D-393).
 
 **Scope: the whole dashboard.** This section is the dashboard's visual
 identity, not a restyle of individual screens. **Every** screen MUST follow
@@ -440,6 +464,15 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     (C-506) and `?c=<id>` open what they open today; the section is derived from
     the page. A hosted agent opens on Chat, a BYO agent on Instructions. The
     Delete zone under Instructions is removed (Delete is in Agent actions).
+  - (phase 5, P5-POLISH-6, D-382, C-1036) **Behaviour and Access are configuration, reached from the …
+    menu.** The tab bar shows **Chat · Triggers · Computer** (BYO: Computer). The … menu (Agent
+    actions) lists **Behaviour** ("Name, instructions, model, memory, skills"), **Access** ("Apps,
+    accounts and the AI key it uses"), a separator, **Freeze <Agent>** ("Pauses it until you unfreeze
+    it") and **Delete <Agent>…** (danger). On a Behaviour or Access page no tab is selected, the …
+    button is marked, and under the header a back link **Chat**, the page name and one sentence name
+    the page; Behaviour keeps its Instructions · Memory · Skills · Evals row. `?tab=` ids are
+    unchanged. A BYO agent (no Chat) opens on Behaviour as before. This replaces the five-section order
+    above wherever they disagree.
   - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
     page (Triggers section), bound to `narration_cards` (off by default). Help text: "Posts one message
     per reply that lists the steps the agent takes, updated as they run and shrunk to one line when the answer

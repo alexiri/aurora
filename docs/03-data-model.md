@@ -2138,3 +2138,32 @@ rollout of the API and the terminator; `15 §SSH access`). The gateway database 
 
 #### `conversations.kind` (phase 5, P4-EVAL-2, C-860; migration `20261201000240`)
 `conversations.kind` CHECK gained `eval` (external_ref `eval:<run_id>:<position>`; the unique `(agent_id, kind, external_ref)` index is unchanged). The same migration adds `eval_read_only` to `request_log.decision` (§request_log). A turn of an `eval` conversation gets a `context` gateway credential whose `capabilities` hold `eval_read_only` (set at mint from the conversation's kind); the gateway refuses every write made with it (C-868).
+
+#### `app_connections` and `secrets`: real use and tests apart (phase 5, P5-POLISH-3, D-383, C-1033; migration `20261201000254`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| last_ok_at | timestamptz null | the last 2xx/3xx answer to an **agent** call through this account, written by the gateway (at most once a minute); backfilled from `last_check_at` where `last_check_result = 'ok'` | 5 (P5-POLISH-3) |
+| last_error_at | timestamptz null | the last failed agent call the gateway attributes to the account | 5 (P5-POLISH-3) |
+| last_error | text null | `rejected` \| `unreachable` \| `unexpected` \| `expired` (CHECK); backfilled from a non-`ok` `last_check_result` | 5 (P5-POLISH-3) |
+| last_test_at | timestamptz null | the last **Test** (C-943); never written by the gateway's use path | 5 (P5-POLISH-3) |
+| last_test_result | text null | `ok` \| `rejected` \| `unreachable` \| `unexpected` (CHECK) | 5 (P5-POLISH-3) |
+
+`last_check_at` and `last_check_result` stay (no longer written) until a later cleanup migration. Both tables get the same five columns.
+
+#### `app_setup_requests`, `app_setup_request_askers` (phase 5, P5-POLISH-4, D-386, C-1030, SEC-135; migration `20261201000255`)
+| Planned table.column | Type | Notes | Phase |
+|---|---|---|---|
+| app_setup_requests.id | uuid pk | | 5 (P5-POLISH-4) |
+| app_setup_requests.org_id | uuid fk organizations on delete cascade | | 5 |
+| app_setup_requests.app_id | text | the catalogue app id | 5 |
+| app_setup_requests.status | text | `open` \| `resolved` \| `declined` \| `withdrawn` (CHECK); at most one `open` row per `(org_id, app_id)` (partial unique index) | 5 |
+| app_setup_requests.needs | jsonb | the `needs` list at the time of the last ask (C-1029) | 5 |
+| app_setup_requests.created_at / closed_at | timestamptz / timestamptz null | | 5 |
+| app_setup_requests.closed_by | uuid null fk users on delete set null | the decliner; null for `resolved` (system) and `withdrawn` | 5 |
+| app_setup_request_askers.request_id | uuid fk app_setup_requests on delete cascade | pk with `user_id` | 5 |
+| app_setup_request_askers.user_id | uuid fk users on delete cascade | | 5 |
+| app_setup_request_askers.workspace_id | uuid fk workspaces on delete cascade | where the person asked (for the resolution link) | 5 |
+| app_setup_request_askers.asked_at | timestamptz | | 5 |
+| app_setup_request_notices | (claims) | one row per (request, recipient, kind) for idempotent mail/push across replicas, like `approval_notifications` | 5 |
+
+No free text anywhere in these tables. Rows of closed requests are purged after 90 days by the existing retention sweep.
