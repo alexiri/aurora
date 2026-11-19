@@ -186,6 +186,117 @@ async fn bridge_supervisor_runner_round_trip() {
     );
 }
 
+/// (P5-GUIDE-7, C-654, SEC-119) `tools/list` is the core descriptors when the bridge is core-only
+/// and everything otherwise (an older API's descriptors carry no `exposure`: everything); a call
+/// by name reaches the runner in both modes with the same frame. Also records the sizes of the
+/// two lists (chars / 4) for the completion report.
+#[tokio::test]
+async fn the_bridge_lists_core_only_or_all_and_calls_any_tool_by_name() {
+    let d = TempDir::new();
+    let root = d.path().to_path_buf();
+    fs::create_dir_all(root.join(".aurora")).unwrap();
+    let schema = json!({"type": "object", "properties": {"key": {"type": "string"}}});
+    let descs = json!([
+        {"name": "complete_task", "description": "Finish.", "input_schema": schema, "family": "tasks", "exposure": "core"},
+        {"name": "memory_save", "description": "Save a note.", "input_schema": schema, "family": "memory", "exposure": "on_demand"},
+        {"name": "memory_get", "description": "Read a note.", "input_schema": schema, "family": "memory"},
+    ]);
+    fs::write(
+        root.join(".aurora/tools.json"),
+        serde_json::to_vec(&descs).unwrap(),
+    )
+    .unwrap();
+    let sock = root.join("tools.sock");
+    let (hub, mut out_rx) = hub(&root, ToolsConfig::default());
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), Some(Uuid::now_v7()));
+    tokio::spawn(hub.clone().serve_owned(sock.clone()));
+    timeout(T, async {
+        while !sock.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .unwrap();
+
+    let mut sizes = Vec::new();
+    for core_only in [true, false] {
+        let (client, server) = tokio::io::duplex(1 << 16);
+        let (sr, sw) = tokio::io::split(server);
+        tokio::spawn(mcp_bridge::run(
+            CONV.into(),
+            sock.clone(),
+            core_only,
+            sr,
+            sw,
+        ));
+        let (cr, mut cw) = tokio::io::split(client);
+        let mut lines = BufReader::new(cr).lines();
+        let rpc = |v: Value| {
+            let mut b = v.to_string().into_bytes();
+            b.push(b'\n');
+            b
+        };
+        cw.write_all(&rpc(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"})))
+            .await
+            .unwrap();
+        let raw = lines.next_line().await.unwrap().unwrap();
+        let list: Value = serde_json::from_str(&raw).unwrap();
+        let mut names: Vec<String> = list["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_owned())
+            .collect();
+        names.sort();
+        if core_only {
+            // The supervisor's own `send_file` is local and core too; the registry's core tool
+            // is listed, no on-demand one (not the process tools either).
+            assert_eq!(
+                names,
+                vec!["complete_task", "send_file"],
+                "core only: {names:?}"
+            );
+        } else {
+            for n in [
+                "complete_task",
+                "send_file",
+                "memory_save",
+                "memory_get",
+                "process_start",
+            ] {
+                assert!(names.iter().any(|x| x == n), "all lists {n}: {names:?}");
+            }
+        }
+        sizes.push((core_only, raw.chars().count()));
+
+        // An on-demand tool is served by name in both modes: the same frame reaches the runner.
+        cw.write_all(&rpc(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"memory_save","arguments":{"key":"k"}}}))).await.unwrap();
+        let SupervisorToRunner::ToolCall(call) = next_matching(&mut out_rx, |m| {
+            matches!(m, SupervisorToRunner::ToolCall(_))
+        })
+        .await
+        else {
+            unreachable!()
+        };
+        assert_eq!(call.tool, "memory_save");
+        assert_eq!(call.args, json!({"key": "k"}));
+        assert_eq!(call.conversation_id, Uuid::parse_str(CONV).unwrap());
+        hub.on_result(ToolResult::success(
+            call.call_id,
+            vec![ToolContent::Text(TextContent { text: "ok".into() })],
+        ));
+        let res: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(res["result"]["isError"], false, "core_only={core_only}");
+    }
+    eprintln!(
+        "tools/list sizes (chars; chars/4 = tokens): {:?}",
+        sizes
+            .iter()
+            .map(|(c, n)| (if *c { "core-only" } else { "all" }, *n, *n / 4))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// (FIX-110, SEC-24) With no turn running in the conversation (a process left behind by an
 /// earlier turn) a tool call is refused locally: no frame reaches the runner.
 #[tokio::test]

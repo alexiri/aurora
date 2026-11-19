@@ -876,6 +876,41 @@ pub(crate) fn fit_render_inputs(v: &mut Value, max: usize) -> bool {
 mod name_tests {
     use super::*;
 
+    /// (P5-GUIDE-7, C-654) `render_inputs.platform_tools` over the real registry: core tools stay
+    /// out of the families, every on-demand tool is in exactly one family with a purpose, and the
+    /// size of the on-demand index is recorded for the report.
+    #[test]
+    fn platform_tools_input_groups_the_on_demand_tools_by_family() {
+        use aurora_protocol::tools::{Exposure, ToolDescriptor};
+        let d = |name: &str, family: &str, exposure: Exposure| ToolDescriptor {
+            name: name.into(),
+            description: None,
+            input_schema: json!({"type": "object"}),
+            family: Some(family.into()),
+            exposure: Some(exposure),
+        };
+        let cat = vec![
+            d("complete_task", "tasks", Exposure::Core),
+            d("memory_save", "memory", Exposure::OnDemand),
+            d("schedule_list", "schedules", Exposure::OnDemand),
+            d("memory_get", "memory", Exposure::OnDemand),
+            ToolDescriptor {
+                family: None,
+                exposure: None,
+                ..d("legacy", "x", Exposure::OnDemand)
+            },
+        ];
+        let v = platform_tools_input("on_demand", &cat);
+        assert_eq!(v["mode"], "on_demand");
+        let fams = v["families"].as_array().unwrap();
+        assert_eq!(fams.len(), 2, "{v}");
+        assert_eq!(fams[0]["name"], "memory");
+        assert_eq!(fams[0]["tools"], json!(["memory_save", "memory_get"]));
+        assert_eq!(fams[1]["name"], "schedules");
+        assert!(!v.to_string().contains("complete_task"));
+        assert_eq!(platform_tools_input("all", &cat)["mode"], "all");
+    }
+
     /// (P5-HARN) The projection's skills directory per harness is the one each adapter declares.
     #[test]
     fn skills_dir_follows_the_adapters_declaration() {

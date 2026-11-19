@@ -657,6 +657,68 @@ mod tests {
         insta::assert_snapshot!(r);
     }
 
+    fn tool_families() -> PlatformToolsInfo {
+        let fam = |n: &str, p: &str, t: &[&str]| ToolFamily {
+            name: n.into(),
+            purpose: p.into(),
+            tools: t.iter().map(|s| (*s).to_owned()).collect(),
+        };
+        PlatformToolsInfo {
+            mode: "on_demand".into(),
+            families: vec![
+                fam(
+                    "memory",
+                    "what you remember between conversations",
+                    &["memory_save", "memory_get", "memory_list", "memory_search"],
+                ),
+                fam(
+                    "schedules",
+                    "recurring and one-off runs of your own",
+                    &["schedule_create", "schedule_list"],
+                ),
+                // A family whose tools are all unavailable arrives empty-less: omitted.
+                fam("webhooks", "inbound webhooks", &[]),
+            ],
+        }
+    }
+
+    /// (P5-GUIDE-7, `24 §10b`) The *platform tools* fragment: on in `on_demand` with the command,
+    /// absent in mode `all`, absent without the command (an older image), absent from an older API.
+    #[test]
+    fn platform_tools_fragment_snapshots_for_both_modes() {
+        let mut i = sample();
+        i.platform_tools = Some(tool_families());
+        let on = render_with(&i, true);
+        assert!(on.contains("## Platform tools"));
+        assert!(on.contains("- memory (save, get, list, search): what you remember"));
+        assert!(on.contains("- schedules (create, list): "));
+        assert!(
+            on.contains("- processes ("),
+            "the supervisor's local family joins"
+        );
+        assert!(
+            !on.contains("- webhooks"),
+            "a family without tools is omitted"
+        );
+        insta::assert_snapshot!("platform_tools_on_demand", on);
+
+        i.platform_tools.as_mut().unwrap().mode = "all".into();
+        let all = render_with(&i, true);
+        assert!(!all.contains("Platform tools"), "{all}");
+        insta::assert_snapshot!("platform_tools_all", all);
+
+        // No command in the sandbox, or no inputs from an older API: nothing is hidden, nothing said.
+        i.platform_tools.as_mut().unwrap().mode = "on_demand".into();
+        assert!(!render_with(&i, false).contains("Platform tools"));
+        i.platform_tools = None;
+        assert!(!render_with(&i, true).contains("Platform tools"));
+
+        // The measured size of the fragment (chars / 4, P5-GUIDE-7's report).
+        let frag = platform_tools_fragment(&tool_families());
+        eprintln!("platform tools fragment: {} chars", frag.chars().count());
+        assert!(frag.chars().count() < 2_000, "{}", frag.chars().count());
+    }
+
     /// With the 23 built-in apps and long notes the fragment stays small: the notes are not in it.
     #[test]
     fn index_with_many_apps_carries_no_notes() {

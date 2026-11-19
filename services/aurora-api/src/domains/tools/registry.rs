@@ -340,6 +340,86 @@ pub async fn catalogue(state: &AppState, agent_id: Uuid) -> Result<Vec<ToolDescr
 pub const CALL_TIMEOUT: Duration = limits::TOOL_CALL_TIMEOUT;
 
 #[cfg(test)]
+mod exposure_tests {
+    use super::*;
+
+    /// (P5-GUIDE-7, D-297) Every tool names a family; the core set is exactly the tools the
+    /// bridge lists in `on_demand` mode and stays within `PLATFORM_TOOLS_CORE_MAX` (with the
+    /// supervisor's local `send_file`, which is core too).
+    #[test]
+    fn every_tool_has_a_family_and_the_core_set_is_the_documented_one() {
+        let r = registry();
+        let no_family: Vec<&str> = r
+            .order
+            .iter()
+            .copied()
+            .filter(|n| r.tools[n].family().trim().is_empty())
+            .collect();
+        assert!(
+            no_family.is_empty(),
+            "tools without a family: {no_family:?}"
+        );
+        let mut core: Vec<&str> = r
+            .order
+            .iter()
+            .copied()
+            .filter(|n| r.tools[n].exposure() == Exposure::Core)
+            .collect();
+        core.sort_unstable();
+        // `send_file` is the supervisor's local core tool (not in this registry).
+        assert_eq!(core, vec!["complete_task"]);
+        assert!(core.len() < limits::PLATFORM_TOOLS_CORE_MAX);
+    }
+
+    #[test]
+    fn a_registry_over_the_core_maximum_is_refused() {
+        struct C(&'static str);
+        #[async_trait::async_trait]
+        impl PlatformTool for C {
+            fn name(&self) -> &'static str {
+                self.0
+            }
+            fn family(&self) -> &'static str {
+                "test"
+            }
+            fn exposure(&self) -> Exposure {
+                Exposure::Core
+            }
+            fn description(&self, _: &ToolContext) -> String {
+                String::new()
+            }
+            fn input_schema(&self) -> Value {
+                serde_json::json!({"type": "object"})
+            }
+            fn available(&self, _: &ToolContext) -> bool {
+                true
+            }
+            async fn call(
+                &self,
+                _: &ToolCallContext,
+                _: Value,
+            ) -> Result<Vec<ToolContent>, ToolError> {
+                Ok(vec![])
+            }
+        }
+        const NAMES: [&str; 9] = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+        let many: Vec<Box<dyn PlatformTool>> = NAMES
+            .iter()
+            .take(limits::PLATFORM_TOOLS_CORE_MAX)
+            .map(|n| Box::new(C(n)) as Box<dyn PlatformTool>)
+            .collect();
+        let err = Registry::new(many).err().expect("over the maximum");
+        assert!(err.contains("PLATFORM_TOOLS_CORE_MAX"), "{err}");
+        let ok: Vec<Box<dyn PlatformTool>> = NAMES
+            .iter()
+            .take(limits::PLATFORM_TOOLS_CORE_MAX - 1)
+            .map(|n| Box::new(C(n)) as Box<dyn PlatformTool>)
+            .collect();
+        assert!(Registry::new(ok).is_ok());
+    }
+}
+
+#[cfg(test)]
 mod eval_classification_tests {
     use super::*;
 

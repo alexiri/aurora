@@ -129,6 +129,43 @@ fn bounded_string_enforces_limit() {
     assert!(BoundedString::<3>::new("abcd").is_err());
 }
 
+/// (P5-GUIDE-7, C-654) Rolling upgrade, both ways: a descriptor from an older API (no `family`,
+/// no `exposure`) parses and means on-demand; one with neither field set serializes exactly as
+/// before; an older peer's descriptor shape (no such fields) reads the new one, extra keys ignored.
+#[test]
+fn descriptor_family_and_exposure_are_optional_both_ways() -> TestResult {
+    use aurora_protocol::tools::{Exposure, ToolDescriptor};
+    let old = r#"{"name":"memory_save","description":"d","input_schema":{"type":"object"}}"#;
+    let d: ToolDescriptor = serde_json::from_str(old)?;
+    assert_eq!(d.family, None);
+    assert_eq!(d.exposure.unwrap_or_default(), Exposure::OnDemand);
+    assert_eq!(serde_json::to_string(&d)?, old, "nothing new is emitted");
+
+    let new = ToolDescriptor {
+        family: Some("memory".into()),
+        exposure: Some(Exposure::Core),
+        ..d
+    };
+    let v = serde_json::to_value(&new)?;
+    assert_eq!(v["family"], "memory");
+    assert_eq!(v["exposure"], "core");
+    assert_eq!(
+        serde_json::to_value(Exposure::OnDemand)?,
+        serde_json::json!("on_demand")
+    );
+
+    // What an older supervisor does: its descriptor type has neither field.
+    #[derive(serde::Deserialize)]
+    struct OldDescriptor {
+        name: String,
+        input_schema: serde_json::Value,
+    }
+    let o: OldDescriptor = serde_json::from_value(v)?;
+    assert_eq!(o.name, "memory_save");
+    assert_eq!(o.input_schema["type"], "object");
+    Ok(())
+}
+
 #[test]
 fn registry_names_are_unique() {
     let all = schema::all();

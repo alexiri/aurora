@@ -149,7 +149,44 @@ after `commit` and calls `release_idle_sessions()` when it moved (a first instal
 `a_changed_catalogue_never_releases_a_running_turn`. Limitation: a session that had a turn running during the change is not released afterwards; it keeps the old list until the next change.
 Runs: `cargo nextest run -p aurora-supervisor -E 'test(/catalogue/)'` 5 passed (the build alone took 70 min at load 100–280).
 
-**Next steps (a fresh worker):**
+**Part 4 (lane `p5-apps`, worker 43, 2026-11-19) — item 3 (tests, measurements), item 9 (security-coverage):**
+Tests added (all passing; each is also on the `18 §App guides on demand` list):
+- Registry (`domains/tools/registry.rs::exposure_tests`): `every_tool_has_a_family_and_the_core_set_is_the_documented_one` (core = `complete_task`, within
+  `PLATFORM_TOOLS_CORE_MAX` counting `send_file`), `a_registry_over_the_core_maximum_is_refused`.
+- API (`tests/it/tools.rs::catalogue_descriptors_carry_family_and_exposure_and_core_is_small`), render input
+  (`hosted/home.rs::platform_tools_input_groups_the_on_demand_tools_by_family`: core out of the families, on-demand grouped in registry order, descriptors without family skipped).
+- Protocol old peer (`aurora-protocol` `tests/it/protocol.rs::descriptor_family_and_exposure_are_optional_both_ways`): an older API's descriptor parses and means on-demand and
+  re-serializes byte for byte; the new descriptor reads through an older supervisor's field-less type (rolling upgrade, new API + old supervisor).
+- Config refusal (`aurora-config` `tests/config.rs::hosted_platform_tools_defaults_and_refuses_unknown_values`).
+- Bridge (`sup tests/it/tools.rs::the_bridge_lists_core_only_or_all_and_calls_any_tool_by_name`): core-only list = `complete_task`, `send_file`; `all` lists everything
+  (descriptors with no `exposure`, as an older API sends, included); `memory_save` is served by name in both modes with the same frame.
+- Home sync / rolling upgrade, old API + new supervisor (`sup tests/it/home.rs::the_bridge_is_core_only_exactly_for_on_demand_with_the_command`): no `platform_tools` → everything listed and no
+  fragment; mode `all`, or no `aurora-agent` in the sandbox → same; `on_demand` + command → core only and the fragment in `AGENTS.md`.
+- Instruction snapshots (`instructions.rs::platform_tools_fragment_snapshots_for_both_modes`; new `.snap` files `platform_tools_on_demand`, `platform_tools_all`; a family without tools is omitted,
+  the local `processes` family joins; absent without the command and without inputs). Cosmetic finding: the verbs of `processes` print whole (`process_start`, …) because
+  the prefix strip trims a trailing `s`; harmless, left as is.
+- SEC-119 parity, e2e (`s43`): `aurora-agent call aurora memory_save` and the bridge's socket `call` request (sent from the harness's child) leave the same `memory_revisions` row
+  (op, author, content, provenance with the conversation and a turn). **Limit:** `tool.started`/`tool.finished` events are the harness adapter's, not the registry's, and the fake
+  harness's `[[shell:]]` emits none, so event parity cannot be asserted against the fake; the e2e proves the durable side. Ran green: `hosted.sh s43` on the full image
+  (`AURORA_E2EH_PREFIX=p5apps-e2eh`, own subnets) — 1 passed, 75 s.
+- Fixed on the way: `tests/it/plugins_upgrade.rs::the_shipped_indico_version_replaces_the_previous_one_automatically` still pinned indico 1.3.0 and omitted `operations.json`
+  (P5-GUIDE-6 bumped it to 1.4.0); `scripts/guards/limits-gaps.allow` loses `PLATFORM_TOOLS_CORE_MAX doc-only` (it now has a reader; the limits-readers guard demanded it).
+- `docs/tests/security-coverage.md`: SEC-119 test ids. SEC-120 unchanged (already lists the GUIDE-7 target tests via GUIDE-6's rows).
+
+**Measured** (chars ÷ 4, no tokenizer in the repo; run `--no-capture`): the real API catalogue is 27 tools; `tools/list` of those as MCP entries
+(name, description, inputSchema) = 11 022 chars ≈ **2 755 tokens** in mode `all`, 290 chars ≈ **72 tokens** core-only (`complete_task`). With the supervisor's local tools
+(a small catalogue of 3 API-like descriptors plus `send_file` and the four `process_*`): 2 031 chars ≈ 507 tokens vs 543 ≈ 135 tokens. The *Platform tools* fragment for a
+three-family sample: 542 chars ≈ 135 tokens (the real one has more families; the section's estimate of one line per family stays under ~1 000 chars).
+**Eval comparison** (`24 §13`): pending — P4-EVAL runs against a live model and were not run in this lane.
+
+**Gate (worker 43; the batch gate was cut down by the coordinator's targeted-tests rule at 13:xx):** `cargo check --workspace --all-targets --locked` clean (after the master merge);
+`cargo nextest run -p aurora-registry -p aurora-core -p aurora-db -p aurora-api` (after `scripts/fixtures/build.sh`): 2028 run, 2027 passed, 1 failed = the indico upgrade test above (fixed, re-run green);
+`-p aurora-protocol -p aurora-config -p aurora-supervisor`: 587 passed; `-p aurora-cli -p aurora-runner`: 174 passed; clippy `--workspace --all-targets --all-features --locked -D warnings`
+clean after one lint of my own test (re-run clean on the touched crates); `scripts/plugins/check-builtin.sh` rc 0; `scripts/guards/run-all.sh` rc 0 (after the allow-list fix);
+`extract-schema.py --check` and the OpenAPI/protocol schema ITs green (inside the suites). **Not run:** the full hosted scenarios incl. goose/OpenCode and the rest of `hosted.sh`,
+perf, any web gate (cancelled by the new rule; CI is the gate). A full-suite run under load took ~25 min for `aurora-api`.
+
+**Next steps (a fresh worker) — superseded by part 4; kept for history:**
 1. **Item 7 verification:** do both adapters hand `SessionOptions.env` to the harness process (claude-code, codex, pi, goose, opencode, fake)? Does `pty.rs`
    strip `AURORA_*` for the terminal, do SSH and `process_start` environments not carry it? Add tests (supervisor `tests/it`, adapters).
 2. **Item 8, target `aurora`** in `services/aurora-supervisor/src/agent_cli/` (`mod.rs` has the `TargetKind::Platform` arms answering `NOT_AVAILABLE`; add `platform.rs`):

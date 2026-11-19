@@ -205,6 +205,59 @@ async fn catalogue_lists_available_tools_with_schemas() {
     }
 }
 
+/// (P5-GUIDE-7, C-654, SEC-119) Every descriptor the API syncs names its family and exposure; the
+/// core set is exactly `complete_task` (the supervisor adds its local `send_file`); the
+/// `render_inputs.platform_tools` families cover every on-demand tool. Records the size of
+/// `tools/list` as the bridge would answer it, everything vs core only (chars / 4).
+#[tokio::test]
+async fn catalogue_descriptors_carry_family_and_exposure_and_core_is_small() {
+    use aurora_protocol::tools::Exposure;
+    let r = rig().await;
+    let b = r.booted("a1").await;
+    let cat = catalogue(&r.h.state, b.agent).await.unwrap();
+    assert!(cat.len() > 20, "{}", cat.len());
+    for t in &cat {
+        assert!(
+            t.family.as_deref().is_some_and(|f| !f.is_empty()),
+            "{} has no family",
+            t.name
+        );
+        assert!(t.exposure.is_some(), "{} has no exposure", t.name);
+    }
+    let core: Vec<&str> = cat
+        .iter()
+        .filter(|t| t.exposure == Some(Exposure::Core))
+        .map(|t| t.name.as_str())
+        .collect();
+    assert_eq!(core, ["complete_task"]);
+    let size = |tools: &[&aurora_protocol::tools::ToolDescriptor]| -> usize {
+        // The bridge's MCP shape: name, description, inputSchema.
+        tools
+            .iter()
+            .map(|t| {
+                json!({"name": t.name, "description": t.description, "inputSchema": t.input_schema})
+                    .to_string()
+                    .chars()
+                    .count()
+            })
+            .sum()
+    };
+    let all: Vec<_> = cat.iter().collect();
+    let core_only: Vec<_> = cat
+        .iter()
+        .filter(|t| t.exposure == Some(Exposure::Core))
+        .collect();
+    let (a, c) = (size(&all), size(&core_only));
+    eprintln!(
+        "MEASURE tools/list (API tools only, no supervisor-local): all = {} tools, {a} chars (~{} tokens); core-only = {} tools, {c} chars (~{} tokens)",
+        all.len(),
+        a / 4,
+        core_only.len(),
+        c / 4
+    );
+    assert!(c * 5 < a, "core-only is a small fraction: {c} vs {a}");
+}
+
 #[tokio::test]
 async fn list_agents_and_apps() {
     let r = rig().await;

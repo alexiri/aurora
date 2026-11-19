@@ -3125,6 +3125,44 @@ async fn s43_aurora_agent_calls_are_decided_by_the_gateway_like_raw_requests() {
         out.contains("memory_save [memory]") && out.contains("rc=0"),
         "{out}"
     );
+    // SEC-119 parity: the same save as the MCP bridge makes it (one socket `call` request from the
+    // harness's child) leaves the same durable row: same op and author, a provenance naming this
+    // conversation and a turn. (`tool.started`/`tool.finished` come from the harness adapter for
+    // either path: the fake's `[[shell:]]` emits none, a real harness reports the command or the
+    // MCP call as its own tool item, so those events are adapter conformance, not registry.)
+    let mcp = tools_sock_as_harness(
+        &st,
+        &admin,
+        &c,
+        &conv,
+        &json!({"id": 7, "session": conv, "method": "call", "tool": "memory_save",
+                "arguments": {"key": "e2e-parity-mcp", "content": "hello"}}),
+    )
+    .await;
+    assert!(
+        mcp.contains("\"ok\":true") || mcp.contains("\"ok\": true"),
+        "{mcp}"
+    );
+    let mcp_turn = "(the bridge's socket request, from the harness's child)";
+    let rows: Vec<(String, String, String, String, String, bool)> = sqlx::query_as(
+        "SELECT m.key, r.op, r.author_kind, r.author_label, r.content, \
+                (r.provenance->>'conversation_id') = $1 AND (r.provenance->>'turn_id') IS NOT NULL \
+         FROM memories m JOIN memory_revisions r ON r.memory_id = m.id \
+         WHERE m.key IN ('e2e-parity', 'e2e-parity-mcp') ORDER BY m.key",
+    )
+    .bind(&conv)
+    .fetch_all(st.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?} (mcp turn {mcp_turn})");
+    let shape = |r: &(String, String, String, String, String, bool)| {
+        (r.1.clone(), r.2.clone(), r.3.clone(), r.4.clone(), r.5)
+    };
+    assert_eq!(shape(&rows[0]), shape(&rows[1]), "{rows:?}");
+    assert!(
+        rows[0].5,
+        "provenance names the conversation and a turn: {rows:?}"
+    );
     // SEC-120: nothing it writes lands under the managed roots.
     let (rc, out) = exec_in(
         &c,

@@ -974,6 +974,61 @@ fn the_catalogue_digest_follows_core_descriptors_and_instruction_files_only() {
     );
 }
 
+/// (P5-GUIDE-7, C-654) The bridge lists only the core tools exactly when the installed render
+/// inputs say `on_demand` and the sandbox has `aurora-agent`; an older API (no `platform_tools`),
+/// mode `all` and an older image keep listing everything (rolling upgrade, old API + new
+/// supervisor). The *Platform tools* fragment is in the instruction file in the same case only.
+#[test]
+fn the_bridge_is_core_only_exactly_for_on_demand_with_the_command() {
+    let run = |platform: Option<serde_json::Value>, agent_cli: bool| -> (bool, String) {
+        let d = TempDir::new();
+        let mut p = HomeProjector::new(HomeConfig {
+            root: d.path().to_path_buf(),
+            skills_dir: Some(".claude/skills".into()),
+            instruction_files: vec!["AGENTS.md".into()],
+            pg: None,
+            agent_cli,
+        });
+        let mut inputs =
+            vec![json!({"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}})];
+        if let Some(pt) = platform {
+            inputs.push(json!({ "platform_tools": pt }));
+        }
+        let mut parts = generation(1, &[], &[]);
+        parts[2] = part(1, 2, 6, "render_inputs", json!(inputs));
+        apply_all(&mut p, &parts);
+        assert!(
+            !p.bridge_core_only(),
+            "nothing installed: everything is listed"
+        );
+        p.commit(1).unwrap();
+        let md = fs::read_to_string(d.path().join("AGENTS.md")).unwrap_or_default();
+        (p.bridge_core_only(), md)
+    };
+    let pt = |mode: &str| {
+        json!({"mode": mode, "families": [
+            {"name": "memory", "purpose": "Notes.", "tools": ["memory_search"]}]})
+    };
+    let (core, md) = run(Some(pt("on_demand")), true);
+    assert!(core);
+    assert!(
+        md.contains("## Platform tools") && md.contains("- memory ("),
+        "{md}"
+    );
+    let (core, md) = run(Some(pt("all")), true);
+    assert!(!core && !md.contains("Platform tools"));
+    let (core, md) = run(Some(pt("on_demand")), false);
+    assert!(
+        !core && !md.contains("Platform tools"),
+        "an older image loses nothing"
+    );
+    let (core, md) = run(None, true);
+    assert!(
+        !core && !md.contains("Platform tools"),
+        "an older API sends no platform_tools"
+    );
+}
+
 /// (P5-GUIDE-6, C-653) The `aurora-agent` sentences are rendered only when the supervisor found
 /// the wrapper (`agent_cli`); the same render inputs otherwise keep the `tools.md` sentence.
 #[test]
