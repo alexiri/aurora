@@ -39,6 +39,9 @@ impl PlatformTool for ListAgents {
     fn name(&self) -> &'static str {
         "list_agents"
     }
+    fn family(&self) -> &'static str {
+        "agents"
+    }
     fn description(&self, _: &ToolContext) -> String {
         "List the agents in your workspace (id, handle, name).".into()
     }
@@ -73,6 +76,9 @@ struct ListApps;
 impl PlatformTool for ListApps {
     fn name(&self) -> &'static str {
         "list_apps"
+    }
+    fn family(&self) -> &'static str {
+        "apps"
     }
     fn description(&self, _: &ToolContext) -> String {
         "List the app connections granted to you (connection id, app, label, status).".into()

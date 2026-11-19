@@ -254,6 +254,18 @@ const SIGNUP: &[Choice] = &[
         description: "Anyone who can reach this address may create an account.",
     },
 ];
+const PLATFORM_TOOLS: &[Choice] = &[
+    Choice {
+        value: "on_demand",
+        label: "On demand",
+        description: "Only the few core tools are listed; the agent searches for the others.",
+    },
+    Choice {
+        value: "all",
+        label: "All listed",
+        description: "Every tool is listed to the agent in every session.",
+    },
+];
 const ORG_CREATION: &[Choice] = &[
     Choice {
         value: "instance_admins",
@@ -644,6 +656,18 @@ pub static FIELDS: &[FieldMeta] = &[
         "5 minutes",
         Some("minutes"),
         RUNNERS,
+    ),
+    with_choices(
+        f(
+            "hosted.platform_tools",
+            "How agents find Aurora's own tools",
+            "On demand keeps the list the agent starts with short; it finds the rest with a command in its computer.",
+            K::Enum,
+            "On demand",
+            None,
+            RUNNERS,
+        ),
+        PLATFORM_TOOLS,
     ),
     // ---------------------------------------------------------------- approvals
     f(

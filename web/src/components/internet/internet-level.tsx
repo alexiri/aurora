@@ -67,7 +67,7 @@ function ReadOnlyRules({ rules }: { rules: PublishedInternetAccess["rules"] }) {
       {rules.map((r) => (
         <li key={r.logical_id} className="rounded-card border border-line bg-surface p-4 text-sm text-ink shadow-card">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <Badge tone={r.action === "allow" && !r.require_approval ? "accent" : r.action === "allow" ? "pending" : "danger"}>
+            <Badge tone={r.action === "allow" && !r.require_approval ? "accent" : r.action === "allow" ? "neutral" : "danger"}>
               {r.action === "block" ? "Blocks" : r.require_approval ? "Asks" : "Allows"}
             </Badge>
             <span className="font-medium">{r.name}</span>
@@ -434,13 +434,13 @@ export function InternetLevel(p: InternetLevelProps) {
               <li key={r.logical_id ?? `new-${i}`} className="rounded-card border border-line bg-surface p-4 text-sm text-ink shadow-card">
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <Badge tone={r.action === "allow" && !r.require_approval ? "accent" : r.action === "allow" ? "pending" : "danger"}>
+                    <Badge tone={r.action === "allow" && !r.require_approval ? "accent" : r.action === "allow" ? "neutral" : "danger"}>
                       {r.action === "block" ? "Blocks" : r.require_approval ? "Asks" : "Allows"}
                     </Badge>
                     <span className="font-medium">{r.name}</span>
                     {r.rate_limit ? <span className="text-ink-2">{r.rate_limit.count}/{r.rate_limit.per}</span> : null}
                     {r.enabled === false ? <span className="text-muted">(turned off)</span> : null}
-                    {ruleIsPending(r, published) ? <Badge tone="pending">Not applied yet</Badge> : null}
+                    {ruleIsPending(r, published) ? <Badge>Not applied yet</Badge> : null}
                   </div>
                   <div className="flex flex-wrap gap-1">
                     <Button size="sm" variant="ghost" aria-label={`Move ${r.name} up`} disabled={i === 0} onClick={() => ed.edit({ ...state, rules: moveRule(rules, i, i - 1) })}>

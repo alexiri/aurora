@@ -3,11 +3,10 @@
 import Link from "next/link";
 import { useId, useState, type ReactNode } from "react";
 
-import { Badge } from "@/components/ui/badge";
+import { LockPill } from "@/components/ui/lock-pill";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { ItemList, ListRow } from "@/components/ui/section";
-import { WhoCan } from "@/components/ui/who-can";
 import type { WhoCanValue } from "@/lib/who-can";
 
 /** A limit set by a level above (C-963): what it says in words, who set it, and who can change it. */
@@ -71,10 +70,9 @@ export function ScopeLadder({
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-ink">{a.label}</span>
-                    <Badge tone={a.source === "instance" ? "neutral" : "pending"}>{SOURCE_WORDS[a.source]}</Badge>
+                    <LockPill owner={SOURCE_WORDS[a.source]} whoCan={a.who_can} />
                   </div>
                   <p className="text-sm text-ink-2">{a.value_display}</p>
-                  <WhoCan value={a.who_can} className="text-xs" />
                 </div>
               </ListRow>
             ))}

@@ -71,8 +71,17 @@ load_env() {
 $_w_all
 EOF
 }
+# (FIX-169, D-371, C-1025) Remember the GOOSE_MODE the wrapper received, before harness.env is read:
+# the file never supplies a mode (it has no such key), and a mode the person set is kept as it is.
+_w_mode_set=${GOOSE_MODE+x}
+_w_mode=${GOOSE_MODE-}
 load_env check
 load_env apply
+if [ -n "$_w_mode_set" ]; then
+    GOOSE_MODE=$_w_mode
+else
+    unset GOOSE_MODE
+fi
 case " ${HARNESSES_ENABLED:-} " in
 *" goose "*) ;;
 *) refuse ;;
@@ -98,6 +107,22 @@ GOOSE_DISABLE_KEYRING=1
 GOOSE_DISABLE_SESSION_NAMING=true
 CONTEXT_FILE_NAMES='["AGENTS.md"]'
 export GOOSE_TELEMETRY_ENABLED GOOSE_DISABLE_KEYRING GOOSE_DISABLE_SESSION_NAMING CONTEXT_FILE_NAMES
+# The same mode as a turn (`GOOSE_MODE=auto`, adapters/goose/config.rs) unless the person chose one: in
+# the environment, or saved with `goose configure` (an environment value would override that).
+if [ -z "${GOOSE_MODE+x}" ]; then
+    _w_saved=
+    if [ -r "$GOOSE_PATH_ROOT/config/config.yaml" ]; then
+        while IFS= read -r _w_line || [ -n "$_w_line" ]; do
+            case $_w_line in
+            GOOSE_MODE:*) _w_saved=1 ;;
+            esac
+        done <"$GOOSE_PATH_ROOT/config/config.yaml"
+    fi
+    if [ -z "$_w_saved" ]; then
+        GOOSE_MODE=auto
+        export GOOSE_MODE
+    fi
+fi
 if [ -n "${SSL_CERT_FILE:-}" ]; then
     GOOSE_CA_CERT_PATH=$SSL_CERT_FILE
     export GOOSE_CA_CERT_PATH

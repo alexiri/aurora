@@ -1,0 +1,14 @@
+---
+source: services/aurora-supervisor/src/agent_cli/show.rs
+expression: "describe(d, \"book_room\").unwrap()"
+---
+indico book_room (package operation)
+POST https://indico.example.test/rooms/api/rooms/{id}/book
+summary: Book a room
+tool: none (a request that matches no catalogue operation)
+access (advisory): A: blocked
+parameters:
+  id (path, integer, required)
+body (application/json):
+  reason (string, required)
+example: aurora-agent call indico book_room id=<integer> reason=<string>

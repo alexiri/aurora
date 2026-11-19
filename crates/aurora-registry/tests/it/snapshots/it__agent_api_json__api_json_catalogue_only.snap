@@ -1,0 +1,83 @@
+---
+source: crates/aurora-registry/tests/it/agent_api_json.rs
+expression: "api(None, &a)"
+---
+{
+  "accounts": [
+    {
+      "base_url": "https://api.example.test",
+      "connection_id": "c_1",
+      "grant": "full",
+      "label": "Label c_1",
+      "letter": "A"
+    }
+  ],
+  "app": {
+    "id": "demo-app",
+    "name": "Demo app",
+    "version": "1.2.3"
+  },
+  "format": "aurora.app-api/1",
+  "operations": [
+    {
+      "access": {
+        "A": "allowed"
+      },
+      "body": null,
+      "host": "api.example.test",
+      "id": "list_things",
+      "items": null,
+      "method": "GET",
+      "pagination": null,
+      "params": [],
+      "path": "/v1/things",
+      "source": "catalogue",
+      "summary": "List things",
+      "tags": [],
+      "tool": "list_things"
+    },
+    {
+      "access": {
+        "A": "allowed"
+      },
+      "body": null,
+      "host": "api.example.test",
+      "id": "get_thing",
+      "items": null,
+      "method": "GET",
+      "pagination": null,
+      "params": [],
+      "path": "/v1/things/*",
+      "source": "catalogue",
+      "summary": "Get a thing",
+      "tags": [],
+      "tool": "get_thing"
+    },
+    {
+      "access": {
+        "A": "allowed"
+      },
+      "body": null,
+      "host": "api.example.test",
+      "id": "make_thing",
+      "items": null,
+      "method": "POST",
+      "pagination": null,
+      "params": [],
+      "path": "/v1/things",
+      "source": "catalogue",
+      "summary": "Make a thing",
+      "tags": [],
+      "tool": "make_thing"
+    }
+  ],
+  "recipes": [
+    {
+      "file": "make-and-check.md",
+      "title": "Make a thing and check it"
+    }
+  ],
+  "untooled": {
+    "A": "allowed"
+  }
+}

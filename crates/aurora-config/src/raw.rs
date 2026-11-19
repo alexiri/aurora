@@ -594,6 +594,9 @@ pub struct HostedSection {
     /// (FIX-025, D-158) End-to-end bound from "a turn needs a sandbox" to "the supervisor is
     /// ready" (the runner's capacity wait counts inside it). 60–1800, default 300.
     pub sandbox_ready_timeout_secs: u64,
+    /// (P5-GUIDE-7, C-657, D-297) How the MCP bridge lists platform tools: `on_demand` (default,
+    /// only the core tools; the rest through `aurora-agent`) or `all` (every tool, as before).
+    pub platform_tools: String,
 }
 impl Default for HostedSection {
     fn default() -> Self {
@@ -608,6 +611,7 @@ impl Default for HostedSection {
             turn_ceiling_secs: 6 * 3600,
             turn_stall_secs: 10 * 60,
             sandbox_ready_timeout_secs: 300,
+            platform_tools: "on_demand".into(),
         }
     }
 }

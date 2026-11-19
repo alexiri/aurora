@@ -55,7 +55,7 @@ export function ThreadHeader({
           ))}
         </p>
       </div>
-      {live === null ? null : live ? <Badge tone="accent">Live</Badge> : <Badge tone="pending">Reconnecting…</Badge>}
+      {live === null ? null : live ? <Badge tone="accent">Live</Badge> : <Badge>Reconnecting…</Badge>}
       {actions}
     </header>
   );

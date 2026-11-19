@@ -70,7 +70,7 @@ library fetch (API replicas only, never a sandbox); per-organization limiter as 
   the API's probe does not judge a stale one. A mint or refresh that asks for re-authorization is `rejected`
   (and marks the connection, as it always does).
 
-The route writes no health itself: the API stores the result (`last_check_*`). It answers 404
+The route writes no health itself: the API stores the result (`last_test_*`, C-1033). It answers 404
 `connection_not_found` for a connection outside the named organization and 400 for a malformed request.
 
 ### Proxy listener TLS (phase 1, RFE-002)
@@ -317,6 +317,7 @@ Everything inside a `CONNECT` is attacker-paced, so every phase has a bound (all
 |-------|-------|------------|
 | `TUNNEL_HANDSHAKE_TIMEOUT` | 10 s | the inner TLS handshake of a MITM tunnel (from the `200` to a completed handshake) and the dial of an open-lane tunnel (a slow dial answers 504 `upstream_timeout`) |
 | `TUNNEL_HEADER_TIMEOUT` | 30 s | the head of each request inside a MITM tunnel (hyper's header-read bound, which needs a timer: the inner HTTP builder has one). It also bounds the wait for the next request on a keep-alive HTTP/1 tunnel |
+| `GATEWAY_BODY_IDLE_TIMEOUT` | 60 s (FIX-180, D-395, C-1040) | the body of every proxied request (absolute-form `http://` and inside a MITM tunnel): no body byte for the limit answers `408 request_body_timeout`, closes the HTTP/1 connection and writes the request-log row. An idle limit, not a total one: a slow body that keeps moving continues. Not a setting |
 | `TUNNEL_IDLE_TIMEOUT` | 600 s (the WebSocket idle value) | **every** tunnel kind: open-lane tunnels, MITM tunnels (no bytes in either direction and no request in flight; a request held for approval is in flight, not idle) and upgraded WebSockets |
 | `TUNNEL_PER_CREDENTIAL_MAX` | 64 | concurrent tunnels of one credential; the next `CONNECT` is answered 429 `rate_limited` (`details.limit = "concurrent_tunnels"`, `retry-after: 5`) |
 | `TUNNEL_TOTAL_MAX` | 4096 | concurrent tunnels of the gateway (same answer, `details.scope = "total"`) |
@@ -850,12 +851,15 @@ minted.
     - Upstream 401/403 where **nothing was injected** → replace with guidance
       (below), preserving the status.
     - Upstream 401 with a recorded tenant/host mismatch → 421 `host_mismatch`.
-    - (phase 5, P5-UX-14, D-350, C-985, SEC-129) **Account health from real use.** The response is passed
-      through unchanged; when a credential was injected, an upstream 401 records `rejected` and a later
-      2xx or 3xx records `ok` on the account (`last_check_result`, `last_check_at`; connection or
-      secret). A 403 records nothing. The write is spawned off the request path, only on a change of
-      state (the statement skips a row that already holds the result), at most once a minute per
-      account per replica, and never touches `status`, `updated_at` or anything an agent's access reads.
+    - (phase 5, P5-UX-14, D-350, C-985, SEC-129; P5-POLISH-3, D-383, C-1033) **Account health from real
+      use.** The response is passed through unchanged; when a credential was injected, an upstream 2xx or
+      3xx writes `last_ok_at` and an upstream 401 or 403 writes `last_error_at` with `last_error =
+      'rejected'` on the account (connection or secret); any other status records nothing. Only agent calls
+      reach this path; a Test is recorded apart by the API (`last_test_*`). The write is spawned off the
+      request path, at most once a minute per account **and outcome** per replica (a failure is written
+      even inside the minute after a success, so it is never hidden), and never touches `status`,
+      `updated_at` or anything an agent's access reads. The gateway role may update only `last_ok_at`,
+      `last_error_at` and `last_error` among these columns.
     - **LLM origin backstop** (`08 §11.3`): for an injected LLM key whose
       endpoint has a key-origin rule, the account the provider reports in the
       response headers must comply; otherwise the response is replaced with

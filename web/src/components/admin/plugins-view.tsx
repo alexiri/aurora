@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
+import { AttentionChip } from "@/components/ui/attention-chip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -13,18 +14,14 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { checkSummary, useAddonSources, useCheckAllAddonSources } from "@/lib/api/addon-sources";
-import { ApiError } from "@/lib/api/client";
-import { errorMessage } from "@/lib/api/errors";
+import { errorDetail, errorMessage } from "@/lib/api/errors";
 import { usePlugins, useUploadPlugin, type PluginViolation } from "@/lib/api/plugins";
 import { adminRoutes } from "@/lib/routes";
 
 const STATUSES = ["", "pending_approval", "active", "disabled", "rejected", "superseded", "invalid"];
 
 export function violationsOf(err: unknown): PluginViolation[] {
-  if (!(err instanceof ApiError)) return [];
-  const d = err.details;
-  if (typeof d !== "object" || d === null || !("violations" in d)) return [];
-  const v = (d as { violations: unknown }).violations;
+  const v = errorDetail(err, "violations");
   return Array.isArray(v) ? (v as PluginViolation[]) : [];
 }
 
@@ -42,9 +39,8 @@ export function ViolationList({ violations }: { violations: PluginViolation[] })
 }
 
 /** Tone for a plugin lifecycle status (text always shown beside it). */
-export function statusTone(status: string): "neutral" | "accent" | "pending" | "danger" {
+export function statusTone(status: string): "neutral" | "accent" | "danger" {
   if (status === "active") return "accent";
-  if (status === "pending_approval") return "pending";
   if (status === "rejected" || status === "invalid") return "danger";
   return "neutral";
 }
@@ -211,9 +207,14 @@ export function PluginsView() {
                   <div className="flex flex-wrap items-center gap-1">
                     <Badge tone={statusTone(p.status)}>{p.status.replace("_", " ")}</Badge>
                     {p.update_available ? (
-                      <Link href={adminRoutes.advanced(p.source_id ?? "package-sources")}>
-                        <Badge tone="pending">Update available</Badge>
-                      </Link>
+                      <AttentionChip
+                        action={
+                          <Link className="text-xs font-medium text-link underline" href={adminRoutes.advanced(p.source_id ?? "package-sources")}>
+                            Review the update
+                          </Link>
+                        }>
+                        Update available
+                      </AttentionChip>
                     ) : null}
                   </div>
                 </Td>

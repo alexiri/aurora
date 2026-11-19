@@ -8,10 +8,6 @@ import { ApiError } from "@/lib/api/client";
 import { connectorIconUrl, type ConnectorAdmin } from "@/lib/api/connectors";
 import { fieldErrors } from "@/lib/api/errors";
 
-export const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-
-export const fmtWhen = (s?: string | null) => (s ? new Date(s).toLocaleString() : "—");
-
 const MESSAGES: Record<string, string> = {
   connector_exists: "A connector with this id already exists.",
   unknown_connector_type: "No running connector host offers this type any more.",
@@ -54,13 +50,13 @@ export function ManagedBadge({ managed }: { managed: boolean }) {
 
 /** A managed type accepted without a signature under `plugins.allow_unsigned` (development only, D-142). */
 export function UnsignedBadge() {
-  return <Badge tone="pending">Unsigned (development)</Badge>;
+  return <Badge>Unsigned (development)</Badge>;
 }
 
 /** Status of a connector for humans: managed ones wait for the host, show its error, or run. */
-export function connectorStatus(c: ConnectorAdmin): { label: string; tone: "neutral" | "accent" | "pending" | "danger" } {
+export function connectorStatus(c: ConnectorAdmin): { label: string; tone: "neutral" | "accent" | "danger" } {
   if (c.status === "disabled") return { label: "Disabled", tone: "neutral" };
-  if (c.status === "pending_approval") return { label: "Needs approval", tone: "pending" };
+  if (c.status === "pending_approval") return { label: "Needs approval", tone: "neutral" };
   const failing = c.host_status.find((h) => h.state === "error");
   if (c.managed && failing) {
     return { label: failing.message ? `Error: ${failing.message}` : "Error", tone: "danger" };
@@ -74,9 +70,17 @@ export function connectorStatus(c: ConnectorAdmin): { label: string; tone: "neut
 export function ConnectorStatusChip({ c }: { c: ConnectorAdmin }) {
   const s = connectorStatus(c);
   return (
-    <Badge data-testid="status-chip" tone={s.tone} className="max-w-full whitespace-normal break-words normal-case tracking-normal">
-      {s.label}
-    </Badge>
+    <>
+      <Badge data-testid="status-chip" tone={s.tone} className="max-w-full whitespace-normal break-words normal-case tracking-normal">
+        {s.label}
+      </Badge>
+      {/* (FIX-167, D-369) A widened update waits while the connector keeps running at the approved level. */}
+      {c.update_pending && c.status !== "pending_approval" ? (
+        <Badge data-testid="update-pending-chip" tone="neutral" className="max-w-full whitespace-normal break-words normal-case tracking-normal">
+          Update waiting for approval
+        </Badge>
+      ) : null}
+    </>
   );
 }
 

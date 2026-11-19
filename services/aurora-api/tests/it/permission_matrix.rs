@@ -562,6 +562,8 @@ const ROWS: &[Row] = &[
     r("PATCH", "/v1/admin/connectors/{id}", G::Inst, false),
     r("GET", "/v1/admin/connector-types", G::Inst, false),
     r("GET", "/v1/admin/overview", G::Inst, false),
+    // (FIX-167 Part B, C-1022) what needs an instance admin's attention
+    r("GET", "/v1/admin/attention", G::Inst, false),
     r("POST", "/v1/admin/connectors/{id}/approve", G::Inst, false),
     r("POST", "/v1/admin/connectors/{id}/token", G::Inst, false),
     r("GET", "/v1/admin/connector-host-tokens", G::Inst, false),
@@ -652,6 +654,7 @@ const ROWS: &[Row] = &[
         true,
     ),
     r("POST", "/v1/admin/settings/email/test", G::Inst, true),
+    r("GET", "/v1/admin/llm-endpoint-warnings", G::Inst, false),
     r("GET", "/v1/admin/secret-stores", G::Inst, true),
     r("PUT", "/v1/admin/secret-stores/{id}", G::Inst, true),
     r("DELETE", "/v1/admin/secret-stores/{id}", G::Inst, true),

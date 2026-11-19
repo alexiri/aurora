@@ -12,7 +12,18 @@ afterEach(() => {
   window.history.replaceState(null, "", "/");
 });
 
-describe("PageHeader level badge (C-962)", () => {
+describe("PageHeader level (D-389)", () => {
+  it("carries no level pill of its own: the rail's switcher says where you are", () => {
+    render(<PageHeader title="People" description="Who is here." />);
+    expect(screen.queryByTestId("level-badge")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "People" })).toBeInTheDocument();
+  });
+
+  it("a page the switcher does not place reads its level as plain text above the title, not a pill", () => {
+    render(<PageHeader title="People" level={{ kind: "workspace", label: "Acme › Main" }} />);
+    expect(screen.getByTestId("level-badge").tagName).toBe("P");
+  });
+
   it("shows the level of the page next to its title", () => {
     render(<PageHeader title="People" level={{ kind: "workspace", label: "Acme › Main" }} />);
     const badge = screen.getByTestId("level-badge");

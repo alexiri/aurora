@@ -112,10 +112,10 @@ describe("availability editor", () => {
     wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "open", allow: [] }} apps={[GH]} canEdit />);
     // open: the list has no switches; the app's name leads to its setup page
     expect(screen.getByLabelText("People can connect every app")).toBeChecked();
-    expect(screen.queryByRole("checkbox", { name: "GitHub" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "GitHub" })).toBeNull();
     expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "/o/o1/w/w1/apps/gh");
     fireEvent.click(screen.getByLabelText("People can connect only the apps switched on below"));
-    fireEvent.click(screen.getByRole("checkbox", { name: "GitHub" }));
+    fireEvent.click(screen.getByRole("switch", { name: "GitHub" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(puts).toEqual([{ posture: "restricted", allow: [{ app_id: "gh" }] }]));
     await screen.findByText("Saved.");
@@ -124,8 +124,8 @@ describe("availability editor", () => {
   it("a restricted organization shows its switches; a member sees who can change them instead of Save", () => {
     availabilityFetch({ posture: "restricted", allow: [{ app_id: "gh" }] }, []);
     wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "restricted", allow: [{ app_id: "gh" }] }} apps={[GH]} canEdit={false} />);
-    expect(screen.getByRole("checkbox", { name: "GitHub" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "GitHub" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "GitHub" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "GitHub" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 });

@@ -48,7 +48,7 @@ export async function openWebhook(page: Page, path: string, scheme: Scheme, opts
     const who = { agent: { id: agent.id, name: agent.name, handle: agent.handle }, workspace: { id: ws.id, name: ws.name } };
     extraAccounts.push({
       ref: { type: "connection", id: CONN }, kind: "app", name: "ops-alerts", scope: "workspace", levels: ["read", "ask", "act"],
-      app: { app_id: "webhook", name: "Outgoing webhook", custom_only: false }, health: { state: "unknown" }, agents: [{ ...who, level: "read" }],
+      app: { app_id: "webhook", name: "Outgoing webhook", custom_only: false }, health: { state: "not_used" }, agents: [{ ...who, level: "read" }],
       can: { give_access: true, change_access: true, manage: true },
     });
   }

@@ -154,7 +154,7 @@ export function AdminRunnersView() {
                       <h2 className="text-base font-medium">{name}</h2>
                       <div className="flex flex-wrap items-center gap-2">
                         {backend ? <Badge>{backend}</Badge> : null}
-                        {until ? <Badge tone="pending">old token valid until {clockTime(until)}</Badge> : null}
+                        {until ? <Badge>old token valid until {clockTime(until)}</Badge> : null}
                         <Badge tone={live > 0 ? "accent" : "danger"}>{live > 0 ? `${live} live` : "offline"}</Badge>
                       </div>
                     </div>

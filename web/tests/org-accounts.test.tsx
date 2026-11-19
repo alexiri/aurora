@@ -86,7 +86,7 @@ const account = (limit: "read" | "ask" | "act"): Account =>
     scope: "organization",
     limit,
     levels: ["read", "ask", "act"].slice(0, ["read", "ask", "act"].indexOf(limit) + 1),
-    health: { state: "ok" },
+    health: { state: "working" },
     agents: [],
     can: { give_access: true, change_access: true, manage: true },
   }) as unknown as Account;

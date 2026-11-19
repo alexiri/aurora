@@ -41,7 +41,7 @@ const account = (over: Record<string, unknown> = {}) => ({
   app: { app_id: "linear", name: "Linear", custom_only: false },
   scope: "workspace",
   levels: ["read", "ask", "act"],
-  health: { state: "ok" },
+  health: { state: "working" },
   agents: [{ agent: { id: "a1", name: "Daneel", handle: "daneel" }, workspace: { id: "w1", name: "Ops" }, level: "ask", always_allowed: [] }],
   can: { give_access: true, change_access: true, manage: true },
   given: true,
@@ -74,7 +74,7 @@ describe("Welcome (C-927)", () => {
     wrap(<WelcomeView />);
     expect(await screen.findByRole("heading", { name: "Welcome to Ops" })).toBeInTheDocument();
     const where = screen.getByRole("region", { name: "Where you are" });
-    expect(where.textContent).toContain("This is Ops, in Acme. Daneel works here, on its own computer.");
+    expect(where.textContent).toContain("This is Ops in Acme. Daneel works here, on its own computer.");
     const safe = screen.getByRole("region", { name: "How it stays safe" });
     expect(safe.textContent).toContain("Everything Daneel sends goes through Aurora's gateway. It holds the keys, applies the access you choose, and puts anything that needs your say in Approvals.");
     expect(within(safe).getByRole("link", { name: "Approvals" })).toHaveAttribute("href", "/o/acme/w/ops/approvals");
@@ -94,6 +94,8 @@ describe("Welcome (C-927)", () => {
     world({ personal: true, name: "Bob" });
     wrap(<WelcomeView />);
     expect(await screen.findByRole("heading", { name: "Welcome, Bob" })).toBeInTheDocument();
+    // D-389: the sentence reads from the person's side, not with their own name.
+    expect(screen.getByRole("region", { name: "Where you are" }).textContent).toContain("This is your workspace in Acme.");
   });
 
   it("a member reads their role in one sentence and the same summary, websites included, without the owner's policy", async () => {

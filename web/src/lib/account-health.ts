@@ -34,21 +34,23 @@ export function healthLine(a: Pick<Account, "app" | "name" | "health"> & { statu
     return { tone: "neutral", text: "Turned off: the instance of this app was removed" };
   }
   switch (h.state) {
-    case "rejected": {
+    // (C-1033) `failing`: an agent's call through the account failed and none has succeeded since; `last_error` says why.
+    case "failing": {
+      if (h.last_error === "unreachable") {
+        return {
+          tone: "attention",
+          text: h.detail ? `Could not be reached (${h.detail})` : "Could not be reached",
+          fix: { kind: "test", label: "Test" },
+        };
+      }
       const w = wordOf(h);
       return { tone: "attention", text: `${appOf(a)} no longer accepts this ${w}`, fix: { kind: "replace", label: `Replace ${w}` } };
     }
     case "sign_in_expired":
       return { tone: "attention", text: `The sign-in to ${appOf(a)} expired`, fix: { kind: "reconnect", label: "Reconnect" } };
-    case "unreachable":
-      return {
-        tone: "attention",
-        text: h.detail ? `Could not be reached (${h.detail})` : "Could not be reached",
-        fix: { kind: "test", label: "Test" },
-      };
     case "disabled":
       return { tone: "neutral", text: "Turned off", fix: { kind: "turn_on", label: "Turn on" } };
-    case "ok":
+    case "working":
       return { tone: "ok", text: used ? `Works · used ${used}` : "Works" };
     default:
       return { tone: "neutral", text: used ? `Not checked yet · used ${used}` : "Not checked yet" };
@@ -57,7 +59,7 @@ export function healthLine(a: Pick<Account, "app" | "name" | "health"> & { statu
 
 /** Whether an account needs attention: an agent cannot use it until someone fixes it. A turned-off account does not. */
 export function needsAttention(a: Pick<Account, "health">): boolean {
-  return a.health.state === "rejected" || a.health.state === "sign_in_expired" || a.health.state === "unreachable";
+  return a.health.state === "failing" || a.health.state === "sign_in_expired";
 }
 
 /**
@@ -67,12 +69,11 @@ export function needsAttention(a: Pick<Account, "health">): boolean {
 export function healthClause(a: Pick<Account, "app" | "name" | "health">): string {
   const h = a.health;
   switch (h.state) {
-    case "rejected":
+    case "failing":
+      if (h.last_error === "unreachable") return h.detail ? `it could not be reached (${h.detail})` : "it could not be reached";
       return `it no longer accepts this ${wordOf(h)}`;
     case "sign_in_expired":
       return "the sign-in expired";
-    case "unreachable":
-      return h.detail ? `it could not be reached (${h.detail})` : "it could not be reached";
     default:
       return healthLine(a).text.toLowerCase();
   }

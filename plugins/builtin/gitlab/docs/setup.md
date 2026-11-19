@@ -7,7 +7,10 @@ to GitLab; agents never see the token.
 
 - **Personal access token** (simplest). In GitLab open *User settings, Access tokens* and create a personal
   access token, or a project or group access token to limit the reach to one project or group.
-  Choose the narrowest scopes you need and paste the token when connecting.
+  Choose the narrowest scopes you need and paste the token when connecting. The connect window lists
+  the scopes to tick for the access you chose: **Read only** `read_api` and `read_repository`;
+  **Read and write** `api` and `write_repository`. Source: GitLab's
+  [access token scopes](https://docs.gitlab.com/security/tokens/access_token_scopes/).
   - `read_api` and `read_repository` let agents read projects, issues, merge requests,
     pipelines and files, and clone over HTTPS.
   - `api` additionally lets them create and change things. `write_repository` lets them push code.

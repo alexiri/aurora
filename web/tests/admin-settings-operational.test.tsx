@@ -120,7 +120,7 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
     expect(within(table).queryAllByRole("textbox")).toHaveLength(0);
   });
 
-  it("explains a terminal the deployment does not provide, and saves the clocks", async () => {
+  it("shows one Unavailable card, and no form, for a terminal the deployment does not provide; with it, saves the clocks", async () => {
     let put: Json | null = null;
     const terminal = (available: boolean) =>
       section(
@@ -142,9 +142,24 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
         return json(200, terminal(false));
       },
     });
-    render(wrap("terminal"));
+    const first = render(wrap("terminal"));
     expect(await screen.findByText(/does not provide the terminal/)).toBeTruthy();
+    expect(screen.getByRole("region", { name: "The web terminal isn't available on this Aurora" })).toBeTruthy();
     expect(screen.getByText("terminal.enabled: true")).toBeTruthy();
+    // The settings render only when they can take effect: no form, no Save.
+    expect(document.getElementById("terminal.wake_wait_secs-c")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    first.unmount();
+    mockFetch({
+      "GET /v1/admin/settings/terminal": () => json(200, terminal(true)),
+      "POST /v1/admin/settings/terminal/preview": () => json(200, { generation: 3, diff: [], loosening: [], affected_orgs: [], affected_orgs_total: 0, warnings: [] }),
+      "PUT /v1/admin/settings/terminal": async (req) => {
+        put = await bodyOf(req);
+        return json(200, terminal(true));
+      },
+    });
+    render(wrap("terminal"));
+    await screen.findByRole("button", { name: "Save" });
     fireEvent.change(document.getElementById("terminal.wake_wait_secs-c")!, { target: { value: "90" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(put).not.toBeNull());
@@ -202,7 +217,7 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
     expect(screen.getByText(/Private destinations\./)).toBeTruthy();
     const list = screen.getByRole("list", { name: "Rate class overrides" });
     expect(within(list).getByText("write")).toBeTruthy();
-    expect(within(list).getByText("Managed by Helm")).toBeTruthy();
+    expect(within(list).getByText("Set in Helm")).toBeTruthy();
     // The Helm class cannot be picked again.
     const pick = screen.getByRole("combobox", { name: "Class to override" }) as HTMLSelectElement;
     expect([...pick.options].map((o) => o.value)).not.toContain("write");

@@ -198,6 +198,7 @@ overridden by the named configuration key (`15`).
 | Name | Value | Config key | Used in |
 |------|-------|-----------|---------|
 | `GATEWAY_RESOLVE_CACHE_TTL` | 60 s | `gateway.resolve_cache_ttl_secs` | 06 |
+| `GATEWAY_BODY_IDLE_TIMEOUT` | (FIX-180, D-395) 60 s without a request-body byte → `408 request_body_timeout` | — | 06 |
 | `GATEWAY_DB_PROBE_INTERVAL` | (phase 3, RFE-014) 5 s, probe timeout 2 s, 2 consecutive failures = unreachable | — | 06 |
 | `GATEWAY_LISTEN_GRACE` | (phase 3, RFE-014) 30 s of LISTEN loss (database reachable) before the gateway reports `degraded`; reconnect backoff 0.5 s → 10 s | — | 06 |
 | `REQUEST_LOG_OUTAGE_BUFFER` | (phase 3, RFE-014) 10 000 request-log rows buffered in memory during a database outage | — | 06 |

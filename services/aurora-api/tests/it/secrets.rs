@@ -888,7 +888,7 @@ async fn llm_key_admission_validation_and_origin() {
         .await;
     assert_eq!((s, v["result"].as_str()), (200, Some("ok")), "{v}");
     let stored: Option<String> =
-        sqlx::query_scalar("SELECT last_check_result FROM secrets WHERE id = $1::uuid")
+        sqlx::query_scalar("SELECT last_test_result FROM secrets WHERE id = $1::uuid")
             .bind(&aid)
             .fetch_one(w.h.pool())
             .await

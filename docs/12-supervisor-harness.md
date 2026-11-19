@@ -737,7 +737,7 @@ registry**. Every adapter's launcher registers the process it starts for a conve
 pid, conversation, `/proc` start time) and the entry goes when that process exits, so a recycled pid never matches. The
 request is served only when that harness's conversation equals the request's `session`; any other outcome (no
 harness above the caller, another conversation's harness, a vanished or recycled pid) answers `session_not_caller`
-with one fixed text that names no conversation, bumps a refusal counter, and logs no arguments. `session` stays on the wire
+with one fixed text that names no conversation, bumps a refusal counter, and logs no arguments. The check cannot be defeated by tracing the harness: the sandbox's seccomp profile refuses `ptrace` and `process_vm_readv/writev` to every process in it (D-394, SEC-137), and no adapter, the terminal or the language servers need them. `session` stays on the wire
 as a cross-check; it is never corrected. The turn is still checked as before: a harness that runs while its
 conversation has no turn gets `no_active_turn`. The MCP bridge and `aurora-agent` run from the harness's shell pass; a web-terminal
 or SSH shell, a `process_start` child (a child of the supervisor, not of the harness), another conversation's harness
@@ -1052,6 +1052,22 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   the gateway attributes it to the **agent** (lane `mitm`, no turn or conversation), counts it
   against the same budgets and rate limits and shows it in the request log (`07`) like any other
   model call of that agent; the person at the terminal is not recorded as a speaker.
+  **(FIX-169, D-371, C-1025) Approvals.** A wrapper starts its CLI with the approval and sandbox
+  settings a turn uses (the Aurora sandbox and gateway are the boundary; the CLI's per-action prompts
+  and its own sandbox protect nothing the terminal does not already allow). It is a default: whatever
+  the person passes keeps winning. `claude` gets `--permission-mode bypassPermissions` in front of
+  the person's arguments, unless they pass `--permission-mode` (either spelling),
+  `--dangerously-skip-permissions` or `--allow-dangerously-skip-permissions`, or give `--` first; a
+  root flag before a subcommand is accepted by `mcp`, `doctor`, `update`, `--version` and `--help`
+  (checked on the 2.1.318 CLI next to the pinned 2.1.319), so subcommands need no special case, and
+  the wrapper never writes `settings.json`. `codex` gets `-c approval_policy="never"` and
+  `-c sandbox_mode="danger-full-access"` ahead of the person's arguments in both exec branches
+  (a later `-c` of theirs wins); the wrapper leaves out the default a dedicated flag covers
+  (`-a/--ask-for-approval`, `-s/--sandbox`, `--full-auto`, `--dangerously-bypass-approvals-and-sandbox`).
+  `goose` gets `GOOSE_MODE=auto` unless `GOOSE_MODE` was in the environment the wrapper received
+  (taken before `harness.env` is read, and the file has no such key) or a mode is saved in
+  `$GOOSE_PATH_ROOT/config/config.yaml`. `opencode` (`"permission": {"*": "allow"}` in the terminal
+  config) and `pi` (never asks) already behave this way.
 - `pty.resize { cols, rows }` applies `TIOCSWINSZ`; bytes are relayed with the W18 credit
   machinery (`16 §W19`, tag `0x02`), never logged, never counted beyond byte totals, never
   visible to the harness, the gateway or the loopback proxies. A terminal session is **not**

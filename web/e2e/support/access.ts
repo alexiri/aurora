@@ -77,7 +77,7 @@ export async function mockAccess(page: Page) {
       const can = { give_access: true, change_access: true, manage: true };
       const row = (cid: string, name: string, app: { app_id: string; name: string; custom_only: boolean }, entry: Record<string, unknown>) => ({
         ref: { type: "connection", id: cid }, kind: "app", name, scope: "workspace", levels: app.custom_only ? ["read", "ask"] : ["read", "ask", "act"], app,
-        health: { state: "unknown", last_used_at: now }, agents: [{ ...who, ...entry }], can, given: true,
+        health: { state: "not_used", last_used_at: now }, agents: [{ ...who, ...entry }], can, given: true,
       });
       return json({
         items: [

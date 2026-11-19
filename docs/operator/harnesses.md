@@ -124,6 +124,17 @@ agent's own model through the same machine proxy and gateway as a turn, keeps it
 this instance" (exit 127) when its harness is not enabled or not in the image. When the agent has
 no usable model for it, it prints why and exits 1.
 
+The terminal behaves like a turn: approvals and the harness's own sandbox are **off** (the Aurora
+sandbox and gateway are the boundary), so `claude`, `codex` and `goose` run tools without asking, as
+`opencode` and `pi` already do. A person can opt back in on the command line, and their choice is
+never overridden:
+
+| Harness | Ask again with |
+|---------|----------------|
+| `claude` | `claude --permission-mode default` (or `plan`, `acceptEdits`) |
+| `codex` | `codex -a on-request -s workspace-write` (or `-c approval_policy=…`) |
+| `goose` | `GOOSE_MODE=approve goose` (or save a mode with `goose configure`) |
+
 ## Failures you may see
 
 | Where | Code | Meaning and fix |

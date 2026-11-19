@@ -107,3 +107,105 @@ describe("inline-style guard", () => {
     expect(offenders(STYLE_ATTR)).toEqual([]);
   });
 });
+
+// (P5-POLISH-1, D-393) Unlayered CSS beats Tailwind's layered utilities: an unlayered `a { color: inherit }` blanked every
+// `text-on-primary` link. Element selectors belong in `@layer base`.
+/** Top-level selectors of a stylesheet that are outside `@layer`/`@theme`/`@utility` and are not a class, id, attribute or `:root`. */
+export function unlayeredElementSelectors(css: string): string[] {
+  const src = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const out: string[] = [];
+  const TRANSPARENT = /^@(media|supports|container)\b/;
+  let i = 0;
+  const walkBlock = (): void => {
+    while (i < src.length) {
+      const open = src.indexOf("{", i);
+      const semi = src.indexOf(";", i);
+      const close = src.indexOf("}", i);
+      if (close !== -1 && (open === -1 || close < open) && (semi === -1 || close < semi)) {
+        i = close + 1;
+        return;
+      }
+      if (semi !== -1 && (open === -1 || semi < open)) {
+        i = semi + 1; // a declaration or `@import …;`
+        continue;
+      }
+      if (open === -1) return;
+      const prelude = src.slice(i, open).trim();
+      i = open + 1;
+      if (prelude.startsWith("@")) {
+        if (TRANSPARENT.test(prelude)) walkBlock();
+        else skipBlock();
+      } else {
+        for (const sel of prelude.split(",")) {
+          const s = sel.trim();
+          if (s && !/^(\.|#|\[|:root)/.test(s)) out.push(s);
+        }
+        skipBlock();
+      }
+    }
+  };
+  const skipBlock = (): void => {
+    let depth = 1;
+    while (i < src.length && depth > 0) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}") depth--;
+      i++;
+    }
+  };
+  walkBlock();
+  return out;
+}
+
+/** `focus:` utilities (a mouse click would leave a ring): only `focus-visible:` / `focus-within:` are allowed. */
+export const FOCUS_UTILITY = /(?<![\w-])focus:[a-z!\[-]/;
+/** A `:focus` pseudo-class without `-visible` / `-within` in CSS. */
+export const FOCUS_PSEUDO = /:focus(?![-\w])/;
+
+// (P5-POLISH-2, D-384) Amber means "needs you": only `AttentionChip` (which requires an action) is amber; a `Badge` is
+// sentence case and has no amber tone.
+describe("amber guard", () => {
+  const BADGE_PENDING = /<Badge\b[^>]*\btone=\{?["']pending["']/;
+  it("recognises a pending badge", () => {
+    expect(BADGE_PENDING.test('<Badge tone="pending">Held</Badge>')).toBe(true);
+    expect(BADGE_PENDING.test('<Notice tone="pending">x</Notice>')).toBe(false);
+    expect(BADGE_PENDING.test('<Badge tone="accent">x</Badge>')).toBe(false);
+  });
+  it("has no Badge with tone pending (use AttentionChip with an action, LockPill or a neutral Badge)", () => {
+    expect(offenders(BADGE_PENDING)).toEqual([]);
+  });
+  it("keeps the pending tone and uppercase out of badge.tsx", () => {
+    const badge = readFileSync(join(SRC, "components/ui/badge.tsx"), "utf8");
+    expect(badge).not.toMatch(/pending/);
+    expect(badge).not.toMatch(/uppercase|tracking-/);
+  });
+  it("makes AttentionChip require an action or an action id", () => {
+    const chip = readFileSync(join(SRC, "components/ui/attention-chip.tsx"), "utf8");
+    expect(chip).toMatch(/\{ action: ReactNode; actionId\?: undefined \} \| \{ actionId: string; action\?: undefined \}/);
+  });
+});
+
+describe("layer guard", () => {
+  it("recognises an unlayered element rule", () => {
+    expect(unlayeredElementSelectors("a { color: inherit; }")).toEqual(["a"]);
+    expect(unlayeredElementSelectors("@layer base { a { color: inherit; } } .x { a: b } :root { --a: 1 }")).toEqual([]);
+    expect(unlayeredElementSelectors("@media (max-width: 1px) { body { x: y } }")).toEqual(["body"]);
+    expect(FOCUS_UTILITY.test('"focus:ring-2"')).toBe(true);
+    expect(FOCUS_UTILITY.test('"focus-visible:ring-2 has-[:focus-visible]:outline"')).toBe(false);
+    expect(FOCUS_PSEUDO.test("a:focus { x: y }")).toBe(true);
+    expect(FOCUS_PSEUDO.test("a:focus-visible { x: y }")).toBe(false);
+  });
+
+  it("has no unlayered element selector in globals.css", () => {
+    expect(unlayeredElementSelectors(readFileSync(join(SRC, "app/globals.css"), "utf8"))).toEqual([]);
+  });
+
+  it("has no other global stylesheet", () => {
+    expect(files.filter((f) => f.endsWith(".css")).map(rel)).toEqual(["app/globals.css"]);
+  });
+
+  it("styles no `:focus` without `-visible` (no ring after a mouse click)", () => {
+    expect(offenders(FOCUS_UTILITY)).toEqual([]);
+    expect(offenders(FOCUS_PSEUDO, new Set(["components/agents/files/viewer/editor.tsx"]))).toEqual([]);
+  });
+});
+

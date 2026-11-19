@@ -1,0 +1,96 @@
+{{- /* D-394 / SEC-137: the sandbox pods' seccomp profile is a `Localhost` profile (the runtime default
+      minus ptrace, process_vm_readv and process_vm_writev; files/sandbox-seccomp.json, the same file
+      the runner embeds). The kubelet reads a Localhost profile from its own seccomp directory, so this
+      DaemonSet copies the profile there on every node that can run a sandbox. A node without the file
+      cannot start a sandbox pod (the kubelet refuses it): the pod never runs without the profile.
+      The DaemonSet needs a hostPath write, which no Pod Security level below `privileged` allows, so
+      it lives in its own namespace labelled `privileged`. Set `sandboxes.seccomp.install=false` when
+      the profile is provided another way (for example the Security Profiles Operator): then it must
+      exist on every sandbox node at <kubelet seccomp dir>/aurora/sandbox-seccomp.json. */ -}}
+{{- if .Values.sandboxes.seccomp.install }}
+{{- $full := include "aurora.fullname" . -}}
+{{- $ns := .Values.sandboxes.seccomp.namespace -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    kubernetes.io/metadata.name: {{ $ns }}
+    app.kubernetes.io/name: aurora
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-sandbox-seccomp
+  namespace: {{ $ns }}
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+data:
+  sandbox-seccomp.json: |
+{{ .Files.Get "files/sandbox-seccomp.json" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $full }}-sandbox-seccomp
+  namespace: {{ $ns }}
+  labels:
+    {{- include "aurora.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-seccomp
+spec:
+  selector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "sandbox-seccomp") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "aurora.selector" (dict "root" . "component" "sandbox-seccomp") | nindent 8 }}
+      annotations:
+        checksum/profile: {{ .Files.Get "files/sandbox-seccomp.json" | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.runner.k8s.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.runner.k8s.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      priorityClassName: system-node-critical
+      containers:
+        # Copies the profile, then idles (a DaemonSet pod must keep running; the file stays on the
+        # node after the pod goes, which is what the kubelet needs).
+        - name: install
+          image: {{ include "aurora.sandboxImage" . | quote }}
+          command:
+            - sh
+            - -ec
+            - |
+              mkdir -p /host/aurora
+              cp /profile/sandbox-seccomp.json /host/aurora/sandbox-seccomp.json.tmp
+              mv /host/aurora/sandbox-seccomp.json.tmp /host/aurora/sandbox-seccomp.json
+              chmod 0644 /host/aurora/sandbox-seccomp.json
+              while true; do sleep 3600; done
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, DAC_OVERRIDE, FOWNER]
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {memory: 32Mi}
+          volumeMounts:
+            - {name: profile, mountPath: /profile, readOnly: true}
+            - {name: kubelet-seccomp, mountPath: /host}
+      volumes:
+        - name: profile
+          configMap: {name: {{ $full }}-sandbox-seccomp}
+        - name: kubelet-seccomp
+          hostPath:
+            path: {{ .Values.sandboxes.seccomp.hostDir | quote }}
+            type: DirectoryOrCreate
+{{- end }}

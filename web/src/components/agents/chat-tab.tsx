@@ -7,6 +7,7 @@ import { ChatPanel } from "@/components/chat/chat-panel";
 import { SearchBox } from "@/components/chat/search/search-box";
 import { resultKey, SearchResults, type SearchScope, type SearchSort } from "@/components/chat/search/search-results";
 import { ApiError } from "@/lib/api/client";
+import { errorDetail } from "@/lib/api/errors";
 import { useAgents } from "@/lib/api/queries";
 import { useMessageSearch, type SearchItem } from "@/lib/api/search";
 import { extractFilters, queryOf, toSearchParams, type FilterChip } from "@/lib/chat/search-syntax";
@@ -156,7 +157,7 @@ export function ChatTab({
   const searchError = (() => {
     const e = search.error;
     if (!(e instanceof ApiError) || e.code !== "search_query_invalid") return null;
-    const reason = (e.details as { reason?: string } | null)?.reason;
+    const reason = errorDetail(e, "reason");
     return reason === "too_long" ? "Searches are limited to 200 characters." : reason === "too_many_terms" ? "Use at most 12 words." : "Type something to search for.";
   })();
   /** Enter: the finished filters become chips, the rest is `q`; nothing is sent without words. */

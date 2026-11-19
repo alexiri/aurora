@@ -5,9 +5,10 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useConnectorTypes, useDeleteConnector, useRotateConnectorToken, type ConnectorAdmin } from "@/lib/api/connectors";
+import { plural } from "@/lib/utils";
 
 import { ApprovalPanel } from "./approval-panel";
-import { ConnectorError, ConnectorIcon, ConnectorStatusChip, ManagedBadge, UnsignedBadge, count } from "./shared";
+import { ConnectorError, ConnectorIcon, ConnectorStatusChip, ManagedBadge, UnsignedBadge } from "./shared";
 
 /** One connector in the list: identity, status, counts, and either Manage (managed) or the self-hosted actions. */
 export function ConnectorCard({
@@ -39,8 +40,8 @@ export function ConnectorCard({
           <ConnectorStatusChip c={c} />
           {c.version ? <span className="text-xs text-muted">v{c.version}</span> : null}
           <span className="text-xs text-muted sm:ml-auto">
-            {count(c.integration_count, "integration")} ·{" "}
-            {c.managed ? `${count(hosts, "host")} reporting` : count(c.replicas.length, "replica")}
+            {plural(c.integration_count, "integration")} ·{" "}
+            {c.managed ? `${plural(hosts, "host")} reporting` : plural(c.replicas.length, "replica")}
           </span>
         </div>
         {c.managed ? (
@@ -49,7 +50,7 @@ export function ConnectorCard({
           </Button>
         ) : (
           <>
-            {c.status === "pending_approval" ? <ApprovalPanel c={c} /> : null}
+            {c.status === "pending_approval" || c.update_pending ? <ApprovalPanel c={c} /> : null}
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"

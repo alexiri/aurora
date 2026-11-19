@@ -160,7 +160,7 @@ describe("primitives", () => {
   it("Badge and StatusDot always carry text", () => {
     render(
       <>
-        <Badge tone="pending">Held</Badge>
+        <Badge>Held</Badge>
         <StatusDot tone="accent">Running</StatusDot>
       </>,
     );

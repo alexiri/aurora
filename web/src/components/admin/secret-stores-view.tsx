@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
+import { LockPill } from "@/components/ui/lock-pill";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -336,7 +337,7 @@ function healthLabel(s: StoreView): string {
 }
 
 function SourceBadge({ s }: { s: StoreView }) {
-  if (s.source === "helm") return <Badge tone="pending">Configured in Helm</Badge>;
+  if (s.source === "helm") return <LockPill owner="Set in Helm" />;
   if (s.source === "builtin") return <Badge>Built in</Badge>;
   return <Badge tone="accent">Dashboard</Badge>;
 }

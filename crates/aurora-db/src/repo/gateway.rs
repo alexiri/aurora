@@ -423,30 +423,28 @@ pub async fn touch_connection_last_used<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
-/// (P5-UX-14, D-350, C-985) Records what real use showed about an account: `rejected` (an upstream
-/// 401 on a request with its credential injected) or `ok` (a later 2xx or 3xx). Only on a change of
-/// state: a row already holding `result` is not written. Informational — never touches `status`,
-/// `updated_at` or anything an agent's access reads. Returns whether a row changed.
-pub async fn record_account_check<'e, E: PgExecutor<'e>>(
+/// (P5-UX-14, D-350, C-985; P5-POLISH-3, D-383, C-1033) Records what real use showed about an account
+/// (an agent's call, never a Test): `error` is `None` for a 2xx/3xx answer (`last_ok_at = now()`) or
+/// the failure (`rejected`, `unreachable`, `unexpected`, `expired`) written to `last_error_at` /
+/// `last_error`. Informational — never touches `status`, `updated_at` or anything an agent's access
+/// reads, and never the `last_test_*` pair. Returns whether a row changed.
+pub async fn record_account_use<'e, E: PgExecutor<'e>>(
     exec: E,
     connection: bool,
     id: Uuid,
-    result: &str,
+    error: Option<&str>,
 ) -> Result<bool, DbError> {
-    let sql = if connection {
-        "UPDATE app_connections SET last_check_at = now(), last_check_result = $2 \
-         WHERE id = $1 AND last_check_result IS DISTINCT FROM $2"
-    } else {
-        "UPDATE secrets SET last_check_at = now(), last_check_result = $2 \
-         WHERE id = $1 AND last_check_result IS DISTINCT FROM $2"
+    let sql = match (connection, error.is_some()) {
+        (true, false) => "UPDATE app_connections SET last_ok_at = now() WHERE id = $1",
+        (true, true) => {
+            "UPDATE app_connections SET last_error_at = now(), last_error = $2 WHERE id = $1"
+        }
+        (false, false) => "UPDATE secrets SET last_ok_at = now() WHERE id = $1",
+        (false, true) => "UPDATE secrets SET last_error_at = now(), last_error = $2 WHERE id = $1",
     };
-    Ok(sqlx::query(sql)
-        .bind(id)
-        .bind(result)
-        .execute(exec)
-        .await?
-        .rows_affected()
-        == 1)
+    let q = sqlx::query(sql).bind(id);
+    let q = if let Some(e) = error { q.bind(e) } else { q };
+    Ok(q.execute(exec).await?.rows_affected() == 1)
 }
 
 #[derive(Debug, Clone)]

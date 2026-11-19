@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/client";
+import { errorDetail } from "@/lib/api/errors";
 
 /** The shape of an LLM secret value per auth mode (C-801, C-802 `value_shape`). */
 export type ValueShape = "string" | "aws_sigv4" | "aws_assume_role" | "azure_entra" | "gcp_service_account";
@@ -145,9 +146,7 @@ export const KEY_REASON: Record<string, string> = {
 /** The plain-language reason of an `llm_key_invalid` error, if it carries one we know. */
 export function keyReasonMessage(err: unknown): string | undefined {
   if (!(err instanceof ApiError) || err.code !== "llm_key_invalid") return undefined;
-  const d = err.details;
-  if (typeof d !== "object" || d === null) return undefined;
-  const reason = (d as { reason?: unknown }).reason;
+  const reason = errorDetail(err, "reason");
   return typeof reason === "string" ? KEY_REASON[reason] : undefined;
 }
 

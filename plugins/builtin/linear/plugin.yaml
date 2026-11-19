@@ -1,6 +1,6 @@
 package:
   id: linear
-  version: 1.2.0
+  version: 1.3.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -26,6 +26,8 @@ apps:
       id: linear
       name: Linear
       description: Read issues, projects, teams and comments in Linear with GraphQL queries, and create or update issues and comment when you allow it
+      summary: Issues, projects, teams and comments in Linear.
+      first_prompt: "Which Linear issues are assigned to me?"
       category: productivity
       api_docs: https://linear.app/developers/graphql
       web_hosts: [linear.app]

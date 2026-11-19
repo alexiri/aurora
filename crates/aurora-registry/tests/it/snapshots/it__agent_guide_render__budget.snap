@@ -21,6 +21,7 @@ Choose an account with the request header `x-aurora-connection-id: <connection i
 ## Files in this folder
 
 - `tools.md`: every operation and your access to it
+- `api.json`: the operations of this app, for `aurora-agent`. Use `aurora-agent search|describe|call <app_id> …` rather than reading it.
 
 The reference files and recipes of this app are not available in this sandbox.
 

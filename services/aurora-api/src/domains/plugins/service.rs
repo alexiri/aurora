@@ -3,13 +3,14 @@ use aurora_core::ApiError;
 use aurora_db::repo::plugins::{self, PackageRow};
 use aurora_registry::diff::{Widening, widens};
 use aurora_registry::manifest::{Agent, GuideEntry};
-use aurora_registry::snapshot::{GuideDigests, guide_digests};
+use aurora_registry::snapshot::{GuideDigests, OPERATIONS_COUNT_KEY, guide_digests};
 use aurora_registry::{Limits, Manifest, Package};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
 use super::dto::{
-    PluginAgentGuide, PluginGuideChanged, PluginGuideFile, PluginGuideFileChange, PluginPackage,
+    PluginAgentGuide, PluginGuideChanged, PluginGuideFile, PluginGuideFileChange,
+    PluginGuideOperations, PluginPackage,
 };
 
 const STATUSES: [&str; 6] = [
@@ -93,10 +94,11 @@ pub struct GuideView {
 pub async fn guide_view(conn: &mut PgConnection, r: &PackageRow) -> Result<GuideView, ApiError> {
     let manifest: Manifest = serde_json::from_value(r.manifest.clone())
         .map_err(|e| ApiError::internal(format!("stored manifest unreadable: {e}")))?;
-    let has_guide = manifest
-        .apps
-        .iter()
-        .any(|a| a.agent.as_ref().is_some_and(|g| !g.guide.is_empty()));
+    let has_guide = manifest.apps.iter().any(|a| {
+        a.agent
+            .as_ref()
+            .is_some_and(|g| !g.guide.is_empty() || g.operations.is_some())
+    });
     let mut digests = GuideDigests::new();
     if has_guide {
         let bytes = plugins::get_blob(&mut *conn, &r.digest, "archive")
@@ -160,7 +162,13 @@ fn app_changed(
     PluginGuideChanged {
         summary: oag.summary != nag.summary,
         instructions: oag.instructions != nag.instructions,
-        operations: false,
+        operations: oag.operations != nag.operations
+            || (nag.operations.is_some()
+                && odig.is_none_or(|d| {
+                    nag.operations
+                        .as_ref()
+                        .is_some_and(|f| sha(d, f) != sha(ndig, f))
+                })),
         files,
     }
 }
@@ -250,7 +258,23 @@ pub async fn agent_guides(
                         }
                     })
                     .collect(),
-                operations: None,
+                operations: ag.and_then(|g| g.operations.as_ref()).map(|f| {
+                    let (sha256, size) = new
+                        .digests
+                        .get(&(id.clone(), f.clone()))
+                        .cloned()
+                        .unwrap_or_default();
+                    let count = new
+                        .digests
+                        .get(&(id.clone(), OPERATIONS_COUNT_KEY.to_owned()))
+                        .map_or(0, |(_, n)| u32::try_from(*n).unwrap_or(u32::MAX));
+                    PluginGuideOperations {
+                        file: f.clone(),
+                        size,
+                        sha256,
+                        count,
+                    }
+                }),
                 changed: changed.remove(&id),
                 app_id: id,
             }
@@ -274,7 +298,9 @@ pub async fn guide_file(
         .iter()
         .find(|a| a.about.id == app_id)
         .and_then(|a| a.agent.as_ref())
-        .is_some_and(|g| g.guide.iter().any(|e| e.file == file));
+        .is_some_and(|g| {
+            g.guide.iter().any(|e| e.file == file) || g.operations.as_deref() == Some(file)
+        });
     if !listed {
         return Err(not_found());
     }

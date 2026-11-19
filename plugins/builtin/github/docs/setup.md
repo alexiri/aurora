@@ -56,6 +56,11 @@ were moved to **GitHub** with their grants intact; see *Upgrading* below.)
   token Aurora shows the scopes GitHub reports (`X-OAuth-Scopes`); GitHub reports nothing for a
   fine-grained token (the `X-Accepted-GitHub-Permissions` header names what an *endpoint* needs, not
   what your token has), so check its permissions on GitHub.
+  The connect window lists the permissions to tick on the fine-grained token form for the access
+  you chose: for **Read only**, *Contents*, *Issues*, *Pull requests*, *Metadata* and *Actions*, each
+  **Read**; for **Read and write**, *Contents*, *Issues* and *Pull requests* **Read and write** (plus
+  *Metadata* and *Actions* Read). *Metadata: Read* is always on. Source: GitHub's
+  [permissions required for fine-grained personal access tokens](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens).
 - **GitHub App sign-in** (acts as you, fine-grained). An administrator registers a GitHub App
   once (below) and people connect with *Sign in with GitHub*.
 - **OAuth**. An instance admin registers a GitHub OAuth app once (below), then people connect with

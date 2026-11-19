@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
-import { retryUnlessClientError } from "./errors";
+import { detailFields, retryUnlessClientError } from "./errors";
 import { useInvalidatingMutation } from "./mutations";
 import { fetchAllPages } from "./paging";
 import type { components } from "./schema";
@@ -349,8 +349,7 @@ export function governanceIssues(err: unknown): GovIssues {
   const out: GovIssues = { byPath: {}, general: [] };
   if (!(err instanceof ApiError) || (err.code !== "governance_invalid" && err.code !== "governance_below_instance_minimum"))
     return out;
-  const d = err.details as { fields?: { path?: unknown; message?: unknown }[] } | null;
-  const fields = Array.isArray(d?.fields) ? d.fields : [];
+  const fields = detailFields(err);
   if (fields.length === 0) out.general.push(err.message);
   for (const f of fields) {
     const message = typeof f.message === "string" ? f.message : "Invalid value";

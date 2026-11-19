@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { ChevronDownIcon, WrenchIcon } from "@/components/ui/icons";
 import { formatDuration, toolGroupSummary, type ToolCall } from "@/lib/chat/layout";
 
-const TONE = { ALLOW: "accent", HELD: "pending", DENY: "danger", TOOL: "neutral" } as const;
+const TONE = { ALLOW: "accent", HELD: "neutral", DENY: "danger", TOOL: "neutral" } as const;
 
 /**
  * A turn's consecutive tool calls folded into one row: "Used N tools · total duration". Open while the turn

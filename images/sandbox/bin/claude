@@ -92,4 +92,24 @@ unset HARNESSES_ENABLED AURORA_CLAUDE_UNAVAILABLE AURORA_CODEX_UNAVAILABLE \
 CLAUDE_CONFIG_DIR=/workspace/.aurora/terminal/claude
 export CLAUDE_CONFIG_DIR
 /usr/bin/mkdir -p "$CLAUDE_CONFIG_DIR" 2>/dev/null
+# (FIX-169, D-371, C-1025) The same default as a turn (`--permission-mode bypassPermissions`,
+# adapters/claude_code/config.rs): the Aurora sandbox and gateway are the boundary, not the CLI's
+# per-action prompts. It is only a default: a person who passes a mode (either spelling), or
+# --dangerously-skip-permissions / --allow-dangerously-skip-permissions, keeps exactly that, with no
+# second mode added. A root flag placed before a subcommand is accepted by every subcommand
+# (`claude --permission-mode bypassPermissions mcp list`, `--version`, `doctor`, `update`), so the
+# default needs no subcommand special case. The person's settings.json is never touched.
+_w_default=1
+for _w_arg in "$@"; do
+    case $_w_arg in
+    --) break ;;
+    --permission-mode | --permission-mode=* | --dangerously-skip-permissions | --allow-dangerously-skip-permissions)
+        _w_default=0
+        break
+        ;;
+    esac
+done
+if [ "$_w_default" = 1 ]; then
+    exec "$bin" --permission-mode bypassPermissions "$@"
+fi
 exec "$bin" "$@"

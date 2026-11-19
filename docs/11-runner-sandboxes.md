@@ -122,7 +122,9 @@ logged as a warning on every start; never set in deployments).
 Size limits are best-effort on podman (documented).
 - Container: `--read-only` root, tmpfs `/tmp` (512 MiB) and `/run/aurora`
 (16 MiB), `--user 1000:1000`, `--cap-drop=ALL`,
-`--security-opt no-new-privileges`, default seccomp profile (never
+`--security-opt no-new-privileges`, the sandbox seccomp profile (the
+runtime default minus `ptrace` and `process_vm_readv/writev`, D-394/SEC-137; the
+runner writes it beside the podman socket and passes `seccomp=<file>`; never
 weakened), `--pids-limit`, `--memory`, `--cpus`, no host mounts other than the
 home volume at `/workspace`, no device access, `--init` disabled (the
 supervisor is PID 1 and reaps).
@@ -144,7 +146,10 @@ platform, not the kubelet, decides restarts) and a **Secret**
 for the gateway and runner Service ClusterIPs (looked up by the runner at
 spawn), securityContext `runAsUser/runAsGroup/fsGroup 1000`,
 `runAsNonRoot`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`,
-`seccompProfile: RuntimeDefault`, `readOnlyRootFilesystem: true` with
+`seccompProfile: {type: Localhost, localhostProfile: aurora/sandbox-seccomp.json}` (the
+runtime default minus `ptrace` and `process_vm_readv/writev`, D-394/SEC-137; the chart's
+DaemonSet puts the file in each sandbox node's kubelet seccomp directory, and a node without
+it cannot start the pod), `readOnlyRootFilesystem: true` with
 `emptyDir` for `/tmp` and `/run/aurora` (memory medium), resource requests =
 limits from the profile, optional `runtimeClassName` (`runner.k8s.runtime_class`,
 gVisor or Kata recommended), node selector and tolerations from config.

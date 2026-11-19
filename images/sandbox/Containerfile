@@ -73,7 +73,7 @@ COPY images/sandbox/etc/zshrc /etc/zshrc
 # /run/aurora/harness.env (written by the supervisor, no secret), keep their own state under
 # /workspace/.aurora/terminal and exec the pinned binaries; a harness missing from the image or not
 # enabled on the instance prints "not enabled on this instance".
-COPY --chmod=0755 images/sandbox/bin/claude images/sandbox/bin/codex images/sandbox/bin/pi images/sandbox/bin/goose images/sandbox/bin/opencode /opt/aurora/bin/
+COPY --chmod=0755 images/sandbox/bin/claude images/sandbox/bin/codex images/sandbox/bin/pi images/sandbox/bin/goose images/sandbox/bin/opencode images/sandbox/bin/aurora-agent /opt/aurora/bin/
 WORKDIR /workspace
 
 # ---- base: developer tool set (rebuilt rarely)

@@ -42,6 +42,7 @@ apps:
           - { label: Room, source: path, segment: 3 }
     agent:
       summary: "Room search and booking."
+      operations: operations.json
       instructions: |
         Rooms are addressed by numeric id. Send JSON bodies.
       guide:

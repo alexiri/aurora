@@ -248,6 +248,9 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
     if parts.uri.path().ends_with("/403") {
         *r.status_mut() = http::StatusCode::FORBIDDEN;
     }
+    if parts.uri.path().ends_with("/404") {
+        *r.status_mut() = http::StatusCode::NOT_FOUND;
+    }
     if parts.uri.path().ends_with("/challenge") {
         *r.status_mut() = http::StatusCode::UNAUTHORIZED;
         r.headers_mut().insert(

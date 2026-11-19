@@ -3,7 +3,9 @@
 
 use super::{cmds, pack};
 use anyhow::{Context, Result, anyhow, bail};
-use aurora_registry::agent_guide::{GrantAccess, GuideAccount, project_file, render};
+use aurora_registry::agent_guide::{
+    GrantAccess, GuideAccount, project_file, render_with_operations,
+};
 use aurora_registry::snapshot::{
     AppEntry, ClaimStatus, HostEntry, Snapshot, compile_with_guides, guide_digests,
 };
@@ -63,11 +65,28 @@ fn files_of(
         .filter(|h| h.app_id == app.app_id && h.claim_status == ClaimStatus::Lost)
         .collect();
     let account = sample_account(app, snap, access);
-    let r = render(app, &lost, &[account], version, true);
+    // (P5-GUIDE-6, C-649) The operations file feeds `api.json`, as in the home sync.
+    let operations = match app.agent.as_ref().and_then(|a| a.operations.as_ref()) {
+        Some(r) => {
+            let path = format!("agent/{}/{}", app.app_id, r.file);
+            let bytes = pkg
+                .file(&path)
+                .ok_or_else(|| anyhow!("{path} is named by agent.operations but missing"))?;
+            Some(
+                aurora_registry::operations::parse(bytes)
+                    .map_err(|e| anyhow!("{path}: {}", e.message()))?,
+            )
+        }
+        None => None,
+    };
+    let r = render_with_operations(app, &lost, &[account], version, true, operations.as_ref());
     let mut out = vec![
         ("guide.md".to_owned(), r.guide_md),
         ("tools.md".to_owned(), r.tools_md),
     ];
+    if let Some(api) = r.api_json {
+        out.push(("api.json".to_owned(), api));
+    }
     if let Some(ag) = &app.agent {
         for g in &ag.guide {
             let path = format!("agent/{}/{}", app.app_id, g.file);

@@ -252,10 +252,13 @@ fn memory_empty_dir(size: &str) -> EmptyDirVolumeSource {
     }
 }
 
-fn runtime_default_seccomp() -> SeccompProfile {
+/// D-394 / SEC-137: the `Localhost` profile that is the runtime default minus `ptrace` and
+/// `process_vm_*`. The kubelet refuses to start a container whose profile file is missing on the
+/// node, so a node without the chart's installer never runs a sandbox without it.
+fn sandbox_seccomp() -> SeccompProfile {
     SeccompProfile {
-        type_: "RuntimeDefault".into(),
-        localhost_profile: None,
+        type_: "Localhost".into(),
+        localhost_profile: Some(super::super::SANDBOX_SECCOMP_LOCALHOST.into()),
     }
 }
 
@@ -296,7 +299,7 @@ pub fn pod_spec(
                 drop: Some(vec!["ALL".into()]),
                 add: None,
             }),
-            seccomp_profile: Some(runtime_default_seccomp()),
+            seccomp_profile: Some(sandbox_seccomp()),
             ..Default::default()
         }),
         volume_mounts: Some(vec![
@@ -348,7 +351,7 @@ pub fn pod_spec(
                 run_as_group: Some(SANDBOX_UID),
                 fs_group: Some(SANDBOX_UID),
                 run_as_non_root: Some(true),
-                seccomp_profile: Some(runtime_default_seccomp()),
+                seccomp_profile: Some(sandbox_seccomp()),
                 ..Default::default()
             }),
             runtime_class_name: cfg.runtime_class.clone(),

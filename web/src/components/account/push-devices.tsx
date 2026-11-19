@@ -21,16 +21,15 @@ import {
   type PushState,
   type PushSubscriptionRow,
 } from "@/lib/api/push";
+import { fmtDate as fmt } from "@/lib/utils";
 import { deviceLabel, hasPushMarker, pushSupport, removeDevice, turnOnPush, type PushSupport } from "@/lib/web-push";
 
-const fmt = (s?: string | null) => (s ? new Date(s).toLocaleString() : "—");
-
-const STATE_CHIP: Record<PushState, { text: string; tone: "accent" | "neutral" | "pending" | "danger" }> = {
+const STATE_CHIP: Record<PushState, { text: string; tone: "accent" | "neutral" | "danger" }> = {
   active: { text: "Active", tone: "accent" },
   paused: { text: "Paused", tone: "neutral" },
   disabled: { text: "Not receiving", tone: "danger" },
   expired: { text: "Not receiving", tone: "danger" },
-  stale_key: { text: "Needs update", tone: "pending" },
+  stale_key: { text: "Needs update", tone: "neutral" },
 };
 
 const SUPPORT_TEXT: Record<Exclude<PushSupport, "ok">, string> = {

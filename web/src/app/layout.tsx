@@ -4,6 +4,7 @@ import { cookies, headers } from "next/headers";
 import type { ReactNode } from "react";
 
 import "./globals.css";
+import { CspNonce } from "@/components/csp-nonce";
 import { RateLimitNotice } from "@/components/rate-limit-notice";
 import { isPreference, THEME_COOKIE, THEME_SCRIPT } from "@/components/theme/theme";
 import { ThemeSync } from "@/components/theme/theme-switch";
@@ -61,6 +62,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
+        <CspNonce nonce={nonce} />
         <Providers tracingRatio={tracingRatio}>
           <ThemeSync />
           <VersionBanner />

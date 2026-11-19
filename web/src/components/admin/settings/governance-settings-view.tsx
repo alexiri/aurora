@@ -152,7 +152,7 @@ function OrgsStanding() {
                       <Link className="font-medium text-ink underline-offset-2 hover:underline" href={orgRoutes(o.slug).aiModels()}>
                         {o.name}
                       </Link>
-                      {o.frozen ? <Badge className="ml-2" tone="pending">frozen</Badge> : null}
+                      {o.frozen ? <Badge className="ml-2" tone="danger">Frozen</Badge> : null}
                     </Td>
                     <Td>{label(o.llm_posture)}</Td>
                     <Td>{label(o.egress_posture)}</Td>

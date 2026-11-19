@@ -39,7 +39,7 @@ oauth_clients:
       - { name: client_id, label: Client ID }
       - { name: client_secret, label: Secret, secret: true }
 apps:
-  - about: { id: ghlike, name: GH Like, description: D, category: dev }
+  - about: { id: ghlike, name: GH Like, description: D, category: dev, summary: Repositories and issues on GH Like., first_prompt: "Which issues are open?" }
     credentials:
       - { name: access_token, secret: true, optional: true }
       - { name: refresh_token, secret: true, optional: true }
@@ -69,6 +69,9 @@ apps:
       - id: token
         kind: fields
         label: Personal token
+        access_levels:
+          - { id: read, label: Read only, permission_hints: ["Contents · Read", "Issues · Read"] }
+          - { id: write, label: Read and write, permission_hints: ["Contents · Read and write", "Issues · Read and write"] }
         fields:
           - { name: access_token, label: Token, type: secret, required: true }
     hosts:
@@ -780,4 +783,234 @@ async fn an_unknown_placeholder_is_refused_when_the_package_is_uploaded() {
         "{status} {v}"
     );
     assert_ne!(v["status"], "pending_approval", "{v}");
+}
+
+// ---- P5-POLISH-3 (D-388, C-1029): readiness in the catalogue ----
+
+impl W {
+    async fn catalogue(&self, who: &str) -> (u16, Value) {
+        self.call(
+            who,
+            Method::GET,
+            &format!("/v1/apps?workspace_id={}", self.ws),
+            None,
+        )
+        .await
+    }
+}
+
+fn item<'a>(list: &'a Value, app: &str) -> &'a Value {
+    list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["app_id"] == app)
+        .unwrap_or_else(|| panic!("{app} not listed: {list}"))
+}
+
+/// The catalogue's readiness is the connect plan's, for every app of the fixture: `ready` exactly when the plan
+/// suggests a method; otherwise `needs` is the union of what the people methods need, in a fixed order, and
+/// `who_can` the people who can fix the first blocked one.
+async fn assert_catalogue_agrees_with_plans(w: &W, who: &str) {
+    let (s, list) = w.catalogue(who).await;
+    assert_eq!(s, 200, "{list}");
+    for app in ["ghlike", "lin", "ghes", "awsk"] {
+        let it = item(&list, app);
+        let (s, plan) = w
+            .call(
+                who,
+                Method::GET,
+                &format!("/v1/apps/{app}/connect-plan?{}", w.ws_q()),
+                None,
+            )
+            .await;
+        assert_eq!(s, 200, "{plan}");
+        let r = &it["readiness"];
+        let ready = !plan["suggested_method"].is_null();
+        assert_eq!(
+            r["state"],
+            if ready { "ready" } else { "needs_admin" },
+            "{app}: {r} vs {plan}"
+        );
+        if ready {
+            assert!(
+                r.get("needs").is_none() && r.get("who_can").is_none(),
+                "{app}: {r}"
+            );
+            continue;
+        }
+        let blocked: Vec<&Value> = plan["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["audience"] == "person" && m["ready"] == false)
+            .collect();
+        let mut want: Vec<&str> = Vec::new();
+        for n in ["oauth_client", "instance", "admin_material"] {
+            if blocked
+                .iter()
+                .any(|m| m["needs"].as_array().unwrap().iter().any(|x| x == n))
+            {
+                want.push(n);
+            }
+        }
+        assert_eq!(r["needs"], json!(want), "{app}: {r}");
+        assert_eq!(r["who_can"], blocked[0]["who_can"], "{app}: {r}");
+    }
+}
+
+#[tokio::test]
+async fn catalogue_readiness_follows_the_connect_plan_as_clients_and_servers_appear() {
+    let w = world().await;
+    // Nothing set up: the token apps are ready, the sign-in-only and server-bound ones need an admin.
+    let (_, list) = w.catalogue(&w.ws_owner).await;
+    assert_eq!(
+        item(&list, "ghlike")["readiness"],
+        json!({"state": "ready"})
+    );
+    assert_eq!(item(&list, "awsk")["readiness"], json!({"state": "ready"}));
+    let lin = &item(&list, "lin")["readiness"];
+    assert_eq!(lin["state"], "needs_admin", "{lin}");
+    assert_eq!(lin["needs"], json!(["oauth_client"]));
+    assert_eq!(lin["who_can"]["role"], "org_admin");
+    assert_eq!(people(&lin["who_can"]), ["Adam Admin"]);
+    assert_eq!(
+        item(&list, "ghes")["readiness"]["needs"],
+        json!(["instance"])
+    );
+    assert_catalogue_agrees_with_plans(&w, &w.ws_owner).await;
+    assert_catalogue_agrees_with_plans(&w, &w.org_admin).await;
+
+    // An instance client makes the sign-in app ready, at once and for everyone.
+    w.client(&w.root, "/v1/admin/oauth-clients", "linear").await;
+    let (_, list) = w.catalogue(&w.ws_owner).await;
+    assert_eq!(item(&list, "lin")["readiness"], json!({"state": "ready"}));
+    assert_catalogue_agrees_with_plans(&w, &w.ws_owner).await;
+
+    // A member reads the same readiness (they may not connect, but the catalogue says what is missing).
+    let (s, list) = w.catalogue(&w.member).await;
+    assert_eq!(s, 200, "{list}");
+    assert_eq!(item(&list, "ghes")["readiness"]["state"], "needs_admin");
+}
+
+#[tokio::test]
+async fn a_switched_off_app_is_hidden_from_a_member_and_shown_to_an_admin_as_unavailable() {
+    let w = world().await;
+    sqlx::query("UPDATE organizations SET app_posture = 'restricted' WHERE id = $1")
+        .bind(w.org)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO org_app_availability (org_id, app_id) VALUES ($1, 'ghlike')")
+        .bind(w.org)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    // A workspace owner and a member see only what is switched on.
+    for who in [&w.ws_owner, &w.member] {
+        let (s, list) = w.catalogue(who).await;
+        assert_eq!(s, 200, "{list}");
+        let ids: Vec<&str> = list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["app_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["ghlike"], "{list}");
+        assert_eq!(item(&list, "ghlike")["available"], true);
+    }
+    // An organization admin sees all of them; a switched-off one is `available: false` and says who allows it.
+    let (_, list) = w.catalogue(&w.org_admin).await;
+    assert_eq!(list["items"].as_array().unwrap().len(), 4, "{list}");
+    let lin = item(&list, "lin");
+    assert_eq!(lin["available"], false);
+    assert_eq!(lin["readiness"]["state"], "needs_admin");
+    assert_eq!(lin["readiness"]["who_can"]["action"], "allow_app");
+    assert_eq!(lin["readiness"]["who_can"]["you_can"], true);
+    assert_eq!(item(&list, "ghlike")["readiness"]["state"], "ready");
+}
+
+/// (P5-POLISH-3, D-387, C-1031) The package's text for people reaches the clients: `summary` on the catalogue,
+/// `summary`, `first_prompt` and the token permissions per level on the app, and the same hints on the connect
+/// plan's methods. A token method's levels are not account choices (`access_levels` stays an OAuth thing).
+#[tokio::test]
+async fn package_text_summary_first_prompt_and_permission_hints_are_served() {
+    let w = world().await;
+    let (_, list) = w.catalogue(&w.member).await;
+    assert_eq!(
+        item(&list, "ghlike")["summary"],
+        "Repositories and issues on GH Like."
+    );
+    assert!(item(&list, "lin")["summary"].is_null());
+
+    let (s, d) = w
+        .call(&w.member, Method::GET, "/v1/apps/ghlike", None)
+        .await;
+    assert_eq!(s, 200, "{d}");
+    assert_eq!(d["summary"], "Repositories and issues on GH Like.");
+    assert_eq!(d["first_prompt"], "Which issues are open?");
+    let token = method_of(&d["connect"], "token");
+    assert_eq!(
+        token["permission_hints"],
+        json!([
+            {"level": "read", "label": "Read only", "hints": ["Contents · Read", "Issues · Read"]},
+            {"level": "write", "label": "Read and write", "hints": ["Contents · Read and write", "Issues · Read and write"]},
+        ]),
+        "{token}"
+    );
+    assert_eq!(token["access_levels"], json!([]), "not an account choice");
+    assert_eq!(
+        method_of(&d["connect"], "oauth")["permission_hints"],
+        json!([])
+    );
+
+    let (_, plan) = w
+        .call(
+            &w.ws_owner,
+            Method::GET,
+            &format!("/v1/apps/ghlike/connect-plan?{}", w.ws_q()),
+            None,
+        )
+        .await;
+    assert_eq!(
+        method(&plan, "token")["permission_hints"],
+        token["permission_hints"]
+    );
+}
+
+fn method_of<'a>(methods: &'a Value, id: &str) -> &'a Value {
+    methods
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == id)
+        .unwrap_or_else(|| panic!("{id}: {methods}"))
+}
+
+#[tokio::test]
+async fn the_catalogue_lists_the_accounts_a_caller_may_give_and_the_agents_using_them() {
+    let w = world().await;
+    let conn = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) \
+         VALUES ($1,$2,$3,'ghlike','multi','1.0.0','Work GitHub','active','x')",
+    )
+    .bind(conn)
+    .bind(w.org)
+    .bind(w.ws)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let (_, list) = w.catalogue(&w.ws_owner).await;
+    assert_eq!(
+        item(&list, "ghlike")["accounts"],
+        json!([{"id": conn, "name": "Work GitHub", "agent_ids": []}]),
+        "{list}"
+    );
+    assert_eq!(item(&list, "lin")["accounts"], json!([]));
+    assert_eq!(item(&list, "ghlike")["connection_count"], 1);
+    // The catalogue without a workspace has no readiness and no accounts.
+    let (s, plain) = w.call(&w.ws_owner, Method::GET, "/v1/apps", None).await;
+    assert_eq!(s, 200, "{plain}");
+    assert!(item(&plain, "ghlike")["readiness"].is_null());
 }

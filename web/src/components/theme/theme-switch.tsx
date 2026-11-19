@@ -89,7 +89,7 @@ export function ThemeSwitch({ className }: { className?: string }) {
         <label
           key={value}
           className={cn(
-            "relative inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md text-muted has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent has-[:focus-visible]:shadow-[0_0_0_5px_var(--focus-halo)]",
+            "relative inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md text-muted has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent",
             pref === value && "bg-surface text-ink shadow-card",
           )}
         >

@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import type { Account } from "@/lib/api/accounts";
-import { relativeTime } from "@/lib/api/files";
+import { formatWhen } from "@/lib/format-date";
 import { healthLine, testOutcomeText, type HealthFix } from "@/lib/account-health";
 
 /**
@@ -20,7 +20,8 @@ export function AccountHealth({
   onFix?: (kind: HealthFix) => void;
 }) {
   if (outcome) return <p className="text-sm text-muted">{testOutcomeText(outcome)}</p>;
-  const used = account.health.last_used_at ? relativeTime(account.health.last_used_at) : undefined;
+  // After "used": "just now", "5 min ago", "18 Nov".
+  const used = account.health.last_used_at ? formatWhen(account.health.last_used_at).replace(/^Just/, "just") : undefined;
   const line = healthLine(account, used);
   return (
     <p className={`flex flex-wrap items-center gap-x-2 text-sm ${line.tone === "attention" ? "text-danger-ink" : "text-muted"}`}>

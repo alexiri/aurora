@@ -1,10 +1,9 @@
 // (FIX-154, D-306(c), C-897) Credential-free apps: the agent's Access tab lists them with Give access (saved through
-// PUT …/grants/apps/{app}); the connect dialog has no form and connects and grants in one action.
+// PUT …/grants/apps/{app}).
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccountsList } from "@/components/accounts/accounts-list";
-import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
 
@@ -61,7 +60,7 @@ const conn = (appId: string) => ({
 
 const account = (appId: string) => ({
   ref: { type: "connection", id: CONN }, kind: "app", name: "CERN directory", scope: "workspace", levels: ["read", "ask", "act"],
-  app: { app_id: appId, name: "CERN Phonebook", custom_only: false }, health: { state: "unknown" }, agents: [], given: false,
+  app: { app_id: appId, name: "CERN Phonebook", custom_only: false }, health: { state: "not_used" }, agents: [], given: false,
   can: { give_access: true, change_access: true, manage: true },
 });
 function setupAccess(accounts: unknown[] = []) {
@@ -125,52 +124,3 @@ describe("Access tab", () => {
   });
 });
 
-describe("Connect dialog", () => {
-  const open = () => wrap(<ConnectDialog appId="phonebook" workspaceId={WS} orgId={ORG} onClose={() => {}} />);
-  function setupConnect() {
-    routes["GET /v1/apps"] = () => json(200, { items: [summary()] });
-    routes["GET /v1/apps/phonebook"] = () => json(200, detail());
-    routes[`GET /v1/workspaces/${WS}/agents`] = () =>
-      json(200, { items: [{ id: AGENT, handle: "scout", name: "Scout", kind: "hosted", frozen: null }], next_cursor: null });
-    routes["POST /v1/apps/phonebook/connect"] = () =>
-      json(200, { status: "connected", connection: conn("phonebook"), missing_scopes: [] });
-  }
-
-  it("has no form: the note, an agent picker and one action; with no agent chosen it only connects", async () => {
-    setupConnect();
-    open();
-    await screen.findByText(/Nothing to enter/);
-    expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.getByText("Give agents access")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await screen.findByText(/CERN Phonebook is connected/);
-    expect(count("POST /v1/apps/phonebook/connect")).toBe(1);
-    expect(calls.some((c) => c.key.startsWith("PUT"))).toBe(false);
-  });
-
-  it("with an agent chosen it gives access through the app grant route (which creates the connection)", async () => {
-    setupConnect();
-    routes[`PUT /v1/agents/${AGENT}/grants/apps/phonebook`] = () =>
-      json(200, {
-        connection: conn("phonebook"), created: true,
-        grant: { id: "g1", agent_id: AGENT, connection_id: CONN, created_at: now, mode: "full", allow_tools: [], ask_tools: [], ask_timeout_secs: null, app_restrictions: { custom_only: false, block_untooled: false } },
-      });
-    open();
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Scout/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Connect and give access" }));
-    await screen.findByText(/CERN Phonebook is connected and 1 agent has access/);
-    expect(count(`PUT /v1/agents/${AGENT}/grants/apps/phonebook`)).toBe(1);
-    expect(count("POST /v1/apps/phonebook/connect")).toBe(0);
-  });
-
-  it("a failed grant says so and keeps the connection", async () => {
-    setupConnect();
-    routes[`PUT /v1/agents/${AGENT}/grants/apps/phonebook`] = () => json(403, { error: { code: "forbidden", message: "No." } });
-    open();
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Scout/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Connect and give access" }));
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("Could not give access to Scout");
-    expect(alert.textContent).toContain("Access tab");
-  });
-});

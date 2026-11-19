@@ -10,8 +10,9 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Notice } from "@/components/ui/notice";
 import type { ApiKey } from "@/lib/api/account";
 import { errorMessage } from "@/lib/api/errors";
+import { fmtDate } from "@/lib/utils";
 
-export const fmtDate = (s?: string | null) => (s ? new Date(s).toLocaleString() : "—");
+export { fmtDate };
 
 function keyStatus(k: ApiKey): string {
   if (k.revoked_at) return "Revoked";
@@ -19,7 +20,7 @@ function keyStatus(k: ApiKey): string {
   return "Active";
 }
 
-const statusTone = { Active: "accent", Revoked: "danger", Expired: "pending" } as const;
+const statusTone = { Active: "accent", Revoked: "danger", Expired: "neutral" } as const;
 
 /** List of API keys with a confirmed revoke action. */
 export function KeyTable({

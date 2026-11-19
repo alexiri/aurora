@@ -281,21 +281,25 @@ export function errorMessage(err: unknown): string {
   return isTransportFailure(err) ? NETWORK_SENTENCE : "Something went wrong.";
 }
 
+/** `details[key]` of an API error, or undefined when it has no object details or no such key. */
+export function errorDetail(err: unknown, key: string): unknown {
+  const d = err instanceof ApiError ? err.details : undefined;
+  return typeof d === "object" && d !== null ? (d as Record<string, unknown>)[key] : undefined;
+}
+
+/** The objects of `details.fields[]` (each `{ path?, message? }`); empty when there are none. */
+export function detailFields(err: unknown): { path?: unknown; message?: unknown }[] {
+  const fields = errorDetail(err, "fields");
+  return Array.isArray(fields) ? fields.filter((f) => typeof f === "object" && f !== null) : [];
+}
+
 /** Field-level validation messages keyed by field path (`details.fields[]`). */
 export function fieldErrors(err: unknown): Record<string, string> {
   const out: Record<string, string> = {};
-  if (!(err instanceof ApiError)) return out;
-  const d = err.details;
-  if (typeof d !== "object" || d === null || !("fields" in d)) return out;
-  const fields = (d as { fields: unknown }).fields;
-  if (!Array.isArray(fields)) return out;
-  for (const f of fields) {
-    if (typeof f === "object" && f !== null) {
-      const { path, message } = f as Record<string, unknown>;
-      const key = typeof path === "string" ? path.replace(/^\//, "") : "";
-      if (key && typeof message === "string" && !(key in out)) {
-        out[key] = message;
-      }
+  for (const { path, message } of detailFields(err)) {
+    const key = typeof path === "string" ? path.replace(/^\//, "") : "";
+    if (key && typeof message === "string" && !(key in out)) {
+      out[key] = message;
     }
   }
   return out;

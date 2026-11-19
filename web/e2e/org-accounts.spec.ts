@@ -69,7 +69,7 @@ async function mockOrg(page: Page, person: "org-owner" | "ws-owner", initial: Mo
       levels,
       limit: a.limit,
       app: { app_id: "aws-keys", name: "AWS", custom_only: false },
-      health: { state: "unknown", last_used_at: now },
+      health: { state: "not_used", last_used_at: now },
       managed_by: who,
       agents: holders.map((h) => {
         const p = people.find((x) => x.id === h.id)!;

@@ -92,6 +92,27 @@ base="${AURORA_CODEX_BASE_URL:-}"
 unset HARNESSES_ENABLED AURORA_CODEX_MODEL AURORA_CODEX_BASE_URL \
     AURORA_CLAUDE_UNAVAILABLE AURORA_CODEX_UNAVAILABLE \
     ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY
+# (FIX-169, D-371, C-1025) The same approval and sandbox settings as a turn (adapters/codex/config.rs):
+# Codex's own sandbox cannot nest in the container, and the Aurora sandbox and gateway are the
+# boundary. They are defaults placed before the person's arguments: a later `-c` of theirs wins, and
+# a dedicated flag (-a/--ask-for-approval, -s/--sandbox, --full-auto,
+# --dangerously-bypass-approvals-and-sandbox) means we add neither the approval nor the sandbox default
+# it covers.
+_w_ask=1
+_w_box=1
+for _w_arg in "$@"; do
+    case $_w_arg in
+    --) break ;;
+    -a | --ask-for-approval | --ask-for-approval=*) _w_ask=0 ;;
+    -s | --sandbox | --sandbox=*) _w_box=0 ;;
+    --full-auto | --dangerously-bypass-approvals-and-sandbox)
+        _w_ask=0
+        _w_box=0
+        ;;
+    esac
+done
+[ "$_w_box" = 1 ] && set -- -c 'sandbox_mode="danger-full-access"' "$@"
+[ "$_w_ask" = 1 ] && set -- -c 'approval_policy="never"' "$@"
 if [ -n "$base" ]; then
     # TOML basic strings: the values come from the supervisor (an endpoint URL, a model id).
     exec "$bin" \

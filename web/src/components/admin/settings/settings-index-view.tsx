@@ -204,7 +204,7 @@ export function SettingsIndexView() {
                     ) : null}
                     <p className="text-xs text-muted">
                       {s.keys_total} setting{s.keys_total === 1 ? "" : "s"}
-                      {s.keys_locked > 0 ? <> · <Badge tone="pending">{s.keys_locked} in Helm</Badge></> : null}
+                      {s.keys_locked > 0 ? <> · <Badge>{s.keys_locked} in Helm</Badge></> : null}
                       {s.keys_dashboard > 0 ? <> · <Badge tone="accent">{s.keys_dashboard} in the dashboard</Badge></> : null}
                       {" · "}Last change: {s.updated_by_label ? `${s.updated_by_label}, ` : ""}
                       {when(s.updated_at)}

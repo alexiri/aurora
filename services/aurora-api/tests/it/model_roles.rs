@@ -383,3 +383,67 @@ async fn the_dispatcher_clears_dropped_agent_roles_in_the_database() {
         "{d}"
     );
 }
+
+/// (P5-POLISH-3, D-385, C-1034) The warnings sit on the endpoint, for the instance admin: each endpoint that
+/// leaves a role unset lists it, from the same resolution as an agent's turn. A person who is not an
+/// instance admin gets 403.
+#[tokio::test]
+async fn endpoint_role_warnings_list_the_roles_each_endpoint_leaves_unset() {
+    let r = rig().await;
+    let root = r.h.user("root@x.io", true).await;
+    let (_, tok) = r.h.good_session(root).await;
+    let admin = cookie(&tok);
+    let (s, v) = call(
+        &r,
+        &admin,
+        Method::GET,
+        "/v1/admin/llm-endpoint-warnings",
+        None,
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let by_endpoint = |id: &str| -> Vec<(String, String)> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["endpoint_id"] == id)
+            .map(|e| {
+                e["roles"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|w| {
+                        (
+                            w["role"].as_str().unwrap().to_owned(),
+                            w["warning"].as_str().unwrap().to_owned(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let unset = |roles: &[&str]| -> Vec<(String, String)> {
+        roles
+            .iter()
+            .map(|r| ((*r).to_owned(), "role_unset".to_owned()))
+            .collect()
+    };
+    assert_eq!(
+        by_endpoint("plain"),
+        unset(&["large", "medium", "small"]),
+        "{v}"
+    );
+    assert_eq!(by_endpoint("roled"), unset(&["medium"]), "{v}");
+    assert_eq!(by_endpoint("listed"), unset(&["medium", "small"]), "{v}");
+
+    let ck = owner(&r).await;
+    let (s, _) = call(
+        &r,
+        &ck,
+        Method::GET,
+        "/v1/admin/llm-endpoint-warnings",
+        None,
+    )
+    .await;
+    assert_eq!(s, 403);
+}

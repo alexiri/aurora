@@ -247,6 +247,7 @@ export async function mockApi(
       return json({ user, memberships: [{ org, status: "active", workspaces: [{ ...ws, personal: false }] }], default_org_id: id(1), client_address: "203.0.113.7" });
     }
     // P4-ONB-2: onboarding progress (seen, so `/` stays on the workspace), the guide's readiness and the setup wizard.
+    if (p === "/v1/me/user-tokens") return json({ tokens: [] });
     if (p === "/v1/me/onboarding") return json({ welcome_seen: true, guide_dismissed: [], tour_completed_at: null });
     if (/^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json(readinessReady);
     // FIX-029 (C-611) + P4-PRV-1: ONE sandbox view — running with port 3000 listening (the
@@ -534,6 +535,8 @@ export async function mockApi(
         next_cursor: null,
       });
     }
+    // (FIX-167 Part B, C-1022) Nothing needs the admin by default: the badge stays hidden. `admin-attention.spec.ts` overrides it.
+    if (p === "/v1/admin/attention") return json({ items: [] });
     if (p === "/v1/admin/connectors") return json({ items: [mattermostConnector] });
     if (p === "/v1/admin/connector-types") return json({ host_running: true, items: [mattermostType] });
     // FIX-025 (C-586) + FIX-029 (C-614): the runners admin view and its per-runner failures.
@@ -707,8 +710,8 @@ export async function mockApi(
       if (p.startsWith("/v1/orgs/")) {
         return json({
           items: [
-            { ref: { type: "connection", id: id(43) }, kind: "app", name: "platform-prod", scope: "organization", levels: ["read", "ask", "act"], limit: "ask", app: { app_id: "aws-keys", name: "AWS", custom_only: false }, health: { state: "unknown", last_used_at: now }, agents: [{ ...who, level: "ask" }], can },
-            { ref: { type: "secret", id: id(62) }, kind: "ai_key", name: "Users AI gateway", scope: "organization", levels: [], health: { state: "unknown", last_used_at: now }, agents: [{ ...who, level: "use" }], can },
+            { ref: { type: "connection", id: id(43) }, kind: "app", name: "platform-prod", scope: "organization", levels: ["read", "ask", "act"], limit: "ask", app: { app_id: "aws-keys", name: "AWS", custom_only: false }, health: { state: "not_used", last_used_at: now }, agents: [{ ...who, level: "ask" }], can },
+            { ref: { type: "secret", id: id(62) }, kind: "ai_key", name: "Users AI gateway", scope: "organization", levels: [], health: { state: "not_used", last_used_at: now }, agents: [{ ...who, level: "use" }], can },
           ],
           next_cursor: null,
         });
@@ -716,10 +719,10 @@ export async function mockApi(
       return json({
         items: [
           ...extraAccounts,
-          { ref: { type: "connection", id: id(40) }, kind: "app", name: "acme-bot", scope: "workspace", levels: ["read", "ask", "act"], app: { app_id: "github", name: "GitHub", custom_only: false }, health: { state: "unknown", last_used_at: now }, agents: [{ ...who, level: "read" }], can, ...mark(true) },
+          { ref: { type: "connection", id: id(40) }, kind: "app", name: "acme-bot", scope: "workspace", levels: ["read", "ask", "act"], app: { app_id: "github", name: "GitHub", custom_only: false }, health: { state: "not_used", last_used_at: now }, agents: [{ ...who, level: "read" }], can, ...mark(true) },
           { ref: { type: "connection", id: id(41) }, kind: "app", name: "Product team", scope: "workspace", levels: ["read", "ask", "act"], app: { app_id: "linear", name: "Linear", custom_only: false }, health: { state: "sign_in_expired" }, agents: [{ ...who, level: "ask", always_allowed: [{ tool_id: "create_issue", name: "Create an issue" }] }], can, ...mark(true) },
-          { ref: { type: "secret", id: id(60) }, kind: "ai_key", name: "Team key", scope: "workspace", levels: [], health: { state: "unknown", last_used_at: now }, agents: [{ ...who, level: "use", ...(forAgent ? { model: "claude-sonnet" } : {}) }], can, ...mark(true) },
-          { ref: { type: "secret", id: id(61) }, kind: "website", name: "Weather API", scope: "workspace", levels: [], health: { state: "unknown" }, agents: [], can, ...mark(false) },
+          { ref: { type: "secret", id: id(60) }, kind: "ai_key", name: "Team key", scope: "workspace", levels: [], health: { state: "not_used", last_used_at: now }, agents: [{ ...who, level: "use", ...(forAgent ? { model: "claude-sonnet" } : {}) }], can, ...mark(true) },
+          { ref: { type: "secret", id: id(61) }, kind: "website", name: "Weather API", scope: "workspace", levels: [], health: { state: "not_used" }, agents: [], can, ...mark(false) },
         ],
         next_cursor: null,
       });

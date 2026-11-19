@@ -26,6 +26,11 @@ exists answer `404` or `403`, connect again and choose the other region.
    `project:releases` scope covers reading **and** changing releases, so only grant it when you need
    releases, and keep in mind Aurora only treats the request method, not the scope, as the permission
    boundary.
+   The connect window lists what to pick for the access you chose: **Read only** `Organization: Read`,
+   `Project: Read`, `Issue & Event: Read` and `Release: Read`; **Read and write** the same with
+   `Issue & Event: Read & Write`. Sources: Sentry's
+   [auth token guide](https://docs.sentry.io/api/guides/create-auth-token/) and
+   [API permissions](https://docs.sentry.io/api/permissions/).
 3. Save, then copy the token. Organization auth tokens (`sntrys_…`) are meant for CI (releases and
    source maps) and cannot read issues; use an internal integration or a personal token.
 

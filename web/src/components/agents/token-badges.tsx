@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { tokenStates, type TokenFlags, type TokenState } from "@/lib/api/agent-tokens";
 
-const LABEL: Record<TokenState, { text: string; tone: "danger" | "pending" | "neutral"; title: string }> = {
+const LABEL: Record<TokenState, { text: string; tone: "danger" | "neutral"; title: string }> = {
   expired: {
     text: "Token expired",
     tone: "danger",
@@ -9,7 +9,7 @@ const LABEL: Record<TokenState, { text: string; tone: "danger" | "pending" | "ne
   },
   expiring: {
     text: "Token expiring",
-    tone: "pending",
+    tone: "neutral",
     title: "This token expires within 14 days. Regenerate it before then.",
   },
   stale: {

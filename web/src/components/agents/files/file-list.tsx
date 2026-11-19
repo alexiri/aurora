@@ -8,7 +8,8 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { FileIcon, FileTextIcon, FolderIcon, ImageIcon, LinkIcon, MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { cn } from "@/lib/utils";
-import { downloadUrl, effectiveKind, humanSize, relativeTime, unopenable, type FileEntry } from "@/lib/api/files";
+import { downloadUrl, effectiveKind, humanSize, unopenable, type FileEntry } from "@/lib/api/files";
+import { formatExact, formatWhen } from "@/lib/format-date";
 
 import { filesHref } from "./use-files-path";
 
@@ -133,7 +134,7 @@ export function FileList({ agent, entries, actions, now }: { agent: string; entr
                 {e.kind === "dir" || e.kind === "symlink" ? "—" : humanSize(e.size)}
               </Td>
               <Td className="whitespace-nowrap text-ink-2 max-md:order-4 max-md:border-0 max-md:p-0 max-md:text-xs max-md:text-muted">
-                <span title={e.modified_at ? new Date(e.modified_at).toLocaleString() : undefined}>{relativeTime(e.modified_at, now)}</span>
+                <span title={e.modified_at ? formatExact(e.modified_at) : undefined}>{formatWhen(e.modified_at, { now })}</span>
               </Td>
               <Td className="w-px text-right max-md:order-2 max-md:border-0 max-md:p-0">
                 <RowMenu agent={agent} entry={e} actions={actions} />

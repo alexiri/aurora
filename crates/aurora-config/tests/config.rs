@@ -190,6 +190,29 @@ fn toml_only_and_api_validates() {
     assert_eq!(api.keyring.active, "main");
 }
 
+// P5-GUIDE-7 (C-657): `hosted.platform_tools` defaults to `on_demand`, accepts `all`, and an
+// unknown value refuses startup naming the key.
+#[test]
+fn hosted_platform_tools_defaults_and_refuses_unknown_values() {
+    let ok = |extra: &str| {
+        load_with(&format!("{BASE}{extra}"), &[])
+            .unwrap()
+            .api_config()
+    };
+    assert_eq!(ok("").unwrap().hosted.platform_tools, "on_demand");
+    assert_eq!(
+        ok("[hosted]\nplatform_tools = \"all\"\n")
+            .unwrap()
+            .hosted
+            .platform_tools,
+        "all"
+    );
+    for bad in ["core", "", "On_Demand"] {
+        let e = ok(&format!("[hosted]\nplatform_tools = \"{bad}\"\n")).unwrap_err();
+        assert!(e.has_key("hosted.platform_tools"), "{bad:?}: {e:?}");
+    }
+}
+
 // P4-HAR (D-122): `hosted.enabled_harnesses` defaults to `["claude-code"]` (nothing changes until an
 // operator opts in); an unknown id, an empty list, a default that is not enabled and an ungated
 // `fake` refuse startup.

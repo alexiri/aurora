@@ -50,6 +50,9 @@ impl PlatformTool for List {
     fn name(&self) -> &'static str {
         "webhook_list"
     }
+    fn family(&self) -> &'static str {
+        "webhooks"
+    }
     fn description(&self, _: &ToolContext) -> String {
         "List your webhooks (inbound capability URLs that wake you with a payload).".into()
     }
@@ -95,6 +98,9 @@ impl PlatformTool for Deliveries {
     fn name(&self) -> &'static str {
         "webhook_deliveries"
     }
+    fn family(&self) -> &'static str {
+        "webhooks"
+    }
     fn description(&self, _: &ToolContext) -> String {
         "Recent deliveries of one of your webhooks (status, size, turn), newest first.".into()
     }
@@ -134,6 +140,9 @@ struct UpdateArgs {
 impl PlatformTool for Update {
     fn name(&self) -> &'static str {
         "webhook_update"
+    }
+    fn family(&self) -> &'static str {
+        "webhooks"
     }
     fn description(&self, _: &ToolContext) -> String {
         "Change the instructions of one of your webhooks or pause/resume it. A webhook disabled \
