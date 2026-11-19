@@ -691,7 +691,7 @@ The gateway database role's column-level `SELECT (id, status, gateway_instance_i
 | status | text CHECK in (`open`,`resolved`,`declined`,`withdrawn`) default `open` | at most one `open` row per `(org_id, app_id)` (partial unique index `app_setup_requests_open`); a second person's ask joins it |
 | needs | jsonb | the `needs` of C-1029 at the last ask (`oauth_client`, `instance`, `admin_material`) |
 | unavailable | boolean | the app is switched off for the organization (nothing in `needs` then) |
-| created_at, updated_at, closed_at | timestamptz | `closed_at` null while open |
+| closed_at | timestamptz null | null while open (`created_at`, `updated_at` per §Conventions) |
 | closed_by | uuid null FK→users (set null) | the decliner; null for `resolved` (the system) and `withdrawn` |
 Closed rows (with their askers and notices) are deleted 90 days after `closed_at` by the hourly sweep (`app_setup_requests::service::spawn`). The gateway role has no grant on them.
 
@@ -710,7 +710,6 @@ One row per (request, recipient, kind): the claims that keep the e-mail and the 
 |---|---|---|
 | request_id, user_id, kind | uuid, uuid, text | primary key |
 | title, detail, href | text not null | fixed sentences built from the app name and display names, and the dashboard path the notice opens (`/o/<org>/apps?tab=…&app=<id>` or the workspace's `/apps`); never a decision link |
-| created_at | timestamptz | |
 | mailed_at, pushed_at | timestamptz null | claimed (`now()`) by the e-mail sweeper and the push loop with `FOR UPDATE SKIP LOCKED`, then sent; push only for notices younger than an hour |
 
 ### `approval_notifications`

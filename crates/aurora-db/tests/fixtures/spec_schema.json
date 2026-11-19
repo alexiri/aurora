@@ -187,7 +187,6 @@
       "workspace_id"
     ],
     "app_setup_request_notices": [
-      "created_at",
       "detail",
       "href",
       "kind",
@@ -201,13 +200,11 @@
       "app_id",
       "closed_at",
       "closed_by",
-      "created_at",
       "id",
       "needs",
       "org_id",
       "status",
-      "unavailable",
-      "updated_at"
+      "unavailable"
     ],
     "approval_notifications": [
       "approval_id",
@@ -1768,7 +1765,6 @@
       "workspace_id": "uuid"
     },
     "app_setup_request_notices": {
-      "created_at": "timestamptz",
       "detail": "text not null",
       "href": "text not null",
       "kind": "text",
@@ -1780,15 +1776,13 @@
     },
     "app_setup_requests": {
       "app_id": "text",
-      "closed_at": "timestamptz",
+      "closed_at": "timestamptz null",
       "closed_by": "uuid null",
-      "created_at": "timestamptz",
       "id": "uuid not null",
       "needs": "jsonb",
       "org_id": "uuid",
       "status": "text",
-      "unavailable": "boolean",
-      "updated_at": "timestamptz"
+      "unavailable": "boolean"
     },
     "approval_notifications": {
       "approval_id": "uuid",
