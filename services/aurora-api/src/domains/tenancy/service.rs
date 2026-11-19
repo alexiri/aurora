@@ -6,7 +6,7 @@ use crate::app::AppState;
 use crate::domains::automations::service::{To, reassign_org_member};
 use aurora_config::ApiConfig;
 use aurora_core::token::{self, TokenPrefix};
-use aurora_core::{ApiError, FieldError, ids};
+use aurora_core::{ApiError, ids};
 use aurora_db::repo::agents::{self, AgentRow, NewDefaultAgent};
 use aurora_db::repo::members::{self, MemberRow};
 use aurora_db::repo::orgs::{self, OrgRow};
@@ -25,7 +25,7 @@ pub struct CreatedOrg {
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid request.", path, msg)
 }
 
 fn slug_taken() -> ApiError {

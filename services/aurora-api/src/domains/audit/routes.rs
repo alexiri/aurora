@@ -3,7 +3,7 @@ use crate::http::auth::{Caller, InstanceAdmin, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, Pagination};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::audit::{self, AuditRow, Scope};
 use axum::extract::State;
 use chrono::{DateTime, Utc};
@@ -142,9 +142,10 @@ async fn instance_audit(
         None | Some("instance") => false,
         Some("all") => true,
         Some(_) => {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Invalid audit query.",
-                vec![FieldError::new("/scope", "scope must be instance or all")],
+                "/scope",
+                "scope must be instance or all",
             ));
         }
     };

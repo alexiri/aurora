@@ -213,7 +213,7 @@ pub async fn upgrade(
     };
     // ---- mint the single-use `auy_` grant (C-618) and answer the upgrade by proxying.
     let grant = token::generate(token::TokenPrefix::TerminalStream);
-    let grant_hash = hex(&token::hash(grant.expose()));
+    let grant_hash = hex(token::hash(grant.expose()));
     let id = Uuid::now_v7();
     let expires_at = chrono::Utc::now()
         + chrono::Duration::seconds(i64::try_from(TERMINAL_GRANT_TTL.as_secs()).unwrap_or(30));
@@ -326,7 +326,7 @@ pub(crate) async fn open(
     if !s.ops().terminal.enabled {
         return Err(grant_invalid());
     }
-    let hash = hex(&token::hash(req.grant.expose()));
+    let hash = hex(token::hash(req.grant.expose()));
     let row = grants_repo::consume_terminal_grant(&s.pool, &hash)
         .await?
         .ok_or_else(grant_invalid)?;
@@ -743,14 +743,7 @@ where
     )
 }
 
-/// Lower-case hex of a SHA-256 (the `grant_hash` column is text, like the previews plane's).
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out
-}
+use ::hex::encode as hex;
 
 #[cfg(test)]
 mod tests {

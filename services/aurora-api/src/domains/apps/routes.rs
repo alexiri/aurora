@@ -4,7 +4,7 @@ use crate::app::AppState;
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::contacts;
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode, header};
@@ -34,12 +34,10 @@ async fn setup_view(
             let a = caller.workspace(state, ws).await?;
             require_own(&a)?;
             if org.is_some_and(|o| o != a.org_id) {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_field(
                     "org_id does not match the workspace.",
-                    vec![FieldError::new(
-                        "/org_id",
-                        "not the workspace's organization",
-                    )],
+                    "/org_id",
+                    "not the workspace's organization",
                 ));
             }
             Ok(setup::SetupView {
@@ -56,12 +54,10 @@ async fn setup_view(
                 org_admin: true,
             })
         }
-        (None, None) => Err(ApiError::invalid_request(
+        (None, None) => Err(ApiError::invalid_field(
             "Name a level.",
-            vec![FieldError::new(
-                "/workspace_id",
-                "give workspace_id, or org_id for an organization",
-            )],
+            "/workspace_id",
+            "give workspace_id, or org_id for an organization",
         )),
     }
 }
@@ -221,9 +217,10 @@ async fn app_icon(
         None | Some("light") => false,
         Some("dark") => true,
         Some(_) => {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Invalid variant.",
-                vec![FieldError::new("/variant", "must be light or dark")],
+                "/variant",
+                "must be light or dark",
             ));
         }
     };

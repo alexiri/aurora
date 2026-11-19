@@ -613,15 +613,7 @@ pub fn marker_sha256(kind: &str, reason: &str, blobs: &BTreeMap<String, String>)
     h.finalize().into()
 }
 
-#[must_use]
-pub fn hex(b: &[u8]) -> String {
-    use std::fmt::Write as _;
-    b.iter()
-        .fold(String::with_capacity(b.len() * 2), |mut s, x| {
-            let _ = write!(s, "{x:02x}");
-            s
-        })
-}
+pub use ::hex::encode as hex;
 
 #[must_use]
 pub fn parse_hex(s: &str) -> Option<Vec<u8>> {

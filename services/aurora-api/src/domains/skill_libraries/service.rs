@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use aurora_core::sanitize::{label as clean_label, one_line};
-use aurora_core::{ApiError, FieldError, limits};
+use aurora_core::{ApiError, limits};
 use aurora_db::DbError;
 use aurora_db::repo::skill_libraries::{self as repo, LibraryPatch, LibraryRow, NewLibrary};
 use aurora_registry::library;
@@ -58,7 +58,7 @@ pub fn ensure_enabled(state: &AppState) -> Result<(), ApiError> {
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid skill library.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid skill library.", path, msg)
 }
 
 pub fn read_failure(e: &ReadError) -> ApiError {
@@ -779,7 +779,7 @@ pub async fn skill_content(
                 })
                 .collect(),
             size: s.size,
-            content_sha256: Some(content::hex(&s.content_sha256)),
+            content_sha256: Some(content::hex(s.content_sha256)),
         }),
     }
 }

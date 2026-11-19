@@ -9,7 +9,7 @@ use crate::domains::grants::service as grants;
 use crate::domains::scim::gates;
 use crate::domains::tenancy::service as tenancy;
 use crate::http::auth::Caller;
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::placement::{self as repo, PlacementRow};
 use aurora_db::repo::users::UserRow;
 use aurora_db::repo::{connections, identities, members, secrets, users, workspaces};
@@ -37,7 +37,7 @@ struct Starter {
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid request.", path, msg)
 }
 
 /// The actor of everything placement writes at sign-in.

@@ -30,14 +30,7 @@ fn res(r: &Report, s: ReportStatus, detail: Option<&str>) -> ReportResult {
 }
 
 fn clip(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        return s;
-    }
-    let mut e = max;
-    while !s.is_char_boundary(e) {
-        e -= 1;
-    }
-    &s[..e]
+    &s[..s.floor_char_boundary(max)]
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

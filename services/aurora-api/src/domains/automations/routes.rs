@@ -5,7 +5,7 @@ use crate::audit::AuditActor;
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::authz;
 use aurora_db::repo::members;
@@ -101,9 +101,10 @@ async fn bulk_reassign(
             "schedule" => sch = true,
             "webhook" => hook = true,
             _ => {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_field(
                     "Invalid request.",
-                    vec![FieldError::new("/kinds", "schedule or webhook")],
+                    "/kinds",
+                    "schedule or webhook",
                 ));
             }
         }

@@ -8,7 +8,7 @@ use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::connectors::ops::{self, CORRELATED_WAIT, CorrelatedError, NewOp};
 use crate::domains::conversations::service::load_agent;
 use crate::http::auth::{Caller, require_own};
-use aurora_core::{ApiError, FieldError, sanitize};
+use aurora_core::{ApiError, sanitize};
 use aurora_db::repo::agents::AgentRow;
 use aurora_db::repo::channel_integrations::{self as integrations_repo, IntegrationRow};
 use aurora_db::repo::space_bindings::{self as repo, BindingRow};
@@ -245,9 +245,10 @@ pub async fn my_spaces(
     q: MySpacesQuery,
 ) -> Result<MySpacesList, ApiError> {
     if q.mine != Some(true) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new("/mine", "must be true")],
+            "/mine",
+            "must be true",
         ));
     }
     // The role first: someone who cannot bind is told so, not asked to link an account.
@@ -349,9 +350,10 @@ pub async fn create(
     // Live checks through the connector, no cached ledger.
     let space_ref = req.space_ref.trim().to_owned();
     if space_ref.is_empty() || space_ref.len() > 256 {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new("/space_ref", "invalid")],
+            "/space_ref",
+            "invalid",
         ));
     }
     let listed = bot_spaces(s, integ.id, None, SPACES_SCAN)

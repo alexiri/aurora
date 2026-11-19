@@ -7,7 +7,7 @@ use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::agents::dto::Agent;
 use crate::domains::conversations::service as conv;
 use crate::domains::hosted::lifecycle;
-use aurora_core::{ApiError, FieldError, sanitize};
+use aurora_core::{ApiError, sanitize};
 use aurora_db::DbError;
 use aurora_db::repo::conversations as convs;
 use aurora_db::repo::credentials;
@@ -98,9 +98,7 @@ pub async fn ensure_agent_active_pool(state: &AppState, agent: Uuid) -> Result<(
 
 /// The reason, sanitized to one line, 1..=500 characters.
 pub fn validate_reason(raw: &str) -> Result<String, ApiError> {
-    let bad = |m: &str| {
-        ApiError::invalid_request("Invalid request.", vec![FieldError::new("/reason", m)])
-    };
+    let bad = |m: &str| ApiError::invalid_field("Invalid request.", "/reason", m);
     if raw.chars().count() > REASON_MAX {
         return Err(bad("must be at most 500 characters"));
     }

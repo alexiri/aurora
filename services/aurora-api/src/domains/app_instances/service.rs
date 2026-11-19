@@ -28,10 +28,7 @@ fn field_error(code: &str, path: &str, message: &str, extra: Option<Value>) -> A
 }
 
 fn bad(path: &str, message: &str) -> ApiError {
-    ApiError::invalid_request(
-        "Invalid app instance.",
-        vec![FieldError::new(path, message)],
-    )
+    ApiError::invalid_field("Invalid app instance.", path, message)
 }
 
 fn clean_label(s: &str) -> Result<String, ApiError> {

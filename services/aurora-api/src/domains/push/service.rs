@@ -8,7 +8,7 @@ use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::{Principal, SessionCaller};
 use aurora_core::limits::PUSH_SUBSCRIPTIONS_PER_USER;
 use aurora_core::secret::Secret;
-use aurora_core::{ApiError, FieldError, sanitize};
+use aurora_core::{ApiError, sanitize};
 use aurora_db::repo::push as repo;
 use aurora_secrets::{Purpose, SealContext, SecretRef};
 use axum::http::StatusCode;
@@ -113,9 +113,10 @@ fn clean_label(label: Option<&str>) -> Result<Option<String>, ApiError> {
     let Some(l) = label else { return Ok(None) };
     let l = sanitize::one_line(l, 80);
     if l.chars().count() > 80 {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid label.",
-            vec![FieldError::new("/label", "must be at most 80 characters")],
+            "/label",
+            "must be at most 80 characters",
         ));
     }
     Ok(Some(l))

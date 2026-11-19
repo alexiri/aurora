@@ -4,7 +4,7 @@ use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::auth::mail::{self, Mail};
 use crate::domains::tenancy::dto::{Org, OrgSettings, OrgSummary};
 use aurora_core::token::{self, TokenPrefix};
-use aurora_core::{ApiError, FieldError, ids};
+use aurora_core::{ApiError, ids};
 use aurora_db::DbError;
 use aurora_db::repo::invitations::{self as repo, NewInvitation};
 use aurora_db::repo::{members, orgs, users, workspaces};
@@ -52,9 +52,10 @@ pub async fn create(
 ) -> Result<Invitation, ApiError> {
     let email = req.email.trim().to_lowercase();
     if !valid_email(&email) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid email.",
-            vec![FieldError::new("/email", "must be a valid email address")],
+            "/email",
+            "must be a valid email address",
         ));
     }
     let mut ws: Vec<Uuid> = req.workspace_ids.clone();
@@ -64,12 +65,10 @@ pub async fn create(
     appr.sort_unstable();
     appr.dedup();
     if appr.iter().any(|w| ws.contains(w)) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "A workspace cannot be bound as both member and approver.",
-            vec![FieldError::new(
-                "/approver_workspace_ids",
-                "must be disjoint from workspace_ids",
-            )],
+            "/approver_workspace_ids",
+            "must be disjoint from workspace_ids",
         ));
     }
 
@@ -81,12 +80,10 @@ pub async fn create(
     if !all_ws.is_empty() {
         let found = repo::workspaces_in_org(&mut *tx, org, &all_ws).await?;
         if found.len() != all_ws.len() {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Unknown workspace.",
-                vec![FieldError::new(
-                    "/workspace_ids",
-                    "all workspaces must belong to the organization",
-                )],
+                "/workspace_ids",
+                "all workspaces must belong to the organization",
             ));
         }
     }

@@ -4,8 +4,8 @@ use super::dto::{
 use crate::app::AppState;
 use crate::audit::{AuditActor, Outcome};
 use crate::http::auth::Caller;
+use aurora_core::ApiError;
 use aurora_core::limits::{ATTACH_IN_COUNT, TURN_TEXT_MAX};
-use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
 use aurora_db::authz::{self, WorkspaceAuth};
 use aurora_db::bus::{self, Channel};
@@ -27,7 +27,7 @@ const EXTERNAL_REF_MAX: usize = 128;
 const TITLE_MAX: usize = 200;
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid request.", path, msg)
 }
 
 fn conv_404() -> ApiError {
@@ -317,14 +317,7 @@ pub struct NewMessage<'a> {
 }
 
 fn clip(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
+    &s[..s.floor_char_boundary(max_bytes)]
 }
 
 /// `text` bound; empty text is allowed only when files are attached (C-726).

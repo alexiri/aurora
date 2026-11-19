@@ -28,7 +28,7 @@ pub mod presences;
 mod reach;
 mod routes;
 
-use aurora_core::{ApiError, FieldError, sanitize};
+use aurora_core::{ApiError, sanitize};
 use serde_json::Value;
 
 use crate::domains::connectors::ops::CorrelatedError;
@@ -69,8 +69,7 @@ pub(crate) fn object_field(
     max: usize,
     allow_empty: bool,
 ) -> Result<Value, ApiError> {
-    let bad =
-        |m: &str| ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, m)]);
+    let bad = |m: &str| ApiError::invalid_field("Invalid request.", path, m);
     let v = if v.is_null() {
         Value::Object(Default::default())
     } else {

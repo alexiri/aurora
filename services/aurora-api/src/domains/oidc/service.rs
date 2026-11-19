@@ -6,7 +6,7 @@ use crate::domains::auth::service::{self as auth, Client, normalize_email};
 use crate::domains::{invitations, placement, tenancy};
 use crate::http::ratelimit::Bucket;
 use aurora_config::{OidcProvider, SignupMode};
-use aurora_core::{ApiError, FieldError, ids};
+use aurora_core::{ApiError, ids};
 use aurora_crypto::Purpose;
 use aurora_db::DbError;
 use aurora_db::repo::identities::{self, NewSsoUser};
@@ -82,12 +82,10 @@ pub fn validate_return_to(raw: Option<&str>) -> Result<String, ApiError> {
     if ok {
         Ok(r.to_owned())
     } else {
-        Err(ApiError::invalid_request(
+        Err(ApiError::invalid_field(
             "Invalid request.",
-            vec![FieldError::new(
-                "/return_to",
-                "must be a same-origin path starting with /",
-            )],
+            "/return_to",
+            "must be a same-origin path starting with /",
         ))
     }
 }

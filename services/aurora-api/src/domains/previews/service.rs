@@ -10,7 +10,7 @@ use crate::domains::conversations::service::notify_work;
 use crate::domains::freeze::service as freeze;
 use crate::http::auth::Caller;
 use aurora_core::limits::{PREVIEW_WAKE_WAIT, PREVIEW_WAKE_WINDOW};
-use aurora_core::{ApiError, FieldError, token};
+use aurora_core::{ApiError, token};
 use aurora_db::DbError;
 use aurora_db::repo::agents as agents_repo;
 use aurora_db::repo::preview_shares as repo;
@@ -20,7 +20,7 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid request.", path, msg)
 }
 
 pub fn previews_disabled() -> ApiError {

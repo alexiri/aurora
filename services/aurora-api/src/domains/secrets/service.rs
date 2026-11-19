@@ -4,7 +4,7 @@ use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::{Caller, require_own};
 use crate::http::pagination::Pagination;
-use aurora_core::{ApiError, FieldError, Secret as Plain};
+use aurora_core::{ApiError, Secret as Plain};
 use aurora_db::repo::{credentials, derived_rules, secrets as repo};
 use aurora_db::{DbError, conflict_code};
 use aurora_policy::{HostPattern, PathPattern};
@@ -35,7 +35,7 @@ fn event(caller: &Caller, action: &str, row: &SecretRow, extra: Value) -> AuditE
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid secret.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid secret.", path, msg)
 }
 
 pub fn ctx(row: &SecretRow) -> SealContext {

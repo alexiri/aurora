@@ -11,7 +11,7 @@
 use super::dto::*;
 use crate::app::AppState;
 use crate::domains::secrets::gov;
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::gateway::{self, ScopePolicyRows};
 use aurora_db::repo::policy as repo;
 use aurora_llm::governance::{EffectiveGovernance, OpenLaneAdmission, OpenLanePosture};
@@ -122,7 +122,7 @@ pub fn timeout_flags(
 }
 
 fn field(path: &str, msg: &str) -> ApiError {
-    ApiError::invalid_request("Invalid request.", vec![FieldError::new(path, msg)])
+    ApiError::invalid_field("Invalid request.", path, msg)
 }
 
 fn sim_verdict(v: Verdict) -> SimVerdict {

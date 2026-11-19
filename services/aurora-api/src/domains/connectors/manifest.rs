@@ -24,14 +24,7 @@ pub fn digest(m: &ConnectorManifest) -> Result<[u8; 32], serde_json::Error> {
     Ok(Sha256::digest(aurora_registry::snapshot::canonical_bytes(&v)).into())
 }
 
-pub fn hex(d: &[u8]) -> String {
-    use std::fmt::Write;
-    d.iter()
-        .fold(String::with_capacity(d.len() * 2), |mut s, b| {
-            let _ = write!(s, "{b:02x}");
-            s
-        })
-}
+pub use ::hex::encode as hex;
 
 /// The manifest as announced (envelope keys removed).
 pub fn public(stored: &Value) -> Value {

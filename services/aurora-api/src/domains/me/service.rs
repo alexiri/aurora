@@ -2,7 +2,7 @@ use super::dto::*;
 use crate::app::AppState;
 use crate::domains::tenancy::dto::{OrgSummary, parse_org_role, parse_status, parse_ws_role};
 use crate::domains::tenancy::service::WorkspaceDeletion;
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::{account, notify_auth_revoked, users};
 use uuid::Uuid;
@@ -93,12 +93,10 @@ pub async fn patch_me(
 ) -> Result<Me, ApiError> {
     let name = match req.display_name.as_deref().map(str::trim) {
         Some(n) if n.is_empty() || n.chars().count() > 80 => {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_field(
                 "Invalid display name.",
-                vec![FieldError::new(
-                    "/display_name",
-                    "must be 1 to 80 characters",
-                )],
+                "/display_name",
+                "must be 1 to 80 characters",
             ));
         }
         other => other,

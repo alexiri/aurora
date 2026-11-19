@@ -5,7 +5,7 @@ use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, Pagination};
-use aurora_core::{ApiError, FieldError};
+use aurora_core::ApiError;
 use aurora_db::repo::peer_tasks as repo;
 use axum::extract::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -30,9 +30,10 @@ async fn list_peer_tasks(
     // Authorise before parsing the query (FIX-181 F7, C-1041).
     load_agent(&s, &c, agent).await?;
     if q.status.as_deref().is_some_and(|v| !STATUSES.contains(&v)) {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "Invalid status.",
-            vec![FieldError::new("/status", "unknown status")],
+            "/status",
+            "unknown status",
         ));
     }
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;

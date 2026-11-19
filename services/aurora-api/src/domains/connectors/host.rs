@@ -13,7 +13,7 @@ use super::setup;
 use crate::app::AppState;
 use crate::http::json::{Json, Query};
 use aurora_core::token::{self, TokenPrefix};
-use aurora_core::{ApiError, FieldError, limits, sanitize};
+use aurora_core::{ApiError, limits, sanitize};
 use aurora_db::repo::connector_hosts;
 use aurora_db::repo::connectors::{self, ConnectorRow};
 use aurora_protocol::common::Validate;
@@ -157,7 +157,7 @@ async fn register(
             accepted.push(json!({
                 "type_id": t.type_id,
                 "manifest": m,
-                "manifest_digest": manifest::hex(&digest),
+                "manifest_digest": manifest::hex(digest),
                 "signed": false,
             }));
             continue;
@@ -218,9 +218,10 @@ async fn assignments(
     }
     let wait = q.wait.unwrap_or(DEFAULT_ASSIGNMENTS_WAIT_SECS);
     if wait > MAX_ASSIGNMENTS_WAIT_SECS {
-        return Err(ApiError::invalid_request(
+        return Err(ApiError::invalid_field(
             "`wait` must be 0-30.",
-            vec![FieldError::new("/wait", "must be 0-30")],
+            "/wait",
+            "must be 0-30",
         ));
     }
     let wait = Duration::from_secs(u64::from(wait));
