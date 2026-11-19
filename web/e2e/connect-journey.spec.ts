@@ -61,7 +61,7 @@ for (const scheme of ["light", "dark"] as const) {
         await dialog.getByRole("button", { name: "Done" }).click();
         await expect(dialog).toBeHidden();
         const row = page.getByRole("list", { name: "Accounts Daneel can use" }).getByRole("listitem", { name: "acme-prod" });
-        await expect(row.getByRole("radio", { name: /Read only/ })).toBeChecked();
+        await expect(row.getByRole("combobox", { name: /Daneel's access to/ })).toHaveValue("read");
       });
 
       test("Ask before changes sends level ask and the write permissions", async ({ page }) => {

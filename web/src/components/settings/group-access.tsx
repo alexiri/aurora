@@ -3,7 +3,6 @@
 import { useState } from "react";
 
 import { ImpactSummary } from "@/components/groups/impact-summary";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -14,12 +13,10 @@ import { cn } from "@/lib/utils";
 import type { components } from "@/lib/api/schema";
 import { errorMessage } from "@/lib/api/errors";
 import {
-  sourceText,
   useDeleteGroupAccess,
   useGroupImpact,
   useGroups,
   usePutGroupAccess,
-  type DerivedMember,
   type GroupAccessBinding,
   type WorkspaceRole,
 } from "@/lib/api/groups";

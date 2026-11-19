@@ -34,7 +34,11 @@ function AgentEntry({ account, entry, workspaceId, canChange, orgName }: { accou
   // (P5-POLISH-7, D1) A pill: the agent and its access level. For someone who may change it, pressing it opens the access
   // select in a popover (not a dialog); Remove access stays there for the accounts that have no levels.
   const pill = "inline-flex min-h-9 items-center gap-2 rounded-full border border-line bg-surface px-2.5 py-1 text-sm text-ink";
-  const avatar = <Avatar name={entry.agent.name} tintKey={entry.agent.id} size={20} />;
+  const avatar = (
+    <span aria-hidden="true" className="inline-flex">
+      <Avatar name={entry.agent.name} tintKey={entry.agent.id} size={20} />
+    </span>
+  );
   if (!canChange) {
     return (
       <li className={pill}>
@@ -47,7 +51,7 @@ function AgentEntry({ account, entry, workspaceId, canChange, orgName }: { accou
     <li>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <button type="button" className={`${pill} hover:bg-subtle`} aria-label={`${entryText(entry)}: change access`}>
+          <button type="button" className={`${pill} hover:bg-subtle`}>
             {avatar}
             {entryText(entry)}
           </button>
@@ -200,7 +204,10 @@ export function AccountRow({
               ) : null}
             </>
           ) : account.can.give_access ? (
-            <GiveOne account={account} agent={agent} />
+            <>
+              {shared ? <p className="text-sm text-ink-2">Shared by {org.data?.name ?? "your organization"}</p> : null}
+              <GiveOne account={account} agent={agent} />
+            </>
           ) : null}
         </div>
       ) : account.agents.length === 0 ? (
