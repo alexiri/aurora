@@ -259,11 +259,18 @@ pub struct DerivedMemberView {
     pub user: UserRef,
     pub role: WorkspaceRole,
     pub sources: Vec<AccessSourceView>,
+    /// (P5-APIGAP-4, C-1050) When the earliest current direct or group source started; `null`
+    /// when the only source is an org role (its start is not recorded).
+    pub joined_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// (P5-APIGAP-4, C-1051) Always `active`: a person suspended in the workspace derives nothing.
+    pub status: crate::domains::tenancy::dto::AccessStatus,
 }
 
 impl DerivedMemberView {
     pub fn from_row(r: DerivedRow, names: &std::collections::HashMap<Uuid, String>) -> Self {
         Self {
+            joined_at: r.joined_at,
+            status: crate::domains::tenancy::dto::AccessStatus::Active,
             user: UserRef {
                 id: r.user_id,
                 email: r.email,

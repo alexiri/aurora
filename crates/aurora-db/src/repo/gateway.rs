@@ -162,6 +162,11 @@ pub async fn touch_last_used<'e, E: PgExecutor<'e>>(exec: E, ids: &[Uuid]) -> Re
 /// Whether the user holds `can_use` on the workspace: an active org member who is owner/admin
 /// or holds `workspace_access`. Suspended members do not. The speaker of a turn is bound to
 /// policy `user` identities only while this holds (RFE-005, 06 §Credential authentication).
+/// (P5-APIGAP-4, SEC-138) The gateway role cannot read the `effective_*` views, so this is the
+/// view's law restated: a `suspended` direct binding counts for nothing and also cancels the
+/// person's group bindings on this workspace; implicit org owners/admins are unaffected. Keep it
+/// in step with `effective_workspace_access` (`crates/aurora-db/tests/it/authz_groups.rs` pins
+/// both against each other).
 pub async fn can_use<'e, E: PgExecutor<'e>>(
     exec: E,
     workspace_id: Uuid,
@@ -172,14 +177,19 @@ pub async fn can_use<'e, E: PgExecutor<'e>>(
          JOIN org_members m ON m.org_id = w.org_id AND m.status = 'active' \
          WHERE w.id = $1 AND m.user_id = $2 \
            AND (m.role IN ('owner', 'admin') \
-                OR EXISTS (SELECT 1 FROM workspace_access x \
-                           WHERE x.workspace_id = w.id AND x.user_id = m.user_id) \
                 OR EXISTS (SELECT 1 FROM group_members gm \
                            JOIN groups g ON g.id = gm.group_id \
                            WHERE gm.org_id = w.org_id AND gm.user_id = m.user_id \
-                             AND (g.org_role = 'admin' \
-                                  OR EXISTS (SELECT 1 FROM group_workspace_access b \
-                                             WHERE b.group_id = g.id AND b.workspace_id = w.id)))))",
+                             AND g.org_role = 'admin') \
+                OR (NOT EXISTS (SELECT 1 FROM workspace_access s \
+                                WHERE s.workspace_id = w.id AND s.user_id = m.user_id \
+                                  AND s.status = 'suspended') \
+                    AND (EXISTS (SELECT 1 FROM workspace_access x \
+                                 WHERE x.workspace_id = w.id AND x.user_id = m.user_id) \
+                         OR EXISTS (SELECT 1 FROM group_members gm \
+                                    JOIN group_workspace_access b ON b.group_id = gm.group_id \
+                                    WHERE gm.org_id = w.org_id AND gm.user_id = m.user_id \
+                                      AND b.workspace_id = w.id)))))",
     )
     .bind(workspace_id)
     .bind(user_id)

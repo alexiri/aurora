@@ -763,6 +763,10 @@ pub struct DerivedMember {
     pub display_name: String,
     pub role: String,
     pub created_at: DateTime<Utc>,
+    /// (P5-APIGAP-4, C-1050) The earliest start of a current direct or group source (a group
+    /// source starts at the later of the membership and the binding); `None` when the only
+    /// source is an org role, whose start is not recorded.
+    pub joined_at: Option<DateTime<Utc>>,
     pub sources: Vec<crate::authz::AccessSource>,
 }
 
@@ -787,6 +791,7 @@ pub async fn derived_members<'e, E: PgExecutor<'e>>(
         Option<String>,
         Option<String>,
         serde_json::Value,
+        Option<DateTime<Utc>>,
     );
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT ew.user_id, u.email::text, u.display_name, ew.role, om.created_at, om.role, \
@@ -798,7 +803,13 @@ pub async fn derived_members<'e, E: PgExecutor<'e>>(
                             LEFT JOIN group_workspace_access b \
                                    ON b.group_id = g.id AND b.workspace_id = ew.workspace_id \
                            WHERE gm.org_id = ew.org_id AND gm.user_id = ew.user_id \
-                             AND (g.org_role IS NOT NULL OR b.role IS NOT NULL)), '[]'::jsonb) \
+                             AND (g.org_role IS NOT NULL OR b.role IS NOT NULL)), '[]'::jsonb), \
+                LEAST(CASE WHEN wa.status = 'active' THEN wa.created_at END, \
+                      (SELECT min(GREATEST(gm.created_at, b.created_at)) \
+                         FROM group_members gm \
+                         JOIN group_workspace_access b \
+                              ON b.group_id = gm.group_id AND b.workspace_id = ew.workspace_id \
+                        WHERE gm.org_id = ew.org_id AND gm.user_id = ew.user_id)) \
            FROM effective_workspace_access ew \
            JOIN users u ON u.id = ew.user_id \
            JOIN org_members om ON om.org_id = ew.org_id AND om.user_id = ew.user_id \
@@ -824,13 +835,26 @@ pub async fn derived_members<'e, E: PgExecutor<'e>>(
     Ok(rows
         .into_iter()
         .map(
-            |(user_id, email, display_name, role, created_at, org_role, wa, idp, base, groups)| {
+            |(
+                user_id,
+                email,
+                display_name,
+                role,
+                created_at,
+                org_role,
+                wa,
+                idp,
+                base,
+                groups,
+                joined_at,
+            )| {
                 DerivedMember {
                     user_id,
                     email,
                     display_name,
                     role,
                     created_at,
+                    joined_at,
                     sources: crate::authz::build_sources(
                         &org_role,
                         wa.as_deref(),
@@ -865,8 +889,11 @@ pub async fn via_groups<'e, E: PgExecutor<'e>>(
            JOIN org_members om ON om.org_id = gm.org_id AND om.user_id = gm.user_id \
                 AND om.status = 'active' \
           WHERE g.org_role = 'admin' \
-             OR EXISTS (SELECT 1 FROM group_workspace_access b \
-                         WHERE b.group_id = g.id AND b.workspace_id = w.id) \
+             OR (EXISTS (SELECT 1 FROM group_workspace_access b \
+                          WHERE b.group_id = g.id AND b.workspace_id = w.id) \
+                 AND NOT EXISTS (SELECT 1 FROM workspace_access s \
+                                  WHERE s.workspace_id = w.id AND s.user_id = $2 \
+                                    AND s.status = 'suspended')) \
           ORDER BY g.name, g.id",
     )
     .bind(org)

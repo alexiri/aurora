@@ -5645,7 +5645,11 @@ export interface paths {
         delete: operations["deleteAccess"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Suspend or restore a person's direct binding in this workspace only (`can_own`; P5-APIGAP-4,
+         *     C-1051, SEC-138). A suspended binding grants nothing here, direct or through a group.
+         */
+        patch: operations["patchAccess"];
         trace?: never;
     };
     "/v1/workspaces/{ws}/accounts": {
@@ -6177,7 +6181,19 @@ export interface components {
             idp_value?: string | null;
             /** @description True for org owners/admins (no row). */
             implicit: boolean;
+            /**
+             * Format: date-time
+             * @description (phase 5, P5-APIGAP-4, C-1050) When the direct binding was created; `null` for an implicit
+             *     row without one (the org role's start is not recorded).
+             */
+            joined_at?: string | null;
             role: components["schemas"]["WorkspaceRole"];
+            /**
+             * @description (phase 5, P5-APIGAP-4, C-1051) `suspended`: the person has no access to this workspace
+             *     (direct or through a group) until restored. An `implicit` row's access comes from the org
+             *     role and is not affected.
+             */
+            status: components["schemas"]["AccessStatus"];
             /** Format: uuid */
             user_id: string;
         };
@@ -6234,6 +6250,12 @@ export interface components {
             /** @description The `idp:<provider>:<value>` source, for `idp_claim`. */
             value?: string | null;
         };
+        /**
+         * @description (P5-APIGAP-4, C-1051) A workspace binding's status: `suspended` grants nothing in that
+         *     workspace (SEC-138).
+         * @enum {string}
+         */
+        AccessStatus: "active" | "suspended";
         Account: {
             agents: components["schemas"]["AgentAccess"][];
             app?: components["schemas"]["AccountApp"] | null;
@@ -10937,8 +10959,16 @@ export interface components {
         };
         Page_DerivedMemberView: {
             items: {
+                /**
+                 * Format: date-time
+                 * @description (P5-APIGAP-4, C-1050) When the earliest current direct or group source started; `null`
+                 *     when the only source is an org role (its start is not recorded).
+                 */
+                joined_at?: string | null;
                 role: components["schemas"]["WorkspaceRole"];
                 sources: components["schemas"]["AccessSourceView"][];
+                /** @description (P5-APIGAP-4, C-1051) Always `active`: a person suspended in the workspace derives nothing. */
+                status: components["schemas"]["AccessStatus"];
                 user: components["schemas"]["UserRef"];
             }[];
             next_cursor?: string | null;
@@ -11657,6 +11687,10 @@ export interface components {
                 workspace: components["schemas"]["OverrideWorkspace"];
             }[];
             next_cursor?: string | null;
+        };
+        /** @description (phase 5, P5-APIGAP-4, C-1051) `PATCH /workspaces/{ws}/access/{user}`: suspend or restore. */
+        PatchAccessRequest: {
+            status: components["schemas"]["AccessStatus"];
         };
         PatchAdminUserRequest: {
             disabled?: boolean | null;
@@ -39930,6 +39964,84 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    patchAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description User id */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchAccessRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessBinding"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -580,6 +580,91 @@ fn last_owner() -> ApiError {
     )
 }
 
+/// The turn end of a workspace suspension (P5-APIGAP-4, C-1051).
+const SUSPENDED_IN_WORKSPACE: crate::domains::scim::deprovision::TurnEnd =
+    crate::domains::scim::deprovision::TurnEnd {
+        code: "user_suspended",
+        notice: "This turn was stopped: the person was suspended in this workspace.",
+        message: "The speaker was suspended in this workspace.",
+    };
+
+/// (P5-APIGAP-4, D-399, C-1051, SEC-138) Suspend or restore `target`'s direct binding in `ws`.
+/// The caller holds `can_own` (checked by the route). One transaction: the refusals, the status,
+/// on suspension the person's speaker turns in this workspace, the invalidations (gateway
+/// identities of the person, open streams) and the critical audit row. The same status again
+/// is a no-op without audit.
+pub async fn set_access_status(
+    state: &AppState,
+    auth: &aurora_db::authz::WorkspaceAuth,
+    caller: Uuid,
+    target: Uuid,
+    status: super::dto::AccessStatus,
+    mut ev: crate::audit::AuditEvent,
+) -> Result<(), ApiError> {
+    use super::dto::AccessStatus;
+    let ws = auth.workspace_id;
+    let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let Some((_role, cur, idp_role)) = workspaces::lock_binding(&mut tx, ws, target).await? else {
+        return Err(ApiError::not_found("Binding not found."));
+    };
+    if cur == status.as_str() {
+        return Ok(());
+    }
+    if status == AccessStatus::Suspended {
+        if target == caller {
+            return Err(ApiError::conflict(
+                "cannot_suspend_self",
+                "You cannot suspend yourself.",
+            ));
+        }
+        if aurora_db::authz::effective_org_role(&mut *tx, target, auth.org_id)
+            .await?
+            .is_some_and(aurora_db::authz::OrgRole::is_admin)
+        {
+            return Err(ApiError::conflict(
+                "implicit_access",
+                "Organization owners and admins have access to every workspace; change their organization role instead.",
+            ));
+        }
+        if idp_role.is_some() {
+            return Err(crate::domains::admin::service::managed_by_idp());
+        }
+        let target_owns = aurora_db::authz::workspace_access(&mut *tx, target, ws)
+            .await?
+            .is_some_and(|a| a.can_own());
+        if target_owns && workspaces::other_active_owners(&mut tx, ws, target).await? == 0 {
+            return Err(ApiError::conflict(
+                "last_owner",
+                "A workspace needs at least one active owner.",
+            ));
+        }
+    }
+    workspaces::set_binding_status(&mut tx, ws, target, status.as_str()).await?;
+    let flush = if status == AccessStatus::Suspended {
+        crate::domains::scim::deprovision::abort_speaker_turns(
+            &mut tx,
+            auth.org_id,
+            Some(ws),
+            target,
+            &SUSPENDED_IN_WORKSPACE,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+    // Both directions change effective access: gateways drop the person's cached identities
+    // (their speaker binding, RFE-005), the API's auth cache drops their rows, and open streams
+    // of the person re-authorize (`aurora_auth_revoked { kind: "access" }`).
+    aurora_db::repo::groups::notify_member_changed(&mut tx, auth.org_id, target).await?;
+    notify_auth_revoked(&mut *tx, "user", target).await?;
+    ev.metadata["change"] = serde_json::json!({"status": format!("{cur} → {}", status.as_str())});
+    crate::audit::commit_critical(tx, &ev).await?;
+    for (c, t) in flush {
+        crate::domains::hosted::lifecycle::flush_deltas(state, c, t).await;
+    }
+    Ok(())
+}
+
 fn admin_vs_owner() -> ApiError {
     ApiError::forbidden("Admins cannot modify owners or grant the owner role.")
 }

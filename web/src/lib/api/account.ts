@@ -134,6 +134,21 @@ export function usePutAccess(wsId: string) {
   });
 }
 
+/** (P5-APIGAP-4, C-1051) Suspend one person in this workspace, or restore them. */
+export function useSetAccessStatus(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { user: string; status: "active" | "suspended" }) =>
+      unwrap(
+        api.PATCH("/v1/workspaces/{ws}/access/{user}", {
+          params: { path: { ws: wsId, user: v.user } },
+          body: { status: v.status },
+        }),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: accountKeys.access(wsId) }),
+  });
+}
+
 export function useDeleteAccess(wsId: string) {
   const qc = useQueryClient();
   return useMutation({

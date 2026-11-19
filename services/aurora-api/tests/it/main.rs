@@ -142,6 +142,7 @@ mod web_push_ssrf;
 mod webhooks;
 mod who_can;
 mod workspace_access;
+mod workspace_suspend;
 
 #[test]
 fn init_scim_logs() {

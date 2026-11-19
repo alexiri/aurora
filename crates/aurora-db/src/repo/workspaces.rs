@@ -242,6 +242,60 @@ pub async fn unbind_user<'e, E: PgExecutor<'e>>(
     )
 }
 
+/// (P5-APIGAP-4, C-1051) The direct binding of `user` in `ws`, locked for a status change:
+/// `(role, status, idp_role)`; `None` when the person has no direct row.
+pub async fn lock_binding(
+    conn: &mut sqlx::PgConnection,
+    ws: Uuid,
+    user: Uuid,
+) -> Result<Option<(String, String, Option<String>)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT role, status, idp_role FROM workspace_access
+         WHERE workspace_id = $1 AND user_id = $2 FOR UPDATE",
+    )
+    .bind(ws)
+    .bind(user)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+/// (P5-APIGAP-4, C-1051) Sets the binding's `status` (`active` | `suspended`). The role,
+/// `created_at` (the Joined date) and every IdP column are untouched.
+pub async fn set_binding_status(
+    conn: &mut sqlx::PgConnection,
+    ws: Uuid,
+    user: Uuid,
+    status: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE workspace_access SET status = $3, updated_at = now()
+         WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(ws)
+    .bind(user)
+    .bind(status)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// (P5-APIGAP-4, C-1051) Users other than `except` with an effective `owner` role in `ws`
+/// (the access law's view: active, not suspended, implicit org owners/admins included).
+pub async fn other_active_owners(
+    conn: &mut sqlx::PgConnection,
+    ws: Uuid,
+    except: Uuid,
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM effective_workspace_access
+         WHERE workspace_id = $1 AND role = 'owner' AND user_id <> $2",
+    )
+    .bind(ws)
+    .bind(except)
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AccessRow {
     pub user_id: Uuid,
@@ -252,6 +306,12 @@ pub struct AccessRow {
     pub created_at: DateTime<Utc>,
     /// (P4-IDP-1) The IdP role value behind this binding; `None` for manual bindings.
     pub idp_value: Option<String>,
+    /// (P5-APIGAP-4, C-1050) The direct row's creation time; `None` for an implicit row without
+    /// a direct row (the org role's start is not recorded).
+    pub joined_at: Option<DateTime<Utc>>,
+    /// (P5-APIGAP-4, C-1051) The direct row's `status` (`active` | `suspended`); `active` for an
+    /// implicit row without a direct row.
+    pub status: String,
 }
 
 // The implicit rows follow the **effective** org role (FIX-083, D-130(b)): a member whose group
@@ -260,7 +320,9 @@ const ACCESS_SEL: &str = "SELECT u.id AS user_id, u.email::text AS email, u.disp
     CASE WHEN e.role IN ('owner','admin') THEN 'owner' ELSE a.role END AS role,
     (e.role IN ('owner','admin')) AS implicit,
     COALESCE(a.created_at, m.created_at) AS created_at,
-    substring(a.idp_source from '^idp:[^:]*:(.*)$') AS idp_value
+    substring(a.idp_source from '^idp:[^:]*:(.*)$') AS idp_value,
+    a.created_at AS joined_at,
+    COALESCE(a.status, 'active') AS status
   FROM workspaces w
   JOIN org_members m ON m.org_id = w.org_id AND m.status = 'active'
   JOIN effective_org_members e ON e.org_id = m.org_id AND e.user_id = m.user_id

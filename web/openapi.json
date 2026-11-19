@@ -34890,6 +34890,120 @@
             "api_key": []
           }
         ]
+      },
+      "patch": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Suspend or restore a person's direct binding in this workspace only (`can_own`; P5-APIGAP-4,\nC-1051, SEC-138). A suspended binding grants nothing here, direct or through a group.",
+        "operationId": "patchAccess",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchAccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessBinding"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
       }
     },
     "/v1/workspaces/{ws}/accounts": {
@@ -38514,7 +38628,8 @@
           "email",
           "display_name",
           "role",
-          "implicit"
+          "implicit",
+          "status"
         ],
         "properties": {
           "display_name": {
@@ -38534,8 +38649,20 @@
             "type": "boolean",
             "description": "True for org owners/admins (no row)."
           },
+          "joined_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(phase 5, P5-APIGAP-4, C-1050) When the direct binding was created; `null` for an implicit\nrow without one (the org role's start is not recorded)."
+          },
           "role": {
             "$ref": "#/components/schemas/WorkspaceRole"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AccessStatus",
+            "description": "(phase 5, P5-APIGAP-4, C-1051) `suspended`: the person has no access to this workspace\n(direct or through a group) until restored. An `implicit` row's access comes from the org\nrole and is not affected."
           },
           "user_id": {
             "type": "string",
@@ -38720,6 +38847,14 @@
             "description": "The `idp:<provider>:<value>` source, for `idp_claim`."
           }
         }
+      },
+      "AccessStatus": {
+        "type": "string",
+        "description": "(P5-APIGAP-4, C-1051) A workspace binding's status: `suspended` grants nothing in that\nworkspace (SEC-138).",
+        "enum": [
+          "active",
+          "suspended"
+        ]
       },
       "Account": {
         "type": "object",
@@ -53800,9 +53935,18 @@
               "required": [
                 "user",
                 "role",
-                "sources"
+                "sources",
+                "status"
               ],
               "properties": {
+                "joined_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time",
+                  "description": "(P5-APIGAP-4, C-1050) When the earliest current direct or group source started; `null`\nwhen the only source is an org role (its start is not recorded)."
+                },
                 "role": {
                   "$ref": "#/components/schemas/WorkspaceRole"
                 },
@@ -53811,6 +53955,10 @@
                   "items": {
                     "$ref": "#/components/schemas/AccessSourceView"
                   }
+                },
+                "status": {
+                  "$ref": "#/components/schemas/AccessStatus",
+                  "description": "(P5-APIGAP-4, C-1051) Always `active`: a person suspended in the workspace derives nothing."
                 },
                 "user": {
                   "$ref": "#/components/schemas/UserRef"
@@ -56413,6 +56561,19 @@
             ]
           }
         }
+      },
+      "PatchAccessRequest": {
+        "type": "object",
+        "description": "(phase 5, P5-APIGAP-4, C-1051) `PATCH /workspaces/{ws}/access/{user}`: suspend or restore.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/AccessStatus"
+          }
+        },
+        "additionalProperties": false
       },
       "PatchAdminUserRequest": {
         "type": "object",

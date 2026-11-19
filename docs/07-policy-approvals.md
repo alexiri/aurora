@@ -570,7 +570,9 @@ nor receive their cards/notifications (SSE, long-poll, batch).
   `APPROVAL_WATCHER_TTL` (45 s; replicas record `approval_watchers`). If neither
   exists it sends **one e-mail per decider** (the decider set of this section:
   `can_approve` users with an explicit workspace `owner`/`approver` binding,
-  intersected with conversation visibility, `04`; if the workspace has no explicit
+  intersected with conversation visibility, `04`; (phase 5, P5-APIGAP-4, SEC-138) a person
+  suspended in the workspace is not a decider, through a direct or a group binding, and
+  their decisions are refused like any non-member's; if the workspace has no explicit
   binding the org owners/admins) through the SMTP mailer (`04 §Email`). The e-mail
   is platform voice, sanitized, and carries only: agent and workspace names, the
   approval's title (no summary fields, no body), the rule name, the expiry and a

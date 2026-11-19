@@ -198,7 +198,11 @@ unencrypted.
   speaker, `principals = {agent_id} ∪ speaker_group_ids`: the ids of the groups **of the
   agent's own org** that contain the speaker (`03 §Planned changes`, `group_members`;
   read once per resolution with the `can_use` check, one indexed query, never per
-  request). A speaker without `can_use` has no speaker and therefore no group ids; a
+  request). A speaker without `can_use` has no speaker and therefore no group ids
+  ((phase 5, P5-APIGAP-4, SEC-138) the gateway's `can_use` is the API view's law restated
+  for the gateway role: a person suspended in the workspace fails it, through a direct or
+  a group binding, and the suspension's `user` invalidation drops their cached identities at
+  once); a
   request without a speaker carries none, so `group` identities never match
   speakerless traffic (`07 §Rule anatomy`). The set is capped by `GROUPS_PER_USER`
   (100). It is part of the cached identity and is dropped and re-resolved by the

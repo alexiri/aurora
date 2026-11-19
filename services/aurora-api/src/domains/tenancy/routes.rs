@@ -29,7 +29,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_workspace_overrides))
         .routes(routes!(get_workspace, patch_workspace, delete_workspace))
         .routes(routes!(list_access))
-        .routes(routes!(put_access, delete_access))
+        .routes(routes!(put_access, patch_access, delete_access))
         .routes(routes!(resolve))
 }
 
@@ -725,6 +725,39 @@ async fn put_access(
     let row = workspaces::get_access(&s.pool, ws, user)
         .await?
         .ok_or_else(|| ApiError::internal("Internal error."))?;
+    Ok(Json(row.into()))
+}
+
+/// Suspend or restore a person's direct binding in this workspace only (`can_own`; P5-APIGAP-4,
+/// C-1051, SEC-138). A suspended binding grants nothing here, direct or through a group.
+#[utoipa::path(patch, path = "/workspaces/{ws}/access/{user}", operation_id = "patchAccess", tag = "workspaces",
+    params(("ws" = Uuid, Path, description = "Workspace id"), ("user" = Uuid, Path, description = "User id")),
+    request_body = PatchAccessRequest,
+    responses((status = 200, body = AccessBinding), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 409, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn patch_access(
+    c: Caller,
+    State(s): State<AppState>,
+    Path((ws, user)): Path<(Uuid, Uuid)>,
+    Json(req): Json<PatchAccessRequest>,
+) -> Result<Json<AccessBinding>, ApiError> {
+    let a = c.workspace(&s, ws).await?;
+    require_own(&a)?;
+    let action = match req.status {
+        AccessStatus::Suspended => "workspace_access.suspend",
+        AccessStatus::Active => "workspace_access.restore",
+    };
+    let ev = event(&c, action)
+        .org(a.org_id)
+        .workspace(ws)
+        .target("user", user)
+        .metadata(json!({}));
+    service::set_access_status(&s, &a, c.user_id, user, req.status, ev).await?;
+    let row = workspaces::get_access(&s.pool, ws, user)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Binding not found."))?;
     Ok(Json(row.into()))
 }
 

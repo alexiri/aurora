@@ -1,7 +1,8 @@
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { AccessTab } from "@/components/settings/access-tab";
+import { AccessTab, SUSPEND_KEEPS, SUSPEND_STOPS, joinedText } from "@/components/settings/access-tab";
+import { formatExact, formatWhen } from "@/lib/format-date";
 import { json } from "./support/api";
 import { wrap } from "./support/render";
 
@@ -65,6 +66,78 @@ describe("People table", () => {
     wrap(<AccessTab wsId="w" orgId="o" canOwn />);
     const sam = await screen.findByLabelText("Role for sam@x.io");
     expect(within(sam).getAllByRole("option").map((o) => o.textContent)).toEqual(["Owner"]);
+  });
+
+  it("shows when each person joined, with the exact time as the tooltip and a dash for access from the organization", async () => {
+    mockFetch({
+      ...routes,
+      "GET /v1/workspaces/w/access": () =>
+        json(200, {
+          ...access,
+          items: [
+            { ...access.items[0], joined_at: null, status: "active" },
+            { ...access.items[1], joined_at: "2025-03-04T10:00:00Z", status: "active" },
+          ],
+        }),
+    });
+    wrap(<AccessTab wsId="w" orgId="o" canOwn />);
+    expect(await screen.findByRole("columnheader", { name: "Joined" })).toBeInTheDocument();
+    const row = screen.getByTestId("access-row-c");
+    const cell = within(row).getByTitle(formatExact("2025-03-04T10:00:00Z"));
+    expect(cell).toHaveTextContent(formatWhen("2025-03-04T10:00:00Z"));
+    // The narrow-screen line under the person says it in words.
+    expect(within(row).getByText(joinedText("2025-03-04T10:00:00Z"))).toBeInTheDocument();
+  });
+
+  it("suspends after a confirmation that says what stops, marks the row, and restores", async () => {
+    const calls: { key: string; body: unknown }[] = [];
+    let carol = { ...access.items[1], joined_at: "2025-03-04T10:00:00Z", status: "active" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Request | string | URL) => {
+        const req = input instanceof Request ? input : new Request(new URL(String(input), "http://localhost"));
+        const url = new URL(req.url, "http://localhost");
+        const key = `${req.method} ${url.pathname}`;
+        const text = req.method === "GET" ? "" : await req.clone().text();
+        const body = text ? JSON.parse(text) : undefined;
+        calls.push({ key, body });
+        if (key === "PATCH /v1/workspaces/w/access/c") {
+          carol = { ...carol, status: (body as { status: string }).status };
+          return json(200, carol);
+        }
+        if (key === "GET /v1/workspaces/w/access") return json(200, { ...access, items: [access.items[0], carol] });
+        const h = (routes as Record<string, () => Response>)[key];
+        return h ? h() : json(404, { error: { code: "not_found", message: "nf" } });
+      }),
+    );
+    wrap(<AccessTab wsId="w" orgId="o" canOwn />);
+    fireEvent.keyDown(await screen.findByRole("button", { name: "More for Carol" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Suspend carol@x.io" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Suspend Carol in this workspace?")).toBeInTheDocument();
+    expect(within(dialog).getByText(SUSPEND_STOPS)).toBeInTheDocument();
+    expect(within(dialog).getByText(SUSPEND_KEEPS)).toBeInTheDocument();
+    expect(calls.some((c) => c.key.startsWith("PATCH"))).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Suspend" }));
+    await waitFor(() => expect(calls.find((c) => c.key === "PATCH /v1/workspaces/w/access/c")?.body).toEqual({ status: "suspended" }));
+    const row = await screen.findByTestId("access-row-c");
+    expect(await within(row).findByText("Suspended")).toBeInTheDocument();
+    fireEvent.keyDown(within(row).getByRole("button", { name: "More for Carol" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Restore carol@x.io" }));
+    await waitFor(() => expect(calls.filter((c) => c.key === "PATCH /v1/workspaces/w/access/c").at(-1)?.body).toEqual({ status: "active" }));
+    await waitFor(() => expect(within(screen.getByTestId("access-row-c")).queryByText("Suspended")).toBeNull());
+  });
+
+  it("does not mark an organization owner suspended: their access comes from the organization", async () => {
+    mockFetch({
+      ...routes,
+      "GET /v1/workspaces/w/access": () =>
+        json(200, { ...access, items: [access.items[0], { user_id: "z", email: "zed@x.io", display_name: "Zed", role: "owner", implicit: true, status: "suspended", joined_at: null }] }),
+    });
+    wrap(<AccessTab wsId="w" orgId="o" canOwn />);
+    const row = await screen.findByTestId("access-row-z");
+    expect(within(row).queryByText("Suspended")).toBeNull();
+    expect(within(row).queryByRole("button")).toBeNull();
   });
 
   it("shows Groups in a shared workspace and not in a personal one", async () => {
