@@ -1,17 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { InstructionsTab } from "@/components/agents/instructions-tab";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // P4-HAR (D-122, docs/14 §Instructions): the harness picker.
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 function mockFetch(routes: Record<string, (req: Request) => Response | Promise<Response>>) {
   const fn = vi.fn(async (input: Request | string | URL) => {
@@ -23,16 +17,6 @@ function mockFetch(routes: Record<string, (req: Request) => Response | Promise<R
   vi.stubGlobal("fetch", fn);
   return fn;
 }
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const agent = (kind: "byo" | "hosted", harness: string | null = "claude-code") => ({
   id: "a1", org_id: "o1", workspace_id: "w1", handle: "bot", name: "Bot", kind,

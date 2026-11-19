@@ -1,9 +1,9 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 import { agent, id, mockApi, now, org, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // P5-UX-11 (C-936, C-937, C-947, C-990, SEC-131; docs/14 §Agents, accounts and access §2 and §11): accounts for the whole
 // organization. Three journeys against a stateful mock of the organization's account:
@@ -17,13 +17,6 @@ import { overflow } from "./support/open";
 
 const SHOTS = "/tmp/aurora-screens/p5-ux-11";
 mkdirSync(SHOTS, { recursive: true });
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 async function check(page: Page, name: string, scheme: string, width: number) {
   expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);

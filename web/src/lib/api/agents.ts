@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { useInvalidatingMutation } from "./mutations";
 import { queryKeys, type Agent } from "./queries";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
@@ -12,21 +13,13 @@ export type PatchAgentRequest = components["schemas"]["PatchAgentRequest"];
 export type ContainerConfig = components["schemas"]["ContainerConfig"];
 
 export function useCreateAgent(wsId: string | undefined) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateAgentRequest) =>
-      unwrap(api.POST("/v1/workspaces/{ws}/agents", { params: { path: { ws: wsId! } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.agents(wsId ?? "") }),
-  });
+  return useInvalidatingMutation((body: CreateAgentRequest) =>
+    unwrap(api.POST("/v1/workspaces/{ws}/agents", { params: { path: { ws: wsId! } }, body })), queryKeys.agents(wsId ?? ""));
 }
 
 export function usePatchAgent(wsId: string | undefined, agentId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: PatchAgentRequest) =>
-      unwrap(api.PATCH("/v1/agents/{agent}", { params: { path: { agent: agentId } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.agents(wsId ?? "") }),
-  });
+  return useInvalidatingMutation((body: PatchAgentRequest) =>
+    unwrap(api.PATCH("/v1/agents/{agent}", { params: { path: { agent: agentId } }, body })), queryKeys.agents(wsId ?? ""));
 }
 
 export type HarnessList = components["schemas"]["HarnessList"];

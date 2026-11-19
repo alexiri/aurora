@@ -131,6 +131,9 @@ async fn compute(
     let hosted = &s.ops().hosted;
     let default_harness = hosted.default_harness.as_str();
 
+    // (D-372) What each queued agent's key serves is read before the transaction opens: no transaction
+    // spans a network call. The dispatcher's model selection inside the transaction reads the cache.
+    dispatch::prewarm_listings(s).await;
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
     let mut after = dispatch::After::default();
     // Arm 1: ownership takeover (the heartbeat itself was stamped by the extractor).

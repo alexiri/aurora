@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, ApiError } from "./client";
+import { api } from "./client";
+import { retryUnlessClientError } from "./errors";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -30,10 +31,6 @@ export function intervalLabel(v: string): string {
   return INTERVAL_LABELS[v as Interval] ?? v;
 }
 
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
-
 export const addonKeys = {
   all: ["admin", "addon-sources"] as const,
 };
@@ -48,7 +45,7 @@ export function useAddonSources() {
   return useQuery({
     queryKey: addonKeys.all,
     queryFn: () => unwrap(api.GET("/v1/admin/addon-sources")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 

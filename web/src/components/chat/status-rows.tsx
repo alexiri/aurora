@@ -11,6 +11,7 @@ import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import { chatApi, useRetrySandbox, useSandbox } from "@/lib/api/conversations";
 import { errorCopy, type ErrorLink } from "@/lib/chat/transcript";
+import { wsRoutes } from "@/lib/routes";
 
 import type { AgentIdent } from "./types";
 /** While a turn runs: the agent avatar and a `subtle` bubble with three dots and the activity line. */
@@ -46,12 +47,15 @@ export function ErrorBlock({
   code,
   message,
   base,
+  agentId,
   canOwn = false,
   children,
 }: {
   code?: string | null;
   message?: string;
   base: string;
+  /** The failing agent (id or handle): "Choose a model" and "Agent access" open **its** page, whatever page the chat is on (FIX-170). */
+  agentId?: string;
   /** Workspace owner: gets the "Agent access" link. */
   canOwn?: boolean;
   /** Reserved (FIX-029, C-615): the retry button is passed as `children` by the chat's error blocks. */
@@ -60,13 +64,21 @@ export function ErrorBlock({
   const copy = errorCopy(code, message);
   // The chat lives on the agent page, so its tabs are addressed relative to the current path (`?tab=`, C-506).
   const pathname = usePathname() ?? "";
-  const hrefOf = (l: ErrorLink): string | undefined =>
-    l.path === "credentials"
-      ? // The gateway's `credentials` link names the old page; its tab decides the Apps & accounts tab (C-960).
-        `${base}/apps?tab=${l.tab === "apps" || l.tab === "oauth" ? "apps" : "accounts"}${l.tab === "llm" ? "&kind=ai-key" : ""}`
-      : l.path === "access" || l.path === "instructions"
-        ? `${pathname}?tab=${l.path}`
-        : undefined;
+  // `base` is the workspace's own `/o/<org>/w/<ws>`: the route helper builds the agent's page from its parts.
+  const parts = /^\/o\/([^/]+)\/w\/([^/]+)/.exec(base);
+  const routes = parts ? wsRoutes(decodeURIComponent(parts[1]!), decodeURIComponent(parts[2]!)) : null;
+  const hrefOf = (l: ErrorLink): string | undefined => {
+    if (l.path === "credentials") {
+      // The gateway's `credentials` link names the old page; its tab decides the Apps & accounts tab (C-960).
+      return `${base}/apps?tab=${l.tab === "apps" || l.tab === "oauth" ? "apps" : "accounts"}${l.tab === "llm" ? "&kind=ai-key" : ""}`;
+    }
+    if (l.path === "access" || l.path === "instructions") {
+      // (FIX-170) The failing agent's own page; "Choose a model" lands on its Default model field.
+      if (agentId && routes) return `${routes.agent(agentId, { tab: l.path })}${l.path === "instructions" ? "#a-model" : ""}`;
+      return `${pathname}?tab=${l.path}`;
+    }
+    return undefined;
+  };
   const links = [copy.link, copy.extra].filter((l): l is ErrorLink => !!l && (!l.ownerOnly || canOwn));
   return (
     <div role="alert" className="max-w-chat-card rounded-card rounded-tl-sm border border-danger-ink/30 bg-danger-soft px-3.5 py-2.5 text-sm text-danger-ink">

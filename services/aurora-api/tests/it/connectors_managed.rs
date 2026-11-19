@@ -1071,10 +1071,12 @@ async fn sec69_widened_manifest_goes_to_pending_approval_for_managed_connectors(
         .push(json!({"name": "new_setting", "label": "New", "type": "text"}));
     let (s, v) = delegated_register(&m, "alpha", &wider).await;
     assert_eq!(s, 200, "{v}");
-    assert_eq!(v["status"], "pending_approval");
+    // (D-369) The connector keeps running at the approved level while the update waits.
+    assert_eq!(v["status"], "active");
     let (_, list) = m.admin(Method::GET, "/v1/admin/connectors", None).await;
     let c = &list["items"][0];
-    assert_eq!(c["status"], "pending_approval");
+    assert_eq!(c["status"], "active");
+    assert_eq!(c["update_pending"], true);
     assert!(
         c["widening"][0].as_str().unwrap().contains("new_setting"),
         "{c}"
@@ -1146,6 +1148,7 @@ async fn sec69_widened_manifest_goes_to_pending_approval_for_managed_connectors(
             v["status"].as_str().unwrap().to_owned()
         }
     };
+    // A first registration (no baseline) still waits.
     assert_eq!(reg(base.clone()).await, "pending_approval");
 }
 
@@ -1216,7 +1219,8 @@ async fn sec69_disable_stops_serving_and_enable_restores_the_status() {
         .await;
     assert_eq!(v["status"], "awaiting_registration");
 
-    // Registered with a digest that is not the approved one → pending_approval.
+    // Registered with a digest that is not the approved one: it keeps running (D-369), so
+    // re-enabling restores `active` with the update still pending.
     let mut wider = manifest("alpha");
     wider["capabilities"]["buttons"] = json!(true);
     delegated_register(&m, "alpha", &wider).await;
@@ -1233,7 +1237,8 @@ async fn sec69_disable_stops_serving_and_enable_restores_the_status() {
             Some(json!({"enabled": true})),
         )
         .await;
-    assert_eq!(v["status"], "pending_approval");
+    assert_eq!(v["status"], "active");
+    assert_eq!(v["update_pending"], true);
 }
 
 // ------------------------------------------------------------- assignments
@@ -1274,10 +1279,11 @@ async fn bootstrap_token_never_attaches_to_a_managed_connector() {
     assert_eq!(got, t2.to_vec());
 }
 
-/// FIX-113 (CONN-14): a managed connector waiting for approval of a widened manifest is not
-/// assigned, so its decrypted settings are not handed to the host.
+/// FIX-113 (CONN-14), amended by FIX-167 (D-369, SEC-134): a managed connector whose widened
+/// manifest waits for approval keeps its assignment, at the approved level: the new
+/// `instance_setup` field is neither sent nor editable. A first registration still waits.
 #[tokio::test]
-async fn pending_approval_connectors_get_no_assignment() {
+async fn update_pending_connectors_keep_their_assignment_at_the_approved_level() {
     let m = M::new().await;
     let (host, _) = m.add_managed("alpha").await;
     let (s, v) = delegated_register(&m, "alpha", &manifest("alpha")).await;
@@ -1291,18 +1297,36 @@ async fn pending_approval_connectors_get_no_assignment() {
         .unwrap()
         .push(json!({"name": "new_setting", "label": "New", "type": "text"}));
     let (s, v) = delegated_register(&m, "alpha", &wider).await;
-    assert_eq!(
-        (s, v["status"].as_str()),
-        (200, Some("pending_approval")),
-        "{v}"
-    );
+    assert_eq!((s, v["status"].as_str()), (200, Some("active")), "{v}");
     let (s, _, v) = m.assignments(Some(host), None, 0).await;
     assert_eq!(s, 200, "{v}");
-    assert_eq!(
-        v["connectors"].as_array().map(Vec::len),
-        Some(0),
-        "no assignment (and no decrypted secrets) while approval is pending: {v}"
+    assert_eq!(v["connectors"].as_array().map(Vec::len), Some(1), "{v}");
+    assert_eq!(v["connectors"][0]["status"], "active");
+    assert!(
+        v["connectors"][0]["settings"].get("new_setting").is_none(),
+        "a field only the pending manifest declares is not assigned: {v}"
     );
+    let set = |v: &str| Some(json!({"settings": {"new_setting": v}}));
+    let (s, v) = m
+        .admin(Method::PATCH, "/v1/admin/connectors/alpha", set("x"))
+        .await;
+    assert_eq!(s, 422, "not editable before approval: {v}");
+    // Approve turns it on: the field is editable and assigned.
+    let digest = m.digest(&wider);
+    let (s, v) = m
+        .admin(
+            Method::POST,
+            "/v1/admin/connectors/alpha/approve",
+            Some(json!({"manifest_digest": digest})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = m
+        .admin(Method::PATCH, "/v1/admin/connectors/alpha", set("x"))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, _, v) = m.assignments(Some(host), None, 0).await;
+    assert_eq!(v["connectors"][0]["settings"]["new_setting"], "x", "{v}");
 }
 
 #[tokio::test]

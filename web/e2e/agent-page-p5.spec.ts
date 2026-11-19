@@ -1,10 +1,10 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 import { AGENT_ROUTE, DEFAULT, MINE, NIGHTLY, mockChat } from "./support/chat-mock";
 import { id, mockApi, org, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // P5-AGENT-2 (D-200, D-201; docs/14 §Agent page (phase 5)): the agent page's status rail. The API is mocked.
 // Screenshots of the four states (expanded, collapsed, pop-over open, phone sheet) go outside the repo.
@@ -68,12 +68,6 @@ async function open(page: Page, scheme: "light" | "dark", opts: { approvals?: un
   return decisions;
 }
 
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 const rail = (page: Page) => page.getByRole("complementary", { name: "Status" });
 /** The page header (the one holding the agent's h1), and the chat card (the rounded panel around the conversation list). */
 const pageHeader = (page: Page) => page.locator("header", { has: page.getByRole("heading", { level: 1 }) });

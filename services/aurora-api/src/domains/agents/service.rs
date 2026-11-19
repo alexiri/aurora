@@ -103,10 +103,13 @@ async fn check_roles(
     let default_endpoint = match new_endpoint {
         Some(e) => Some(e.to_owned()),
         None => {
-            crate::domains::hosted::model::readiness(state, &llm, conn, agent, org, ws, harness)
-                .await?
-                .default_endpoint()
-                .map(str::to_owned)
+            // (D-372) `conn` may be a transaction: the endpoint of the default needs no key listing.
+            crate::domains::hosted::model::readiness_cached(
+                state, &llm, conn, agent, org, ws, harness,
+            )
+            .await?
+            .default_endpoint()
+            .map(str::to_owned)
         }
     };
     if default_endpoint.as_deref() != Some(roles.endpoint_id.as_str()) {

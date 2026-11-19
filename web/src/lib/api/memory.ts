@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -98,16 +99,12 @@ export function useRestoreMemory(agent: string, key: string) {
 }
 
 export function useRedactRevision(agent: string, key: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (rev: number) =>
-      unwrap(
-        api.POST("/v1/agents/{agent}/memories/{key}/revisions/{rev}/redact", {
-          params: { path: { agent, key, rev } },
-        }),
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: memKeys.revisions(agent, key) }),
-  });
+  return useInvalidatingMutation((rev: number) =>
+    unwrap(
+      api.POST("/v1/agents/{agent}/memories/{key}/revisions/{rev}/redact", {
+        params: { path: { agent, key, rev } },
+      }),
+    ), memKeys.revisions(agent, key));
 }
 
 /** Meter state for a text against a limit. */

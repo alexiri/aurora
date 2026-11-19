@@ -5,14 +5,14 @@ import { ensurePlacement } from "./support/placement";
 // FIX-019 (D-136): the owner's production endpoint shape on the kind dev stack with --llm-mock.
 // The endpoint `aigw-mock` (deploy/kind/values-llm-mock.yaml) has only `base_url` and
 // no `default_model`, `models` or `dialects` (and no key_origin rule, which behaves as `endpoint`).
-//   store a key, grant it, chat -> the turn fails `no_default_model` (not `no_model_key`) and no
-//   sandbox starts; choose the model on the agent -> the next message gets the mock's answer.
+//   store a key, grant it, chat -> (FIX-170, D-372) the first model the key serves is used (`key_listing`) and the
+//   sandbox starts; choose a scenario model on the agent -> the next message gets the mock's scripted answer.
 // Setup goes through the API (this journey is about the server's decision; first-run.spec.ts is the
 // dashboard-only journey). Run with scripts/e2e/first-run.sh -- e2e/no-default-model.spec.ts.
 const MOCK_KEY = "sk-aurora-mock-dev"; // dev-only dummy master key
 const ENDPOINT = "aigw-mock";
 
-test("owner's endpoint shape: no_default_model, then a reply after choosing a model", async ({ page, browser, baseURL }) => {
+test("owner's endpoint shape: the first message works with no model chosen, then a scripted reply after choosing one", async ({ page, browser, baseURL }) => {
   test.setTimeout(8 * 60_000);
   await ensurePlacement(browser, baseURL!); // P4-ONB-1: a fresh open instance waits for a placement
   const email = `nodefault-${Date.now().toString(36)}@example.test`;
@@ -42,26 +42,25 @@ test("owner's endpoint shape: no_default_model, then a reply after choosing a mo
   const grant = await api.put(`/v1/agents/${agent}/grants/secrets/${keyId}`, { headers: h });
   expect(grant.ok(), await grant.text()).toBeTruthy();
 
-  // The key is usable, the model is not: the readiness route says so.
+  // (FIX-170, D-372) The key is usable and no model is configured anywhere: the first chat model the key
+  // serves resolves, and the readiness route says where it came from.
   const rd = await (await api.get(`/v1/agents/${agent}/model-readiness`)).json();
   expect(rd.keys[0].usable).toBe(true);
-  expect(rd.default).toBeNull();
+  expect(rd.default.source).toBe("key_listing");
 
-  // Chat: the dashboard's conversation page, stream status observed.
+  // Chat: the dashboard's conversation page. The first message is not refused for a missing model: the sandbox starts.
   await page.goto(`${base}/agents`);
   await page.getByRole("link", { name: /Daneel/ }).first().click();
   await page.getByRole("tab", { name: "Chat" }).click();
   await page.getByLabel("Message", { exact: true }).fill("hello");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText(/no model is chosen|no_default_model/i).first()).toBeVisible({ timeout: 60_000 });
-  // Stream: the API stream opens in milliseconds, delivers `turn.queued`, `error` and `turn.finished`,
-  // and stays open (probed with fetch). Until FIX-021 the dashboard pill flipped to "Reconnecting…" on any
-  // failed turn: `es.onerror` also fires for an SSE event NAMED `error` (readyState stays OPEN). Fixed in
-  // `use-transcript.ts` (covered by `web/tests/use-transcript-live.test.tsx`), so it is not asserted here.
-  const sandbox = await (await api.get(`/v1/agents/${agent}/sandbox`)).json();
-  expect(["unprovisioned", "stopped"]).toContain(sandbox.state);
+  await expect(async () => {
+    const sandbox = await (await api.get(`/v1/agents/${agent}/sandbox`)).json();
+    expect(["unprovisioned", "stopped"]).not.toContain(sandbox.state);
+  }).toPass({ timeout: 4 * 60_000 });
+  await expect(page.getByText(/no model is chosen|could not pick a model|no_default_model/i)).toHaveCount(0);
 
-  // Choose the model on the agent; the next message starts the sandbox and the mock answers.
+  // Choose a scenario model on the agent; the next message gets the mock's scripted answer.
   const patch = await api.patch(`/v1/agents/${agent}`, {
     headers: h,
     data: { model_endpoint_id: ENDPOINT, model_id: "scn-pong" },

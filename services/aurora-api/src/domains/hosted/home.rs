@@ -146,7 +146,8 @@ async fn models_input(
         return Value::Null;
     }
     let llm = state.llm();
-    let r = match super::model::readiness(
+    // (D-372) Runs inside the dispatcher's transaction: the key listings come from the cache only.
+    let r = match super::model::readiness_cached(
         state,
         &llm,
         conn,

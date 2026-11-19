@@ -787,6 +787,9 @@ struct Reply {
     /// What the read ended with when no status came back: `"timeout (N bytes)"`, `"closed (N
     /// bytes)"` or the read error. A diagnostic only.
     ended: String,
+    /// (FIX-177) TLS records of the request were still queued in the client's session when the
+    /// body's `write_all` returned (the socket was full), and the flush sent them. A diagnostic.
+    queued: bool,
 }
 
 fn auth(user: &str) -> String {
@@ -806,14 +809,27 @@ async fn request(
     extra: &str,
     body: &[u8],
 ) -> Reply {
-    let mut s = crate::common::connect(env.proxy).await;
+    let s = crate::common::connect(env.proxy).await;
+    request_on(s, target, method, path, extra, body).await
+}
+
+/// [`request`] on a connection the caller opened (FIX-177: one with a tight send buffer).
+async fn request_on(
+    mut s: tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
+    target: SocketAddr,
+    method: &str,
+    path: &str,
+    extra: &str,
+    body: &[u8],
+) -> Reply {
     let head = format!(
         "{method} http://{target}{path} HTTP/1.1\r\nHost: {target}\r\n{}{extra}Content-Length: {}\r\nConnection: close\r\n\r\n",
         auth("agent"),
         body.len()
     );
     s.write_all(head.as_bytes()).await.unwrap();
-    s.write_all(body).await.unwrap();
+    // Flushed: without it the end of a large body can stay in the TLS session (FIX-177).
+    let queued = crate::common::write_flushed(&mut s, body).await;
     let mut out = Vec::new();
     // A multi-MiB body (the SigV4 signing limit is 8 MiB) is buffered, hashed and signed by a debug
     // build: on a loaded CI runner that alone can take longer than 5 s. The read ends when the
@@ -838,6 +854,7 @@ async fn request(
             .unwrap_or(0),
         body: body.to_owned(),
         ended,
+        queued,
     }
 }
 

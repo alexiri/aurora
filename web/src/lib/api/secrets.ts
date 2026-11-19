@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -71,12 +72,8 @@ export function useCreateSecret(scope: SecretScope) {
 }
 
 export function usePatchSecret(scope: SecretScope, id: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: PatchSecretRequest) =>
-      unwrap(api.PATCH("/v1/secrets/{id}", { params: { path: { id } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: secretKeys.list(scope) }),
-  });
+  return useInvalidatingMutation((body: PatchSecretRequest) =>
+    unwrap(api.PATCH("/v1/secrets/{id}", { params: { path: { id } }, body })), secretKeys.list(scope));
 }
 
 export function useSetSecretValue(scope: SecretScope, id: string) {
@@ -90,22 +87,14 @@ export function useSetSecretValue(scope: SecretScope, id: string) {
 }
 
 export function useVerifySecret(scope: SecretScope, id: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => unwrap(api.POST("/v1/secrets/{id}/verify", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: secretKeys.list(scope) }),
-  });
+  return useInvalidatingMutation(() => unwrap(api.POST("/v1/secrets/{id}/verify", { params: { path: { id } } })), secretKeys.list(scope));
 }
 
 export function useDeleteSecret(scope: SecretScope, id: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async () => {
-      const { error, response } = await api.DELETE("/v1/secrets/{id}", { params: { path: { id } } });
-      if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: secretKeys.list(scope) }),
-  });
+  return useInvalidatingMutation(async () => {
+    const { error, response } = await api.DELETE("/v1/secrets/{id}", { params: { path: { id } } });
+    if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
+    }, secretKeys.list(scope));
 }
 
 export function useAcceptSecret(scope: SecretScope, id: string) {
@@ -119,14 +108,10 @@ export function useAcceptSecret(scope: SecretScope, id: string) {
 }
 
 export function useRejectSecret(scope: SecretScope, id: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async () => {
-      const { error, response } = await api.POST("/v1/secrets/{id}/reject", { params: { path: { id } } });
-      if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: secretKeys.list(scope) }),
-  });
+  return useInvalidatingMutation(async () => {
+    const { error, response } = await api.POST("/v1/secrets/{id}/reject", { params: { path: { id } } });
+    if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
+    }, secretKeys.list(scope));
 }
 
 // ---- pure form helpers (unit tested) ----

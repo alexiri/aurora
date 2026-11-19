@@ -9,7 +9,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 afterEach(() => {
-  cleanup();
   window.history.replaceState(null, "", "/");
 });
 

@@ -1,5 +1,12 @@
 import "@testing-library/jest-dom/vitest";
-import { configure } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
+import { afterEach, vi } from "vitest";
+
+// Every test file starts clean: unmount what RTL rendered and drop `vi.stubGlobal` stubs.
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 // jsdom + a loaded host make the query -> render chains slow; the 1s testing-library default caused
 // random timeouts on the full run (the per-test budget is already 20s, see vitest.config.ts).

@@ -161,7 +161,9 @@ pub async fn options(
         for integ in rows.iter().filter(|i| i.status == "active") {
             let connector = connectors::get(&s.pool, &integ.connector_id).await?;
             let active = connector.as_ref().is_some_and(|r| r.status == "active");
-            let manifest = connector.as_ref().and_then(|r| r.manifest.as_ref());
+            let manifest = connector
+                .as_ref()
+                .and_then(crate::domains::connectors::effective_manifest_ref);
             let modes = offered_modes(manifest, integ, active);
             let fields = manifest
                 .and_then(|m| m.pointer("/presence_setup/dedicated/fields"))
@@ -243,7 +245,9 @@ pub async fn attach(
     let connector = connectors::get(&s.pool, &integ.connector_id)
         .await?
         .filter(|r| r.status == "active");
-    let manifest = connector.as_ref().and_then(|r| r.manifest.as_ref());
+    let manifest = connector
+        .as_ref()
+        .and_then(crate::domains::connectors::effective_manifest_ref);
     let cap = match req.mode {
         PresenceMode::Dedicated => "presence_dedicated",
         PresenceMode::Shared => "presence_shared",
@@ -567,7 +571,9 @@ pub async fn reattach(
             .ok_or_else(|| {
                 ApiError::unavailable("connector_unavailable", "The connector is not active.")
             })?;
-        let defs = manual_fields(connector.manifest.as_ref());
+        let defs = manual_fields(crate::domains::connectors::effective_manifest_ref(
+            &connector,
+        ));
         if defs.is_empty() {
             let mut tx = s.pool.begin().await.map_err(DbError::from)?;
             repo::set_status(&mut *tx, id, "pending_setup", None).await?;

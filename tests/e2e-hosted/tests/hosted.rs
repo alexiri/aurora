@@ -755,6 +755,63 @@ async fn process_output(
     panic!("process {name} did not finish within {secs}s: {out}");
 }
 
+/// Runs `command` in the agent's **web terminal**: the path a person types into (C-616: the
+/// API's WebSocket, the runner, the supervisor's PTY, `bash`). Returns what the command printed.
+/// A tools-socket `process_start` cannot observe a codex-harness agent: FIX-151 accepts it only
+/// from the conversation's harness, and codex runs no `[[shell:]]` directive. Echo is turned off
+/// first, so the output never contains the typed command. The end is a marker the shell computes
+/// (`$((40+2))`), so typed text can never fake it.
+async fn terminal_output(api: &Api, command: &str, secs: u64) -> String {
+    use futures::{SinkExt as _, StreamExt as _};
+    use tokio_tungstenite::tungstenite::Message;
+    let mut ws = api.terminal(&api.daneel, "bash").await;
+    let end = std::time::Instant::now() + Duration::from_secs(secs);
+    // Reads PTY bytes into `buf` until it contains `needle`; false on deadline or close.
+    async fn read_until<S>(
+        ws: &mut S,
+        buf: &mut String,
+        needle: &str,
+        end: std::time::Instant,
+    ) -> bool
+    where
+        S: futures::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+    {
+        while !buf.contains(needle) {
+            let left = end.saturating_duration_since(std::time::Instant::now());
+            match tokio::time::timeout(left, ws.next()).await {
+                Ok(Some(Ok(Message::Binary(b)))) => buf.push_str(&String::from_utf8_lossy(&b)),
+                Ok(Some(Ok(_))) => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+    let mut buf = String::new();
+    ws.send(Message::binary(
+        b"stty -echo; echo TERM_READY_$((40+2))\r".to_vec(),
+    ))
+    .await
+    .unwrap();
+    assert!(
+        read_until(&mut ws, &mut buf, "TERM_READY_42", end).await,
+        "the terminal never answered: {buf}"
+    );
+    let mut out = String::new();
+    ws.send(Message::binary(
+        format!("{command}; echo TERM_DONE_$((40+2))\r").into_bytes(),
+    ))
+    .await
+    .unwrap();
+    let done = read_until(&mut ws, &mut out, "TERM_DONE_42", end).await;
+    let _ = ws.send(Message::binary(b"exit\r".to_vec())).await;
+    let _ = ws.close(None).await;
+    assert!(
+        done,
+        "the terminal command did not finish within {secs}s: {out}"
+    );
+    out.replace("\r\n", "\n")
+}
+
 /// Lines of an environment dump (`KEY=value` per line) that carry boot material: an `AURORA_BOOT*`
 /// variable, the bootstrap token, the gateway boot token, or any `aub_`/`aup_`/`auc_` credential
 /// value (the prefix at a word start followed by a token-like run of 8 or more characters).
@@ -998,15 +1055,25 @@ async fn s8d_chromium_wrapper_on_the_full_image_fetches_through_the_open_proxy()
     );
     assert!(can_connect(c, "127.0.0.1", 3128), "machine proxy");
 
+    // Chromium abandons a load with `net::ERR_NETWORK_CHANGED` when an interface appears or goes in
+    // the shared rootless network namespace (other test containers starting or stopping; nightly
+    // 2026-11-19): that is the host, not the proxy path, so such a load is retried (at most 3 tries).
     let chromium = |url: &str| {
-        exec_in(
-            c,
-            &format!(
-                "HOME=/workspace timeout 120 chromium-browser --headless --no-sandbox --disable-gpu \
-                 --disable-dev-shm-usage --ignore-certificate-errors --user-data-dir=/workspace/.chromium-profile \
-                 --virtual-time-budget=10000 --dump-dom {url} 2>&1; echo rc=$?"
-            ),
-        )
+        let mut r = (0, String::new());
+        for _ in 0..3 {
+            r = exec_in(
+                c,
+                &format!(
+                    "HOME=/workspace timeout 120 chromium-browser --headless --no-sandbox --disable-gpu \
+                     --disable-dev-shm-usage --ignore-certificate-errors --user-data-dir=/workspace/.chromium-profile \
+                     --virtual-time-budget=10000 --dump-dom {url} 2>&1; echo rc=$?"
+                ),
+            );
+            if !r.1.contains("ERR_NETWORK_CHANGED") {
+                break;
+            }
+        }
+        r
     };
     // Allowed host: the page is fetched through the gateway and rendered.
     let (_, out) = chromium(&format!("https://127.0.0.1:{port}/allowed"));
@@ -2615,6 +2682,10 @@ display_name = "Mock Responses upstream"
 base_url = "{}"
 dialects = ["openai_responses"]
 default_model = "say"
+
+# The terminal probes below go through the real web terminal (terminal_output).
+[terminal]
+enabled = true
 "#,
         up.base()
     );
@@ -2673,13 +2744,11 @@ default_model = "say"
     let seen_before = up.requests().len();
     let (_, agent_cfg_before) = exec_in(c, "sha256sum /workspace/.codex/config.toml 2>&1");
 
-    // The terminal, as a person types it: `rg`, the wrappers, a refused harness, the environment.
-    let out = process_output(
-        &st,
+    // The terminal, as a person types it (the real web terminal: the agent's harness is codex,
+    // so no tools-socket helper can stand in; FIX-151): `rg`, the wrappers, a refused harness,
+    // the environment.
+    let out = terminal_output(
         &api,
-        c,
-        &conv,
-        "termcli",
         "rg --version | head -1; which codex; claude --version; echo claude-rc=$?; echo '--- env'; env",
         90,
     )
@@ -2697,12 +2766,8 @@ default_model = "say"
         "the boot document in the terminal env: {env_part}"
     );
 
-    let run = process_output(
-        &st,
+    let run = terminal_output(
         &api,
-        c,
-        &conv,
-        "termcodex",
         "codex exec --skip-git-repo-check 'Reply with exactly the word: pong'; echo codex-rc=$?",
         150,
     )

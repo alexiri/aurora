@@ -42308,6 +42308,7 @@
           "display_name",
           "status",
           "widening",
+          "update_pending",
           "replicas",
           "integration_count",
           "created_at",
@@ -42382,6 +42383,13 @@
               "null"
             ]
           },
+          "pending_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1021) The announced version while an update is pending; `null` otherwise."
+          },
           "replicas": {
             "type": "array",
             "items": {
@@ -42416,6 +42424,10 @@
             ],
             "description": "Managed only: the built-in type."
           },
+          "update_pending": {
+            "type": "boolean",
+            "description": "(C-1021, D-369) A widened manifest waits for approval while the connector keeps running\nunder the approved one."
+          },
           "version": {
             "type": [
               "string",
@@ -42427,7 +42439,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Human-readable reasons approval is required (empty unless `pending_approval`)."
+            "description": "Human-readable reasons approval is required (empty unless `pending_approval` or an update\nis pending)."
           }
         }
       },
@@ -49457,7 +49469,8 @@
         "required": [
           "harness",
           "keys",
-          "override_dropped"
+          "override_dropped",
+          "warnings"
         ],
         "properties": {
           "default": {
@@ -49484,6 +49497,13 @@
           "override_dropped": {
             "type": "boolean",
             "description": "An agent model override exists but is not usable (the next turn drops it with a notice)."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(C-1026, D-372) Readiness warnings, empty when none: `default_model_not_served` (the endpoint's\ndefault is not served by the key and was skipped), `override_not_served` (the agent's model is not\nin the key's list; it is still used). Additive: clients ignore unknown values."
           }
         }
       },
@@ -58839,7 +58859,7 @@
               "string",
               "null"
             ],
-            "description": "`role_unset` | `role_not_allowed`; null when none."
+            "description": "`role_unset` | `role_not_allowed` | `role_not_served` (C-1026); null when none."
           }
         }
       },

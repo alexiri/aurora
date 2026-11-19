@@ -205,8 +205,14 @@ pub struct ConnectorAdmin {
     /// The last approved manifest (icon stripped), the baseline for the approval diff (C-40).
     #[schema(value_type = Option<Object>)]
     pub approved_manifest: Option<serde_json::Value>,
-    /// Human-readable reasons approval is required (empty unless `pending_approval`).
+    /// Human-readable reasons approval is required (empty unless `pending_approval` or an update
+    /// is pending).
     pub widening: Vec<String>,
+    /// (C-1021, D-369) A widened manifest waits for approval while the connector keeps running
+    /// under the approved one.
+    pub update_pending: bool,
+    /// (C-1021) The announced version while an update is pending; `null` otherwise.
+    pub pending_version: Option<String>,
     /// Live (not retired, recently seen) replicas.
     pub replicas: Vec<ReplicaInfo>,
     pub integration_count: i64,

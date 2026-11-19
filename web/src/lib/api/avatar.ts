@@ -1,8 +1,7 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-
 import { api, ApiError, tracedFetch } from "./client";
+import { useInvalidatingMutation } from "./mutations";
 import { queryKeys } from "./queries";
 import type { components } from "./schema";
 
@@ -42,22 +41,14 @@ async function putAvatar(agentId: string, file: File): Promise<AgentDto> {
 }
 
 export function useUploadAvatar(wsId: string | undefined, agentId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (file: File) => putAvatar(agentId, file),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.agents(wsId ?? "") }),
-  });
+  return useInvalidatingMutation((file: File) => putAvatar(agentId, file), queryKeys.agents(wsId ?? ""));
 }
 
 export function useRemoveAvatar(wsId: string | undefined, agentId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async () => {
-      const { error, response } = await api.DELETE("/v1/agents/{agent}/avatar", {
-        params: { path: { agent: agentId } },
-      });
-      if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.agents(wsId ?? "") }),
-  });
+  return useInvalidatingMutation(async () => {
+    const { error, response } = await api.DELETE("/v1/agents/{agent}/avatar", {
+      params: { path: { agent: agentId } },
+    });
+    if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
+    }, queryKeys.agents(wsId ?? ""));
 }

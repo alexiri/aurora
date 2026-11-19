@@ -1,19 +1,12 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { id, mockApi, org, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // P5-UX-1 (C-915, C-916, C-981; docs/14 §Who can fix this): a refused page names who can open it, an empty Accounts
 // list asks someone else only when the viewer cannot act. Both themes at 1280 px and 390 px, no horizontal scroll,
 // axe with nothing disabled.
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 const admins = [{ name: "Ada Lovelace" }, { name: "Alan Turing" }];
 const owners = [{ name: "Bob Builder" }, { name: "Ada Diaz" }];

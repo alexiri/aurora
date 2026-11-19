@@ -1,8 +1,8 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { openMattermost, type FlowOptions } from "./support/mattermost-flow";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // FIX-127 (D-195(g), C-710..C-714): Mattermost as one guided path, on the mock API.
 //   instance admin adds Mattermost with zero typed fields → org admin checks the credentials,
@@ -11,13 +11,6 @@ import { overflow } from "./support/open";
 
 const ORG_CHANNELS = "/o/acme/channels";
 const AGENT_CHANNELS = "/o/acme/w/main/agents/daneel?tab=channels";
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 test("journey: add Mattermost with zero typed fields, connect it picking a team, attach an agent", async ({ page }) => {
   const mock = await openMattermost(page, "/admin/connectors", "light");

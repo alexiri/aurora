@@ -210,11 +210,13 @@ const ERROR_COPY: Record<string, ErrorCopy> = {
     showServerMessage: true,
     guideStep: "key",
   },
+  // (FIX-170, D-372) The agent works without a chosen model when its key serves a chat model, so this is
+  // left for a key whose model list could not be read or serves no allowed chat model. The server message says which.
+  // The guide link is dropped: the direct link opens this agent's Default model field, which is the fix.
   no_default_model: {
-    message: "This agent has an LLM key but no model is chosen.",
+    message: "This agent has an LLM key, but Aurora could not pick a model for it.",
     link: { label: "Choose a model", path: "instructions" },
     showServerMessage: true,
-    guideStep: "model",
   },
   model_not_allowed: { message: "The selected model is not allowed. Choose another model." },
   hosted_disabled: { message: "Hosted agents are not enabled on this instance." },

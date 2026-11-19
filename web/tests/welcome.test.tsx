@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "ops" }),
@@ -15,7 +16,6 @@ import { WelcomeView, roleSentence } from "@/components/onboarding/welcome-view"
 // (P5-UX-7, C-927) The Welcome page: its title, its three cards from the five sentences with real names, and the agent's
 // summary on Welcome and on the Access tab.
 
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request) => Response | Promise<Response>;
 let routes: Record<string, Handler>;
 
@@ -30,10 +30,6 @@ beforeEach(() => {
       return h ? h(req) : json(404, { error: { code: "not_found", message: "nf" } });
     }),
   );
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 const wrap = (ui: React.ReactElement) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
 

@@ -437,19 +437,26 @@ async fn narrowing_stays_active_and_widening_needs_approval() {
             "extra",
         ),
     ] {
+        // (D-369) The connector keeps running under the approved manifest; the update waits.
         let (st, _) = w.register(&tok, &m).await;
-        assert_eq!(st, "pending_approval", "{m}");
+        assert_eq!(st, "active", "{m}");
         let c = w.connector("fake").await;
-        assert_eq!(c["status"], "pending_approval");
+        assert_eq!(c["status"], "active");
+        assert_eq!(c["update_pending"], true);
+        assert_eq!(c["pending_version"], "1.2.3");
         let why = c["widening"].to_string();
         assert!(why.contains(needle), "{why}");
-        // Approved digest still names the previous manifest; nothing is served meanwhile.
+        // Approved digest still names the previous manifest; the integration is served meanwhile.
         assert_ne!(c["approved_manifest_digest"], c["manifest_digest"]);
         let (_, _, cfg) = w.config(&tok, replica, None).await;
-        assert!(cfg["integrations"].as_array().unwrap().is_empty());
-        // Going back to the approved (narrow) manifest restores service without approval.
+        assert_eq!(ids(&cfg), sorted(&[i]));
+        // Going back to the approved (narrow) manifest clears the pending update.
         let (st, _) = w.register(&tok, &narrow).await;
         assert_eq!(st, "active");
+        let c = w.connector("fake").await;
+        assert_eq!(c["update_pending"], false);
+        assert!(c["pending_version"].is_null());
+        assert_eq!(c["widening"], json!([]));
         let (_, _, cfg) = w.config(&tok, replica, None).await;
         assert_eq!(ids(&cfg), sorted(&[i]));
     }
@@ -461,10 +468,24 @@ async fn narrowing_stays_active_and_widening_needs_approval() {
         json!(["actions"]),
         json!([]),
     );
-    assert_eq!(w.register(&tok, &wide).await.0, "pending_approval");
-    assert_eq!(w.register(&tok, &wide).await.0, "pending_approval");
+    assert_eq!(w.register(&tok, &wide).await.0, "active");
+    assert_eq!(w.register(&tok, &wide).await.0, "active");
+    assert_eq!(w.connector("fake").await["update_pending"], true);
+    // One audit row per pending digest, not per registration.
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action='connector.update_pending'
+           AND metadata->'widening'->>0 LIKE '%edits%'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
     w.approve("fake").await;
-    assert_eq!(w.connector("fake").await["status"], "active");
+    let c = w.connector("fake").await;
+    assert_eq!(
+        (c["status"].as_str(), c["update_pending"].as_bool()),
+        (Some("active"), Some(false))
+    );
     // Approval is idempotent for the same digest.
     w.approve("fake").await;
 }

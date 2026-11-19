@@ -43,6 +43,22 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(link::router())
 }
 
+/// (D-369, SEC-134) The manifest a connector row is served under: the approved baseline while an
+/// update waits for approval, the announced one otherwise. Every reader that grants, routes or
+/// assigns something goes through this.
+pub fn effective_manifest(
+    row: &aurora_db::repo::connectors::ConnectorRow,
+) -> Option<serde_json::Value> {
+    effective_manifest_ref(row).cloned()
+}
+
+/// [`effective_manifest`], borrowed.
+pub fn effective_manifest_ref(
+    row: &aurora_db::repo::connectors::ConnectorRow,
+) -> Option<&serde_json::Value> {
+    row.manifest.as_ref().map(manifest::effective)
+}
+
 /// Seal context of an integration's platform credentials.
 pub fn integration_seal_ctx(integration_id: Uuid, org_id: Uuid) -> SealContext {
     SealContext {

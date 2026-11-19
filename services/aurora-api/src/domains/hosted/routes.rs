@@ -579,6 +579,14 @@ async fn model_readiness(
             .collect(),
         default,
         override_dropped: r.override_dropped.is_some(),
+        warnings: [
+            (r.default_not_served, "default_model_not_served"),
+            (r.override_not_served, "override_not_served"),
+        ]
+        .into_iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, w)| w.to_owned())
+        .collect(),
     }))
 }
 

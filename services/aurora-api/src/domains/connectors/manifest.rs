@@ -56,6 +56,24 @@ pub fn stored_widening(stored: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// (D-369, SEC-134) Whether the announced manifest waits for approval next to an approved
+/// baseline: the connector keeps running at the baseline until an instance admin approves.
+pub fn update_pending(stored: &Value) -> bool {
+    stored.get(APPROVED).is_some() && !stored_widening(stored).is_empty()
+}
+
+/// (D-369, SEC-134) The one effective manifest: **every reader that grants, routes or assigns
+/// something uses this.** While an update is pending it is the approved baseline, otherwise the
+/// announced manifest. Review screens use [`public`] (the announced one) instead.
+pub fn effective(stored: &Value) -> &Value {
+    if update_pending(stored)
+        && let Some(approved) = stored.get(APPROVED)
+    {
+        return approved;
+    }
+    stored
+}
+
 /// The last approved manifest, if any.
 pub fn baseline(stored: &Value) -> Option<ConnectorManifest> {
     serde_json::from_value(stored.get(APPROVED)?.clone()).ok()

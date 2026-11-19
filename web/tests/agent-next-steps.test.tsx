@@ -1,6 +1,7 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { wrap } from "./support/render";
+import { err, json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(""),
@@ -13,9 +14,6 @@ import { AgentChannelsTab } from "@/components/channels/agent-channels-tab";
 
 // FIX-127 Part C: the agent's Channels tab — next steps after attaching, "Add to a channel", empty states.
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-const err = (status: number, code: string, message = code) => json(status, { error: { code, message } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 interface Rec { key: string; body: unknown; url: string }
 function mockFetch(routes: Record<string, Handler>) {
@@ -35,14 +33,6 @@ function mockFetch(routes: Record<string, Handler>) {
   );
   return calls;
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const T = "2026-01-01T00:00:00Z";
 const integ = {

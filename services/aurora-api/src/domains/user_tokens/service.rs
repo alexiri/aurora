@@ -94,7 +94,7 @@ pub async fn create(
         })?;
     let manifest = connectors::get(&s.pool, &integ.connector_id)
         .await?
-        .and_then(|k| k.manifest);
+        .and_then(|k| crate::domains::connectors::effective_manifest(&k));
     let org = integ.org_id;
     if !Ctx::new(integ.clone(), manifest)
         .caps

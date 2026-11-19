@@ -2,11 +2,12 @@
 // banner above the workspace's Accounts list.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { RequestsBanner } from "@/components/accounts/requests-banner";
 import { AccessRequestCard } from "@/components/chat/access-request-card";
 import type { TranscriptEvent } from "@/lib/api/conversations";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main" }),
@@ -15,7 +16,6 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const ev = (seq: number, payload: Record<string, unknown>): TranscriptEvent => ({ seq, type: "notice", ts: "2026-01-01T00:00:00Z", payload });
 
 const agent = { id: "ag1", name: "Daneel" };
@@ -42,11 +42,6 @@ function stub(role: "owner" | "member", calls: string[] = [], items: unknown[] =
 }
 
 const wrap = (ui: React.ReactElement) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("the access request card", () => {
   it("says what the agent needs, marks the reason as its words, and opens the journey for that agent and app", async () => {

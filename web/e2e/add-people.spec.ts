@@ -1,20 +1,13 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { id, mockApi, org, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // P5-UX-5 (C-919, C-920; docs/14 §Agents, accounts and access §10): a workspace owner's People page has Add people (an
 // e-mail and a role; one sentence; the link to send; who to ask for an invitation), the list "Waiting for first sign-in"
 // with Remove, and Welcome's Add people link opens the dialog. Both themes at 1280 px and 390 px, no horizontal scroll,
 // axe with no rule disabled. The real-stack journey is add-people-journey.spec.ts.
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 async function check(page: Page) {
   expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);

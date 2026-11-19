@@ -1,20 +1,13 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { id, mockApi, org } from "./support/mock-api";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // P4-LLM-6 (C-811, docs/14 §Credentials › LLM keys, §Settings › LLM endpoints): the key form per auth mode
 // (Bedrock assume-role with the organization's external id and the trust policy, Azure Entra, GCP key file) and the
 // endpoint rows with harness badges and the private-address mark. Both themes at 1280 px and 390 px, no horizontal
 // scroll, axe with nothing disabled.
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 const providers = {
   providers: [

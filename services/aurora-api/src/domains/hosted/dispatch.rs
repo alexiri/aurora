@@ -74,6 +74,14 @@ fn secs(d: Duration) -> f64 {
     d.as_secs_f64()
 }
 
+/// (D-372) Warms the key-listing cache for the agents with queued hosted turns, outside any transaction.
+/// Never fails the poll: an agent whose listing cannot be read resolves without it.
+pub async fn prewarm_listings(s: &AppState) {
+    if let Err(e) = model::prewarm_queued(s, NO_KEY_PAGES, ARM_LIMIT).await {
+        tracing::warn!(error = %e.code(), "model listing prewarm failed");
+    }
+}
+
 /// `no_model_key` before any sandbox start: queued hosted turns of agents without a usable key.
 pub async fn sweep_no_model_key(
     s: &AppState,

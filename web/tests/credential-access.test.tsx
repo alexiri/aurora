@@ -1,7 +1,7 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "ops" }),
@@ -21,8 +21,6 @@ import { OriginView, originDetailText } from "@/components/credentials/origin-vi
 import { errorCopy } from "@/lib/chat/transcript";
 import { resolveTab } from "@/lib/use-tab-param";
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 interface Call { key: string; body: unknown }
 let calls: Call[];
@@ -46,15 +44,6 @@ beforeEach(() => {
     }),
   );
 });
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 
 const sec = (over: Record<string, unknown> = {}) => ({
   id: "s1", scope: "workspace", kind: "generic", name: "gh", status: "active", host_pattern: "api.github.com", path_pattern: null,
@@ -79,8 +68,10 @@ describe("error links", () => {
     expect(a.link).toMatchObject({ label: "Open LLM keys", path: "credentials", tab: "llm" });
     expect(a.extra).toMatchObject({ label: "Agent access", path: "access", ownerOnly: true });
     const b = errorCopy("no_default_model");
-    expect(b.message).toBe("This agent has an LLM key but no model is chosen.");
+    expect(b.message).toBe("This agent has an LLM key, but Aurora could not pick a model for it.");
     expect(b.link).toMatchObject({ label: "Choose a model", path: "instructions" });
+    expect(b.guideStep).toBeUndefined(); // (FIX-170) the direct link is the fix
+    expect(a.guideStep).toBe("key");
   });
 });
 
@@ -211,7 +202,7 @@ describe("model readiness on the Access tab", () => {
     routes["GET /v1/agents/a1/model-readiness"] = () => readiness([key({})], null);
     tab();
     expect(await screen.findByText(/No model chosen/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "choose one on Instructions" }).getAttribute("href")).toBe("/o/acme/w/ops/credentials?tab=instructions"); // relative to the (mocked) current path
+    expect(screen.getByRole("link", { name: "Choose one on Instructions" }).getAttribute("href")).toBe("/o/acme/w/ops/credentials?tab=instructions#a-model"); // relative to the (mocked) current path
     expect(screen.queryByTestId("next-model")).toBeNull();
   });
 

@@ -1,9 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/components/app-shell";
+import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // FIX-027: the sidebar has two stacked selectors — Organization, then (only with an active
 // organization) Workspace. "All organizations" (instance admins) is the one path to the admin
@@ -20,9 +20,6 @@ vi.mock("next/navigation", () => ({
   usePathname: () => nav.pathname,
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const now = "2026-11-10T10:00:00Z";
 const org = { id: "o1", slug: "acme", name: "Acme Labs", my_role: "owner", app_posture: "open", external_id: "x", settings: {}, created_at: now };
@@ -55,11 +52,6 @@ function mockFetch(isAdmin: boolean) {
   );
 }
 
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
 function world(pathname: string, params: Record<string, string | undefined>, isAdmin = true) {
   nav.pathname = pathname;
   nav.params = params;
@@ -76,11 +68,6 @@ async function open(testId: string) {
 
 const item = (name: string) => screen.findByRole("menuitem", { name });
 const semibold = (el: HTMLElement) => expect(el.className).toContain("font-semibold");
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("organization selector", () => {
   it("lists the user's organizations with the active one highlighted, on a workspace page", async () => {

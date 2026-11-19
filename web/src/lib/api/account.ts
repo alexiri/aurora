@@ -2,7 +2,9 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, ApiError } from "./client";
+import { api } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import { fetchAllPages, MAX_PAGES, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
@@ -14,10 +16,6 @@ export type AdminUser = components["schemas"]["AdminUser"];
 export type Member = components["schemas"]["Member"];
 export type CreatedKey = components["schemas"]["CreatedKey"];
 export type PatchWorkspaceRequest = components["schemas"]["PatchWorkspaceRequest"];
-
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
 
 export const accountKeys = {
   myKeys: ["me", "api-keys"] as const,
@@ -31,12 +29,8 @@ export const accountKeys = {
 /* ---- account ---- */
 
 export function useUpdateMe() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: components["schemas"]["PatchMeRequest"]) =>
-      unwrap(api.PATCH("/v1/me", { body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
-  });
+  return useInvalidatingMutation((body: components["schemas"]["PatchMeRequest"]) =>
+    unwrap(api.PATCH("/v1/me", { body })), ["me"]);
 }
 
 export const revokeOtherSessions = () => unwrap(api.POST("/v1/auth/sessions/revoke-others"));
@@ -49,16 +43,12 @@ export function useMyApiKeys() {
     queryKey: accountKeys.myKeys,
     queryFn: () =>
       fetchAllPages((cursor) => unwrap(api.GET("/v1/me/api-keys", { params: { query: { limit: PAGE_LIMIT, cursor } } }))),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function useRevokeApiKey(invalidate: readonly unknown[]) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => unwrap(api.DELETE("/v1/api-keys/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: invalidate }),
-  });
+  return useInvalidatingMutation((id: string) => unwrap(api.DELETE("/v1/api-keys/{id}", { params: { path: { id } } })), invalidate);
 }
 
 /* ---- workspace settings ---- */
@@ -110,7 +100,7 @@ export function useAccess(wsId: string, enabled = true) {
       return { ...all, truncated };
     },
     enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -172,7 +162,7 @@ export function useWorkspaceKeys(wsId: string) {
           }),
         ),
       ),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -204,7 +194,7 @@ export function useAudit(wsId: string, action: string) {
         }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -222,15 +212,11 @@ export function useAdminUsers(q: string, enabled = true) {
         }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function usePatchAdminUser() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { id: string; body: components["schemas"]["PatchAdminUserRequest"] }) =>
-      unwrap(api.PATCH("/v1/admin/users/{id}", { params: { path: { id: v.id } }, body: v.body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
-  });
+  return useInvalidatingMutation((v: { id: string; body: components["schemas"]["PatchAdminUserRequest"] }) =>
+    unwrap(api.PATCH("/v1/admin/users/{id}", { params: { path: { id: v.id } }, body: v.body })), ["admin", "users"]);
 }

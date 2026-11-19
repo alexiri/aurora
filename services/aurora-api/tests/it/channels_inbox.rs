@@ -1984,6 +1984,77 @@ async fn no_working_status_without_native_status() {
     assert!(w.ops("status.set").await.is_empty());
 }
 
+/// Starts turn number `idx` and returns how many `status.set` ops exist afterwards.
+async fn turn_status_ops(w: &W, idx: usize) -> usize {
+    let turn = w.turns().await[idx];
+    sqlx::query("UPDATE turns SET status='dispatched' WHERE id=$1")
+        .bind(turn)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let mut tx = w.h.pool().begin().await.unwrap();
+    let row = aurora_db::repo::turns::set_running(&mut tx, turn, None)
+        .await
+        .unwrap()
+        .unwrap();
+    aurora_api::domains::channels::mirror::on_turn_started(&mut tx, &row)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    w.ops("status.set").await.len()
+}
+
+/// FIX-167 (D-369, SEC-134): while an update that adds `native_status` waits for approval, the
+/// connector keeps running at the approved level (no typing op); approval turns it on.
+#[tokio::test]
+async fn a_pending_update_keeps_native_status_off_until_approved() {
+    let w = world().await;
+    // The approved baseline lacks `native_status`; the announced manifest (all capabilities)
+    // waits. This is the stored envelope `register` writes for a widened re-registration.
+    sqlx::query(
+        "UPDATE connectors SET manifest = jsonb_set(manifest #- '{_approved,capabilities,native_status}',
+                '{_widening}', '[\"New capability: native_status.\"]'::jsonb),
+            approved_manifest_digest = 'older' WHERE id = 'fake'",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let i = w.integ;
+    let a = w.agent("rex").await;
+    w.presence(i, a, "shared", None).await;
+    w.link(i, "U1", w.member).await;
+    w.post(i, "e1", dm("U1", "q", "B1")).await;
+    assert_eq!(
+        turn_status_ops(&w, 0).await,
+        0,
+        "no typing op before approval"
+    );
+
+    // Approve (the real route): the capability turns on for the next turn.
+    let root = w.h.user("root2@x.io", true).await;
+    let admin = cookie(&w.h.good_session(root).await.1);
+    let digest: String =
+        sqlx::query_scalar("SELECT manifest_digest FROM connectors WHERE id='fake'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    let (s, _, v) =
+        w.h.send(
+            Method::POST,
+            "/v1/admin/connectors/fake/approve",
+            &hd(&admin),
+            Some(json!({ "manifest_digest": digest })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let i2 = w.integration(json!({}), true).await;
+    let a2 = w.agent("rex2").await;
+    w.presence(i2, a2, "shared", None).await;
+    w.link(i2, "U2", w.member).await;
+    w.post(i2, "e2", dm("U2", "q2", "B1")).await;
+    assert_eq!(turn_status_ops(&w, 1).await, 1, "typing op after approval");
+}
+
 // ------------------------------------------------------------------ other events
 
 #[tokio::test]
