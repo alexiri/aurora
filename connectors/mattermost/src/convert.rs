@@ -100,7 +100,11 @@ fn break_image_openers(s: &str) -> String {
 }
 
 /// A code span that holds `inner` literally: the delimiter is longer than any backtick run in it.
+/// The span is always one line: a line break inside it (CommonMark reads one as a space there)
+/// could be followed by a block starter (`> `, `- `, `# `, …) that ends the paragraph before the
+/// span closes, leaving the span's URL as bare text the server fetches (FIX-182, D-270).
 fn code_span(inner: &str) -> String {
+    let inner = &inner.replace(['\r', '\n'], " ");
     let run = inner
         .split(|c| c != '`')
         .map(str::len)
@@ -784,7 +788,16 @@ pub fn convert(neutral: &str) -> String {
                             } else {
                                 ""
                             };
-                            let label = convert(inner);
+                            // A label has no indentation: converted as a document, four spaces
+                            // would make an indented code block that keeps its raw HTML (and the
+                            // URLs in it) as typed (FIX-182, the 20 000-case proptest).
+                            let label = convert(
+                                &inner
+                                    .lines()
+                                    .map(str::trim_start)
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                            );
                             // A link cannot hold a link: when the label already has links (the
                             // core wrote `[url](url)` for the URLs in it), the content stays as
                             // it is and the anchor's tags go.
@@ -1054,6 +1067,8 @@ mod tests {
         assert_eq!(convert("a <code>x</code> b\n"), "a `x` b\n");
         assert_eq!(convert("a <code>x`y</code> b\n"), "a ``x`y`` b\n");
         assert_eq!(convert("a <code>x b\n"), "a x b\n");
+        // FIX-182: a span never holds a line break (a block starter after it would cut the span).
+        assert_eq!(convert("<div> <code>x\n> y</code> </div>\n"), " `x > y` \n");
         assert_eq!(convert("a <b>x b\n"), "a x b\n");
         assert_eq!(convert("a </b>x b\n"), "a x b\n");
         assert_eq!(convert("a <b>x</b> <i>y</i>\n"), "a **x** _y_\n");

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 02af42e08582e5bf29b382e7fc82c98233a4c79d548c2021b8b480c154b35712 # FIX-182: an unclosed <code> pair across a `> ` line left a bare URL (CI run 44535701452)
+cc 0d813d5a422d0a59f7efa89c0fc76783265f4f2f4cfb6f69d27a32dc45cb3870 # shrinks to s = "$![x](https://e.example/?d=S)$ <a href=\"https://a.example\">    [https://cern.ch](http:e.example/l) <a href=\"https://a.example\">t</a> </a>"
