@@ -37,6 +37,88 @@ pub fn gateway_tls(gw: &GeneratedCa, proxy: SocketAddr) -> (Arc<Ca>, Arc<ProxyTl
     (ca, tls)
 }
 
+/// The boot every proxy test repeats (P5-DEDUP-1 T6): binds a loopback listener, a guard that
+/// allows `127.0.0.0/8`, the gateway TLS ([`gateway_tls`]) and a 5 s header timeout. Returns the
+/// listener, its address and the parts to hand to `Proxy::new`/`with_byo`.
+pub async fn proxy_parts(
+    gw: &GeneratedCa,
+    resolver: Arc<dyn aurora_gateway::auth::CredentialResolver>,
+    handler: Arc<dyn aurora_gateway::pipeline::RequestHandler>,
+    extra_ca_pem: Option<Vec<u8>>,
+) -> (
+    tokio::net::TcpListener,
+    SocketAddr,
+    aurora_gateway::proxy::ProxyParts,
+) {
+    let pl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = pl.local_addr().unwrap();
+    let guard = Arc::new(
+        aurora_gateway::guard::Guard::new(&["127.0.0.0/8".to_owned()], vec![proxy]).unwrap(),
+    );
+    let (ca, tls) = gateway_tls(gw, proxy);
+    let parts = aurora_gateway::proxy::ProxyParts {
+        ca,
+        tls,
+        resolver,
+        handler,
+        guard,
+        header_timeout: std::time::Duration::from_secs(5),
+        extra_ca_pem,
+        egress_proxy: None,
+    };
+    (pl, proxy, parts)
+}
+
+/// Keeps every request-log row written (P5-DEDUP-1 T10); the tests read `.0` after `log.flush()`.
+#[derive(Default)]
+pub struct Capture(pub Mutex<Vec<aurora_db::repo::gateway::RequestLogRow>>);
+
+#[async_trait::async_trait]
+impl aurora_gateway::reqlog::LogWriter for Capture {
+    async fn write(&self, rows: &[aurora_db::repo::gateway::RequestLogRow]) -> Result<(), String> {
+        self.0.lock().unwrap().extend_from_slice(rows);
+        Ok(())
+    }
+}
+
+/// The identity most test resolvers answer (P5-DEDUP-1 T7): a nil credential id, no conversation,
+/// turn, speaker, capabilities or BYO controls.
+pub fn identity(
+    kind: aurora_gateway::auth::CredentialKind,
+    agent: uuid::Uuid,
+    ws: uuid::Uuid,
+    org: uuid::Uuid,
+) -> aurora_gateway::auth::RequestIdentity {
+    aurora_gateway::auth::RequestIdentity {
+        credential_id: uuid::Uuid::nil(),
+        kind,
+        agent_id: agent,
+        workspace_id: ws,
+        org_id: org,
+        conversation_id: None,
+        turn_id: None,
+        trace_context: None,
+        context_label: None,
+        speaker_user_id: None,
+        speaker_group_ids: Vec::new(),
+        capabilities: vec![],
+        byo: None,
+    }
+}
+
+/// [`proxy_parts`] +`Proxy::new` + a spawned `run`; returns the address and the proxy handle.
+pub async fn spawn_proxy(
+    gw: &GeneratedCa,
+    resolver: Arc<dyn aurora_gateway::auth::CredentialResolver>,
+    handler: Arc<dyn aurora_gateway::pipeline::RequestHandler>,
+    extra_ca_pem: Option<Vec<u8>>,
+) -> (SocketAddr, Arc<aurora_gateway::proxy::Proxy>) {
+    let (pl, addr, parts) = proxy_parts(gw, resolver, handler, extra_ca_pem).await;
+    let p = aurora_gateway::proxy::Proxy::new(parts).unwrap();
+    tokio::spawn(p.clone().run(pl, std::future::pending()));
+    (addr, p)
+}
+
 pub fn client_config(ca_pem: &str, alpn: &[&[u8]]) -> Arc<rustls::ClientConfig> {
     let mut roots = RootCertStore::empty();
     for c in CertificateDer::pem_slice_iter(ca_pem.as_bytes()) {

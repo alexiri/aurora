@@ -1,5 +1,4 @@
 //! Preview share DTOs (phase 4, P4-PRV-1, D-144, D-145; C-540..C-549).
-use aurora_db::repo::preview_shares::ShareRow;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -55,12 +54,6 @@ pub struct PreviewShare {
     pub last_accessed_at: Option<DateTime<Utc>>,
     pub created_by: PreviewCreatedBy,
     pub created_at: DateTime<Utc>,
-}
-
-/// Share row + the derived status (needs the sandbox and the freeze state).
-pub struct ShareView {
-    pub row: ShareRow,
-    pub status: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

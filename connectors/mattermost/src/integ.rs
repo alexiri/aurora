@@ -11,7 +11,6 @@ use aurora_protocol::connector::{
     BotMembership, CommandInvoked, EventKind, InboundEvent, Integration, MessageChanged, OpError,
     Presence, PresenceRemoved, PresenceRemovedReason, ReactionAdded,
 };
-use reqwest::Method;
 use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -22,7 +21,7 @@ use crate::events::{
     mentioned_usernames, message_posted, now_ms, rfc3339_ms, space,
 };
 use crate::lanes::Lanes;
-use crate::render::{Lookups, MentionRefs, mention_refs};
+use crate::render::{Lookups, MentionRefs};
 use crate::ws::{WsConn, WsError};
 
 const USER_TTL: Duration = Duration::from_secs(300);
@@ -417,10 +416,6 @@ impl Integ {
         )
         .await;
         lk
-    }
-
-    pub async fn lookups_for(&self, neutral: &str) -> Lookups {
-        self.lookups(&mention_refs(neutral)).await
     }
 
     async fn file_info(&self, id: &str) -> Option<MmFileInfo> {
@@ -1021,11 +1016,6 @@ pub fn posts_of(v: &Value) -> Vec<MmPost> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// `PUT`/`POST` helper kept here so ops and registration share it.
-pub async fn send_json(mm: &Mm, token: &str, method: Method, path: &str, body: &Value) -> R<Value> {
-    mm.json(token, method, path, &[], Some(body)).await
 }
 
 #[cfg(test)]

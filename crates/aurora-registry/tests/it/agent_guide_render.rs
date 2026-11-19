@@ -26,6 +26,7 @@ fn acct(id: &str, label: &str, host: Option<&str>, access: GrantAccess) -> Guide
         host: host.map(Into::into),
         service: None,
         access,
+        webhook: None,
     }
 }
 

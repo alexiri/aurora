@@ -116,7 +116,32 @@ impl Env {
     }
 }
 
-fn pick_account<'a>(doc: &'a ApiDoc, want: Option<&str>) -> Result<&'a Account, String> {
+fn pick_account<'a>(
+    doc: &'a ApiDoc,
+    want: Option<&str>,
+    bound_to: Option<&str>,
+) -> Result<&'a Account, String> {
+    // (C-911) An operation bound to an account (a webhook) uses that account; naming another is
+    // refused, and the other accounts of the app are no ambiguity.
+    if let Some(letter) = bound_to {
+        let own = doc.account(letter).ok_or_else(|| {
+            format!(
+                "{}: this operation belongs to account {letter}, which is not granted",
+                doc.app.id
+            )
+        })?;
+        if let Some(k) = want
+            && doc
+                .account(k)
+                .is_none_or(|a| a.connection_id != own.connection_id)
+        {
+            return Err(format!(
+                "this operation belongs to account {} ({}); --account {k:?} names another",
+                own.letter, own.label
+            ));
+        }
+        return Ok(own);
+    }
     let list = || {
         doc.accounts
             .iter()
@@ -178,6 +203,8 @@ struct Page {
     body: Vec<u8>,
     /// The body hit `AGENT_CLI_SAVE_MAX`.
     cut: bool,
+    /// (C-911) The gateway's `X-Aurora-Error` code: this answer is the gateway's, not the app's.
+    aurora_error: Option<String>,
 }
 
 async fn send(env: &Env, url: &Url, built: &Built, connection_id: &str) -> Result<Page, String> {
@@ -213,6 +240,11 @@ async fn send(env: &Env, url: &Url, built: &Built, connection_id: &str) -> Resul
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_owned();
+    let aurora_error = resp
+        .headers()
+        .get("x-aurora-error")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| oneline(v, 64));
     let link_next = resp
         .headers()
         .get_all("link")
@@ -252,6 +284,7 @@ async fn send(env: &Env, url: &Url, built: &Built, connection_id: &str) -> Resul
         link_next,
         body,
         cut,
+        aurora_error,
     })
 }
 
@@ -290,15 +323,28 @@ fn gateway_refusal(status: u16, body: &[u8]) -> Option<(String, String, Option<V
 }
 
 fn failure(page: &Page) -> Outcome {
-    if let Some((code, message, details)) = gateway_refusal(page.status, &page.body) {
+    // A refusal is the gateway's when it has the `06 §Errors` body, or says so in `X-Aurora-Error`.
+    let refusal = gateway_refusal(page.status, &page.body).or_else(|| {
+        page.aurora_error.as_ref().map(|c| {
+            let message = serde_json::from_slice::<Value>(&page.body)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(str::to_owned))
+                .unwrap_or_default();
+            (c.clone(), message, None)
+        })
+    });
+    if let Some((code, message, details)) = refusal {
         let mut s = format!(
             "refused by the Aurora gateway (HTTP {}, {}): {}\n",
             page.status,
             oneline(&code, 64),
             oneline(&message, 600)
         );
-        if let Some(d) = details {
+        if let Some(d) = &details {
             s.push_str(&format!("details: {}\n", oneline(&d.to_string(), 800)));
+            if let Some(m) = d.get("may_have_been_delivered").and_then(Value::as_bool) {
+                s.push_str(&format!("may_have_been_delivered: {m}\n"));
+            }
         }
         return Outcome::fail(EXIT_GATEWAY, bound(&s));
     }
@@ -389,7 +435,10 @@ async fn call_doc(
             op.map_or("", |o| o.path.as_str())
         )));
     }
-    let account = pick_account(doc, opts.account.as_deref()).map_err(usage)?;
+    let bound_to = op
+        .filter(|_| opts.path.is_none())
+        .and_then(|o| o.account.as_deref());
+    let account = pick_account(doc, opts.account.as_deref(), bound_to).map_err(usage)?;
     let whole_body = opts
         .body
         .as_deref()

@@ -318,7 +318,8 @@ describe("the actions table", () => {
     routes["GET /v1/workspaces/w1/accounts"] = () => json(200, { items: [], next_cursor: null });
     routes["GET /v1/agents/a1/apps/aws/access"] = () => json(200, ACCESS);
     wrap(<AccessControl account={app()} entry={entry({ level: "act" })} workspaceId="w1" canChange />);
-    fireEvent.click(await screen.findByRole("button", { name: "What exactly?" }));
+    // (P5-POLISH-6) "What exactly?" is an option of the access select.
+    fireEvent.change(await screen.findByRole("combobox", { name: "Daneel's access to AWS prod" }), { target: { value: "__exactly" } });
     const dlg = await screen.findByRole("region", { name: /What Daneel can do in AWS/ });
     // Only the action with the app default says so.
     expect(within(dlg).getAllByText(/Asks first \(app default\)/)).toHaveLength(1);

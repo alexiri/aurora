@@ -68,6 +68,10 @@ struct OpOut {
     items: Option<String>,
     tool: Option<String>,
     access: BTreeMap<String, &'static str>,
+    /// (C-911) The account letter an operation is bound to (a webhook), else `null`.
+    account: Option<String>,
+    /// (C-911) The person's note for the agent (a webhook), else `null`.
+    notes: Option<String>,
     source: &'static str,
 }
 
@@ -252,6 +256,153 @@ fn drop_descriptions(ops: &mut [OpOut]) {
     }
 }
 
+/// The catalogue tool every webhook operation maps to (C-909: a send-mode app has exactly one).
+const WEBHOOK_TOOL: &str = "send";
+const NOTES_MAX: usize = 1000;
+const SLUG_MAX: usize = 40;
+
+/// The host of a webhook connection (C-909, C-911).
+pub(super) fn webhook_host(connection_id: &str) -> String {
+    format!("{}.link.aurora.internal", inline(connection_id, 64))
+}
+
+/// `[a-z0-9_]`, at most [`SLUG_MAX`] characters; runs of anything else become one `_`.
+pub(super) fn slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        let c = c.to_ascii_lowercase();
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    let out: String = out.trim_matches('_').chars().take(SLUG_MAX).collect();
+    let out = out.trim_end_matches('_');
+    if out.is_empty() {
+        "webhook".to_owned()
+    } else {
+        out.to_owned()
+    }
+}
+
+/// The operation ids of the webhook accounts, `send_<slug>` with `_2`, `_3`… for duplicates, in
+/// account order (`None` for an account that is not a webhook).
+pub(super) fn webhook_ids(accounts: &[GuideAccount]) -> Vec<Option<String>> {
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    accounts
+        .iter()
+        .map(|a| {
+            let w = a.webhook.as_ref()?;
+            let base = format!("send_{}", slug(&w.name));
+            let n = seen.entry(base.clone()).or_default();
+            *n += 1;
+            Some(if *n == 1 { base } else { format!("{base}_{n}") })
+        })
+        .collect()
+}
+
+/// A slot's limits, as the sentence appended to its description.
+pub(super) fn slot_description(s: &aurora_webhook::Slot) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let d = inline(&s.description, SUMMARY_MAX);
+    if !d.is_empty() {
+        parts.push(d);
+    }
+    if let Some(n) = s.max_length {
+        parts.push(format!("at most {n} characters"));
+    }
+    if let Some(n) = s.max_items {
+        parts.push(format!("at most {n} items"));
+    }
+    parts.join("; ")
+}
+
+fn slot_type_word(t: aurora_webhook::SlotType) -> &'static str {
+    use aurora_webhook::SlotType as S;
+    match t {
+        S::String | S::Enum => "string",
+        S::Integer => "integer",
+        S::Number => "number",
+        S::Boolean => "boolean",
+        S::StringList => "array",
+        S::Json => "json",
+    }
+}
+
+fn webhook_operations(
+    accounts: &[GuideAccount],
+    letters: &[String],
+    access_of: &dyn Fn(&str) -> BTreeMap<String, &'static str>,
+) -> Vec<OpOut> {
+    let ids = webhook_ids(accounts);
+    let mut out = Vec::new();
+    for ((a, letter), id) in accounts.iter().zip(letters).zip(ids) {
+        let (Some(w), Some(id)) = (&a.webhook, id) else {
+            continue;
+        };
+        let first = w.description.lines().find(|l| !l.trim().is_empty());
+        let summary = match first {
+            Some(l) => inline(
+                &format!("{} — {}", inline(&w.name, 80), inline(l, SUMMARY_MAX)),
+                SUMMARY_MAX,
+            ),
+            None => inline(&w.name, SUMMARY_MAX),
+        };
+        let fields = w
+            .slots
+            .iter()
+            .map(|s| {
+                let d = slot_description(s);
+                ParamOut {
+                    name: inline(&s.name, 64),
+                    location: None,
+                    required: s.required.then_some(true),
+                    ty: slot_type_word(s.ty),
+                    description: (!d.is_empty()).then_some(d),
+                    values: s.r#enum.as_ref().map(|v| {
+                        v.iter()
+                            .map(|x| Value::String(inline(x, SUMMARY_MAX)))
+                            .collect()
+                    }),
+                    default: None,
+                }
+            })
+            .collect();
+        let mut access = access_of(WEBHOOK_TOOL);
+        access.retain(|k, _| k == letter);
+        out.push(OpOut {
+            id,
+            method: inline(&w.method, 16),
+            path: "/".to_owned(),
+            host: Some(webhook_host(&a.id)),
+            summary,
+            tags: vec!["webhook".to_owned()],
+            params: vec![ParamOut {
+                name: "X-Aurora-Dry-Run".to_owned(),
+                location: Some("header"),
+                required: None,
+                ty: "string",
+                description: Some("Check and show the body without sending".to_owned()),
+                values: Some(vec![Value::String("1".to_owned())]),
+                default: None,
+            }],
+            body: Some(BodyOut {
+                content_type: "application/json".to_owned(),
+                fields,
+            }),
+            pagination: None,
+            items: None,
+            tool: Some(WEBHOOK_TOOL.to_owned()),
+            access,
+            account: Some(letter.clone()),
+            notes: Some(inline(&w.description, NOTES_MAX)).filter(|n| !n.is_empty()),
+            source: "connection",
+        });
+    }
+    out
+}
+
 /// Render `api.json`; `None` for a database app or an app with neither operations nor catalogue.
 pub(super) fn render(
     app: &AppEntry,
@@ -316,9 +467,17 @@ pub(super) fn render(
             items: op.items.as_deref().map(|i| inline(i, 200)),
             tool: tool.map(|t| inline(&t, 64)),
             access,
+            account: None,
+            notes: None,
             source: "package",
         });
     }
+    // (C-911) One operation per webhook account, in account-letter order.
+    let webhook_ops = webhook_operations(accounts, &letters, &access_of);
+    if !webhook_ops.is_empty() {
+        mapped.insert(WEBHOOK_TOOL.to_owned());
+    }
+    ops.extend(webhook_ops);
     for t in &tools {
         if mapped.contains(&t.id) {
             continue;
@@ -341,6 +500,8 @@ pub(super) fn render(
             items: None,
             tool: Some(inline(&t.id, 64)),
             access: access_of(&t.id),
+            account: None,
+            notes: None,
             source: "catalogue",
         });
     }
@@ -371,11 +532,14 @@ pub(super) fn render(
                 letter: l.clone(),
                 connection_id: inline(&a.id, 64),
                 label: inline(&a.label, 120),
-                base_url: a
-                    .host
-                    .clone()
-                    .or_else(|| sole_static_host(app))
-                    .map(|h| format!("https://{}", inline(&h, 253))),
+                base_url: if a.webhook.is_some() {
+                    Some(format!("https://{}", webhook_host(&a.id)))
+                } else {
+                    a.host
+                        .clone()
+                        .or_else(|| sole_static_host(app))
+                        .map(|h| format!("https://{}", inline(&h, 253)))
+                },
                 grant: match a.access {
                     GrantAccess::Full => "full",
                     GrantAccess::Custom { .. } => "custom",

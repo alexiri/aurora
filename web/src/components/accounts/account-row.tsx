@@ -17,7 +17,8 @@ import { usePatchConnection } from "@/lib/api/apps";
 import type { HealthFix } from "@/lib/account-health";
 import type { SecretScope } from "@/lib/api/secrets";
 import { useWhoCan } from "@/lib/api/who-can";
-import { useOrg } from "@/lib/api/queries";
+import { useMe, useOrg, useWorkspaces } from "@/lib/api/queries";
+import { workspaceDisplayName } from "@/lib/workspace-name";
 import { entryText, kindLabel } from "@/lib/accounts";
 import { WebhookCardLine } from "@/components/webhook/webhook-card-line";
 import { LimitControl } from "./limit-control";
@@ -28,7 +29,19 @@ import { AccountMenu } from "./account-menu";
 import { ConnectionDetails } from "./connection-details";
 
 /** One agent's entry in "who can use it": opens the access choice and **Remove access** (`14 §1`). */
-function AgentEntry({ account, entry, workspaceId, canChange, orgName }: { account: Account; entry: AgentAccess; workspaceId: string; canChange: boolean; orgName?: string }) {
+/** "Bob's workspace" for an agent's workspace, read from the organization's workspace list (a personal one carries its owner). */
+export function workspaceLabelOf(
+  ws: { id: string; name: string },
+  list: { id: string; name: string; personal_of?: { id: string; name: string } | null }[] | undefined,
+  viewer: { id?: string } | null | undefined,
+): string {
+  const full = list?.find((w) => w.id === ws.id);
+  return workspaceDisplayName(full ?? { name: ws.name }, viewer);
+}
+
+function AgentEntry({ account, entry, workspaceId, canChange, orgName, workspaceLabel }: { account: Account; entry: AgentAccess; workspaceId: string; canChange: boolean; orgName?: string; workspaceLabel?: string }) {
+  // The pill's words; outside its own workspace the agent carries its workspace: "Daneel · Bob's workspace · Read only".
+  const text = workspaceLabel ? entryText(entry).replace(entry.agent.name, `${entry.agent.name} · ${workspaceLabel}`) : entryText(entry);
   const [open, setOpen] = useState(false);
   const remove = useRemoveAccess();
   // (P5-POLISH-7, D1) A pill: the agent and its access level. For someone who may change it, pressing it opens the access
@@ -43,7 +56,7 @@ function AgentEntry({ account, entry, workspaceId, canChange, orgName }: { accou
     return (
       <li className={pill}>
         {avatar}
-        {entryText(entry)}
+        {text}
       </li>
     );
   }
@@ -53,7 +66,7 @@ function AgentEntry({ account, entry, workspaceId, canChange, orgName }: { accou
         <PopoverTrigger asChild>
           <button type="button" className={`${pill} hover:bg-subtle`}>
             {avatar}
-            {entryText(entry)}
+            {text}
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-96 space-y-3">
@@ -106,6 +119,8 @@ export function AccountRow({
 }) {
   const shared = account.scope === "organization" && scope.kind === "workspace";
   const org = useOrg(account.scope === "organization" ? orgId : undefined);
+  const me = useMe();
+  const orgWorkspaces = useWorkspaces(scope.kind === "organization" ? orgId : undefined);
   const own: SecretScope = account.scope === "organization" ? { kind: "organization", id: orgId } : scope;
   const mine = agent ? account.agents.find((a) => a.agent.id === agent.id) : undefined;
   const ws = workspaceId ?? (scope.kind === "workspace" ? scope.id : "");
@@ -215,11 +230,33 @@ export function AccountRow({
           <Badge>No agent can use this</Badge>
         </div>
       ) : (
-        <ul className="flex flex-wrap items-center gap-2" aria-label="Who can use it">
-          {account.agents.map((a) => (
-            <AgentEntry key={a.agent.id} account={account} entry={a} workspaceId={a.workspace.id} canChange={account.can.change_access} orgName={org.data?.name} />
-          ))}
-        </ul>
+        // (P5-POLISH-9, E2) An agent outside its own workspace is "<Agent> · <workspace>"; more than three agents fold into
+        // "Used by <n> agents", which opens the pills.
+        (() => {
+          const pills = (
+            <ul className="flex flex-wrap items-center gap-2" aria-label="Who can use it">
+              {account.agents.map((a) => (
+                <AgentEntry
+                  key={a.agent.id}
+                  account={account}
+                  entry={a}
+                  workspaceId={a.workspace.id}
+                  canChange={account.can.change_access}
+                  orgName={org.data?.name}
+                  workspaceLabel={scope.kind === "organization" ? workspaceLabelOf(a.workspace, orgWorkspaces.data?.items, me.data?.user) : undefined}
+                />
+              ))}
+            </ul>
+          );
+          return account.agents.length > 3 ? (
+            <details>
+              <summary className="cursor-pointer text-sm font-medium text-ink">Used by {account.agents.length} agents</summary>
+              <div className="mt-2">{pills}</div>
+            </details>
+          ) : (
+            pills
+          );
+        })()
       )}
       {account.ref.type === "connection" ? (
         <details className="text-sm">

@@ -1,0 +1,40 @@
+---
+source: crates/aurora-registry/tests/it/agent_api_json.rs
+expression: r.tools_md
+---
+# Demo app: operations and your access
+
+Written by Aurora from the app's catalogue and your grants. The gateway decides every request;
+workspace and organization policy can be stricter than this list, never looser.
+
+## Accounts
+- A: `c_1` Label c_1 (full access)
+
+## Webhook: Ops alerts (account A, `send_ops_alerts`)
+
+Deploy results.
+
+| slot | type | required | notes |
+|---|---|---|---|
+| `text` | string | yes | The message; at most 200 characters |
+| `level` | enum | no | one of info, warn |
+| `count` | integer | no |  |
+| `ratio` | number | no |  |
+| `urgent` | boolean | no |  |
+| `tags` | string list | no | at most 20 characters; at most 5 items |
+| `card` | json | no |  |
+
+```
+curl -sS -X POST https://c_1.link.aurora.internal/ -H 'Content-Type: application/json' -d '{"text":"…"}'
+```
+Add `-H 'X-Aurora-Dry-Run: 1'` to check the body without sending.
+
+## Read
+- `list_things` GET /v1/things: List things. All things. [allowed]
+- `get_thing` GET /v1/things/*: Get a thing. [allowed]
+
+## Write
+- `make_thing` POST /v1/things: Make a thing. [allowed]
+
+## Requests that match no operation above
+[allowed]

@@ -325,9 +325,6 @@ async fn metrics_middleware(req: Request, next: Next) -> Response {
     metrics::counter!("aurora_scim_requests_total", "outcome" => outcome).increment(1);
     res
 }
-/// Marker: the router wrappers insert the parsed `{id}` here.
-#[derive(Debug, Clone, Copy)]
-pub struct PathId(pub Uuid);
 
 /// The `{id}` of an item route, parsed **after** authentication: a malformed one is a SCIM
 /// `404` error body (never axum's plain-text 400 from a `Path<Uuid>` extractor, and never
