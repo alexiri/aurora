@@ -330,3 +330,12 @@ mapping that must be exactly right.
   (`SandboxView` has no idle time).
 - Tests: vitest `accounts`, `agent-summary` (new rows), Playwright `accounts`, `org-accounts` follow the kind chips and the
   organization wording.
+
+### Pass-2 fixes (lane a, 2026-11-19)
+
+- **#1 done.** On an agent's Access tab the level ("Read only" text or the select) is in the row's right cluster just
+  before the … button (`AccessControl` `inRow`; its details wrap below the header); the rows are one `Card` with
+  `divide-y` (also for the collapsed "Not given to …" list).
+- **#2 done.** The Webhooks section has no description while there is no webhook (the empty state says it).
+- Tests run: vitest `accounts`, `agent-empty-states`, `m5-tabs`, `credential-access`, `polish-11-review-fixes` and others
+  (129 pass), `pnpm typecheck`, eslint on touched files. No Playwright run.

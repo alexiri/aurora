@@ -24,7 +24,7 @@ import {
   type AccessBinding,
 } from "@/lib/api/account";
 import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
-import { AddPeople, WaitingList } from "./add-people";
+import { WaitingList } from "./add-people";
 import { GroupAccess } from "./group-access";
 import { useWorkspaceOffboarding } from "@/lib/api/automations";
 
@@ -235,24 +235,18 @@ export function AccessTab({
   const [err, setErr] = useState<unknown>(null);
   if (access.isPending) return <Loading />;
   if (access.isError) return <ErrorState error={access.error} onRetry={() => access.refetch()} />;
-  const items = access.data.items;
+  // (P5-POLISH-11, D6) You first, then by name.
+  const items = [...access.data.items].sort(
+    (a, b) =>
+      Number(b.user_id === meId) - Number(a.user_id === meId) ||
+      (a.display_name || a.email).localeCompare(b.display_name || b.email),
+  );
   const bound = new Set(items.map((b) => b.user_id));
   const inherited = (access.data.derived_members?.items ?? []).filter((d) => !bound.has(d.user.id));
   const directOwners = items.filter((b) => b.role === "owner" && !b.implicit).length;
   return (
     <div className="space-y-6">
       {!canOwn ? <Notice role="status">Only workspace owners can change who has access.</Notice> : null}
-      {canOwn && people ? (
-        <div className="flex justify-end">
-          <AddPeople
-            wsId={wsId}
-            orgId={orgId}
-            workspacePath={people.workspacePath}
-            hasApprover={items.some((b) => b.role === "approver")}
-            initiallyOpen={people.initiallyOpen}
-          />
-        </div>
-      ) : null}
       <ErrorNotice error={err} />
       {items.length === 0 && inherited.length === 0 ? (
         <EmptyState title="No one has access yet" />

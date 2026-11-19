@@ -13,6 +13,7 @@ import { LlmKeyForm, useFooterSlot } from "@/components/credentials/llm-form";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Card } from "@/components/ui/card";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { accountKeys, useAccounts, type Account } from "@/lib/api/accounts";
 import type { SecretScope } from "@/lib/api/secrets";
@@ -144,7 +145,7 @@ export function AccountsList({
       <MenuTrigger asChild>
         <Button size="sm">Add</Button>
       </MenuTrigger>
-      <MenuContent>
+      <MenuContent align="end">
         <MenuItem onSelect={() => setConnecting("")}>Connect an app or website</MenuItem>
         <MenuItem onSelect={() => setAddingKey(true)}>Add an AI key</MenuItem>
       </MenuContent>
@@ -233,16 +234,27 @@ export function AccountsList({
       ) : (
         <>
           {given.length > 0 ? (
-            <ul className="space-y-3" aria-label={agent ? `Accounts ${agent.name} can use` : "Accounts"}>
-              {given.map(row)}
-            </ul>
+            // (P5-POLISH-11, C1) On an agent's page the accounts are one bordered list with dividers.
+            agent ? (
+              <Card className="p-0 sm:p-0">
+                <ul className="divide-y divide-line" aria-label={`Accounts ${agent.name} can use`}>
+                  {given.map(row)}
+                </ul>
+              </Card>
+            ) : (
+              <ul className="space-y-3" aria-label="Accounts">
+                {given.map(row)}
+              </ul>
+            )
           ) : null}
           {agent && notGiven.length > 0 ? (
             <details className="space-y-3">
               <summary className="cursor-pointer text-sm font-medium text-ink">Not given to {agent.name} ({notGiven.length})</summary>
-              <ul className="mt-3 space-y-3" aria-label={`Not given to ${agent.name}`}>
-                {notGiven.map(row)}
-              </ul>
+              <Card className="mt-3 p-0 sm:p-0">
+                <ul className="divide-y divide-line" aria-label={`Not given to ${agent.name}`}>
+                  {notGiven.map(row)}
+                </ul>
+              </Card>
             </details>
           ) : null}
         </>

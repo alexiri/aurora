@@ -8,6 +8,8 @@ import { AccountsPanel } from "@/components/accounts/accounts-panel";
 import { WorkspaceFreeze } from "@/components/freeze/freeze-sections";
 import { WorkspaceInternet } from "@/components/internet/workspace-internet";
 import { AccessTab } from "@/components/settings/access-tab";
+import { AddPeople } from "@/components/settings/add-people";
+import { useAccess } from "@/lib/api/account";
 import { AuditTab } from "@/components/settings/audit-tab";
 import { DangerTab } from "@/components/settings/danger-tab";
 import { GeneralTab } from "@/components/settings/general-tab";
@@ -79,9 +81,24 @@ export function WorkspaceInternetAccessPage() {
 function PeopleBody({ w, org, ws, addOpen }: { w: Workspace; org: string; ws: string; addOpen: boolean }) {
   const list = useWorkspaces(w.org_id);
   const personal = !!w.personal_of || !!list.data?.items.find((x) => x.id === w.id)?.personal_of;
+  // (P5-POLISH-11, D6) **Add people** is on the header's line; the list's query is shared, so this costs no request.
+  const access = useAccess(w.id);
   return (
     <div className="max-w-page space-y-4">
-      <PageHeader title="People" description="Who can use this workspace." className="mb-2" />
+      <PageHeader
+        title="People"
+        description="Who can use this workspace."
+        className="mb-2"
+        actions={
+          <AddPeople
+            wsId={w.id}
+            orgId={w.org_id}
+            workspacePath={wsRoutes(org, ws).base}
+            hasApprover={!!access.data?.items.some((b) => b.role === "approver")}
+            initiallyOpen={addOpen}
+          />
+        }
+      />
       <AccessTab wsId={w.id} orgId={w.org_id} canOwn personal={personal} people={{ workspacePath: wsRoutes(org, ws).base, initiallyOpen: addOpen }} />
     </div>
   );
