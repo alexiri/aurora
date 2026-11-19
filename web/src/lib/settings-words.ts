@@ -63,10 +63,18 @@ export function bytesWords(n: number): string {
   return plural(n, "bytes");
 }
 
-/** "5368709120 bytes" (the server's default in words) → "5 GB"; any other text is unchanged. */
+const BYTE_UNITS: Record<string, number> = { bytes: 1, KiB: 1024, MiB: MB, GiB: GB };
+
+/** A byte count in the server's words ("5 GiB", "256 KiB", "100 bytes", `aurora-config` fields.rs) → bytes; else null. */
+function bytesOf(text: string): number | null {
+  const m = /^(\d+(?:\.\d+)?) ?(bytes|KiB|MiB|GiB)$/.exec(text.trim());
+  return m ? Number(m[1]) * BYTE_UNITS[m[2]!]! : null;
+}
+
+/** "5 GiB" (the server's default in words) → "5 GB"; any other text is unchanged. */
 export function defaultInWords(text: string): string {
-  const m = /^(\d+) bytes$/.exec(text.trim());
-  return m ? bytesWords(Number(m[1])) : text;
+  const n = bytesOf(text);
+  return n === null ? text : bytesWords(n);
 }
 
 /**
@@ -75,7 +83,7 @@ export function defaultInWords(text: string): string {
  */
 export function editUnit(field: FieldInfo): { size: number; label: string | null } {
   if (field.unit === "bytes") {
-    const n = Number(/^(\d+) bytes$/.exec(field.default_display.trim())?.[1] ?? 0);
+    const n = bytesOf(field.default_display) ?? 0;
     if (n >= GB) return { size: GB, label: "GB" };
     if (n >= MB) return { size: MB, label: "MB" };
     return { size: 1, label: "bytes" };

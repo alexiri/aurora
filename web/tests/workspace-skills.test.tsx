@@ -151,4 +151,12 @@ describe("agent Skills tab: effective set", () => {
     fireEvent.click(await screen.findByRole("button", { name: /triage/ }));
     expect(await screen.findByRole("button", { name: "Save" })).toBeTruthy();
   });
+
+  it("a workspace list asks for no agent's skills (no GET /v1/agents//skills, P5-POLISH-11 pass 2)", async () => {
+    const fn = mockFetch({ "GET /v1/workspaces/w1/skills": () => json(200, { items: [deploy], next_cursor: null }) });
+    wrap(<SkillsEditor scope={{ kind: "workspace", id: "w1" }} />);
+    expect(await screen.findByRole("button", { name: /deploy-checklist/ })).toBeTruthy();
+    const paths = fn.mock.calls.map(([input]) => decodeURIComponent(new URL((input as Request).url, "http://localhost").pathname));
+    expect(paths.filter((p) => p.startsWith("/v1/agents/"))).toEqual([]);
+  });
 });

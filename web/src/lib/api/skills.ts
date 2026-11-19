@@ -100,6 +100,8 @@ export function useAgentSkills(agent: string) {
   return useQuery({
     queryKey: skillKeys.agent(agent),
     queryFn: () => unwrap(api.GET("/v1/agents/{agent}/skills", { params: { path: { agent } } })),
+    // SkillsEditor calls this with "" for a workspace or organization list: no request then (was GET /v1/agents//skills, 400).
+    enabled: agent !== "",
     retry: false,
   });
 }
