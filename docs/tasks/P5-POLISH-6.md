@@ -305,3 +305,28 @@ All paths are under `web/src/`.
 
 Sonnet (`nextjs-developer`). Many components on the most-used page, a navigation change and a status
 mapping that must be exactly right.
+
+## Completion report — review pass 1 (P5-POLISH-11)
+
+- **#1 done.** A read-only app (no `levels`) renders "Read only" in its Access row (`access-control.tsx`), and the
+  agent pills and the pill popover say "<Agent> · Read only" (`entryText(entry, account)`), so D1 and B5 follow.
+- **#2 done.** The AI key row carries an "AI" tile, "Shared by your organization · <Agent> thinks with <model>" and no
+  who-can line on an agent's page. The kind chip is gone for apps and AI keys (a kind is its icon, F2); a website keeps
+  its chip. "Shared by <Org name>" is now "Shared by your organization" everywhere in the row.
+- **#3 done.** The summary names an account by the name a person gave it when that name does not carry the app's own
+  ("Daneel can read Team calendar."); "GitHub account" still reads "GitHub", two accounts of one app are told apart as
+  before (`lib/summary/agent.ts`).
+- **#4 done.** The Needs you heading's amber tile only while something waits (rail and pop-over).
+- **#5 done.** Webhooks: the header's **New webhook** shows only once there is a webhook.
+- **#6 partly done.** The Channels who-can line reads "Only organization owners and admins can connect a chat
+  platform. Ask alice." (new `connect_chat` action phrase). Open: the mockup's "alice can connect a chat platform."
+  wording and the **Ask** button — no contact/mention path exists yet (same open item as P5-POLISH-9).
+- **#7 done.** Peers: one empty state while both lists are empty; each list says its own emptiness in one line otherwise.
+- **#8 done.** "awake under a minute" when turns > 0 and `awake_seconds` is 0. Open: the mockup's "This month" card
+  (the section stays plain).
+- **#9 done.** `useRetention(orgId, enabled)`; the Chat tab asks only for organization owners and admins.
+- **#10 done.** The account … menu is `align="end"`.
+- **#11 open (owner/API):** "Wake it now" (no route wakes a stopped computer) and "sleeps after <n> minutes"
+  (`SandboxView` has no idle time).
+- Tests: vitest `accounts`, `agent-summary` (new rows), Playwright `accounts`, `org-accounts` follow the kind chips and the
+  organization wording.
