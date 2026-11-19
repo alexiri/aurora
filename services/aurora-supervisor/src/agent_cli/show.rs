@@ -163,12 +163,25 @@ pub fn search_with(
         }
         for op in &d.operations {
             let tags = op.tags.join(" ");
+            // (C-911) A webhook is found by its note and its slot names too.
+            let notes = op.notes.as_deref().unwrap_or_default();
+            let slots = if op.account.is_some() {
+                op.body
+                    .iter()
+                    .flat_map(|b| b.fields.iter().map(|f| f.name.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            } else {
+                String::new()
+            };
             let s = score(
                 &terms,
                 &[
                     (&op.id, 6),
                     (&tags, 4),
                     (&op.summary, 3),
+                    (notes, 2),
+                    (&slots, 2),
                     (&op.path, 2),
                     (&d.app.name, 1),
                 ],
@@ -267,6 +280,11 @@ fn example(app: &str, op: &Operation) -> String {
         .chain(op.body.iter().flat_map(|b| b.fields.iter()))
         .filter(|p| p.is_required())
     {
+        if p.ty == "json" {
+            // (C-911) A JSON field is passed with `:=`.
+            o.push_str(&format!(" {}:=<json>", oneline(&p.name, 64)));
+            continue;
+        }
         let v = p
             .default
             .as_ref()
@@ -308,6 +326,15 @@ fn describe_with(doc: &ApiDoc, op: &Operation, desc_max: usize) -> String {
     );
     if !op.summary.is_empty() {
         o.push_str(&format!("summary: {}\n", oneline(&op.summary, 200)));
+    }
+    if let Some(n) = op.notes.as_deref().filter(|n| !n.is_empty()) {
+        o.push_str(&format!("notes: {}\n", oneline(n, 1000)));
+    }
+    if let Some(a) = &op.account {
+        o.push_str(&format!(
+            "account: {} (this operation is bound to it; --account is not needed)\n",
+            oneline(a, 8)
+        ));
     }
     match &op.tool {
         Some(t) => o.push_str(&format!("tool: {}\n", oneline(t, 64))),
@@ -358,6 +385,13 @@ fn describe_with(doc: &ApiDoc, op: &Operation, desc_max: usize) -> String {
         o.push_str(&format!("items at: {}\n", oneline(i, 60)));
     }
     o.push_str(&format!("example: {}\n", example(&doc.app.id, op)));
+    // (C-911) A webhook can be checked without sending: the dry run shows the rendered body.
+    if op.account.is_some() && op.params.iter().any(|p| p.name == "X-Aurora-Dry-Run") {
+        o.push_str(&format!(
+            "dry run (sends nothing): {} X-Aurora-Dry-Run=1\n",
+            example(&doc.app.id, op)
+        ));
+    }
     o
 }
 

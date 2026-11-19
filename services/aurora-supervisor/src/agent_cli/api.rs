@@ -79,6 +79,12 @@ pub struct Operation {
     pub access: BTreeMap<String, String>,
     #[serde(default)]
     pub source: String,
+    /// (C-911) The account letter this operation is bound to (a webhook), else absent.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// (C-911) The person's note for the agent (a webhook), else absent.
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 impl Operation {

@@ -291,6 +291,9 @@ async fn app_folder(
                         ask: c.ask_tools.iter().cloned().collect(),
                     }
                 },
+                // (P5-WEBHOOK-3) Filled from the connection's webhook config once P5-WEBHOOK-2's
+                // rows exist.
+                webhook: None,
             }
         })
         .collect();
