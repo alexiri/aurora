@@ -368,3 +368,157 @@ Users" (mockup "Shared by your organization").
 **Left for pass 2:** re-check the screens above after the owning lanes merge; Carol's views of Channels with an
 integration (needs a running chat connector), F2's failure path, the not-checked findings.
 **Cluster:** torn down at the end of pass 1 (`kind-dev.sh down`, same variables); pass 2 brings it up again.
+
+## Completion report — pass 2 (lane `p5-polish-c`, 2026-11-19)
+
+**How.** Master at `2ec532b8` (lane fixes `72736a36`, `ecbf9766`, `2ec532b8`). Throwaway cluster again
+(`AURORA_DEV_CLUSTER=p5pc AURORA_DEV_PORT=4610`, `up --llm-mock --connector-fake` through `heavy.sh`), never
+`aurora-dev`/:4000. `mirrors.almalinux.org` served a wrong TLS certificate, so the sandbox image was built with
+`SANDBOX_BASE_IMAGE` = a local AlmaLinux 10 base pointed at `repo.almalinux.org` (scratchpad only, no repo change).
+Data as pass 1, but in a different order: placement first, Bob and Carol signed in **before** the organization key was
+added (that order found E4 #1 below), key added through the checklist dialog, Daneel given the key from its Access tab,
+Bob connected "Team calendar" (ICS) through the journey and said hello ("pong"), Bob asked for Google Calendar, Acme
+Labs with 8 workspaces, 6 more shared workspaces in Users, Bob (owner) and Carol (member) in "Engineering".
+Playwright at 1440×900 and 390×844, dark and light, same checks on every capture (console errors, CSP, 4xx `/v1`,
+overflow at 390 px, axe wcag2a/aa). Captures: the lane's scratchpad
+(`/tmp/claude-1000/-home-alex-orca-workspaces-aurora-p5-polish-c/defa3287-b35d-4248-a8c9-13532515064e/scratchpad/shots/`).
+
+**Automated rules:** no CSP violation, no horizontal scroll at 390 px, no axe violation except
+`aria-hidden-focus` while a modal row menu is open (F3 below). Console errors left: the dev connector's icon 404
+(E6 below); the Skills 400 and the bytes display were fixed here. Pass 1's 403s (retention, org members, org
+accounts for Carol) and the setup 400 are gone.
+
+### Verdicts after the lanes' fixes
+
+| ID | Pass 2 | Notes (shots: `<id>-<theme>-<width>.png`) |
+|---|---|---|
+| A1 | matches | AI-key dialogs: no inner card, Cancel/**Add key** in the footer, first field focused (`e4-keydialog-*`) |
+| A2 | matches | "Try it in chat" readable (`b5-done`) |
+| B1 | matches | search hides empty groups (`b1-search`); one "G" icon stays (P5-POLISH-3, owner) |
+| B2 | matches | Ask → "Asked alice · Undo" on the card; Alice's overview "1 thing needs you." (`b2-ask`, `b2-alice-overview`) |
+| B3, B4, C3, D3, E5 | not re-run | matched in pass 1, no lane touched them |
+| B5 | matches | "Daneel can now read Team calendar." + "Read only. You can change this on Daneel's Access tab." |
+| C1 | minor differences | AI row matches (tile, "Shared by your organization · Daneel thinks with scn-pong", no who-can); level placement and card list differ (P5-POLISH-6 #1 below) |
+| C2 | matches | row menu aligned to its button, order and Delete text as the mockup (`c2-menu`) |
+| C4 | matches | neutral Needs-you icon, model calls filtered; status dot fixed here (below) |
+| C5 | minor differences | "awake under a minute"; gaps below are real |
+| C6 | minor differences | Webhooks one button, Peers one empty state; Channels **Ask** is a real gap; webhooks header (P5-POLISH-6 #2) |
+| D1 | minor differences | no chips, "2 accounts. Daneel uses both." with Add on its line, pill "Daneel · Read only"; Add menu alignment (P5-POLISH-7 #1) |
+| D2 | matches | alphabetical; status + one button per app |
+| D4 | matches | whole switcher menu, sticky search after the drill-in, "B" avatar (`d4-switcher-*-open`) |
+| D5 | matches | sentence counts Needs you; Recent activity without model calls |
+| D6 | minor differences | Groups only in shared workspaces, "Has access as an owner of Users"; Add people placement and row order (P5-POLISH-7 #2, #3); Joined/Suspend gaps real |
+| E1 | minor differences | broken item fixed: Carol sees "Users AI gateway"; Agents is a neutral member page; key icon (P5-POLISH-9 #1); Ask/default-model gaps real |
+| E2 | minor differences | "1 account, shared with everyone in Users.", AI tile, no chip; "New agents get this key automatically." gap real |
+| E3 | matches | banner with **Show them**, filters, sorted table, asked row with Set up / Not now |
+| E4 | needs changes | Sign-in done, full-bleed rows, filled current button; backfill missing from the checklist (flow) and header overlap (P5-POLISH-10 #1, #2) |
+| E6 | minor differences | connector row: one status chip, Self-hosted as text; neutral notice; org page neutral cards; icon 404 (dev) |
+| E7 | matches | "Default: …" as help lines, full-width rows, New users as setting rows; bytes fixed here |
+| E8 | minor differences | sign-in gaps grouped by package with icons; duplicated "Apps people can't sign in to yet" heading (P5-POLISH-10 #3) |
+| F1 | matches | amber only with an action (checklist band, Needs you, e-mail line, Sign-in row); notices neutral |
+| F2 | matches (visible part) | no kind chips; "Worked 3 min ago" came from the real model call; failure path still not exercisable |
+| F3 | minor differences | one ring, menus framed; axe `aria-hidden-focus` with modal menus (P5-POLISH-1 #1) |
+
+### Changes to send back (pass 2, by owning brief)
+
+**P5-POLISH-10 (administration)**
+1. *flow* — People who signed in before the key exists get no key: `/v1/admin/setup` says
+   `personal_workspaces_without_starter: 1` (Carol's Daneel can't answer), yet the checklist's AI-key row says
+   "Users AI gateway · every new agent gets it" and the toast says nothing; the only backfill offer is `BackfillOffer`
+   on the Health view (`setup-view.tsx:442`). When the count is > 0, show the offer on the AI-key row (or in the toast):
+   "1 person signed in before the key. Give their agent the key too" with the backfill button.
+2. *rough* — Checklist header: `setup-view.tsx:285` `-mt-3` pulls "Five steps…" into the 40 px PageHeader row: at 1440
+   it touches the title's descenders and "2 of 5" sits under the Health tab; at 390 it overlaps the Checklist/Health
+   tabs and "2 of 5" wraps onto two lines (`e4-placed-light-390`). Drop `-mt-3`; `whitespace-nowrap` on the count
+   (`after/e4.png`: title, then the sentence with "n of 5" right-aligned, then the bar).
+3. *rough* — Health view shows the heading "Apps people can't sign in to yet" twice: the group inside Needs you and a
+   section below it holding only "People can connect GitHub, GitLab with a token…" (`e8-health-dark-1440`). One
+   heading: put the token line under the Needs-you group, or title the second "Apps that need a token".
+4. *rough* — Checklist done rows: the AI-key row keeps an **Add another** button and done rows use outline buttons;
+   `after/e4.png` has no button on a done key row and plain text buttons (Review, Change); minor.
+5. *rough, dev only* — Admin › Chat platforms logs `GET /v1/connectors/fake/icon` 404 on every visit
+   (`connectors/shared.tsx:105`: `hasIcon` defaults to true; `ConnectorAdmin` has no icon flag). Pre-existing since
+   P4-MCON-3. Needs `has_icon` on `ConnectorAdmin` (API) or a 204 for a connector without an icon: owner to place.
+
+**P5-POLISH-6 (agent pages)**
+1. *rough* — Access rows: "Read only" is a third line on the left under the health line, and each account is its own
+   card (`c1-access2-dark-1440`); `after/c1.png` puts the level (text or select) on the row's right just before the …
+   button and the rows in one bordered list with dividers. Move the level into the row's right cluster; render the rows
+   in one `Card` with `divide-y`.
+2. *rough* — Webhooks while empty: the section header "Give an external system a URL that wakes the agent." repeats
+   the empty state's "A webhook gives an external system a URL that wakes the agent."; Peers and Channels have no
+   header. Hide the header while there is no webhook.
+
+**P5-POLISH-7 (workspace pages)**
+1. *rough* — Accounts **Add** menu (`accounts-list.tsx:147`, `<MenuContent>`) runs past the button to the viewport
+   edge (`d1-add-dark-1440`): `align="end"`, as the account … menu.
+2. *rough* — People: **Add people** sits in its own `flex justify-end` row 24 px under the header
+   (`access-tab.tsx:245`); `after/d6.png` has it on the header's line: pass it to the People page's `PageHeader` actions.
+3. *rough* — Shared workspace People lists "Carol Member" before "Bob Builder (you)" (`d6-shared-dark-1440`): you
+   first, then by name, as the mockup.
+
+**P5-POLISH-9 (organization pages)**
+1. *rough* — Carol's AI models key row uses the agent (robot) icon; C1, D1 and E2 use the "AI" tile: same tile here.
+2. *rough* — Organization home lists workspaces newest first (Web, Mobile, Infra, Data, Ops, Engineering, Default):
+   sort by name.
+
+**P5-POLISH-1 (menus, focus)**
+1. *rough, a11y* — While a modal row menu is open (Accounts **Add**, People row …) axe reports
+   `aria-hidden-focus` on the app root (`.min-h-screen`): Radix's modal `DropdownMenu` hides the page with
+   `aria-hidden` but leaves it focusable. The agent page's menu is `modal={false}` and reports nothing. Make
+   `ui/menu.tsx`'s `Menu` non-modal by default (a menu needs no focus trap), or confirm it is a false positive.
+
+### Open items the lanes listed — real or closable
+
+- **Wake it now** (P5-POLISH-6): real. `POST /v1/agents/{agent}/sandbox/retry` and `restart` only leave `failed`
+  (409 `sandbox_not_failed` otherwise, `hosted/routes.rs:389`); no route wakes a sleeping computer.
+- **"Sleeps after n minutes"**: real. `SandboxView` has no idle field; the idle timeout is Helm config, shown
+  only on Admin › Agents › Deadlines ("Stop an idle computer after · Set in Helm").
+- **Ask button** (Channels, org AI models, org chat platforms): real. The only ask route is
+  `POST /v1/workspaces/{ws}/apps/{app}/setup-request` (apps only).
+- **"default scn-pong" on Carol's key row**: real. Members can read no endpoint default (`ModelOption` has none;
+  `/v1/secrets/{id}/models` is owner/admin).
+- **"New agents get this key automatically."** on org Accounts: real for an org admin (starter grants are in
+  `/v1/admin/placement`, instance admins only).
+- **Workspace People Joined / Suspend**: real. `AccessBinding` has no timestamp; suspension is organization-wide
+  (`PATCH /v1/orgs/{org}/members/{user}` `status`), not per workspace.
+- **Activity verbs and app icons** (P5-POLISH-7): not re-checked (the LLM mock calls no tool, so no app activity).
+- **Per-app Google icons** (P5-POLISH-3): real, owner decision (unchanged).
+- **"needs a token / Google sign-in"** on From Aurora rows: not re-checked.
+
+### Fixed directly in this lane (pass 2)
+
+- `cdaf306b` — `lib/settings-words.ts`: byte settings read the server's default in words. The API writes "5 GiB",
+  "1 MiB", "256 KiB" (`aurora-config` `fields.rs`), but P5-POLISH-10 #6 parsed only "<n> bytes", so Computers still
+  edited "5368709120 bytes". Now it shows "5" GB and "Default: 5 GB" (`v2-computers-light-1440`, rebuilt web).
+  The new test in `tests/polish-11-review-fixes.test.tsx` failed without the fix.
+- `c1f655b6` — `ui/status-line.tsx`: `items-baseline`, so the dot sits on the first line of wrapped text, not
+  between the lines (status rail Computer, Admin › AI models endpoint warnings; `v2-rail-dark-1440`). This follows up
+  P5-POLISH-2 #1.
+- `67a20156` — `lib/api/skills.ts`: `useAgentSkills` is enabled only with an agent id. Workspace Skills logged
+  `GET /v1/agents//skills` 400 on every visit (pre-existing since FE-050). The new test in
+  `tests/workspace-skills.test.tsx` failed without the fix.
+- Gates: vitest `polish-11-review-fixes`, `settings-in-words`, `admin-settings*` (7 files), `harness-controls`,
+  `polish-2-primitives`, `workspace-skills`, `memory-skills`, `skill-library`, all green; `pnpm typecheck` and eslint
+  on the touched files clean. Playwright not run (CI is the gate).
+
+### Pass 1's "Not checked" findings
+
+Fixed: 103 Skills (teaching empty state with **New skill**; plus the 400 above). 033 Sign-in (the Helm dev provider is
+listed "Set in Helm"; directory sync is one Unavailable card). 026 Self-hosted (lists the registrations).
+Changed: 302 (the switcher shows "Users · Organization", not "All workspaces"); 030 ("Tightened below" is now a
+"Where organizations stand" table); 408 (empty boxes say what empty means).
+Still there: 111 the API-key expiry is a native date input ("mm/dd/yyyy"). 405 org Internet has seven sections.
+408/409 org Data/Settings are half-width forms (409: bare "Members can create workspaces" checkbox), not the setting
+rows E7 gave admin pages. 036 Data has four tabs. 029 Rules mixes checkboxes and choice cards. 043 All settings is a
+second home (owner decision).
+Not checked: 013 (placement was saved through the API this time); F2's failure path and Channels with an integration.
+Both remain impossible on this stack: the mock makes no tool calls, and the fake connector stays "Waiting for the
+connector".
+
+### Words (for the wording pass)
+
+The chat error for an agent without a key, "This agent has no usable LLM key. Open LLM keys · Agent access · Fix it
+in the guide", is a red box with three links and says "LLM keys" (the UI elsewhere says "AI key").
+
+**Cluster:** torn down at the end of pass 2 (`kind-dev.sh down`, same variables).
