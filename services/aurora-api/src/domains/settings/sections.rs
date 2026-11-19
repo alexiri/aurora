@@ -258,7 +258,8 @@ async fn affected_llm(
             ),
         });
     }
-    // FIX-019: an endpoint without a default model (startup logs the same).
+    // FIX-019: an endpoint without a default model (startup logs the same). (FIX-170, D-372) Not a `litellm`
+    // one: its agents use the first allowed chat model their key serves.
     let known = aurora_config::llm_endpoint_warnings(&before.raw.llm);
     for w in aurora_config::llm_endpoint_warnings(&after.raw.llm)
         .into_iter()

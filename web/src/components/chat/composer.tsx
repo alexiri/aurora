@@ -387,7 +387,7 @@ export function Composer({
           {uploadErrorMessage(sendErr)}
         </p>
       ) : sendErr && !replyGone ? (
-        <ErrorBlock code={sendErr instanceof ApiError ? sendErr.code : null} message={sendErr instanceof ApiError ? sendErr.message : undefined} base={base} />
+        <ErrorBlock code={sendErr instanceof ApiError ? sendErr.code : null} message={sendErr instanceof ApiError ? sendErr.message : undefined} base={base} agentId={agentId} />
       ) : null}
       {expired > 0 ? (
         <Notice role="status">

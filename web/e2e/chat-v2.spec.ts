@@ -74,7 +74,7 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
     prepare: async (page) => {
       // FIX-021: the link opens the LLM keys tab, owners also get "Agent access", the reason counts show under the copy.
       await expect(page.getByRole("link", { name: "Open LLM keys" })).toHaveAttribute("href", /\/apps\?tab=accounts&kind=ai-key$/);
-      await expect(page.getByRole("link", { name: "Agent access" })).toHaveAttribute("href", /\?tab=access$/);
+      await expect(page.getByRole("link", { name: "Agent access" })).toHaveAttribute("href", /\/agents\/[^/?]+\?tab=access$/);
       await expect(page.getByText("1 granted key not usable (origin_unverified)")).toBeVisible();
     },
   },
@@ -83,8 +83,10 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
     fx: fixtures.noModel,
     query: () => `?c=${MINE.id}`,
     prepare: async (page) => {
-      await expect(page.getByText("This agent has an LLM key but no model is chosen.")).toBeVisible();
-      await expect(page.getByRole("link", { name: "Choose a model" })).toHaveAttribute("href", /\?tab=instructions$/);
+      await expect(page.getByText("This agent has an LLM key, but Aurora could not pick a model for it.")).toBeVisible();
+      // (FIX-170) The failing agent's own Default model field, not a path relative to the chat; the guide link is gone.
+      await expect(page.getByRole("link", { name: "Choose a model" })).toHaveAttribute("href", /\/o\/[^/]+\/w\/[^/]+\/agents\/[^/?]+\?tab=instructions#a-model$/);
+      await expect(page.getByRole("link", { name: "Fix it in the guide" })).toHaveCount(0);
       // The named `error` event must not flip the pill to "Reconnecting…" (the chat mock stream stays open).
       await expect(page.getByText("Reconnecting")).toHaveCount(0);
     },

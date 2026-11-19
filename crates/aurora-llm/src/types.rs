@@ -286,6 +286,18 @@ pub trait LlmProvider: Send + Sync {
         let _ = check;
         self.list_models(ep, key, http).await
     }
+    /// (D-372) The `mode` of each public model name, from a provider route that carries it (LiteLLM's
+    /// `GET /model/info`), so an automatic pick can skip embedding, image and audio models. A name the
+    /// answer does not cover is a chat model. Providers without such a route answer an empty map.
+    async fn model_modes(
+        &self,
+        ep: &Endpoint,
+        key: &Secret<String>,
+        http: &reqwest::Client,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let _ = (ep, key, http);
+        Ok(std::collections::HashMap::new())
+    }
     /// (P4-LLM-3, P4-LLM-4) [`Self::list_models_strict`] for a secret of the auth mode in `check` (providers with several
     /// value shapes, Azure's and Bedrock's, override it; the others ignore it).
     async fn list_models_strict_as(

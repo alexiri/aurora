@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -17,6 +17,7 @@ import type { Agent } from "@/lib/api/queries";
 import { errorTarget, ROLES } from "@/lib/model-roles";
 
 import { AvatarField } from "./avatar-field";
+import { automaticModelText, READINESS_WARNING_COPY } from "./model-readiness";
 import { EMPTY_ROLES, ModelRolesFields, type RoleDraft, type RoleFieldErrors } from "./model-roles-fields";
 
 export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string }) {
@@ -32,6 +33,16 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
   const [clientErr, setClientErr] = useState("");
   const [saved, setSaved] = useState(false);
   const fe = patch.error ? fieldErrors(patch.error) : {};
+
+  // (FIX-170) The chat's "Choose a model" link ends in `#a-model`: scroll to the Default model field and focus it
+  // once it can take focus (it is disabled until the model list has loaded).
+  const modelReady = agent.kind === "hosted" && !!models.data?.items.length;
+  useEffect(() => {
+    if (!modelReady || window.location.hash !== "#a-model") return;
+    const el = document.getElementById("a-model");
+    el?.scrollIntoView?.({ block: "center" });
+    el?.focus();
+  }, [modelReady]);
 
   // (phase 5, P5-MODELS-3, D-302, D-303, C-876) Roles belong to the default model's endpoint: the one chosen here, or
   // the one the next turn would use (readiness, owners only).
@@ -166,6 +177,17 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
             </option>
           ))}
         </select>
+        {/* (FIX-170, C-1026) What the next turn uses while no model is chosen, and the warnings of the default selection. */}
+        {!model && defaultView ? (
+          <p className="text-xs text-ink-2" data-testid="model-automatic">
+            {automaticModelText(defaultView.source, defaultView.model_id)}
+          </p>
+        ) : null}
+        {(readiness.data?.warnings ?? []).map((w) => (
+          <p key={w} className="text-xs text-pending-ink" data-testid="model-warning">
+            {READINESS_WARNING_COPY[w] ?? w}
+          </p>
+        ))}
       </Field>
       {agent.kind === "hosted" ? (
         <ModelRolesFields

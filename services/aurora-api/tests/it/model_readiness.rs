@@ -398,7 +398,8 @@ async fn no_default_model_fails_before_any_sandbox_start_then_override_dispatche
         ("failed".into(), Some("no_default_model".into()))
     );
     let said = everything_said(&r, conv).await;
-    assert!(said.contains("no model is chosen"), "{said}");
+    // (FIX-170) The endpoint did not answer the key's model list: the message says that.
+    assert!(said.contains("model list could not be read"), "{said}");
     assert!(!said.contains("k-secret-name-aigw"), "{said}");
 
     // The Instructions picker can fix it: the key is usable, so its models are listed.

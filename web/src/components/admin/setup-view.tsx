@@ -55,7 +55,6 @@ const FIX: Record<string, string> = {
   no_role_mappings: "Map a role from your sign-in token to instance admin. The operator guide on sign-in explains how.",
   no_endpoints: "Add an LLM endpoint under Admin › Settings › LLM endpoints. The operator guide on LLM endpoints explains how.",
   endpoint_unreachable: "Check the endpoint's address and that the API can reach it. Test connection is on the endpoint's page.",
-  no_default_model: "Set a default model so agents need not choose one by one.",
   no_runner: "Install a runner and register it. The operator guide on runners explains how.",
   runner_offline: "Check that the runner is running and can reach the API. The operator guide on runners explains how.",
   no_gateway: "Start the gateway. Without it agents cannot reach the internet or the LLM.",
@@ -64,7 +63,7 @@ const FIX: Record<string, string> = {
 };
 
 /** The checks whose fix is made on Admin › Settings › LLM endpoints (SET-3): the step links there. */
-const LLM_SETTINGS_FIXES: Record<string, true> = { no_endpoints: true, endpoint_unreachable: true, no_default_model: true };
+const LLM_SETTINGS_FIXES: Record<string, true> = { no_endpoints: true, endpoint_unreachable: true };
 
 function CheckRow({ c }: { c: SetupCheck }) {
   const s = STATE[c.status];
@@ -269,20 +268,9 @@ function LlmBody({ step, waiting, onChanged }: { step: SetupStep; waiting: numbe
   const org = placement.data?.default_org ?? null;
   const secrets = useSecrets({ kind: "organization", id: org?.id ?? "" });
   const orgKey = (secrets.data?.items ?? []).find((s) => s.kind === "llm" && s.status === "active");
-  const noDefaultModel = step.checks.some((c) => c.reason === "no_default_model");
   return (
     <div className="space-y-4">
       <Checks step={step} />
-      {noDefaultModel ? (
-        <Notice tone="pending" role="status">
-          An endpoint has no default model. Agents on it need a model chosen one by one; until then their turns fail with
-          &ldquo;no default model&rdquo;. Set <code className="font-mono">default_model</code> on the endpoint in{" "}
-          <Link href={adminRoutes.aiModels("endpoints")} className="font-medium underline underline-offset-2">
-            Administration › AI models › Endpoints
-          </Link>{" "}
-          (or in the Helm values for an endpoint managed there).
-        </Notice>
-      ) : null}
       {!org || !placement.data?.saved ? (
         <p className="text-sm text-ink-2">Choose the default organization in the step above, then add its LLM key here.</p>
       ) : (

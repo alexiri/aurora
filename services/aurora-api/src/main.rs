@@ -479,14 +479,14 @@ async fn serve(
         }
     });
     let ops = service::ops_router(metrics, vec![("database", db_check)]);
+    for w in aurora_config::llm_endpoint_warnings(&cfg.llm) {
+        tracing::warn!("{w}");
+    }
     if cfg.auth.dev_idp.enabled {
         tracing::warn!(
             issuer = cfg.auth.dev_idp.issuer.as_deref().unwrap_or(""),
             "DEVELOPMENT ONLY: the development identity provider `dev` is enabled (auth.dev_idp); it signs users in without a password and must never be exposed"
         );
-    }
-    for w in aurora_config::llm_endpoint_warnings(&cfg.llm) {
-        tracing::warn!("{w}");
     }
     let state =
         aurora_api::app::AppState::try_new(pool.clone(), cfg.clone())?.with_config_source(source);
