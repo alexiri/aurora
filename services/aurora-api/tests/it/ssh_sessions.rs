@@ -671,6 +671,24 @@ async fn ssh_sessions_grants_are_single_use_and_bound() {
     assert_eq!(leaked, 0);
 }
 
+/// (FIX-181 F4, C-1041) A frozen agent is 423 `frozen` at redemption, not 409 `not_current`.
+#[tokio::test]
+async fn ssh_sessions_redemption_of_a_frozen_agent_is_423() {
+    let s = setup("running").await;
+    let id = open_ok(&s).await;
+    let (st, g) = grant(&s, id, "shell").await;
+    assert_eq!(st, 200, "{g}");
+    sqlx::query(
+        "UPDATE agents SET frozen_at = now(), frozen_reason = 'x', frozen_authority = 'workspace_owner' WHERE id = $1",
+    )
+    .bind(s.agent)
+    .execute(s.r.h.pool())
+    .await
+    .unwrap();
+    let (st, v) = redeem(&s, g["grant"].as_str().unwrap(), "ssh").await;
+    assert_eq!((st, code(&v)), (423, "frozen"), "{v}");
+}
+
 /// A stopped sandbox is a 409 `not_running` after the wait (and the wake demand is set); a
 /// foreign replica's grant call is `session_closed`.
 #[tokio::test]

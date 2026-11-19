@@ -480,9 +480,8 @@ pub(crate) async fn open(
     if a.kind != "hosted" {
         return Err(not_current());
     }
-    crate::domains::freeze::service::ensure_agent_active_pool(s, a.id)
-        .await
-        .map_err(|_| not_current())?;
+    // A frozen agent is 423 `frozen` on every route (C-1041), not `not_current`.
+    crate::domains::freeze::service::ensure_agent_active_pool(s, a.id).await?;
     Ok(PreviewStreamOpenResponse {
         sandbox_id: row.sandbox_id,
         boot_id: row.boot_id,
