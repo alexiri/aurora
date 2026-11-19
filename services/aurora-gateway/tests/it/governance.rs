@@ -3,9 +3,10 @@
 //! The mock provider is Anthropic-style: `GET /v1/models` reports the key's account in
 //! `anthropic-organization-id`, `POST /v1/messages` does too.
 
+use crate::common::Capture;
 use async_trait::async_trait;
 use aurora_config::{EgressEntry, LlmEndpoint, LlmSection, SecretsSection};
-use aurora_db::repo::gateway::{PolicyRuleRow, RequestLogRow, ScopePolicyRows, SecretMetaRow};
+use aurora_db::repo::gateway::{PolicyRuleRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
 use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
@@ -13,8 +14,8 @@ use aurora_gateway::governance::{GovSource, Governance, instance_from_config};
 use aurora_gateway::guard::Guard;
 use aurora_gateway::invalidation::{Invalidatable, Invalidate, Scope};
 use aurora_gateway::plaintext::PlaintextCache;
-use aurora_gateway::proxy::{Proxy, ProxyParts};
-use aurora_gateway::reqlog::{LogWriter, RequestLog};
+use aurora_gateway::proxy::Proxy;
+use aurora_gateway::reqlog::RequestLog;
 use aurora_gateway::resolve::{PolicySource, Resolver};
 use aurora_secrets::{MemoryStore, SecretRef, SecretVault, StoreRegistry};
 use base64::Engine;
@@ -112,17 +113,6 @@ impl GovSource for TestGov {
             .lock()
             .unwrap()
             .push((id, origin, status.to_owned()));
-    }
-}
-
-#[derive(Default)]
-struct Capture(Mutex<Vec<RequestLogRow>>);
-
-#[async_trait]
-impl LogWriter for Capture {
-    async fn write(&self, rows: &[RequestLogRow]) -> Result<(), String> {
-        self.0.lock().unwrap().extend_from_slice(rows);
-        Ok(())
     }
 }
 
@@ -747,23 +737,9 @@ async fn start(o: Opts) -> Env {
         .with_llm_mint(llm_mint),
     );
     let gw = ca::generate("gw").unwrap();
-    let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let proxy = pl.local_addr().unwrap();
-    let guard = Arc::new(Guard::new(&["127.0.0.0/8".to_owned()], vec![proxy]).unwrap());
-    let (gw_ca, gw_tls) = crate::common::gateway_tls(&gw, proxy);
-    let p = Proxy::new(ProxyParts {
-        ca: gw_ca,
-        tls: gw_tls,
-        resolver: Arc::new(Static(w.clone())),
-        handler,
-        guard,
-        header_timeout: Duration::from_secs(5),
-        extra_ca_pem: None,
-        egress_proxy: None,
-    })
-    .unwrap();
+    let (proxy, p) =
+        crate::common::spawn_proxy(&gw, Arc::new(Static(w.clone())), handler, None).await;
     let px = p.clone();
-    tokio::spawn(p.run(pl, std::future::pending()));
     Env {
         px,
         proxy,

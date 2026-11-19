@@ -221,11 +221,6 @@ impl JsonPath {
         Ok(Self(segs))
     }
 
-    #[must_use]
-    pub fn is_wildcard(&self) -> bool {
-        self.0.iter().any(|s| matches!(s, Seg::Each))
-    }
-
     /// Every value the path selects.
     #[must_use]
     pub fn select<'a>(&self, root: &'a Value) -> Vec<&'a Value> {

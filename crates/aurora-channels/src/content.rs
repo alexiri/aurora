@@ -138,11 +138,6 @@ impl Content {
         }
     }
 
-    pub fn with_card(mut self, card: Card) -> Self {
-        self.card = Some(card);
-        self
-    }
-
     /// Appends an explicit `<@here>` broadcast. Core use only, never from model text.
     pub fn with_here(mut self) -> Self {
         let t = self.text.take().unwrap_or_default();

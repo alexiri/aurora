@@ -26,9 +26,6 @@ pub const ACTION_SWEEP_EVERY: Duration = Duration::from_secs(60);
 pub const RETENTION_SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
 const RETENTION_JOB: &str = "conversation_retention";
 const ATTACHMENT_SWEEP_JOB: &str = "attachment_sweep";
-/// SCIM token expiry notices (P4-GRP-2, singleton; fires once per token per threshold via the
-/// audit-log lookup in [`aurora_db::repo::scim::tokens_expiring_within`]).
-pub const SCIM_EXPIRY_SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
 const SCIM_EXPIRY_JOB: &str = "scim_token_expiry";
 const RETENTION_PRUNE_JOB: &str = "retention_prune";
 pub const PARTITION_EVERY: Duration = Duration::from_secs(24 * 3600);
