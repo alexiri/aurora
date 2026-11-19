@@ -236,7 +236,7 @@ export function ChatTab({
     wsId,
     base,
     agentId,
-    agent: { kind: agentKind, isDefault, brief: agent?.brief },
+    agent: { name: agent?.name, kind: agentKind, isDefault, brief: agent?.brief },
     terminalAvailable,
     sshAvailable,
     openConversation: convId ? { id: convId, title: conv ? conversationTitle(conv) : "Direct chat" } : null,

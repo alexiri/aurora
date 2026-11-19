@@ -28,7 +28,8 @@ export function ThreadHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 md:px-5">
+    // (P5-POLISH-6) 64 px, the same as the status panel's header, so their bottom borders form one line.
+    <header className="flex h-16 shrink-0 items-center gap-2 border-b border-line px-3 md:px-5">
       {onBack ? (
         <button
           type="button"

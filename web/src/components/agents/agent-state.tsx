@@ -37,7 +37,8 @@ export function AgentState({
   const gateway = useAgentPendingApprovals(wsId, agentId, canApprove);
   const actions = useAgentPendingActionApprovals(wsId, agentId, canApprove);
   const conversations = useConversations(agentId);
-  const cantAnswer = !!readiness.data && !readiness.data.keys.some((k) => k.usable);
+  const keys = readiness.data?.keys;
+  const cantAnswer = Array.isArray(keys) && !keys.some((k) => k.usable);
   const needs = (gateway.data?.items.length ?? 0) + (actions.data?.items.length ?? 0);
   const working = (conversations.data?.items ?? []).some((c) => !!c.active_turn);
   const { word, tone } = agentStateOf({ cantAnswer, needs, working });

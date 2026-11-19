@@ -20,7 +20,7 @@ export interface RailContext {
   wsId: string;
   base: string;
   agentId: string;
-  agent: { kind: string; isDefault: boolean; brief: string | null | undefined };
+  agent: { name?: string; kind: string; isDefault: boolean; brief: string | null | undefined };
   terminalAvailable: boolean;
   /** (P4-SSH-2, C-795) The agent's SSH page exists: the Computer part links to it. Optional: absent means off. */
   sshAvailable?: boolean;
@@ -73,12 +73,12 @@ function StatusParts({ ctx, idPrefix, onShow }: { ctx: RailContext; idPrefix: st
         "Doing now",
         <DoingNow working={status.working} open={ctx.open} openConversation={ctx.openConversation} titleOf={ctx.titleOf} onSelect={ctx.onSelectConversation} />,
       )}
-      {section("recent", <WrenchIcon />, "Recent tool calls", <RecentCalls status={status} activityHref={activityHref} />)}
+      {section("recent", <WrenchIcon />, "Recent actions", <RecentCalls status={status} activityHref={activityHref} />)}
       {section(
         "computer",
         <MonitorIcon />,
         "Computer",
-        <ComputerPart sandbox={status.sandbox} terminalAvailable={ctx.terminalAvailable} sshAvailable={ctx.sshAvailable === true} onNavigate={ctx.onNavigate} />,
+        <ComputerPart agentName={ctx.agent.name ?? "the agent"} sandbox={status.sandbox} terminalAvailable={ctx.terminalAvailable} sshAvailable={ctx.sshAvailable === true} onNavigate={ctx.onNavigate} />,
       )}
       {section("about", <BookIcon />, "About", <AboutPart kind={ctx.agent.kind} isDefault={ctx.agent.isDefault} brief={ctx.agent.brief} onNavigate={ctx.onNavigate} />)}
     </div>
@@ -94,14 +94,25 @@ export function stripLabels(ctx: RailContext): Record<PartId, string> {
   return {
     needs: n === 0 ? "Needs you: nothing waiting" : `Needs you: ${n} ${n === 1 ? "approval" : "approvals"} waiting`,
     doing: working ? "Doing now: working" : "Doing now: idle",
-    recent: status.problem ? "Recent tool calls: some were denied or failed" : "Recent tool calls: none denied or failed",
+    recent: status.problem ? "Recent actions: some were denied or failed" : "Recent actions: none denied or failed",
     computer: `Computer: ${sb}`,
     about: "About this agent",
   };
 }
 
 const iconButton =
-  "relative inline-flex size-10 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink";
+  "group relative inline-flex size-10 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink";
+
+/** The collapsed icon's visible label, on hover and keyboard focus (the button keeps its fuller `aria-label`). */
+function Tip({ children }: { children: ReactNode }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute right-full z-30 mr-2 hidden whitespace-nowrap rounded-control bg-primary px-2 py-1 text-xs font-medium text-on-primary shadow-pop group-hover:block group-focus-visible:block">
+      {children}
+    </span>
+  );
+}
 
 /**
  * The status rail (D-201). Expanded: 288 px with the five parts; collapsed: a 56 px strip of icons with their state.
@@ -187,6 +198,7 @@ export function StatusRail({
           <PopoverTrigger asChild>
             <button type="button" aria-label={labels.needs} className={iconButton}>
               <CheckCircleIcon width={20} height={20} />
+              <Tip>Needs you</Tip>
               {status.needs.length > 0 ? (
                 <AttentionChip actionId="status-rail-needs" aria-hidden="true" className="absolute -right-1 -top-1 px-1.5 tabular-nums">
                   {status.needs.length}
@@ -195,7 +207,7 @@ export function StatusRail({
             </button>
           </PopoverTrigger>
           <PopoverContent side="left" align="start" aria-label="Needs you" className="space-y-3">
-            <h3 className="flex items-center gap-2 text-label font-semibold uppercase tracking-label text-muted">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-ink-2">
               <span aria-hidden="true" className="inline-flex size-6 items-center justify-center rounded-md bg-pending-soft text-pending-ink">
                 <CheckCircleIcon width={16} height={16} />
               </span>
@@ -224,18 +236,22 @@ export function StatusRail({
       ) : null}
       <button type="button" aria-label={labels.doing} onClick={() => expandAt("doing")} className={iconButton}>
         <ActivityIcon width={20} height={20} />
+        <Tip>Doing now</Tip>
         {working ? dot("accent") : null}
       </button>
       <button type="button" aria-label={labels.recent} onClick={() => expandAt("recent")} className={iconButton}>
         <WrenchIcon width={20} height={20} />
+        <Tip>Recent actions</Tip>
         {status.problem ? dot("danger") : null}
       </button>
       <button type="button" aria-label={labels.computer} onClick={() => expandAt("computer")} className={iconButton}>
         <MonitorIcon width={20} height={20} />
+        <Tip>Computer</Tip>
         {status.sandbox ? dot(sandboxLook(status.sandbox).tone) : null}
       </button>
       <button type="button" aria-label={labels.about} onClick={() => expandAt("about")} className={iconButton}>
         <BookIcon width={20} height={20} />
+        <Tip>About</Tip>
       </button>
     </aside>
   );
@@ -250,7 +266,7 @@ export function StatusRail({
         overlay && "absolute inset-y-0 right-0 z-20 shadow-pop",
       )}
     >
-      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-2">
+      <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-line px-3">
         <h2 className="font-display text-base font-semibold text-ink">Status</h2>
         <button ref={collapseRef} type="button" aria-label="Collapse status panel" onClick={collapse} className={iconButton}>
           <ChevronRightIcon width={20} height={20} />
