@@ -183,7 +183,7 @@ pub async fn decide(
         .ok_or_else(|| ApiError::not_found("Approval not found."))?;
     // 404 when the workspace is invisible; key confinement applies.
     let auth = c.workspace(s, existing.workspace_id).await?;
-    if auth.org_id != existing.org_id || !auth.can_use() {
+    if auth.org_id != existing.org_id {
         return Err(ApiError::not_found("Approval not found."));
     }
     // RFE-009: an approval naming a direct conversation the caller cannot see does not exist.

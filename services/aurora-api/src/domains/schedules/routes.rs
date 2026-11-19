@@ -35,10 +35,8 @@ async fn visible_agent(c: &Caller, s: &AppState, id: Uuid) -> Result<agents::Age
     let row = agents::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    let ws = c.workspace(s, row.workspace_id).await?;
-    if !ws.can_use() {
-        return Err(ApiError::forbidden("Workspace access required."));
-    }
+    // Membership is the check: `c.workspace` is 404 for a non-member or inactive member.
+    c.workspace(s, row.workspace_id).await?;
     Ok(row)
 }
 

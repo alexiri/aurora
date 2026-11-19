@@ -156,10 +156,9 @@ pub async fn decide(
     let not_found = || ApiError::not_found("Action approval not found.");
     let existing = repo::get(&s.pool, id).await?.ok_or_else(not_found)?;
     // 404 when the workspace is invisible; key confinement applies.
+    // (A `WorkspaceAuth` exists only for an active member with a workspace role, so there is no
+    // separate `can_use` check, FIX-181 F10.)
     let auth = c.workspace(s, existing.workspace_id).await?;
-    if !auth.can_use() {
-        return Err(not_found());
-    }
     // RFE-009: an approval naming a direct conversation the caller cannot see does not exist.
     // (Clarification C of D-47: only within the conversation's own workspace.)
     if !aurora_db::repo::approvals::conversation_visible(

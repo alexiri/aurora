@@ -248,7 +248,7 @@ async fn access_law_matrix() {
     assert!(a.can_own() && a.org_id == org);
     assert!(q(admin).await.unwrap().unwrap().can_own());
     let m = q(bound_m).await.unwrap().unwrap();
-    assert!(!m.can_own() && m.can_use());
+    assert!(!m.can_own());
     assert!(q(bound_o).await.unwrap().unwrap().can_own());
     assert!(q(unbound).await.unwrap().is_none());
     assert!(q(susp_admin).await.unwrap().is_none());

@@ -91,10 +91,9 @@ pub struct WorkspaceAuth {
 }
 
 impl WorkspaceAuth {
-    /// Anyone holding a `WorkspaceAuth` satisfies `can_use`.
-    pub fn can_use(&self) -> bool {
-        true
-    }
+    // (FIX-181 F10) No `can_use()`: a `WorkspaceAuth` is only ever built for an active member with
+    // an effective workspace role, so holding one *is* `can_use`; the check lives in the
+    // construction (`workspace_access`).
     pub fn can_own(&self) -> bool {
         self.effective_ws_role == WorkspaceRole::Owner
     }
@@ -605,9 +604,7 @@ pub async fn automation_authorized(
         return workspace_has_active_owner(&mut *conn, ws).await;
     }
     Ok(match creator {
-        Some(u) => workspace_access(&mut *conn, u, ws)
-            .await?
-            .is_some_and(|a| a.can_use()),
+        Some(u) => workspace_access(&mut *conn, u, ws).await?.is_some(),
         None => false,
     })
 }
@@ -653,7 +650,6 @@ mod tests {
             auth(WorkspaceRole::Approver),
             auth(WorkspaceRole::Owner),
         );
-        assert!(m.can_use() && a.can_use() && o.can_use());
         assert!(!m.can_approve() && a.can_approve() && o.can_approve());
         assert!(!m.can_own() && !a.can_own() && o.can_own());
         assert_eq!(

@@ -59,12 +59,9 @@ pub async fn set_archived(
     id: Uuid,
     archived: bool,
 ) -> Result<Conversation, ApiError> {
-    // `can_see_conversation` (404 otherwise); `can_use` holds for every workspace member, so the
+    // `can_see_conversation` (404 otherwise); every workspace member may use the workspace, so the
     // non-direct rule needs no further check.
-    let (row, auth) = load_conversation_auth(state, c, id).await?;
-    if !auth.can_use() {
-        return Err(forbidden());
-    }
+    let (row, _auth) = load_conversation_auth(state, c, id).await?;
     let mut conn = state.pool.acquire().await.map_err(db)?;
     lifecycle::set_archived(&mut conn, id, archived, archived.then_some(c.user_id)).await?;
     let row = convs::get(&mut *conn, id).await?.unwrap_or(row);
