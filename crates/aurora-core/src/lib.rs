@@ -12,6 +12,7 @@ pub mod ids;
 pub mod limits;
 pub mod llm_classify;
 pub mod model_id;
+pub mod names;
 pub mod pgservice;
 pub mod ranges;
 pub mod sanitize;

@@ -39,7 +39,7 @@ pub fn question_404() -> ApiError {
 pub async fn visible_agent(s: &AppState, c: &Caller, id: Uuid) -> Result<AgentRow, ApiError> {
     let not_found = || ApiError::not_found("Agent not found.");
     let a = agents::get(&s.pool, id).await?.ok_or_else(not_found)?;
-    let auth = c.workspace(s, a.workspace_id).await.map_err(|e| {
+    c.workspace(s, a.workspace_id).await.map_err(|e| {
         // A key confined to another workspace keeps its 403 `workspace_mismatch` (as elsewhere).
         if e.status() == http::StatusCode::NOT_FOUND {
             not_found()
@@ -47,9 +47,6 @@ pub async fn visible_agent(s: &AppState, c: &Caller, id: Uuid) -> Result<AgentRo
             e
         }
     })?;
-    if !auth.can_use() {
-        return Err(not_found());
-    }
     if a.kind != "hosted" {
         return Err(ApiError::unprocessable(
             "eval_not_supported",

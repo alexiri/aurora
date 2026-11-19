@@ -1523,6 +1523,56 @@ async fn redemption_follows_the_live_terminal_setting_not_the_boot_config() {
     assert_eq!((s, code(&v)), (409, "not_current"), "setting off: {v}");
 }
 
+/// (FIX-181 F4, C-1041) A grant for a frozen agent redeems as 423 `frozen`, not 409 `not_current`.
+#[tokio::test]
+async fn redemption_of_a_frozen_agent_is_423() {
+    let mut r = rig_with(|_| {}).await;
+    r.h = r.h.with_helm("[terminal]\navailable = true\n");
+    let (agent, sb) = sandbox(&r, "frozen-redeem", "running").await;
+    let boot: Uuid = sqlx::query_scalar("SELECT boot_id FROM sandboxes WHERE id = $1")
+        .bind(sb)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let user: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = 'm@x.io'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let g = token::generate(token::TokenPrefix::FilesStream);
+    let hash = hex::encode(token::hash(g.expose()));
+    sqlx::query(
+        "INSERT INTO file_stream_grants (id, agent_id, sandbox_id, boot_id, granted_for, grant_hash, expires_at) \
+         VALUES ($1,$2,$3,$4,$5,$6, now() + interval '30 seconds')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(agent)
+    .bind(sb)
+    .bind(boot)
+    .bind(user)
+    .bind(hash)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE agents SET frozen_at = now(), frozen_reason = 'x', frozen_authority = 'workspace_owner' WHERE id = $1",
+    )
+    .bind(agent)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let b = bearer(&r.tok);
+    let rid = r.rep.to_string();
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            "/v1/runner/preview-streams/open",
+            &[("authorization", &b), ("x-aurora-replica", &rid)],
+            Some(json!({"grant": g.expose(), "kind": "files"})),
+        )
+        .await;
+    assert_eq!((s.as_u16(), code(&v)), (423, "frozen"), "{v}");
+}
+
 /// Audit rows carry paths and sizes, never contents; a canary written and read back appears in
 /// no audit row and no request-log row.
 #[tokio::test]

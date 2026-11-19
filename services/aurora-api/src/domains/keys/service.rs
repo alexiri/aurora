@@ -9,15 +9,14 @@ use uuid::Uuid;
 
 /// Validated `(name, expires_at)`.
 pub fn validate(req: CreateKeyRequest) -> Result<(String, Option<DateTime<Utc>>), ApiError> {
-    let name = req.name.trim().to_owned();
     let mut errs = Vec::new();
-    let n = name.chars().count();
-    if !(1..=80).contains(&n) || name.chars().any(char::is_control) {
-        errs.push(FieldError::new(
-            "/name",
-            "must be 1-80 characters without control characters",
-        ));
-    }
+    let name = match aurora_core::names::clean(&req.name, 80) {
+        Ok(n) => n,
+        Err(e) => {
+            errs.push(FieldError::new("/name", e.to_string()));
+            String::new()
+        }
+    };
     if req.expires_at.is_some_and(|t| t <= Utc::now()) {
         errs.push(FieldError::new("/expires_at", "must be in the future"));
     }

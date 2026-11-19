@@ -34,23 +34,15 @@ pub(super) async fn visible_agent(
     let row = agents::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    let ws = c.workspace(s, row.workspace_id).await?;
-    if !ws.can_use() {
-        return Err(ApiError::forbidden("Workspace access required."));
-    }
+    // Membership is the check: `c.workspace` is 404 for a non-member or inactive member.
+    c.workspace(s, row.workspace_id).await?;
     Ok(row)
 }
 
-/// Workspace skills: `can_use` reads (404 invisible), `can_own` writes (403 for a member).
+/// Workspace skills: membership reads (404 invisible), `can_own` writes (403 for a member).
 async fn workspace_auth(c: &Caller, s: &AppState, ws: Uuid, write: bool) -> Result<(), ApiError> {
     let a = c.workspace(s, ws).await?;
-    if write {
-        require_own(&a)
-    } else if a.can_use() {
-        Ok(())
-    } else {
-        Err(ApiError::forbidden("Workspace access required."))
-    }
+    if write { require_own(&a) } else { Ok(()) }
 }
 
 /// Agent skills follow the agent's workspace; workspace skills: `can_use` reads, `can_own`

@@ -32,22 +32,10 @@ fn slug_taken() -> ApiError {
     ApiError::conflict("slug_taken", "That slug is already in use.")
 }
 
-/// Trimmed name, 1-80 chars, no control characters.
+/// Trimmed name, 1-80 chars, no control or invisible formatting characters
+/// (`aurora_core::names`, FIX-181 F6).
 pub fn validate_name(path: &str, s: &str) -> Result<String, ApiError> {
-    let t = s.trim();
-    let n = t.chars().count();
-    if n == 0 || n > 80 {
-        return Err(bad(path, "must be 1 to 80 characters"));
-    }
-    if t.chars()
-        .any(|c| c.is_control() || aurora_core::sanitize::is_stripped(c))
-    {
-        return Err(bad(
-            path,
-            "must not contain control or invisible formatting characters",
-        ));
-    }
-    Ok(t.to_owned())
+    aurora_core::names::clean(s, 80).map_err(|e| bad(path, &e.to_string()))
 }
 
 /// Lowercase, non-`[a-z0-9]` -> `-`, collapsed and trimmed; at most `max` chars.
