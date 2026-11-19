@@ -308,10 +308,15 @@ function readRawReturn(): string | null {
     return null;
   }
 }
-function parseReturn(raw: string | null): ReturnTo | null {
+/** An internal path only: starts with one "/", no scheme, no protocol-relative "//", no backslash. */
+export function isInternalPath(href: string): boolean {
+  return href.startsWith("/") && !href.startsWith("//") && !href.includes("\\") && !/^[a-z][a-z0-9+.-]*:/i.test(href);
+}
+
+export function parseReturn(raw: string | null): ReturnTo | null {
   try {
     const v: unknown = raw ? JSON.parse(raw) : null;
-    if (v && typeof v === "object" && "href" in v && "name" in v && typeof v.href === "string" && typeof v.name === "string") {
+    if (v && typeof v === "object" && "href" in v && "name" in v && typeof v.href === "string" && typeof v.name === "string" && isInternalPath(v.href)) {
       return { href: v.href, name: v.name };
     }
   } catch {

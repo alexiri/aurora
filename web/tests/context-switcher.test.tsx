@@ -250,6 +250,13 @@ describe("Administration rail", () => {
     expect(footer.some((a) => a.getAttribute("aria-current") === "page")).toBe(true);
   });
 
+  it.each(["javascript:alert(1)", "//evil.example/x", "https://evil.example/", "/\\evil"])("ignores a remembered href that is not an internal path: %s", async (href) => {
+    window.sessionStorage.setItem("aurora.admin-return", JSON.stringify({ href, name: "Evil" }));
+    render("/admin", {}, { admin: true, usersCount: 2 });
+    const back = await screen.findByRole("link", { name: "Back to Users" });
+    expect(back).toHaveAttribute("href", "/o/users/w/bob");
+  });
+
   it("without a remembered place goes back to the first workspace", async () => {
     render("/admin", {}, { admin: true, usersCount: 2 });
     const back = await screen.findByRole("link", { name: "Back to Users" });
