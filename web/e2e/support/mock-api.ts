@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 
@@ -253,8 +253,10 @@ export async function mockApi(
     }
     const icon = p.match(/^\/v1\/apps\/([^/]+)\/icon$/);
     if (icon) {
-      const file = url.searchParams.get("variant") === "dark" ? "icon-dark.png" : "icon.png";
-      return route.fulfill({ status: 200, contentType: "image/png", body: readFileSync(join(BUILTIN, icon[1], "assets", file)) });
+      const file = join(BUILTIN, icon[1], "assets", url.searchParams.get("variant") === "dark" ? "icon-dark.png" : "icon.png");
+      // An uploaded app (no built-in folder) has no icon file here: the API's 404, which the page draws as initials.
+      if (!existsSync(file)) return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+      return route.fulfill({ status: 200, contentType: "image/png", body: readFileSync(file) });
     }
     if (p === "/v1/me") {
       return json({ user, memberships: [{ org, status: "active", workspaces: [{ ...ws, personal: false }] }], default_org_id: id(1), client_address: "203.0.113.7" });
@@ -564,7 +566,7 @@ export async function mockApi(
       const pkg = PACKAGES.find((x) => x.id === p.split("/")[4]) ?? PACKAGES[3];
       return json({
         id: id(70), package_id: pkg.id, version: "1.0.0", contract: 1, digest: "sha256:0000", publisher: "aurora", source: "builtin", status: "approved",
-        created_at: now, signer: { kind: "builtin", name: "Aurora" },
+        origin: "aurora", summary: null, reaches: ["api.github.com"], reaches_more: 0, created_at: now, signer: { kind: "builtin", name: "Aurora" },
         apps: [{ app_id: pkg.id, name: pkg.name, ...(pkg.id === "github" ? { library_host: "api.github.com" } : {}) }], host_claims: [], violations: [], widenings: [], impact: null,
         permissions: { hooks: [], context: [], egress: { "api.github.com": ["GET"] } },
       });
@@ -772,8 +774,34 @@ export async function mockApi(
       }
       return json({ section, title: section, description: "", generation: 1, updated_at: now, updated_by_label: null, extra: null, settings: [] });
     }
+    // (P5-REFINE-16, C-1080/C-1082) The workspace's attention feed and the rail's counts, from the same fixtures: the two
+    // pending approvals and the Linear account whose sign-in expired. Approvals' part of the count is 2, the whole 3.
+    if (/^\/v1\/workspaces\/[^/]+\/attention$/.test(p)) {
+      const since = now;
+      const row = (over: Record<string, unknown>) => ({
+        level: "workspace", actors: [], actors_total: 0, reason: null, own: false, can_decline: false, state: "open", closed_at: null, message: null,
+        closed_by_role: null, closed_by: null, since, ...over,
+      });
+      const base = "/o/acme/w/main";
+      return json({
+        count: 3,
+        items: [
+          row({ id: `approval:${approval.id}`, kind: "approval", topic: "approvals", subject_id: approval.id, title: "Daneel is waiting for your approval", detail: "merge a pull request", href: `${base}/approvals`, decision: true, action: { label: "Review", href: `${base}/approvals` } }),
+          row({ id: `approval:${parkedApproval.id}`, kind: "approval", topic: "approvals", subject_id: parkedApproval.id, title: "Daneel is waiting for your approval", detail: "delete a repository", href: `${base}/approvals`, decision: true, action: { label: "Review", href: `${base}/approvals` } }),
+          row({ id: `broken_account:${id(41)}`, kind: "broken_account", topic: "accounts", subject_id: id(41), title: "Product team needs you", detail: "Sign-in expired", href: `${base}/apps?tab=accounts`, decision: false, action: { label: "Sign in again", href: `${base}/apps?tab=accounts&reconnect=${id(41)}` } }),
+        ],
+      });
+    }
+    if (p === "/v1/attention/counts") return json({ workspace: { workspace_id: id(2), count: 3, topics: { approvals: 2, accounts: 1 } } });
     if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval, parkedApproval] : [], next_cursor: null });
     if (p.endsWith("/workspaces")) return json({ items: [ws] });
+    // (P5-REFINE-17 brief-6) The organization's agents are `OrgAgent` rows: their workspace, kind and header state.
+    if (/^\/v1\/orgs\/[^/]+\/agents$/.test(p)) {
+      return json({
+        items: [{ id: agent.id, name: agent.name, handle: agent.handle, kind: agent.kind, state: "ready", last_active_at: now, workspace: { id: ws.id, slug: ws.slug, name: ws.name, personal_of: null } }],
+        next_cursor: null,
+      });
+    }
     if (p.endsWith("/agents")) return json({ items: [agent] });
     // P4-PRV-1: the agent's preview shares (the Previews tab; the sandbox view marks port 3000 shared).
     if (/^\/v1\/agents\/[^/]+\/previews$/.test(p)) return json({ shares: previewShares });
