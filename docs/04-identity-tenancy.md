@@ -556,6 +556,31 @@ and everything they own. Restoring sets the row `active` again. Audit:
 source-scan guard (`aurora-db` `membership_queries`) lists every other raw reader of the
 binding tables.
 
+**The turn's person** (phase 5, P5-PERSON, D-402, C-1052, SEC-139). The person a turn runs
+for is its person speaker (doors `web`, `api`, `thread`), or on a schedule turn the
+schedule's creator; webhook, watch, peer, eval and system turns and creator-less schedules
+have none. They count only while not disabled, an active org member **and** holding
+`can_use` on the agent's workspace (so a workspace suspension, SEC-138, ends it). One
+function (`domains/people/turn_person.rs`) serves the turn context block, `send_message`
+to `"me"` and calendar invitations (SEC-108). Three rules follow from it:
+- **The block names no one but the turn's person.** The turn context block (`10 §Turn
+  context`, C-1053) is built at dispatch from server rows only (the person's account, the
+  schedule, the link, the binding), never from the message text or anything the agent
+  wrote, and never stored. Its `Working for` line exists only when there is a person, and
+  is that person's own display name, verified e-mail and cached handle; a thread author
+  without a link is a `Speaker` label only. Every value is one clamped line with `<`/`>`
+  removed, so no name can close the block or forge another line.
+- **No e-mail in a group space.** The e-mail is left out whenever the turn's conversation
+  is a group space (the conversation's kind, or its door's/latest thread link, is
+  `group`), because other readers of that space may not be workspace members. It is also
+  left out while unverified.
+- **`me` reaches only that person.** `send_message` `to: "me"` resolves to the turn's
+  person's own `user_links` row on the chosen integration and nothing else; with no person
+  it is refused (`no_person`), with no link `not_linked`. The usual reach check and the
+  `ask` approval are skipped for it (the person is the one the turn runs for and holds
+  `can_use`); `proactive_messaging = off` still refuses outside the person's own DM thread.
+  Every other `to` form keeps reach and approval.
+
 **`can_approve`** (phase 2, RFE-012, D-55): `can_approve(user, workspace)` is the
 same with workspace role `owner` **or** `approver` (or org owner/admin). The
 hierarchy is `can_own ⊂ can_approve ⊂ can_use`. A plain `member` chats with the

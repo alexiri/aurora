@@ -761,7 +761,17 @@ Available to an agent only while it has an `active` presence.
   name; never a display name); otherwise nothing is sent and the refusal lists the
   pinned candidates' aliases to retry with (no candidates: one text, the same
   whether the person exists unreachable or not at all). `read_conversation`'s
-  `target` resolves the same way. The result carries `recipient {alias?, kind,
+  `target` resolves the same way. (phase 5, P5-PERSON, D-402(c), C-1055, SEC-139)
+  **`to: "me"`** (any case) is the turn's person (`04 §The turn's person`: the person
+  speaker, or a schedule's creator) in a direct message on the platform chosen by the
+  rules above, through their own `user_links` row: no person → `no_person`; no link on
+  that integration → `not_linked` ("<name> has no linked <Platform> account; they can
+  link it under Account."); the person's own DM thread of this conversation → the
+  own-thread path; otherwise **sent, with no reach check and no approval, unless
+  `proactive_messaging` is `off`** (refused). Only this person is reachable this way.
+  `user.lookup` results also refresh the handle cache (`user_links.handle`) of linked
+  platform users, which the turn context block shows (`10 §Turn context`).
+  The result carries `recipient {alias?, kind,
   label}`. Reach is re-checked at send. Messages to
   the current conversation's own thread are always allowed. Otherwise the
   agent's `proactive_messaging`: `off` → refused; `ask` → **action approval**
