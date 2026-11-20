@@ -750,7 +750,37 @@ async fn read_all(sftp: &Sftp, full: &str, size: u64) -> Result<Vec<u8>, Fail> {
     r.map(|()| out)
 }
 
-pub async fn text(s: &AppState, c: &Caller, agent: Uuid, path: &str) -> Result<FileText, ApiError> {
+/// (P5-REFINE-4, C-1060) The start of a big text file shown by `preview=1`: 256 KiB, cut at the
+/// last line end.
+pub(crate) const PREVIEW_HEAD: u64 = 256 * 1024;
+
+/// The preview of a file's first bytes: cut at the last `\n` (or, with no line end, at the last
+/// whole UTF-8 character). `None` when the head is binary (NUL) or not UTF-8.
+pub(crate) fn preview_cut(head: &[u8]) -> Result<String, &'static str> {
+    if head.contains(&0) {
+        return Err("binary");
+    }
+    let cut = match head.iter().rposition(|b| *b == b'\n') {
+        Some(i) => &head[..=i],
+        None => head,
+    };
+    match std::str::from_utf8(cut) {
+        Ok(s) => Ok(s.to_owned()),
+        // A character split by the cut (no line end in the head): keep the whole ones.
+        Err(e) if e.error_len().is_none() => {
+            Ok(String::from_utf8_lossy(&cut[..e.valid_up_to()]).into_owned())
+        }
+        Err(_) => Err("not_utf8"),
+    }
+}
+
+pub async fn text(
+    s: &AppState,
+    c: &Caller,
+    agent: Uuid,
+    path: &str,
+    preview: bool,
+) -> Result<FileText, ApiError> {
     let path = pre(path)?;
     let path = path.as_str();
     let a = authorize(s, c, agent).await?;
@@ -767,6 +797,27 @@ pub async fn text(s: &AppState, c: &Caller, agent: Uuid, path: &str) -> Result<F
     if st.kind != "file" {
         return Err(not_editable("binary"));
     }
+    if st.size > FILES_EDIT_MAX && preview {
+        // (C-1060) The first part of a big text file, never saveable (no etag).
+        let head = read_all(&sftp, &full, PREVIEW_HEAD).await.f()?;
+        let content = preview_cut(&head).map_err(not_editable)?;
+        audit(
+            s,
+            c,
+            &a.agent,
+            "agent.files.download",
+            json!({ "path": clip(&full), "bytes": head.len(), "via": "preview" }),
+        );
+        return Ok(FileText {
+            path: full,
+            etag: None,
+            size: st.size,
+            modified_at: time_of(st.mtime),
+            line_ending: line_ending_of(&content).into(),
+            content,
+            truncated: true,
+        });
+    }
     if st.size > FILES_EDIT_MAX {
         return Err(not_editable("too_large"));
     }
@@ -775,10 +826,7 @@ pub async fn text(s: &AppState, c: &Caller, agent: Uuid, path: &str) -> Result<F
         return Err(not_editable("binary"));
     }
     let content = String::from_utf8(bytes.clone()).map_err(|_| not_editable("not_utf8"))?;
-    let line_ending = match content.find('\n') {
-        Some(i) if i > 0 && content.as_bytes()[i - 1] == b'\r' => "crlf",
-        _ => "lf",
-    };
+    let line_ending = line_ending_of(&content);
     audit(
         s,
         c,
@@ -788,12 +836,21 @@ pub async fn text(s: &AppState, c: &Caller, agent: Uuid, path: &str) -> Result<F
     );
     Ok(FileText {
         path: full,
-        etag: etag_of(&bytes),
+        etag: Some(etag_of(&bytes)),
         size: bytes.len() as u64,
         modified_at: time_of(st.mtime),
         line_ending: line_ending.into(),
         content,
+        truncated: false,
     })
+}
+
+/// `crlf` when the first line ends with `\r\n`, else `lf`.
+fn line_ending_of(content: &str) -> &'static str {
+    match content.find('\n') {
+        Some(i) if i > 0 && content.as_bytes()[i - 1] == b'\r' => "crlf",
+        _ => "lf",
+    }
 }
 
 /// What the content GET needs to stream: the headers' inputs and the body.
@@ -1329,4 +1386,29 @@ pub async fn delete(
         json!({ "path": clip(&full), "deleted": deleted }),
     );
     Ok(deleted)
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::preview_cut;
+
+    #[test]
+    fn cuts_at_the_last_line_end() {
+        assert_eq!(preview_cut(b"a,b\n1,2\n3,").unwrap(), "a,b\n1,2\n");
+        assert_eq!(preview_cut(b"one\r\ntwo").unwrap(), "one\r\n");
+    }
+
+    #[test]
+    fn without_a_line_end_keeps_whole_characters() {
+        // "é" is two bytes; the head ends inside the second one.
+        let head = "abcé".as_bytes();
+        assert_eq!(preview_cut(&head[..head.len() - 1]).unwrap(), "abc");
+        assert_eq!(preview_cut(head).unwrap(), "abcé");
+    }
+
+    #[test]
+    fn binary_and_invalid_utf8_are_refused() {
+        assert_eq!(preview_cut(b"ab\0cd\n"), Err("binary"));
+        assert_eq!(preview_cut(b"ab\xffcd\n"), Err("not_utf8"));
+    }
 }

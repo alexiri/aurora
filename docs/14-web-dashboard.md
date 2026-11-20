@@ -505,6 +505,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   starting or running; errors through the shared notice) and says "Sleeps after
   n minutes of quiet" in words from `SandboxView.idle_stop_after_secs`, nothing
   when it is null.
+  (P5-REFINE-4, D-412, SEC-141) The engine's details (image, runner, pod events,
+  start-attempt and start-log detail) are instance-admin only: the API returns them
+  to nobody else, so the Computer page shows everyone else the computer in words
+  (`SandboxView.computer`); the UI is P5-REFINE-15's.
 - **Agent page (phase 5)** (P5-AGENT-2, D-200, D-201; design: the "Agent page
   redesign" canvas, boards "Chosen · Rail expanded", "Chosen · Rail collapsed"
   and "A · Phone"; its "New conversation" button is not part of the design).

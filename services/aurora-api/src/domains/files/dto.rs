@@ -39,12 +39,37 @@ pub struct FileList {
 pub struct FileText {
     pub path: String,
     pub content: String,
-    /// `"sha256:" + hex(SHA-256 of the bytes)`.
-    pub etag: String,
+    /// `"sha256:" + hex(SHA-256 of the bytes)`. Null only for a preview of a file over the editor
+    /// limit (`truncated: true`, P5-REFINE-4, C-1060): such a preview can never be saved.
+    pub etag: Option<String>,
+    /// The whole file's size (also when `content` is a preview of its start).
     pub size: u64,
     pub modified_at: Option<DateTime<Utc>>,
     /// `lf` | `crlf`.
     pub line_ending: String,
+    /// (P5-REFINE-4, C-1060) `content` is the file's first 256 KiB cut at a line end
+    /// (`preview=1` on a file over 1 MiB); false for the whole file.
+    pub truncated: bool,
+}
+
+/// `GET …/files/text` (C-898; `preview`, C-1060).
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct TextQuery {
+    /// Absolute path under `/workspace`.
+    pub path: Option<String>,
+    /// (P5-REFINE-4, C-1060) `1`/`true`: a text file over the editor limit (1 MiB) answers its
+    /// first 256 KiB (`truncated: true`, no `etag`) instead of `422 file_not_editable`.
+    #[param(inline)]
+    pub preview: Option<PreviewFlag>,
+}
+
+/// `preview=1` / `preview=true` (and `0` / `false`).
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+pub enum PreviewFlag {
+    #[serde(rename = "1", alias = "true")]
+    On,
+    #[serde(rename = "0", alias = "false")]
+    Off,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
