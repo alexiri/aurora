@@ -3,6 +3,7 @@
 //! ([`service::reevaluate`], called after the commit of whatever can change an app's readiness), withdrawn
 //! by the asker or declined by an owner or admin.
 pub mod dto;
+pub mod level;
 mod routes;
 pub mod service;
 
