@@ -133,15 +133,20 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
         const form = page.getByRole("form", { name: "New schedule" });
         await form.getByLabel("Name").fill("Anniversary");
         await form.getByLabel("Prompt").fill("Remind me.");
-        await form.getByRole("radio", { name: "Every year" }).check();
+        // The Segmented radios are sr-only under their labels: click the label people see, then check the state.
+        const when = form.getByRole("radiogroup", { name: "When" });
+        await when.getByText("Every year", { exact: true }).click();
+        await expect(form.getByRole("radio", { name: "Every year" })).toBeChecked();
         await form.getByRole("combobox", { name: "Day of the month" }).selectOption("27");
-        await form.getByRole("combobox", { name: "Month" }).selectOption("11");
+        await form.getByRole("combobox", { name: "Month", exact: true }).selectOption("11");
         await form.getByRole("combobox", { name: "Time of day" }).selectOption("10:00");
-        await expect(form.getByTestId("schedule-summary")).toContainText("Every year on 27 November at 10:00 · next: 27 Nov 2027 (Zurich time)");
+        // A new schedule starts in the workspace's zone (the shared mock's workspace is UTC; the Zurich rows are saved ones).
+        await expect(form.getByTestId("schedule-summary")).toContainText("Every year on 27 November at 10:00 · next: 27 Nov 2027 (UTC time)");
         await check(page);
-        await form.getByRole("radio", { name: "Once" }).check();
+        await when.getByText("Once", { exact: true }).click();
+        await expect(form.getByRole("radio", { name: "Once" })).toBeChecked();
         await expect(form.getByLabel("Date")).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
-        await expect(form.getByTestId("schedule-summary")).toContainText(/^Once, on \w{3} \d{1,2} \w{3} at 09:00 \(Zurich time\)\./);
+        await expect(form.getByTestId("schedule-summary")).toContainText(/^Once, on \w{3} \d{1,2} \w{3} at 10:00 \(UTC time\)\./); // the time picked for Every year carries over
         await form.getByLabel("Date").fill("2020-01-01");
         await expect(form.getByText("Pick a time in the future")).toBeVisible();
         await expect(form.getByRole("button", { name: "Create schedule" })).toBeDisabled();
