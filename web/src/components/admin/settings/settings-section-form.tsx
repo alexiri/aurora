@@ -724,7 +724,7 @@ function KeyedList({
           {helm.map((e) => (
             <ListRow key={`h-${e.id}`}>
               <span className="font-medium text-ink">{e.id}</span>
-              <LockPill owner="Set in Helm" />
+              <LockPill owner="Set by the installation" />
             </ListRow>
           ))}
           {own.map((e, i) => (

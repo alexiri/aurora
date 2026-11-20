@@ -131,7 +131,7 @@ export function SettingField({
       <div className="min-w-0 space-y-2">
         {locked ? (
           <div className="space-y-1">
-            <LockPill owner="Set in Helm" />
+            <LockPill owner="Set by the installation" />
             <div className="break-words text-sm text-ink" data-testid={`${id}-locked-value`}>
               {lockedValue}
             </div>

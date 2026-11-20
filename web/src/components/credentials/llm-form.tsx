@@ -226,7 +226,7 @@ export function LlmKeyForm({
         </Field>
         <Field
           id="l-endpoint"
-          label="Provider endpoint"
+          label="Which service is this key for?"
           hint={endpoint ? `Allowed key scopes: ${scopes.length ? scopes.join(", ") : "any"}.${harnessLine ? ` ${harnessLine}.` : ""}` : undefined}
           error={scopeOk ? undefined : `Your organization does not permit ${scopeName}-level keys for this endpoint.`}
         >
