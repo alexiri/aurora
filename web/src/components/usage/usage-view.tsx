@@ -9,7 +9,7 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { BarChart } from "@/components/ui/bar-chart";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { DateField } from "@/components/ui/date-field";
-import { Field, inputClass } from "@/components/ui/field";
+import { Field } from "@/components/ui/field";
 import { FilterChip } from "@/components/ui/filter-chip";
 import { Segmented } from "@/components/ui/segmented";
 import { StatTile } from "@/components/ui/stat-tile";
@@ -33,7 +33,6 @@ import {
   type Measure,
   type RangeId,
 } from "@/lib/usage-format";
-import { cn } from "@/lib/utils";
 
 export type UsageLevel =
   | { kind: "workspace"; wsId: string; /** `/o/<org>/w/<ws>` */ base: string }

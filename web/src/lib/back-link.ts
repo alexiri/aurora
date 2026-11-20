@@ -8,7 +8,6 @@ import { accountRoutes } from "@/lib/routes";
 export function safeFrom(raw: string | null | undefined): string | null {
   if (!raw || !raw.startsWith("/o/")) return null;
   if (raw.startsWith("//") || raw.includes("\\") || raw.includes("://")) return null;
-  // eslint-disable-next-line no-control-regex -- control characters are the point
   if (/[\u0000-\u001f\u007f]/.test(raw)) return null;
   // No dot segments: `/o/../..//evil.test` must not be able to walk out of `/o/`.
   if (/(^|\/)\.\.?(\/|$)/.test(raw.split(/[?#]/)[0]!)) return null;

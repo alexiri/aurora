@@ -1,26 +1,46 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { CheckIcon } from "@/components/ui/icons";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { useCopy } from "@/lib/use-copy";
 
 /**
- * (P5-REFINE-2) The copy state of a one-time secret: `copied` becomes true with the first successful copy and stays true,
- * `state` is the button's own ("copied" for two seconds, "failed" when the browser refused).
+ * (P5-REFINE-2) The copy state of a one-time secret: `used` becomes true with the first successful copy and stays true,
+ * `state` is the button's own ("copied" for two seconds, "failed" when the browser refused). The state lives with the
+ * component that shows the secret, so it starts over with the next secret.
  */
 export function useSecretCopy(secret: string | null) {
-  const { state, copy } = useCopy();
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const [used, setUsed] = useState(false);
-  useEffect(() => {
-    if (state === "copied") setUsed(true);
-  }, [state]);
-  useEffect(() => {
-    if (secret === null) setUsed(false);
-  }, [secret]);
-  return { used, state, copy: () => secret !== null && copy(secret) };
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+  function copy() {
+    if (secret === null) return;
+    let write: Promise<void> | undefined;
+    try {
+      write = navigator.clipboard?.writeText(secret);
+    } catch {
+      write = undefined;
+    }
+    if (!write) return setState("failed");
+    write.then(
+      () => {
+        setUsed(true);
+        setState("copied");
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => setState("idle"), 2000);
+      },
+      () => setState("failed"),
+    );
+  }
+  return { used, state, copy };
 }
 
 /**
@@ -70,12 +90,12 @@ export function SecretBox({
 }
 
 /** "You haven't copied it. Close anyway?" with **Copy** and **Close anyway**. */
-export function CloseAnywayConfirm({ onCopy, onClose, onKeep }: { onCopy: () => void; onClose: () => void; onKeep?: () => void }) {
+export function CloseAnywayConfirm({ onCopy, onClose }: { onCopy: () => void; onClose: () => void }) {
   return (
     <div role="alert" className="space-y-2 rounded-control border border-pending-line bg-pending-panel p-3 text-sm text-pending-ink">
       <p className="font-medium">You haven&apos;t copied it. Close anyway?</p>
       <div className="flex flex-wrap gap-2">
-        <Button type="button" size="sm" onClick={() => (onKeep?.(), onCopy())}>
+        <Button type="button" size="sm" onClick={onCopy}>
           Copy
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={onClose}>
@@ -94,12 +114,7 @@ export function CloseAnywayConfirm({ onCopy, onClose, onKeep }: { onCopy: () => 
  */
 export function SecretOnce({
   secret,
-  title,
-  description,
-  children,
-  onClose,
-  copyLabel,
-  doneLabel = "I have saved it",
+  ...rest
 }: {
   secret: string | null;
   title: string;
@@ -109,31 +124,43 @@ export function SecretOnce({
   copyLabel?: string;
   doneLabel?: string;
 }) {
+  // Mounted only while there is a secret, so copy and ask state start over with every new one.
+  return secret === null ? null : <OpenSecret secret={secret} {...rest} />;
+}
+
+function OpenSecret({
+  secret,
+  title,
+  description,
+  children,
+  onClose,
+  copyLabel,
+  doneLabel = "I have saved it",
+}: {
+  secret: string;
+  title: string;
+  description?: string;
+  children?: ReactNode;
+  onClose: () => void;
+  copyLabel?: string;
+  doneLabel?: string;
+}) {
   const { used, state, copy } = useSecretCopy(secret);
   const [asking, setAsking] = useState(false);
-  useEffect(() => {
-    if (secret === null) setAsking(false);
-  }, [secret]);
-  const close = () => {
-    setAsking(false);
-    onClose();
-  };
-  const tryClose = () => (used ? close() : setAsking(true));
+  const tryClose = () => (used ? onClose() : setAsking(true));
   return (
-    <Dialog open={secret !== null} onOpenChange={(open) => (open ? undefined : tryClose())}>
+    <Dialog open onOpenChange={(open) => (open ? undefined : tryClose())}>
       <DialogContent title={title} description={description}>
-        {secret !== null ? (
-          <div className="space-y-4">
-            <SecretBox secret={secret} used={used} state={state} onCopy={copy} copyLabel={copyLabel} />
-            {children}
-            {asking && !used ? <CloseAnywayConfirm onCopy={copy} onClose={close} /> : null}
-            <div className="flex justify-end">
-              <Button type="button" onClick={tryClose}>
-                {doneLabel}
-              </Button>
-            </div>
+        <div className="space-y-4">
+          <SecretBox secret={secret} used={used} state={state} onCopy={copy} copyLabel={copyLabel} />
+          {children}
+          {asking && !used ? <CloseAnywayConfirm onCopy={copy} onClose={onClose} /> : null}
+          <div className="flex justify-end">
+            <Button type="button" onClick={tryClose}>
+              {doneLabel}
+            </Button>
           </div>
-        ) : null}
+        </div>
       </DialogContent>
     </Dialog>
   );

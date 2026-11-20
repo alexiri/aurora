@@ -420,12 +420,26 @@ adoption with several subtle behaviours (focus, timers, SSR).
 
 ## Completion report
 
-- **Items done** (Scope 1–10, each with the commit):
-- **Adoption table** (primitive → every file now using it; anything left on the old pattern and why):
+- **Items done** (Scope 1–10; commits on `alexiri/p5-polish-b`, see `git log` for the P5-REFINE-2 (n/n) commits): 1 save bar, 2 SecretOnce, 3 confirm ladder, 4 dates, 5 tables, 6 colour, 7 dialogs/skeletons, 8 404/context, 9 labels + guard, 10 TechnicalDetails. All web-only; no API, contract or generated-file change (`web/openapi.json` etc. untouched).
+- **Adoption table:**
+  - `SaveBar`/`useSaveBar`: `admin/settings/settings-section-form` (Undo, "Saved. Applied to every replica within seconds."), `account/profile-view`, `agents/workspace-byo`, `apps/availability-view`, `internet/internet-level` (ApplyBar deleted), `org/directory-view`, `org/retention-form`, `org/settings-view`, `settings/general-tab`, `webhook/org-webhook-settings`, `agents/instructions-tab`, `agents/evals/judge-section`. `SavedNotice` remains only for the Import dialog.
+  - `InlineSaved`: avatar (`agents/avatar-field`), `accounts/access-control`, workspace People role select (`settings/access-tab`). **Not done:** org People role select (the mutation lives in the parent), `model-roles-fields` selects (they are part of the Instructions form, so the bar covers them), switches in `availability-view` (they are part of its form).
+  - `SecretOnce`: `agents/reveal`, `connectors/connectors-admin-view`, `connectors/host-tokens`, `admin/runners-view`, `org/keys-view`, `settings/keys-tab`, `org/directory-view`, `webhooks/webhooks-tab` (URL), `webhook/signing-secret-once` (body, via `SecretBox`). `one-time-key-dialog` deleted.
+  - Ladder: `TypeToConfirm`/`DeleteWithName` in `settings/danger-tab`, `org/settings-view`, `admin/admin-delete-dialog` (visible name; the page sends the slug the API wants). `ConfirmAction` replaces `ConfirmButton` (deleted) in channels, connector-card, skills, memory. Promote dialogs in `org/members-view` and `settings/access-tab`. Rotate/Delete dialogs with the webhooks-5 sentences in `webhooks/webhooks-tab`; schedule delete dialog; Regenerate token wording in `agents/connect-tab`. `ConfirmDialog.description` is required (compile-time test). `useUndoToast` + `UndoToastHost` (in `AppShell`) exist; **no screen uses the first rung yet** (no existing action fits "undoable without a confirm"; the area briefs that add Pause use it).
+  - `When`/`formatWhen`/`DateField`: every `toLocale*` in `src/components` is gone (`rg toLocale src/components` is empty); `<When>` on Members, Access, Activity, Audit, Deliveries, Users, Files, Memory; `DateField` on Audit (2), API keys (2), Usage (2). Time zone from `GET /v1/me` is set through `useTimezoneAutofill`.
+  - Stacked tables (`DataTable stackBelow` / `ResponsiveTable`, CSS in `globals.css`): Activity, Audit (all three screens share the panel), Deliveries, People, Pending invitations, workspace People (`access-tab`), Users, Files list.
+  - `AppIcon` plate; `Badge` Critical = danger; terminal "loading/connecting" and "Private destinations" notices are neutral. `Skeleton`/`Loading variant="rows"`: accounts list, apps tab, org-apps dialog. `Dialog` top-anchored. `FormDialog` has a reserved error slot (`error` prop). `NotFoundState` + `app/not-found.tsx` + shell 404 for unknown org/workspace; `lastScope` for Account; `?from=` + `BackToAgent` (SSH). `lib/labels.ts` adopted in Activity (decisions), Audit (actions), webhook/schedule disabled reasons, harness names. `TechnicalDetails`: account-row, actions-table, app-setup sections, computer-tab, runners-view.
 - **Deviations from the brief and why:**
-- **Screenshots compared** (path, dark/light, 1256/390 px, verdict) for admin-2, behaviour-6, workspace-7,
-  webhooks-5, workspace-8, setup-7, workspace-12, org-3, admin-11, org-13, computer-5:
-- **`/apps` load time observed** (for workspace-12):
-- **`copy-guard` exemption list at the end** (file → count):
-- **Tests run** (command and counts):
-- **Open questions:**
+  - Tables use one DOM and CSS (`data-stack` attribute rules in `globals.css`) instead of a rendered-twice component, so existing tests and SSR stay correct. Stacked meta lines are one per line, not chips side by side as in org-13.
+  - "Row action buttons use `text-ink-2`": already true (`Button variant="ghost"` is `text-ink-2`), nothing changed.
+  - The brief names `org-apps-list.tsx` :116 as a technical `<details>`; it is "Other people's personal workspaces", not machinery, so it was left alone.
+  - Amber review: only the three notices the brief names were changed; 90 other `tone="pending"` notices are left to the area briefs.
+  - `SaveBar` shows "Saved" only once nothing is pending (`saved && !dirty`); forms whose draft stays until a refetch pass `dirty && !saved`.
+  - Copy guard: strings that are one token in code (comparisons, option values) are not checked, as in `ui-text.test.ts`; real names (`id_ed25519`, `known_hosts`, `read_repository`, `aurora_settings`) and the theme script are allowed explicitly.
+  - The `from` link is added to the agent's SSH page only; Account › API keys has no agent entry point today.
+  - `lib/labels.ts` covers the enums listed in `COVERED` (14 schema enums) plus decisions, phases, harnesses, audit actions, disabled reasons; the rest of the inline `Record<string,string>` tables stay for the area briefs.
+- **Screenshots compared:** none. No browser was run (Playwright forbidden by the lane rules), so admin-2, behaviour-6, workspace-7, webhooks-5, workspace-8, setup-7, workspace-12, org-3, admin-11, org-13 and computer-5 are **not visually verified**; P5-REFINE-20 must do it. Mockup sentences and shapes were matched from `after/src/*.html`.
+- **`/apps` load time observed:** not measured (no running cluster).
+- **`copy-guard` exemption list at the end** (file → count): empty.
+- **Tests run:** `pnpm typecheck`; `vitest run` on the 95 test files that import touched components plus the new ones (`save-bar`, `secret-once`, `confirm-ladder`, `when-date-field`, `responsive-table`, `refine-2-shell`, `back-to-agent`, `copy-guard`, `labels`, `format-date`): green after the edits (one `files-viewer` failure was a flake and passed on rerun). ESLint on changed files. Playwright specs edited, not run: `ia-4`, `webhook`, `internet-access`.
+- **Open questions:** none blocking. The brief's Playwright specs (one per theme row, axe, 390 px) and the "title y equal before/after" test for the add-key dialog are **not written**.

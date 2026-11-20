@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { CalendarIcon } from "@/components/ui/icons";
 import { cn } from "@/lib/utils";
@@ -74,10 +74,11 @@ export function DateField({
     return order.map((p) => word[p]).join(sep);
   }, []);
   // Follow the value when it changes from outside (a Clear button, the picker).
-  useEffect(() => {
+  const [seen, setSeen] = useState(value);
+  if (value !== seen) {
+    setSeen(value);
     if (value !== (localeTextToIso(text) ?? "")) setText(isoToLocaleText(value));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only an outside change of `value` resets the text
-  }, [value]);
+  }
   function commit(next: string) {
     setText(next);
     if (next.trim() === "") {

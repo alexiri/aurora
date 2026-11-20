@@ -197,7 +197,7 @@ describe("a workspace's Internet access page", () => {
     const bar = screen.getByRole("region", { name: "Unsaved changes" });
     expect(within(bar).getByText("1 unsaved change")).toBeInTheDocument();
     expect(publishes).toHaveLength(0);
-    fireEvent.click(within(bar).getByRole("button", { name: "Save", exact: true }));
+    fireEvent.click(within(bar).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(publishes).toEqual([{ revision: 4 }]));
     // Applied: the rule is no longer marked and the bar is gone.
     await waitFor(() => expect(screen.queryByText("Not applied yet")).toBeNull());
@@ -297,7 +297,7 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add rule" }));
     const bar = await screen.findByRole("region", { name: "Unsaved changes" });
     await waitFor(() => expect(within(bar).getByText("2 unsaved changes")).toBeInTheDocument());
-    fireEvent.click(within(bar).getByRole("button", { name: "Save", exact: true }));
+    fireEvent.click(within(bar).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(srv.publishes).toHaveLength(1));
     expect(order).toEqual(["governance"]);
     expect(govBody!.revision).toBe(4);
@@ -306,7 +306,7 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     expect(await within(bar).findByText(/The limits were applied\. The rules and defaults were not/)).toBeInTheDocument();
     await waitFor(() => expect(within(bar).getByText(/^1 unsaved change/)).toBeInTheDocument());
     // A retry sends only the rules: the document is not sent again.
-    fireEvent.click(within(bar).getByRole("button", { name: "Save", exact: true }));
+    fireEvent.click(within(bar).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(srv.publishes).toHaveLength(2));
     expect(order).toEqual(["governance"]);
   });
@@ -326,7 +326,7 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show the rule" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add rule" }));
     const bar = await screen.findByRole("region", { name: "Unsaved changes" });
-    fireEvent.click(within(bar).getByRole("button", { name: "Save", exact: true }));
+    fireEvent.click(within(bar).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(order).toEqual(["governance"]));
     expect(await screen.findByText(/Below the minimum/)).toBeInTheDocument();
     expect(order).toEqual(["governance"]);

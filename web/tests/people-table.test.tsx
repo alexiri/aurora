@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { AccessTab, SUSPEND_KEEPS, SUSPEND_STOPS, joinedText } from "@/components/settings/access-tab";
+import { AccessTab, SUSPEND_KEEPS, SUSPEND_STOPS } from "@/components/settings/access-tab";
 import { formatExact, formatWhen } from "@/lib/format-date";
 import { json } from "./support/api";
 import { wrap } from "./support/render";
