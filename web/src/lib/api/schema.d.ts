@@ -8770,6 +8770,15 @@ export interface components {
             /** Format: uuid */
             secret_id: string;
         };
+        /** @description The one real model call made when the judge is saved (C-872). */
+        EvalJudgeTest: {
+            /** @description `rejected` | `unreachable` | `timeout` when failed, else null. Never the provider's text. */
+            reason?: string | null;
+            /** @description `ok` | `failed`. */
+            result: string;
+            /** Format: int64 */
+            took_ms: number;
+        };
         EvalJudgeUsage: {
             /** Format: int64 */
             input_tokens: number;
@@ -8948,6 +8957,7 @@ export interface components {
         EvalSettings: {
             judge?: components["schemas"]["EvalJudge"] | null;
             regression_notify: boolean;
+            test?: components["schemas"]["EvalJudgeTest"] | null;
         };
         EventsPage: {
             items: components["schemas"]["TranscriptEvent"][];
@@ -14303,6 +14313,13 @@ export interface components {
             /** Format: uuid */
             id: string;
             label: string;
+        };
+        StartEvalRun: {
+            /**
+             * @description Run only these questions (1..=20, each a question of the agent); absent = every enabled
+             *     question.
+             */
+            question_ids?: string[] | null;
         };
         /** @description (FIX-029, C-611) One entry of the boot's start log (`sandboxes.start_log`, C-612). */
         StartLogEntry: {
@@ -21903,7 +21920,12 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional; `{}` or no body runs every enabled question */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StartEvalRun"] | null;
+            };
+        };
         responses: {
             202: {
                 headers: {

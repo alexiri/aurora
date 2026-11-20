@@ -8,10 +8,14 @@ import { SizeMeter } from "@/components/memory/size-meter";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Altitude } from "@/components/ui/altitude";
 import { ConfirmAction } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { SwitchField } from "@/components/ui/switch";
+import { ApiError } from "@/lib/api/client";
+import { newSkillName, skillDisplayName } from "@/lib/skill-name";
 import type { BudgetTier } from "@/lib/api/skill-libraries";
 import { AddFromLibrary, LibraryBadge, LibraryManagedNotice, LibrarySkillActions, PendingUpdatesNotice } from "./library";
 import {
@@ -29,7 +33,6 @@ import {
   usePutSkillFile,
   useUpdateSkill,
   useWorkspaceSkills,
-  validateSkillName,
   validateSkillPath,
   TIER_LABEL,
   type FileTreeNode,
@@ -49,7 +52,7 @@ export function TierBadge({ tier }: { tier: SkillTier }) {
  * Editable list + editor for one tier (agent, workspace or organization). `readOnly` is the member view of a
  * workspace tier: the list and every skill open, nothing can be changed (writes are `can_own`, the API enforces it).
  */
-export function SkillsEditor({ scope, readOnly = false, orgId }: { scope: SkillScope; readOnly?: boolean; orgId?: string }) {
+export function SkillsEditor({ scope, readOnly = false, orgId, agentName }: { scope: SkillScope; readOnly?: boolean; orgId?: string; agentName?: string }) {
   const agentList = useAgentSkills(scope.kind === "agent" ? scope.id : "");
   const wsList = useWorkspaceSkills(scope.kind === "workspace" ? scope.id : undefined);
   const orgList = useOrgSkills(scope.kind === "organization" ? scope.id : undefined);
@@ -101,8 +104,8 @@ export function SkillsEditor({ scope, readOnly = false, orgId }: { scope: SkillS
                 className="block w-full min-w-0 overflow-hidden rounded-control px-3 py-2 text-left text-sm text-ink hover:bg-subtle aria-[current=true]:bg-subtle aria-[current=true]:font-semibold"
                 onClick={() => { setSelected(s.id); setCreating(false); }}
               >
-                <span className="font-mono">{s.name}</span>
-                {!s.enabled ? <span className="ml-1 text-xs text-muted">(disabled)</span> : null}
+                <span className="font-medium">{skillDisplayName(s.name)}</span>
+                {!s.enabled ? <span className="ml-1 text-xs text-muted">(off)</span> : null}
                 <span className="block truncate text-xs font-normal text-ink-2">{s.description}</span>
                 {s.source ? (
                   <span className="mt-1 flex flex-wrap gap-1">
@@ -114,9 +117,9 @@ export function SkillsEditor({ scope, readOnly = false, orgId }: { scope: SkillS
           ))}
         </ul>
         <div className="min-w-0">
-          {creating ? <CreateSkill scope={scope} onDone={(id) => { setCreating(false); setSelected(id); }} /> : null}
+          {creating ? <CreateSkill scope={scope} taken={items.map((s) => s.name)} onDone={(id) => { setCreating(false); setSelected(id); }} onCancel={() => setCreating(false)} /> : null}
           {!creating && current ? (
-            <SkillEditor key={`${current.id}:${current.updated_at}`} scope={scope} skill={current} readOnly={readOnly} onDeleted={() => setSelected(null)} />
+            <SkillEditor key={`${current.id}:${current.updated_at}`} scope={scope} skill={current} readOnly={readOnly} agentName={agentName} onDeleted={() => setSelected(null)} />
           ) : null}
           {!creating && !current && items.length > 0 ? <p className="text-sm text-muted">Select a skill to edit it.</p> : null}
         </div>
@@ -125,42 +128,59 @@ export function SkillsEditor({ scope, readOnly = false, orgId }: { scope: SkillS
   );
 }
 
-function CreateSkill({ scope, onDone }: { scope: SkillScope; onDone: (id: string) => void }) {
+/** Who a skill is "on for" in words, by tier. */
+function onFor(scope: SkillScope, agentName?: string): string {
+  if (scope.kind === "agent") return agentName ? `On for ${agentName}` : "On for this agent";
+  return scope.kind === "workspace" ? "On for this workspace's agents" : "On for the organization's agents";
+}
+
+/**
+ * (P5-REFINE-12, behaviour-2) A new skill: a name in words, "Use it when…" and the instructions. The folder name is
+ * Aurora's: made from the Name, unique, never `aurora-…`; a 409 retries once with the next suffix.
+ */
+function CreateSkill({ scope, taken, onDone, onCancel }: { scope: SkillScope; taken: string[]; onDone: (id: string) => void; onCancel: () => void }) {
   const create = useCreateSkill(scope);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [body, setBody] = useState("");
-  const [err, setErr] = useState("");
+  const [err, setErr] = useState<{ name?: string; description?: string; body?: string }>({});
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const issue = validateSkillName(name);
-    if (issue) return setErr(issue);
-    if (!description.trim() || description.length > SKILL_DESCRIPTION_MAX) return setErr(`Description is required, at most ${SKILL_DESCRIPTION_MAX} characters.`);
-    if (body.length > SKILL_BODY_MAX) return setErr("The body is over the limit.");
-    setErr("");
-    try {
-      const s = await create.mutateAsync({ name, description, body });
-      onDone(s.id);
-    } catch {
-      // shown below
+    const next: typeof err = {};
+    if (!name.trim() || name.length > SKILL_NAME_MAX) next.name = "Give the skill a name, up to 64 characters.";
+    if (!description.trim()) next.description = "Say when the agent should use it.";
+    else if (description.length > SKILL_DESCRIPTION_MAX) next.description = `Keep it to ${SKILL_DESCRIPTION_MAX} characters.`;
+    if (body.length > SKILL_BODY_MAX) next.body = `That is too long: instructions hold up to ${formatCount(SKILL_BODY_MAX)} characters.`;
+    setErr(next);
+    if (Object.keys(next).length) return;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const s = await create.mutateAsync({ name: newSkillName(name, taken, attempt), description: description.trim(), body });
+        onDone(s.id);
+        return;
+      } catch (error) {
+        if (attempt >= 1 || !(error instanceof ApiError && error.status === 409)) return;
+      }
     }
   }
   return (
     <form onSubmit={(e) => void submit(e)} noValidate className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
-      <Field id="sk-name" label="Name" hint="Immutable once created." error={err.includes("lowercase") || err.includes("reserved") ? err : undefined}>
-        <input id="sk-name" className={inputClass} value={name} maxLength={SKILL_NAME_MAX} onChange={(e) => setName(e.target.value)} />
+      <Field id="sk-name" label="Name" error={err.name}>
+        <input id="sk-name" className={inputClass} value={name} maxLength={SKILL_NAME_MAX} placeholder="Weekly report" onChange={(e) => setName(e.target.value)} />
       </Field>
-      <Field id="sk-desc" label="Description">
-        <input id="sk-desc" className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
+      <Field id="sk-desc" label="Use it when…" error={err.description}>
+        <input id="sk-desc" className={inputClass} value={description} placeholder="someone asks for a weekly status report" onChange={(e) => setDescription(e.target.value)} />
       </Field>
-      <Field id="sk-body" label="SKILL.md">
-        <textarea id="sk-body" className={`${inputClass} font-mono`} rows={10} value={body} onChange={(e) => setBody(e.target.value)} />
+      <Field id="sk-body" label="Instructions" error={err.body}>
+        <textarea id="sk-body" className={inputClass} rows={8} value={body} onChange={(e) => setBody(e.target.value)} />
       </Field>
-      <SizeMeter label="Body" used={body.length} max={SKILL_BODY_MAX} />
-      {err && !err.includes("lowercase") && !err.includes("reserved") ? <Notice tone="danger" role="alert">{err}</Notice> : null}
+      <SizeMeter label="Size" used={body.length} max={SKILL_BODY_MAX} />
       <ErrorNotice error={create.error} />
-      <Button type="submit" size="lg" disabled={create.isPending}>Create skill</Button>
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" disabled={create.isPending}>Save</Button>
+        <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </div>
     </form>
   );
 }
@@ -197,7 +217,7 @@ export function SkillReadOnly({ skill }: { skill: Skill }) {
   );
 }
 
-function SkillEditor({ scope, skill, readOnly = false, onDeleted }: { scope: SkillScope; skill: Skill; readOnly?: boolean; onDeleted: () => void }) {
+function SkillEditor({ scope, skill, readOnly = false, agentName, onDeleted }: { scope: SkillScope; skill: Skill; readOnly?: boolean; agentName?: string; onDeleted: () => void }) {
   const update = useUpdateSkill(scope, skill.id);
   const del = useDeleteSkill(scope);
   const [description, setDescription] = useState(skill.description);
@@ -232,23 +252,23 @@ function SkillEditor({ scope, skill, readOnly = false, onDeleted }: { scope: Ski
       {managed ? <LibrarySkillActions skill={skill} tier={tier} canDecide={!readOnly} /> : null}
       <form onSubmit={submit} noValidate className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
         <Field id="sk-name" label="Name" hint="The name cannot be changed.">
-          <input id="sk-name" className={inputClass} value={skill.name} readOnly />
+          <input id="sk-name" className={inputClass} value={skillDisplayName(skill.name)} readOnly />
         </Field>
-        <Field id="sk-desc" label="Description" error={description.length > SKILL_DESCRIPTION_MAX ? `At most ${SKILL_DESCRIPTION_MAX} characters.` : undefined}>
+        <Field id="sk-desc" label="Use it when…" error={description.length > SKILL_DESCRIPTION_MAX ? `At most ${SKILL_DESCRIPTION_MAX} characters.` : undefined}>
           <input id="sk-desc" className={inputClass} value={description} readOnly={contentReadOnly} onChange={(e) => setDescription(e.target.value)} />
         </Field>
-        <Field id="sk-body" label="SKILL.md">
-          <textarea id="sk-body" className={`${inputClass} font-mono`} rows={10} value={body} readOnly={contentReadOnly} onChange={(e) => setBody(e.target.value)} />
+        <Field id="sk-body" label="Instructions">
+          <textarea id="sk-body" className={inputClass} rows={8} value={body} readOnly={contentReadOnly} onChange={(e) => setBody(e.target.value)} />
         </Field>
-        <SizeMeter label="Body" used={body.length} max={SKILL_BODY_MAX} />
-        <CheckboxField id="skill-enabled" label="Enabled" checked={enabled} disabled={readOnly} onChange={setEnabled} />
+        <SizeMeter label="Size" used={body.length} max={SKILL_BODY_MAX} />
+        <SwitchField id="skill-enabled" label={onFor(scope, agentName)} checked={enabled} disabled={readOnly} onChange={setEnabled} />
         <ErrorNotice error={failed} />
         {readOnly ? null : (
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" size="lg" disabled={bodyOver || update.isPending}>Save</Button>
+            <Button type="submit" disabled={bodyOver || update.isPending}>Save</Button>
             <ConfirmAction
               label={managed ? "Remove" : "Delete"}
-              title={`${managed ? "Remove" : "Delete"} the skill “${skill.name}”?`}
+              title={`${managed ? "Remove" : "Delete"} the skill “${skillDisplayName(skill.name)}”?`}
               description={
                 managed
                   ? "Agents stop using it. It can be installed again from the library."
@@ -260,7 +280,16 @@ function SkillEditor({ scope, skill, readOnly = false, onDeleted }: { scope: Ski
           </div>
         )}
       </form>
-      <SkillFiles scope={scope} skill={skill} readOnly={contentReadOnly} />
+      {/* (P5-REFINE-12) Files, scripts and the folder name are Expert: a collapsed line stands in below it. */}
+      <Altitude id="skill.files" level="expert" label="Advanced: files and scripts">
+        <div className="space-y-3">
+          <h3 className="font-display text-base font-semibold text-ink">Advanced: files and scripts</h3>
+          <p className="text-xs text-muted">
+            Folder name: <code className="font-mono">{skill.name}</code>. The instructions above are its <code className="font-mono">SKILL.md</code>.
+          </p>
+          <SkillFiles scope={scope} skill={skill} readOnly={contentReadOnly} />
+        </div>
+      </Altitude>
     </div>
   );
 }
@@ -298,7 +327,7 @@ function SkillFiles({ scope, skill, readOnly = false }: { scope: SkillScope; ski
 
   return (
     <section aria-label="Files" className="space-y-3">
-      <h3 className="font-display text-base font-semibold text-ink">Files</h3>
+      <h4 className="text-sm font-semibold text-ink">Files</h4>
       <SizeMeter label="Total size" used={skill.total_size} max={SKILL_TOTAL_MAX} />
       {skill.files.length === 0 ? <p className="text-sm text-muted">No extra files.</p> : <FileTree nodes={buildTree(skill.files)} readOnly={readOnly} onDelete={(p) => del.mutate(p)} onReplace={replace} />}
       {del.error || put.error ? <ErrorNotice error={del.error ?? put.error} /> : null}
@@ -380,10 +409,12 @@ export function EffectiveSkillsView({ agentId }: { agentId: string }) {
   return (
     <section aria-label="Effective skills" className="space-y-3">
       <h3 className="font-display text-base font-semibold text-ink">Skills this agent receives</h3>
-      <p className="text-xs text-muted">
-        One skill per name. The agent&apos;s own skill takes precedence over a workspace skill, which takes precedence over an organization skill. A
-        disabled skill never hides a lower one. Workspace skills are managed by workspace owners and organization skills by organization owners and admins.
-      </p>
+      <Altitude id="skill.files" level="expert">
+        <p className="text-xs text-muted">
+          One skill per name. The agent&apos;s own skill takes precedence over a workspace skill, which takes precedence over an organization skill. A
+          disabled skill never hides a lower one. Workspace skills are managed by workspace owners and organization skills by organization owners and admins.
+        </p>
+      </Altitude>
       {eff.isPending ? <Loading /> : null}
       {eff.isError ? <ErrorState error={eff.error} onRetry={() => eff.refetch()} /> : null}
       {eff.data && items.length === 0 ? <p className="text-sm text-muted">None.</p> : null}

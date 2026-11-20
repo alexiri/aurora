@@ -573,7 +573,10 @@ async fn the_judge_key_must_be_granted_usable_and_permitted_and_changing_it_need
         )
         .await;
     assert_eq!(s, 200);
-    assert_eq!(v, json!({"judge": null, "regression_notify": true}));
+    assert_eq!(
+        v,
+        json!({"judge": null, "regression_notify": true, "test": null})
+    );
     let not_granted = w.key("k-ungranted", false, "active", false).await;
     let proposed = w.key("k-proposed", true, "proposed", false).await;
     let scoped = w.key("k-workspace", true, "active", true).await;
@@ -634,7 +637,10 @@ async fn the_judge_key_must_be_granted_usable_and_permitted_and_changing_it_need
         .settings(&w.owner, json!({"judge": null, "regression_notify": true}))
         .await;
     assert_eq!(s, 200, "{v}");
-    assert_eq!(v, json!({"judge": null, "regression_notify": true}));
+    assert_eq!(
+        v,
+        json!({"judge": null, "regression_notify": true, "test": null})
+    );
     // Audit: ids only, critical, written with the change.
     let rows: Vec<(Value, bool)> = sqlx::query_as("SELECT metadata, critical FROM audit_log WHERE action = 'eval.settings.update' ORDER BY created_at")
         .fetch_all(w.r.h.pool()).await.unwrap();

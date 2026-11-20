@@ -32,8 +32,8 @@ const codex = (available: boolean) => ({
 
 /** The picker replaces the read-only field once `/v1/harnesses` answers. */
 async function picker(): Promise<HTMLSelectElement> {
-  await waitFor(() => expect(screen.getByLabelText("Harness").tagName).toBe("SELECT"));
-  return screen.getByLabelText("Harness") as HTMLSelectElement;
+  await waitFor(() => expect(screen.getByLabelText("Agent program").tagName).toBe("SELECT"));
+  return screen.getByLabelText("Agent program") as HTMLSelectElement;
 }
 
 describe("Instructions harness picker", () => {
@@ -43,8 +43,8 @@ describe("Instructions harness picker", () => {
     // FIX-172 (D-374): the display name as read-only text, not an input-looking box.
     await waitFor(() => expect(document.getElementById("a-harness")).toHaveTextContent("Claude Code"));
     expect(document.getElementById("a-harness")?.tagName).toBe("P");
-    expect(screen.queryByRole("combobox", { name: "Harness" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Harness" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Agent program" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Agent program" })).toBeNull();
     expect(screen.getByText(/Your administrator chooses which programs agents can run\./)).toBeInTheDocument();
     // Not an instance admin: no link to the administration page.
     expect(screen.queryByRole("link", { name: /Administration › Agents › Defaults/ })).toBeNull();
@@ -64,7 +64,7 @@ describe("Instructions harness picker", () => {
   it("is never shown for a BYO agent", () => {
     const fn = mockFetch({});
     wrap(<InstructionsTab agent={agent("byo", null)} wsId="w1" />);
-    expect(screen.queryByRole("combobox", { name: "Harness" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Agent program" })).toBeNull();
     expect(fn.mock.calls.some(([r]) => String((r as Request).url).includes("/v1/harnesses"))).toBe(false);
   });
 
@@ -99,7 +99,7 @@ describe("Instructions harness picker", () => {
       "Starts fresh sessions for every conversation of this agent; the transcript is kept.",
     );
     expect(patched).toHaveLength(0);
-    fireEvent.click(screen.getByRole("button", { name: "Change harness" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change agent program" }));
     await waitFor(() => expect(patched).toHaveLength(1));
     expect(patched[0]).toMatchObject({ harness: "codex", name: "Bot" });
     await screen.findByText("Saved");
@@ -134,7 +134,7 @@ describe("Instructions harness picker", () => {
     wrap(<InstructionsTab agent={agent("hosted")} wsId="w1" />);
     fireEvent.change(await picker(), { target: { value: "codex" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Change harness" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Change agent program" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("cannot change while a turn is running");
   });
 });

@@ -100,7 +100,7 @@ describe("skill files", () => {
       },
     });
     wrap(<SkillsEditor scope={{ kind: "agent", id: "a1" }} />);
-    fireEvent.click(await screen.findByRole("button", { name: /demo/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Demo/ }));
     expect(await screen.findByText(/Total size: 40,000 \/ 32,000/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("File path"), { target: { value: "../evil" } });
     fireEvent.click(screen.getByRole("button", { name: "Save file" }));

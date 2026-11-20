@@ -2,6 +2,7 @@
 
 use super::dto::{
     CreateEvalSchedule, EvalRun, EvalRunDetail, EvalSchedule, EvalScheduleList, PatchEvalSchedule,
+    StartEvalRun,
 };
 use super::{runs, schedules};
 use crate::app::AppState;
@@ -66,6 +67,7 @@ async fn list_runs(
 /// Start a run: it is queued and the due-work arm runs its questions one at a time.
 #[utoipa::path(post, path = "/agents/{agent}/eval-runs", operation_id = "startEvalRun", tag = "evals",
     params(("agent" = Uuid, Path, description = "Agent id")),
+    request_body(content = Option<StartEvalRun>, description = "Optional; `{}` or no body runs every enabled question"),
     responses((status = 202, body = EvalRun), (status = 404, body = ErrorEnvelope),
         (status = 409, description = "eval_run_active", body = ErrorEnvelope),
         (status = 422, description = "eval_no_questions, eval_not_supported", body = ErrorEnvelope),
@@ -76,10 +78,26 @@ async fn start_run(
     c: Caller,
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
+    body: axum::body::Bytes,
 ) -> Result<(StatusCode, Json<EvalRun>), ApiError> {
+    // The body is optional (older clients send none).
+    let b: StartEvalRun = if body.iter().all(u8::is_ascii_whitespace) {
+        StartEvalRun::default()
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError::invalid_field("Invalid request body.", "", e.to_string()))?
+    };
+    if let Some(ids) = &b.question_ids
+        && (ids.is_empty() || ids.len() > 20)
+    {
+        return Err(
+            ApiError::unprocessable("invalid", "question_ids holds 1 to 20 questions")
+                .with_details(serde_json::json!({ "field": "question_ids" })),
+        );
+    }
     Ok((
         StatusCode::ACCEPTED,
-        Json(runs::start(&s, &c, agent).await?),
+        Json(runs::start(&s, &c, agent, b.question_ids.as_deref()).await?),
     ))
 }
 

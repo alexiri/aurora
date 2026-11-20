@@ -38,10 +38,24 @@ export const REASON: Record<string, string> = {
   judge_unparseable: "The judge's answer could not be read.",
 };
 
-export const reasonText = (code: string | null | undefined): string => {
+export const reasonText = (code: string | null | undefined, agentName?: string): string => {
   if (!code) return "";
+  // (P5-REFINE-12, behaviour-3) A missing ANSWER line is Aurora's to explain, never the agent's fault.
+  if (code === "no_answer_line") return `${agentName ?? "The agent"}'s reply had no ANSWER line, so Aurora could not compare it. The reply is shown below.`;
   return REASON[code] ?? `The turn failed (${code.replace(/_/g, " ")}).`;
 };
+
+/** The sentence after saving a judge (C-863 `test`): tested and answered, or saved but the test failed. */
+export function judgeTestMessage(test: { result: string; took_ms: number; reason?: string | null } | null | undefined): string | null {
+  if (!test) return null;
+  if (test.result === "ok") return `Judge saved and tested: it answered in ${Math.max(1, Math.round(test.took_ms / 1000))} s.`;
+  const why: Record<string, string> = {
+    rejected: "the key or model was refused",
+    unreachable: "the model provider could not be reached",
+    timeout: "it took too long to answer",
+  };
+  return `Judge saved, but the test failed: ${why[test.reason ?? ""] ?? "it did not answer"}. Judged questions will not be scored until it works.`;
+}
 
 /** Run-level `error_code` (a cancelled or failed run) in words. */
 export const RUN_REASON: Record<string, string> = {
@@ -73,8 +87,7 @@ export function evalErrorMessage(err: unknown): string {
 export const isCode = (err: unknown, ...codes: string[]) => err instanceof ApiError && codes.includes(err.code);
 
 /** The `ANSWER:` help: what the agent is told. */
-export const ANSWER_HELP =
-  "For number and text questions the agent is asked to finish its reply with a last line, ANSWER: followed by its answer. That line is compared with the expected answer; text is compared ignoring case and extra spaces.";
+export const ANSWER_HELP = "Aurora adds 'Finish with a line: ANSWER: ...' to the question for you.";
 
 export const WRITES_HELP =
   "A run is a real conversation, so the agent works as it normally does, but every action that would change something outside is refused and the agent is told so: sending messages, writing memory or skills, creating schedules, and any request that is not a read. Refused actions are counted per question.";

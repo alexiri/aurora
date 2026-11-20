@@ -223,8 +223,10 @@ test.describe("layout, 1280 px", () => {
       await expect(page.getByRole("button", { name: "Agent actions" })).toBeVisible();
       // (P5-POLISH-6) The model field is "Model"; the roles and the subagent default sit under Advanced.
       await expect(page.getByLabel("Model", { exact: true })).toBeVisible();
-      await page.getByText("Advanced: model roles, effort, agent program").click();
-      await expect(page.getByRole("group", { name: "Model roles" })).toBeVisible();
+      // (P5-REFINE-3, P5-REFINE-12) Advanced is Expert: at Use it is one collapsed line whose Show opens it in place.
+      const advanced = page.locator('[data-altitude="agent.roles"]');
+      if (await advanced.count()) await advanced.getByRole("button", { name: "Show" }).click();
+      await expect(page.getByRole("group", { name: "Models for different jobs" })).toBeVisible();
       await expect(page.getByLabel("Subagents use")).toBeVisible();
       await page.screenshot({ path: `${dir}/instructions-${scheme}-1280x800.png` });
     });

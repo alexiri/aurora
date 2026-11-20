@@ -68,10 +68,10 @@ describe("workspace skills page", () => {
     });
     wrap(<WorkspaceSkills />);
     fireEvent.click(await screen.findByRole("button", { name: "New skill" }));
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "release-notes" } });
-    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Write release notes" } });
-    fireEvent.change(screen.getByLabelText("SKILL.md"), { target: { value: "steps" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Release notes" } });
+    fireEvent.change(screen.getByLabelText("Use it when…"), { target: { value: "Write release notes" } });
+    fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "steps" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(created).toEqual({ name: "release-notes", description: "Write release notes", body: "steps" }));
   });
 
@@ -82,7 +82,7 @@ describe("workspace skills page", () => {
       "GET /v1/workspaces/w1/skills": () => json(200, { items: [deploy], next_cursor: null }),
     });
     wrap(<WorkspaceSkills />);
-    fireEvent.click(await screen.findByRole("button", { name: /deploy-checklist/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Deploy checklist/ }));
     expect(await screen.findByText(/Overridden by an agent skill of the same name in/)).toBeTruthy();
     expect(screen.getByText("daneel")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
@@ -96,15 +96,15 @@ describe("workspace skills page", () => {
       "GET /v1/workspaces/w1/skills": () => json(200, { items: [deploy], next_cursor: null }),
     });
     wrap(<WorkspaceSkills />);
-    fireEvent.click(await screen.findByRole("button", { name: /deploy-checklist/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Deploy checklist/ }));
     expect(await screen.findByText(/Only workspace owners can change them/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "New skill" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save file" })).toBeNull();
     expect(screen.queryByLabelText("Replace run.sh")).toBeNull();
-    expect((screen.getByLabelText("SKILL.md") as HTMLTextAreaElement).readOnly).toBe(true);
-    expect(fn.mock.calls.some(([r]) => (r as Request).method !== "GET")).toBe(false);
+    expect((screen.getByLabelText("Instructions") as HTMLTextAreaElement).readOnly).toBe(true);
+    expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method !== "GET")).toBe(false);
   });
 });
 
@@ -140,7 +140,7 @@ describe("agent Skills tab: effective set", () => {
     expect(within(notApplied).getByText("Disabled")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Open style-guide (Organization)" }));
-    expect((await screen.findByLabelText("SKILL.md") as HTMLTextAreaElement).readOnly).toBe(true);
+    expect((await screen.findByLabelText("Instructions") as HTMLTextAreaElement).readOnly).toBe(true);
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   });
@@ -155,7 +155,7 @@ describe("agent Skills tab: effective set", () => {
   it("a workspace list asks for no agent's skills (no GET /v1/agents//skills, P5-POLISH-11 pass 2)", async () => {
     const fn = mockFetch({ "GET /v1/workspaces/w1/skills": () => json(200, { items: [deploy], next_cursor: null }) });
     wrap(<SkillsEditor scope={{ kind: "workspace", id: "w1" }} />);
-    expect(await screen.findByRole("button", { name: /deploy-checklist/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Deploy checklist/ })).toBeTruthy();
     const paths = fn.mock.calls.map(([input]) => decodeURIComponent(new URL((input as Request).url, "http://localhost").pathname));
     expect(paths.filter((p) => p.startsWith("/v1/agents/"))).toEqual([]);
   });

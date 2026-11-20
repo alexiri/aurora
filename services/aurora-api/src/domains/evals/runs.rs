@@ -55,10 +55,25 @@ pub async fn start_tx(
     trigger: &str,
     schedule: Option<Uuid>,
     started_by: Option<Uuid>,
+    only: Option<&[Uuid]>,
 ) -> Result<Uuid, ApiError> {
     crate::domains::freeze::service::ensure_agent_active(&mut *conn, a.id).await?;
     repo::lock_agent_questions(conn, a.id).await?;
-    let questions = repo::enabled_questions(&mut *conn, a.id).await?;
+    // (C-864) `question_ids` runs just those questions; every id must be one of the agent's.
+    let questions = match only {
+        None => repo::enabled_questions(&mut *conn, a.id).await?,
+        Some(ids) => {
+            let found = repo::questions_by_ids(&mut *conn, a.id, ids).await?;
+            if found.len() != ids.len() {
+                return Err(ApiError::unprocessable(
+                    "invalid",
+                    "question_ids must be questions of this agent",
+                )
+                .with_details(json!({ "field": "question_ids" })));
+            }
+            found
+        }
+    };
     if questions.is_empty() {
         return Err(ApiError::unprocessable(
             "eval_no_questions",
@@ -101,12 +116,17 @@ pub async fn start_tx(
     Ok(id)
 }
 
-pub async fn start(s: &AppState, c: &Caller, agent: Uuid) -> Result<EvalRun, ApiError> {
+pub async fn start(
+    s: &AppState,
+    c: &Caller,
+    agent: Uuid,
+    only: Option<&[Uuid]>,
+) -> Result<EvalRun, ApiError> {
     let a = visible_agent(s, c, agent).await?;
     // The fingerprint is read before the transaction; nothing in it is secret.
     let fp = current_fingerprint(s, &a).await?;
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
-    let id = start_tx(&mut tx, &a, &fp, "manual", None, Some(c.user_id)).await?;
+    let id = start_tx(&mut tx, &a, &fp, "manual", None, Some(c.user_id), only).await?;
     let run = repo::get_run(&mut *tx, id).await?.ok_or_else(run_404)?;
     crate::domains::conversations::service::notify_work(&mut tx).await?;
     tx.commit().await.map_err(DbError::from)?;

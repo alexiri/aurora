@@ -34,7 +34,7 @@ export function RegressionNotice({ run, onCompare }: { run: EvalRun; onCompare?:
 function Progress({ run }: { run: EvalRun }) {
   const active = isActive(run);
   const ratio = active ? progressRatio(run) : (run.pass_rate ?? 0) / 100;
-  const answered = run.counts.passed + run.counts.failed + run.counts.errored;
+  const answered = run.counts.passed + run.counts.failed + run.counts.errored + run.counts.not_scored;
   return (
     <div className="min-w-32 space-y-1">
       <Meter
@@ -45,7 +45,7 @@ function Progress({ run }: { run: EvalRun }) {
         aria-valuemax={100}
         aria-valuenow={Math.round(ratio * 100)}
       />
-      <p className="text-xs text-ink-2">{active ? `${answered} of ${run.counts.total} answered` : `${fmtRate(run.pass_rate)} passed`}</p>
+      <p className="text-xs text-ink-2">{active ? `${answered} of ${run.counts.total} done` : `${fmtRate(run.pass_rate)} passed`}</p>
     </div>
   );
 }

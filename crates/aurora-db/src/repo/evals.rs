@@ -312,11 +312,24 @@ pub struct RunRow {
 const RUN_COLS: &str = "r.id, r.agent_id, r.workspace_id, r.trigger, r.schedule_id, \
     s.name AS schedule_name, r.started_by_user_id, u.display_name AS started_by_label, r.status, \
     r.question_set_version, r.fingerprint, r.fingerprint_hash, r.questions_total, \
-    r.questions_passed, r.questions_failed, r.questions_errored, r.questions_not_scored, \
-    r.refused_writes, r.judge_usage, r.regression, r.error_code, r.cancel_requested_at, \
+    CASE WHEN live.p IS NULL THEN r.questions_passed ELSE live.p END AS questions_passed, \
+    CASE WHEN live.p IS NULL THEN r.questions_failed ELSE live.f END AS questions_failed, \
+    CASE WHEN live.p IS NULL THEN r.questions_errored ELSE live.e END AS questions_errored, \
+    CASE WHEN live.p IS NULL THEN r.questions_not_scored ELSE live.n END AS questions_not_scored, \
+    CASE WHEN live.p IS NULL THEN r.refused_writes ELSE live.w END AS refused_writes, \
+    r.judge_usage, r.regression, r.error_code, r.cancel_requested_at, \
     r.created_at, r.started_at, r.finished_at";
+/// While a run is `queued` or `running` its counts are read from the rows that have ended so far
+/// (C-864: the stored columns are only written when the run finishes); a finished run reads them.
 const RUN_FROM: &str = "FROM eval_runs r LEFT JOIN users u ON u.id = r.started_by_user_id \
-    LEFT JOIN eval_schedules s ON s.id = r.schedule_id";
+    LEFT JOIN eval_schedules s ON s.id = r.schedule_id \
+    LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE outcome = 'pass')::int AS p, \
+        count(*) FILTER (WHERE outcome = 'fail')::int AS f, \
+        count(*) FILTER (WHERE outcome = 'error')::int AS e, \
+        count(*) FILTER (WHERE outcome = 'not_scored')::int AS n, \
+        COALESCE(sum(refused_writes), 0)::int AS w \
+        FROM eval_results er WHERE er.run_id = r.id AND er.finished_at IS NOT NULL \
+          AND r.status IN ('queued','running')) live ON r.status IN ('queued','running')";
 
 pub struct NewRun<'a> {
     pub agent_id: Uuid,
@@ -670,6 +683,22 @@ pub async fn enabled_questions<'e, E: PgExecutor<'e>>(
         "SELECT {COLS} FROM eval_questions WHERE agent_id = $1 AND enabled ORDER BY position"
     )))
     .bind(agent)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// The agent's questions among `ids`, in position order (a foreign or unknown id is simply absent,
+/// so the caller compares lengths).
+pub async fn questions_by_ids<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<QuestionRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM eval_questions WHERE agent_id = $1 AND id = ANY($2) ORDER BY position"
+    )))
+    .bind(agent)
+    .bind(ids)
     .fetch_all(exec)
     .await?)
 }

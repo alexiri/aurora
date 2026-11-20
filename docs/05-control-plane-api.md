@@ -827,9 +827,9 @@ Hosted agents only (BYO: 422 `eval_not_supported`). Reads and writes of question
 |---|---|---|
 | GET/POST `/v1/agents/{agent}/eval-questions` | S/K | (phase 5, P4-EVAL, C-861) list in position order / create one `EvalQuestion` (422 `invalid`, 422 `eval_question_limit`) |
 | GET/PATCH/DELETE `/v1/eval-questions/{id}` | S/K | (phase 5, P4-EVAL, C-861) `PATCH` bumps `version`; the expected-answer fields follow C-862 |
-| GET/PUT `/v1/agents/{agent}/eval-settings` | S/K | (phase 5, P4-EVAL, C-863) `{ judge: { secret_id, model_id } \| null, regression_notify: bool }`; a judge change needs `can_own`; 422 `eval_judge_not_granted`, `eval_judge_not_usable`, `eval_judge_not_permitted` |
+| GET/PUT `/v1/agents/{agent}/eval-settings` | S/K | (phase 5, P4-EVAL, C-863) `{ judge: { secret_id, model_id } \| null, regression_notify: bool }` → `{ judge, regression_notify, test: { result, took_ms, reason } \| null }` (a changed judge is tested with one minimal model call and saved either way); a judge change needs `can_own`; 422 `eval_judge_not_granted`, `eval_judge_not_usable`, `eval_judge_not_permitted` |
 | GET `/v1/agents/{agent}/eval-fingerprint` | S/K | (phase 5, P4-EVAL, C-866) the configuration fingerprint a run started now would record: `{ fingerprint, fingerprint_hash, question_set_version }` |
-| POST `/v1/agents/{agent}/eval-runs` | S/K | (phase 5, P4-EVAL, C-864) start a run → 202 `EvalRun` (`queued`); 409 `eval_run_active`, 429 `eval_runs_limited`, 423 `frozen`, 422 `eval_no_questions` |
+| POST `/v1/agents/{agent}/eval-runs` | S/K | (phase 5, P4-EVAL, C-864) start a run (optional body `{ question_ids?: uuid[] }`, 1..=20, runs only those) → 202 `EvalRun` (`queued`; `counts` is live while the run is active); 409 `eval_run_active`, 429 `eval_runs_limited`, 423 `frozen`, 422 `eval_no_questions` |
 | GET `/v1/agents/{agent}/eval-runs` | S/K | (phase 5, P4-EVAL, C-864) runs newest first, cursor page (`05` list convention), filters `status`, `trigger` |
 | GET `/v1/eval-runs/{id}` | S/K | (phase 5, P4-EVAL, C-864/C-867) the run with counts, fingerprint, regression and its results (`?results_after=` cursor, ≤ 100 per page) |
 | POST `/v1/eval-runs/{id}/cancel` | S/K | (phase 5, P4-EVAL, C-865) sets `cancel_requested_at`; 409 `eval_run_finished` for a finished run |

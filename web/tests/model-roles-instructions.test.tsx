@@ -79,19 +79,23 @@ async function roleSelect(name: string): Promise<HTMLSelectElement> {
 }
 
 describe("Instructions: model roles (P5-MODELS-3)", () => {
-  it("labels the default model, lists the endpoint's models per role with the claude-code alias", async () => {
+  it("labels the default model, lists the endpoint's models per role named by what they do (behaviour-5)", async () => {
     mockFetch(base());
     wrap(<InstructionsTab agent={agent()} wsId="w1" />);
     expect(screen.getByLabelText("Model")).toBeInTheDocument();
-    expect(screen.getByText(/It may use other allowed models on the same endpoint/)).toBeInTheDocument();
-    const large = await roleSelect("Large (opus)");
-    expect(screen.getByLabelText("Medium (sonnet)")).toBeInTheDocument();
-    expect(screen.getByLabelText("Small (haiku)")).toBeInTheDocument();
+    expect(screen.getByText("The model Bot starts with.")).toBeInTheDocument();
+    expect(screen.getByText("Advanced is for admins and power users. Most people never need it.")).toBeInTheDocument();
+    const large = await roleSelect("Strongest model");
+    expect(screen.getByLabelText("Everyday model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Fastest model")).toBeInTheDocument();
     const names = within(large).getAllByRole("option").map((o) => o.textContent);
     expect(names).toContain("claude-opus");
     expect(names).not.toContain("elsewhere");
-    await waitFor(() => expect(within(large).getByRole("option", { name: "Use the endpoint's setting (claude-opus)" })).toBeInTheDocument());
-    expect(within(screen.getByLabelText("Small (haiku)")).getByRole("option", { name: "Use the endpoint's setting (none)" })).toBeInTheDocument();
+    // An unset role is "Same as the default", never "Use the endpoint's setting (none)"; no "(litellm)" suffix on models.
+    for (const label of ["Strongest model", "Everyday model", "Fastest model"]) {
+      expect(within(screen.getByLabelText(label)).getByRole("option", { name: "Same as the default" })).toBeInTheDocument();
+    }
+    expect(document.body.textContent).not.toMatch(/endpoint's setting|\(litellm\)|\(opus\)|\(none\)/);
     // (P5-POLISH-6, D-385) The role warnings are not on this page; the endpoint shows them.
     expect(screen.queryAllByTestId("role-warning")).toHaveLength(0);
   });
@@ -99,7 +103,7 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
   it("saves roles with the default endpoint and the subagent default; clearing them sends null", async () => {
     mockFetch({ ...base(), "PATCH /v1/agents/a1": () => json(200, agent()) });
     wrap(<InstructionsTab agent={agent()} wsId="w1" />);
-    fireEvent.change(await roleSelect("Small (haiku)"), { target: { value: "claude-sonnet" } });
+    fireEvent.change(await roleSelect("Fastest model"), { target: { value: "claude-sonnet" } });
     fireEvent.change(screen.getByLabelText("Subagents use"), { target: { value: "small" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(patches()).toHaveLength(1));
@@ -116,7 +120,7 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
     await waitFor(() => expect(patches()).toHaveLength(1));
     expect(patches()[0]!.body).not.toHaveProperty("model_roles");
     expect(patches()[0]!.body).not.toHaveProperty("subagent_model");
-    fireEvent.change(screen.getByLabelText("Small (haiku)"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Fastest model"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(patches()).toHaveLength(2));
     expect(patches()[1]!.body).toMatchObject({ model_roles: null });
@@ -139,16 +143,16 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
     ];
     mockFetch({ ...base(), "GET /v1/harnesses": () => json(200, { default: "claude-code", items }) });
     wrap(<InstructionsTab agent={agent({ harness: "opencode" })} wsId="w1" />);
-    await waitFor(() => expect(screen.getByLabelText("Harness").tagName).toBe("SELECT"));
-    const picker = screen.getByLabelText("Harness");
+    await waitFor(() => expect(screen.getByLabelText("Agent program").tagName).toBe("SELECT"));
+    const picker = screen.getByLabelText("Agent program");
     expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual(["Claude Code", "Codex", "Pi", "goose", "OpenCode"]);
     // OpenCode (as configured here) maps `small` only: the other two roles say so and cannot be set.
-    const large = (await screen.findByLabelText("Large")) as HTMLSelectElement;
+    const large = (await screen.findByLabelText("Strongest model")) as HTMLSelectElement;
     await waitFor(() => expect(large).toBeDisabled());
     expect(screen.getAllByText("Not used by OpenCode.")).toHaveLength(2);
-    expect(screen.getByLabelText("Small")).not.toBeDisabled();
+    expect(screen.getByLabelText("Fastest model")).not.toBeDisabled();
     const subagent = screen.getByLabelText("Subagents use");
-    expect(within(subagent).getAllByRole("option").map((o) => o.textContent)).toEqual(["Same as the default", "Small"]);
+    expect(within(subagent).getAllByRole("option").map((o) => o.textContent)).toEqual(["Same as the default", "Fastest model"]);
     // A harness that maps none still shows the group note with its own name.
     cleanup();
     wrap(<InstructionsTab agent={agent({ harness: "pi" })} wsId="w1" />);
@@ -162,9 +166,9 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
         json(422, { error: { code: "llm_model_not_allowed", message: "no", details: { field: "model_roles.large", model: "claude-opus", allowed_models: [] } } }),
     });
     wrap(<InstructionsTab agent={agent()} wsId="w1" />);
-    fireEvent.change(await roleSelect("Large (opus)"), { target: { value: "claude-opus" } });
+    fireEvent.change(await roleSelect("Strongest model"), { target: { value: "claude-opus" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    const field = await screen.findByLabelText("Large (opus)");
+    const field = await screen.findByLabelText("Strongest model");
     await waitFor(() => expect(field).toHaveAttribute("aria-invalid", "true"));
     expect(screen.getByText("claude-opus is not allowed on this endpoint.")).toBeInTheDocument();
 
@@ -175,7 +179,7 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
         json(422, { error: { code: "model_role_endpoint_mismatch", message: "no", details: { endpoint_id: "x", default_endpoint_id: "gw" } } }),
     });
     wrap(<InstructionsTab agent={agent()} wsId="w1" />);
-    fireEvent.change(await roleSelect("Large (opus)"), { target: { value: "claude-opus" } });
+    fireEvent.change(await roleSelect("Strongest model"), { target: { value: "claude-opus" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText(/belong to another endpoint/)).toBeInTheDocument();
   });
@@ -191,7 +195,7 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
         })),
     });
     wrap(<InstructionsTab agent={agent({ model_roles: { endpoint_id: "gw", large: "claude-opus" }, subagent_model: "medium" })} wsId="w1" />);
-    await roleSelect("Large (opus)");
+    await roleSelect("Strongest model");
     expect(screen.queryAllByTestId("role-warning")).toHaveLength(0);
     expect(screen.queryByText(/is not allowed for your organization/)).toBeNull();
   });
@@ -205,10 +209,10 @@ describe("Instructions at Use (D-406)", () => {
     expect(screen.getByLabelText("Instructions")).toBeInTheDocument();
     expect(screen.getByLabelText("Model")).toBeInTheDocument();
     // Expert strings never render at Use: the harness, the roles, Subagents use and Effort.
-    expect(screen.queryByLabelText("Harness")).toBeNull();
+    expect(screen.queryByLabelText("Agent program")).toBeNull();
     expect(screen.queryByLabelText("Effort")).toBeNull();
-    expect(screen.queryByLabelText("Large (opus)")).toBeNull();
-    expect(screen.getByText("Model roles, effort and agent program")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Strongest model")).toBeNull();
+    expect(screen.getByText("Advanced")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show" }));
     expect(await screen.findByLabelText("Effort")).toBeInTheDocument();
   });

@@ -2,10 +2,7 @@
 
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
-import type { components } from "@/lib/api/schema";
-import { ROLES, roleLabel, type Role, ROLE_LABEL } from "@/lib/model-roles";
-
-type DefaultModel = components["schemas"]["DefaultModel"];
+import { ROLES, ROLE_NAME, type Role } from "@/lib/model-roles";
 
 export type RoleDraft = Record<Role, string>;
 export const EMPTY_ROLES: RoleDraft = { large: "", medium: "", small: "" };
@@ -19,10 +16,10 @@ export interface RoleFieldErrors {
 
 /**
  * The **Model roles** group and **Subagents use** of the Instructions tab (D-302, D-303, C-876). `models` are the
- * default endpoint's allowed models; readiness (owners only) supplies the endpoint's own roles and the warnings.
+ * default endpoint's allowed models. (P5-REFINE-12) Roles are named for what they do, an unset role reads "Same as the
+ * default", and no endpoint detail shows here.
  */
 export function ModelRolesFields({
-  harnessId,
   harnessName,
   roleless,
   mapped = null,
@@ -31,11 +28,9 @@ export function ModelRolesFields({
   onRoles,
   subagent,
   onSubagent,
-  readiness,
   errors,
   disabled,
 }: {
-  harnessId: string | undefined;
   harnessName: string;
   /** The harness maps no roles (`GET /v1/harnesses` `model_roles = []`). */
   roleless: boolean;
@@ -46,7 +41,6 @@ export function ModelRolesFields({
   onRoles: (r: RoleDraft) => void;
   subagent: string;
   onSubagent: (s: string) => void;
-  readiness: DefaultModel | null;
   errors: RoleFieldErrors;
   disabled: boolean;
 }) {
@@ -62,28 +56,24 @@ export function ModelRolesFields({
     <div className="space-y-4" role="group" aria-labelledby="a-roles-title">
       <div className="space-y-1">
         <h3 id="a-roles-title" className="text-sm font-semibold text-ink">
-          Model roles
+          Models for different jobs
         </h3>
         <p className="text-xs text-muted">
-          The model each role stands for. The harness picks a role for subagents and background work; a role left empty
-          follows the endpoint.
+          The agent picks a model for subagents and background work. Anything left on “Same as the default” uses the
+          default model.
         </p>
       </div>
       {ROLES.map((role) => {
         const id = `a-role-${role}`;
-        const view = readiness?.roles[role];
-        const endpointModel = view && view.source === "endpoint" ? view.model_id : view?.source === "none" ? null : undefined;
-        const empty =
-          endpointModel === undefined
-            ? "Use the endpoint's setting"
-            : `Use the endpoint's setting (${endpointModel ?? "none"})`;
+        // (P5-REFINE-12, behaviour-5) Never "Use the endpoint's setting (none)": an unset role follows the default.
+        const empty = "Same as the default";
         // (C-1016) "Not used by <display name>" for whichever role the harness does not map.
         const unused = mapped !== null && !mapped.includes(role);
         return (
           <Field
             key={role}
             id={id}
-            label={roleLabel(role, harnessId)}
+            label={ROLE_NAME[role]}
             error={errors.roles[role]}
             hint={unused ? `Not used by ${harnessName}.` : undefined}
           >
@@ -109,7 +99,7 @@ export function ModelRolesFields({
           <option value="inherit">Same as the default</option>
           {ROLES.filter((r) => mapped === null || mapped.includes(r)).map((r) => (
             <option key={r} value={r}>
-              {ROLE_LABEL[r]}
+              {ROLE_NAME[r]}
             </option>
           ))}
         </select>
