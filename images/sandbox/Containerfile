@@ -81,11 +81,15 @@ FROM os AS base
 RUN dnf -y install --setopt=install_weak_deps=False epel-release \
     && dnf -y install --setopt=install_weak_deps=False \
          git curl jq ripgrep fd-find less openssh-clients python3 python3-pip \
-         nodejs npm gcc gcc-c++ make unzip zip procps-ng chromium \
+         nodejs nodejs-full-i18n npm gcc gcc-c++ make unzip zip procps-ng chromium \
     # (FIX-103) Chromium is required, not best-effort: the `sandbox` target declares the `browser`
     # capability below, and the runner schedules browser boots from that label. A build where the
     # package is unavailable fails here instead of shipping an image that advertises a browser it lacks.
     && { test -x /usr/bin/chromium-browser || test -x /usr/bin/chromium; } \
+    # (FIX-190) AlmaLinux's `nodejs` is a small-ICU build whose `Intl.Segmenter` segfaults on any input
+    # (Pi's terminal interface, and any agent script, uses it); `nodejs-full-i18n` adds the ICU data
+    # file Node finds on its own. The build fails if segmenting still crashes.
+    && node -e 'if ([...new Intl.Segmenter("en").segment("a b")].length !== 3) process.exit(1)' \
     && dnf clean all && rm -rf /var/cache/dnf \
     && pip3 install --no-cache-dir uv==0.13.8 \
     && npm config set prefix /workspace/.local --global \

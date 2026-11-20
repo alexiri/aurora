@@ -143,6 +143,24 @@ pub fn render_settings() -> String {
     }))
 }
 
+/// (FIX-190, D-404) The web terminal's `settings.json`: a turn's [`render_settings`] plus
+/// [`TERMINAL_ONLY_SETTINGS`], as one compact JSON line. The wrapper adds the keys a file in its
+/// config directory lacks (Pi writes that file itself on its first start); a value already there is
+/// kept.
+pub fn terminal_settings() -> String {
+    let mut v: Value = serde_json::from_str(&render_settings()).unwrap_or(Value::Null);
+    if let Some(o) = v.as_object_mut() {
+        for (k, val) in TERMINAL_ONLY_SETTINGS {
+            o.insert(k.to_owned(), val);
+        }
+    }
+    v.to_string()
+}
+
+/// Settings only the interactive interface reads (an RPC turn never shows them): after an image
+/// update that bumps Pi, one line instead of the full "What's New" changelog before the prompt.
+pub const TERMINAL_ONLY_SETTINGS: [(&str, Value); 1] = [("collapseChangelog", Value::Bool(true))];
+
 fn pretty(v: &Value) -> String {
     let mut s = serde_json::to_string_pretty(v).unwrap_or_else(|_| "{}".into());
     s.push('\n');
@@ -407,6 +425,27 @@ pub(crate) mod tests {
         assert_eq!(v["retry"]["maxRetries"], MAX_RETRIES);
         assert_eq!(v["defaultProjectTrust"], "never");
         assert_eq!(v["enableInstallTelemetry"], false);
+    }
+
+    /// (FIX-190, D-404) A terminal and a turn agree: every key of the turn's settings with the turn's
+    /// value, plus only the interface's own keys, on one line (harness.env holds one value per line),
+    /// with nothing secret.
+    #[test]
+    fn terminal_settings_are_the_turns_settings_on_one_line() {
+        let t = terminal_settings();
+        assert!(!t.contains('\n'), "{t}");
+        let term: Value = serde_json::from_str(&t).unwrap();
+        let mut want: Value = serde_json::from_str(&render_settings()).unwrap();
+        for (k, v) in TERMINAL_ONLY_SETTINGS {
+            assert!(want.get(k).is_none(), "{k} is a turn setting too");
+            want[k] = v;
+        }
+        assert_eq!(term, want);
+        assert_eq!(term["collapseChangelog"], true);
+        assert!(
+            !t.contains("aurora-placeholder") && !t.contains("apiKey"),
+            "{t}"
+        );
     }
 
     #[test]

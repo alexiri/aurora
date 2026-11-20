@@ -92,8 +92,10 @@ XDG_STATE_HOME=$_w_state/state
 export XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME
 config="${AURORA_OPENCODE_CONFIG:-}"
 key_var="${AURORA_OPENCODE_KEY_VAR:-}"
+plugin_version="${AURORA_OPENCODE_PLUGIN_VERSION:-}"
 # OpenCode uses none of the other harnesses' variables.
 unset HARNESSES_ENABLED AURORA_OPENCODE_MODEL AURORA_OPENCODE_CONFIG AURORA_OPENCODE_KEY_VAR \
+    AURORA_OPENCODE_PLUGIN_VERSION \
     AURORA_OPENCODE_UNAVAILABLE AURORA_CLAUDE_UNAVAILABLE AURORA_CODEX_UNAVAILABLE \
     AURORA_CODEX_MODEL AURORA_CODEX_BASE_URL \
     ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY
@@ -114,4 +116,33 @@ if [ -n "$config" ]; then
     OPENCODE_CONFIG_CONTENT=$config
     export OPENCODE_CONFIG_CONTENT
 fi
-exec "$bin" "$@"
+# (FIX-191) The files a turn renders (`opencode::config::plugin_files`) so that OpenCode's background
+# install of its plugin package returns at once instead of asking the npm registry. Each is written
+# only when missing: a person who adds plugins changes them, and OpenCode keeps them up to date.
+write_missing() {
+    if [ -e "$1" ] || [ -L "$1" ]; then
+        return 0
+    fi
+    /usr/bin/mkdir -p "${1%/*}" 2>/dev/null || return 0
+    printf '%s\n' "$2" >"$1" 2>/dev/null
+}
+case $plugin_version in
+"" | *[!0-9A-Za-z.+-]*) ;;
+*)
+    _w_cfg=$XDG_CONFIG_HOME/opencode
+    write_missing "$_w_cfg/package.json" \
+        "{\"dependencies\":{\"@opencode-ai/plugin\":\"$plugin_version\"}}"
+    write_missing "$_w_cfg/package-lock.json" \
+        "{\"name\":\"opencode\",\"lockfileVersion\":3,\"requires\":true,\"packages\":{\"\":{\"dependencies\":{\"@opencode-ai/plugin\":\"$plugin_version\"}}}}"
+    write_missing "$_w_cfg/node_modules/@opencode-ai/plugin/package.json" \
+        "{\"name\":\"@opencode-ai/plugin\",\"version\":\"$plugin_version\"}"
+    ;;
+esac
+# (FIX-191) Run OpenCode as a child, not `exec`, so that a start that fails behind its full-screen
+# interface still says where its log is (the log is the only place its error goes).
+"$bin" "$@"
+_w_rc=$?
+if [ "$_w_rc" -ne 0 ] && [ -d "$XDG_DATA_HOME/opencode/log" ]; then
+    echo "opencode: exited with status $_w_rc; see $XDG_DATA_HOME/opencode/log for details" >&2
+fi
+exit "$_w_rc"

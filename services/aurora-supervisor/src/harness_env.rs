@@ -239,6 +239,9 @@ fn terminal_values(
             ("MODEL", m.model.clone()),
             ("MODELS_JSON", pi::config::terminal_models(m)?),
             ("KEY_VAR", pi::config::api_of(&m.dialect)?.1.to_owned()),
+            // (FIX-190, D-404) The turn's settings (no project trust, no install telemetry, a
+            // quiet start), so the terminal's Pi starts configured.
+            ("SETTINGS_JSON", pi::config::terminal_settings()),
         ],
         "goose" => {
             let (provider, _) = goose::config::provider_of(&m.dialect)?;
@@ -255,6 +258,9 @@ fn terminal_values(
                 "KEY_VAR",
                 opencode::config::provider_of(&m.dialect)?.1.to_owned(),
             ),
+            // (FIX-191) The version of the turn's `plugin_files`, which the wrapper writes when
+            // missing: without them OpenCode's start asks the npm registry for its plugin package.
+            ("PLUGIN_VERSION", opencode::PINNED_VERSION.to_owned()),
         ],
     })
 }
@@ -377,6 +383,25 @@ mod tests {
             }
             assert!(!t.contains("aub_") && !t.contains("aup_"), "{t}");
         }
+    }
+
+    /// (FIX-190, D-404) Pi's terminal section carries the turn's settings, rendered by the adapter.
+    #[test]
+    fn the_pi_section_carries_the_turns_settings() {
+        let mut m = TerminalModels::default();
+        m.set(
+            "pi",
+            Some(TerminalModel {
+                choice: Some(choice("litellm", "anthropic_messages")),
+                unavailable: None,
+            }),
+        );
+        let t = render(&cfg(), &m);
+        let want = format!(
+            "AURORA_PI_SETTINGS_JSON={}\n",
+            q(&crate::adapters::pi::config::terminal_settings())
+        );
+        assert!(t.contains(&want), "{t}");
     }
 
     #[test]

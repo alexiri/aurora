@@ -557,6 +557,119 @@ fn the_pi_wrapper_configures_pi_from_the_file_and_keeps_it_off_the_vendor_networ
     }
 }
 
+fn json_file(path: &Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// (FIX-190, D-404) `pi`'s first start writes the turn's `settings.json` (no project-trust question,
+/// no install telemetry, a quiet start) and nothing secret.
+#[test]
+fn the_pi_wrapper_writes_the_turns_settings_on_first_start() {
+    let (rig, _) = Rig::started(
+        "pi",
+        &terminal_file("pi", GOLDEN_MODEL, "anthropic_messages"),
+        &[],
+        &[],
+    );
+    let path = rig.state.join("settings.json");
+    let want: serde_json::Value =
+        serde_json::from_str(&aurora_supervisor::adapters::pi::config::terminal_settings())
+            .unwrap();
+    let v = json_file(&path);
+    assert_eq!(v, want);
+    assert_eq!(v["defaultProjectTrust"], "never");
+    assert_eq!(v["enableInstallTelemetry"], false);
+    assert_eq!(v["quietStartup"], true);
+    assert_eq!(v["collapseChangelog"], true);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !text.contains("aurora-placeholder") && !text.contains("apiKey"),
+        "{text}"
+    );
+    assert!(
+        !rig.seen_env()
+            .unwrap()
+            .contains_key("AURORA_PI_SETTINGS_JSON")
+    );
+    let names: Vec<_> = std::fs::read_dir(&rig.state)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.starts_with('.'))
+        .collect();
+    assert!(names.is_empty(), "temp files left: {names:?}");
+}
+
+/// (FIX-190) An existing `settings.json` (Pi's own, or the person's) is merged, never replaced: Aurora's
+/// keys are added where missing, every value there is kept, and a file that has them all, or is not
+/// a JSON object, stays byte-identical.
+#[test]
+fn the_pi_wrapper_keeps_the_persons_settings() {
+    let file = terminal_file("pi", GOLDEN_MODEL, "openai_chat");
+    let turn: serde_json::Value =
+        serde_json::from_str(&aurora_supervisor::adapters::pi::config::render_settings()).unwrap();
+    let start = |existing: &str| {
+        let rig = Rig::new("pi");
+        rig.write_env(&file);
+        std::fs::create_dir_all(&rig.state).unwrap();
+        let path = rig.state.join("settings.json");
+        std::fs::write(&path, existing).unwrap();
+        let out = rig.run_as(&[], &[]);
+        assert!(out.status.success(), "{out:?}");
+        assert!(rig.seen_args().is_some(), "the binary ran");
+        (rig, path)
+    };
+    // What Pi writes on its first start: its key is kept, Aurora's are added.
+    let (_rig, path) = start("{\n  \"lastChangelogVersion\": \"1.5.2\"\n}\n");
+    let v = json_file(&path);
+    assert_eq!(v["lastChangelogVersion"], "1.5.2");
+    for k in [
+        "retry",
+        "defaultProjectTrust",
+        "enableInstallTelemetry",
+        "quietStartup",
+    ] {
+        assert_eq!(v[k], turn[k], "{k}");
+    }
+    // A choice of the person's wins, also inside a nested object.
+    let (_rig, path) = start(
+        "{\"defaultProjectTrust\":\"ask\",\"quietStartup\":false,\"retry\":{\"maxRetries\":7}}",
+    );
+    let v = json_file(&path);
+    assert_eq!(v["defaultProjectTrust"], "ask");
+    assert_eq!(v["quietStartup"], false);
+    assert_eq!(v["retry"]["maxRetries"], 7);
+    assert_eq!(v["retry"]["enabled"], turn["retry"]["enabled"]);
+    assert_eq!(v["enableInstallTelemetry"], false);
+    // Every key present (with other values and an extra key): untouched, byte for byte.
+    let full = "{ \"retry\": {\"enabled\": false, \"maxRetries\": 0, \"baseDelayMs\": 1},\n\"defaultProjectTrust\": \"always\", \"enableInstallTelemetry\": true, \"quietStartup\": false, \"collapseChangelog\": false, \"theme\": \"light\" }\n";
+    let (_rig, path) = start(full);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), full);
+    // Not JSON, or not an object: the person's to fix, untouched.
+    for bad in ["{ not json", "[1, 2]\n"] {
+        let (_rig, path) = start(bad);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), bad);
+    }
+}
+
+/// (FIX-190, D-404) No model for Pi: a bare `pi` says so instead of opening Pi's provider setup; with
+/// arguments the binary still runs, unchanged.
+#[test]
+fn the_pi_wrapper_without_a_model_explains_instead_of_opening_its_setup() {
+    let rig = Rig::new("pi");
+    rig.write_env("HARNESSES_ENABLED='pi'\n");
+    let out = rig.run_as(&[], &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr).trim_end(),
+        "pi: no model is set up for this agent's terminal; check the agent's model on its Behaviour page"
+    );
+    assert!(rig.seen_env().is_none(), "the binary ran");
+    for args in [vec!["--version"], vec!["--help"]] {
+        let (_, seen) = Rig::started("pi", "HARNESSES_ENABLED='pi'\n", &args, &[]);
+        assert_eq!(seen, args);
+    }
+}
+
 /// `goose`: configured by environment, its own root, the right provider for the dialect.
 #[test]
 fn the_goose_wrapper_sets_the_provider_for_the_dialect_and_its_own_root() {
@@ -784,6 +897,224 @@ fn the_goose_wrapper_defaults_to_auto_mode_and_keeps_the_persons_choice() {
     .unwrap();
     assert!(rig.run_as(&[], &[]).status.success());
     assert_eq!(mode(&rig), None);
+}
+
+/// The goose config file the wrapper manages (FIX-189).
+fn goose_config(rig: &Rig) -> PathBuf {
+    rig.state.join("config").join("config.yaml")
+}
+
+fn yaml(path: &Path) -> BTreeMap<String, serde_yaml::Value> {
+    serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// (FIX-189, D-404) goose opens its wizard when its config file is missing: the first start writes a
+/// minimal one (non-secret keys only, mode 0600), and nothing else.
+#[test]
+fn the_goose_wrapper_writes_a_minimal_config_on_first_start() {
+    for (dialect, provider, hosts) in [
+        (
+            "anthropic_messages",
+            "anthropic",
+            &[("ANTHROPIC_HOST", "http://llm.example")][..],
+        ),
+        (
+            "openai_chat",
+            "litellm",
+            &[
+                ("LITELLM_HOST", "http://llm.example"),
+                ("LITELLM_BASE_PATH", "v1/chat/completions"),
+            ][..],
+        ),
+    ] {
+        let (rig, args) = Rig::started(
+            "goose",
+            &terminal_file("goose", GOLDEN_MODEL, dialect),
+            &[],
+            &[],
+        );
+        assert!(args.is_empty(), "{args:?}");
+        let path = goose_config(&rig);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{dialect}");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("API_KEY") && !text.contains("aurora-placeholder"),
+            "{text}"
+        );
+        assert!(!text.contains("GOOSE_MODE:"), "{text}");
+        let map = yaml(&path);
+        let mut want: BTreeMap<String, serde_yaml::Value> = BTreeMap::new();
+        want.insert("GOOSE_PROVIDER".into(), provider.into());
+        want.insert("GOOSE_MODEL".into(), GOLDEN_MODEL.into());
+        want.insert("GOOSE_TELEMETRY_ENABLED".into(), false.into());
+        for (k, v) in hosts {
+            want.insert((*k).into(), (*v).into());
+        }
+        assert_eq!(map, want, "{dialect}");
+        // No temp file left beside it.
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["config.yaml"], "{dialect}");
+        // The default mode is still `auto` (FIX-169): the written file has no mode.
+        let (rig2, _) = Rig::started(
+            "goose",
+            &terminal_file("goose", GOLDEN_MODEL, dialect),
+            &[],
+            &[],
+        );
+        assert_eq!(
+            rig2.seen_env()
+                .unwrap()
+                .get("GOOSE_MODE")
+                .map(String::as_str),
+            Some("auto")
+        );
+    }
+}
+
+/// (FIX-189) A file that exists is the person's: a later start leaves it byte-identical.
+#[test]
+fn the_goose_wrapper_leaves_an_existing_config_alone() {
+    let file = terminal_file("goose", GOLDEN_MODEL, "openai_chat");
+    let (rig, _) = Rig::started("goose", &file, &[], &[]);
+    let path = goose_config(&rig);
+    let edited = "GOOSE_PROVIDER: openai\nGOOSE_MODEL: mine\nextensions: {}\n";
+    std::fs::write(&path, edited).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let out = rig.run_as(&[], &[]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+    // The environment still names the agent's provider and model (goose reads it first).
+    let seen = rig.seen_env().unwrap();
+    assert_eq!(
+        seen.get("GOOSE_PROVIDER").map(String::as_str),
+        Some("litellm")
+    );
+    assert_eq!(
+        seen.get("GOOSE_MODEL").map(String::as_str),
+        Some(GOLDEN_MODEL)
+    );
+}
+
+/// (FIX-189) Every value is written as a YAML string: YAML's special characters stay data.
+#[test]
+fn the_goose_config_quotes_yaml_special_characters() {
+    let model = "a: b # c 'd' \"e\" {f} [g] &h *i !j %k @l `m` |n >o ~ null";
+    let host = "http://h.example:8080/#x'y";
+    let rig = Rig::new("goose");
+    let q = |v: &str| v.replace('\'', "'\\''");
+    rig.write_env(&format!(
+        "HARNESSES_ENABLED='goose'\nAURORA_GOOSE_MODEL='{}'\nAURORA_GOOSE_PROVIDER='litellm'\nAURORA_GOOSE_HOST='{}'\n",
+        q(model),
+        q(host)
+    ));
+    let out = rig.run_as(&[], &[]);
+    assert!(out.status.success(), "{out:?}");
+    let map = yaml(&goose_config(&rig));
+    assert_eq!(map["GOOSE_MODEL"], serde_yaml::Value::from(model));
+    assert_eq!(map["LITELLM_HOST"], serde_yaml::Value::from(host));
+    assert_eq!(map.len(), 5, "{map:?}");
+    // A one-word YAML keyword (`null`, `true`) is still a string.
+    for (word, name) in [("null", "n1"), ("true", "n2"), ("1.5", "n3")] {
+        let rig = Rig::new("goose");
+        rig.write_env(&format!(
+            "HARNESSES_ENABLED='goose'\nAURORA_GOOSE_MODEL='{word}'\nAURORA_GOOSE_PROVIDER='anthropic'\nAURORA_GOOSE_HOST='http://h'\n"
+        ));
+        assert!(rig.run_as(&[], &[]).status.success(), "{name}");
+        assert_eq!(
+            yaml(&goose_config(&rig))["GOOSE_MODEL"],
+            serde_yaml::Value::from(word),
+            "{name}"
+        );
+    }
+}
+
+/// (FIX-189, D-404) No model for goose: a bare `goose` says so instead of opening the wizard; with
+/// arguments (`configure`, `--version`) the binary still runs, unchanged.
+#[test]
+fn the_goose_wrapper_without_a_model_explains_instead_of_opening_the_wizard() {
+    let rig = Rig::new("goose");
+    rig.write_env("HARNESSES_ENABLED='goose'\n");
+    let out = rig.run_as(&[], &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr).trim_end(),
+        "goose: no model is set up for this agent's terminal; check the agent's model on its Behaviour page"
+    );
+    assert!(rig.seen_env().is_none(), "the binary ran");
+    assert!(!goose_config(&rig).exists());
+    for args in [vec!["configure"], vec!["--version"]] {
+        let (rig, seen) = Rig::started("goose", "HARNESSES_ENABLED='goose'\n", &args, &[]);
+        assert_eq!(seen, args);
+        assert!(!goose_config(&rig).exists(), "{args:?}");
+    }
+}
+
+/// (FIX-191) `opencode` writes the turn's plugin files (so its start never asks the npm registry), each
+/// only when missing.
+#[test]
+fn the_opencode_wrapper_writes_the_turns_plugin_files_when_missing() {
+    let file = terminal_file("opencode", GOLDEN_MODEL, "anthropic_messages");
+    assert!(file.contains("AURORA_OPENCODE_PLUGIN_VERSION='"), "{file}");
+    let (rig, _) = Rig::started("opencode", &file, &[], &[]);
+    for (rel, content) in aurora_supervisor::adapters::opencode::config::plugin_files() {
+        // The turn's paths are relative to its root, whose `config` is XDG_CONFIG_HOME.
+        let path = rig.state.join(rel);
+        let want: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json_file(&path), want, "{rel}");
+    }
+    assert!(
+        !rig.seen_env()
+            .unwrap()
+            .keys()
+            .any(|k| k.starts_with("AURORA_OPENCODE_")),
+    );
+    // A package.json the person (or OpenCode, for their plugins) changed is kept.
+    let pkg = rig.state.join("config/opencode/package.json");
+    let theirs =
+        "{\"dependencies\":{\"@opencode-ai/plugin\":\"1.19.6\",\"my-plugin\":\"1.0.0\"}}\n";
+    std::fs::write(&pkg, theirs).unwrap();
+    assert!(rig.run_as(&[], &[]).status.success());
+    assert_eq!(std::fs::read_to_string(&pkg).unwrap(), theirs);
+    // A version that is not a plain version string writes nothing.
+    let rig = Rig::new("opencode");
+    rig.write_env(&file.replace(
+        "AURORA_OPENCODE_PLUGIN_VERSION='1.19.6'",
+        "AURORA_OPENCODE_PLUGIN_VERSION='1\"}x'",
+    ));
+    assert!(rig.run_as(&[], &[]).status.success());
+    assert!(!rig.state.join("config/opencode/package.json").exists());
+}
+
+/// (FIX-191) OpenCode's errors go to its log, behind its full-screen interface: after a non-zero exit
+/// the wrapper says where that log is, and keeps the status; a clean exit says nothing.
+#[test]
+fn the_opencode_wrapper_names_the_log_after_a_failed_start() {
+    let file = terminal_file("opencode", GOLDEN_MODEL, "anthropic_messages");
+    for (code, says) in [(0, false), (3, true)] {
+        let rig = Rig::new("opencode");
+        rig.write_env(&file);
+        exe(
+            &rig.dir.path().join("fake-bin"),
+            &format!("/usr/bin/mkdir -p \"$XDG_DATA_HOME/opencode/log\"\nexit {code}"),
+        );
+        let out = rig.run_as(&[], &[]);
+        assert_eq!(out.status.code(), Some(code));
+        let err = String::from_utf8_lossy(&out.stderr);
+        let log = rig.state.join("data/opencode/log");
+        assert_eq!(
+            err.contains(&format!("see {} for details", log.display())),
+            says,
+            "{code}: {err}"
+        );
+    }
 }
 
 /// `opencode` already behaves like a turn: its terminal config allows every tool.

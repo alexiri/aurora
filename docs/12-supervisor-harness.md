@@ -1037,13 +1037,42 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   of their own: `AURORA_<HARNESS>_MODEL` plus what the CLI needs, rendered by the adapter's own
   config code so a terminal and a turn agree: **Pi** gets `AURORA_PI_MODELS_JSON` (the `models.json`
   that the wrapper writes into `PI_CODING_AGENT_DIR=/workspace/.aurora/terminal/pi`) and
-  `AURORA_PI_KEY_VAR`, with `PI_OFFLINE`, `PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK` set; **goose**
+  `AURORA_PI_KEY_VAR`, with `PI_OFFLINE`, `PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK` set. **(FIX-190,
+  D-404)** Pi also gets `AURORA_PI_SETTINGS_JSON`, a turn's `settings.json` (`adapters/pi/config.rs`
+  `terminal_settings`: the keys and values of `render_settings`, i.e. the retry bound,
+  `defaultProjectTrust: "never"` (no project-trust question), no install telemetry, `quietStartup`,
+  plus `collapseChangelog: true`, which only the interface reads: one line instead of the "What's
+  New" page after an image update bumps Pi). Pi has no other first-run screen when a model is
+  configured: login, provider and model choice open only on `/login` and `/model`, and the update
+  check is off (`PI_SKIP_VERSION_CHECK`, `PI_OFFLINE`). Pi writes that file itself on its first start and
+  the person may edit it, so the wrapper merges rather than replaces: it adds the keys the file lacks
+  (`jq`, Aurora's values under the file's) and keeps every value already there; a file that has them
+  all, is not a JSON object, or is a link is not touched. `models.json` is still written on every
+  start (it holds only the gateway provider). With no model for Pi and no arguments, the wrapper says
+  so ("no model is set up for this agent's terminal; check the agent's model on its Behaviour page",
+  exit 1) instead of opening Pi's provider setup; arguments still pass through. Pi runs on the
+  image's system Node.js, which needs the full ICU data (`docs/11 §Sandbox image`, FIX-190); **goose**
   gets `AURORA_GOOSE_PROVIDER` (`anthropic` or `litellm`) and `AURORA_GOOSE_HOST`, which the wrapper
   turns into goose's own variables, with `GOOSE_PATH_ROOT=/workspace/.aurora/terminal/goose`,
-  telemetry, keyring and session naming off; **OpenCode** gets `AURORA_OPENCODE_CONFIG` (the rendered
+  telemetry, keyring and session naming off. **(FIX-189, D-404)** A bare `goose` opens its setup
+  wizard whenever its config file does not exist, whatever the environment says, so the wrapper
+  creates a minimal `$GOOSE_PATH_ROOT/config/config.yaml` (mode 0600, non-secret keys only:
+  `GOOSE_PROVIDER`, `GOOSE_MODEL`, the provider's host keys and `GOOSE_TELEMETRY_ENABLED: false`, each
+  a YAML string; never the placeholder key) when there is none. An existing file is the person's and
+  is left alone; the environment still sets the provider and model, because goose reads the
+  environment before the file. With no model for goose and no arguments, the wrapper says so ("no
+  model is set up for this agent's terminal; check the agent's model on its Behaviour page", exit 1)
+  instead of opening the wizard; arguments (`goose configure`, `--version`) still pass through.
+  **OpenCode** gets `AURORA_OPENCODE_CONFIG` (the rendered
   `opencode.json` without the platform tools, passed as `OPENCODE_CONFIG_CONTENT`), with its XDG
   directories under `/workspace/.aurora/terminal/opencode` and the vendor switches of `§Adapters`
-  set. A model the harness cannot use (an id or role that fails the supervisor's re-check, or a
+  set. **(FIX-191)** It also gets `AURORA_OPENCODE_PLUGIN_VERSION` (the pinned version), from which
+  the wrapper writes a turn's `plugin_files` under `$XDG_CONFIG_HOME/opencode` when they are missing,
+  so the start does not ask the npm registry for OpenCode's plugin package (a file already there is
+  kept: OpenCode updates them for the person's own plugins). OpenCode runs as the wrapper's child, not
+  `exec`ed, and after a non-zero exit the wrapper prints "opencode: exited with status N; see
+  `<XDG_DATA_HOME>/opencode/log` for details", because its errors go to that log, behind its
+  full-screen interface. A model the harness cannot use (an id or role that fails the supervisor's re-check, or a
   dialect it does not speak, for example goose on a Responses-only endpoint) becomes
   `AURORA_<HARNESS>_UNAVAILABLE` ("this agent's model endpoint cannot be used with …"), never a
   half-configured CLI. The wrappers name the placeholder only through the variable the CLI's config
