@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 196 | 171 | 5 (FIX-191, opencode's blank screen, waiting for the owner's runtime class and log; FIX-194 in `p5-apps`; P5-REFINE-2 (B, sent back), -4 (E), -5 (F); P5-REFINE-1 and -3, P5-PERSON, FIX-183..190, FIX-192, FIX-193 and P5-APIGAP-1..4 are done) | 16 (P5-REFINE-6..20 in lanes A–F per the briefs; P5-SCHED-ONCE A+B in lane E after -7, C in lane B after -14) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 196 | 172 | 4 (FIX-191, opencode's blank screen, waiting for the owner's runtime class and log; P5-REFINE-2 (B, sent back), -4 (E), -5 (F); P5-REFINE-1 and -3, P5-PERSON, FIX-183..190, FIX-192, FIX-193 and P5-APIGAP-1..4 are done) | 16 (P5-REFINE-6..20 in lanes A–F per the briefs; P5-SCHED-ONCE A+B in lane E after -7, C in lane B after -14) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 7 | 0 | 0 | 3 (P4-S3: specified and briefed, moved from phase 5, D-318; FIX-174 and FIX-175: briefed, moved from phase 5 by the owner 2026-11-19, P6-WARMPOOL companions) | 4 (P6-ORGTREE, P6-LIMITS, P6-WARMPOOL: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **520** | **482** | **6** | **18** | **4** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
+| **All** | **520** | **483** | **5** | **18** | **4** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
 
 ## Environment
 
