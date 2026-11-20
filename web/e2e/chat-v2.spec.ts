@@ -75,6 +75,9 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
       // FIX-021: the link opens the LLM keys tab, owners also get "Agent access", the reason counts show under the copy.
       await expect(page.getByRole("link", { name: "Open AI keys" })).toHaveAttribute("href", /\/apps\?tab=accounts&kind=ai-key$/);
       await expect(page.getByRole("link", { name: "Agent access" })).toHaveAttribute("href", /\/agents\/[^/?]+\?tab=access$/);
+      // (chat-7) The technical line is under Details.
+      await expect(page.getByText("1 granted key not usable (origin_unverified)")).toBeHidden();
+      await page.getByRole("button", { name: "Details" }).click();
       await expect(page.getByText("1 granted key not usable (origin_unverified)")).toBeVisible();
     },
   },
@@ -91,15 +94,25 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
       await expect(page.getByText("Reconnecting")).toHaveCount(0);
     },
   },
-  { name: "phone-list", fx: DEFAULT, query: () => "", phoneOnly: true },
+  {
+    // (chat-11) The phone opens the person's conversation; the list is one tap back.
+    name: "phone-list",
+    fx: DEFAULT,
+    query: () => "",
+    phoneOnly: true,
+    prepare: async (page) => {
+      await page.getByRole("button", { name: "Back to conversations" }).click();
+      await expect(page.getByRole("tab", { name: "Active" })).toBeVisible();
+    },
+  },
   {
     name: "phone-thread",
     fx: DEFAULT,
     query: () => "",
     phoneOnly: true,
     prepare: async (page) => {
-      await page.getByRole("button", { name: /Direct chat/ }).first().click();
       await expect(page.getByRole("button", { name: "Back to conversations" })).toBeVisible();
+      await expect(page.getByPlaceholder(/^(Message Daneel…|Add a follow-up…)$/)).toBeVisible();
     },
   },
 ];
@@ -320,9 +333,14 @@ test.describe("layout, 1280 px", () => {
 test.describe("layout, 390 px", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("the list and the thread are two views; Back and the browser's back return to the list", async ({ page }) => {
+  test("the list and the thread are two views; the phone opens the thread, Back returns to the list", async ({ page }) => {
     await openChat(page, "light", DEFAULT);
     const list = page.getByRole("navigation", { name: "Conversations" });
+    // (chat-11) The Chat tab opens the person's conversation with the composer ready; the list is one tap back.
+    await expect(page.getByRole("log")).toBeVisible();
+    await expect(list).toBeHidden();
+    await expect(page.getByPlaceholder(/^(Message Daneel…|Add a follow-up…)$/)).toBeVisible();
+    await page.getByRole("button", { name: "Back to conversations" }).click();
     await expect(list).toBeVisible();
     await expect(page.getByRole("log")).toBeHidden();
     expect(await overflow(page)).toBeLessThanOrEqual(0);

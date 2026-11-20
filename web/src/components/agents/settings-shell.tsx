@@ -84,7 +84,7 @@ export function SettingsShell({
             label="Settings pages"
             idBase="agent"
             columnFromMd
-            className="max-md:max-w-full md:w-52 md:shrink-0 md:flex-col md:bg-transparent md:p-0"
+            className="max-md:max-w-full max-md:flex-wrap md:w-52 md:shrink-0 md:flex-col md:bg-transparent md:p-0"
             tabClassName="md:w-full md:justify-start md:rounded-control md:px-3"
           />
         ) : null}

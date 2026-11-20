@@ -206,7 +206,11 @@ describe("transcript", () => {
     pane();
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("no usable AI key");
+    // (chat-7) The technical line is under Details, not in the sentence.
+    expect(alert.textContent).not.toContain("1 granted key not usable");
+    fireEvent.click(within(alert).getByRole("button", { name: "Details" }));
     expect(alert.textContent).toContain("1 granted key not usable (origin_unverified)");
+    expect(within(alert).getByRole("button", { name: "Hide details" })).toBeTruthy();
     expect(within(alert).getByRole("link", { name: "Open AI keys" }).getAttribute("href")).toBe("/o/x/w/y/apps?tab=accounts&kind=ai-key");
     // Not an owner (the workspace did not load): no "Agent access" link.
     expect(within(alert).queryByRole("link", { name: "Agent access" })).toBeNull();
@@ -453,6 +457,30 @@ describe("conversation list and the URL (RFE-009)", () => {
     expect((await screen.findByRole("heading", { name: "Old room", level: 2 })).closest("header")!.textContent).toMatch(/Archived 1 Feb 2026/);
     fireEvent.keyDown(screen.getByRole("button", { name: "Conversation actions" }), { key: "Enter" });
     expect(screen.getByRole("menuitem", { name: "Unarchive" })).toBeTruthy();
+  });
+
+  // (P5-REFINE-11, chat-1) The API returns the person's direct chat archived or not: an archived one is never injected into Active.
+  it("an archived direct conversation is not in the Active groups; the thread is read-only with Restore and no composer; New chat restores it", async () => {
+    const direct = conv("d1", "direct", { archived_at: "2026-11-19T10:00:00Z" });
+    const calls = mock({
+      "POST /v1/agents/a1/conversations/direct": () => json(200, direct),
+      "GET /v1/agents/a1/conversations": () => json(200, { items: [], next_cursor: null }),
+      "POST /v1/conversations/d1/unarchive": () => json(200, { ...direct, archived_at: null }),
+    });
+    wrap(<ChatTab agentId="a1" wsId="w" base="/o/x/w/y" agent={{ id: "a1", name: "Daneel", handle: "daneel" }} />);
+    const nav = await screen.findByRole("navigation", { name: "Conversations" });
+    expect(await within(nav).findByText("No active conversations")).toBeTruthy();
+    expect(within(nav).queryByText("Direct chat")).toBeNull();
+    expect(within(nav).getByText("Start a new chat to talk with Daneel.")).toBeTruthy();
+    // The thread shows the archived conversation read-only.
+    const header = (await screen.findByRole("heading", { name: "Direct chat", level: 2 })).closest("header")!;
+    expect(header.textContent).toMatch(/Archived 19 Nov 2026/);
+    expect(header.textContent).toMatch(/read only/);
+    expect(within(header).getByRole("button", { name: "Restore" })).toBeTruthy();
+    expect(screen.getByText("This conversation is archived. Restore it to write again.")).toBeTruthy();
+    expect(screen.queryByLabelText("Message")).toBeNull();
+    fireEvent.click(within(nav).getByRole("button", { name: "New chat" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.path === "/v1/conversations/d1/unarchive")).toBe(true));
   });
 
   it("an empty archive says so", async () => {

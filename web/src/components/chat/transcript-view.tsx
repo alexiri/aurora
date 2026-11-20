@@ -64,6 +64,9 @@ export function TranscriptView({
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [state]);
 
+  // "Jump to latest": while the reader is more than a screen above the bottom, count the messages that arrived since.
+  const [leftAt, setLeftAt] = useState<number | null>(null);
+
   // (chat-2) After sending, the person's message and the answer are in view, always: follow again, go to the bottom now and
   // once more after the next paint (the message's attachments and the new rows change the height after the first scroll).
   // `leftAt` is reset in the same effect so "Jump to latest" is not shown.
@@ -81,9 +84,6 @@ export function TranscriptView({
     });
     return () => cancelAnimationFrame(raf);
   }, [sent]);
-
-  // "Jump to latest": while the reader is more than a screen above the bottom, count the messages that arrived since.
-  const [leftAt, setLeftAt] = useState<number | null>(null);
   const unread = useMemo(
     () => (leftAt === null ? 0 : state.events.filter((e) => (e.seq ?? 0) > leftAt && MESSAGE_TYPES.has(e.type)).length),
     [state.events, leftAt],

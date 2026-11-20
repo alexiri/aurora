@@ -110,6 +110,8 @@ export function ChatTab({
   const qc = useQueryClient();
   const direct = useDirectConversation(agentId);
   const [archived, setArchived] = useState(false);
+  // (chat-11) The phone's list is shown only after the person taps back.
+  const [listShown, setListShown] = useState(false);
   // (P5-CHAT-4) The search box: `text` filters titles as you type; Enter submits a message search (`submitted`).
   const [query, setQuery] = useState("");
   const [chips, setChips] = useState<FilterChip[]>([]);
@@ -256,7 +258,9 @@ export function ChatTab({
     setArchived(false);
     select(null, "replace");
   };
-  const threadOpen = picked !== null;
+  // (chat-11) On a phone the Chat tab opens the person's conversation (the composer ready); the list is one tap back.
+  // Picking, deep links and the Archived view keep working; the desktop shows both panes whatever this says.
+  const threadOpen = picked !== null || (!listShown && !archived && convId !== null);
   // (chat-1) Until several chats exist (P5-REFINE-7) "New chat" opens the person's chat, restoring it when it was archived.
   const newChat = () => {
     setArchived(false);
@@ -316,6 +320,7 @@ export function ChatTab({
           onNewChat={newChat}
           archived={archived}
           onArchivedChange={(a) => {
+            setListShown(true);
             setArchived(a);
             select(null, "replace");
           }}
@@ -376,7 +381,10 @@ export function ChatTab({
             archived={archived || !!conv?.archived_at}
             retentionDays={retention.data?.conversations_days ?? null}
             onGone={done}
-            onBack={() => select(null)}
+            onBack={() => {
+              setListShown(true);
+              select(null);
+            }}
             onTurn={setOpenTurn}
             initialDraft={draft ?? undefined}
             onDraftUsed={onDraftUsed}

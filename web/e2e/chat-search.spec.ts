@@ -171,6 +171,8 @@ test.describe("390 px", () => {
   test.use({ viewport: { width: 390, height: 844 } });
   test("results replace the list, opening one shows the thread, Back returns to the results", async ({ page }) => {
     await openChat(page, "light", fx());
+    // (chat-11) The phone opens the conversation: the list, and its search box, are one tap back.
+    await page.getByRole("button", { name: "Back to conversations" }).click();
     await search(page, "release");
     expect(await overflow(page)).toBeLessThanOrEqual(0);
     expect(await serious(page)).toEqual([]);

@@ -27,16 +27,31 @@ export function formatBytes(n: number): string {
  * The name and size of an attachment the transcript only knows by id (a person's message lists ids): a HEAD of the
  * content route, whose `Content-Disposition` (C-30) carries the stored filename. Nothing is rendered from the bytes.
  */
-export async function fetchAttachmentFacts(id: string): Promise<{ filename: string | null; size: number | null }> {
+export async function fetchAttachmentFacts(id: string): Promise<{ filename: string | null; size: number | null; contentType: string | null }> {
   const res = await fetch(attachmentUrl(id), { method: "HEAD", credentials: "same-origin" });
-  if (!res.ok) return { filename: null, size: null };
+  if (!res.ok) return { filename: null, size: null, contentType: null };
   const disposition = res.headers.get("content-disposition") ?? "";
   const filename = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)?.[1];
   const length = Number(res.headers.get("content-length"));
   return {
     filename: filename ? decodeURIComponent(filename) : null,
     size: Number.isFinite(length) && length > 0 ? length : null,
+    // (chat-10) A person's message lists ids only, so the type comes from here: without it an image stayed a generic card.
+    contentType: res.headers.get("content-type"),
   };
+}
+
+const RASTER_BY_EXTENSION: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+
+/**
+ * The type to decide a thumbnail with: the declared one, unless it is missing or the generic `application/octet-stream`
+ * (an upload without a type), then the name's extension for the raster types the browser shows.
+ */
+export function effectiveContentType(contentType: string | null | undefined, filename: string | null | undefined): string | undefined {
+  const t = (contentType ?? "").toLowerCase().split(";")[0].trim();
+  if (t && t !== "application/octet-stream") return t;
+  const ext = (filename ?? "").split(".").pop()?.toLowerCase() ?? "";
+  return RASTER_BY_EXTENSION[ext] ?? (t || undefined);
 }
 
 /** Multipart upload (`file` field). Typed with the generated `Attachment`; the browser sets the boundary. */

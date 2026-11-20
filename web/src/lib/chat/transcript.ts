@@ -1,4 +1,5 @@
 import type { Conversation, Followup, SendResult, TranscriptEvent } from "@/lib/api/conversations";
+import { SOMETHING_WENT_WRONG } from "@/lib/labels";
 
 export interface Delta {
   turnId: string;
@@ -286,5 +287,5 @@ const ERROR_COPY: Record<string, ErrorCopy> = {
 export function errorCopy(code: string | null | undefined, fallback?: string): ErrorCopy {
   if (code && ERROR_COPY[code]) return ERROR_COPY[code];
   // Unknown code (WEBX-9): generic main copy; the server's sentence, if any, goes in the secondary line.
-  return { message: "Something went wrong. Please try again.", showServerMessage: !!fallback };
+  return { message: SOMETHING_WENT_WRONG, showServerMessage: !!fallback };
 }

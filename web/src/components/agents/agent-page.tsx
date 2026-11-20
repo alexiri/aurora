@@ -243,6 +243,8 @@ export function AgentPage() {
             onValueChange={(v) => choosePage(v as AgentPageId)}
             label={`${section.label} pages`}
             idBase="agent"
+            // What does not fit at 390 px goes into a More menu: never a strip that scrolls sideways (docs/14 §Tabs).
+            overflow="menu"
           />
         ) : null}
         <div

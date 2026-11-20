@@ -12,7 +12,7 @@ import { HighlightedText } from "@/components/ui/highlighted-text";
 import { ClockIcon } from "@/components/ui/icons";
 import { Segmented } from "@/components/ui/segmented";
 import type { SearchItem, SearchResponse } from "@/lib/api/search";
-import { KIND_LABEL, listTime } from "@/lib/chat/layout";
+import { KIND_LABEL, searchTime } from "@/lib/chat/layout";
 import { cn } from "@/lib/utils";
 
 export type SearchScope = "agent" | "all";
@@ -175,7 +175,10 @@ export function ResultRow({
     e.preventDefault();
     onOpen();
   };
-  const author = [i.author.label, showAgent ? i.agent.name : null].filter(Boolean).join(" · ");
+  // (chat-9) Who spoke goes in front of the sentence ("Daneel: pong"); the person's own words carry no prefix. In All agents
+  // the agent's name leads the line.
+  const speaker = i.author.kind === "person" || !i.author.label ? "" : `${i.author.label}: `;
+  const lead = `${showAgent ? `${i.agent.name} · ` : ""}${i.type === "attachment" ? "File · " : ""}${speaker}`;
   return (
     <Link
       href={href}
@@ -187,13 +190,13 @@ export function ResultRow({
         <span className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">{i.conversation.title || kindTitle(i.conversation.kind)}</span>
           {i.conversation.archived ? <Badge>Archived</Badge> : null}
-          <span className="shrink-0 text-xs tabular-nums text-muted">{listTime(i.at, now)}</span>
+          {/* (chat-9) The full date and time of the message ("19 Nov 23:50"), not "Wed" or a bare clock. */}
+          <span className="shrink-0 text-xs tabular-nums text-muted">{searchTime(i.at, now)}</span>
         </span>
-        <span className="block truncate text-xs text-muted">
-          {author}
-          {i.type === "attachment" ? " · File" : ""}
+        <span className="block line-clamp-3 text-sm text-ink-2">
+          {lead}
+          <HighlightedText text={i.snippet} highlights={i.highlights} className="inline" />
         </span>
-        <HighlightedText text={i.snippet} highlights={i.highlights} className="block line-clamp-3 text-sm text-ink-2" />
       </span>
     </Link>
   );
