@@ -132,6 +132,8 @@ export function ChatThread({
     : undefined;
   const segments = [
     ...(isDirect || !conversation ? [] : [kindLabel(conversation.kind)]),
+    // (P5-REFINE-14, schedules-7, C-1074) The automation that started this thread is gone: "Schedule deleted" / "Webhook deleted".
+    ...(conversation?.automation?.deleted ? [conversation.automation.kind === "webhook" ? "Webhook deleted" : "Schedule deleted"] : []),
     // (chat-1) "Archived 19 Nov 2026 · read only"
     ...(conversation?.archived_at ? [`Archived ${DATE.format(new Date(conversation.archived_at))}`, "read only"] : archived ? ["Archived", "read only"] : []),
     ...(retentionDays ? [`Deleted after ${retentionDays} days without activity`] : []),
@@ -163,6 +165,13 @@ export function ChatThread({
             ) : null
           }
         />
+        {conversation?.automation?.deleted ? (
+          <Notice tone="neutral" role="status" className="m-3 shrink-0" data-testid="automation-deleted">
+            {conversation.automation.kind === "webhook"
+              ? "It was started by a webhook that no longer exists. No new deliveries."
+              : "It was started by a schedule that no longer exists. No new runs."}
+          </Notice>
+        ) : null}
         {actionErr ? (
           <Notice tone="danger" role="alert" className="m-3 shrink-0">
             {actionErr}

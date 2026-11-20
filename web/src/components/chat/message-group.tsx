@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 
 import { ActionApprovalNote, ApprovalCard } from "./approval-card";
 import { AttachmentCard } from "./attachments";
+import { AutomationMessage, automationDisplay } from "./automation-message";
 import { excerptOf, useChatActions } from "./chat-actions";
 import { QuoteStrip, quoteOf } from "./quote-strip";
 import { ErrorBlock, RetryStart, isRetryableCode } from "./status-rows";
@@ -153,6 +154,8 @@ function Bubble({
   const p = ev.payload;
   const text = s(p.text);
   const quote = quoteOf(p);
+  // (P5-REFINE-14, C-1079) A schedule or webhook turn carries what people read; the turn's own text (the safety wrapper) is not shown.
+  const display = side === "person" ? automationDisplay(p) : null;
   const attachments = side === "person" && Array.isArray(p.attachments) ? (p.attachments as unknown[]).map(s).filter(Boolean) : [];
   return (
     // `w-full`: the row spans the column, so the bubble's percentage max-width is measured against the chat
@@ -184,7 +187,11 @@ function Bubble({
             : "max-w-bubble rounded-card rounded-tl-tail bg-subtle text-ink",
         )}>
         {quote ? <QuoteStrip quote={quote} onJump={actions.jump} side={side} /> : null}
-        {text.trim() ? <Markdown source={text} breaks={side === "person"} /> : null}
+        {display && side === "person" ? (
+          <AutomationMessage display={display} ts={ev.ts} text={display.kind === "schedule" ? text : undefined} />
+        ) : text.trim() ? (
+          <Markdown source={text} breaks={side === "person"} />
+        ) : null}
         {attachments.map((id) => (
           <AttachmentCard key={id} id={id} purged={state.purged?.[id]} />
         ))}
