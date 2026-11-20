@@ -288,6 +288,82 @@ pub struct PolicyGenerationSummary {
     pub published_by: Option<CreatedBy>,
     pub published_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// (P5-REFINE-6, C-1087) What this generation changed against the one before it (at most
+    /// 20; `more` counts the rest). Empty for the first generation.
+    pub changes: Vec<RuleChange>,
+    /// (C-1087) Changes left out after the first 20.
+    pub more: i64,
+    /// (C-1087) Who made it: the publisher; `null` for a draft or an unknown publisher.
+    pub actor: Option<ChangeActor>,
+}
+
+/// (C-1087) One rule added, removed or edited.
+#[derive(Debug, Serialize, ToSchema, PartialEq, Eq)]
+pub struct RuleChange {
+    pub kind: RuleChangeKind,
+    pub rule_name: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleChangeKind {
+    Added,
+    Removed,
+    Edited,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ChangeActor {
+    pub display_name: String,
+}
+
+/// The most changes listed per generation (C-1087).
+pub const CHANGES_MAX: usize = 20;
+
+/// (C-1087) The rule changes from `old` to `new`, matched by `logical_id`, in `new`'s order
+/// (removed ones after, in `old`'s order); the first [`CHANGES_MAX`] and how many more.
+#[must_use]
+pub fn rule_changes(
+    old: &[aurora_db::repo::policy::RuleRow],
+    new: &[aurora_db::repo::policy::RuleRow],
+) -> (Vec<RuleChange>, i64) {
+    use aurora_db::repo::policy::RuleRow;
+    fn same(a: &RuleRow, b: &RuleRow) -> bool {
+        a.priority == b.priority
+            && a.name == b.name
+            && a.description == b.description
+            && a.enabled == b.enabled
+            && a.identities == b.identities
+            && a.targets == b.targets
+            && a.action == b.action
+            && a.require_approval == b.require_approval
+            && a.approval_timeout_secs == b.approval_timeout_secs
+            && a.rate_limit == b.rate_limit
+            && a.conditions == b.conditions
+    }
+    let mut all = Vec::new();
+    for n in new {
+        match old.iter().find(|o| o.logical_id == n.logical_id) {
+            None => all.push((RuleChangeKind::Added, &n.name)),
+            Some(o) if !same(o, n) => all.push((RuleChangeKind::Edited, &n.name)),
+            Some(_) => {}
+        }
+    }
+    for o in old {
+        if !new.iter().any(|n| n.logical_id == o.logical_id) {
+            all.push((RuleChangeKind::Removed, &o.name));
+        }
+    }
+    let more = i64::try_from(all.len().saturating_sub(CHANGES_MAX)).unwrap_or(i64::MAX);
+    let listed = all
+        .into_iter()
+        .take(CHANGES_MAX)
+        .map(|(kind, name)| RuleChange {
+            kind,
+            rule_name: name.clone(),
+        })
+        .collect();
+    (listed, more)
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -588,8 +664,14 @@ pub fn summary_dto(
         open_lane_posture: parse_str(&g.open_lane_posture)?,
         rule_count: s.rule_count,
         draft_revision: (g.status == "draft").then_some(g.draft_revision),
+        actor: g
+            .published_by_name
+            .clone()
+            .map(|display_name| ChangeActor { display_name }),
         published_by: published_by(&g),
         published_at: g.published_at,
         created_at: g.created_at,
+        changes: Vec::new(),
+        more: 0,
     })
 }

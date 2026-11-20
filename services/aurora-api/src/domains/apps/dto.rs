@@ -50,6 +50,10 @@ pub struct AppSummary {
     /// instances or database; every connect method is a `fields` method with no fields): an agent
     /// is given access in one step. Derived from the installed manifest, not stored.
     pub credential_free: bool,
+    /// (P5-REFINE-6, C-1067, D-419) No tool of the app is in group `read` (the Outgoing webhook):
+    /// its levels are `ask` and `act` ("Ask before each send", "Send without asking"), never
+    /// `read`. Derived from the installed manifest, not stored.
+    pub send_only: bool,
     /// (P5-POLISH-3, D-387, C-1029, C-1031) The manifest's `about.summary`: one plain sentence cards show
     /// whole; `null` when the package has none (clients then clamp `description`, never cutting mid-word).
     pub summary: Option<String>,
@@ -274,6 +278,8 @@ pub struct AppDetail {
     pub family: Option<AppFamily>,
     /// (FIX-154, C-895) as on `AppSummary`.
     pub credential_free: bool,
+    /// (P5-REFINE-6, C-1067) as on `AppSummary`: the connect journey's level step reads it.
+    pub send_only: bool,
     pub api_docs: Option<String>,
     pub connect_note: Option<ConnectNote>,
     pub label_hint: Option<String>,

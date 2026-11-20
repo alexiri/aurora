@@ -120,6 +120,52 @@ export function useCancelInvitation(orgId: string) {
     unwrap(api.DELETE("/v1/invitations/{id}", { params: { path: { id } } })), orgKeys.invitations(orgId));
 }
 
+export type InvitationLink = components["schemas"]["InvitationLink"];
+
+/**
+ * (P5-REFINE-6, C-1069, SEC-140) Re-issue an invitation's link to copy. The previous link stops
+ * working. The link is returned to the caller only: never cached, never logged.
+ */
+export function useInvitationLink(orgId: string) {
+  return useInvalidatingMutation(
+    (id: string) => unwrap(api.POST("/v1/invitations/{id}/link", { params: { path: { id } } })),
+    orgKeys.invitations(orgId),
+  );
+}
+
+/** (C-1069) E-mail an invitation again with a new link; 409 `mail_disabled` when mail is log-only. */
+export function useResendInvitation(orgId: string) {
+  return useInvalidatingMutation(
+    (id: string) => unwrap(api.POST("/v1/invitations/{id}/resend", { params: { path: { id } } })),
+    orgKeys.invitations(orgId),
+  );
+}
+
+export type OrgAgent = components["schemas"]["OrgAgent"];
+
+export type OrgAgentState = components["schemas"]["OrgAgentState"];
+
+/**
+ * (P5-REFINE-6, C-1090, D-425) Every agent of the organization (owners and admins) in one route, with the header's
+ * state (`paused`, `needs_key`, `failed`, `working`, `starting`, `asleep`, `ready`) and its last use. Replaces the
+ * per-workspace fan-out of `components/org/org-agents-list.tsx` (P5-REFINE-17).
+ */
+export function useOrganizationAgents(orgId: string | undefined) {
+  return useQuery({
+    queryKey: ["orgs", orgId, "agents"] as const,
+    queryFn: () =>
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/orgs/{org}/agents", {
+            params: { path: { org: orgId ?? "" }, query: { limit: PAGE_LIMIT, cursor } },
+          }),
+        ),
+      ),
+    enabled: !!orgId,
+    retry: retryUnlessClientError,
+  });
+}
+
 export function useOrgKeys(orgId: string) {
   return useQuery({
     queryKey: orgKeys.keys(orgId),
@@ -198,6 +244,8 @@ export function useRetention(orgId: string | undefined, enabled = true) {
 
 export type OrgStorage = components["schemas"]["OrgStorage"];
 export type AdminStorage = components["schemas"]["AdminStorage"];
+/** (P5-REFINE-6, C-1072) Conversations, files, activity; `bytes` is `null` when not computable. */
+export type StorageCategory = components["schemas"]["StorageCategory"];
 
 /** The server serves these pages from a snapshot (FIX-126); revisiting within a minute refetches nothing. */
 export const STORAGE_STALE_MS = 60_000;

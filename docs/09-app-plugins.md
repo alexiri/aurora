@@ -235,6 +235,16 @@ items through a `read` connection (`07 §Read-only connections`). A method can a
 **credential** read-only where the vendor allows it (the `aurora_access` hook key, §8.2); the
 package's `docs/setup.md` says per method what the vendor enforces and what Aurora enforces.
 
+**Send-only apps (phase 5, P5-REFINE-6, D-419, C-1067).** An app whose tools are all outside group
+`read` (the Outgoing webhook: one `tools.write` item, `send`) is **send-only**, derived from the
+snapshot, nothing declared or stored. Its levels are `ask` ("Ask before each send": `allow: []`,
+`ask: [every tool]`) and `act` ("Send without asking": `full`); `read` would expand to an empty grant,
+so it is never offered (`levels`, `send_only` on the app and account DTOs) and is refused with
+`422 level_not_offered` (`details { app_id, offered }`) by the connect journey's `grant.level` and
+`limit`, and by the level `PUT` of a grant, before anything is expanded or written. A hand-built
+custom list keeps its own `empty_custom` refusal. The access notice names the account: "Dani can
+now send to Ops alerts, and asks you first." / "… without asking."
+
 `scopes: []` with `default_scopes: []` is valid: the authorization request then carries no `scope`
 parameter and the connection has no scopes (FIX-133: a **GitHub App's user authorization**, whose
 permissions come from the app's registration, is the package's `oauth_app` method, with its own

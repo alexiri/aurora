@@ -24,6 +24,35 @@ fn is_read(t: &Tool) -> bool {
     t.group == "read"
 }
 
+/// (P5-REFINE-6, C-1067, D-419) An app with tools and none of them in group `read` (the Outgoing
+/// webhook): it only sends, so `read` is never one of its levels. Derived, nothing stored.
+#[must_use]
+pub fn send_only(tools: &[Tool]) -> bool {
+    !tools.is_empty() && !tools.iter().any(is_read)
+}
+
+/// (C-1067) Refuse a level the app does not offer, before it is expanded: `read` on a send-only
+/// app would expand to an empty grant. `422 level_not_offered` with the levels that exist.
+pub fn require_offered(
+    level: Level,
+    tools: &[Tool],
+    custom_only: bool,
+    app_id: &str,
+) -> Result<(), aurora_core::ApiError> {
+    if level == Level::Read && send_only(tools) {
+        let offered: Vec<&str> = levels_for(tools, custom_only, None)
+            .into_iter()
+            .map(Level::as_str)
+            .collect();
+        return Err(aurora_core::ApiError::unprocessable(
+            "level_not_offered",
+            "This app only sends: choose Ask before each send or Send without asking.",
+        )
+        .with_details(serde_json::json!({"app_id": app_id, "offered": offered})));
+    }
+    Ok(())
+}
+
 /// Expand `level` over the app's tools (from [`crate::domains::apps::service::tools`]).
 ///
 /// - `read` allows every read tool.
@@ -188,15 +217,18 @@ pub fn lowered_grant(
     Some((false, a, k))
 }
 
-/// The choices that exist for an app: none when it has no tool that changes anything, no `act`
-/// for a `custom_only` app (C-410), and nothing above the account's `limit`.
+/// The choices that exist for an app: none when it has no tool that changes anything, no `read`
+/// for a send-only app (C-1067), no `act` for a `custom_only` app (C-410), and nothing above the
+/// account's `limit`.
 #[must_use]
 pub fn levels_for(tools: &[Tool], custom_only: bool, limit: Option<Level>) -> Vec<Level> {
     if !tools.iter().any(|t| !is_read(t)) {
         return Vec::new();
     }
+    let sends_only = send_only(tools);
     [Level::Read, Level::Ask, Level::Act]
         .into_iter()
+        .filter(|l| !(sends_only && *l == Level::Read))
         .filter(|l| !(custom_only && *l == Level::Act))
         .filter(|l| limit.is_none_or(|m| l.rank() <= m.rank()))
         .collect()
@@ -285,8 +317,11 @@ pub fn classify(full: bool, allow: &[String], ask: &[String], tools: &[Tool]) ->
         .filter(|t| !is_read(t))
         .map(|t| (t, decide(t)))
         .collect();
+    // (C-1067) A send-only app has no `read` level: a grant that blocks every send is not one of
+    // its levels (the writers refuse it; a lowered limit can leave it behind).
+    let sends_only = send_only(tools);
     if reads_allowed {
-        if writes.iter().all(|(_, d)| *d == Decision::Block) {
+        if writes.iter().all(|(_, d)| *d == Decision::Block) && !sends_only {
             return level(Level::Read);
         }
         if writes.iter().all(|(_, d)| *d != Decision::Block) {
@@ -305,6 +340,7 @@ pub fn classify(full: bool, allow: &[String], ask: &[String], tools: &[Tool]) ->
     }
     let (base, differs) = [Level::Read, Level::Ask, Level::Act]
         .into_iter()
+        .filter(|l| !(sends_only && *l == Level::Read))
         .map(|l| {
             let n = tools
                 .iter()
@@ -511,6 +547,71 @@ mod tests {
         assert_eq!(connection_limit(Some("ask"), "write"), Level::Ask);
         assert_eq!(connection_limit(None, "read"), Level::Read);
         assert_eq!(access_for_limit(Level::Ask), "write");
+    }
+
+    /// The Outgoing webhook: one write tool `send`, no read tool.
+    fn webhook() -> Vec<Tool> {
+        vec![tool("send", "write")]
+    }
+
+    #[test]
+    fn a_send_only_app_offers_ask_and_act_never_read() {
+        let w = webhook();
+        assert!(send_only(&w));
+        assert!(!send_only(&two_writes()));
+        assert!(!send_only(&[]));
+        assert!(!send_only(&[tool("list", "read")]));
+        assert_eq!(levels_for(&w, false, None), vec![Level::Ask, Level::Act]);
+        assert_eq!(levels_for(&w, true, None), vec![Level::Ask]);
+        assert_eq!(levels_for(&w, false, Some(Level::Ask)), vec![Level::Ask]);
+        assert!(levels_for(&w, false, Some(Level::Read)).is_empty());
+        // An app with reads and writes is unchanged; a custom-only one drops `act`.
+        assert_eq!(
+            levels_for(&two_writes(), false, None),
+            vec![Level::Read, Level::Ask, Level::Act]
+        );
+        assert_eq!(
+            levels_for(&two_writes(), true, None),
+            vec![Level::Read, Level::Ask]
+        );
+        // `ask` is "ask for every send", a valid custom grant.
+        let a = expand(Level::Ask, &w);
+        assert_eq!(a.mode, GrantMode::Custom);
+        assert_eq!((a.allow_tools, a.ask_tools), (vec![], ids(&["send"])));
+        assert_eq!(expand(Level::Act, &w).mode, GrantMode::Full);
+        // `read` is refused before it is expanded.
+        let e = require_offered(Level::Read, &w, false, "webhook").unwrap_err();
+        assert_eq!(e.code(), "level_not_offered");
+        assert_eq!(
+            e.details().unwrap()["offered"],
+            serde_json::json!(["ask", "act"])
+        );
+        assert!(require_offered(Level::Ask, &w, false, "webhook").is_ok());
+        assert!(require_offered(Level::Read, &two_writes(), false, "gh").is_ok());
+    }
+
+    #[test]
+    fn a_send_only_saved_grant_reads_as_ask_or_act_never_read() {
+        let w = webhook();
+        let lvl = |full: bool, allow: &[&str], ask: &[&str]| {
+            classify(full, &ids(allow), &ids(ask), &w).choice
+        };
+        assert_eq!(lvl(false, &[], &["send"]), Choice::Level(Level::Ask));
+        assert_eq!(lvl(true, &[], &[]), Choice::Level(Level::Act));
+        assert_eq!(lvl(false, &["send"], &[]), Choice::Level(Level::Act));
+        // Every send blocked (only a lowered limit leaves that behind) is not `read`.
+        assert_eq!(
+            lvl(false, &[], &[]),
+            Choice::Custom {
+                base: Level::Ask,
+                differs: 1
+            }
+        );
+        for l in [Level::Ask, Level::Act] {
+            let g = expand(l, &w);
+            let c = classify(g.mode == GrantMode::Full, &g.allow_tools, &g.ask_tools, &w);
+            assert_eq!(c.choice, Choice::Level(l));
+        }
     }
 
     #[test]

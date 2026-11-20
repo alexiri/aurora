@@ -155,7 +155,15 @@ protocol's replica and integration ownership (§4) already handles several repli
    is approved in the same request (`approve_manifest_digest`); a different digest → 409
    `stale_manifest`. No token is returned or shown.
 
-The connector is `awaiting_registration` until a host registers it, then `active`. A later host
+The connector is `awaiting_registration` until a host registers it, then `active`. (phase 5,
+P5-REFINE-6, C-1068) **One readiness:** the organization's Chat platforms (`/v1/connector-availability`)
+and Administration (`/v1/admin/connectors`) read the state through one function
+(`connectors/readiness.rs`): a row still `awaiting_registration` whose type a live host announces is
+`registering` (it registers within one host poll), and `waiting_for_host` only when no live host
+announces the type; both carry `host_running` and the person's `next_step`. A development host build
+embeds an empty manifest signature: under `plugins.allow_unsigned` (D-142) the managed connector's
+own `register` accepts that empty signature as the host's `register` does (a present signature is
+always verified), so a running development host's connector becomes `active`. A later host
 version with a widened manifest keeps it `active` under the approved manifest, with the update
 pending, exactly as §3 (the dashboard shows the manifest diff; a connector first registered stays
 `pending_approval`). Disabling sets `disabled` (hosts stop it, integrations are not served);
@@ -705,7 +713,8 @@ through `POST /v1/connector/credentials` (CAS on `credentials_version`).
 (for example "no admin token: replies to individuals arrive as DMs"). Create then runs the
 authoritative synchronous validation as before; a choice list is only a convenience. Before any
 connector is usable, `GET /v1/connector-availability` tells an org admin per connector type whether it
-is `active`, `not_added`, `waiting_for_host`, `disabled` or `needs_approval`, and which instance
+is `active`, `not_added`, `registering` (P5-REFINE-6), `waiting_for_host`, `disabled` or
+`needs_approval`, with `host_running`, `can_connect` and `next_step` (C-1068), and which instance
 admins to ask. Setup fields may carry `advanced: true` (collapsed in the dashboard, C-715).
 
 ### 5.9 User linking

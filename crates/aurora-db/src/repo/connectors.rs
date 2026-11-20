@@ -99,6 +99,21 @@ pub async fn update_managed<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// (P5-REFINE-6, C-1068) Is `user` an active owner or admin of some organization? Only the
+/// wording of a connector's next step depends on it (`connect` vs `owner_connects`).
+pub async fn administers_an_org<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members
+                        WHERE user_id = $1 AND status = 'active' AND role IN ('owner', 'admin'))",
+    )
+    .bind(user)
+    .fetch_one(exec)
+    .await?)
+}
+
 /// Managed connectors a host serves (C-456): `active` and `awaiting_registration` ones whose type
 /// is one of `types`. A connector waiting for an admin's approval of a widened manifest
 /// (`pending_approval`) gets no assignment, so its decrypted settings are not handed out.

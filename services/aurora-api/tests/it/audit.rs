@@ -71,6 +71,66 @@ async fn org_audit_permissions_filters_pagination() {
     assert_eq!(call(&h, &xt, &uri).await.0, 404);
 }
 
+/// (P5-REFINE-6, C-1088) `include_system=false` leaves out the platform's own events and says
+/// how many; the default (and `true`) lists them; the callers are unchanged.
+#[tokio::test]
+async fn system_events_can_be_hidden_and_are_counted() {
+    let h = Harness::new().await;
+    let owner = h.user("o@x.io", false).await;
+    let org = h.org().await;
+    h.member(org, owner, "owner", "active").await;
+    let (_, ot) = h.good_session(owner).await;
+    put(&h, org, None, owner, "org.update").await;
+    for _ in 0..2 {
+        audit::insert(
+            h.pool(),
+            &NewAudit {
+                org_id: Some(org),
+                workspace_id: None,
+                actor_kind: "system",
+                actor_id: None,
+                actor_label: "plugin-builtin",
+                action: "plugin.install",
+                target_kind: None,
+                target_id: None,
+                outcome: "success",
+                source: "system",
+                ip: None,
+                metadata: &json!({}),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let uri = format!("/v1/orgs/{org}/audit");
+    let (s, v) = call(&h, &ot, &uri).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"].as_array().unwrap().len(), 3);
+    assert!(v.get("hidden_system").is_none(), "{v}");
+    let (_, v) = call(&h, &ot, &format!("{uri}?include_system=false")).await;
+    assert_eq!(v["items"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["items"][0]["actor_kind"], "user");
+    assert_eq!(v["hidden_system"], 2);
+    // The instance list (instance admins only) the same way.
+    let root = h.user("root@x.io", true).await;
+    let (_, rt) = h.good_session(root).await;
+    let (s, v) = call(
+        &h,
+        &rt,
+        &format!("/v1/admin/audit?org={org}&include_system=false"),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["hidden_system"], 2);
+    assert_eq!(
+        call(&h, &ot, "/v1/admin/audit?include_system=false")
+            .await
+            .0,
+        403
+    );
+}
+
 #[tokio::test]
 async fn workspace_audit_requires_can_own() {
     let h = Harness::new().await;
