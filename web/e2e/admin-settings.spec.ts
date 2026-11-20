@@ -33,16 +33,16 @@ for (const scheme of ["light", "dark"] as const) {
       });
 
       test("a section shows a locked setting read-only and the editable ones", async ({ page }) => {
-        // The section lives on AI models › Rules; the old address redirects there (C-960, C-971).
+        // The section lives on What agents may do › AI keys and rules; the old address redirects there (C-960, C-971).
         await openRoute(page, "/admin/settings/governance", scheme);
-        await expect(page).toHaveURL(/\/admin\/ai-models\?tab=rules$/);
-        await expect(page.getByRole("heading", { name: "AI endpoints", level: 1 })).toBeVisible();
+        await expect(page).toHaveURL(/\/admin\/internet-access\?tab=ai-keys$/);
+        await expect(page.getByRole("heading", { name: "What agents may do", level: 1 })).toBeVisible();
         await expect(page.locator("[id='governance.llm.require_key_origin-c']")).toBeChecked();
         // The egress and BYO keys of the same section are not on this page (C-971: three topics).
         await expect(page.locator("[id='governance.egress.minimum_posture-c']")).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
-        // Administration › Internet access holds the egress keys: the Helm-locked one reads as text.
+        // What agents may do › Internet access holds the egress keys: the Helm-locked one reads as text.
         await openRoute(page, "/admin/internet-access", scheme);
         await expect(page.getByRole("heading", { name: "What agents may do", level: 1 })).toBeVisible();
         // (P5-REFINE-18, D-410) The preset card first, saying what Helm keeps; today's fields are behind Customise.
@@ -54,8 +54,9 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.locator("[id='governance.egress.minimum_posture-c']")).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
-        // Administration › Agents › BYO holds the BYO agents and agent tokens groups.
+        // What agents may do › Bring your own holds the BYO agents and agent tokens groups (the old Agents address redirects).
         await openRoute(page, "/admin/agents?tab=byo", scheme);
+        await expect(page).toHaveURL(/\/admin\/internet-access\?tab=byo$/);
         await expect(page.getByRole("heading", { name: "Agent tokens" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
@@ -63,7 +64,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       // P5-IA-5 (C-972): the BYO choice reads in words, as choice cards with a sentence each, never `owners_only`.
       test("the BYO choice reads in words", async ({ page }) => {
-        await openRoute(page, "/admin/agents?tab=byo", scheme);
+        await openRoute(page, "/admin/internet-access?tab=byo", scheme);
         const group = page.getByRole("radiogroup", { name: "Who may connect their own agent" });
         await expect(group.getByRole("radio")).toHaveCount(3);
         await expect(group.getByText("Only workspace owners may connect their own agent.")).toBeVisible();
@@ -87,7 +88,7 @@ for (const scheme of ["light", "dark"] as const) {
       // SET-3: providers, the preference order locked by Helm, a Helm endpoint beside a dashboard endpoint.
       test("the LLM endpoints page shows providers, a Helm endpoint and a dashboard endpoint", async ({ page }) => {
         await openRoute(page, "/admin/settings/llm", scheme);
-        await expect(page).toHaveURL(/\/admin\/ai-models\?tab=endpoints$/);
+        await expect(page).toHaveURL(/\/admin\/ai-models$/);
         await expect(page.getByRole("heading", { name: "AI endpoints", level: 1 })).toBeVisible();
         await expect(page.getByRole("checkbox", { name: "LiteLLM" })).toBeChecked();
         await expect(page.getByRole("checkbox", { name: "OpenAI", exact: true })).not.toBeChecked();
@@ -133,8 +134,8 @@ for (const scheme of ["light", "dark"] as const) {
       // SET-5: the operational pages — the runners' sizes read-only, a terminal the deployment lacks, rate classes.
       test("the agents page shows a locked deadline and the runners' sizes", async ({ page }) => {
         await openRoute(page, "/admin/settings/agents", scheme);
-        await expect(page).toHaveURL(/\/admin\/agents\?tab=defaults$/);
-        await expect(page.getByRole("heading", { name: "Agent defaults", level: 1 })).toBeVisible();
+        await expect(page).toHaveURL(/\/admin\/internet-access\?tab=defaults$/);
+        await expect(page.getByRole("heading", { name: "What agents may do", level: 1 })).toBeVisible();
         await expect(page.getByTestId("hosted.idle_stop_secs-locked-value")).toHaveText("30 minutes");
         await expect(page.getByRole("region", { name: "Runners and sandbox sizes" })).toContainText("4096");
         expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -144,7 +145,7 @@ for (const scheme of ["light", "dark"] as const) {
       // FIX-172 (D-374): the programs are ticked by name, limited to what runners offer; the default is picked from them.
       test("the agents page ticks harnesses by name and saves their ids", async ({ page }) => {
         let put: Record<string, unknown> | null = null;
-        await openRoute(page, "/admin/agents?tab=defaults", scheme);
+        await openRoute(page, "/admin/internet-access?tab=defaults", scheme);
         // Registered after the mock, so these answer first (the last route wins).
         await page.route("**/v1/admin/settings/agents/preview", (route) =>
           route.fulfill({
@@ -174,8 +175,8 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("the terminal page shows one Unavailable card for a missing deployment wiring, and no form", async ({ page }) => {
         await openRoute(page, "/admin/settings/terminal", scheme);
-        await expect(page).toHaveURL(/\/admin\/agents\?tab=computers$/);
-        await expect(page.getByRole("heading", { name: "Agent defaults", level: 1 })).toBeVisible();
+        await expect(page).toHaveURL(/\/admin\/platform\?tab=computers$/);
+        await expect(page.getByRole("heading", { name: "Health & runners", level: 1 })).toBeVisible();
         await expect(page.getByText(/does not provide the terminal/)).toBeVisible();
         await expect(page.getByRole("region", { name: "The web terminal isn't available on this Aurora" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);

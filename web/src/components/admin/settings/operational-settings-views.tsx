@@ -335,7 +335,7 @@ export function ApprovalsSettingsView() {
   return <OperationalView sectionId="approvals" page={APPROVALS_PAGE} />;
 }
 
-/** Administration › Agents › Defaults (C-967): the agents and approvals sections as one run of titled groups. */
+/** Administration › What agents may do › Defaults (C-967): the agents and approvals sections as one run of titled groups. */
 export function AgentsDefaultsView() {
   const [moved, setMoved] = useMovedDefault();
   return (
@@ -432,7 +432,7 @@ export function TerminalSettingsView({ bare = false }: { bare?: boolean }) {
   );
 }
 
-/** Administration › Agents › Computers (C-967): the terminal and the previews as one run of titled groups, one Save. */
+/** Administration › Health & runners › Computers (C-967): the terminal and the previews as one run of titled groups, one Save. */
 export function ComputersView() {
   return (
     <OperationalStack

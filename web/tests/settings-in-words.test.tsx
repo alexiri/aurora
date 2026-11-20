@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/admin/agents",
+  usePathname: () => "/admin/internet-access",
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
   useParams: () => ({}),

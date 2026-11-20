@@ -33,6 +33,18 @@ function join(target: string, search: URLSearchParams, hash: string, drop?: stri
 type Rule = (m: RegExpMatchArray, search: URLSearchParams) => string | null;
 const ADMIN: [RegExp, Rule][] = [
   [/^\/admin\/setup$/, () => adminRoutes.home()],
+  // (P5-REFINE-18 #1) What agents may do is one page with four tabs; Computers is a tab of Health & runners.
+  [
+    /^\/admin\/agents$/,
+    (_m, s) => {
+      const tab = s.get("tab");
+      if (tab === "computers") return adminRoutes.platform("computers");
+      if (tab === "byo") return adminRoutes.agentPolicy("byo");
+      return adminRoutes.agentPolicy("defaults"); // defaults, skills, and an address with no tab
+    },
+  ],
+  [/^\/admin\/ai-models$/, (_m, s) => (s.get("tab") === "rules" ? adminRoutes.agentPolicy("ai-keys") : null)],
+  [/^\/admin\/internet-access$/, (_m, s) => (s.get("tab") === "limits" ? adminRoutes.agentPolicy("internet-access") : null)],
   [/^\/admin\/users$/, () => adminRoutes.people("users")],
   [/^\/admin\/orgs$/, () => adminRoutes.people("organizations")],
   [/^\/admin\/orgs\/([^/]+)$/, (m) => adminRoutes.organization(decodeURIComponent(m[1]!))],

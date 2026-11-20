@@ -122,7 +122,7 @@ describe("All settings (C-971)", () => {
   ] as Parameters<typeof groupSections>[0];
 
   it("groups sections by topic in sidebar order and filters by name or description", () => {
-    expect(groupSections(sections, "").map((g) => g.topic)).toEqual(["AI models", "People", "Data"]);
+    expect(groupSections(sections, "").map((g) => g.topic)).toEqual(["What agents may do", "People & sign-in", "Data"]);
     expect(groupSections(sections, "providers").map((g) => g.sections.map((s) => s.section))).toEqual([["sign_in"]]);
     expect(groupSections(sections, "KEEPS").map((g) => g.topic)).toEqual(["Data"]);
     expect(groupSections(sections, "zzz")).toEqual([]);
@@ -133,9 +133,9 @@ describe("All settings (C-971)", () => {
     wrap(<SettingsIndexView />);
     await screen.findByRole("heading", { name: "All settings" });
     expect(screen.getByRole("link", { name: "Open Sign-in" }).getAttribute("href")).toBe(adminRoutes.signIn());
-    expect(screen.getByRole("link", { name: "Open Governance" }).getAttribute("href")).toBe("/admin/ai-models?tab=rules");
-    expect(screen.getByRole("link", { name: "Internet access" }).getAttribute("href")).toBe("/admin/internet-access?tab=limits");
-    expect(screen.getByRole("link", { name: "Agents › BYO" }).getAttribute("href")).toBe("/admin/agents?tab=byo");
+    expect(screen.getByRole("link", { name: "Open Governance" }).getAttribute("href")).toBe("/admin/internet-access?tab=ai-keys");
+    expect(screen.getByRole("link", { name: "Internet access" }).getAttribute("href")).toBe("/admin/internet-access?tab=internet-access");
+    expect(screen.getByRole("link", { name: "Bring your own" }).getAttribute("href")).toBe("/admin/internet-access?tab=byo");
     fireEvent.change(screen.getByRole("searchbox", { name: "Search settings" }), { target: { value: "retention" } });
     expect(screen.queryByText("Sign-in")).toBeNull();
     expect(screen.getByText("Retention", { selector: "a" })).toBeTruthy();

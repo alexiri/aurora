@@ -243,8 +243,8 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
                     {isAdmin ? (
                       <>
                         {" "}
-                        <Link href={adminRoutes.agents("defaults")} className="underline">
-                          Administration › Agents › Defaults
+                        <Link href={adminRoutes.agentPolicy("defaults")} className="underline">
+                          Administration › What agents may do › Defaults
                         </Link>
                       </>
                     ) : null}

@@ -322,7 +322,7 @@ describe("Administration › Overview: the health view", () => {
     const terminal = await within(health).findByText("Web terminal");
     const row = terminal.closest("li")!;
     expect(row.textContent).toContain("Off. People see “not available” on their agent's Computer tab.");
-    expect(within(row).getByRole("link", { name: "Turn on" })).toHaveAttribute("href", "/admin/agents?tab=computers#terminal.enabled");
+    expect(within(row).getByRole("link", { name: "Turn on" })).toHaveAttribute("href", "/admin/platform?tab=computers#terminal.enabled");
   });
 
   it("says nothing needs the admin when nothing does", async () => {

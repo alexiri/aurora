@@ -17,7 +17,7 @@ import { ProviderRolesView } from "@/components/admin/settings/provider-roles-vi
 import { SettingsIndexView } from "@/components/admin/settings/settings-index-view";
 import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
 import { SetInHelmView } from "@/components/admin/set-in-helm-view";
-import { SetupView } from "@/components/admin/setup-view";
+import { AdminHealthPanel, SetupView } from "@/components/admin/setup-view";
 import { TrustedKeysView } from "@/components/admin/trusted-keys-view";
 import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
@@ -44,23 +44,6 @@ export function AdminOverviewPage() {
   );
 }
 
-export function AdminAgentsPage() {
-  return (
-    <AdminGuard>
-      <TopicPage<Tabs<"adminAgents">>
-        idBase="admin-agents"
-        title="Agent defaults"
-        description="Defaults for every agent, bring-your-own agents, their computers and skills."
-        tabs={[
-          { id: "defaults", label: "Defaults", content: <AgentsDefaultsView /> },
-          { id: "byo", label: "BYO", content: <GovernanceFields part="byo" /> },
-          { id: "computers", label: "Computers", content: <ComputersView /> },
-          { id: "skills", label: "Skills", content: <SkillsSettingsView bare /> },
-        ]}
-      />
-    </AdminGuard>
-  );
-}
 
 export function AdminAppsPage() {
   return (
@@ -107,23 +90,43 @@ export function AdminAppsPage() {
 export function AdminAiModelsPage() {
   return (
     <AdminGuard>
-      <TopicPage<Tabs<"adminAiModels">>
+      <TopicPage<"endpoints">
         idBase="admin-ai-models"
         title="AI endpoints"
-        description="The AI providers and endpoints, and the rules for which models agents may use."
-        tabs={[
-          { id: "endpoints", label: "Endpoints", content: <EmbeddedPage>{section("llm")}</EmbeddedPage> },
-          { id: "rules", label: "Rules", content: <GovernanceRulesFields /> },
-        ]}
+        description="The AI providers and endpoints agents' models come from. The rules for AI keys are under What agents may do."
+        tabs={[{ id: "endpoints", label: "Endpoints", content: <EmbeddedPage>{section("llm")}</EmbeddedPage> }]}
       />
     </AdminGuard>
   );
 }
 
+/**
+ * (P5-REFINE-18 #1, rec 9) What agents may do: one page, four tabs. The preset card sits first on Internet access;
+ * AI keys and rules and Bring your own are the governance parts that used to live under AI models and Agents.
+ */
 export function AdminInternetAccessPage() {
   return (
     <AdminGuard>
-      <AdminInternet />
+      <TopicPage<Tabs<"adminAgentPolicy">>
+        idBase="admin-agent-policy"
+        title="What agents may do"
+        description="Which websites agents can reach, which AI keys they may use, whether people can bring their own agents, and the defaults every agent starts with."
+        tabs={[
+          { id: "internet-access", label: "Internet access", content: <AdminInternet /> },
+          { id: "ai-keys", label: "AI keys and rules", content: <GovernanceRulesFields /> },
+          { id: "byo", label: "Bring your own", content: <GovernanceFields part="byo" /> },
+          {
+            id: "defaults",
+            label: "Defaults",
+            content: (
+              <div className="space-y-10">
+                <AgentsDefaultsView />
+                <SkillsSettingsView bare />
+              </div>
+            ),
+          },
+        ]}
+      />
     </AdminGuard>
   );
 }
@@ -202,9 +205,11 @@ export function AdminPlatformPage() {
       <TopicPage<Tabs<"adminPlatform">>
         idBase="admin-platform"
         title="Health & runners"
-        description="The machinery of this instance: runners, secret stores, e-mail and rate limits."
+        description="Whether Aurora is healthy, the computers agents run on, and this installation's own settings: secret stores, e-mail and rate limits."
         tabs={[
+          { id: "health", label: "Health", content: <AdminHealthPanel /> },
           { id: "runners", label: "Runners", content: <AdminRunnersView /> },
+          { id: "computers", label: "Computers", content: <ComputersView /> },
           { id: "secret-stores", label: "Secret stores", content: section("secrets") },
           { id: "email", label: "Email", content: section("email") },
           { id: "limits", label: "Rate limits", content: section("limits") },

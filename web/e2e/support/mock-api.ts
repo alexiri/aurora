@@ -919,16 +919,16 @@ export const LEGACY_ROUTES: RouteEntry[] = PRE_IA_ROUTES.filter((r) => !KEPT.has
 const tab = (base: string, tabs: string[], prefix: string): RouteEntry[] => tabs.map((t) => ({ name: `${prefix}-${t}`, path: `${base}?tab=${t}` }));
 const TOPIC_ROUTES: RouteEntry[] = [
   { name: "admin-overview", path: "/admin" },
-  ...tab("/admin/agents", ["defaults", "byo", "computers", "skills"], "admin-agents"),
   ...tab("/admin/apps", ["apps", "oauth-clients", "self-hosted", "advanced"], "admin-apps"),
   { name: "admin-app-package", path: "/admin/apps/packages/github" },
-  ...tab("/admin/ai-models", ["endpoints", "rules"], "admin-ai-models"),
-  { name: "admin-internet-access", path: "/admin/internet-access" },
+  { name: "admin-ai-models", path: "/admin/ai-models" },
+  // (P5-REFINE-18 #1) What agents may do: one page, four tabs.
+  ...tab("/admin/internet-access", ["internet-access", "ai-keys", "byo", "defaults"], "admin-agent-policy"),
   ...tab("/admin/people", ["users", "organizations", "sign-in", "new-users"], "admin-people"),
   { name: "admin-organization", path: `/admin/people/organizations/${id(1)}` },
   { name: "admin-chat-platforms", path: "/admin/chat-platforms" },
   ...tab("/admin/data", ["retention", "storage", "audit", "usage"], "admin-data"),
-  ...tab("/admin/platform", ["runners", "secret-stores", "email", "limits"], "admin-platform"),
+  ...tab("/admin/platform", ["health", "runners", "computers", "secret-stores", "email", "limits"], "admin-platform"),
   ...tab("/o/acme/agents", ["agents", "byo", "skills"], "org-agents"),
   { name: "org-skill-libraries", path: "/o/acme/agents/skills/libraries" },
   ...tab("/o/acme/apps", ["accounts", "apps", "oauth-clients", "self-hosted"], "org-apps"),

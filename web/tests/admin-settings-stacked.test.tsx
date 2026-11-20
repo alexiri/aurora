@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/admin/agents",
+  usePathname: () => "/admin/internet-access",
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
   useParams: () => ({}),
@@ -54,7 +54,7 @@ const approvals = () =>
   ]);
 const clean = { generation: 3, diff: [], loosening: [], affected_orgs: [], affected_orgs_total: 0, warnings: [] };
 
-describe("Administration › Agents: stacked settings sections have one Save (P5-IA-3)", () => {
+describe("Administration › What agents may do › Defaults: stacked settings sections have one Save (P5-IA-3)", () => {
   it("shows one Save for the page and writes every changed section from it, a locked key staying read-only", async () => {
     const puts: Record<string, Json> = {};
     mockFetch({
