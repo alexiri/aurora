@@ -126,8 +126,11 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
         await page.getByRole("button", { name: "Run now" }).click();
         const started = page.getByTestId("run-started");
         await expect(started).toContainText("Started · Open the conversation");
+        // (schedules-3) The same words as a toast at every width; its link opens the run's own thread.
+        const toast = page.getByTestId("undo-toast");
+        await expect(toast).toContainText("Started · Open the conversation");
         await page.screenshot({ path: `${SHOTS}/run-now-${scheme}-${width}.png` });
-        await started.getByRole("link", { name: "Open the conversation" }).click();
+        await toast.getByRole("link", { name: "Open the conversation" }).click();
         await expect(page).toHaveURL(/tab=chat/);
         await expect(page).toHaveURL(/c=conv-run-1/);
         await page.goto(PAGE);
@@ -150,7 +153,8 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
         const table = page.getByRole("table", { name: "Runs" });
         await expect(table).toContainText("Answered");
         await expect(table).toContainText("Skipped by the gate · nothing to report");
-        await expect(table.getByRole("link", { name: "Open the conversation" })).toHaveAttribute("href", /c=conv-r1/);
+        // (schedules-3) The link reads like the thread's own name: "<Schedule name> · <time>".
+        await expect(table.getByRole("link", { name: /^Morning summary · \d{1,2} \w{3}( \d{4})? \d{2}:\d{2}$/ }).first()).toHaveAttribute("href", /c=conv-r1/);
         await check(page);
         await page.screenshot({ path: `${SHOTS}/runs-${scheme}-${width}.png` });
       });

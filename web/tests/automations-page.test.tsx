@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AutomationsTab } from "@/components/automations/automations-tab";
-import { UndoToastHost } from "@/components/ui/undo-toast";
+import { runThreadName } from "@/components/automations/schedule-row";
+import { dismissUndoToast, UndoToastHost } from "@/components/ui/undo-toast";
 import { json, err, type Handler } from "./support/api";
 import { seedMoreControls } from "./support/render";
 
@@ -12,6 +13,8 @@ import { seedMoreControls } from "./support/render";
 
 afterEach(() => {
   cleanup();
+  // The toast is one module-level slot: the next test must not see this test's.
+  dismissUndoToast();
   vi.unstubAllGlobals();
 });
 
@@ -148,6 +151,39 @@ describe("a schedule row", () => {
     const status = await screen.findByTestId("run-started");
     expect(status).toHaveTextContent("Started · Open the conversation");
     expect(within(status).getByRole("link", { name: "Open the conversation" })).toHaveAttribute("href", "/o/acme/w/main/agents/daneel?tab=chat&c=conv-9");
+    // (schedules-3) The same words as a toast, at every width, linking the run's own thread.
+    const toast = await screen.findByTestId("undo-toast");
+    expect(toast).toHaveTextContent("Started · Open the conversation");
+    expect(within(toast).getByRole("link", { name: "Open the conversation" })).toHaveAttribute("href", "/o/acme/w/main/agents/daneel?tab=chat&c=conv-9");
+  });
+
+  it("Run now skipped by its gate says so in a toast without a link", async () => {
+    mockApi({
+      "GET /v1/agents/a1/schedules": page([sched()]),
+      "GET /v1/agents/a1/webhooks": page([]),
+      "POST /v1/schedules/s1/run-now": () => json(201, run("r9", { result: "skipped_by_gate", conversation_id: null })),
+    });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Run now" }));
+    const toast = await screen.findByTestId("undo-toast");
+    expect(toast).toHaveTextContent("Skipped by the gate · nothing to report");
+    expect(within(toast).queryByRole("link")).toBeNull();
+  });
+
+  it("a person's pause says who paused it; a pause that is not a person's says nothing about a name (C-1096)", async () => {
+    mockApi({
+      "GET /v1/agents/a1/schedules": page([
+        sched({ enabled: false, disabled_reason: "user", paused_by: { id: "u2", display_name: "Carol Member" } }),
+        sched({ id: "s2", name: "Auto-paused", enabled: false, disabled_reason: "failures", paused_by: null }),
+      ]),
+      "GET /v1/agents/a1/webhooks": page([hook({ enabled: false, disabled_reason: "user", paused_by: { id: "u3", display_name: "Dana Admin" } })]),
+    });
+    mount();
+    await screen.findByText("Morning summary");
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Paused by Carol Member");
+    expect(text).toContain("Paused by Dana Admin");
+    expect(text.match(/Paused by/g)).toHaveLength(2);
   });
 
   it("Run now maps schedule_busy to words", async () => {
@@ -166,6 +202,7 @@ describe("a schedule row", () => {
         run("r2", { outcome: "gated_quiet", result: "skipped_by_gate", conversation_id: null }),
         run("r3", { result: "failed", reason: "gate_failed" }),
         run("r4", { result: "running" }),
+        run("r5", { result: "failed", reason: "computer_failed", conversation_id: null, turn_id: "t-5" }),
       ]),
     });
     mount();
@@ -177,13 +214,28 @@ describe("a schedule row", () => {
     expect(within(table).getByText("Skipped by the gate · nothing to report")).toBeInTheDocument();
     expect(within(table).getByText("Failed · the check could not run")).toBeInTheDocument();
     expect(within(table).getByText("Running")).toBeInTheDocument();
-    const links = within(table).getAllByRole("link", { name: "Open the conversation" });
+    // (schedules-3) The link reads like the run thread's own name: "<Schedule name> · <time>".
+    const threadName = runThreadName("Morning summary", "2026-01-02T09:00:00Z");
+    expect(threadName).toMatch(/^Morning summary · \d{1,2} \w{3}( \d{4})? \d{2}:\d{2}$/);
+    const links = within(table).getAllByRole("link", { name: threadName });
     expect(links.map((l) => l.getAttribute("href"))).toEqual([
       "/o/acme/w/main/agents/daneel?tab=chat&c=c-r1",
       "/o/acme/w/main/agents/daneel?tab=chat&c=c-r3",
       "/o/acme/w/main/agents/daneel?tab=chat&c=c-r4",
     ]);
+    expect(within(table).queryByRole("link", { name: "Open the conversation" })).toBeNull();
+    // A skipped run has no thread: None. A failed run without a thread offers Open details.
     expect(within(table).getByText("None")).toBeInTheDocument();
+    fireEvent.click(within(table).getByRole("button", { name: "Open details" }));
+    const dialog = await screen.findByRole("dialog", { name: "What happened to this run" });
+    expect(dialog).toHaveTextContent("Failed");
+    // The raw codes sit under Technical details only.
+    const tech = within(dialog).getByText("Technical details").closest("details")!;
+    expect(tech).toHaveTextContent("reason: computer_failed");
+    expect(tech).toHaveTextContent("turn: t-5");
+    expect(tech.open).toBe(false);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "What happened to this run" })).toBeNull());
   });
 
   it("pages the run history with Load more, following next_cursor", async () => {
@@ -272,8 +324,20 @@ describe("the schedule form", () => {
     expect(within(form).getAllByRole("radio").map((r) => (r as HTMLInputElement).parentElement?.textContent)).toEqual(["Every 5 minutes", "Hourly", "Every day", "Weekdays", "Weekly", "Custom"]);
     expect(within(form).queryByRole("radio", { name: /minute$/ })).toBeNull();
     expect(within(form).getByRole("radio", { name: "Every day" })).toBeChecked();
-    expect(within(form).getByRole("combobox", { name: "Time zone" })).toHaveValue("Europe/Zurich");
-    expect(within(form).getByRole("option", { name: "Europe/Zurich · Acme workspace" })).toBeInTheDocument();
+    // (send-back) The time zone is a searchable select: the workspace's zone first, then type to narrow.
+    const zone = within(form).getByRole("combobox", { name: "Time zone" });
+    expect(zone.tagName).toBe("INPUT");
+    expect(zone).toHaveValue("Europe/Zurich · Acme workspace");
+    fireEvent.focus(zone);
+    expect(within(within(form).getByRole("listbox")).getAllByRole("option")[0]).toHaveTextContent("Europe/Zurich · Acme workspace");
+    fireEvent.change(zone, { target: { value: "tokyo" } });
+    expect(within(within(form).getByRole("listbox")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Asia/Tokyo"]);
+    fireEvent.keyDown(zone, { key: "Enter" });
+    expect(zone).toHaveValue("Asia/Tokyo");
+    fireEvent.focus(zone);
+    fireEvent.change(zone, { target: { value: "zurich" } });
+    fireEvent.mouseDown(within(within(form).getByRole("listbox")).getByRole("option", { name: "Europe/Zurich · Acme workspace" }));
+    expect(zone).toHaveValue("Europe/Zurich · Acme workspace");
     expect(within(form).getByRole("combobox", { name: "Time of day" })).toHaveValue("09:00");
     fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Morning summary" } });
     fireEvent.change(within(form).getByLabelText("Prompt"), { target: { value: "go" } });

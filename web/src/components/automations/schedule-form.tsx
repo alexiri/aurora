@@ -8,6 +8,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, FormActions } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/notice";
 import { Segmented } from "@/components/ui/segmented";
+import { Combobox } from "@/components/ui/combobox";
 import { Select } from "@/components/ui/select";
 import { useAltitude } from "@/lib/altitude";
 import { fieldErrors } from "@/lib/api/errors";
@@ -230,7 +231,7 @@ export function ScheduleForm({
             />
           ) : null}
           {spec.preset !== "every5" && spec.preset !== "hourly" ? (
-            <Select aria-label="Time zone" className="w-auto max-w-full" value={timezone} onChange={setTimezone} options={zones} />
+            <Combobox aria-label="Time zone" wrapperClassName="w-72 max-w-full" value={timezone} onChange={setTimezone} options={zones} />
           ) : null}
         </div>
         {fe.timezone ? (

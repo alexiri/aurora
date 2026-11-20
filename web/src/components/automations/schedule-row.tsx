@@ -10,6 +10,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { Altitude } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { LoadMore } from "@/components/ui/load-more";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
@@ -19,6 +20,7 @@ import { useUndoToast } from "@/components/ui/undo-toast";
 import { When } from "@/components/ui/when";
 import { useDeleteSchedule, useRunScheduleNow, useScheduleRuns, useUpdateSchedule, type Schedule, type ScheduleRun } from "@/lib/api/schedules";
 import { automationThreadHref } from "@/lib/automation-thread";
+import { searchTime } from "@/lib/chat/layout";
 import { cronToSpec, whenWords } from "@/lib/cron";
 import { label, RUN_RESULT, runReason } from "@/lib/labels";
 import { clockIn, runTimeWords } from "@/lib/schedule-words";
@@ -30,9 +32,38 @@ export function runOutcomeWords(r: Pick<ScheduleRun, "result" | "reason">): stri
   return reason ? `${label(RUN_RESULT, r.result)} · ${reason}` : label(RUN_RESULT, r.result);
 }
 
+/** The run's thread is named "<Schedule name> · <time>" (the same title the conversation list shows, D-409). */
+export function runThreadName(scheduleName: string, firedAt: string, now: Date = new Date()): string {
+  const when = searchTime(firedAt, now);
+  return when ? `${scheduleName} · ${when}` : scheduleName;
+}
+
+/** (schedules-3) "Open details" for a run that has no thread: what the run has, in words, the error under Technical details. */
+function RunDetails({ run, onClose }: { run: ScheduleRun; onClose: () => void }) {
+  return (
+    <Dialog open onOpenChange={(o) => (o ? undefined : onClose())}>
+      <DialogContent title="What happened to this run" description="This run did not start a conversation.">
+        <div className="space-y-3 text-sm text-ink">
+          <p>
+            <When value={run.fired_at} /> · {runOutcomeWords(run)}
+          </p>
+          <TechnicalDetails>
+            {[`outcome: ${run.outcome}`, `result: ${run.result}`, run.reason ? `reason: ${run.reason}` : null, run.turn_id ? `turn: ${run.turn_id}` : null, `run: ${run.id}`]
+              .filter(Boolean)
+              .map((line) => (
+                <div key={line}>{line}</div>
+              ))}
+          </TechnicalDetails>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** (schedules-3) The runs as a table: When · Outcome · Conversation; stacked rows below 900 px. */
-export function Runs({ agentId, id, agentBase }: { agentId: string; id: string; agentBase: string }) {
+export function Runs({ agentId, id, agentBase, name }: { agentId: string; id: string; agentBase: string; name: string }) {
   const q = useScheduleRuns(agentId, id, true);
+  const [details, setDetails] = useState<ScheduleRun | null>(null);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const items = q.data.pages.flatMap((p) => p.items);
@@ -51,10 +82,16 @@ export function Runs({ agentId, id, agentBase }: { agentId: string; id: string; 
             header: "Conversation",
             cell: (r) => {
               const href = automationThreadHref(agentBase, r.conversation_id);
-              return href ? (
-                <Link href={href} className="text-accent-ink underline underline-offset-2 hover:no-underline">
-                  Open the conversation
-                </Link>
+              if (href)
+                return (
+                  <Link href={href} className="text-accent-ink underline underline-offset-2 hover:no-underline">
+                    {runThreadName(name, r.fired_at)}
+                  </Link>
+                );
+              return r.result === "failed" ? (
+                <button type="button" className="text-accent-ink underline underline-offset-2 hover:no-underline" onClick={() => setDetails(r)}>
+                  Open details
+                </button>
               ) : (
                 "None"
               );
@@ -62,6 +99,7 @@ export function Runs({ agentId, id, agentBase }: { agentId: string; id: string; 
           },
         ]}
       />
+      {details ? <RunDetails run={details} onClose={() => setDetails(null)} /> : null}
       <LoadMore query={q} />
     </div>
   );
@@ -146,6 +184,7 @@ export function ScheduleRow({
       body={s.prompt}
       meta={
         <>
+          {s.paused_by ? `Paused by ${s.paused_by.display_name} · ` : ""}
           {last} · <OwnerLabel anchor={s.anchor} creator={s.created_by} />
           {s.origin_conversation_id ? " · Also posts in the chat it was made in" : ""}
         </>
@@ -180,7 +219,20 @@ export function ScheduleRow({
       }
       actions={
         <>
-          <Button size="sm" disabled={run.isPending || !s.enabled} onClick={() => run.mutate(s.id, { onSuccess: setStarted })}>
+          <Button
+            size="sm"
+            disabled={run.isPending || !s.enabled}
+            onClick={() =>
+              run.mutate(s.id, {
+                onSuccess: (r) => {
+                  setStarted(r);
+                  // (schedules-3) The same words as a toast at every width, linking the run's own thread.
+                  const href = automationThreadHref(agentBase, r.conversation_id);
+                  if (r.result === "skipped_by_gate") toast("Skipped by the gate · nothing to report");
+                  else toast("Started", undefined, { success: true, link: href ? { label: "Open the conversation", href } : undefined });
+                },
+              })
+            }>
             Run now
           </Button>
           <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
@@ -227,7 +279,7 @@ export function ScheduleRow({
         busy={del.isPending}
         onConfirm={() => del.mutate(s.id, { onSuccess: () => setConfirm(false) })}
       />
-      {showRuns ? <Runs agentId={agentId} id={s.id} agentBase={agentBase} /> : null}
+      {showRuns ? <Runs agentId={agentId} id={s.id} agentBase={agentBase} name={s.name} /> : null}
     </RowShell>
   );
 }
