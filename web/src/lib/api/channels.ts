@@ -29,6 +29,7 @@ export const channelKeys = {
   mySpaces: (integration: string) => ["channel-integrations", integration, "my-spaces"] as const,
   reach: (agent: string) => ["agents", agent, "reach"] as const,
   myLinks: ["me", "channel-links"] as const,
+  myPlatforms: ["me", "chat-platforms"] as const,
   dmDefaults: ["me", "dm-defaults"] as const,
 };
 
@@ -200,6 +201,15 @@ export function useDecideReach(agent: string) {
   });
 }
 
+/** (C-1089) The chat platforms the person can link, with the bot to message: any signed-in person may read it. */
+export function useMyChatPlatforms() {
+  return useQuery({
+    queryKey: channelKeys.myPlatforms,
+    queryFn: () => unwrap(api.GET("/v1/me/chat-platforms")),
+    retry: retryUnlessClientError,
+  });
+}
+
 export function useMyChannelLinks() {
   return useQuery({
     queryKey: channelKeys.myLinks,
@@ -215,6 +225,7 @@ export function useUnlinkMine() {
       unwrap(api.DELETE("/v1/me/channel-links/{id}", { params: { path: { id } } })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: channelKeys.myLinks });
+      void qc.invalidateQueries({ queryKey: channelKeys.myPlatforms });
       void qc.invalidateQueries({ queryKey: channelKeys.dmDefaults });
     },
   });
