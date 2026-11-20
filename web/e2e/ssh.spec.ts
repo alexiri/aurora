@@ -176,7 +176,9 @@ test.describe("certificate download", () => {
     await page.getByRole("button", { name: "Get a certificate" }).click();
     const link = page.getByRole("link", { name: "Download", exact: true });
     await expect(link).toBeVisible();
-    await expect(page.getByTestId("cert-state")).toContainText(/Certificate valid for 1[45] more minutes \(until /);
+    // The mock's 15 minutes start when the request is answered, the countdown's clock at its last tick (up to a minute
+    // earlier on a loaded machine): 14 to 16.
+    await expect(page.getByTestId("cert-state")).toContainText(/Certificate valid for 1[456] more minutes \(until /);
     await expect(page.getByText(/Save it as/)).toContainText("~/.ssh/aurora-daneel-cert.pub");
     const [download] = await Promise.all([page.waitForEvent("download"), link.click()]);
     expect(download.suggestedFilename()).toBe("aurora-daneel-cert.pub");

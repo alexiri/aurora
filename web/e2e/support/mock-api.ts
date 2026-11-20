@@ -773,6 +773,13 @@ export async function mockApi(
     }
     if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval, parkedApproval] : [], next_cursor: null });
     if (p.endsWith("/workspaces")) return json({ items: [ws] });
+    // (P5-REFINE-17 brief-6) The organization's agents are `OrgAgent` rows: their workspace, kind and header state.
+    if (/^\/v1\/orgs\/[^/]+\/agents$/.test(p)) {
+      return json({
+        items: [{ id: agent.id, name: agent.name, handle: agent.handle, kind: agent.kind, state: "ready", last_active_at: now, workspace: { id: ws.id, slug: ws.slug, name: ws.name, personal_of: null } }],
+        next_cursor: null,
+      });
+    }
     if (p.endsWith("/agents")) return json({ items: [agent] });
     // P4-PRV-1: the agent's preview shares (the Previews tab; the sandbox view marks port 3000 shared).
     if (/^\/v1\/agents\/[^/]+\/previews$/.test(p)) return json({ shares: previewShares });
