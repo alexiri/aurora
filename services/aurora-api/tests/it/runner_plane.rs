@@ -250,6 +250,71 @@ fn boot_doc(item: &Value) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+/// (P5-REFINE-4, C-1057, D-416; UX review 5's bug) Every work poll answers the stream
+/// listener's flags from the live configuration, with registration's rule: a runner that
+/// registered while the terminal was off learns it is on at its next poll.
+#[tokio::test]
+async fn every_poll_answers_the_stream_flags_registration_would() {
+    let r = rig_cfg(|c| {
+        c.terminal.enabled = false;
+        c.terminal.available = false;
+        c.previews.enabled = false;
+    })
+    .await;
+    let mut capabilities = caps(2);
+    capabilities["terminal"] = json!(true);
+    capabilities["ssh"] = json!(true);
+    let rr = &r;
+    let reg = |caps: Value| async move {
+        let (s, v) = rr
+            .call(
+                None,
+                "/v1/runner/register",
+                Some(
+                    json!({"version": "0.1", "backend": "fake", "capabilities": caps,
+                            "advertised_host": "runner-a"}),
+                ),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        v
+    };
+    let flags = |config: &Value| {
+        json!({
+            "previews": config["previews"].as_bool().unwrap_or(false),
+            "terminal": config["terminal"].as_bool().unwrap_or(false),
+            "ssh_enabled": config["ssh_enabled"].as_bool().unwrap_or(false),
+        })
+    };
+    let v = reg(capabilities.clone()).await;
+    let replica: Uuid = v["replica_id"].as_str().unwrap().parse().unwrap();
+    let off = json!({"previews": false, "terminal": false, "ssh_enabled": false});
+    assert_eq!(flags(&v["config"]), off);
+    let w = r.work(replica, 0).await;
+    assert_eq!(w["streams"], off, "{w}");
+
+    // The setting turns on (a `helm upgrade`, or the admin switch): the next poll says so.
+    let mut c = (*r.h.state.ops()).clone();
+    c.terminal.enabled = true;
+    c.previews.enabled = true;
+    r.h.state.ops_live.store(std::sync::Arc::new(c));
+    let w = r.work(replica, 0).await;
+    let on = json!({"previews": true, "terminal": true, "ssh_enabled": false});
+    assert_eq!(w["streams"], on, "{w}");
+    // Registration and the poll use one function: the same inputs give the same answer.
+    let v = reg(capabilities.clone()).await;
+    assert_eq!(flags(&v["config"]), on);
+    let replica: Uuid = v["replica_id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(r.work(replica, 0).await["streams"], on);
+
+    // A runner that does not advertise the terminal is never told to serve it.
+    let v = reg(caps(2)).await;
+    let replica: Uuid = v["replica_id"].as_str().unwrap().parse().unwrap();
+    let no_term = json!({"previews": true, "terminal": false, "ssh_enabled": false});
+    assert_eq!(flags(&v["config"]), no_term);
+    assert_eq!(r.work(replica, 0).await["streams"], no_term);
+}
+
 #[tokio::test]
 async fn admin_provision_register_and_list() {
     let r = rig().await;

@@ -20,7 +20,9 @@ const BACKGROUND: &str = "(EXISTS (SELECT 1 FROM processes p WHERE p.sandbox_id 
         AND p.boot_id = s.boot_id AND p.status = 'running' AND p.busy)
     OR EXISTS (SELECT 1 FROM watches w JOIN processes p ON p.id = w.process_id
         WHERE p.sandbox_id = s.id AND p.boot_id = s.boot_id AND w.status = 'armed'))";
-const ENGAGED_AGE: &str =
+/// Seconds since the sandbox last saw engagement (the idle stop's clock); `SandboxView`'s
+/// `computer.sleeps_in_secs` reads the same expression (P5-REFINE-4, C-1059).
+pub(crate) const ENGAGED_AGE: &str =
     "extract(epoch from now() - coalesce(s.last_engaged_at, s.last_active_at, s.created_at))";
 const DUE_SCHEDULE: &str = "EXISTS (SELECT 1 FROM schedules sc WHERE sc.agent_id = s.agent_id
         AND sc.enabled AND sc.next_fire_at <= now()
@@ -1026,9 +1028,14 @@ pub async fn apply_status(
             "running" => Ok((Applied::Duplicate, vec![])),
             "starting" => {
                 sqlx::query(
+                    // (P5-REFINE-4, C-1059) Never move the phase backwards: the supervisor can
+                    // connect (`booting`) and the harness report `ready` before this report is
+                    // applied; `waiting_supervisor` only replaces an earlier phase.
                     "UPDATE sandboxes SET state='running', container_ref=$2, lifecycle_lease_until=NULL,
                          last_active_at=now(),
-                         running_at = now(), start_phase = $3,
+                         running_at = now(),
+                         start_phase = CASE WHEN start_phase IN ('booting', 'ready')
+                                            THEN start_phase ELSE $3 END,
                          start_detail = coalesce($4, start_detail), start_progress_at = now(),
                          updated_at=now() WHERE id=$1",
                 )

@@ -122,6 +122,93 @@ struct RouteEnd {
     from_sandbox: Arc<AtomicUsize>,
     /// The window the runner announced for that direction (`stream.open`/`pty.open`).
     recv_window: usize,
+    /// (P5-REFINE-4, C-1058) The keep-awake heartbeat of a terminal or SSH leg: aborted when
+    /// this route is dropped, i.e. on every way the leg ends (release, supervisor close,
+    /// channel loss, listener drop).
+    _heartbeat: Option<AbortOnDrop>,
+}
+
+/// Aborts its task when dropped.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// (P4-TERM, C-620; P4-SSH-2, C-796; P5-REFINE-4, C-1058) The keep-awake stamps of the
+/// listener: shared by the byte path and the per-leg heartbeats, so the two never double-post.
+#[derive(Clone)]
+struct Stamper {
+    server: ChannelServer,
+    /// Last stamp per (sandbox, ssh): the terminal and SSH columns are separate (C-796).
+    last: Arc<Mutex<HashMap<(Uuid, bool), tokio::time::Instant>>>,
+    /// Stamps posted (or due while no API client is attached); read by tests.
+    posted: Arc<std::sync::atomic::AtomicU64>,
+    terminal_grace: Duration,
+    ssh_grace: Duration,
+}
+
+impl Stamper {
+    fn grace(&self, ssh: bool) -> Duration {
+        if ssh {
+            self.ssh_grace
+        } else {
+            self.terminal_grace
+        }
+    }
+
+    /// The heartbeat's period: half the grace, so a quiet session's stamps overlap.
+    fn heartbeat_every(&self, ssh: bool) -> Duration {
+        self.grace(ssh) / 2
+    }
+
+    /// Best-effort stamp when the last one of `(sandbox, ssh)` is at least `min_gap` old. Never
+    /// blocks the caller: the API call is detached, failures are ignored (a missed stamp only
+    /// shortens the grace the previous one bought).
+    async fn stamp(&self, sandbox: Uuid, ssh: bool, min_gap: Duration) {
+        if !self.due(sandbox, ssh, min_gap).await {
+            return;
+        }
+        self.posted.fetch_add(1, Ordering::Relaxed);
+        if let Some(api) = self.server.api() {
+            tokio::spawn(async move { api.keep_awake(sandbox, ssh).await });
+        }
+    }
+
+    async fn due(&self, sandbox: Uuid, ssh: bool, min_gap: Duration) -> bool {
+        let mut last = self.last.lock().await;
+        let now = tokio::time::Instant::now();
+        match last.get(&(sandbox, ssh)) {
+            Some(t) if now.duration_since(*t) < min_gap => false,
+            _ => {
+                last.insert((sandbox, ssh), now);
+                true
+            }
+        }
+    }
+
+    /// (C-1058) Stamps `(sandbox, ssh)` every [`Stamper::heartbeat_every`] for as long as the
+    /// returned guard lives, whether or not bytes flow. The first beat is one period after the
+    /// open (the session's first bytes stamp at once through the byte path). A beat is skipped
+    /// when any stamp of that kind is younger than 9/10 of the period, so the byte path and the
+    /// heartbeat share one budget and the gap between two stamps stays under the grace.
+    fn heartbeat(&self, sandbox: Uuid, ssh: bool) -> AbortOnDrop {
+        let me = self.clone();
+        let every = self.heartbeat_every(ssh);
+        let min_gap = every.mul_f32(0.9);
+        // The clock starts at the open, not at the task's first poll.
+        let first = tokio::time::Instant::now() + every;
+        AbortOnDrop(tokio::spawn(async move {
+            let mut tick = tokio::time::interval_at(first, every);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                me.stamp(sandbox, ssh, min_gap).await;
+            }
+        }))
+    }
 }
 
 /// What the pump needs to deliver to one leg (cloned out of `routes` under the lock).
@@ -146,9 +233,8 @@ enum Keep {
 pub struct StreamListener {
     server: ChannelServer,
     routes: Arc<Mutex<Routes>>,
-    /// (P4-TERM, C-620) Last keep-awake stamp per sandbox (rate limit).
-    /// Keyed by (sandbox, ssh): the terminal and SSH columns are separate (C-796).
-    last_stamp: Arc<Mutex<HashMap<(Uuid, bool), std::time::Instant>>>,
+    /// (P4-TERM, C-620; C-1058) The keep-awake stamps (byte path and heartbeats).
+    stamper: Stamper,
     /// Idle and lifetime limits of a leg (production: [`IDLE_TIMEOUT`], [`LIFETIME`]; tests
     /// build the listener with shortened ones through [`StreamListener::with_limits`]).
     idle: Duration,
@@ -178,6 +264,11 @@ pub struct Bounds {
     /// `pty.resize` from the browser is coalesced to the latest size and sent at most this
     /// often.
     pub resize_flush: Duration,
+    /// The keep-awake grace of a terminal / SSH leg ([`TERMINAL_AWAKE_GRACE`],
+    /// [`SSH_AWAKE_GRACE`]): bytes stamp at most once per grace, an open leg's heartbeat every
+    /// half grace (C-1058). Tests shorten them.
+    pub terminal_awake_grace: Duration,
+    pub ssh_awake_grace: Duration,
 }
 
 impl Default for Bounds {
@@ -190,6 +281,8 @@ impl Default for Bounds {
             max_files: aurora_core::limits::FILE_SESSIONS_PER_SANDBOX as usize,
             max_ssh: SSH_CHANNELS_PER_SANDBOX as usize,
             resize_flush: Duration::from_millis(50),
+            terminal_awake_grace: TERMINAL_AWAKE_GRACE,
+            ssh_awake_grace: SSH_AWAKE_GRACE,
         }
     }
 }
@@ -222,9 +315,15 @@ impl StreamListener {
         bounds: Bounds,
     ) -> Arc<Self> {
         Arc::new(Self {
+            stamper: Stamper {
+                server: server.clone(),
+                last: Arc::new(Mutex::new(HashMap::new())),
+                posted: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                terminal_grace: bounds.terminal_awake_grace,
+                ssh_grace: bounds.ssh_awake_grace,
+            },
             server,
             routes: Arc::new(Mutex::new(Routes::default())),
-            last_stamp: Arc::new(Mutex::new(HashMap::new())),
             idle,
             lifetime,
             pre_auth: Arc::new(Semaphore::new(bounds.pre_auth_cap)),
@@ -393,37 +492,19 @@ impl StreamListener {
         }
     }
 
-    /// (P4-TERM, C-620; P4-SSH-2, C-796) Best-effort keep-awake stamp, rate-limited to one per
-    /// grace per sandbox and kind (the grace already outlives the gap). Never blocks the leg:
-    /// the API call is detached, failures are ignored (a missed stamp only shortens the grace
-    /// the previous one bought).
+    /// (P4-TERM, C-620; P4-SSH-2, C-796) Best-effort keep-awake stamp of the byte path,
+    /// rate-limited to one per grace per sandbox and kind (the grace already outlives the gap;
+    /// an open leg's heartbeat, C-1058, fills the quiet stretches).
     async fn stamp_awake(&self, sandbox: Uuid, ssh: bool) {
-        if !self.stamp_due(sandbox, ssh).await {
-            return;
-        }
-        if let Some(api) = self.server.api() {
-            let api = api.clone();
-            tokio::spawn(async move { api.keep_awake(sandbox, ssh).await });
-        }
+        self.stamper
+            .stamp(sandbox, ssh, self.stamper.grace(ssh))
+            .await;
     }
 
-    /// Rate-limit gate: `true` at most once per [`TERMINAL_AWAKE_GRACE`] / [`SSH_AWAKE_GRACE`]
-    /// per sandbox and kind.
-    async fn stamp_due(&self, sandbox: Uuid, ssh: bool) -> bool {
-        let grace = if ssh {
-            SSH_AWAKE_GRACE
-        } else {
-            TERMINAL_AWAKE_GRACE
-        };
-        let mut last = self.last_stamp.lock().await;
-        let now = std::time::Instant::now();
-        match last.get(&(sandbox, ssh)) {
-            Some(t) if now.duration_since(*t) < grace => false,
-            _ => {
-                last.insert((sandbox, ssh), now);
-                true
-            }
-        }
+    /// Keep-awake stamps this listener has posted (byte path and heartbeats). For tests and
+    /// diagnostics.
+    pub fn keep_awake_stamps(&self) -> u64 {
+        self.stamper.posted.load(Ordering::Relaxed)
     }
 
     /// The W6 connection of `(sandbox, boot)` was admitted (`connected`) or dropped: the
@@ -612,6 +693,9 @@ impl StreamListener {
         if live >= cap {
             return None;
         }
+        // (P5-REFINE-4, C-1058, D-416) An open terminal or SSH session keeps the computer awake
+        // whether or not bytes flow; the heartbeat lives exactly as long as this route.
+        let heartbeat = (terminal || ssh).then(|| self.stamper.heartbeat(binding.sandbox_id, ssh));
         routes.legs.insert(
             id,
             RouteEnd {
@@ -628,6 +712,7 @@ impl StreamListener {
                 } else {
                     PREVIEW_STREAM_WINDOW
                 },
+                _heartbeat: heartbeat,
             },
         );
         Some(close_rx)
@@ -2209,9 +2294,109 @@ mod tests {
                 ssh: false,
                 from_sandbox: Arc::new(AtomicUsize::new(0)),
                 recv_window: TERMINAL_STREAM_WINDOW,
+                _heartbeat: None,
             },
         );
         (rx, close_rx)
+    }
+
+    // ------------------------------------------- P5-REFINE-4, C-1058: the open-leg heartbeat
+
+    fn binding(sandbox: Uuid) -> PreviewStreamOpenResponse {
+        serde_json::from_value(serde_json::json!({
+            "sandbox_id": sandbox, "boot_id": Uuid::new_v4(), "window": 1024,
+            "idle_secs": 600, "max_lifetime_secs": 14400
+        }))
+        .unwrap()
+    }
+
+    /// Registers a leg of the given kind through the production path.
+    async fn open(l: &StreamListener, id: u32, sandbox: Uuid, kind: (bool, bool, bool)) {
+        let (tx, _rx) = mpsc::channel(4);
+        let (terminal, files, ssh) = kind;
+        l.register_route(
+            id,
+            &binding(sandbox),
+            terminal,
+            files,
+            ssh,
+            tx,
+            Arc::new(AtomicUsize::new(0)),
+        )
+        .await
+        .expect("under the cap");
+    }
+
+    /// Lets the spawned heartbeat run after a clock advance.
+    async fn advance(d: Duration) {
+        tokio::time::advance(d).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    const TERMINAL: (bool, bool, bool) = (true, false, false);
+    const FILES: (bool, bool, bool) = (false, true, false);
+    const SSH: (bool, bool, bool) = (false, false, true);
+    const PORT: (bool, bool, bool) = (false, false, false);
+
+    /// A quiet terminal leg stamps every half grace for as long as it is open, and not after.
+    #[tokio::test(start_paused = true)]
+    async fn an_open_terminal_leg_stamps_every_half_grace_without_bytes() {
+        let l = listener();
+        let sb = Uuid::new_v4();
+        open(&l, 1, sb, TERMINAL).await;
+        advance(Duration::from_secs(1)).await;
+        assert_eq!(l.keep_awake_stamps(), 0, "the first beat is one period in");
+        for n in 1..=4 {
+            advance(TERMINAL_AWAKE_GRACE / 2).await;
+            assert_eq!(l.keep_awake_stamps(), n, "beat {n}");
+        }
+        // Every way a leg ends drops its route; the heartbeat goes with it.
+        l.release_pty_as(1, sb, Uuid::new_v4(), PtyCloseReason::Eof, 0, 0)
+            .await;
+        advance(TERMINAL_AWAKE_GRACE * 3).await;
+        assert_eq!(l.keep_awake_stamps(), 4, "no stamp after the leg closed");
+    }
+
+    /// SSH legs beat on their own (ssh) clock; files and port legs never beat.
+    #[tokio::test(start_paused = true)]
+    async fn only_terminal_and_ssh_legs_beat() {
+        let l = listener();
+        let sb = Uuid::new_v4();
+        open(&l, 1, sb, FILES).await;
+        open(&l, 2, sb, PORT).await;
+        advance(TERMINAL_AWAKE_GRACE * 2).await;
+        assert_eq!(l.keep_awake_stamps(), 0);
+        open(&l, 3, sb, SSH).await;
+        advance(SSH_AWAKE_GRACE / 2).await;
+        assert_eq!(l.keep_awake_stamps(), 1);
+        assert!(l.stamper.last.lock().await.contains_key(&(sb, true)));
+        assert!(!l.stamper.last.lock().await.contains_key(&(sb, false)));
+        // The channel died: every leg of the boot is dropped, the beat stops.
+        l.routes.lock().await.legs.clear();
+        advance(SSH_AWAKE_GRACE * 2).await;
+        assert_eq!(l.keep_awake_stamps(), 1);
+    }
+
+    /// The byte path and the heartbeat share one budget: a byte stamp just before a beat makes
+    /// the beat skip, and a beat holds the next byte stamp back for a grace.
+    #[tokio::test(start_paused = true)]
+    async fn bytes_and_heartbeat_never_double_post() {
+        let l = listener();
+        let sb = Uuid::new_v4();
+        open(&l, 1, sb, TERMINAL).await;
+        advance(TERMINAL_AWAKE_GRACE / 2 - Duration::from_secs(1)).await;
+        l.stamp_awake(sb, false).await; // bytes at 59 s
+        assert_eq!(l.keep_awake_stamps(), 1);
+        advance(Duration::from_secs(1)).await; // the beat at 60 s skips
+        assert_eq!(l.keep_awake_stamps(), 1);
+        l.stamp_awake(sb, false).await; // more bytes: inside the grace
+        assert_eq!(l.keep_awake_stamps(), 1);
+        advance(TERMINAL_AWAKE_GRACE / 2).await; // the beat at 120 s: 61 s since the last
+        assert_eq!(l.keep_awake_stamps(), 2);
+        l.stamp_awake(sb, false).await; // bytes right after a beat: held back
+        assert_eq!(l.keep_awake_stamps(), 2);
     }
 
     /// A full leg queue never makes the pump wait (FIX-060: no await on the queue, no lock
