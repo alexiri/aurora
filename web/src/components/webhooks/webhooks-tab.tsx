@@ -19,6 +19,7 @@ import { Select } from "@/components/ui/select";
 import { Altitude } from "@/components/ui/altitude";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { fieldErrors } from "@/lib/api/errors";
+import { useVerb } from "@/lib/palette-verb";
 import {
   useCreateWebhook,
   useDeleteWebhook,
@@ -262,6 +263,8 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
 export function WebhooksTab({ agentId, wsId, canOwn }: { agentId: string; wsId?: string; canOwn?: boolean }) {
   const q = useWebhooks(agentId);
   const [creating, setCreating] = useState(false);
+  // (P5-REFINE-19) The palette's "New webhook for <Agent>" opens the form the button opens.
+  useVerb("new-webhook", () => setCreating(true), canOwn === true);
   // The URL lives only in this component state while the dialog is open.
   const [shown, setShown] = useState<{ url: string; name: string } | null>(null);
   if (q.isPending) return <Loading />;

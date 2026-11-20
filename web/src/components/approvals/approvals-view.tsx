@@ -61,7 +61,8 @@ export function ApprovalCard({
   const params = useParams<{ org?: string; ws?: string }>();
   // A parked approval repeats its sentence before it is decided (inside the card): the agent is told, not resumed in place.
   return (
-    <li className={cn("rounded-card border border-pending-line bg-surface p-4 shadow-card sm:p-5", focused && "ring-2 ring-accent")}>
+    // (P5-REFINE-19) `a` / `b` answer the card that has the focus (Expert): the same buttons.
+    <li tabIndex={-1} data-approval-card="" className={cn("rounded-card border border-pending-line bg-surface p-4 outline-none shadow-card focus-visible:ring-2 focus-visible:ring-accent sm:p-5", focused && "ring-2 ring-accent")}>
       <ApprovalQuestion
         approval={a}
         now={now}

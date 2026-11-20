@@ -18,6 +18,7 @@ import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automation
 import { fieldErrors } from "@/lib/api/errors";
 import { MainAction } from "@/components/ui/main-action";
 import { useWhoCan } from "@/lib/api/who-can";
+import { useVerb } from "@/lib/palette-verb";
 import {
   cronFieldCount,
   useCreateSchedule,
@@ -243,6 +244,8 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
 export function SchedulesTab({ agentId, defaultTimezone, wsId, canOwn }: { agentId: string; defaultTimezone?: string; wsId?: string; canOwn?: boolean }) {
   const q = useSchedules(agentId);
   const [creating, setCreating] = useState(false);
+  // (P5-REFINE-19) The palette's "New schedule for <Agent>" opens the form the button opens.
+  useVerb("new-schedule", () => setCreating(true), canOwn === true);
   // (C-916) Who sets up a schedule, for a viewer who cannot.
   const who = useWhoCan({ workspaceId: wsId }, "workspace_owner", "add_schedule");
   if (q.isPending) return <Loading />;

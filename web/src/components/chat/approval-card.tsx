@@ -115,6 +115,7 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
     <div
       id={approvalAnchorId(id)}
       tabIndex={-1}
+      data-approval-card=""
       className="max-w-chat-card space-y-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-accent">
       {detail ? (
         <ApprovalQuestion
@@ -145,10 +146,10 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
           {parked ? <ParkedNote className="text-xs text-ink-2" /> : null}
           {canApprove ? (
             <div className="grid grid-cols-2 gap-2 sm:flex">
-              <Button className="min-h-11 sm:min-h-10" variant="approve" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "approve" })}>
+              <Button data-approval-key="allow-once" className="min-h-11 sm:min-h-10" variant="approve" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "approve" })}>
                 Allow once
               </Button>
-              <Button className="min-h-11 sm:min-h-10" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "deny" })}>
+              <Button data-approval-key="block" className="min-h-11 sm:min-h-10" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "deny" })}>
                 Block
               </Button>
             </div>

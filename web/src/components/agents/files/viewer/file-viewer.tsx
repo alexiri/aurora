@@ -225,7 +225,8 @@ function EditorPane({
   };
 
   return (
-    <div className="space-y-3">
+    // (P5-REFINE-19) The editor keeps its keys: no letter shortcut fires in it.
+    <div className="space-y-3" data-no-shortcuts="">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h2 className="break-all font-display text-base font-semibold text-ink">{name}</h2>

@@ -23,7 +23,11 @@ import { useRefreshAttentionOnMutation, useWorkspaceCounts } from "@/lib/api/att
 import { AttentionBadge } from "./admin/attention-badge";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
+import { CommandPalette, openPalette, openShortcutSheet } from "./palette/command-palette";
 import { ScopeSwitcher } from "./nav/scope-switcher";
+import { ShortcutsHost } from "./shortcuts/shortcuts-host";
+import { isMac, keysLabel, SHORTCUTS } from "@/lib/shortcuts";
+import { Altitude } from "./ui/altitude";
 import { Tour } from "./onboarding/tour";
 import { startTour } from "./onboarding/tour-events";
 import { ThemeSwitch } from "./theme/theme-switch";
@@ -46,8 +50,10 @@ import {
   LockIcon,
   LogOutIcon,
   MenuIcon,
+  KeyboardIcon,
   MessageIcon,
   PlugIcon,
+  SearchIcon,
   ScaleIcon,
   ScrollIcon,
   ServerIcon,
@@ -94,6 +100,26 @@ function NavItem({
         {badge}
       </Link>
     </li>
+  );
+}
+
+/** (P5-REFINE-19) "Search · ⌘K" in the rail's footer: opens the command palette; the shortcut is muted text beside it. */
+function SearchButton() {
+  // The server cannot know the platform: the first render says Ctrl, the browser's own then replaces it.
+  const mac = useSyncExternalStore(noopSubscribe, () => isMac(), () => false);
+  return (
+    <button
+      type="button"
+      onClick={() => openPalette()}
+      data-tour="search"
+      className="flex min-h-9 w-full items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left text-sm text-ink-2 hover:bg-subtle hover:text-ink"
+    >
+      <SearchIcon className="size-4 shrink-0 text-muted" />
+      <span className="min-w-0 flex-1 truncate">Search</span>
+      <span aria-hidden="true" className="shrink-0 text-xs text-muted">
+        {keysLabel(SHORTCUTS.find((s) => s.id === "palette")!.keys, mac)}
+      </span>
+    </button>
   );
 }
 
@@ -167,6 +193,13 @@ function UserMenu() {
         <MenuSwitchItem checked={more.more} onCheckedChange={more.setMore} disabled={more.pending} className={itemClass}>
           Show more controls
         </MenuSwitchItem>
+        {/* (P5-REFINE-19) The shortcut sheet is for whoever turned the switch on. */}
+        <Altitude id="kbd" level="expert">
+          <MenuItem onSelect={() => openShortcutSheet()} className={itemClass}>
+            <KeyboardIcon className="size-4 shrink-0 text-muted" />
+            Keyboard shortcuts
+          </MenuItem>
+        </Altitude>
         <MenuItem onSelect={onTour} className={itemClass}>
           <HomeIcon className="size-4 shrink-0 text-muted" />
           Show me around
@@ -471,6 +504,7 @@ function SidebarContent({
             />
           </ul>
         ) : null}
+        <SearchButton />
         <ThemeSwitch />
         <UserMenu />
       </div>
@@ -594,6 +628,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           {missing ? <NotFoundState kind={missing} slug={missing === "organization" ? orgSlug : wsSlug} /> : children}
         </main>
         <Tour setNavOpen={tourNavOpen} />
+        <CommandPalette />
+        <ShortcutsHost />
         <UndoToastHost />
       </div>
     </div>

@@ -39,7 +39,7 @@ export function TerminalWindow() {
     );
   }
   return (
-    <main className="flex min-h-screen flex-col bg-canvas">
+    <main className="flex min-h-screen flex-col bg-canvas" data-no-shortcuts="">
       <header className="flex items-center gap-3 border-b border-line bg-surface px-4 py-2">
         <h1 ref={titleRef} tabIndex={-1} className="min-w-0 truncate font-display text-base font-semibold text-ink">
           {agent.name} — Terminal

@@ -2353,7 +2353,8 @@ which wraps it with the id given.
 | `chat.redact` | "Remove this message's content…" (Redact) | Expert | Now |
 | `org.groups`, `org.directory` | Groups, Directory sync tabs | Expert unless a directory provider is configured (then Set up) | Now |
 | `apikeys` | Account › API keys explained | Set up | Now |
-| `palette.verbs`, `kbd`, `bulk` | palette verbs, keyboard shortcuts, bulk actions | Expert | Later: P5-REFINE-19 |
+| `palette.verbs`, `kbd` | palette verbs, keyboard shortcuts (and their sheet) | Expert | Now (P5-REFINE-19; `palette.verbs` is a list the registry builds, not a wrapper) |
+| `bulk` | bulk actions on lists | Expert | Later: P5-REFINE-19 |
 | `fold.cli` | "From your terminal" CLI/API snippets | Expert | Now (SSH snippet); later 14, 15, 19 |
 
 A control not in the table is a gap in the classification: add the row (and the registry row) first.
@@ -2361,6 +2362,47 @@ A control not in the table is a gap in the classification: add the row (and the 
 **The lint** (`tests/altitude-registry.test.ts`): every `<Altitude id level>` names a registry id at its level;
 every row not marked later or rule-only is used in the code; rendered at Use with the switch off, the Expert
 strings are absent.
+
+## Expert speed (phase 5, P5-REFINE-19, D-405, D-406, D-413)
+
+Speed for the people who want it, with nothing added for the people who don't: everything below is behind **Show more
+controls**, except the *nouns* in the palette. Each verb and each key does what its button does, shows the same dialog
+(the confirm ladder) and never acts on its own.
+
+**Command palette (⌘K / Ctrl K).** One dialog (`components/palette/command-palette.tsx`, mounted once in the app shell),
+opened with `⌘K` (macOS) or `Ctrl K`, and from **Search · ⌘K** in the rail's footer. Top-anchored, a search field
+(`role="combobox"`), a `role="listbox"` of results under group headings (Actions, Workspaces, Organizations, Agents,
+Pages, Agent pages, Account), arrow keys, Enter to choose, Escape to close, a hint line, full width at 390 px. Matching is
+case-insensitive, by whole-label start, word start or substring; ties go by recency (`readRecent`, the switcher's list).
+No match: "Nothing matches “text”."; a skeleton row while the session loads.
+- **Nouns, for everyone:** workspaces and organizations (the switcher's index, D-389), the agents of the current
+  workspace, the topics the viewer's `visibleTopics` lists, the open agent's pages the navigation lists, and the person's
+  account pages.
+- **Verbs, altitude Expert (`palette.verbs`):** *New chat with <Agent>*, *Give <Agent> an app* (goes to Apps & access),
+  *New schedule for…*, *New webhook for…*, *Pause <Agent>* (opens the Pause confirm) / *Resume <Agent>* (goes to the danger
+  zone where the button is), *Export <Agent>*, *Open Approvals*, *Add people*, *New agent*, *Keyboard shortcuts*. A verb the
+  viewer's role lacks is not listed (owners: all; approvers: *Open Approvals*; members: *New chat*). A verb navigates to the
+  page that owns the button and leaves a pending verb (`lib/palette-verb.ts`); the control registers `useVerb(id, open)` and
+  opens its own dialog. A verb nobody picks up in five seconds is dropped.
+- The palette never opens (and no letter fires) inside the terminal, an editor (`code-field`, the file viewer) or anything
+  marked `data-no-shortcuts`. `⌘K` itself works in a plain text field, not in the terminal.
+
+**Keyboard shortcuts (`kbd`, Expert).** `lib/shortcuts.ts` is the one registry, one matcher (`ChordMatcher`, chords with a
+one-second window) and one `keydown` listener on `document`. The sheet (`?`, the palette verb *Keyboard shortcuts*, or the
+account menu entry **Keyboard shortcuts**, shown only with the switch on) lists them:
+
+| Keys | Does |
+|---|---|
+| `⌘K` / `Ctrl K` | the palette (always on) |
+| `/` | focus the conversation search (always on; exists) |
+| `?` | the shortcut sheet |
+| `g` then `a` / `p` / `o` / `s` | Agents · Approvals · Overview · Settings of the current workspace (only those the role lists) |
+| `n` | New chat with the open agent (on an agent page) |
+| `a` / `b` | **Allow once** / **Block** on the approval card that has the focus (the same buttons; a parked approval still asks) |
+
+**Never fires** when focus is in an `input`, `textarea`, `select`, a `contenteditable` or any `[data-no-shortcuts]` (the
+terminal, the file editor, the code field); with a modifier other than the chord's; while a dialog other than the sheet and
+the palette is open; on a touch-only device (no `hover: hover`). With the switch off only `⌘K` and `/` work.
 
 ## Agent settings pages (phase 5, P5-REFINE-12, D-406, D-407, D-411, D-413, D-414)
 
