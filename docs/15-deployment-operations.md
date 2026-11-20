@@ -38,8 +38,12 @@ single compile of the workspace (`images/services/Containerfile`, cargo-chef dep
 sandbox image installs the pinned Claude Code and Codex runtimes by default; build with
 `SANDBOX_HARNESSES="claude-code"` for a slimmer image. The label `org.aurora.harnesses`
 tells the runner what is inside. Helm: `config.hosted.enabled_harnesses` (default
-`[claude-code]`); on Kubernetes, which cannot read the label, `config.runner.image_harnesses`
-names the runtimes of the sandbox image (D-153).
+`[claude-code]`); on Kubernetes, which cannot read the label, the chart fills
+`runner.image_harnesses` with the five runtimes when the sandbox image is the standard
+`aurora-sandbox` (FIX-188, D-153). With any other image, or a slim build, set
+`config.runner.image_harnesses` yourself; an explicit value always wins. The runner reports the
+list once, when it registers, and the chart does not roll pods on a ConfigMap change, so after
+changing it run `kubectl rollout restart` on the runner.
 
 Service images are distroless (`gcr.io/distroless/cc` or equivalent), run as
 non-root, contain only their binary, and are built for linux/amd64. arm64 images are not planned: OPS-022 (multi-arch images) was
@@ -316,7 +320,7 @@ NetworkPolicy and its key is a secret root.
 | `runner.api_url` | — | runner | e.g. `http://aurora-api:4101` |
 | `runner.backend` | — (required) | runner | `podman`, `kubernetes`, `fake` (config, never detection) |
 | `runner.image` | `aurora-sandbox:<version>` | runner | |
-| `runner.image_harnesses` | `[]` | runner | (phase 4, P4-HAR, D-153) harness runtimes the sandbox image contains, for the Kubernetes backend, which cannot read the image label `org.aurora.harnesses`; empty = `claude-code`, `fake`; podman reads the label and ignores it |
+| `runner.image_harnesses` | `[]`; on Kubernetes the chart renders `claude-code, codex, pi, goose, opencode` when the sandbox image is the standard `aurora-sandbox` | runner | (phase 4, P4-HAR, D-153; FIX-188) harness runtimes the sandbox image contains, for the Kubernetes backend, which cannot read the image label `org.aurora.harnesses`; empty = `claude-code`, `fake`; podman reads the label and ignores it. Set `config.runner.image_harnesses` for another image or a slim build (an explicit value, even `[]`, wins); changing it needs a runner restart (`kubectl rollout restart`), because the runner reports it once, when it registers |
 | `runner.advertised_host` | — | runner | sandbox-facing host for the WS URL |
 | `runner.max_sandboxes`, `runner.held_awake_ceiling` | 4, derived | runner | |
 | `runner.sandbox_memory_mib`, `runner.sandbox_cpus`, `runner.sandbox_pids`, `runner.home_gib` | 2048, 1, 512, 10 | runner | defaults |

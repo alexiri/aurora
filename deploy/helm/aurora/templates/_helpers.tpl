@@ -461,3 +461,10 @@ spec:
   ports: [{protocol: TCP, port: {{ .Values.database.port }}}]
 {{- end }}
 {{- end -}}
+
+{{/* (FIX-188) The harness runtimes the standard `aurora-sandbox` image contains: the default of
+     `ARG SANDBOX_HARNESSES` in images/sandbox/Containerfile (scripts/guards/chart-ops.sh keeps the
+     two equal). configmap.yaml renders it as [runner] image_harnesses for that image only. */}}
+{{- define "aurora.standardSandboxHarnesses" -}}
+claude-code,codex,pi,goose,opencode
+{{- end -}}

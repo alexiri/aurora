@@ -44,7 +44,7 @@ with podman: the default image is 3.07 GB with all five, 2.49 GB with `claude-co
 |------|-------|
 | The harness is enabled | `hosted.enabled_harnesses` includes its id |
 | A sandbox image that contains it | the default `aurora-sandbox` image contains all five; build with `--build-arg SANDBOX_HARNESSES=claude-code` (or any comma-separated subset) to leave some out |
-| A runner that knows the image has it | podman reads the image label `org.aurora.harnesses`; on Kubernetes set `runner.image_harnesses` (it has no chart default, `[]`, and the podman backend reads the label) |
+| A runner that knows the image has it | podman reads the image label `org.aurora.harnesses`; on Kubernetes the chart lists all five for the standard `aurora-sandbox` image (FIX-188); set `config.runner.image_harnesses` for another image or a slim build (an explicit value wins) and run `kubectl rollout restart` on the runner, which reports the list once, when it registers |
 | An LLM endpoint that serves one of its dialects | the table above; a LiteLLM endpoint serves `openai_chat`, `openai_responses` and `anthropic_messages` by default |
 | A granted LLM key on that endpoint | the usual key and grant flow ([llm-endpoints.md](llm-endpoints.md)) |
 
@@ -71,7 +71,8 @@ config:
   hosted:
     enabled_harnesses: ["claude-code", "codex", "pi", "goose", "opencode"]
   runner:
-    # Kubernetes cannot read the image label: say what the sandbox image contains.
+    # Kubernetes cannot read the image label. The chart fills this list for the standard
+    # `aurora-sandbox` image; for another or a slim image say what it contains.
     image_harnesses: ["claude-code", "codex", "pi", "goose", "opencode"]
 ```
 

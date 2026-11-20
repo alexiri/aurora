@@ -323,3 +323,53 @@ rate="$(toml_of --set scim.ratePerMinute=900)" || fail "scim.ratePerMinute rende
 locked="$(toml_of --set terminal.enabled=true --set config.terminal.enabled=false)" || fail "terminal on with config.terminal.enabled=false must render (kept off, locked)"
 [ "$locked" = "{'terminal': {'available': True, 'enabled': False}, 'scim': None}" ] || fail "an operator-set config.terminal.enabled must be kept next to available: $locked"
 echo "chart-ops: terminal and SCIM render availability"
+
+# --- (FIX-188, C-1012) the chart reports the standard sandbox image's harnesses on Kubernetes, which cannot read
+#     the image label: the chart's list equals the Containerfile's SANDBOX_HARNESSES default; a default render and
+#     runner.sandboxImage=<...>/aurora-sandbox:<tag> carry the five; another image carries none; an explicit list wins ---
+containerfile_harnesses() { sed -n 's/^ARG SANDBOX_HARNESSES="\(.*\)"$/\1/p' "$1"; }
+chart_harnesses() { sed -n '/define "aurora.standardSandboxHarnesses"/{n;p;}' "$1"; }
+harness_lists_equal() { # <Containerfile> <helpers.tpl>
+  local a b
+  a="$(containerfile_harnesses "$1")"; b="$(chart_harnesses "$2")"
+  [ -n "$a" ] && [ "$a" = "$b" ]
+}
+harness_lists_equal images/sandbox/Containerfile deploy/helm/aurora/templates/_helpers.tpl \
+  || fail "aurora.standardSandboxHarnesses ($(chart_harnesses deploy/helm/aurora/templates/_helpers.tpl)) differs from SANDBOX_HARNESSES in images/sandbox/Containerfile ($(containerfile_harnesses images/sandbox/Containerfile))"
+planted_cf="$(mktemp)"
+trap 'rm -f "$planted" "$planted_cf"; rm -rf "$notes_chart"' EXIT
+sed 's/^\(ARG SANDBOX_HARNESSES=".*\)"$/\1,planted"/' images/sandbox/Containerfile >"$planted_cf"
+if harness_lists_equal "$planted_cf" deploy/helm/aurora/templates/_helpers.tpl; then
+  fail "self-test: a planted SANDBOX_HARNESSES mismatch passed the chart/Containerfile comparison"
+fi
+runner_harnesses() { # prints the [runner] image_harnesses of a render, or "unset"
+  "${H[@]}" "$@" | python3 -I -c '
+import sys, tomllib, yaml
+out = {}
+for d in yaml.safe_load_all(sys.stdin):
+    if d and d.get("kind") == "ConfigMap":
+        for n, t in (d.get("data") or {}).items():
+            if n.endswith(".toml") and "runner" in tomllib.loads(t):
+                out = tomllib.loads(t)["runner"]
+print(",".join(out["image_harnesses"]) if "image_harnesses" in out else "unset")
+'
+}
+five="$(containerfile_harnesses images/sandbox/Containerfile)"
+check_harnesses() { # <want> <label> <helm flags...>
+  local want="$1" label="$2" got; shift 2
+  got="$(runner_harnesses "$@")" || fail "$label: render failed"
+  [ "$got" = "$want" ] || fail "$label: [runner] image_harnesses = $got, want $want"
+}
+check_harnesses "$five" "default render"
+check_harnesses "$five" "runner.sandboxImage=aurora-sandbox:1.2.3" --set runner.sandboxImage=reg.example/aurora-sandbox:1.2.3
+check_harnesses "$five" "a digest-pinned aurora-sandbox" --set config.runner.image=reg.example:5000/x/aurora-sandbox@sha256:0123
+check_harnesses unset "aurora-sandbox-min" --set config.runner.image=reg.example/aurora-sandbox-min:1.2.3
+check_harnesses unset "a custom image" --set runner.sandboxImage=reg.example/custom:1
+check_harnesses "claude-code" "an explicit list" --set 'config.runner.image_harnesses={claude-code}'
+# the check bites: a wrong expectation must fail
+if (check_harnesses "claude-code" "self-test" ) >/dev/null 2>&1; then
+  fail "self-test: check_harnesses passed a default render against a wrong expectation"
+fi
+# runner.image_harnesses is runner configuration, not a movable instance setting
+! grep -qx 'runner.image_harnesses' deploy/helm/aurora/movable-keys.txt || fail "runner.image_harnesses must not be a movable key"
+echo "chart-ops: sandbox image harnesses ok"
