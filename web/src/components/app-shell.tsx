@@ -21,6 +21,7 @@ import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/
 import { useTimezoneAutofill } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
+import { useRefreshAttentionOnMutation } from "@/lib/api/attention";
 import { AttentionBadge } from "./admin/attention-badge";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
@@ -304,7 +305,18 @@ function AdminNavList({ pathname }: { pathname: string }) {
       <ul className="space-y-0.5">
         {visibleTopics("admin", { instanceAdmin }).map((t) => {
           const href = topicHref("admin", t);
-          return <NavItem key={t} tour={t} href={href} label={TOPIC_LABEL[t]} icon={TOPIC_ICON[t]!} active={topicActive(pathname, href, t)} />;
+          // (P5-REFINE-18 #18, C-1022/C-1080) Overview carries the total: the same count as the sidebar entry and the account menu.
+          return (
+            <NavItem
+              key={t}
+              tour={t}
+              href={href}
+              label={TOPIC_LABEL[t]}
+              icon={TOPIC_ICON[t]!}
+              active={topicActive(pathname, href, t)}
+              badge={t === "overview" ? <AttentionBadge /> : undefined}
+            />
+          );
         })}
       </ul>
     </nav>
@@ -404,6 +416,7 @@ function SidebarContent({
   // The admin navigation is for instance admins only (the page guard already refuses everyone else; the nav must not
   // advertise it to a signed-in member who typed an /admin path, WEBA-11).
   const isInstanceAdmin = useMe().data?.user.is_instance_admin === true;
+  useRefreshAttentionOnMutation(isInstanceAdmin);
   const resolved = useResolve(orgSlug);
   useRememberReturn(orgSlug, wsSlug, resolved.data?.org.name, !inAdmin);
   const wsName = resolved.data?.workspace?.name;

@@ -43,6 +43,9 @@ for (const scheme of ["light", "dark"] as const) {
         // Administration › Internet access holds the egress keys: the Helm-locked one reads as text.
         await openRoute(page, "/admin/internet-access", scheme);
         await expect(page.getByRole("heading", { name: "Internet access", level: 1 })).toBeVisible();
+        // (P5-REFINE-18, D-410) The preset card first, saying what Helm keeps; today's fields are behind Customise.
+        await expect(page.getByTestId("preset-state")).toContainText("set in Helm");
+        await page.getByRole("button", { name: /Customise/ }).click();
         // The locked value reads in words, never the stored id (D-341).
         await expect(page.getByTestId("governance.egress.minimum_posture-locked-value")).toHaveText("Approved websites only");
         await expect(page.getByText("config.governance.egress.minimum_posture").first()).toBeVisible();

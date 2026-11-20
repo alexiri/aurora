@@ -242,10 +242,12 @@ describe("Generic settings section form (SET-1)", () => {
     fireEvent.click(document.getElementById("t.flag-c")!);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("This allows more than before:")).toBeTruthy();
+    expect(within(dialog).getByRole("heading", { name: "Allow more than before?" })).toBeTruthy();
+    // `t.flag` has no template: the generic sentence, never the key outside Technical details.
+    expect(within(dialog).getByTestId("loosening-sentences")).not.toHaveTextContent("t.flag");
     expect(within(dialog).getByText("Acme")).toBeTruthy();
     expect(puts).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Yes, save" }));
     await waitFor(() => expect(puts).toHaveBeenCalledTimes(1));
   });
 
@@ -270,5 +272,28 @@ describe("Generic settings section form (SET-1)", () => {
     expect(await screen.findByText("must be between 1 and 100")).toBeTruthy();
     expect(screen.getByText(/needs t\.flag/)).toBeTruthy();
     expect(screen.queryByText(/sign in again/i)).toBeNull();
+  });
+});
+
+// P5-REFINE-18 #16 (setup-6): a server address is one line, not a text area.
+describe("single-line string settings", () => {
+  it("renders a 512-character address as an input and a 20 000-character document as a text area", async () => {
+    mockFetch({
+      "GET /v1/admin/settings/settings_test": () =>
+        json(
+          200,
+          section({
+            fields: [fld("t.url", "Mail server address", "string"), fld("t.doc", "Template", "string")],
+            settings: [
+              setting({ key: "t.url", value: "smtp://mail.example.com:587", source: "dashboard", schema: schema("string", { max_len: 512 }) }),
+              setting({ key: "t.doc", value: "x", source: "dashboard", schema: schema("string", { max_len: 20000 }) }),
+            ],
+          }),
+        ),
+    });
+    wrap(<SettingsSectionView slug="settings-test" />);
+    await screen.findByText("Mail server address");
+    expect(document.getElementById("t.url-c")?.tagName).toBe("INPUT");
+    expect(document.getElementById("t.doc-c")?.tagName).toBe("TEXTAREA");
   });
 });
