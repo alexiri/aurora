@@ -6,6 +6,7 @@ import { FilesTab } from "@/components/agents/files-tab";
 import { ClashDialog } from "@/components/agents/files/dialogs";
 import type { UploadJob } from "@/components/agents/files/upload-queue";
 import { filesTiming, type FileEntry } from "@/lib/api/files";
+import { seedMoreControls } from "./support/render";
 
 // P5-FILES-2 (docs/14 §Files): the page against a mocked API — listing, the hidden filter, the URL's `&path=`, the
 // waking and unsupported states, row actions (rename, recursive delete), uploads by picker and by dropped folder.
@@ -50,11 +51,13 @@ function mockApi(handler: (req: Seen) => Response | undefined) {
 
 const listing = (path: string, entries: FileEntry[], truncated = false) => json(200, { path, entries, truncated });
 
-function renderTab(frozen = false) {
+function renderTab(frozen = false, more = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // Show hidden is an Expert control (computer-9): the person's "Show more controls" switch is on unless a test says Use.
+  seedMoreControls(qc, more);
   return render(
     <QueryClientProvider client={qc}>
-      <FilesTab agentId="a1" frozen={frozen} />
+      <FilesTab agentId="a1" agentName="Scout" frozen={frozen} />
     </QueryClientProvider>,
   );
 }
@@ -88,7 +91,7 @@ describe("FilesTab listing", () => {
     const seen = mockApi((r) => (r.path === "/v1/agents/a1/files" ? listing("/workspace", ROOT) : undefined));
     renderTab();
     expect(await screen.findByRole("link", { name: "src" })).toBeInTheDocument();
-    expect(seen[0]!.query.get("path")).toBe("/workspace");
+    expect(seen.find((s) => s.path === "/v1/agents/a1/files")!.query.get("path")).toBe("/workspace");
     // Hidden names are filtered by default; `.aurora` is a dot-name too.
     expect(screen.queryByText(".env")).toBeNull();
     expect(screen.getByText("1.2 KiB")).toBeInTheDocument();
@@ -107,7 +110,9 @@ describe("FilesTab listing", () => {
     await screen.findByRole("link", { name: "src" });
     fireEvent.click(screen.getByRole("checkbox", { name: "Show hidden" }));
     expect(await screen.findByText(".env")).toBeInTheDocument();
-    expect(screen.getByText("Read-only")).toBeInTheDocument();
+    // `.aurora` is Aurora's own: a Managed badge, with the reason, rather than a bare Read-only.
+    expect(screen.getByText("Managed")).toBeInTheDocument();
+    expect(screen.getByTestId("hidden-warning").textContent).toBe("Hidden files hold settings Aurora and the agent rely on. Edit them only if you know why.");
     expect(window.localStorage.getItem("aurora.files.hidden")).toBe("1");
     await openRowMenu(".aurora");
     await screen.findByRole("menuitem", { name: "Copy path" });
@@ -146,16 +151,16 @@ describe("path in the URL", () => {
     });
     renderTab();
     const crumbs = await screen.findByRole("navigation", { name: "Folder path" });
-    expect(within(crumbs).getByRole("link", { name: "workspace" })).toBeInTheDocument();
+    expect(within(crumbs).getByRole("link", { name: "Your files with Scout" })).toBeInTheDocument();
     expect(within(crumbs).getByText("src")).toHaveAttribute("aria-current", "page");
-    expect(seen[0]!.query.get("path")).toBe("/workspace/src");
+    expect(seen.find((s) => s.path === "/v1/agents/a1/files")!.query.get("path")).toBe("/workspace/src");
 
     fireEvent.click(await screen.findByRole("link", { name: "app" }));
     expect(await screen.findByText("page.tsx")).toBeInTheDocument();
     expect(new URLSearchParams(window.location.search).get("path")).toBe("/workspace/src/app");
     expect(new URLSearchParams(window.location.search).get("tab")).toBe("files");
 
-    fireEvent.click(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("link", { name: "workspace" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("link", { name: "Your files with Scout" }));
     expect(await screen.findByRole("link", { name: "src" })).toBeInTheDocument();
     expect(new URLSearchParams(window.location.search).has("path")).toBe(false);
   });
@@ -318,6 +323,7 @@ describe("row actions", () => {
       return undefined;
     });
     renderTab();
+    await screen.findByText("This folder is empty");
     fireEvent.click(await screen.findByRole("button", { name: /New folder/ }));
     fireEvent.change(await screen.findByLabelText("Folder name"), { target: { value: "docs" } });
     fireEvent.click(screen.getByRole("button", { name: "Create folder" }));
@@ -382,7 +388,10 @@ describe("uploads", () => {
     expect(xhrs[0]!.headers["content-type"]).toBe("application/octet-stream");
     xhrs[0]!.respond(201, { entry: entry("hello.txt", "file"), etag: null });
     const tray = await screen.findByRole("region", { name: "Uploads" });
-    await waitFor(() => expect(within(tray).getByText("Done")).toBeInTheDocument());
+    // (computer-10) Done collapses the panel to one line, and the toast says what was uploaded.
+    await waitFor(() => expect(screen.getByTestId("uploads-done").textContent).toContain("Uploads: 1 file done"));
+    expect(within(tray).queryByText("Done")).toBeNull();
+    expect(screen.getByRole("button", { name: "Hide" })).toBeInTheDocument();
   });
 
   it("shows a failed upload as a danger chip with the reason", async () => {
@@ -440,8 +449,131 @@ describe("uploads", () => {
   });
 });
 
+// (P5-REFINE-15, computer-2/3/9) The agent's own entries in a group, the failed state, Move to…, hidden files.
+describe("Computer › Files (P5-REFINE-15)", () => {
+  const OWN_ROOT = [
+    entry("AGENTS.md", "file", { writable: false }),
+    entry("CLAUDE.md", "file", { writable: false }),
+    entry("memory", "dir"),
+    entry("note.txt", "file"),
+    entry("docs", "dir"),
+    entry("fruit.csv", "file"),
+  ];
+
+  it("groups the agent's own entries, explains them, marks them Managed and keeps them out of write actions", async () => {
+    mockApi((r) => (r.path === "/v1/agents/a1/files" ? listing("/workspace", OWN_ROOT) : undefined));
+    renderTab();
+    await screen.findByRole("button", { name: "note.txt" });
+    expect(screen.getByText("Your files")).toBeInTheDocument();
+    expect(screen.getByText("Scout's own")).toBeInTheDocument();
+    expect(screen.getByTestId("own-note").textContent).toBe(
+      "The grey files are Scout's instructions and memory. Aurora keeps them for you; edit them on the Behaviour page.",
+    );
+    expect(screen.getAllByText("Managed")).toHaveLength(3);
+    expect(screen.getAllByText("Instructions, kept by Aurora")).toHaveLength(2);
+    expect(screen.getByText("Memory, kept by Aurora")).toBeInTheDocument();
+    expect(screen.queryByText("Read-only")).toBeNull();
+    // Download works, Rename, Move and Delete are not offered for them.
+    await openRowMenu("AGENTS.md");
+    expect(await screen.findByRole("menuitem", { name: "Download" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Move to…" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Delete" })).toBeNull();
+  });
+
+  it("names the root for the person", async () => {
+    mockApi((r) => (r.path === "/v1/agents/a1/files" ? listing("/workspace", OWN_ROOT) : undefined));
+    renderTab();
+    await screen.findByRole("button", { name: "note.txt" });
+    expect(screen.getByText("Your files with Scout")).toBeInTheDocument();
+  });
+
+  it("when the folder cannot load after the retries: one calm state, Upload and New file disabled with the reason", async () => {
+    mockApi((r) => (r.path === "/v1/agents/a1/files" ? err(503, "sandbox_waking") : undefined));
+    renderTab();
+    expect(await screen.findByText("Couldn't connect to the computer", undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByText(/Tried \d+ times\. The computer didn't answer\./)).toBeInTheDocument();
+    expect(screen.getByTestId("files-nothing-loaded").textContent).toBe("Nothing loaded. Actions come back when the computer answers.");
+    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New file" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("Move to… sends the rename op with the full destination path", async () => {
+    const seen = mockApi((r) => {
+      if (r.path === "/v1/agents/a1/files/ops") return json(200, { entry: entry("fruit.csv", "file", {}, "/workspace/docs") });
+      if (r.path === "/v1/agents/a1/files") return listing(r.query.get("path")!, r.query.get("path") === "/workspace" ? OWN_ROOT : []);
+      return undefined;
+    });
+    renderTab();
+    await openRowMenu("fruit.csv");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
+    expect(await screen.findByText("Move fruit.csv")).toBeInTheDocument();
+    expect(screen.getByText("Choose a folder in workspace.")).toBeInTheDocument();
+    // Folders only, one level at a time: `docs` is there, the files are not.
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("button", { name: "docs" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Move here" }));
+    await waitFor(() => expect(seen.find((s) => s.path.endsWith("/ops"))?.body).toEqual({ op: "rename", path: "/workspace/fruit.csv", to: "/workspace/docs/fruit.csv" }));
+  });
+
+  it("a file row dropped onto a folder row moves it the same way", async () => {
+    const seen = mockApi((r) => {
+      if (r.path === "/v1/agents/a1/files/ops") return json(200, { entry: entry("fruit.csv", "file", {}, "/workspace/docs") });
+      if (r.path === "/v1/agents/a1/files") return listing("/workspace", OWN_ROOT);
+      return undefined;
+    });
+    renderTab();
+    await screen.findByRole("button", { name: "fruit.csv" });
+    const store: Record<string, string> = {};
+    const dataTransfer = { types: ["application/x-aurora-file"], setData: (t: string, v: string) => (store[t] = v), getData: (t: string) => store[t] ?? "", effectAllowed: "", dropEffect: "" };
+    fireEvent.dragStart(screen.getByTestId("file-row-fruit.csv"), { dataTransfer });
+    const target = screen.getByTestId("file-row-docs");
+    fireEvent.dragOver(target, { dataTransfer });
+    expect(target).toHaveAttribute("data-drop");
+    fireEvent.drop(target, { dataTransfer });
+    await waitFor(() => expect(seen.find((s) => s.path.endsWith("/ops"))?.body).toEqual({ op: "rename", path: "/workspace/fruit.csv", to: "/workspace/docs/fruit.csv" }));
+  });
+
+  it("Rename refuses a slash and says where moving is", async () => {
+    mockApi((r) => (r.path === "/v1/agents/a1/files" ? listing("/workspace", OWN_ROOT) : undefined));
+    renderTab();
+    await openRowMenu("note.txt");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "docs/note.txt" } });
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    expect(await screen.findByText("To move it, use Move to…")).toBeInTheDocument();
+  });
+
+  it("Show hidden is an Expert control: absent at Use, and what the browser remembered is not shown", async () => {
+    window.localStorage.setItem("aurora.files.hidden", "1");
+    mockApi((r) => (r.path === "/v1/agents/a1/files" ? listing("/workspace", [...OWN_ROOT, entry(".env", "file")]) : undefined));
+    renderTab(false, false);
+    await screen.findByRole("button", { name: "note.txt" });
+    expect(screen.queryByRole("checkbox", { name: "Show hidden" })).toBeNull();
+    expect(screen.queryByText(".env")).toBeNull();
+    expect(screen.queryByTestId("hidden-warning")).toBeNull();
+  });
+
+  it("asks once before a hidden file opens for editing; Cancel does not open it", async () => {
+    window.localStorage.setItem("aurora.files.hidden", "1");
+    mockApi((r) => {
+      if (r.path === "/v1/agents/a1/files/text") return json(200, { path: "/workspace/.env", content: "A=1", etag: "sha256:a", size: 3, modified_at: null, line_ending: "lf", truncated: false });
+      return r.path === "/v1/agents/a1/files" ? listing("/workspace", [entry(".env", "file")]) : undefined;
+    });
+    renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: ".env" }));
+    expect(await screen.findByText("Edit a hidden file?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByTestId("code-editor")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: ".env" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit anyway" }));
+    expect(await screen.findByTestId("code-editor")).toBeInTheDocument();
+  });
+});
+
 describe("ClashDialog", () => {
-  const job = { id: "u1", name: "report.txt", dir: "/workspace/up", label: "report.txt", state: "waiting" } as UploadJob;
+  const job ={ id: "u1", name: "report.txt", dir: "/workspace/up", label: "report.txt", state: "waiting" } as UploadJob;
 
   it("offers Replace, Keep both and Skip", () => {
     const onChoose = vi.fn();

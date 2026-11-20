@@ -24,7 +24,9 @@ test.describe("agent Files page", () => {
     await expect(rows.nth(1)).toContainText("notes.md");
     await page.getByRole("checkbox", { name: "Show hidden" }).check();
     await expect(rows).toHaveCount(4);
-    await expect(page.getByText("Read-only")).toBeVisible();
+    // `.aurora` is Aurora's own: Managed (with the hidden-files warning below the list), not a bare Read-only.
+    await expect(page.getByText("Managed")).toBeVisible();
+    await expect(page.getByTestId("hidden-warning")).toContainText("Hidden files hold settings Aurora and the agent rely on.");
     // The choice survives a reload.
     await page.reload();
     await expect(page.getByRole("checkbox", { name: "Show hidden" })).toBeChecked();
@@ -56,7 +58,8 @@ test.describe("agent Files page", () => {
       el.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, bubbles: true, cancelable: true }));
       el.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
     });
-    await expect(page.getByRole("region", { name: "Uploads" }).getByText("Done")).toBeVisible();
+    // Done collapses the panel to one line (computer-10).
+    await expect(page.getByTestId("uploads-done")).toContainText("Uploads: 1 file done");
     await expect(page.getByRole("button", { name: "dropped.txt", exact: true })).toBeVisible();
     expect(fs.puts.map((p) => [p.path, p.headers["if-none-match"], p.bytes])).toEqual([["/workspace/dropped.txt", "*", 13]]);
   });
@@ -70,7 +73,7 @@ test.describe("agent Files page", () => {
     writeFileSync(join(dir, "a.txt"), "a");
     writeFileSync(join(dir, "sub", "b.txt"), "bb");
     await page.getByTestId("folder-input").setInputFiles(dir);
-    await expect(page.getByRole("region", { name: "Uploads" }).getByText("Done")).toHaveCount(2);
+    await expect(page.getByTestId("uploads-done")).toContainText("Uploads: 2 files done");
     expect(fs.ops).toEqual(expect.arrayContaining([{ op: "mkdir", path: "/workspace/pics", parents: true }, { op: "mkdir", path: "/workspace/pics/sub", parents: true }]));
     expect(fs.puts.map((p) => p.path).sort()).toEqual(["/workspace/pics/a.txt", "/workspace/pics/sub/b.txt"]);
     await page.getByRole("link", { name: "pics", exact: true }).click();
@@ -176,9 +179,9 @@ test.describe("Files viewer", () => {
     await page.locator(".cm-content").click();
     await page.keyboard.press("Control+End");
     await page.keyboard.type("// edited");
-    await expect(page.getByText("Unsaved changes")).toBeVisible();
+    await expect(page.getByTestId("dirty-dot")).toBeVisible();
     await page.keyboard.press("Control+s");
-    await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+    await expect(page.getByTestId("dirty-dot")).toHaveCount(0);
     expect(fs.puts.at(-1)).toMatchObject({ path: "/workspace/src/main.rs" });
     expect(fs.puts.at(-1)!.headers["if-match"]).toBe(`"${before}"`);
     expect(fs.nodes.get("/workspace/src/main.rs")!.content).toBe("fn main() {}\n// edited");
@@ -214,9 +217,9 @@ test.describe("Files viewer", () => {
     await page.getByRole("button", { name: "notes.md", exact: true }).click();
     await page.locator(".cm-content").click();
     await page.keyboard.type("x");
-    await page.getByRole("navigation", { name: "Folder path" }).getByRole("link", { name: "workspace" }).click();
-    await expect(page.getByRole("dialog", { name: "Discard your changes?" })).toBeVisible();
-    await page.getByRole("button", { name: "Discard changes" }).click();
+    await page.getByRole("navigation", { name: "Folder path" }).getByRole("link", { name: "Your files with Daneel" }).click();
+    await expect(page.getByRole("dialog", { name: "Leave without saving?" })).toBeVisible();
+    await page.getByRole("button", { name: "Discard", exact: true }).click();
     await expect(page.getByRole("button", { name: "notes.md", exact: true })).toBeVisible();
     expect(fs.puts).toHaveLength(0);
   });
@@ -295,7 +298,7 @@ test.describe("Files journey (C-907)", () => {
       mkdirSync(dir, { recursive: true });
       for (const n of ["a.txt", "b.txt", "c.txt"]) writeFileSync(join(dir, n), n);
       await page.getByTestId("folder-input").setInputFiles(dir);
-      await expect(page.getByRole("region", { name: "Uploads" }).getByText("Done")).toHaveCount(3);
+      await expect(page.getByTestId("uploads-done")).toContainText("Uploads: 3 files done");
       await page.getByRole("link", { name: "proj", exact: true }).click();
       await expect(page.getByRole("region", { name: "Files in this folder" }).locator("tbody tr")).toHaveCount(3);
 
@@ -304,7 +307,7 @@ test.describe("Files journey (C-907)", () => {
       await page.locator(".cm-content").click();
       await page.keyboard.type("alpha");
       await page.keyboard.press("Control+s");
-      await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+      await expect(page.getByTestId("dirty-dot")).toHaveCount(0);
       await page.getByRole("button", { name: "Back to folder" }).first().click();
       await rowMenu(page, "a.txt").click();
       // (A browser download bypasses `page.route`, so the bytes the link serves are fetched in the page, through the mock.)
@@ -335,17 +338,17 @@ test.describe("Files journey (C-907)", () => {
       await page.getByLabel("New name").fill("b2.txt");
       await page.getByRole("button", { name: "Rename" }).click();
       await expect(page.getByRole("button", { name: "b2.txt", exact: true })).toBeVisible();
-      await page.getByRole("navigation", { name: "Folder path" }).getByRole("link", { name: "workspace" }).click();
+      await page.getByRole("navigation", { name: "Folder path" }).getByRole("link", { name: "Your files with Daneel" }).click();
       await rowMenu(page, "proj").click();
       await page.getByRole("menuitem", { name: "Delete" }).click();
       await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
       await expect(page.getByRole("link", { name: "proj", exact: true })).toHaveCount(0);
       expect([...fs.nodes.keys()].some((p) => p.startsWith("/workspace/proj"))).toBe(false);
 
-      // `.aurora` is read-only: a badge, and no Rename or Delete.
+      // `.aurora` is Aurora's own: a Managed badge, and no Rename, Move or Delete.
       await page.getByRole("checkbox", { name: "Show hidden" }).check();
       await expect(page.getByRole("link", { name: ".aurora", exact: true })).toBeVisible();
-      await expect(page.getByText("Read-only").first()).toBeVisible();
+      await expect(page.getByText("Managed").first()).toBeVisible();
       await rowMenu(page, ".aurora").click();
       await expect(page.getByRole("menuitem", { name: "Open" })).toBeVisible();
       await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);

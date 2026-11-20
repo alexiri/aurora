@@ -195,6 +195,14 @@ export function useWakeSandbox(agentId: string) {
     onSuccess: (view) => qc.setQueryData(["agents", agentId, "sandbox"], view),
   });
 }
+/** (P5-REFINE-15, C-1060) **Sleep now**: 202 with the view while it stops; 409 `sandbox_busy` while work runs. */
+export function useSleepSandbox(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => chatApi.sleep(agentId),
+    onSuccess: (view) => qc.setQueryData(["agents", agentId, "sandbox"], view),
+  });
+}
 /** (FIX-029, C-610) Retry a failed start; the 202 view parks the sandbox back in `stopped`. */
 export function useRetrySandbox(agentId: string) {
   const qc = useQueryClient();

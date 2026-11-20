@@ -1,7 +1,8 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalTab } from "@/components/agents/terminal-tab";
+import { wrap } from "./support/render";
 
 // FIX-067: an abnormal close (1006: a dropped connection or a failed handshake) retries with the
 // documented backoff, a few times, visibly; the terminal close codes (4403/4404/4409) end the pane.
@@ -44,7 +45,7 @@ afterEach(() => {
 });
 
 async function mount() {
-  render(<TerminalTab agentId="agent-1" frozen={false} />);
+  wrap(<TerminalTab agentId="agent-1" frozen={false} />);
   await waitFor(() => expect(Socket.instances).toHaveLength(1));
   // Only timers are faked, so the core load's promise chain keeps running.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -63,11 +64,21 @@ describe("terminal reconnect", () => {
       expect(Socket.instances.length).toBe(before + 1);
     }
     act(() => Socket.instances.at(-1)!.fail(1006));
-    expect(screen.getByRole("alert")).toHaveTextContent("ended unexpectedly");
+    // (computer-2) After the last retry the pane stops and says so once: no "Reconnecting…", no pane to type into.
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't connect to the computer");
+    expect(screen.getByRole("alert")).toHaveTextContent("Tried 4 times. The computer didn't answer.");
+    expect(screen.queryByText("Reconnecting…")).toBeNull();
+    expect(screen.getByTestId("terminal-not-connected")).toHaveTextContent("Not connected");
+    expect(screen.getByTestId("wterm-pane").closest(".hidden")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Report it" })).toBeInTheDocument();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(20000);
     });
     expect(Socket.instances).toHaveLength(5);
+    // Try again starts a fresh run: a new socket, and the pane is back.
+    act(() => screen.getByRole("button", { name: "Try again" }).click());
+    expect(Socket.instances).toHaveLength(6);
+    expect(screen.queryByText("Couldn't connect to the computer")).toBeNull();
   });
 
   it.each([4403, 4404, 4409])("close %i stays final: no reconnect", async (code) => {
@@ -105,7 +116,7 @@ describe("terminal reconnect", () => {
       expect(Socket.instances).toHaveLength(attempt + 1);
     }
     act(() => Socket.instances.at(-1)!.fail(code, true));
-    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't connect to the computer");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60000);
     });
@@ -123,7 +134,7 @@ describe("terminal reconnect", () => {
     }
     expect(Socket.instances).toHaveLength(13);
     act(() => Socket.instances.at(-1)!.fail(1006));
-    expect(screen.getByRole("alert")).toHaveTextContent("still starting");
+    expect(screen.getByRole("alert")).toHaveTextContent("Tried 12 times. The computer didn't answer.");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60000);
     });

@@ -121,6 +121,24 @@ export function humanSize(n: number): string {
 /** `/workspace/.aurora` and everything under it is platform-managed and read-only (C-899). */
 export const isManaged = (path: string) => path === `${WORKSPACE_ROOT}/.aurora` || path.startsWith(`${WORKSPACE_ROOT}/.aurora/`);
 
+/**
+ * (P5-REFINE-15, computer-9) What Aurora itself writes into the workspace root for the agent: `AGENTS.md` and `CLAUDE.md`
+ * (the instruction files, 0444, from `docs/12` §instruction_files and the supervisor's home sync) and `memory/` (the notes the
+ * supervisor syncs). They are shown in their own group, read-only by default, with a Managed badge and the line below.
+ */
+export const AGENT_OWN_ENTRIES: Readonly<Record<string, string>> = {
+  "AGENTS.md": "Instructions, kept by Aurora",
+  "CLAUDE.md": "Instructions, kept by Aurora",
+  memory: "Memory, kept by Aurora",
+};
+
+/** The one line under an agent-own entry's name, or null when the entry is not one (only the root's entries are). */
+export function agentOwnNote(path: string): string | null {
+  return parentPath(path) === WORKSPACE_ROOT ? (AGENT_OWN_ENTRIES[baseName(path)] ?? null) : null;
+}
+
+export const isAgentOwn = (path: string) => agentOwnNote(path) !== null;
+
 export const isHidden =(e: Pick<FileEntry, "name">) => e.name.startsWith(".");
 
 /** The kind a symlink opens as (its target's), a regular entry's own. */
@@ -252,8 +270,8 @@ export function useFileList(agent: string, path: string, opts: { enabled?: boole
  * The editor's read (C-898 `GET …/files/text`, P5-FILES-3): the text, its `etag` and line ending; 422 `file_not_editable`
  * (`details.reason`: too_large, binary, not_utf8) rejects with an `ApiError`.
  */
-export function getFileText(agent: string, path: string): Promise<FileText> {
-  return unwrap(api.GET("/v1/agents/{agent}/files/text", { params: { path: { agent }, query: { path } } }));
+export function getFileText(agent: string, path: string, opts: { preview?: boolean } = {}): Promise<FileText> {
+  return unwrap(api.GET("/v1/agents/{agent}/files/text", { params: { path: { agent }, query: { path, ...(opts.preview ? { preview: "1" as const } : {}) } } }));
 }
 
 /** The 10 MiB cap of the image preview (C-905). */

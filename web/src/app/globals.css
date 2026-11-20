@@ -236,11 +236,13 @@
   --aurora-term-color-7: #6b7280;
   --aurora-term-color-8: #57606a;
   --aurora-term-color-9: #dc2626;
-  --aurora-term-color-10: #059669;
-  --aurora-term-color-11: #d97706;
+  /* (P5-REFINE-15, computer-8) The bright colours 10, 11 and 14 were 3.2 to 3.8:1 on white (a bold green prompt): darker, same
+     hue, now >= 4.5:1; `tests/terminal-palette-contrast.test.ts` reads this block. */
+  --aurora-term-color-10: #15803d;
+  --aurora-term-color-11: #a16207;
   --aurora-term-color-12: #2563eb;
   --aurora-term-color-13: #c026d3;
-  --aurora-term-color-14: #0891b2;
+  --aurora-term-color-14: #0b7285;
   --aurora-term-color-15: #374151;
 }
 
@@ -248,7 +250,8 @@
   --term-pane-bg: #0d1322;
   --term-pane-fg: #d5dbe7;
   --term-pane-cursor: var(--accent);
-  --aurora-term-color-0: #101828;
+  /* "Black" (0) and bright black (8) were 1.0:1 and 3.9:1 on the dark pane: drawn as readable greys (>= 4.5:1). */
+  --aurora-term-color-0: #7c8aa5;
   --aurora-term-color-1: #f87171;
   --aurora-term-color-2: #4ade80;
   --aurora-term-color-3: #fbbf24;
@@ -256,7 +259,7 @@
   --aurora-term-color-5: #e879f9;
   --aurora-term-color-6: #22d3ee;
   --aurora-term-color-7: #d5dbe7;
-  --aurora-term-color-8: #64748b;
+  --aurora-term-color-8: #94a3b8;
   --aurora-term-color-9: #fca5a5;
   --aurora-term-color-10: #86efac;
   --aurora-term-color-11: #fcd34d;
