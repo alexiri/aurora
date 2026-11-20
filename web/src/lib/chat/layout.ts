@@ -222,7 +222,7 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
   for (const e of state.events) {
     if (e.type !== "error") continue;
     const id = str(e.payload.turn_id);
-    errorText.set(id, [...(errorText.get(id) ?? []), str(e.payload.message).trim()].filter(Boolean));
+    errorText.set(id, [...(errorText.get(id) ?? []), str(e.payload.message).trim(), str(e.payload.detail).trim()].filter(Boolean));
   }
   const repeatsError = (turnId: string, text: string) => {
     const t = text.trim();
