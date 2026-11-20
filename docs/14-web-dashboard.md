@@ -2775,6 +2775,13 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 
 ### 8. What an agent can do, in one place (P5-IA-2, P5-UX-7, P5-UX-10, FIX-159, D-346, D-350, C-986, C-934, C-930)
 
+- **"Did" comes from one feed (P5-REFINE-9, D-415).** What an agent did, is doing and asked is the
+  agent timeline (`GET /v1/agents/{agent}/timeline` and its stream, C-1083, C-1084, `10 §The agent
+  timeline`): structured kinds and names that the web turns into sentences from `lib/labels.ts`. The
+  screens that draw it are P5-REFINE-11 (the rail's "What <Agent> did") and P5-REFINE-16 (the
+  workspace Activity page and its Technical view); the web client is `web/src/lib/api/timeline.ts`
+  (`useAgentTimeline`, `useTimelineStream`).
+
 - **One summary, said the same way everywhere.** A few sentences, computed from the agent's accounts,
   its access and the limits above:
 

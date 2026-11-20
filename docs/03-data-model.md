@@ -964,6 +964,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | boot_id | uuid null | boot that ran it |
 | last_event_n | int not null default 0 | highest applied supervisor event number (`16 §W5` idempotency) |
 | partial unique | (conversation_id) WHERE role=`turn` AND status IN (`queued`,`dispatched`,`running`) | one active turn per conversation |
+| index | (agent_id, created_at desc, id desc) WHERE role=`turn` | (phase 5, P5-REFINE-9, C-1083) the agent timeline's turn source; migration `20261201000267`, which also adds `(agent_id, created_at desc, id desc)` on `approvals`, `action_approvals` and `agent_access_requests`, `(from_agent_id, …)` and `(to_agent_id, …)` on `peer_tasks`, and on `request_log` `(turn_id) WHERE turn_id IS NOT NULL` and `(agent_id, ts desc) WHERE turn_id IS NULL` |
 | trace_context | text null CHECK (trace_context ~ `'^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'`) | (phase 5, FIX-146, D-232, C-732) the W3C `traceparent` of the span that inserted the turn (`repo/turns.rs`; NULL when there is no valid one). Written only by the API at insert and never updated; never taken from a sandbox or supervisor (SEC-88). Read by the runner plane (work items carry it, `16 §W5`), the API's supervisor-report and channel-event handling, and copied onto the turn's context credential at mint (`gateway_credentials.trace_context`) for the gateway, so their spans are children of the turn's context. A follow-up promoted to a turn keeps the follow-up's value. Migration `20261201000150_turn_trace_context.sql` |
 
 ### `turn_answer_buffers`
@@ -982,6 +983,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | payload | jsonb not null | bounded (≤64 KiB serialized) |
 | redacted_at | timestamptz null | set when the payload was replaced by the redaction marker `{ "redacted": true, "redacted_at", "redacted_by", "reason"? }` (≤64 KiB bound unchanged); phase 2, RFE-010 |
 | redacted_by_user_id | uuid null FK→users (set null) | phase 2, RFE-010 |
+| index | (turn_id, seq) WHERE turn_id IS NOT NULL | (phase 5, P5-REFINE-9) a turn's events without scanning its conversation (the agent timeline); migration `20261201000267` |
 
 ### `transcript_search`
 (phase 5, P5-CHAT-4, D-229) One row per searchable durable event, written in the transaction that appends it (`transcript::append_durable_event` is the only insert path). Migration `20261201000172_transcript_search.sql`.

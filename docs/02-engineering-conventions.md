@@ -379,6 +379,7 @@ overridden by the named configuration key (`15`).
 | `PREVIEW_IDLE_TIMEOUT` / `PREVIEW_WS_IDLE_TIMEOUT` / `PREVIEW_STREAM_LIFETIME` | (phase 4, P4-PRV-2) 120 s plain HTTP stream / 600 s upgraded stream / 4 h | — | 16 |
 | `TERMINAL_GRANT_TTL` / `TERMINAL_CHUNK` / `TERMINAL_STREAM_WINDOW` | (phase 4, P4-TERM) 30 s single-use `auy_` grant / 16 KiB PTY data chunk / 128 KiB credit window per direction per PTY | — | 16 |
 | `TERMINALS_PER_SANDBOX` / `_PER_AGENT` / `_PER_USER` | (phase 4, P4-TERM) 2 / 4 / 2 concurrent terminal sessions (per user per API replica) | — | 16 |
+| `TIMELINE_STREAMS_PER_USER` | (phase 5, P5-REFINE-9, C-1084) 5 open agent-timeline streams per person (per API replica); 429 `rate_limited` beyond | — | 10 |
 | `TERMINAL_IDLE_TIMEOUT` / `TERMINAL_MAX_LIFETIME` | (phase 4, P4-TERM) 600 s idle (WebSocket pings count) / 4 h per session | — | 16 |
 | Stream-listener bounds | (FIX-092) request head within 10 s in total; 256 unauthenticated connections per runner replica; live legs per sandbox 64 streams + 2 PTYs; browser text frame ≤ 256 bytes; stalled write 30 s; runner outbound queue 512 frames per supervisor connection; `pty.resize` coalesced to the latest size | — | 16 |
 | `TERMINAL_AWAKE_GRACE` / `TERMINAL_AWAKE_CAP` | (phase 4, P4-TERM) 120 s after the last session byte / 4 h per boot of terminal-held wakefulness | `terminal.awake_cap_secs` (≤ `BACKGROUND_CAP`) | 11 |

@@ -368,7 +368,7 @@ pub async fn insert_run_with_id(
     turn: Option<Uuid>,
     outcome: &str,
 ) -> Result<RunRow, DbError> {
-    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    let row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO schedule_runs (id, schedule_id, turn_id, outcome, fired_at)
          VALUES ($1,$2,$3,$4, now()) RETURNING {RUN_COLS}"
     )))
@@ -376,8 +376,11 @@ pub async fn insert_run_with_id(
     .bind(schedule)
     .bind(turn)
     .bind(outcome)
-    .fetch_one(conn)
-    .await?)
+    .fetch_one(&mut *conn)
+    .await?;
+    // (P5-REFINE-9, C-1084) The agent's timeline shows the run as soon as this commits.
+    super::timeline::hint_automation(conn, super::timeline::Source::Run, schedule, id).await?;
+    Ok(row)
 }
 
 /// Keyset page of a schedule's runs, newest first (`created_at`, `id`; FIX-111).

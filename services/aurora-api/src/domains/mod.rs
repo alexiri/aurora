@@ -62,6 +62,7 @@ pub mod ssh;
 pub mod telemetry;
 pub mod tenancy;
 pub mod terminal;
+pub mod timeline;
 pub mod tools;
 pub mod usage;
 pub mod user_tokens;

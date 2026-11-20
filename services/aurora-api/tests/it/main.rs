@@ -136,6 +136,7 @@ mod ssh_sessions;
 mod telemetry_ingest;
 mod tenancy;
 mod terminal;
+mod timeline;
 mod tools;
 mod trace_e2e;
 mod turn_person;

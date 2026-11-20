@@ -31,10 +31,13 @@ pub enum Channel {
     AuthRevoked,
     /// (phase 5, SET-1, D-236(f)) `{ section, generation }` after a committed settings write.
     Settings,
+    /// (phase 5, P5-REFINE-9, C-1084) `{ a, s, i, q? }` hints that an agent's timeline changed
+    /// (no text; see `repo::timeline::hint`).
+    Timeline,
 }
 
 impl Channel {
-    pub const ALL: [Channel; 12] = [
+    pub const ALL: [Channel; 13] = [
         Channel::Conversation,
         Channel::Delta,
         Channel::Work,
@@ -47,6 +50,7 @@ impl Channel {
         Channel::SecretOrigin,
         Channel::AuthRevoked,
         Channel::Settings,
+        Channel::Timeline,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -63,6 +67,7 @@ impl Channel {
             Channel::SecretOrigin => "aurora_secret_origin",
             Channel::AuthRevoked => "aurora_auth_revoked",
             Channel::Settings => "aurora_settings",
+            Channel::Timeline => "aurora_timeline",
         }
     }
 

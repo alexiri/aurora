@@ -78,6 +78,7 @@ pub mod ssh;
 pub mod ssh_sessions;
 pub mod terminal_grants;
 pub mod thread_links;
+pub mod timeline;
 pub mod tool_identity;
 pub mod transcript;
 pub mod turns;

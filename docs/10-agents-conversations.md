@@ -415,6 +415,40 @@ its last tool call is written as durable `text` events before the `error` event 
   owner's instructions (halved and marked `truncated` when the event would exceed its 64 KiB
   bound). The turn's `text` (what the agent receives, SEC-31) is unchanged.
 
+### The agent timeline (phase 5, P5-REFINE-9, D-415, C-1083, C-1084, SEC-143)
+
+One live list per agent of what it did, is doing and asked, in structured kinds and names the web
+turns into sentences (`lib/labels.ts`); it is the source of "did" for the agent's rail, the
+workspace Activity page and Settings › Apps & access (`14 §8`).
+
+- **Sources.** Turns (`answered`; a turn of an automation thread is shown by its run or delivery
+  row instead), the durable `tool.started` / `tool.finished` events of each turn (`computer`), the
+  request log (`called`; model requests are never rows, they name the turn's `model`), gateway and
+  action approvals (`asked_before`), schedule runs (`ran_schedule`), webhook deliveries
+  (`received_webhook`), peer tasks (`handed_task`, `got_task`) and access requests
+  (`asked_for_access`). `eval` conversations are not on it. Each source is read newest first,
+  bounded by agent and time (indexes of migration `20261201000267`).
+- **The computer classification.** `domains/timeline/computer.rs` holds one table per harness
+  adapter of the tools that run a command or write files: `claude-code` `Bash` | `Write`, `Edit`,
+  `MultiEdit`, `NotebookEdit`; `pi` `bash` | `write`, `edit`; `codex` `shell` | `apply_patch`;
+  `goose` `shell` | `write`, `edit`; `opencode` `bash` | `write`, `edit`, `patch`. A tool that is not
+  in the table (read-only tools, platform tools, unknown names) is never a `computer` row. The
+  command is the first line of the `tool.started` summary after `<name>: ` (≤ 120 characters), the
+  files are its path(s) (at most five per row); both pass a credential filter. A summary without
+  that shape still gives a row ("ran something on its computer"). `tool.finished`'s summary (the
+  tool's output) and redacted events are never read.
+- **Who sees what (SEC-143).** A row from a conversation exists only for a reader who may see that
+  conversation (`can_see_conversation`: another person's `direct` conversation only for that person
+  and the workspace's owners); it is never counted into another row. Runs, deliveries and peer
+  tasks are visible to `can_use`. No row carries message text, tool arguments or output, request
+  paths, bodies, headers, e-mail addresses or secrets.
+- **Live.** Writers send an `aurora_timeline` hint (ids only) in their transaction; the gateway sends
+  one per agent after each request-log flush; turn steps reuse `aurora_conversation` and gateway
+  approvals `aurora_approval`. The stream reloads the row by id, builds it with the reader's access
+  (re-read before every batch) and sends it with the same `id`, so a `running` or `waiting` row
+  turns into its outcome in place. Metrics: `aurora_timeline_streams` (gauge),
+  `aurora_timeline_events_total{kind}`.
+
 ### Live narration cards (phase 5, P4-NARR, D-279, D-280, C-846..C-851, SEC-111)
 
 (phase 5, P4-NARR) A chat-platform connector may show a turn's progress as one **narration card**

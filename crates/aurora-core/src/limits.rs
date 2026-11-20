@@ -505,6 +505,9 @@ pub const PREVIEW_AUTH_CACHE_NEG: Duration = Duration::from_secs(5);
 pub const PREVIEW_STREAMS_PER_SHARE: u32 = 32;
 pub const PREVIEW_STREAMS_PER_SANDBOX: u32 = 64;
 pub const PREVIEW_STREAMS_PER_USER: u32 = 64;
+/// (phase 5, P5-REFINE-9, C-1084) open agent-timeline streams per person (per API replica);
+/// 429 `rate_limited` beyond.
+pub const TIMELINE_STREAMS_PER_USER: u32 = 5;
 /// credit window per direction per stream; a chunk never exceeds `PREVIEW_CHUNK`.
 pub const PREVIEW_STREAM_WINDOW: usize = 128 * KIB;
 pub const PREVIEW_CHUNK: usize = 16 * KIB;
