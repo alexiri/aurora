@@ -135,7 +135,8 @@ export function ChatTab({
   // (P5-REFINE-13, C-1035) `?draft=` is read from the router (not `window.location`, which still shows the previous
   // page during a client-side navigation) and kept here until the person edits the box or sends, so a remount of the
   // composer (the direct chat resolving, the transcript loading) cannot lose it. A draft opens the direct chat.
-  const routerDraft = useSearchParams().get("draft");
+  // `useSearchParams()` is null outside the app router (tests rendering the tab alone), as approvals-view handles.
+  const routerDraft = useSearchParams()?.get("draft") ?? null;
   const [draft, setDraft] = useState<string | null>(null);
   const [seenDraft, setSeenDraft] = useState<string | null>(null);
   if (routerDraft !== seenDraft) {

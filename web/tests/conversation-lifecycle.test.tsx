@@ -6,7 +6,8 @@ import { applyEvent, emptyTranscript } from "@/lib/chat/transcript";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
+// The chat tab reads `?draft=` (P5-REFINE-13: Try it in chat).
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }), useSearchParams: () => new URLSearchParams("") }));
 
 const events = vi.hoisted(() => ({ list: [] as unknown[] }));
 vi.mock("@/lib/chat/use-transcript", () => ({
