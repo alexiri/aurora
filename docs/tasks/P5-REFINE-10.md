@@ -245,12 +245,94 @@ task path. Not Haiku.
 
 (Fill in when done; P5-REFINE-20 reads this.)
 
-- **Items done** (scope items 1–7, with commit ids):
-- **Migration number used:**
+- **Items done** (scope items 1–7, with commit ids): all seven, in one commit on `alexiri/p5-lane6` (id in the lane's
+  worker report). Lane `p5-lane6`, run in parallel with lane F by the Orchestrator; the edits to the shared
+  `permission_matrix.rs` are additive (four rows and two bodies next to the existing link rows); `app.rs` is not touched
+  (the new routes join `agent_links::router`). "Which items wait": none; nothing in this brief depends on an unmerged brief.
+  1. Contract: C-1085 finalized in `API_CONTRACTS.md` (C-29 marked amended); SEC-142 row completed in `17`; coverage row
+     in `docs/tests/security-coverage.md`; `07 §Agent links`, `05` (four rows), `03 §agent_links`, `04 §Audit` (three new
+     critical actions).
+  2. Migration `20261201000264_agent_link_direction.sql`: `direction`, `created_by_kind`, `created_by_user_id`; the
+     gateway role has no grant on `agent_links` (checked; none added). `spec_schema.json` regenerated.
+  3. Rules (SEC-142) in `domains/agent_links/service.rs`; 4. the four routes in `routes.rs` and the DTOs in `dto.rs`;
+  5. enforcement in `peer_tasks::send_message` (person path, before approvals) and in the `message_agent` approval handler;
+  6. typed client in `web/src/lib/api/peers.ts`; 7. permission matrix, ITs, docs.
+- **Migration number used:** `20261201000264`.
 - **Contract text changed from the draft, and why:**
+  - `linkable` items carry `frozen: boolean` (the draft said "listed with `frozen: true`" but left it out of the shape);
+    a workspace API key sees its own workspace only.
+  - `PUT …/direction` body is `{ agent_id, direction, revision }`: a direction (`to_peer`/`from_peer`) is relative, so the
+    route needs the side it is read from, as `PUT …/policy` already does. Narrowing needs `can_use` of `agent_id`'s side
+    (equivalent to "either side": the caller picks the side). The same direction is a no-op (no write, no audit).
+    Widening is defined as "any new flow", so `to_peer` ↔ `from_peer` is a widening.
+  - `created_by` is never null: a stored `created_by_kind` column (`agent` by default) replaces "derived from
+    `created_by_user_id`", because with `ON DELETE SET NULL` a deleted person's link would have read as agent-made. Every
+    row before the migration was created by an agent (there was no other path), so the default is truthful.
+  - Create checks in a fixed order (visible → self → peer visible → hosted → frozen); a workspace key confined elsewhere
+    gets 404 for the peer, not `workspace_mismatch` (nothing revealed). `link_exists` carries `details.link_id`.
+  - Delete closes queued tasks before open ones (closing an open task first would promote a queued one), ends pending
+    approvals with their own line ("…ended without a decision: the link between these agents was removed."), skips
+    approvals a concurrent decision holds (`FOR UPDATE SKIP LOCKED`; that decision then fails with "The link no longer
+    exists."), and audits `expired_approvals` too.
+  - The refusal text is "This link is one-way: <Sender> only works on tasks that <Target> sends it, so you cannot hand
+    <Target> a task." (the draft's "<Peer> only works on tasks that <Self> sends it" with the subject made explicit for the
+    agent reading it).
 - **Deviations from this brief, and why:**
-- **Starting-policy rule** as implemented (a table of creator rights → side policies):
-- **Screenshots compared:** none (backend brief); attach the JSON of `linkable` and of a created link for the mockup's
-  "Daneel and Rex" example:
-- **Gate counts:**
-- **Open questions for the owner:** (including whether agent-created links should be retired)
+  - Two small edits outside the owned list: `action_approvals/service.rs` gains `expire_with_reason` (the sweep's
+    `expire_one` now calls it; same line and code for the sweep) so a delete can end approvals with a reason and the
+    origin is told; `agent_links/handler.rs` re-checks the direction when an approval is decided (otherwise a direction
+    narrowed while the approval waited would still open the task). `peer_tasks/service.rs`: only `send_message` and a
+    one-line helper `one_way_refusal` used by both places.
+  - `aurora-core/src/audit.rs`: `agent_link.create|direction|delete` added to `SECURITY_CRITICAL_ACTIONS` (the brief says
+    critical; `commit_critical` asserts membership).
+  - The agent's home (`hosted::home_peers`) does not show the direction yet; an agent learns it from the refusal. Left for
+    P5-REFINE-12 or a follow-up (the brief kept `list_agents` unchanged).
+- **Starting-policy rule** as implemented:
+
+  | Creator on `{agent}`'s workspace | Creator on the peer's workspace | `{agent}` side | peer side |
+  |---|---|---|---|
+  | `can_approve` (approver, owner, org owner/admin) | `can_approve` | `allow` | `allow` |
+  | `can_approve` | `can_use` only (member) | `allow` | `ask` |
+  | `can_use` only | `can_approve` | `ask` | `allow` |
+  | `can_use` only | `can_use` only | `ask` | `ask` |
+  | no `can_use` on either | — | 404, no row | |
+
+  The creator never sets `blocked`. Who can create: `can_use` on both. Change direction: narrowing `can_use` on the asked
+  side; widening `can_approve` on both. Remove: `can_use` on either. A linked agent reaches only `message_agent` to its
+  peer within the direction and side policies; the peer task runs in the peer's own conversation under the peer's own
+  grants and policy, so a link gives no access to the peer's workspace, conversations, tools, files or credentials.
+  Nobody can link an agent they cannot use because the peer is resolved through the caller's own `can_use` (else 404),
+  and `linkable` lists only agents of workspaces in the caller's `effective_workspace_access`.
+- **Screenshots compared:** none (backend brief). For the mockup's example (Daneel in "Alpha team", Rex in "Bravo team",
+  created by an approver of both, "Daneel can hand tasks to Rex"):
+  - `GET /v1/agents/{daneel}/linkable` →
+    `{"items":[{"agent_id":"…","name":"Rex","handle":"rex","workspace_id":"…","workspace_name":"Bravo team","linked":false,"hosted":true,"frozen":false}]}`
+  - `POST /v1/agents/{daneel}/links {"peer_agent_id":"…rex…","direction":"to_peer"}` → 201
+    `{"id":"…","revision":0,"self":{"agent_id":"…daneel…","policy":"allow"},"peer":{"agent_id":"…rex…","handle":"rex","name":"Rex","workspace_id":"…","workspace_name":"Bravo team","policy":"allow"},"direction":"outgoing","created_by":{"kind":"person","display_name":"<the creator's display name>"},"created_at":"…","updated_at":"…"}`
+- **Tests changed / added:** `services/aurora-api/tests/it/agent_links_people.rs` (new, 9 tests: policies by role, idempotence
+  and `link_exists`, SEC-142 refusals with no row, `linkable` scope and leak scan, direction enforcement before approvals,
+  approval after narrowing, widen/narrow rules and stale revision, delete with cancellation lines, expired approvals and
+  re-creation by an agent); `tests/it/permission_matrix.rs` (four rows, two bodies); `crates/aurora-db/tests/it/agent_link_direction_migration.rs`
+  (new); `aurora-db` unit `agent_links::direction_tests` (both orders, widening table); `web/tests/peers.test.ts` (new: the
+  mockup's titles and sentences); `web/tests/m5-tabs.test.tsx` (the `AgentLink` mock gains `direction`, `created_by`,
+  `peer.workspace_name`; assertions unchanged). No test removed; no UI changed, so no Playwright spec is affected.
+- **Gate counts** (2026-11-20, lane Postgres `pg-p5-lane6`, all through `heavy.sh`):
+  - `cargo fmt --all --check` clean; `cargo clippy -p aurora-api -p aurora-db -p aurora-core --all-targets -- -D warnings`
+    clean.
+  - `cargo test -p aurora-api --test it -- agent_links_people peer_tasks action_approvals permission_matrix audit_atomic
+    openapi_matches_checked_in channels_cards`: 73 passed, 0 failed (the 9 new tests, the existing peer-task and FIX-110
+    tests unchanged, the permission matrix with the four new rows, the audit coverage scan).
+  - `cargo test -p aurora-db -p aurora-core -- agent_link direction_tests schema_matches_spec migration_order audit`:
+    2 + 2 + 4 passed (unit direction tests, migration test, schema-vs-spec, migration order).
+  - OpenAPI regenerated (`UPDATE_OPENAPI=1 … openapi_matches_checked_in`), `pnpm gen:api` regenerated `schema.d.ts`;
+    `pnpm typecheck` clean; `vitest run tests/peers.test.ts tests/m5-tabs.test.tsx` 10 passed; eslint on the touched web
+    files clean.
+  - `python3 scripts/extract-schema.py --check` up to date; `scripts/guards/run-all.sh` all guards passed.
+  - Not run (CI is the full gate): the whole aurora-api IT suite, the web vitest suite (no shared UI changed), Playwright
+    (no UI changed; no spec references these routes).
+- **Open questions for the owner:**
+  - Should agent-created links be retired (only people create links), now that people can? Today `message_agent` to an
+    unlinked agent still creates the link (`created_by: agent`, both sides `ask` across workspaces).
+  - Should the agent's home list a link's direction (so the agent does not try a task the link refuses)?
+  - Should removing a link also stop a peer turn that is running in the receiver's task conversation? Today the task is
+    closed (the requester gets the line) but a turn already running finishes on its own.

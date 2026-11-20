@@ -71,6 +71,9 @@
     "agent_links": [
       "agent_a_id",
       "agent_b_id",
+      "created_by_kind",
+      "created_by_user_id",
+      "direction",
       "id",
       "policy_a",
       "policy_b",
@@ -1658,6 +1661,9 @@
     "agent_links": {
       "agent_a_id": "uuid",
       "agent_b_id": "uuid",
+      "created_by_kind": "text not null",
+      "created_by_user_id": "uuid null",
+      "direction": "text not null",
       "id": "uuid not null",
       "policy_a": "text",
       "policy_b": "text",

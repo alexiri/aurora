@@ -818,6 +818,9 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | policy_a | text CHECK in (`ask`,`allow`,`blocked`) | decided by a person with access to a's workspace |
 | policy_b | text CHECK in (`ask`,`allow`,`blocked`) | |
 | revision | bigint not null default 0 | |
+| direction | text not null default `both` CHECK in (`both`,`a_to_b`,`b_to_a`) | who may hand tasks to whom (P5-REFINE-10, C-1085; a = the lower id); existing links `both` |
+| created_by_kind | text not null default `agent` CHECK in (`person`,`agent`) | `agent`: an agent's first `message_agent` created it (every row before migration `20261201000264`); `person`: `POST /v1/agents/{agent}/links` |
+| created_by_user_id | uuid null FK→users (set null) | the person who linked; null for `agent` or once the user is deleted |
 | unique | (agent_a_id, agent_b_id) | |
 
 ### `peer_tasks`

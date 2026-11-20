@@ -1373,6 +1373,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agent-links/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a link (C-1085): cancels the pair's open and queued tasks and expires its pending
+         *     approvals.
+         */
+        delete: operations["deleteAgentLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agent-links/{id}/direction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Change who may hand tasks to whom (C-1085): widening needs an approver of both sides. */
+        put: operations["setAgentLinkDirection"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agent-links/{id}/policy": {
         parameters: {
             query?: never;
@@ -1846,6 +1883,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/linkable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agents a person may link this agent to (C-1085): same organization, workspaces the caller
+         *     can use; name, handle and workspace only.
+         */
+        get: operations["listLinkableAgents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/links": {
         parameters: {
             query?: never;
@@ -1856,7 +1913,11 @@ export interface paths {
         /** Links of an agent, each seen from this agent's side. */
         get: operations["listAgentLinks"];
         put?: never;
-        post?: never;
+        /**
+         * Link this agent to another (C-1085, SEC-142). 201 when created; 200 with the existing link
+         *     when the pair is linked already with the same direction.
+         */
+        post: operations["createAgentLink"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6889,6 +6950,9 @@ export interface components {
         AgentLink: {
             /** Format: date-time */
             created_at: string;
+            created_by: components["schemas"]["LinkCreator"];
+            /** @description (C-1085) Who may hand tasks to whom, from this agent's side. */
+            direction: components["schemas"]["LinkDirection"];
             /** Format: uuid */
             id: string;
             peer: components["schemas"]["LinkPeer"];
@@ -8462,6 +8526,13 @@ export interface components {
             expires_at?: string | null;
             /** @description 1-80 characters. */
             name: string;
+        };
+        /** @description `POST /v1/agents/{agent}/links` (C-1085). */
+        CreateLinkBody: {
+            /** @description Read from `{agent}`'s side. */
+            direction: components["schemas"]["LinkDirectionRequest"];
+            /** Format: uuid */
+            peer_agent_id: string;
         };
         CreateMemoryRequest: {
             content: string;
@@ -10065,6 +10136,24 @@ export interface components {
         LimitPreview: {
             lowered: components["schemas"]["LoweredAgentView"][];
         };
+        /** @description (C-1085) Who created the link. */
+        LinkCreator: {
+            /** @description The person's display name; null for an agent, or once the person is deleted. */
+            display_name?: string | null;
+            kind: components["schemas"]["LinkCreatorKind"];
+        };
+        /** @enum {string} */
+        LinkCreatorKind: "person" | "agent";
+        /**
+         * @description (C-1085) Who may hand tasks to whom, read from the asked agent's side.
+         * @enum {string}
+         */
+        LinkDirection: "both" | "outgoing" | "incoming";
+        /**
+         * @description (C-1085) The direction a person asks for, read from the agent named by the route or body.
+         * @enum {string}
+         */
+        LinkDirectionRequest: "both" | "to_peer" | "from_peer";
         /** @enum {string} */
         LinkMethod: "verified_email" | "sign_in_link" | "admin";
         LinkPeer: {
@@ -10075,6 +10164,8 @@ export interface components {
             policy: components["schemas"]["LinkPolicy"];
             /** Format: uuid */
             workspace_id: string;
+            /** @description (C-1085) The peer's workspace name. */
+            workspace_name: string;
         };
         /** @enum {string} */
         LinkPolicy: "ask" | "allow" | "blocked";
@@ -10097,6 +10188,25 @@ export interface components {
             /** Format: uuid */
             agent_id: string;
             policy: components["schemas"]["LinkPolicy"];
+        };
+        /** @description A candidate of `GET /v1/agents/{agent}/linkable` (C-1085): nothing else about the agent. */
+        LinkableAgent: {
+            /** Format: uuid */
+            agent_id: string;
+            /** @description The agent is paused by an administrator (not linkable). */
+            frozen: boolean;
+            handle: string;
+            /** @description False for a BYO agent (not linkable). */
+            hosted: boolean;
+            /** @description A link with this agent exists already. */
+            linked: boolean;
+            name: string;
+            /** Format: uuid */
+            workspace_id: string;
+            workspace_name: string;
+        };
+        LinkableAgentList: {
+            items: components["schemas"]["LinkableAgent"][];
         };
         /** @enum {string} */
         Listen: "mentions" | "all";
@@ -14046,6 +14156,20 @@ export interface components {
         SentenceApp: {
             app_id: string;
             name: string;
+        };
+        /** @description `PUT /v1/agent-links/{id}/direction` (C-1085). */
+        SetDirectionBody: {
+            /**
+             * Format: uuid
+             * @description The agent whose side `direction` is read from (one of the link's two agents).
+             */
+            agent_id: string;
+            direction: components["schemas"]["LinkDirectionRequest"];
+            /**
+             * Format: int64
+             * @description The `revision` the caller last saw (409 `stale_revision` on mismatch).
+             */
+            revision: number;
         };
         SetDmDefaultRequest: {
             /** Format: uuid */
@@ -21051,6 +21175,131 @@ export interface operations {
             };
         };
     };
+    deleteAgentLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Link id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    setAgentLinkDirection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Link id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetDirectionBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLink"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description approver_required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description stale_revision */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     setAgentLinkPolicy: {
         parameters: {
             query?: never;
@@ -23619,6 +23868,54 @@ export interface operations {
             };
         };
     };
+    listLinkableAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkableAgentList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listAgentLinks: {
         parameters: {
             query?: never;
@@ -23649,6 +23946,93 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createAgentLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateLinkBody"];
+            };
+        };
+        responses: {
+            /** @description Already linked */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLink"];
+                };
+            };
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLink"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description link_self | not_hosted | link_exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description frozen */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };

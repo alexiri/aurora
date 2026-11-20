@@ -877,7 +877,11 @@ Phase 5 rows, each answered with the standard error body; the set of routes and 
 | POST `/v1/workspaces/{ws}/automations/reassign` | S/K | (phase 2, RFE-021) `{ from_user_id, to: <user_id> \| "workspace", kinds?: [schedule,webhook], ids? }` → `{ reassigned: n }`; `can_own`; one transaction, one audit row per item |
 | GET/POST `/v1/agents/{agent}/webhooks`; GET/PATCH/DELETE `/v1/webhooks/{id}`; POST `…/rotate`; GET `…/deliveries` | S/K | rotate returns new URL once; (phase 2, RFE-021) same `creator`/`anchor` fields as schedules |
 | POST `/v1/hooks/{token}` | P | webhook receive (D-178 Q-R5-20: replay protection of a signed delivery without a delivery id is the sender's; 60 s dedup only) |
-| GET `/v1/agents/{agent}/links`; PUT `/v1/agent-links/{id}/policy`; GET `/v1/agents/{agent}/peer-tasks` | S/K | |
+| GET `/v1/agents/{agent}/links`; PUT `/v1/agent-links/{id}/policy`; GET `/v1/agents/{agent}/peer-tasks` | S/K | (phase 5, C-1085) each `AgentLink` also carries `direction` (`both`\|`outgoing`\|`incoming`, from the asked agent's side), `created_by` and `peer.workspace_name` |
+| GET `/v1/agents/{agent}/linkable` | S/K | (phase 5, P5-REFINE-10, C-1085, SEC-142) `can_use` of the agent's workspace → `{ items: { agent_id, name, handle, workspace_id, workspace_name, linked, hosted, frozen }[] }`: same-organization agents of workspaces the caller can use (workspace key: its workspace), not the agent itself; at most 200, by workspace name then name |
+| POST `/v1/agents/{agent}/links` | S/K | (phase 5, P5-REFINE-10, C-1085, SEC-142) `{ peer_agent_id, direction: both\|to_peer\|from_peer }` → 201 `AgentLink` (200 when already linked the same way); `can_use` of **both** agents' workspaces (else 404); 409 `link_self` \| `not_hosted` \| `link_exists` (`details.link_id`); 423 `frozen`; each side starts `allow` when the caller `can_approve` it, else `ask`; audited `agent_link.create` (critical) |
+| PUT `/v1/agent-links/{id}/direction` | S/K | (phase 5, P5-REFINE-10, C-1085) `{ agent_id, direction, revision }` → 200 `AgentLink`; `can_use` of `agent_id`'s workspace; widening needs `can_approve` on both sides (403 `approver_required`); 409 `stale_revision`; audited `agent_link.direction` (critical) |
+| DELETE `/v1/agent-links/{id}` | S/K | (phase 5, P5-REFINE-10, C-1085) → 204; `can_use` of either side; cancels the pair's open and queued tasks, expires pending `message_agent` approvals; audited `agent_link.delete` (critical) |
 
 ### Skill libraries (phase 4, P4-GSL, D-148, D-149; C-570..C-579)
 

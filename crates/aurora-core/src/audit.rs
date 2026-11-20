@@ -89,6 +89,10 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     // Approval decisions
     "action_approval.decide",
     "agent_link.policy",
+    // (P5-REFINE-10, D-411, SEC-142) a person links two agents, changes or removes the link
+    "agent_link.create",
+    "agent_link.delete",
+    "agent_link.direction",
     "approval.decide",
     "reach_grant.decide",
     // Roles and membership
