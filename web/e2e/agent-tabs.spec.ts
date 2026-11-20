@@ -118,4 +118,22 @@ test.describe("agent page width", () => {
     await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Other agents" }).click();
     await expect(page).toHaveURL(/tab=peers/);
   });
+
+  // (P5-REFINE-15, D-408) The Computer opens on Files, with the one line of state above every sub-page; Details is last.
+  test("the Computer opens on Files with a state line; the sub-nav ends with Details; old ?tab= ids still open", async ({ page }) => {
+    await mockAgent(page);
+    await page.goto("/o/acme/w/main/agents/daneel");
+    await page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { name: "Computer" }).click();
+    await expect(page).toHaveURL(/tab=files/);
+    const pages = page.getByRole("tablist", { name: "Computer pages" }).getByRole("tab");
+    await expect(pages.first()).toHaveText("Files");
+    await expect(pages.last()).toHaveText("Details");
+    await expect(page.getByTestId("computer-state")).toBeVisible();
+    await page.getByRole("tablist", { name: "Computer pages" }).getByRole("tab", { name: "Details" }).click();
+    await expect(page).toHaveURL(/tab=computer/);
+    await expect(page.getByTestId("computer-state")).toBeVisible();
+    await expect(page.getByTestId("computer-facts")).toBeVisible();
+    await page.goto("/o/acme/w/main/agents/daneel?tab=terminal");
+    await expect(page.getByRole("tab", { name: "Terminal", selected: true })).toBeVisible();
+  });
 });

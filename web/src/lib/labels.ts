@@ -49,6 +49,15 @@ export const SANDBOX_PHASE = {
   failed: { label: "Failed" },
 } satisfies LabelTable;
 
+/** (P5-REFINE-15, C-1059, D-412) `SandboxView.computer.word`: the five words a person reads for the computer. */
+export const COMPUTER_WORD = {
+  off: { label: "Off" },
+  starting: { label: "Starting" },
+  on: { label: "On" },
+  stopping: { label: "Stopping" },
+  failed: { label: "Failed" },
+} satisfies LabelTable;
+
 /** `ReachState` of a request to reach a person or agent. */
 export const REACH_STATE = {
   pending: { label: "Waiting" },

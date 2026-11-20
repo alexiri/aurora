@@ -21,8 +21,10 @@ import "@wterm/react/css";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
+import { Altitude } from "@/components/ui/altitude";
 import { Notice } from "@/components/ui/notice";
 import { useSandbox } from "@/lib/api/conversations";
+import { formatTime } from "@/lib/format-date";
 
 import {
   clipboardChord,
@@ -68,6 +70,47 @@ function sendInput(ws: WebSocket, data: string): void {
   }
 }
 
+/** `a` → ^A, `[` → ESC, `@` → NUL (the control character of a printable key); anything else is sent as typed. */
+export function withCtrl(data: string): string {
+  if (data.length !== 1) return data;
+  const c = data.toUpperCase().charCodeAt(0);
+  return c >= 64 && c <= 95 ? String.fromCharCode(c - 64) : data;
+}
+
+/**
+ * (P5-REFINE-15, computer-12) The key row a phone lacks: **Esc · Tab · Ctrl · ↑ · ↓ · ← →**, 44 px keys, sticky at the bottom
+ * of the pane and only below 640 px. Ctrl is a latch: the next key, from here or the keyboard, goes out with Ctrl and it releases.
+ * Every key writes through the pane's own input path (`sendInput`), so framing and chunking are unchanged.
+ */
+function PhoneKeys({ ctrl, onCtrl, onKey, arrows }: { ctrl: boolean; onCtrl: () => void; onKey: (seq: string) => void; arrows: (dir: "A" | "B" | "C" | "D") => string }) {
+  const key = "inline-flex min-h-11 min-w-11 flex-1 items-center justify-center rounded-control border border-line-strong bg-surface px-2 text-sm font-medium text-ink active:bg-subtle";
+  return (
+    <div role="toolbar" aria-label="Terminal keys" data-testid="phone-keys" className="sticky bottom-0 z-10 flex gap-1.5 border-t border-line bg-canvas py-1.5 sm:hidden">
+      <button type="button" className={key} onClick={() => onKey("\x1b")}>
+        Esc
+      </button>
+      <button type="button" className={key} onClick={() => onKey("\t")}>
+        Tab
+      </button>
+      <button type="button" aria-pressed={ctrl} className={`${key} ${ctrl ? "border-accent bg-accent-soft text-accent-ink" : ""}`} onClick={onCtrl}>
+        Ctrl
+      </button>
+      <button type="button" aria-label="Up" className={key} onClick={() => onKey(arrows("A"))}>
+        ↑
+      </button>
+      <button type="button" aria-label="Down" className={key} onClick={() => onKey(arrows("B"))}>
+        ↓
+      </button>
+      <button type="button" aria-label="Left" className={key} onClick={() => onKey(arrows("D"))}>
+        ←
+      </button>
+      <button type="button" aria-label="Right" className={key} onClick={() => onKey(arrows("C"))}>
+        →
+      </button>
+    </div>
+  );
+}
+
 /** How long Ctrl+Shift+V waits for the browser's own `paste` event before reading the clipboard itself (FIX-156). */
 const PASTE_FALLBACK_MS = 150;
 
@@ -93,7 +136,7 @@ type Phase =
   | { kind: "connecting" }
   | { kind: "open" }
   | { kind: "reconnecting"; attempt: number; max: number }
-  | { kind: "ended"; code: number | null; message: string };
+  | { kind: "ended"; code: number | null; message: string; /** The retries ran out: this many tries, none answered (computer-2). */ tries?: number };
 
 /** Backoff for a dropped socket: 1 s, 2 s, 4 s, capped at 8 s (`docs/14 §Terminal tab`). */
 const backoff = (attempt: number) => Math.min(8000, 1000 * 2 ** attempt);
@@ -146,25 +189,31 @@ const ESCAPE_CHORD_MS = 1500;
  */
 export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: boolean }) {
   const { org, ws, handle } = useParams<{ org: string; ws: string; handle: string }>();
-  const popOutRef = useRef<HTMLButtonElement>(null);
+  const exitRef = useRef<HTMLButtonElement>(null);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-ink-2">
-          A shell inside the agent&apos;s sandbox (bash or zsh, chosen on the Computer page). Tab completes in the
-          shell; to leave the terminal with the keyboard, press Esc, then Tab.
+        {/* (computer-1, D-416) The keep-awake is the fix; the restart line in the scrollback is the fallback. */}
+        <p className="text-sm text-ink-2" data-testid="terminal-keep-awake">
+          An open terminal keeps the computer awake, so a running command is never cut off.
         </p>
-        <button
-          ref={popOutRef}
-          type="button"
-          className={buttonVariants({ variant: "outline", size: "sm" })}
-          disabled={frozen}
-          onClick={() => window.open(`/o/${org}/w/${ws}/agents/${handle}/terminal`, "_blank", "noopener,noreferrer")}
-        >
-          Open in new window
-        </button>
+        {/* (computer-12) An Expert item, and not on a phone: a second window is a desktop idea. */}
+        <Altitude id="terminal.window" level="expert">
+          <button
+            type="button"
+            className={`${buttonVariants({ variant: "outline", size: "sm" })} max-sm:hidden`}
+            disabled={frozen}
+            onClick={() => window.open(`/o/${org}/w/${ws}/agents/${handle}/terminal`, "_blank", "noopener,noreferrer")}
+          >
+            Open in new window
+          </button>
+        </Altitude>
       </div>
-      <TerminalPane agentId={agentId} frozen={frozen} exitFocusRef={popOutRef} />
+      <TerminalPane agentId={agentId} frozen={frozen} exitFocusRef={exitRef} />
+      {/* Where Esc, then Tab lands (the pop-out button is Expert and not on a phone): visible only while focused. */}
+      <button ref={exitRef} type="button" className="sr-only focus:not-sr-only focus:text-xs focus:underline">
+        Leave the terminal (Esc, then Tab)
+      </button>
     </div>
   );
 }
@@ -233,6 +282,24 @@ export function TerminalPane({
     if (wakingRef.current && !waking) attemptRef.current = 0;
     wakingRef.current = waking;
   }, [waking]);
+  // (computer-1, C-1058, D-416) The computer restarted: `boot_id` changed under an open session, so the running commands
+  // were stopped. One muted line goes into the scrollback, once per restart, in the person's time. Never inferred from
+  // anything but `boot_id`.
+  const bootId = sandbox.data?.boot_id ?? null;
+  const bootRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!bootId) return;
+    if (bootRef.current === null) {
+      bootRef.current = bootId;
+      return;
+    }
+    if (bootRef.current === bootId) return;
+    bootRef.current = bootId;
+    write(encoder.encode(`\r\n\x1b[2m— The computer restarted at ${formatTime(Date.now())}; your running commands were stopped. —\x1b[0m\r\n`));
+  }, [bootId, write]);
+  // The phone key row's Ctrl latch (a ref for the keystroke handler, state for the pressed look).
+  const ctrlRef = useRef(false);
+  const [ctrl, setCtrl] = useState(false);
   // Set when a keystroke arrived while the socket was not open (never sent, never queued).
   const [droppedInput, setDroppedInput] = useState(false);
   // The OSC 52 clipboard-write confirmation (C-622: never automatic, always confirmed).
@@ -329,6 +396,7 @@ export function TerminalPane({
             message: wakingRef.current
               ? "The sandbox is still starting. Try again in a moment."
               : message,
+            tries: attemptRef.current,
           });
           return;
         }
@@ -419,6 +487,15 @@ export function TerminalPane({
     );
   }
 
+  const gaveUp = phase.kind === "ended" && phase.tries !== undefined;
+  const retryNow = () => {
+    attemptRef.current = 0;
+    setPhase({ kind: "connecting" });
+    // Force the socket effect to re-run by nudging its dependency: a fresh mount
+    // of the pane is the simplest reliable reconnect after a final close.
+    setRetryNonce((n) => n + 1);
+  };
+
   /** wterm's hidden input: the one editable element of the pane (focus, paste and the native Paste item live there). */
   const inputEl = () => paneEl.current?.querySelector("textarea") ?? null;
 
@@ -480,19 +557,28 @@ export function TerminalPane({
           Not connected{droppedInput ? " — what you typed was not sent." : " — typing is not sent until the terminal connects."}
         </p>
       ) : null}
-      {phase.kind === "ended" && phase.code !== 1000 ? (
+      {gaveUp ? (
+        // (computer-2) After the last retry the pane stops: no "Reconnecting…", no cursor, no typing. This is the end state.
+        <div role="alert" data-testid="terminal-gave-up" className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-card border border-line bg-surface p-6 text-center">
+          <p className="font-display text-base font-semibold text-ink">Couldn&apos;t connect to the computer</p>
+          <p className="text-sm text-ink-2">Tried {phase.kind === "ended" ? phase.tries : 0} times. The computer didn&apos;t answer.</p>
+          <Button type="button" variant="primary" size="sm" onClick={retryNow}>
+            Try again
+          </Button>
+          <Altitude id="agent.terminal" level="expert">
+            <a href="?tab=computer" className="text-xs text-accent-ink underline underline-offset-2">
+              Report it
+            </a>
+          </Altitude>
+        </div>
+      ) : null}
+      {phase.kind === "ended" && phase.code !== 1000 && !gaveUp ? (
         <Notice tone="danger" role="alert">
           {phase.message}{" "}
           <button
             type="button"
             className="underline underline-offset-2"
-            onClick={() => {
-              attemptRef.current = 0;
-              setPhase({ kind: "connecting" });
-              // Force the socket effect to re-run by nudging its dependency: a fresh mount
-              // of the pane is the simplest reliable reconnect after a final close.
-              setRetryNonce((n) => n + 1);
-            }}
+            onClick={retryNow}
           >
             Reconnect
           </button>
@@ -529,7 +615,8 @@ export function TerminalPane({
         </Notice>
       ) : null}
       <div
-        className="relative"
+        // The pane stays mounted (its core and scrollback) but is not shown after the last retry: no cursor, nothing to type into.
+        className={gaveUp ? "relative hidden" : "relative"}
         onContextMenuCapture={onContextMenu}
         // A paste event of the browser's own (Ctrl+V, ⌘V, the menu, a Ctrl+Shift+V it handled): nothing to read.
         onPasteCapture={() => {
@@ -598,6 +685,12 @@ export function TerminalPane({
             );
           }}
           onData={(data) => {
+            // The Ctrl latch of the phone key row applies to the next key, then releases.
+            if (ctrlRef.current) {
+              data = withCtrl(data);
+              ctrlRef.current = false;
+              setCtrl(false);
+            }
             if (wsRef.current?.readyState === WebSocket.OPEN) {
               sendInput(wsRef.current, data);
             } else {
@@ -627,6 +720,31 @@ export function TerminalPane({
           </Button>
         ) : null}
       </div>
+      {phase.kind === "open" ? (
+        <PhoneKeys
+          ctrl={ctrl}
+          onCtrl={() => {
+            ctrlRef.current = !ctrlRef.current;
+            setCtrl(ctrlRef.current);
+          }}
+          arrows={(d) => {
+            const app = wtRef.current?.bridge?.cursorKeysApp() === true;
+            return app ? `\x1bO${d}` : `\x1b[${d}`;
+          }}
+          onKey={(seq) => {
+            const ws = wsRef.current;
+            if (ws?.readyState !== WebSocket.OPEN) return setDroppedInput(true);
+            let out = seq;
+            if (ctrlRef.current) {
+              ctrlRef.current = false;
+              setCtrl(false);
+              // Ctrl with an arrow is the modified-key sequence; any other key becomes its control character.
+              out = seq.length > 2 && /^\x1b[[O]/.test(seq) ? `\x1b[1;5${seq.slice(-1)}` : withCtrl(seq);
+            }
+            sendInput(ws, out);
+          }}
+        />
+      ) : null}
       <Menu open={menu !== null} onOpenChange={(open) => !open && setMenu(null)}>
         <MenuTrigger asChild>
           <span ref={menuAnchor} aria-hidden="true" className="pointer-events-none fixed size-0" />

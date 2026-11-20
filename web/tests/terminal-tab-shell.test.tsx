@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ComputerTab } from "@/components/agents/computer-tab";
@@ -26,6 +26,7 @@ vi.mock("@/lib/api/conversations", () => ({
   useRetrySandbox: () => ({ isPending: false, error: null, mutate: vi.fn() }),
   // (P5-APIGAP-1) The Computer page's Wake button.
   useWakeSandbox: () => ({ isPending: false, error: null, mutate: vi.fn() }),
+  useSleepSandbox: () => ({ isPending: false, error: null, mutate: vi.fn() }),
   useStartFailures: () => ({ data: { items: [] } }),
 }));
 vi.mock("@/lib/api/queries", () => ({
@@ -62,7 +63,7 @@ beforeEach(() => {
 
 describe("terminal pane reads the shell (FIX-138)", () => {
   it("connects without a query for bash and shows no shell picker", async () => {
-    render(<TerminalTab agentId="agent-1" frozen={false} />);
+    wrap(<TerminalTab agentId="agent-1" frozen={false} />);
     await waitFor(() => expect(UrlSocket.urls).toHaveLength(1));
     expect(UrlSocket.urls[0]).toBe("/v1/agents/agent-1/terminal");
     expect(screen.queryByRole("radiogroup", { name: "Shell" })).not.toBeInTheDocument();
@@ -70,7 +71,7 @@ describe("terminal pane reads the shell (FIX-138)", () => {
 
   it("connects with ?shell=zsh when zsh was chosen earlier in this browser", async () => {
     window.localStorage.setItem("aurora.terminal.shell.agent-1", "zsh");
-    render(<TerminalTab agentId="agent-1" frozen={false} />);
+    wrap(<TerminalTab agentId="agent-1" frozen={false} />);
     await waitFor(() => expect(UrlSocket.urls.length).toBeGreaterThan(0));
     expect(UrlSocket.urls.at(-1)).toBe("/v1/agents/agent-1/terminal?shell=zsh");
   });
@@ -93,7 +94,8 @@ describe("shell picker on the Computer page (FIX-138, owner 2026-11-14)", () => 
 
   it("is absent when the instance has no terminal", () => {
     wrap(<ComputerTab agentId="agent-1" />);
-    expect(screen.getByText("Processes")).toBeInTheDocument();
+    // Details (D-412): the facts a member reads; Processes and the rest are the admins' fold.
+    expect(screen.getByTestId("computer-facts")).toBeInTheDocument();
     expect(screen.queryByRole("radiogroup", { name: "Shell" })).not.toBeInTheDocument();
   });
 });

@@ -189,16 +189,41 @@ describe("SshPage", () => {
       ...over,
     });
 
-  it("shows the empty host-key notice while no terminator is live, and the CLI command", async () => {
+  it("leads with the Aurora command (the handle, not the id) and shows the plain ssh command with the id kept out of sight", async () => {
     base();
-    // The CLI snippet is Expert (D-406, `fold.cli`).
-    wrap(<SshPage agentId={AGENT} frozen={false} />, { moreControls: true });
+    // The host key and the sessions are Expert (D-406, `ssh.sessions`).
+    wrap(<SshPage agentId={AGENT} agentName="Daneel" agentHandle="daneel" frozen={false} />, { moreControls: true });
     await screen.findByText(/no SSH server is running/);
-    expect(screen.getByLabelText("the aurora ssh command").textContent).toBe(`aurora ssh ${AGENT}`);
+    expect(screen.getByRole("heading", { name: "Connect to Daneel's computer" })).toBeInTheDocument();
+    expect(screen.getByText("With the Aurora command line:")).toBeInTheDocument();
+    expect(screen.getByLabelText("the aurora ssh command").textContent).toBe("aurora ssh daneel");
+    // The terminator still wants the agent id as the user name: the block shows an ellipsis, Copy command has the whole line.
     expect(screen.getByLabelText("the ssh command").textContent).toBe(
-      `ssh -o CertificateFile=~/Downloads/id_ed25519-cert.pub -i ~/.ssh/id_ed25519 -p 2222 ${AGENT}@ssh.example.org`,
+      "ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 …@ssh.example.org",
     );
+    expect(screen.getByRole("button", { name: "Copy command" })).toBeInTheDocument();
     expect(screen.getByText(/Port forwarding, agent forwarding and X11 are not available/)).toBeInTheDocument();
+  });
+
+  it("copies the full command, with the id, from Copy command", async () => {
+    base();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    wrap(<SshPage agentId={AGENT} agentName="Daneel" agentHandle="daneel" frozen={false} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy command" }));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        `ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 ${AGENT}@ssh.example.org`,
+      ),
+    );
+  });
+
+  it("keeps the host key and the sessions behind the Expert switch", async () => {
+    base();
+    wrap(<SshPage agentId={AGENT} agentName="Daneel" agentHandle="daneel" frozen={false} />, { moreControls: false });
+    await screen.findByText("With the Aurora command line:");
+    expect(screen.queryByText(/no SSH server is running/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Active sessions")).not.toBeInTheDocument();
   });
 
   it("shows the known_hosts lines and fingerprints once a terminator registered", async () => {
@@ -213,37 +238,58 @@ describe("SshPage", () => {
           }),
         ),
     });
-    wrap(<SshPage agentId={AGENT} frozen={false} />);
+    wrap(<SshPage agentId={AGENT} frozen={false} />, { moreControls: true });
     await screen.findByText("SHA256:hostfp");
     expect(screen.getByLabelText("the known_hosts lines").textContent).toBe("[ssh.example.org]:2222 ssh-ed25519 AAAAHOST");
     expect(screen.queryByText(/no SSH server is running/)).not.toBeInTheDocument();
   });
 
-  it("mints a certificate for the registered key and offers it as id_ed25519-cert.pub", async () => {
+  const certBody = (validBefore: string) => ({
+    certificate: "ssh-ed25519-cert-v01@openssh.com AAAACERT aurora:agent",
+    serial: "7",
+    principal: AGENT,
+    key_id: "k",
+    valid_after: "2026-01-01T00:00:00Z",
+    valid_before: validBefore,
+    username: AGENT,
+    host: "ssh.example.org",
+    port: 2222,
+    known_hosts: [],
+  });
+
+  it("mints a certificate for the registered key, offers it under one stable name and counts down", async () => {
     const bodies: unknown[] = [];
+    const until = new Date(Date.now() + 13 * 60_000 + 30_000).toISOString();
     base({
       [`POST /v1/agents/${AGENT}/ssh-certificate`]: async (req) => {
         bodies.push(await req.json());
-        return json(201, {
-          certificate: "ssh-ed25519-cert-v01@openssh.com AAAACERT aurora:agent",
-          serial: "7",
-          principal: AGENT,
-          key_id: "k",
-          valid_after: "2026-01-01T00:00:00Z",
-          valid_before: "2026-01-01T00:15:00Z",
-          username: AGENT,
-          host: "ssh.example.org",
-          port: 2222,
-          known_hosts: [],
-        });
+        return json(201, certBody(until));
       },
     });
-    wrap(<SshPage agentId={AGENT} frozen={false} />);
+    wrap(<SshPage agentId={AGENT} agentName="Daneel" agentHandle="daneel" frozen={false} />);
     fireEvent.click(await screen.findByRole("button", { name: "Get a certificate" }));
-    const link = await screen.findByRole("link", { name: /Download id_ed25519-cert\.pub/ });
-    expect(link).toHaveAttribute("download", "id_ed25519-cert.pub");
-    expect(screen.getByText(/Valid for 15 minutes; get a new one to reconnect later/)).toBeInTheDocument();
+    const link = await screen.findByRole("link", { name: "Download" });
+    expect(link).toHaveAttribute("download", "aurora-daneel-cert.pub");
+    expect(screen.getByTestId("cert-state").textContent).toMatch(/^Certificate valid for 14 more minutes \(until \d{1,2}:\d{2}.*\)$/);
+    expect(screen.getByText(/Save it as/).textContent).toContain("~/.ssh/aurora-daneel-cert.pub");
+    expect(screen.getByRole("button", { name: "Get a new certificate" })).toBeInTheDocument();
     expect(bodies).toEqual([{ public_key: key(1).public_key }]);
+  });
+
+  it("keeps Download after a reload until the certificate expires (sessionStorage), and says Expired afterwards", async () => {
+    window.sessionStorage.clear();
+    const until = new Date(Date.now() + 5 * 60_000).toISOString();
+    window.sessionStorage.setItem(`aurora.ssh.cert.${AGENT}.${key(1).id}`, JSON.stringify(certBody(until)));
+    base();
+    const first = wrap(<SshPage agentId={AGENT} agentHandle="daneel" frozen={false} />);
+    expect(await screen.findByRole("link", { name: "Download" })).toHaveAttribute("download", "aurora-daneel-cert.pub");
+    expect(screen.getByTestId("cert-state").textContent).toContain("Certificate valid for 5 more minutes");
+    first.unmount();
+    window.sessionStorage.setItem(`aurora.ssh.cert.${AGENT}.${key(1).id}`, JSON.stringify(certBody(new Date(Date.now() - 1000).toISOString())));
+    wrap(<SshPage agentId={AGENT} agentHandle="daneel" frozen={false} />);
+    await screen.findByRole("button", { name: "Get a certificate" });
+    expect(screen.queryByRole("link", { name: "Download" })).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem(`aurora.ssh.cert.${AGENT}.${key(1).id}`)).toBeNull();
   });
 
   it("lets a person with several keys pick one", async () => {

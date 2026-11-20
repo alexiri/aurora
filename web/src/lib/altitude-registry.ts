@@ -56,6 +56,12 @@ export const ALTITUDE_REGISTRY = {
   "auto.verification": { altitude: "setup", area: "Webhooks", later: "P5-REFINE-14" },
   "log.requests": { altitude: "expert", area: "Activity" },
   "tech.details": { altitude: "setup", area: "Technical details folds" },
+  // (P5-REFINE-15, D-406) The Computer's own controls.
+  "computer.actions": { altitude: "setup", area: "Computer (Wake it now, Restart, Sleep now)" },
+  "computer.phase": { altitude: "expert", area: "Computer details (the raw phase, D-412)" },
+  "files.hidden": { altitude: "expert", area: "Files (Show hidden)" },
+  "terminal.window": { altitude: "expert", area: "Terminal (Open in new window)" },
+  "ssh.sessions": { altitude: "expert", area: "Computer: Connect (sessions, known_hosts)" },
   "export.yaml": { altitude: "expert", area: "Settings" },
   "export.agent": { altitude: "expert", area: "Agent export", later: "P5-REFINE-19" },
   "ws.memlang": { altitude: "expert", area: "New workspace, Settings" },

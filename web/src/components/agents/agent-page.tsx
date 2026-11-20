@@ -21,6 +21,7 @@ import { useTabParam } from "@/lib/use-tab-param";
 import { AccessTab } from "./access-tab";
 import { ChatTab } from "./chat-tab";
 import { ComputerTab } from "./computer-tab";
+import { ComputerStateLine } from "./computer-state";
 import { ConnectTab } from "./connect-tab";
 import { DeleteAgentDialog } from "./delete-zone";
 import { MemoryTab } from "@/components/memory/memory-tab";
@@ -32,9 +33,10 @@ import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
 
 import { EvalsTab } from "./evals/evals-tab";
 import { FilesTab } from "./files-tab";
+import { useLeaveGate } from "./files/leave-gate";
 import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
-import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, resolvePage, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
+import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, resolvePage, sectionLanding, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
 import { AgentState } from "./agent-state";
 import { SettingsFrame } from "./settings-shell";
 import { SshPage } from "./ssh-page";
@@ -50,6 +52,8 @@ function HiddenPages({ availability, allows }: { availability: PageAvailability;
 export function AgentPage() {
   const { org, ws, handle } = useParams<{ org: string; ws: string; handle: string }>();
   const altitude = useAltitude();
+  // (P5-REFINE-15, computer-4) Leaving an unsaved Files editor by the page's own links asks first.
+  const leave = useLeaveGate();
   const router = useRouter();
   const resolved = useResolve(org, ws);
   const wsId = resolved.data?.workspace?.id;
@@ -103,15 +107,16 @@ export function AgentPage() {
   const sections = availableSections(availability, altitude.allows, tab);
   const sectionId = SECTION_OF[tab];
   const section = sections.find((s) => s.id === sectionId)!;
-  const choosePage = (p: AgentPageId) => {
-    lastPage.current[SECTION_OF[p]] = p;
-    setTab(p);
-  };
+  const choosePage = (p: AgentPageId) =>
+    leave.ask(() => {
+      lastPage.current[SECTION_OF[p]] = p;
+      setTab(p);
+    });
   const goSection = (id: string) => {
     const next = sections.find((s) => s.id === id);
     if (!next) return;
     const remembered = lastPage.current[next.id];
-    choosePage(remembered && next.pages.some((p) => p.id === remembered) ? remembered : next.pages[0]!.id);
+    choosePage(remembered && next.pages.some((p) => p.id === remembered) ? remembered : sectionLanding(next.id, next.pages)!);
   };
   const base = `/o/${org}/w/${ws}`;
   const canOwn = workspace.data?.my_role === "owner";
@@ -251,6 +256,12 @@ export function AgentPage() {
           {...(section.pages.length > 1 ? { role: "tabpanel", id: tabPanelId("agent", tab), "aria-labelledby": tabId("agent", tab) } : {})}
           className="pt-1"
         >
+          {/* (P5-REFINE-15, D-408) One line of state above every Computer sub-page, the one the header shows. */}
+          {sectionId === "computer" && !byo ? (
+            <div className="pb-4">
+              <ComputerStateLine agentId={agent.id} agentName={agent.name} frozen={agent.frozen !== null} />
+            </div>
+          ) : null}
           {tab === "chat" && !byo ? (
             <ChatTab
               agentId={agent.id}
@@ -288,9 +299,11 @@ export function AgentPage() {
             <ComputerTab agentId={agent.id} agentName={agent.name} workspaceId={workspace.data?.id} frozen={agent.frozen !== null} terminal={terminalEnabled} />
           ) : null}
           {tab === "terminal" && !byo && terminalEnabled ? <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
-          {tab === "files" && !byo && terminalEnabled ? <FilesTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
+          {tab === "files" && !byo && terminalEnabled ? (
+            <FilesTab agentId={agent.id} agentName={agent.name} frozen={agent.frozen !== null} onOpenInstructions={() => choosePage("instructions")} />
+          ) : null}
           {tab === "previews" && !byo ? <PreviewsTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
-          {tab === "ssh" && !byo && sshEnabled ? <SshPage agentId={agent.id} frozen={agent.frozen !== null} /> : null}
+          {tab === "ssh" && !byo && sshEnabled ? <SshPage agentId={agent.id} agentName={agent.name} agentHandle={agent.handle} frozen={agent.frozen !== null} /> : null}
           {tab === "instructions" ? <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} /> : null}
           {tab === "access" && workspace.data ? (
             <AccessTab agentId={agent.id} agentName={agent.name} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} agentBase={`${base}/agents/${agent.handle}`} />
@@ -300,6 +313,7 @@ export function AgentPage() {
         </div>
         </SettingsFrame>
       </div>
+      {leave.dialog}
       {chatPage ? null : <MoreControlsLine className="pt-2" />}
     </div>
     </AltitudeScope>

@@ -1,29 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { Altitude } from "@/components/ui/altitude";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { Segmented } from "@/components/ui/segmented";
-import { StatusLine } from "@/components/ui/status-line";
 import { askSentence } from "@/lib/who-can";
-import { useRetrySandbox, useRestartSandbox, useSandbox, useStartFailures, useWakeSandbox } from "@/lib/api/conversations";
-import { durationWords } from "@/lib/settings-words";
+import { useSandbox, useStartFailures } from "@/lib/api/conversations";
 import type { SandboxStartAttempt, StartLogEntry } from "@/lib/api/conversations";
-import { useInstance, useOrg, useResolve } from "@/lib/api/queries";
+import { useInstance, useMe, useOrg, useResolve } from "@/lib/api/queries";
 import { useParams } from "next/navigation";
 import { UsageCard } from "@/components/usage/usage-card";
 import { ShareDialog } from "@/components/agents/previews-tab";
 import { clockTime } from "@/lib/chat/layout";
+import { COMPUTER_WORD, label } from "@/lib/labels";
 import { TechnicalDetails } from "@/components/ui/technical-details";
-import { errorCopy } from "@/lib/chat/transcript";
 
+import { computerOf } from "./computer-state";
 import { readShell, SHELL_OPTIONS, writeShell, type Shell } from "./terminal-shell";
 
 /**
@@ -164,23 +161,25 @@ function StartLog({ agentId, log }: { agentId: string; log: StartLogEntry[] }) {
   );
 }
 
-/** States where Restart has nothing to do (the API answers 409 `restart_not_applicable`, C-626). */
-const RESTART_NOT_APPLICABLE = new Set(["stopping", "stopped", "unprovisioned"]);
-
 /** "A", "A and B", "A, B and C". */
 function listWords(items: string[]): string {
   return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
+/**
+ * (P5-REFINE-15, D-408, D-412) **Details**, the Computer's last sub-page (Overview when the instance has no Files): the
+ * usage card, ports, and what the computer is. The state line above every sub-page is `ComputerStateLine`. A member
+ * reads "Started 23:55 · on" and nothing about the machinery (SEC-141: the API view does not carry the image or runner to
+ * them); an instance admin also gets the **Admin only** fold; the raw phase is a secondary line at Expert.
+ */
 export function ComputerTab({
   agentId,
   agentName,
-  frozen = false,
   terminal = false,
   workspaceId,
 }: {
   agentId: string;
-  /** For the sentences ("Daneel's computer is asleep"). */
+  /** For the sentences ("Daneel's computer"). */
   agentName?: string;
   /** The agent's workspace: the Usage card reads its usage (C-1000). */
   workspaceId?: string;
@@ -189,17 +188,7 @@ export function ComputerTab({
   terminal?: boolean;
 }) {
   const q = useSandbox(agentId);
-  const restart = useRestartSandbox(agentId);
-  const retry = useRetrySandbox(agentId);
-  const wake = useWakeSandbox(agentId);
-  // (P5-APIGAP-1) After a 202 the button stays pending until the status says starting or running; a start that
-  // never shows (the runner is busy) frees the button again after a minute.
-  useEffect(() => {
-    if (!wake.isSuccess) return;
-    const t = setTimeout(() => wake.reset(), 60_000);
-    return () => clearTimeout(t);
-  }, [wake.isSuccess, wake]);
-  const [open, setOpen] = useState(false);
+  const me = useMe();
   // (P4-PRV-1) Share… opens the add-share dialog prefilled with a listening port. The action exists
   // only when the org has switched Port previews on (docs/14): the instance flag alone is not enough.
   const instance = useInstance();
@@ -211,14 +200,9 @@ export function ComputerTab({
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const v = q.data;
-  // (FIX-049, C-626) Restart is disabled where it would answer 409 (nothing to restart), and on a
-  // failed computer of a frozen agent (the recovery would start work: 423).
-  const restartBlocked = RESTART_NOT_APPLICABLE.has(v.state) || (v.state === "failed" && frozen);
+  const c = computerOf(v);
   const name = agentName ?? "The agent";
-  const asleep = v.state === "stopped" || v.state === "unprovisioned" || v.state === "stopping";
-  const wakePending = wake.isPending || (wake.isSuccess && asleep);
-  // (C-1046) In words, nothing when idle stop is off.
-  const sleepsAfter = v.idle_stop_after_secs ? `Sleeps after ${durationWords(v.idle_stop_after_secs)} of quiet.` : null;
+  const isAdmin = me.data?.user.is_instance_admin === true;
   const missing = [
     ...(terminal ? [] : ["Terminal", "Files"]),
     ...(previewsUsable ? [] : ["Previews"]),
@@ -226,51 +210,32 @@ export function ComputerTab({
   ];
   return (
     <div className="space-y-6">
-      {/* (P5-POLISH-6, C5) One sentence for the state, with the action that fits it. */}
-      <section aria-label="Computer" className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
-        <StatusLine tone={v.state === "running" ? "ok" : v.state === "failed" ? "fail" : "idle"} className="text-base" data-testid="computer-state">
-          {v.state === "running"
-            ? `${name}'s computer is awake`
-            : v.state === "starting"
-              ? `${name}'s computer is starting`
-              : v.state === "failed"
-                ? `${name}'s computer couldn't start`
-                : `${name}'s computer is asleep`}
-        </StatusLine>
-        <p className="text-sm text-ink-2">
-          {v.state === "failed"
-            ? `${errorCopy(v.failure_code).message} ${v.failure_message ?? ""}`.trim()
-            : v.state === "stopped" || v.state === "unprovisioned"
-              ? [`It wakes by itself when ${name} needs it.`, sleepsAfter, "Its files stay."].filter(Boolean).join(" ")
-              : v.state === "running"
-                ? `${sleepsAfter ?? "It sleeps by itself when there is no work."} Its files stay.`
-                : null}
+      {missing.length > 0 ? (
+        <p className="text-sm text-ink-2" data-testid="missing-pages">
+          {listWords(missing)} {missing.length === 1 ? "isn't" : "aren't"} set up on this Aurora. {askSentence({ role: "instance_admin" })}
         </p>
-        <div className="flex flex-wrap gap-2">
-          {asleep && !frozen ? (
-            <Button size="sm" disabled={wakePending} onClick={() => wake.mutate(undefined)}>
-              {wakePending ? "Waking…" : "Wake it now"}
-            </Button>
+      ) : null}
+      {/* (D-412) What a member reads: the phase in words and when it started; nothing else. */}
+      <section aria-label={`${name}'s computer`} className="space-y-1 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" data-testid="computer-facts">
+        <h2 className="font-display text-base font-semibold text-ink">{name}&apos;s computer</h2>
+        <p className="text-sm text-ink-2" data-testid="computer-started">
+          {c.started_at ? `Started ${clockTime(c.started_at)} · ` : ""}
+          {label(COMPUTER_WORD, c.word).toLowerCase() === "on" ? "running" : label(COMPUTER_WORD, c.word).toLowerCase()}
+        </p>
+        <Altitude id="computer.phase" level="expert">
+          {c.phase ? (
+            <p className="font-mono text-xs text-muted" data-testid="computer-phase">
+              {c.phase}
+            </p>
           ) : null}
-          {v.state === "running" ? (
-            <Button variant="outline" size="sm" disabled={restart.isPending || restartBlocked} onClick={() => setOpen(true)}>
-              Restart
-            </Button>
-          ) : null}
-          {v.state === "failed" && !frozen ? (
-            <Button size="sm" disabled={retry.isPending || !v.retryable} onClick={() => retry.mutate(undefined)}>
-              {retry.isPending || !v.retryable ? "Start in flight…" : "Try again"}
-            </Button>
-          ) : null}
-        </div>
-        {missing.length > 0 ? (
-          <p className="text-sm text-ink-2" data-testid="missing-pages">
-            {listWords(missing)} {missing.length === 1 ? "isn't" : "aren't"} set up on this Aurora. {askSentence({ role: "instance_admin" })}
-          </p>
-        ) : null}
+        </Altitude>
       </section>
       {workspaceId ? <UsageCard wsId={workspaceId} org={org} ws={ws} agentId={agentId} /> : null}
-      {terminal ? <TerminalShellSection agentId={agentId} /> : null}
+      {terminal ? (
+        <Altitude id="agent.terminal" level="expert">
+          <TerminalShellSection agentId={agentId} />
+        </Altitude>
+      ) : null}
       {sharePort !== null ? <ShareDialog agentId={agentId} prefillPort={sharePort} onDone={() => setSharePort(null)} /> : null}
       {v.ports.length ? (
         <Section id="computer-ports" title="Ports" description="TCP ports currently listening inside this computer.">
@@ -304,81 +269,87 @@ export function ComputerTab({
           </DataTable>
         </Section>
       ) : null}
-      <ConfirmDialog
-        open={open}
-        onOpenChange={setOpen}
-        title="Restart this computer?"
-        description="Running processes will be stopped and the computer boots again."
-        confirmLabel="Restart"
-        onConfirm={() => {
-          restart.mutate(undefined, { onSettled: () => setOpen(false) });
-        }}
-      />
-      <ErrorNotice error={restart.error} />
-      <ErrorNotice error={wake.error} />
-      {v.restart_to_update ? (
-        <Notice role="status">Configuration changed. Restart to update this computer.</Notice>
+      {/* (D-412, SEC-141) The machinery is for instance admins only. The API does not send it to anyone else; this is not the
+          only guard: nothing is read from a member's view. */}
+      {isAdmin ? (
+        <section aria-labelledby="admin-only-h" className="space-y-2">
+          <h2 id="admin-only-h" className="text-sm font-semibold text-ink">
+            Admin only
+          </h2>
+          <TechnicalDetails
+            className="rounded-card border border-line bg-surface px-4 py-3 shadow-card"
+            summaryClassName="font-medium text-ink"
+            bodyClassName="mt-4"
+            data-testid="technical-details"
+          >
+            <div className="space-y-8">
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid="admin-facts">
+                {v.image ? (
+                  <>
+                    <dt className="text-muted">Image</dt>
+                    <dd className="break-all font-mono text-xs">{v.image}</dd>
+                  </>
+                ) : null}
+                {v.runner_id ? (
+                  <>
+                    <dt className="text-muted">Runner</dt>
+                    <dd className="break-all font-mono text-xs">{v.runner_id}</dd>
+                  </>
+                ) : null}
+                <dt className="text-muted">State</dt>
+                <dd className="font-mono text-xs">
+                  {v.state}
+                  {c.phase ? ` · ${c.phase}` : ""}
+                </dd>
+              </dl>
+              {v.start_attempt ? <StartAttempt a={v.start_attempt} /> : null}
+              {/* (FIX-029, C-612/C-615) The boot's start log, live while starting, frozen at the failure. */}
+              <StartLog agentId={agentId} log={v.start_log} />
+              <Section id="awake-reasons" title="Awake because" card>
+                {v.keep_awake_reasons.length ? (
+                  <ul className="flex flex-wrap gap-2">
+                    {v.keep_awake_reasons.map((r) => (
+                      <li key={r}>
+                        <Badge tone="accent" className="normal-case tracking-normal">
+                          {reasonLabel(r)}
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted">Nothing is keeping this computer awake.</p>
+                )}
+              </Section>
+              <Section id="processes" title="Processes">
+                {v.processes.length ? (
+                  <DataTable caption="Processes">
+                    <thead>
+                      <tr>
+                        <Th>Name</Th>
+                        <Th>State</Th>
+                        <Th>Busy</Th>
+                        <Th>Started</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {v.processes.map((p) => (
+                        <tr key={p.id}>
+                          <Td className="font-mono">{p.name}</Td>
+                          <Td>{p.state}</Td>
+                          <Td>{p.busy ? "yes" : "no"}</Td>
+                          <Td className="whitespace-nowrap text-ink-2">{p.started_at ?? ""}</Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </DataTable>
+                ) : (
+                  <p className="text-sm text-muted">No processes.</p>
+                )}
+              </Section>
+            </div>
+          </TechnicalDetails>
+        </section>
       ) : null}
-      {v.state === "failed" && retry.error ? (
-        <ErrorNotice error={retry.error} />
-      ) : null}
-      {/* (P5-POLISH-6) The engine's details are collapsed: the last start attempt, the start log, why it is awake, the processes. */}
-      <Altitude id="tech.details" level="setup">
-      <TechnicalDetails
-        className="rounded-card border border-line bg-surface px-4 py-3 shadow-card"
-        summaryClassName="font-medium text-ink"
-        bodyClassName="mt-4"
-        data-testid="technical-details"
-      >
-        <div className="space-y-8">
-      {v.image ? <p className="text-xs text-muted">Image: {v.image}</p> : null}
-      {v.start_attempt ? <StartAttempt a={v.start_attempt} /> : null}
-      {/* (FIX-029, C-612/C-615) The boot's start log, live while starting, frozen at the failure. */}
-      <StartLog agentId={agentId} log={v.start_log} />
-      <Section id="awake-reasons" title="Awake because" card>
-        {v.keep_awake_reasons.length ? (
-          <ul className="flex flex-wrap gap-2">
-            {v.keep_awake_reasons.map((r) => (
-              <li key={r}>
-                <Badge tone="accent" className="normal-case tracking-normal">
-                  {reasonLabel(r)}
-                </Badge>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted">Nothing is keeping this computer awake.</p>
-        )}
-      </Section>
-      <Section id="processes" title="Processes">
-        {v.processes.length ? (
-          <DataTable caption="Processes">
-            <thead>
-              <tr>
-                <Th>Name</Th>
-                <Th>State</Th>
-                <Th>Busy</Th>
-                <Th>Started</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {v.processes.map((p) => (
-                <tr key={p.id}>
-                  <Td className="font-mono">{p.name}</Td>
-                  <Td>{p.state}</Td>
-                  <Td>{p.busy ? "yes" : "no"}</Td>
-                  <Td className="whitespace-nowrap text-ink-2">{p.started_at ?? ""}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </DataTable>
-        ) : (
-          <p className="text-sm text-muted">No processes.</p>
-        )}
-      </Section>
-        </div>
-      </TechnicalDetails>
-      </Altitude>
     </div>
   );
 }

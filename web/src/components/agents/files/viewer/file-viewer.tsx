@@ -32,6 +32,10 @@ import {
   type FileText,
 } from "@/lib/api/files";
 
+import { useUndoToast } from "@/components/ui/undo-toast";
+
+import { setLeaveGuard } from "../leave-gate";
+import { CsvTable } from "./csv";
 import { imageDataUrl, sniffImage, typeGuess } from "./image";
 
 // The editor (CodeMirror and its languages) is a separate chunk: the Files listing never pays for it.
@@ -64,7 +68,8 @@ function ExistingFile(props: FileViewerProps) {
   // The text is read once per opening (and again on Reload); it is never kept in the cache or refetched behind the editor.
   const query = useQuery({
     queryKey: [...filesKeys.all(agent), "text", path],
-    queryFn: () => getFileText(agent, path),
+    // (C-1060) `preview=1`: a text file over 1 MiB answers its first 256 KiB with `truncated`, never an etag (read-only).
+    queryFn: () => getFileText(agent, path, { preview: true }),
     retry: (count, err) => isTransient(err) && count < WAKE_ATTEMPTS,
     retryDelay: filesTiming.retryDelayMs,
     staleTime: Infinity,
@@ -127,13 +132,18 @@ function EditorPane({
 }: FileViewerProps & { data: FileText | null; version: number; onReload?: () => Promise<void> }) {
   const initial = data?.content ?? "";
   const name = baseName(path);
+  const toast = useUndoToast();
+  // (computer-11) A preview of the start of a big file is read-only and says so; a CSV opens as a table first.
+  const truncated = data?.truncated === true;
+  const [asText, setAsText] = useState(false);
+  const csv = !isNew && /\.csv$/i.test(name) && !asText;
+  readOnly = readOnly || truncated;
   const [text, setText] = useState(initial);
   const [saved, setSaved] = useState(initial);
   const [etag, setEtag] = useState<string | null>(data?.etag ?? null);
   const [exists, setExists] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [conflictNote, setConflictNote] = useState<string | null>(null);
   const [left, setLeft] = useState(false);
@@ -158,11 +168,10 @@ function EditorPane({
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
-  async function save(how: "normal" | "overwrite" = "normal") {
-    if (saving || readOnly) return;
+  async function save(how: "normal" | "overwrite" = "normal"): Promise<boolean> {
+    if (saving || readOnly) return false;
     setSaving(true);
     setError(null);
-    setStatus(null);
     const body = text;
     try {
       const opts = how === "overwrite" || (exists && !etag) ? { replace: true } : exists ? { ifMatch: `"${etag}"` } : {};
@@ -171,7 +180,9 @@ function EditorPane({
       setExists(true);
       setSaved(body);
       setConflict(false);
-      setStatus("Saved.");
+      // (computer-10) "Saved" is a toast: a status line here moved the editor.
+      toast(`Saved ${name}`);
+      return true;
     } catch (e) {
       if (e instanceof ApiError && e.code === "file_changed") {
         setConflictNote(null);
@@ -181,15 +192,26 @@ function EditorPane({
       } else {
         setError(filesErrorMessage(e));
       }
+      return false;
     } finally {
       setSaving(false);
     }
   }
   useEffect(() => {
     latest.current = () => {
-      if (dirty || (isNew && !exists)) void save();
+      if (dirty) void save();
     };
   });
+  // Leaving by any in-page way asks first (Back, another file, the breadcrumb, the page's own links): see `leave-gate`.
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const textRef = useRef(text);
+  textRef.current = text;
+  useEffect(() => {
+    if (!dirty) return;
+    setLeaveGuard({ name, save: () => saveRef.current(), discard: () => setSaved(textRef.current) });
+    return () => setLeaveGuard(null);
+  }, [dirty, name]);
 
   const copyMine = async () => {
     try {
@@ -206,20 +228,22 @@ function EditorPane({
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h2 className="break-all font-display text-base font-semibold text-ink">{name}</h2>
           {readOnly ? <Badge>Read-only</Badge> : null}
+          {/* (computer-4) A dot while there are unsaved changes; its words are the title and a hidden label. */}
           {dirty ? (
-            <span className="inline-flex items-center gap-1 text-sm text-pending-ink">
-              <span aria-hidden="true">●</span> Unsaved changes
+            <span className="inline-flex items-center text-pending-ink" title="Unsaved changes" data-testid="dirty-dot">
+              <span aria-hidden="true">●</span>
+              <span className="sr-only">Unsaved changes</span>
             </span>
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {readOnly ? null : (
-            <Button type="button" variant="primary" size="sm" onClick={() => void save()} disabled={saving || !(dirty || (isNew && !exists))}>
+            <Button type="button" variant="primary" size="sm" onClick={() => void save()} disabled={saving || !dirty}>
               {saving ? "Saving…" : "Save"}
             </Button>
           )}
           {exists ? (
-            <a href={downloadUrl(agent, path)} download className={buttonVariants({ variant: "outline", size: "sm" })}>
+            <a href={downloadUrl(agent, path)} download onClick={() => toast(`Downloaded ${name}`)} className={buttonVariants({ variant: "outline", size: "sm" })}>
               <DownloadIcon /> Download
             </a>
           ) : null}
@@ -232,12 +256,20 @@ function EditorPane({
           <span className="break-words">{error}</span>
         </Notice>
       ) : null}
-      {status && !dirty ? (
-        <p role="status" className="text-sm text-ink-2">
-          {status}
-        </p>
+      {truncated ? (
+        <Notice tone="neutral" role="status" className="flex flex-wrap items-center justify-between gap-2" data-testid="preview-note">
+          <span>
+            Showing the first {humanSize(new TextEncoder().encode(initial).length)} of {humanSize(data?.size ?? 0)}.
+          </span>
+          <a href={downloadUrl(agent, path)} download className={buttonVariants({ variant: "outline", size: "sm" })}>
+            <DownloadIcon /> Download the whole file
+          </a>
+        </Notice>
       ) : null}
 
+      {csv ? (
+        <CsvTable name={name} text={initial} downloadHref={downloadUrl(agent, path)} onShowText={() => setAsText(true)} />
+      ) : (
       <div
         className="h-[min(65dvh,40rem)] min-h-64 overflow-hidden rounded-card border border-line bg-surface"
         // Esc, then Tab leaves the editor (Tab on its own indents).
@@ -263,14 +295,19 @@ function EditorPane({
           onSave={() => latest.current()}
         />
       </div>
+      )}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div ref={exitFocus}>
           <Back onBack={onBack} />
         </div>
-        <p className="text-xs text-muted">Tab indents. Press Esc, then Tab to leave the editor.</p>
-        <p role="status" className="text-xs text-ink-2">
-          {left ? "Left the editor." : ""}
-        </p>
+        {csv ? null : (
+          <>
+            <p className="text-xs text-muted">Tab indents. Press Esc, then Tab to leave the editor.</p>
+            <p role="status" className="text-xs text-ink-2">
+              {left ? "Left the editor." : ""}
+            </p>
+          </>
+        )}
       </div>
 
       <Dialog open={conflict} onOpenChange={setConflict}>

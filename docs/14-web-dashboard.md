@@ -583,6 +583,53 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     `notices_seen` keys `first-answer`, `first-app`, `first-approval`, `first-run`).
   - *Waiting for other briefs:* several chats, Rename, auto-titles, run threads and the stopped-answer marker (P5-REFINE-7),
     "can't answer" fix button (P5-REFINE-12), the timeline feed (P5-REFINE-9), the Needs-you badge on the Agents list (C-1082, P5-REFINE-8).
+  - **Computer** (phase 5, **P5-REFINE-15, D-405, D-406, D-408, D-412, D-416**). The sub-nav is **Files · Terminal · Connect · Previews ·
+    Details** (`?tab=files|terminal|ssh|previews|computer`; the ids are unchanged). The tab opens on **Files**; with the terminal off
+    on the instance it has no Files and opens on **Overview** (the Details page under its old name, with the "isn't set up" sentence).
+    Terminal, Connect and Previews are **Expert**; at Use the row is **Files · Details**.
+    - **One line of state above every sub-page** (`ComputerStateLine`, the line the header's state follows): "Dani's computer is **on** ·
+      sleeps after 20 min of quiet" (while idle "sleeps in 20 s when idle", counted down between the 5 s polls from
+      `computer.sleeps_in_secs`), "is **off** · it starts when Dani needs it", "**Starting** Dani's computer… Usually under 20 seconds."
+      (spinner), "**Stopping**…", "couldn't start: <reason>" with **Try again**. The words are `COMPUTER_WORD` in `lib/labels.ts`; no raw
+      phase outside Expert and the admin fold. **Wake it now**, **Sleep now** (no confirmation; toast "Dani's computer is going to sleep";
+      409 `sandbox_busy` is shown in words) and **Restart** are Set up controls (`computer.actions`). Files and the Terminal wake the
+      computer by themselves.
+    - **Details** (D-412, SEC-141): a member reads "Dani's computer / Started 23:55 · running" and nothing else; the raw phase is a
+      secondary line at Expert (`computer.phase`); an **Admin only** heading holds the collapsed Technical details (image, runner, state,
+      last start attempt, start log, Awake because, Processes) for instance admins. The API view itself does not carry the image or runner
+      to anyone else (C-1059); the page reads nothing from a member's view.
+    - **Terminal** (computer-1, 2, 8, 12): the sentence above the pane is "An open terminal keeps the computer awake, so a running command
+      is never cut off." After the last retry (4, or 12 while waking) the pane is hidden and a centred state says "Couldn't connect to the
+      computer / Tried 4 times. The computer didn't answer." with **Try again** and, at Expert, a small **Report it** link to Details; the
+      "Not connected" line stays. When `boot_id` changes under an open session the scrollback gets one muted line, "— The computer restarted
+      at 14:02; your running commands were stopped. —" (never inferred from anything else). **Open in new window** is an Expert control
+      and absent below 640 px. Below 640 px a key row sits under the pane (**Esc · Tab · Ctrl · ↑ ↓ ← →**, 44 px; Ctrl is a latch that
+      applies to the next key from the row or the keyboard) and writes through the pane's own `sendInput`. The light ANSI palette
+      (`--aurora-term-color-*`) and the dark black/bright-black are ≥ 4.5:1 on the pane (`tests/terminal-palette-contrast.test.ts` reads
+      `globals.css`); programs that print their own 256-colour or true colour are not changed.
+    - **Files** (computer-2, 3, 4, 5, 9, 10, 11): the breadcrumb root reads "Your files with Dani". At the root two groups: **Your files**
+      and **Dani's own** (`AGENT_OWN_ENTRIES` in `lib/api/files.ts`: `AGENTS.md`, `CLAUDE.md`, `memory`, which the supervisor writes into
+      the workspace root, `docs/12`), under "The grey files are Dani's instructions and memory. Aurora keeps them for you; edit them on the
+      Behaviour page." Their rows carry a **Managed** badge and a line ("Instructions, kept by Aurora"), open read-only, download, and offer
+      no Rename, Move or Delete; on a phone the group starts collapsed. **Show hidden** is Expert (`files.hidden`), a notice says hidden
+      files hold settings, and the first hidden file opened for editing asks "Edit a hidden file?". The row menu has **Move to…** (a folder
+      dialog, one level at a time; sends the `rename` op with the full `to`), a file row can be dragged onto a folder row, and Rename
+      says "To move it, use Move to…" for a slash. Upload, rename, move, delete and download give a toast (Delete has no Undo: the API cannot
+      restore); the uploads panel collapses to "Uploads: 1 file done · Hide". A folder that cannot load after the retries shows "Couldn't
+      connect to the computer / Tried N times…" with **Try again**, and Upload and New file disabled with "Nothing loaded. Actions come back
+      when the computer answers." A text file over 1 MiB opens a read-only **preview of its start** (`GET …/files/text?preview=1`, C-1060:
+      the first 256 KiB, no etag) with "Showing the first 256 KiB of 3.4 MiB." and **Download the whole file**; a `.csv` opens as a table
+      (200 rows, 50 columns, header row, cells as text) with **Show as text**. The editor shows a ● (title "Unsaved changes") instead of a
+      status line, **Save** is enabled only with changes (a New file is created on its first Save), "Saved" is a toast, and every way out
+      with unsaved changes (Back to folder, another file, the breadcrumb, the page's own links, the browser) asks **Leave without saving?**
+      — **Keep editing · Discard · Save and leave** (`leave-gate.tsx`).
+    - **Connect (SSH)** (computer-6): "Connect to Dani's computer"; first **With the Aurora command line:** `aurora ssh <handle>`; then
+      **Plain ssh** with a live line "Certificate valid for 13 more minutes (until 00:10)" (or "Expired · Get a new certificate"),
+      **Download** under one name, `aurora-<handle>-cert.pub` ("Save it as `~/.ssh/aurora-<handle>-cert.pub`"), and the command
+      `ssh -i ~/.ssh/aurora-<handle> -o CertificateFile=~/.ssh/aurora-<handle>-cert.pub … …@host`. The terminator still takes the agent id
+      as the user name (C-1060), so the id is kept out of sight: the block shows an ellipsis and **Copy command** has the whole line. The
+      minted certificate (public, not a secret) is kept in `sessionStorage` per agent and key until `valid_before`, so Download survives a
+      reload. Host key and Active sessions are Expert (`ssh.sessions`).
   - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
     page (Triggers section), bound to `narration_cards` (off by default). Help text: "Posts one message
     per reply that lists the steps the agent takes, updated as they run and shrunk to one line when the answer

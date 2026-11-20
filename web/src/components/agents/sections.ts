@@ -57,11 +57,12 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
   webhooks: "Webhooks",
   channels: "Channels",
   peers: "Other agents",
-  computer: "Computer",
+  // (P5-REFINE-15, D-408) The Computer's sub-nav reads Files · Terminal · Connect · Previews · Details.
+  computer: "Details",
   terminal: "Terminal",
   files: "Files",
   previews: "Previews",
-  ssh: "SSH",
+  ssh: "Connect",
   connect: "Computer: Connect",
   access: "Apps & access",
 };
@@ -70,7 +71,8 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
 export const SECTIONS: readonly { id: SectionId; label: string; pages: readonly AgentPageId[] }[] = [
   { id: "chat", label: "Chat", pages: ["chat"] },
   { id: "triggers", label: "Automations", pages: ["schedules", "webhooks", "channels"] },
-  { id: "computer", label: "Computer", pages: ["computer", "terminal", "files", "previews", "ssh", "connect"] },
+  // (P5-REFINE-15) Files first, then the Expert pages, then Details (the old Overview body); a BYO agent's `connect` stays alone.
+  { id: "computer", label: "Computer", pages: ["files", "terminal", "ssh", "previews", "computer", "connect"] },
   // (D-408) One page with a sub-nav; Pause and Delete sit in its danger zone. `peers` (Other agents) moved here from Automations
   // with its page id kept (P5-REFINE-12 renames and fills it).
   { id: "settings", label: "Settings", pages: ["instructions", "access", "memory", "skills", "evals", "peers"] },
@@ -158,8 +160,19 @@ export function availableSections(av: PageAvailability, allows?: PageAllows, cur
     label: s.label,
     pages: s.pages
       .filter((p) => isPageAvailable(p, av) && (p === current || listed(p, allows)))
-      .map((id) => ({ id, label: PAGE_LABEL[id] })),
+      .map((id) => ({ id, label: pageLabel(id, av) })),
   })).filter((s) => s.pages.length > 0);
+}
+
+/** The page's name in the sub-nav: Details, or Overview when the instance has no Files (terminal off), where it is the state card. */
+export function pageLabel(id: AgentPageId, av: PageAvailability): string {
+  return id === "computer" && !av.terminal ? "Overview" : PAGE_LABEL[id];
+}
+
+/** (P5-REFINE-15) Where the Computer section opens: Files when they exist, else Overview. Other sections open on their first page. */
+export function sectionLanding(section: SectionId, pages: readonly { id: AgentPageId }[]): AgentPageId | undefined {
+  if (section === "computer") return pages.find((p) => p.id === "files")?.id ?? pages.find((p) => p.id === "computer")?.id ?? pages[0]?.id;
+  return pages[0]?.id;
 }
 
 /** A hosted agent opens on Chat, a BYO agent on Instructions. */
