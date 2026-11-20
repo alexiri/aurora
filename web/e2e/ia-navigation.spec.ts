@@ -33,19 +33,22 @@ const labels = (nav: Locator) => nav.getByRole("link").allTextContents();
 
 for (const scheme of ["light", "dark"] as const) {
   test.describe(`navigation by role (${scheme})`, () => {
-    test("a member's organization sidebar shows exactly Workspaces, AI models and Internet access", async ({ page }) => {
+    // (P5-REFINE-17, rec 8) The organization is the "Manage Acme Labs" area; the rail stays a workspace rail.
+    test("a member's Manage area lists exactly Overview, AI models and Internet access", async ({ page }) => {
       await openWith(page, "/o/acme", scheme, meAs(member, "member", "member"));
-      const nav = page.getByRole("complementary", { name: "Sidebar" }).getByRole("navigation", { name: "Organization" });
-      await expect.poll(() => labels(nav)).toEqual(["Workspaces", "AI models", "Internet access"]);
+      const nav = page.getByRole("navigation", { name: "Manage Acme Labs" });
+      await expect.poll(() => labels(nav)).toEqual(["Overview", "AI models", "Internet access"]);
       await expect(page.getByRole("link", { name: "Administration" })).toHaveCount(0);
+      await expect(page.getByRole("complementary", { name: "Sidebar" }).getByRole("navigation", { name: "Organization" })).toHaveCount(0);
     });
 
-    test("an organization owner sees every organization topic", async ({ page }) => {
+    test("an organization owner's Manage area lists every organization topic", async ({ page }) => {
       await openWith(page, "/o/acme", scheme, meAs(member, "owner", "owner"));
-      const nav = page.getByRole("complementary", { name: "Sidebar" }).getByRole("navigation", { name: "Organization" });
+      const nav = page.getByRole("navigation", { name: "Manage Acme Labs" });
       await expect.poll(() => labels(nav)).toEqual([
-        "Workspaces", "Agents", "Apps & accounts", "AI models", "Internet access", "People", "Chat platforms", "Data", "Settings",
+        "Overview", "Agents", "People", "Apps & accounts", "Chat platforms", "AI models", "Internet access", "Data", "Settings",
       ]);
+      await expect(page.getByRole("link", { name: /^Back to / })).toBeVisible();
     });
 
     test("a workspace member sees no Approvals, People or Settings", async ({ page }) => {

@@ -34,6 +34,8 @@ interface World {
   acmeCount: number;
   /** Further organizations with one workspace each. */
   extraOrgs: number;
+  /** `/v1/instance` `org_creation`: who may create an organization. */
+  orgCreation: "instance_admins" | "anyone";
 }
 let world: World;
 
@@ -90,6 +92,7 @@ function mockFetch() {
         const body = (await req.clone().json()) as { more_controls: boolean };
         return json(200, { welcome_seen: true, guide_dismissed: [], tour_completed_at: null, notices_seen: [], more_controls: body.more_controls });
       }
+      if (p === "/v1/instance") return json(200, { org_creation: world.orgCreation, email_delivery: "smtp", features: {} });
       if (p === "/v1/orgs") return json(200, { items: [users, acme] });
       if (p === "/v1/resolve") {
         const slug = url.searchParams.get("org");
@@ -107,7 +110,7 @@ function mockFetch() {
 }
 
 function render(pathname: string, params: Record<string, string | undefined>, over: Partial<World> = {}) {
-  world = { admin: false, orgRole: "member", usersCount: 1, acmeCount: 0, extraOrgs: 0, ...over };
+  world = { admin: false, orgRole: "member", usersCount: 1, acmeCount: 0, extraOrgs: 0, orgCreation: "instance_admins", ...over };
   nav.pathname = pathname;
   nav.params = params;
   mockFetch();
@@ -209,12 +212,25 @@ describe("scope switcher", () => {
     await openSwitcher();
     await screen.findAllByRole("link", { name: /Team 2/ });
     expect(screen.queryByRole("button", { name: /New workspace/ })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Organization settings" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Manage Users" })).toBeNull();
     cleanup();
     onWorkspace({ usersCount: 2, acmeCount: 1, orgRole: "owner" });
     await openSwitcher();
     expect(await screen.findByRole("button", { name: "New workspace in Users" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Organization settings" })).toHaveAttribute("href", "/o/users/settings");
+    // (P5-REFINE-17, rec 8) The row opens the organization's Manage area on its Overview.
+    expect(screen.getByRole("link", { name: "Manage Users" })).toHaveAttribute("href", "/o/users");
+  });
+
+  it("(org-5) New organization is the last row only where sign-up lets this person create one", async () => {
+    onWorkspace({ usersCount: 2, acmeCount: 1 });
+    await openSwitcher();
+    await screen.findAllByRole("link", { name: /Team 2/ });
+    expect(screen.queryByRole("button", { name: "New organization" })).toBeNull();
+    cleanup();
+    onWorkspace({ usersCount: 2, acmeCount: 1, orgCreation: "anyone" });
+    await openSwitcher();
+    fireEvent.click(await screen.findByRole("button", { name: "New organization" }));
+    expect(await screen.findByRole("dialog", { name: "New organization" })).toBeInTheDocument();
   });
 
   it("keyboard: typing goes to the search field, arrow keys move through the rows, Escape closes", async () => {

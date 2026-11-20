@@ -100,17 +100,18 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeClean(page)).toEqual([]);
       });
 
-      test("the organization's Agents page: BYO under Administration's limits, then Skills and Previews", async ({ page }) => {
+      test("the organization's Agents page: the list, then Bring your own under Administration's limits (with Previews) and Skills", async ({ page }) => {
         await open(page, "/o/acme/agents", scheme);
-        await expect(page.getByRole("tab")).toHaveText(["BYO", "Skills", "Previews"]);
+        await expect(page.getByRole("tab")).toHaveText(["Agents", "Bring your own", "Skills"]);
+        await page.getByRole("tab", { name: "Bring your own" }).click();
+        await expect(page).toHaveURL(/\/o\/acme\/agents\?tab=byo$/);
         const above = page.getByRole("region", { name: "Set for you by an Aurora administrator" });
         await expect(above).toContainText("Only workspace owners may run agents outside Aurora");
         await expect(above).toContainText("Up to 90 days");
         await expect(page.getByLabel("Maximum token age (days)")).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
-        await page.getByRole("tab", { name: "Previews" }).click();
-        await expect(page).toHaveURL(/\/o\/acme\/agents\?tab=previews$/);
+        await expect(page.getByRole("region", { name: "Port previews" })).toBeVisible();
         expect(await axeClean(page)).toEqual([]);
       });
 

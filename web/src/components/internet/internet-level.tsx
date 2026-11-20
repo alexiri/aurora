@@ -14,6 +14,7 @@ import { Altitude } from "@/components/ui/altitude";
 import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { inputClass } from "@/components/ui/field";
 import { MainAction } from "@/components/ui/main-action";
@@ -92,6 +93,7 @@ function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }
   const rollback = useRollback(scope);
   // Rollback replaces the draft: it carries the draft revision this list showed (409 otherwise).
   const draftRevision = gens.data?.items.find((g) => g.status === "draft")?.draft_revision ?? undefined;
+  const [target, setTarget] = useState<number | null>(null);
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent title="History of changes" className="max-h-[90vh] overflow-y-auto">
@@ -99,30 +101,56 @@ function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }
         {gens.isError ? <ErrorState error={gens.error} /> : null}
         {rollback.isError ? <ErrorState error={rollback.error} /> : null}
         <ul className="space-y-2">
-          {gens.data?.items.map((g) => (
-            <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line p-2.5 text-sm text-ink">
-              <span>
-                #{g.number} · {g.status} · {g.rule_count} rules
-                {g.published_at ? <span className="text-ink-2"> · {formatWhen(g.published_at)}</span> : null}
-                {g.published_by ? <span className="text-ink-2"> · {g.published_by.display_name}</span> : null}
-              </span>
-              {g.status !== "draft" ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={rollback.isPending || draftRevision === undefined}
-                  aria-label={`Roll back to generation ${g.number}`}
-                  onClick={() => draftRevision !== undefined && rollback.mutate({ generation: g.number, expectRevision: draftRevision }, { onSuccess: onClose })}
-                >
-                  Roll back
-                </Button>
-              ) : null}
-            </li>
-          ))}
+          {gens.data?.items
+            .filter((g) => g.status !== "draft")
+            .map((g) => (
+              <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line p-2.5 text-sm text-ink">
+                <span className="min-w-0">
+                  {/* (org-14) Who changed what: "<Person> published version 4"; the exact change list comes with C-1087. */}
+                  <span className="block">{historySentence(g)}</span>
+                  <span className="block text-xs text-ink-2">
+                    {g.published_at ? formatWhen(g.published_at) : formatWhen(g.created_at)}
+                    {g.status === "published" ? " · current" : ""}
+                  </span>
+                </span>
+                {g.status === "published" ? (
+                  <Badge tone="accent">Current</Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={rollback.isPending || draftRevision === undefined}
+                    aria-label={`Roll back to version ${g.number}`}
+                    onClick={() => setTarget(g.number)}
+                  >
+                    Roll back to this version
+                  </Button>
+                )}
+              </li>
+            ))}
         </ul>
+        <ConfirmDialog
+          open={target !== null}
+          onOpenChange={(o) => {
+            if (!o) setTarget(null);
+          }}
+          title="Roll back to this version?"
+          description="Rules added since stop applying now."
+          confirmLabel="Roll back"
+          busy={rollback.isPending}
+          onConfirm={() => {
+            if (target === null || draftRevision === undefined) return;
+            rollback.mutate({ generation: target, expectRevision: draftRevision }, { onSuccess: onClose });
+          }}
+        />
       </DialogContent>
     </Dialog>
   );
+}
+
+/** "Alice published version 4": the person who changed the rules, and which version it made. */
+export function historySentence(g: { number: number; published_by?: { display_name: string } | null }): string {
+  return `${g.published_by?.display_name ?? "Someone"} published version ${g.number}`;
 }
 
 const LANE_OPTIONS: { value: DraftState["open_lane_posture"]; label: string }[] = [

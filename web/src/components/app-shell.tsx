@@ -7,13 +7,14 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type C
 
 import { usePendingApprovals } from "@/lib/api/approvals";
 import { clearDrafts } from "@/components/chat/composer/drafts";
-import { logout, useMe, useOrg, useResolve, useWorkspace } from "@/lib/api/queries";
+import { logout, useMe, useResolve, useWorkspace } from "@/lib/api/queries";
 import { useAltitude } from "@/lib/altitude";
 import { useMoreControls } from "@/lib/api/use-more-controls";
 import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { ApiError } from "@/lib/api/client";
 import { lastScope } from "@/lib/nav/recent-scopes";
+import { pickRailWorkspace, useRailWorkspace, writeRailWorkspace } from "@/lib/nav/manage-return";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
 import { useTimezoneAutofill } from "@/lib/timezone";
@@ -202,25 +203,6 @@ function topicActive(pathname: string, href: string, topic: string): boolean {
   return topic === "overview" || topic === "workspaces" ? pathname === path : pathname === path || pathname.startsWith(`${path}/`);
 }
 
-function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
-  const resolved = useResolve(orgSlug);
-  const org = useOrg(resolved.data?.org.id);
-  const instanceAdmin = useMe().data?.user.is_instance_admin === true;
-  // While the role loads, list what every member sees; the pages refuse nothing they list.
-  const altitude = useAltitude({ orgId: resolved.data?.org.id });
-  const topics = visibleTopics("org", { instanceAdmin, org: org.data?.my_role ?? (instanceAdmin ? undefined : "member") }, altitude);
-  return (
-    <nav aria-label="Organization">
-      <ul className="space-y-0.5">
-        {topics.map((t) => {
-          const href = topicHref("org", t, orgSlug);
-          return <NavItem key={t} tour={t} href={href} label={TOPIC_LABEL[t]} icon={TOPIC_ICON[t]!} active={topicActive(pathname, href, t)} />;
-        })}
-      </ul>
-    </nav>
-  );
-}
-
 /** Pending-count pill; the query only runs where the approvals page exists (RFE-012). */
 function PendingPill({ wsId }: { wsId: string }) {
   const pending = usePendingApprovals(wsId);
@@ -384,13 +366,25 @@ function SidebarContent({
   wsId?: string;
   pathname: string;
 }) {
-  const base = orgSlug && wsSlug ? wsRoutes(orgSlug, wsSlug).base : null;
   const inAdmin = pathname.startsWith("/admin");
+  // (P5-REFINE-17, rec 8) The organization is an area, not a second rail: on /o/<org>/… the rail stays the workspace
+  // rail of the workspace the person was in (this tab), else their personal workspace, else the first.
+  const meQuery = useMe();
+  const stored = useRailWorkspace();
+  const manageRail = orgSlug && !wsSlug && !inAdmin ? pickRailWorkspace(orgSlug, stored, meQuery.data?.memberships) : null;
+  const railResolved = useResolve(orgSlug, manageRail?.wsSlug);
+  const railSlug = wsSlug ?? manageRail?.wsSlug;
+  const base = orgSlug && railSlug ? wsRoutes(orgSlug, railSlug).base : null;
+  const railWsId = wsSlug ? wsId : railResolved.data?.workspace?.id;
   // The admin navigation is for instance admins only (the page guard already refuses everyone else; the nav must not
   // advertise it to a signed-in member who typed an /admin path, WEBA-11).
   const isInstanceAdmin = useMe().data?.user.is_instance_admin === true;
   const resolved = useResolve(orgSlug);
   useRememberReturn(orgSlug, wsSlug, resolved.data?.org.name, !inAdmin);
+  const wsName = resolved.data?.workspace?.name;
+  useEffect(() => {
+    if (orgSlug && wsSlug && wsName) writeRailWorkspace({ orgSlug, wsSlug, wsName });
+  }, [orgSlug, wsSlug, wsName]);
   const adminRail = inAdmin && isInstanceAdmin;
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-4">
@@ -401,9 +395,7 @@ function SidebarContent({
       {adminRail ? <AdminRailHeader /> : <ScopeSwitcher orgSlug={orgSlug} wsSlug={wsSlug} />}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {base ? (
-          <WorkspaceNav base={base} wsId={wsId} pathname={pathname} />
-        ) : orgSlug ? (
-          <OrgNav orgSlug={orgSlug} pathname={pathname} />
+          <WorkspaceNav base={base} wsId={railWsId} pathname={pathname} />
         ) : adminRail ? (
           <AdminNavList pathname={pathname} />
         ) : pathname.startsWith("/account") ? (
