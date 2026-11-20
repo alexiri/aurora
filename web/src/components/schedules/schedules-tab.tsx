@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Altitude } from "@/components/ui/altitude";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -122,14 +123,19 @@ export function ScheduleForm({
           <input id="sch-tz" className={inputClass} value={timezone} onChange={(e) => setTimezone(e.target.value)} />
         </Field>
       </div>
-      <Field id="sch-gate" label="Gate command (optional)" error={fe.gate_command} hint="Runs before each fire; the agent is only woken when it reports something to do.">
-        <input id="sch-gate" className={`${inputClass} font-mono`} value={gateCommand} onChange={(e) => setGateCommand(e.target.value)} />
-      </Field>
-      <Field id="sch-gate-desc" label="Gate description (optional)" error={fe.gate_description}>
-        <input id="sch-gate-desc" className={inputClass} value={gateDescription} onChange={(e) => setGateDescription(e.target.value)} />
-      </Field>
+      {/* (P5-REFINE-3) Expert; shown anyway when this schedule already has a gate or the server rejected one. */}
+      <Altitude id="auto.gate" level="expert" promote={!!initial?.gate_command || !!fe.gate_command || !!fe.gate_description}>
+        <Field id="sch-gate" label="Gate command (optional)" error={fe.gate_command} hint="Runs before each fire; the agent is only woken when it reports something to do.">
+          <input id="sch-gate" className={`${inputClass} font-mono`} value={gateCommand} onChange={(e) => setGateCommand(e.target.value)} />
+        </Field>
+        <Field id="sch-gate-desc" label="Gate description (optional)" error={fe.gate_description}>
+          <input id="sch-gate-desc" className={inputClass} value={gateDescription} onChange={(e) => setGateDescription(e.target.value)} />
+        </Field>
+      </Altitude>
       {!initial && canOwn ? (
-        <CheckboxField id="sch-anchored" label="Anchor to workspace (outlives any single member)" checked={anchored} onChange={setAnchored} />
+        <Altitude id="auto.anchor" level="expert">
+          <CheckboxField id="sch-anchored" label="Anchor to workspace (outlives any single member)" checked={anchored} onChange={setAnchored} />
+        </Altitude>
       ) : null}
       {initial ? <CheckboxField id="sch-enabled" label="Enabled" checked={enabled} onChange={setEnabled} /> : null}
       {mut.error && Object.keys(fe).length === 0 ? (

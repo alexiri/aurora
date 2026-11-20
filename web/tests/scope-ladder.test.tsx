@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ScopeLadder, type LadderAbove, type LadderBelow } from "@/components/ui/scope-ladder";
+import { wrap } from "./support/render";
 
 afterEach(cleanup);
 
@@ -39,8 +40,15 @@ describe("ScopeLadder (C-963)", () => {
     expect(screen.getByText(/Looser options are not available: Administration requires/)).toBeInTheDocument();
   });
 
+  it("collapsed: a plain member at Use reads the limits from above and gets no Tighten… (D-406)", () => {
+    wrap(<ScopeLadder collapsed above={above} here={<p>Four workspace controls</p>} />, { moreControls: false });
+    expect(screen.getByText("Requests without an account")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Tighten…" })).toBeNull();
+    expect(screen.queryByText("Four workspace controls")).toBeNull();
+  });
+
   it("collapsed: the controls stay out of the page until Tighten… is opened", () => {
-    render(<ScopeLadder collapsed above={above} here={<p>Four workspace controls</p>} />);
+    wrap(<ScopeLadder collapsed above={above} here={<p>Four workspace controls</p>} />, { moreControls: true });
     expect(screen.queryByText("Four workspace controls")).toBeNull();
     const button = screen.getByRole("button", { name: "Tighten…" });
     expect(button.getAttribute("aria-expanded")).toBe("false");

@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import { ClientRow } from "@/components/apps/oauth-clients-panel";
 import { ErrorState, Loading } from "@/components/states";
+import { Altitude } from "@/components/ui/altitude";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -317,6 +318,7 @@ export function WhatItCanDo({ detail }: { detail: AppDetail }) {
         {group("Change", "write")}
       </div>
       {detail.hosts.length > 0 || detail.agent_instructions ? (
+        <Altitude id="tech.details" level="setup">
         <details className="text-sm">
           <summary className="cursor-pointer font-medium text-ink">Technical details</summary>
           <div className="mt-3 space-y-3">
@@ -350,6 +352,7 @@ export function WhatItCanDo({ detail }: { detail: AppDetail }) {
             ) : null}
           </div>
         </details>
+        </Altitude>
       ) : null}
       {detail.api_docs ? (
         <section aria-label="API documentation">

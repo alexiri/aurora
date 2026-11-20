@@ -9,7 +9,9 @@ import { AgentFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
 import { Avatar } from "@/components/agent-avatar";
 import { Badge } from "@/components/ui/badge";
+import { Altitude, AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
+import { useAltitude, useHiddenControls } from "@/lib/altitude";
 import { ChevronLeftIcon, MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
@@ -33,14 +35,21 @@ import { EvalsTab } from "./evals/evals-tab";
 import { FilesTab } from "./files-tab";
 import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
-import { AGENT_PAGE_IDS, availableSections, resolvePage, SECTION_OF, type AgentPageId, type SectionId } from "./sections";
+import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, resolvePage, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
 import { AgentState } from "./agent-state";
 import { SshPage } from "./ssh-page";
 import { TerminalTab } from "./terminal-tab";
 import { useInstance, useOrg } from "@/lib/api/queries";
 
+/** (P5-REFINE-3) Tells the page's scope how many pages the viewer's altitude leaves out of the navigation. */
+function HiddenPages({ availability, allows }: { availability: PageAvailability; allows: PageAllows }) {
+  useHiddenControls(hiddenPageCount(availability, allows));
+  return null;
+}
+
 export function AgentPage() {
   const { org, ws, handle } = useParams<{ org: string; ws: string; handle: string }>();
+  const altitude = useAltitude();
   const router = useRouter();
   const resolved = useResolve(org, ws);
   const wsId = resolved.data?.workspace?.id;
@@ -89,8 +98,9 @@ export function AgentPage() {
 
   const byo = agent.kind === "byo";
   const availability = { byo, previews: previewsEnabled, terminal: terminalEnabled, ssh: sshEnabled };
-  const sections = availableSections(availability);
   const tab = resolvePage(requestedTab, availability);
+  // The viewer's altitude leaves pages out of the navigation; the open page stays listed (a direct `?tab=` still opens).
+  const sections = availableSections(availability, altitude.allows, tab);
   const sectionId = SECTION_OF[tab];
   const section = sections.find((s) => s.id === sectionId)!;
   const choosePage = (p: AgentPageId) => {
@@ -155,7 +165,9 @@ export function AgentPage() {
 
   return (
     // The agent page uses the full content width (FIX-129); long-form panels keep a readable width inside themselves.
+    <AltitudeScope>
     <div className="min-w-0 space-y-2">
+      <HiddenPages availability={availability} allows={altitude.allows} />
       {/* One line at md and up (breadcrumb above the name beside the avatar · section switcher · Agent actions); on a phone
           one compact row (back, avatar, name + status, actions) with the section switcher as the row under it (14 §Agent page). */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 md:flex-nowrap md:gap-x-4">
@@ -180,7 +192,9 @@ export function AgentPage() {
               <h1 className="min-w-0 truncate font-display text-base font-semibold leading-5 text-ink md:text-xl md:leading-7">{agent.name}</h1>
               {/* Each item keeps its words on one line; at 390 px the items wrap between themselves, never off the screen. */}
               <span className="flex min-w-0 flex-wrap items-center gap-x-2 whitespace-nowrap text-sm text-ink-2 md:shrink-0 md:flex-nowrap">
-                <span className="hidden font-mono text-muted md:inline">@{agent.handle}</span>
+                <Altitude id="agent.handle" level="expert">
+                  <span className="hidden font-mono text-muted md:inline">@{agent.handle}</span>
+                </Altitude>
                 {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
                 {byo ? <Badge>{agent.kind}</Badge> : null}
                 {byo && agent.is_default ? <Badge tone="accent">Default</Badge> : null}
@@ -325,6 +339,8 @@ export function AgentPage() {
           {tab === "connect" && byo ? <ConnectTab agent={agent} wsId={wsId} canOwn={canOwn} /> : null}
         </div>
       </div>
+      {chatPage ? null : <MoreControlsLine className="pt-2" />}
     </div>
+    </AltitudeScope>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
+import { Altitude } from "@/components/ui/altitude";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -321,6 +322,7 @@ export function ComputerTab({
         <ErrorNotice error={retry.error} />
       ) : null}
       {/* (P5-POLISH-6) The engine's details are collapsed: the last start attempt, the start log, why it is awake, the processes. */}
+      <Altitude id="tech.details" level="setup">
       <details className="rounded-card border border-line bg-surface px-4 py-3 shadow-card" data-testid="technical-details">
         <summary className="cursor-pointer text-sm font-medium text-ink">Technical details</summary>
         <div className="mt-4 space-y-8">
@@ -371,6 +373,7 @@ export function ComputerTab({
       </Section>
         </div>
       </details>
+      </Altitude>
     </div>
   );
 }

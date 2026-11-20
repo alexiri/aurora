@@ -306,10 +306,63 @@ cross-cutting UI primitive; the classification must follow the table exactly.
 
 ## Completion report
 
-- **Items done** (Scope 1–6, each with the commit):
-- **Contract C-1056 entry** (commit that added it to `docs/API_CONTRACTS.md`):
-- **Classification table check** (every "Now" id wrapped: list id → file; every "Later" id → brief):
-- **Deviations and why** (including the personal-workspace floor):
-- **Screenshots compared** (the footer line and the account menu, dark/light, 1256/390 px):
-- **Tests run** (command and counts):
-- **Open questions:**
+- **Items done** (Scope 1–6): Scope 1 (server) in `e4b82614`: migration `20261201000260`, repo/dto/service, IT
+  `more_controls_defaults_off_persists_and_is_per_person`, `web/openapi.json`, `schema.d.ts`,
+  `spec_schema.json`, docs `03`/`05`. Scopes 2–6 (web) in the lane's second commit: `lib/api/roles.ts`
+  (`Altitude`, `viewerFloor`, `altitudeAllows`, altitude-aware `visibleTopics`), `lib/altitude-registry.ts`,
+  `lib/altitude.tsx` (`useAltitude`, `AltitudeScope`, counters/hint), `lib/api/use-more-controls.ts`,
+  `components/ui/altitude.tsx` (`<Altitude>`, `<MoreControlsLine>`), `MenuSwitchItem` in `ui/menu.tsx`, the account
+  menu row, Account › Profile › Controls, the wrappers below, the lint, `docs/14` §Altitudes.
+- **Contract C-1056 entry**: it was already in `docs/API_CONTRACTS.md` (merged with the briefs, 1e1fef73); no
+  correction was needed. The `03` row and the `05` text are in `e4b82614`.
+- **Classification table check**: "Now" ids → files: `agent.memory/skills/tests/otheragents/terminal/ssh/previews/
+  connect` → `agents/sections.ts` (`PAGE_ALTITUDE`) + `agent-page.tsx`; `agent.roles` (and `effort/harness/
+  program`, one group) and `agent.proactive` → `instructions-tab.tsx`; `agent.handle` → `agent-page.tsx`;
+  `agent.byo` → `create-agent-dialog.tsx` (Expert, kind select) and `agents-view.tsx` (Set up, BYO row; the
+  registry row carries `also: "setup"`); `policy.restrict` → `ui/scope-ladder.tsx`; `policy.try` →
+  `internet/internet-level.tsx`; `auto.gate` → `schedules/schedules-tab.tsx`; `auto.anchor` →
+  `automations/owner-controls.tsx` (both tabs) and the schedule form; `auto.deliveryids` →
+  `webhooks/webhooks-tab.tsx`; `log.requests` → `approvals/activity-view.tsx`; `tech.details` → `account-row`,
+  `actions-table`, `app-setup/sections`, `computer-tab` (the four folds that exist; brief 2's `TechnicalDetails`
+  is not on this branch); `export.yaml` → `admin/settings/settings-index-view.tsx`; `ws.memlang` →
+  `create-workspace-form.tsx`, `settings/general-tab.tsx`; `chat.redact` → `chat/message-group.tsx`;
+  `org.groups`/`org.directory` → `org/org-topics.tsx` (tab list, via the hook); `apikeys` →
+  `account/my-keys-view.tsx` (the explanatory sentence); `fold.cli` → `agents/ssh-page.tsx`. `rail.*` →
+  `visibleTopics` (+ `app-shell.tsx`); `rail.platform` marks the rule. "Later": `policy.presets` → P5-REFINE-18;
+  `auto.cron`, `auto.curl`, `auto.verification` → P5-REFINE-14; `auto.signature`, `export.agent`,
+  `palette.verbs`, `kbd`, `bulk` → P5-REFINE-19 (the registry's `later` names them; the doc table says
+  "14 / 19" for `auto.curl`).
+- **Deviations and why**:
+  - Personal-workspace floor as the brief flags: the owner of a personal workspace starts at Use (one line in
+    `viewerFloor`). Personal is read from `personal_of` on the workspace or, until the org's workspace list
+    answers, assumed (so nothing deeper flashes in).
+  - The brief's lint (c) asserts "Model roles" is absent, but the collapsed line's label is "Model roles, effort
+    and agent program" (acceptance 2); the tests assert the controls (Harness, Effort, the role selects) instead.
+  - `<Altitude id="agent.byo">` is wrapped at two levels (kind select Expert, BYO row Set up): the registry row has
+    `also: "setup"` and the lint accepts either.
+  - Registry rows with `mark: true` (rail topics, `agent.effort/harness/program`) have no wrapper of their own;
+    the lint's "used in code" check skips them. `org.groups`/`org.directory` are used through the hook (tabs are
+    data), so the ids are literals in `org-topics.tsx`.
+  - A schedule that already has a gate command, and a field the server rejects, is promoted (shown) so a hidden
+    setting never silently keeps working or fails. `useAltitude`/`useMoreControls` are inert (Use / off) without a
+    QueryClient, so a control rendered alone in a unit test does not need one.
+  - The Playwright mock now answers `more_controls: true` by default so the existing specs see the whole
+    surface; `e2e/altitude.spec.ts` overrides it (not run here, by the owner's rule).
+  - "What moved" is still in the account menu: brief 1 (strings) removes it; the switch row sits above Show me
+    around as specified.
+  - Directory tabs: a hidden tab list also hides a direct `?tab=groups` request on People (the brief says routes
+    stay open; Groups falls back to Members). Pages and topics follow the brief.
+- **Screenshots compared**: none taken (no running dashboard on this box for this lane; Playwright not run by
+  rule). The footer line and the account-menu row are covered by vitest (`altitude.test.tsx`,
+  `context-switcher.test.tsx`) and the unrun `e2e/altitude.spec.ts` (both themes, 1256 and 390 px, axe).
+- **Tests run**: `cargo test -p aurora-api --test it onboarding` 5 passed (incl. the new one);
+  `openapi_matches_checked_in` passed; `cargo fmt --check` clean; `cargo clippy -p aurora-db -p aurora-api
+  --all-targets -D warnings` clean; `extract-schema.py --check` and `scripts/guards/run-all.sh` pass; `pnpm typecheck`
+  clean; eslint on touched files: 0 errors (1 existing warning in `account-row.tsx`); vitest: 44 files, 411 tests
+  passed (roles, altitude, altitude-pages, altitude-registry, agent-sections, scope-ladder, model-roles-instructions,
+  agents, context-switcher, internet-pages, ui-text and every touched component's test files). Test support:
+  `tests/support/render.tsx` `wrap` seeds the switch on by default (`moreControls: false` tests Use).
+- **Open questions**: (1) personal-workspace floor (the owner confirms; one line). (2) Waiting: `TechnicalDetails`
+  wrapper after P5-REFINE-2 merges (whichever merges second makes the one-line change); the "Later" rows above.
+  (3) Playwright `altitude.spec.ts` needs a first run in CI; other specs that use their own onboarding fixture
+  (not the shared mock) may need `more_controls: true`.

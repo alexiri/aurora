@@ -25,6 +25,9 @@ import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { WhoCan } from "@/components/ui/who-can";
 import { AskAdmin } from "@/components/ask-admin";
+import { AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
+import { useAltitude, useHiddenControls } from "@/lib/altitude";
+import { ALTITUDE_REGISTRY, type AltitudeId } from "@/lib/altitude-registry";
 import { useScimSettings } from "@/lib/api/scim";
 import { useWorkspaces, type Org } from "@/lib/api/queries";
 import { whoCanFromContacts } from "@/lib/who-can";
@@ -164,17 +167,39 @@ export function OrgPeoplePage() {
   );
 }
 
+/** The registry ids of the two tabs (`lib/altitude-registry.ts`); both are Expert, Set up where a provider is configured. */
+const ORG_TAB_ALTITUDE = { groups: "org.groups", directory: "org.directory" } as const satisfies Record<string, AltitudeId>;
+
+/** Tells the page's `AltitudeScope` how many tabs the altitude left out. */
+function ReportHidden({ n }: { n: number }) {
+  useHiddenControls(n);
+  return null;
+}
+
 /** People: Directory sync is for owners, and only where the instance has `scim.enabled` (docs/14). */
 function DirectoryAwareTopic({ org, slug }: { org: Org; slug: string }) {
   const isOwner = org.my_role === "owner";
   const scim = useScimSettings(isOwner ? org.id : undefined);
   const directory = isOwner && scim.data?.available === true;
+  // (P5-REFINE-3, D-406) Groups and Directory sync are Expert unless a directory provider is configured (then Set up).
+  // `org.groups` and `org.directory` are the registry ids; the tabs are data, so the hook decides, not `<Altitude>`.
+  const alt = useAltitude();
+  const level = directory ? "setup" : ALTITUDE_REGISTRY[ORG_TAB_ALTITUDE.groups].altitude;
+  const showGroups = alt.allows(level);
+  const showDirectory = directory && alt.allows(level);
+  const hidden = (showGroups ? 0 : 1) + (directory && !showDirectory ? 1 : 0);
   const tabs: TopicTab<Tabs<"orgPeople">>[] = [
     { id: "members", label: "Members", content: <MembersView orgId={org.id} viewer={org.my_role} /> },
-    { id: "groups", label: "Groups", content: <GroupsView orgId={org.id} orgSlug={slug} /> },
-    ...(directory ? [{ id: "directory-sync" as const, label: "Directory sync", content: <OrgDirectoryView org={org} isOwner /> }] : []),
+    ...(showGroups ? [{ id: "groups" as const, label: "Groups", content: <GroupsView orgId={org.id} orgSlug={slug} /> }] : []),
+    ...(showDirectory ? [{ id: "directory-sync" as const, label: "Directory sync", content: <OrgDirectoryView org={org} isOwner /> }] : []),
   ];
-  return <TopicPage idBase="org-people" title="People" description="Who can use this organization, and the groups they belong to." tabs={tabs} />;
+  return (
+    <AltitudeScope>
+      <ReportHidden n={hidden} />
+      <TopicPage idBase="org-people" title="People" description="Who can use this organization, and the groups they belong to." tabs={tabs} />
+      <MoreControlsLine className="pt-4" />
+    </AltitudeScope>
+  );
 }
 
 export function OrgChatPlatformsPage() {

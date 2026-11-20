@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { Altitude, AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
@@ -37,6 +38,7 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
     : [lang, ...MEMORY_LANGUAGES];
 
   return (
+    <AltitudeScope>
     <Form onSubmit={submit} noValidate className="max-w-md">
       {!canOwn ? <Notice role="status">Only workspace owners can change these settings.</Notice> : null}
       <fieldset disabled={!canOwn || patch.isPending} className="space-y-4">
@@ -52,14 +54,16 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
         <Field id="set-tz" label="Time zone" error={fe.timezone}>
           <Select id="set-tz" value={tz} onChange={setTz} options={tzOptions.map((z) => ({ value: z, label: z }))} />
         </Field>
-        <Field
-          id="set-lang"
-          label="Memory language"
-          hint="Language used for memory search indexing."
-          error={fe.memory_language}
-        >
-          <Select id="set-lang" value={lang} onChange={setLang} options={langOptions.map((l) => ({ value: l, label: l }))} />
-        </Field>
+        <Altitude id="ws.memlang" level="expert" promote={!!fe.memory_language}>
+          <Field
+            id="set-lang"
+            label="Memory language"
+            hint="Language used for memory search indexing."
+            error={fe.memory_language}
+          >
+            <Select id="set-lang" value={lang} onChange={setLang} options={langOptions.map((l) => ({ value: l, label: l }))} />
+          </Field>
+        </Altitude>
       </fieldset>
       {patch.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={patch.error} />
@@ -72,6 +76,8 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
           </Button>
         </FormActions>
       ) : null}
+      <MoreControlsLine />
     </Form>
+    </AltitudeScope>
   );
 }

@@ -1,3 +1,5 @@
+import type { AltitudeId } from "@/lib/altitude-registry";
+
 /**
  * The agent page's five sections (D-200, docs/14 §Agent page (phase 5)) and the one mapping from a page id to its
  * section. The URL keeps `?tab=<page>` with the page ids the page has always had, so every deep link opens the page it
@@ -105,12 +107,46 @@ export interface AvailableSection {
   pages: { id: AgentPageId; label: string }[];
 }
 
-/** The sections that have at least one available page, in order, with their available pages. */
-export function availableSections(av: PageAvailability): AvailableSection[] {
+/**
+ * (P5-REFINE-3, D-406) The altitude of the pages that are not Use: Memory and Skills are Set up, the rest of this table
+ * Expert (registry ids in `lib/altitude-registry.ts`). Altitude hides a page from the navigation only: a direct
+ * `?tab=` still opens it (`resolvePage` does not look at it).
+ */
+export const PAGE_ALTITUDE: Partial<Record<AgentPageId, { id: AltitudeId; level: "setup" | "expert" }>> = {
+  memory: { id: "agent.memory", level: "setup" },
+  skills: { id: "agent.skills", level: "setup" },
+  evals: { id: "agent.tests", level: "expert" },
+  peers: { id: "agent.otheragents", level: "expert" },
+  terminal: { id: "agent.terminal", level: "expert" },
+  ssh: { id: "agent.ssh", level: "expert" },
+  previews: { id: "agent.previews", level: "expert" },
+  connect: { id: "agent.connect", level: "expert" },
+};
+
+/** Does the viewer's altitude list this page in the navigation? `allows` comes from `useAltitude()`. */
+export type PageAllows = (level: "setup" | "expert") => boolean;
+
+function listed(page: AgentPageId, allows: PageAllows | undefined): boolean {
+  const a = PAGE_ALTITUDE[page];
+  return !a || !allows || allows(a.level);
+}
+
+/** How many available pages the altitude leaves out of the navigation (the page footer counts them). */
+export function hiddenPageCount(av: PageAvailability, allows: PageAllows): number {
+  return AGENT_PAGE_IDS.filter((p) => isPageAvailable(p, av) && !listed(p, allows)).length;
+}
+
+/**
+ * The sections that have at least one available page, in order, with their available pages. With `allows`, pages above
+ * the viewer's altitude are left out of the navigation, except `current` (the page that is open, e.g. by a direct link).
+ */
+export function availableSections(av: PageAvailability, allows?: PageAllows, current?: AgentPageId): AvailableSection[] {
   return SECTIONS.map((s) => ({
     id: s.id,
     label: s.label,
-    pages: s.pages.filter((p) => isPageAvailable(p, av)).map((id) => ({ id, label: PAGE_LABEL[id] })),
+    pages: s.pages
+      .filter((p) => isPageAvailable(p, av) && (p === current || listed(p, allows)))
+      .map((id) => ({ id, label: PAGE_LABEL[id] })),
   })).filter((s) => s.pages.length > 0);
 }
 
