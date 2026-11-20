@@ -475,7 +475,21 @@ Lane A, branch `alexiri/p5-polish-a`, master at 6cbf3a12 then re-merged at 4c92c
   - Tests: `refine-11-chats.test.tsx` (+2: error detail, `originRunCard`), `agent-needs.test.tsx` (new, 3), `e2e/agent-needs.spec.ts` (new: count appears,
     drops after deciding without a reload, both themes, 1280/390 px, axe) — Playwright not run, for the CI Watcher. Gates: typecheck, eslint on touched files,
     full web vitest 216 files / 2986 tests passed.
-- **Still waiting (not done, with what they wait for):** item 3's live "What <Agent> did" (last five timeline rows, `useTimelineStream`) → **-9**;
+- **Fourth pass (lane F, branch `alexiri/p5-agent`, -9 merged into the branch): item 3's live "What <Agent> did" is done.** `useAgentStatus` reads
+  `useAgentTimeline(agentId, {}, 5)` and opens one `useTimelineStream(agentId)` per agent page (the rail's expanded panel, pop-over and phone sheet
+  share it, so a person uses one of their five streams, not three). `WhatItDid` (parts.tsx) draws the five newest rows as `timelineWords` sentences
+  (`lib/labels.ts`: title + meta line, one table of outcome words per kind that `labels.test` walks), each a link from `timelineHref`
+  (`lib/timeline-links.ts`: conversation → `?c=&m=`, approval → Approvals, file → Files `?path=`, run/delivery/peer task → the agent's page, app, rule),
+  a time (`formatWhen`, ticks every 30 s) and "All" to the Activity filtered to the agent. A new row appears on top; a running row ("Running ‘Morning
+  summary’…") turns into its outcome in place (same `id`). The collapsed icon's red dot is now "a failed or blocked row among the five".
+  **Removed with the feature it served:** `RecentCalls`, `decisionBadge`, `useAgentRecentActivity` and `approvalKeys.recentActivity` (the rail read the
+  request log; the timeline replaces it), and `useAgentStatus`'s unused `open` parameter. Tests: `status-rail.test.tsx` (rows, links, running row, the
+  `hasProblem` rule; the `decisionBadge` test removed with the function), new `rail-did-live.test.tsx` (five rows asked, one stream, new row on top,
+  running row in place, capped at five), new `timeline-words.test.ts` (the three workspace-2 rows from fields, every outcome word C-1083 lists has a line,
+  every link type), `e2e/agent-page-p5.spec.ts` (mocks `/v1/agents/{id}/timeline`, asserts the sentences and links; **not run**: Playwright is refused in
+  this lane). Commands: `tsc --noEmit` clean; eslint on touched files clean; whole web vitest (shared rail and labels changed) **220 files, 3020 tests passed**;
+  `scripts/guards/run-all.sh` all passed. No Rust or API change.
+- **Still waiting (not done, with what they wait for):** ~~item 3's live "What <Agent> did"~~ done (fourth pass);
   item 8's "<Agent> has no AI model yet" card with Add a key / Ask an admin (header words are done; -8 is merged so the Ask reason exists, but the
   card's button is -12's and is not wired here). Everything else of the brief that has a merged dependency is done (the third pass above).
 - **Deviations from this brief, and why:**
