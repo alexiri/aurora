@@ -391,6 +391,21 @@ Every item: build what the After PNG shows, in both themes, at 1256 and 390 px, 
   private key pasted (`-----BEGIN`) says "That's a private key. Paste the public key (the file ending in .pub)." and never
   sends it anywhere. Server validation stays authoritative.
 
+### 19. Count badges in the workspace rail and on the phone (owner, 2026-11-20; P5-REFINE-20 rows G1, G2, G6)
+
+The owner reported the navigation's count badges don't work. This brief owns them for the workspace:
+- **Approvals** (G1): the count of pending approvals the viewer can decide. Today `PendingPill`
+  (`components/app-shell.tsx` ~:219) reads `usePendingApprovals` with no refetch and no stream outside the Approvals
+  page, so it goes stale. Read the count from C-1082 (`GET /v1/attention/counts`, P5-REFINE-8) when that has merged,
+  and keep it live (the approvals stream where it is open, else a refetch on focus and every 30 s); until then, at
+  least add the refetch on focus and the interval.
+- **Overview** (G2): the workspace's attention count (C-1082) next to Overview, and the same number in the Overview's
+  Needs you heading.
+- **Phone** (G6): the drawer shows the same badges; the hamburger button shows a dot when anything waits.
+- Rules: no badge at zero; only for people who can act; screen-reader text ("2 need your attention"); inside the link;
+  amber only because the viewer can act (D-384); fits at 390 px. Tests: vitest for zero/hidden, the count, and a
+  member who can't act; a mocked Playwright spec where the count drops after deciding, without a reload.
+
 ## Out of scope
 
 - Names and words of brief 1 (vocabulary), primitives of brief 2, altitude registry of brief 3. Use them.
