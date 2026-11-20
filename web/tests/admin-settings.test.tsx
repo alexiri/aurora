@@ -184,7 +184,9 @@ describe("Generic settings section form (SET-1)", () => {
     expect(await screen.findByText("Limit")).toBeTruthy();
     // Locked: read-only text, the Helm note, no control.
     expect(screen.getByTestId("t.limit-locked-value").textContent).toBe("5");
-    expect(screen.getByText(/Configured in Helm/).textContent).toContain("config.t.limit");
+    // (P5-REFINE-18 #1) The Helm key is named once, in a short line; the long how-to lives on Set in Helm.
+    expect(screen.getByText(/Set in your Helm values:/).textContent).toContain("config.t.limit");
+    expect(screen.getAllByRole("link", { name: /Set by the installation/ }).map((a) => a.getAttribute("href"))).toContain("/admin/set-in-helm#t.limit");
     expect(document.getElementById("t.limit-c")).toBeNull();
     // Dashboard: the control holds the value; Reset names the default.
     expect((document.getElementById("t.count-c") as HTMLInputElement).value).toBe("20");
@@ -268,8 +270,10 @@ describe("Generic settings section form (SET-1)", () => {
     // The typed value is kept until Reload.
     expect((document.getElementById("t.flag-c") as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("must be between 1 and 100")).toBeTruthy();
-    expect(screen.getByText(/needs t\.flag/)).toBeTruthy();
+    expect(await screen.findByText("Enter a number from 1 to 100 things.")).toBeTruthy();
+    // A message that names a config key is turned into words; the key is only under Technical details.
+    expect(screen.queryByText(/needs t\.flag/)).toBeNull();
+    expect(screen.getByText(/isn't a valid/)).toBeTruthy();
     expect(screen.queryByText(/sign in again/i)).toBeNull();
   });
 });

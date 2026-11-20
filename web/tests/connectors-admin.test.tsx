@@ -170,7 +170,7 @@ describe("Add connector flow", () => {
     expect(list.getByText("Connect a Mattermost team with a bot account.")).toBeInTheDocument();
     expect(list.getByRole("button", { name: "Add Mattermost" })).toBeInTheDocument();
     cleanup();
-    await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, added: true }])) });
+    await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, added: true }])) }, "Add chat platform");
     const added = within(await screen.findByRole("list", { name: "Chat platform types" }));
     expect(added.getByText("Added")).toBeInTheDocument();
     expect(added.queryByRole("button", { name: "Add Mattermost" })).toBeNull();
@@ -298,7 +298,8 @@ describe("Add connector flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add chat platform" }));
     expect(await screen.findByText(/changed while you were adding it/)).toBeInTheDocument();
     expect(screen.getByTestId("manifest-summary")).toBeInTheDocument();
-    await waitFor(() => expect(calls.filter((c) => c.key === "GET /v1/admin/connector-types").length).toBe(2));
+    // The list, the choose step and the reload after the stale answer each read the types once.
+    await waitFor(() => expect(calls.filter((c) => c.key === "GET /v1/admin/connector-types").length).toBe(3));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     // The form keeps what was typed.
     expect(await screen.findByLabelText("Base URL")).toHaveValue("https://fake.example.org");
@@ -345,7 +346,8 @@ describe("Connector icon (FIX-183, C-1044)", () => {
     await screen.findByText("Self-hosted");
     const srcs = Array.from(container.querySelectorAll("img")).map((i) => i.getAttribute("src"));
     expect(srcs).toEqual(["/v1/connectors/mattermost/icon"]);
-    expect(screen.getAllByTestId("app-icon-fallback")).toHaveLength(1);
+    // One monogram for the self-hosted connector, and one each for Slack and Teams, which are not available yet.
+    expect(screen.getAllByTestId("app-icon-fallback")).toHaveLength(3);
   });
 });
 
@@ -595,6 +597,7 @@ describe("Chat platforms lead with platforms (P5-REFINE-18 #7, admin-6)", () => 
     wrap(<ConnectorsAdminView />);
     expect(await screen.findByText("Where people can talk to agents.")).toBeInTheDocument();
     const list = within(await screen.findByRole("list", { name: "Chat platforms" }));
+    await list.findByText("Available");
     const rows = list.getAllByRole("listitem");
     expect(rows.map((r) => within(r).getByText(/^(Mattermost|Slack|Microsoft Teams)$/).textContent)).toEqual(["Mattermost", "Slack", "Microsoft Teams"]);
     expect(within(rows[0]!).getByText("Available")).toBeInTheDocument();
@@ -615,7 +618,7 @@ describe("Chat platforms lead with platforms (P5-REFINE-18 #7, admin-6)", () => 
     });
     wrap(<ConnectorsAdminView />);
     const list = within(await screen.findByRole("list", { name: "Chat platforms" }));
-    expect(list.getByText("Added")).toBeInTheDocument();
+    expect(await list.findByText("Added")).toBeInTheDocument();
     expect(list.queryByRole("button", { name: "Add Mattermost" })).toBeNull();
     expect(list.getByRole("button", { name: /^Manage / })).toBeInTheDocument();
   });

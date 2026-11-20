@@ -50,7 +50,7 @@ export function ConnectorsAdminView() {
     // (P5-REFINE-18 #7, admin-6) Platforms first; the connector machinery sits in one closed fold on the same page.
     body = (
       <>
-        <PlatformsList onAdd={() => setView({ kind: "add" })} onManage={(id) => setView({ kind: "detail", id })} />
+        <PlatformsList connectors={q.data.items} onAdd={() => setView({ kind: "add" })} onManage={(id) => setView({ kind: "detail", id })} />
         <details className="group rounded-card border border-line bg-surface shadow-card" data-testid="chat-platforms-advanced">
           <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-ink">
             Advanced · connector hosts, tokens and replicas

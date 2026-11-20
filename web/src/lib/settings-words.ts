@@ -251,6 +251,8 @@ export function fieldErrorWords(path: string, message: string, field?: FieldInfo
     .replace(CONFIG_NAME, "")
     .replace(/\s+/g, " ")
     .trim();
+  // A message with no config name in it is already words: it stays as the server wrote it.
+  if (plain === message.trim()) return message;
   const base = plain.length >= 8 && !/\.\.=|=/.test(plain) ? plain : `That isn't a valid ${field ? field.label.toLowerCase() : "value"}.`;
   return `${rowPrefix}${base.charAt(0).toUpperCase()}${base.slice(1)}`.replace(/([^.!?])$/, "$1.");
 }

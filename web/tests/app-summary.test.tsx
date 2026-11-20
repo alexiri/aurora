@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { appSummary, SUMMARY_FALLBACK } from "@/lib/app-summary";
-import { json, mockFetch } from "./support/api";
+import { mockFetch } from "./support/api";
 import { wrap } from "./support/render";
 
 vi.mock("next/navigation", () => ({
@@ -54,7 +54,7 @@ describe("PluginReview opens on the summary (admin-7)", () => {
   } as unknown as PluginPackage;
 
   it("shows the name, 'App package, version', Approve and three sentences; hooks, claims and digest sit in a closed Technical details", () => {
-    mockFetch(() => json(200, plugin));
+    mockFetch({});
     wrap(<PluginReview plugin={plugin} />);
     const summary = screen.getByLabelText("Summary");
     expect(within(summary).getByText("App package, version 1.4")).toBeInTheDocument();

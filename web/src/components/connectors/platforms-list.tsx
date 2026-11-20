@@ -1,10 +1,9 @@
 "use client";
 
-import { ErrorNotice } from "@/components/ui/notice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ItemList, ListRow } from "@/components/ui/section";
-import { useAdminConnectors, useConnectorTypes } from "@/lib/api/connectors";
+import { useConnectorTypes, type ConnectorAdmin } from "@/lib/api/connectors";
 import { notAvailableYet } from "@/lib/chat-platforms";
 
 import { ConnectorIcon, ConnectorStatusChip } from "./shared";
@@ -13,17 +12,15 @@ import { ConnectorIcon, ConnectorStatusChip } from "./shared";
  * (P5-REFINE-18 #7, admin-6) The platforms first: what Aurora can connect people through, with the ones it cannot yet.
  * A type the API lists is "Available" (Add, or Added once it is); the rest of the product's names are "Not available yet".
  */
-export function PlatformsList({ onAdd, onManage }: { onAdd: () => void; onManage: (id: string) => void }) {
+export function PlatformsList({ connectors, onAdd, onManage }: { connectors: ConnectorAdmin[]; onAdd: () => void; onManage: (id: string) => void }) {
   const types = useConnectorTypes();
-  const connectors = useAdminConnectors();
   const listed = types.data?.items ?? [];
   const soon = notAvailableYet(listed);
   return (
     <div className="space-y-3">
-      {types.isError ? <ErrorNotice error={types.error} /> : null}
       <ItemList aria-label="Chat platforms">
         {listed.map((t) => {
-          const connector = (connectors.data?.items ?? []).find((c) => c.type_id === t.type_id);
+          const connector = connectors.find((c) => c.type_id === t.type_id);
           return (
             <ListRow
               key={t.type_id}
@@ -64,11 +61,10 @@ export function PlatformsList({ onAdd, onManage }: { onAdd: () => void; onManage
           </ListRow>
         ))}
       </ItemList>
-      {!types.isPending && !types.data?.host_running ? (
-        <Button variant="outline" onClick={onAdd}>
-          Add chat platform
-        </Button>
-      ) : null}
+      {/* The choose step also holds the self-hosted path, and says so when no host is running. */}
+      <Button variant="outline" onClick={onAdd}>
+        Add chat platform
+      </Button>
     </div>
   );
 }
