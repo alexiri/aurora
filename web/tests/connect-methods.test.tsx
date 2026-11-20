@@ -161,6 +161,40 @@ describe("connect window: How do you want to connect?", () => {
     const radios = screen.getAllByRole("radio") as HTMLInputElement[];
     expect(radios.map((r) => r.checked)).toEqual([false, true, false]);
   });
+
+  // FIX-194 (D-420, C-1091): the field that names the connection starts with the name it has, so a required one
+  // needs no retyping and the person sees the name they keep; it is sent like any other field.
+  it("a reconnect prefills the field that names the connection with its current label", async () => {
+    const withName = {
+      ...APP,
+      connect: [
+        method({
+          id: "token",
+          label: "Personal access token",
+          fields: [
+            { name: "name", label: "Name", type: "text", store: "label", required: true },
+            field("access_token", "Personal access token field"),
+          ],
+        }),
+      ],
+    };
+    const calls = stub(
+      routes({
+        "GET /v1/apps/github": () => json(200, withName),
+        "GET /v1/workspaces/w1/connections": () =>
+          json(200, { items: [{ id: "c1", app_id: "github", connect_method: "token", label: "Production account" }], next_cursor: null }),
+        "POST /v1/apps/github/connect": () => json(200, { kind: "connected", connection: { id: "c1", scopes: [] }, missing_scopes: [] }),
+      }),
+    );
+    wrap(<ConnectView />);
+    const name = (await screen.findByLabelText("Name")) as HTMLInputElement;
+    expect(name.value).toBe("Production account");
+    fireEvent.change(screen.getByLabelText("Personal access token field"), { target: { value: "ghp_x" } });
+    fireEvent.click(screen.getByRole("button", { name: /connect|sign in|save|reconnect/i }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.path === "/v1/apps/github/connect")).toBe(true));
+    const post = calls.find((c) => c.method === "POST" && c.path === "/v1/apps/github/connect");
+    expect(post?.body).toMatchObject({ fields: { name: "Production account", access_token: "ghp_x" } });
+  });
 });
 
 describe("tools restricted to a connect method", () => {

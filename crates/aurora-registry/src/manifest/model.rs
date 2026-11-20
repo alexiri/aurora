@@ -701,6 +701,8 @@ pub enum Store {
     Credentials,
     Metadata,
     TenantHost,
+    /// (FIX-194, D-420, C-1091) The value is the connection's label; it is stored nowhere else.
+    Label,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

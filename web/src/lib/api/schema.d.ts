@@ -9054,7 +9054,11 @@ export interface components {
             placeholder?: string | null;
             required: boolean;
             show_when?: components["schemas"]["ShowWhen"] | null;
-            /** @description `credentials` | `metadata` | `tenant_host`. */
+            /**
+             * @description `credentials` | `metadata` | `tenant_host` | `label`. A `label` field's value is the
+             *     connection's name (FIX-194, C-1091): the dashboard prefills it with the current name when
+             *     the person signs in again.
+             */
             store: string;
             /** @description `text` | `secret` | `select` | `file` | `json_file`. */
             type: string;

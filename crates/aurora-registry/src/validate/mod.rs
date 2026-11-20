@@ -595,6 +595,7 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                         format!("no oauth client `{}`", o.client),
                     );
                 }
+                label_fields(cx, &o.fields, &p, false);
                 for (j, f) in o.fields.iter().enumerate() {
                     if f.store == Store::Credentials || f.kind == FieldType::JsonFile {
                         cx.v(
@@ -619,6 +620,7 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                 }
             }
             Connect::Fields(f) => {
+                label_fields(cx, &f.fields, &p, true);
                 if let Some(pr) = &f.probe {
                     let names: Vec<&str> = f
                         .fields
@@ -629,6 +631,7 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                 }
             }
             Connect::Hook(h) => {
+                label_fields(cx, &h.fields, &p, false);
                 used.insert(Hook::ConnectExchange);
                 if h.authorize {
                     used.insert(Hook::ConnectAuthorize);
@@ -1569,6 +1572,41 @@ fn permission_hint_rules(cx: &mut Ctx<'_>, c: &Connect, p: &str) {
                     format!("a permission hint must be 1 to {HINT_MAX} characters without control characters"),
                 );
             }
+        }
+    }
+}
+
+/// (FIX-194, C-1091) `store: label` names the connection: `fields` methods only, one per method,
+/// text fields only.
+fn label_fields(cx: &mut Ctx<'_>, fields: &[FormField], p: &str, allowed: bool) {
+    let mut seen = false;
+    for (j, f) in fields.iter().enumerate() {
+        if f.store != Store::Label {
+            continue;
+        }
+        let fp = format!("{p}/fields/{j}");
+        if !allowed {
+            cx.v(
+                "label_field_method",
+                &fp,
+                "`store: label` is only allowed in a `kind: fields` method",
+            );
+            continue;
+        }
+        if seen {
+            cx.v(
+                "label_field_duplicate",
+                &fp,
+                "a method may have at most one `store: label` field",
+            );
+        }
+        seen = true;
+        if f.kind != FieldType::Text {
+            cx.v(
+                "label_field_type",
+                &fp,
+                "a `store: label` field must be `type: text`",
+            );
         }
     }
 }

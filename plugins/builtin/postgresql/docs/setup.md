@@ -22,9 +22,11 @@ Aurora cannot tell. Grant the role no view or function you would not want an age
 
 ## Connecting
 
-Choose *PostgreSQL* under *Apps*, enter the server host, port (5432 by default), database, user and
-password, pick the TLS mode and give the connection a name such as `orders prod`. The name becomes
-the **service name** agents use (`orders-prod`); the connection page shows it.
+Choose *PostgreSQL* under *Apps*, give the connection a **Name** such as `Prod DB (eu)` (optional),
+enter the server host, port (5432 by default), database, user and password, and pick the TLS mode.
+The name is what agents call the connection, and it also becomes the **service name** agents use
+with `psql` (`prod-db-eu`); the connection page shows it. Left empty, the connection gets the
+app's name.
 
 Then grant the connection to the agents that may use it, like any other app.
 

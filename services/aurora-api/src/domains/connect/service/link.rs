@@ -106,7 +106,7 @@ fn has_prefix(body: &[u8], prefix: &str) -> bool {
         .starts_with(prefix)
 }
 
-/// Fetch the link once and check it; the connect form's `name` becomes the label.
+/// Fetch the link once and check it. The connection's label is the form's `store: label` field.
 pub(super) async fn check(ctx: &Ctx<'_>, g: &mut Gathered) -> Result<(), ConnectErr> {
     let Some(sl) = ctx.app.secret_link.as_ref() else {
         return Ok(());
@@ -142,9 +142,6 @@ pub(super) async fn check(ctx: &Ctx<'_>, g: &mut Gathered) -> Result<(), Connect
             sl.credential.clone(),
             Value::String(url.as_str().to_owned()),
         );
-        if let Some(name) = g.fields.get("name").and_then(Value::as_str) {
-            g.label = Some(name.trim().to_owned());
-        }
         return Ok(());
     }
     let mut cur = url.clone();
@@ -225,10 +222,6 @@ pub(super) async fn check(ctx: &Ctx<'_>, g: &mut Gathered) -> Result<(), Connect
         sl.credential.clone(),
         Value::String(url.as_str().to_owned()),
     );
-    // The connect form's `name` is the connection's label.
-    if let Some(name) = g.fields.get("name").and_then(Value::as_str) {
-        g.label = Some(name.trim().to_owned());
-    }
     Ok(())
 }
 

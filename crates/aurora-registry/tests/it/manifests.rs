@@ -135,6 +135,51 @@ fn codes(yaml: &str) -> BTreeSet<&'static str> {
     run(yaml).iter().map(|x| x.code).collect()
 }
 
+/// METHODS with extra form fields appended to the `token` (fields) method.
+fn with_token_fields(extra: &str) -> String {
+    METHODS.replace(TOKEN_FIELD, &format!("{TOKEN_FIELD}{extra}"))
+}
+
+const LABEL_FIELD: &str = "          - { name: name, label: Name, store: label }\n";
+
+/// (FIX-194, C-1091) A `store: label` field is valid in a `fields` method, and adding or removing
+/// one widens nothing.
+#[test]
+fn label_field_is_valid_and_never_widens() {
+    let y = with_token_fields(LABEL_FIELD);
+    let v = run(&y);
+    assert!(v.is_empty(), "{v:#?}");
+    let new = Manifest::parse(&y, RUNNING).unwrap();
+    let old = Manifest::parse(METHODS, RUNNING).unwrap();
+    assert!(aurora_registry::diff::widens(&old, &new).is_empty());
+    assert!(aurora_registry::diff::widens(&new, &old).is_empty());
+}
+
+#[test]
+fn label_field_outside_a_fields_method_is_refused() {
+    // The hook method (`app`) comes after the token method's fields.
+    let y = METHODS.replace(
+        "          - { name: private_key, label: Key, type: file, required: true }\n",
+        "          - { name: private_key, label: Key, type: file, required: true }\n          - { name: name, label: Name, store: label }\n",
+    );
+    assert_eq!(codes(&y), BTreeSet::from(["label_field_method"]));
+}
+
+#[test]
+fn two_label_fields_in_one_method_are_refused() {
+    let y = with_token_fields(&format!(
+        "{LABEL_FIELD}          - {{ name: other, label: Other, store: label }}\n"
+    ));
+    assert_eq!(codes(&y), BTreeSet::from(["label_field_duplicate"]));
+}
+
+#[test]
+fn label_field_must_be_text() {
+    let y =
+        with_token_fields("          - { name: name, label: Name, store: label, type: secret }\n");
+    assert_eq!(codes(&y), BTreeSet::from(["label_field_type"]));
+}
+
 /// (FIX-136) A `fields` method declares the scopes a pasted token may carry, with read probes;
 /// tools name them.
 #[test]
