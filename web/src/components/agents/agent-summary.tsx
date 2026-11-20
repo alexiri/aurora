@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo } from "react";
 
 import { Loading, ErrorState } from "@/components/states";
 import { useAccounts } from "@/lib/api/accounts";
 import { useEffectiveGovernance } from "@/lib/api/governance";
 import { useInternetAccess } from "@/lib/api/policy";
-import { agentSummary } from "@/lib/summary/agent";
+import { agentSummary, LIMIT_THAT } from "@/lib/summary/agent";
 import { internetAccessOf, type InternetAccess } from "@/lib/summary/internet";
 
 /**
@@ -35,23 +36,41 @@ export function AgentSummary({
   orgId,
   agent,
   className,
+  welcome,
 }: {
   wsId: string;
   orgId: string;
   agent: { id: string; name: string };
   className?: string;
+  /** Welcome's variant of the reach clause (firstday-5): `limitHref` is Internet access, for owners only. */
+  welcome?: { limitHref?: string };
 }) {
   const accounts = useAccounts({ kind: "workspace", id: wsId, agentId: agent.id });
   const internet = useWorkspaceInternet(wsId, orgId);
   const sentences = useMemo(
-    () => (accounts.data ? agentSummary({ agent: agent.name, agentId: agent.id, accounts: accounts.data.items, internet: internet.access }) : []),
-    [accounts.data, agent.id, agent.name, internet.access],
+    () => (accounts.data ? agentSummary({ agent: agent.name, agentId: agent.id, accounts: accounts.data.items, internet: internet.access, welcome: welcome ? { canLimit: !!welcome.limitHref } : undefined }) : []),
+    [accounts.data, agent.id, agent.name, internet.access, welcome],
   );
   if (accounts.isError) return <ErrorState error={accounts.error} onRetry={() => void accounts.refetch()} />;
   if (accounts.isPending || internet.pending) return <Loading />;
   return (
     <div className={className} data-testid="agent-summary">
-      <p>{sentences.join(" ")}</p>
+      <p>{welcome?.limitHref ? withLimitLink(sentences.join(" "), welcome.limitHref) : sentences.join(" ")}</p>
     </div>
+  );
+}
+
+/** Welcome: "you can limit that" is a link to Internet access. */
+function withLimitLink(text: string, href: string) {
+  const at = text.indexOf(LIMIT_THAT);
+  if (at < 0) return text;
+  return (
+    <>
+      {text.slice(0, at)}
+      <Link href={href} className="font-medium text-link underline">
+        {LIMIT_THAT}
+      </Link>
+      {text.slice(at + LIMIT_THAT.length)}
+    </>
   );
 }

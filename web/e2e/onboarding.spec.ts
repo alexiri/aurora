@@ -110,7 +110,7 @@ test.describe("tour from the keyboard", () => {
     await page.keyboard.press("Enter");
     const first = page.getByRole("dialog", { name: "Overview" });
     await expect(first).toBeFocused();
-    await expect(first.getByText(/Stop 1 of \d/)).toBeVisible();
+    await expect(first.getByText(/Step 1 of \d/)).toBeVisible();
     await page.keyboard.press("ArrowRight");
     await expect(page.getByRole("dialog", { name: "Agents" })).toBeFocused();
     await page.keyboard.press("ArrowLeft");

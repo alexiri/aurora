@@ -346,7 +346,7 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     expect(within(dialog).getByText("Acme — 2 LLM keys stop working")).toBeTruthy();
     expect(within(dialog).getByText(/would stop being usable/)).toBeTruthy();
     expect(puts).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Yes, save" }));
     await waitFor(() => expect(puts).toHaveBeenCalledTimes(1));
   });
 
@@ -474,8 +474,8 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
       fireEvent.change(within(dialog).getByLabelText("Models"), { target: { value: "glm-4.6\nglm-4.5-air" } });
       // a non-Anthropic endpoint without roles carries the notice until a role is set
       expect(within(dialog).getByTestId("no-roles-notice")).toHaveTextContent("Set the roles.");
-      fireEvent.change(within(dialog).getByLabelText("Large"), { target: { value: "glm-4.6" } });
-      fireEvent.change(within(dialog).getByLabelText("Small"), { target: { value: " glm-4.5-air " } });
+      fireEvent.change(within(dialog).getByLabelText("Strongest model"), { target: { value: "glm-4.6" } });
+      fireEvent.change(within(dialog).getByLabelText("Fastest model"), { target: { value: " glm-4.5-air " } });
       expect(within(dialog).queryByTestId("no-roles-notice")).toBeNull();
       fireEvent.click(within(dialog).getByRole("button", { name: "Add model details" }));
       fireEvent.change(within(dialog).getByLabelText("Model id 1"), { target: { value: "glm-4.6" } });
@@ -503,15 +503,15 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
         },
         { entries: [{ id: "glm", value: glm, source: "dashboard" }] },
       );
-      expect(screen.getByTestId("endpoint-roles")).toHaveTextContent("Roles: Large glm-4.6 · Small glm-4.5-air");
+      expect(screen.getByTestId("endpoint-roles")).toHaveTextContent("Roles: Strongest model glm-4.6 · Fastest model glm-4.5-air");
       fireEvent.click(screen.getByRole("button", { name: "Edit glm" }));
       const dialog = await screen.findByRole("dialog");
-      expect(within(dialog).getByLabelText("Large")).toHaveValue("glm-4.6");
+      expect(within(dialog).getByLabelText("Strongest model")).toHaveValue("glm-4.6");
       expect(within(dialog).getByLabelText("Context window 1")).toHaveValue("200000");
       expect(within(dialog).getByRole("checkbox", { name: "Thinking" })).toBeChecked();
       expect(within(dialog).getByRole("checkbox", { name: "Interleaved thinking" })).not.toBeChecked();
-      fireEvent.change(within(dialog).getByLabelText("Large"), { target: { value: "" } });
-      fireEvent.change(within(dialog).getByLabelText("Small"), { target: { value: "" } });
+      fireEvent.change(within(dialog).getByLabelText("Strongest model"), { target: { value: "" } });
+      fireEvent.change(within(dialog).getByLabelText("Fastest model"), { target: { value: "" } });
       fireEvent.click(within(dialog).getByRole("button", { name: "Remove details of model 1" }));
       fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -530,10 +530,10 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
       fireEvent.change(within(dialog).getByLabelText("Base URL"), { target: { value: "https://gw.example.test" } });
       const done = within(dialog).getByRole("button", { name: "Done" }) as HTMLButtonElement;
       expect(done.disabled).toBe(false);
-      fireEvent.change(within(dialog).getByLabelText("Medium"), { target: { value: "bad id!" } });
+      fireEvent.change(within(dialog).getByLabelText("Everyday model"), { target: { value: "bad id!" } });
       expect(within(dialog).getByText("Letters, digits and . _ : / @ - only, up to 200 characters.")).toBeTruthy();
       expect(done.disabled).toBe(true);
-      fireEvent.change(within(dialog).getByLabelText("Medium"), { target: { value: "ok-id" } });
+      fireEvent.change(within(dialog).getByLabelText("Everyday model"), { target: { value: "ok-id" } });
       fireEvent.click(within(dialog).getByRole("button", { name: "Add model details" }));
       fireEvent.change(within(dialog).getByLabelText("Model id 1"), { target: { value: "m" } });
       fireEvent.change(within(dialog).getByLabelText("Context window 1"), { target: { value: "12" } });
@@ -592,12 +592,12 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
       const rows = within(screen.getByRole("list", { name: "Endpoints" })).getAllByRole("listitem");
       // Helm: neutral, says where, no button, no chip beyond "Set in Helm".
       const helm = await within(rows[0]!).findByTestId("endpoint-role-warning");
-      expect(helm.textContent).toContain("Set the Large, Medium and Small roles in the Helm values under llm.endpoints.central.roles");
+      expect(helm.textContent).toContain("Set the Strongest model, Everyday model and Fastest model roles in the Helm values under llm.endpoints.central.roles");
       expect(within(helm).queryByRole("button")).toBeNull();
       expect(within(rows[0]!).getByText("LiteLLM gateway")).toBeTruthy();
       // Dashboard: one line with Set roles, which opens the editor.
       const own = await within(rows[1]!).findByTestId("endpoint-role-warning");
-      expect(own.textContent).toContain("set the Small role.");
+      expect(own.textContent).toContain("set the Fastest model role.");
       fireEvent.click(within(own).getByRole("button", { name: "Set roles of glm" }));
       expect(await screen.findByRole("dialog")).toBeTruthy();
       fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });

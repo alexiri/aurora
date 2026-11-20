@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { accountsSentence, orgAccountsSentence, soleAgentOf } from "@/components/accounts/accounts-list";
@@ -25,13 +25,13 @@ const app = (over: Record<string, unknown> = {}) =>
   }) as never;
 
 describe("apps: one status line and the button that follows it", () => {
-  it("says Ready, Connected (by account) and Needs an admin first, and hides apps that are switched off", () => {
+  it("says Ready, Connected (by account) and that an admin sets it up once, and hides apps that are switched off", () => {
     expect(appStatus([app()])).toMatchObject({ kind: "ready", line: "Ready to connect" });
     expect(appStatus([app({ credential_free: true })]).line).toBe("Ready · no sign-in needed");
     expect(appStatus([app({ connection_count: 1, accounts: [{ id: "1", name: "acme-bot", agent_ids: [] }] })]).line).toBe("Connected · acme-bot");
     expect(appStatus([app({ connection_count: 2 })]).line).toBe("Connected · 2 accounts");
     const needs = app({ readiness: { state: "needs_admin", needs: ["oauth_client"], who_can: { action: "set_up", role: "org_admin", people: [{ name: "Alice Admin" }], you_can: false }, requested: { by_me: false, count: 0 } } });
-    expect(appStatus([needs])).toMatchObject({ kind: "needs_admin", line: "Needs an admin first", askedByMe: false });
+    expect(appStatus([needs])).toMatchObject({ kind: "needs_admin", line: "An admin sets up Google Calendar sign-in once", askedByMe: false });
     expect(isSwitchedOff([app({ readiness: { state: "needs_admin", needs: [] } })])).toBe(true);
     expect(isSwitchedOff([needs])).toBe(false);
   });
@@ -118,5 +118,55 @@ describe("overview sentence", () => {
     expect(overviewSentence(1, ["Daneel"])).toBe("1 thing needs you.");
     expect(overviewSentence(0, ["Daneel"])).toBe("Daneel is ready. Nothing needs you.");
     expect(overviewSentence(0, ["Daneel", "Giskard"])).toBe("Your agents are ready. Nothing needs you.");
+  });
+});
+
+describe("apps: groups, search and sort (workspace-9)", () => {
+  const needsAdmin = (over: Record<string, unknown>) =>
+    app({ readiness: { state: "needs_admin", needs: ["oauth_client"], requested: { by_me: false, count: 0 } }, ...over });
+  function stubApps() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Request | string | URL) => {
+        const req = input as Request;
+        const url = new URL(req.url, "http://localhost");
+        if (`${req.method} ${url.pathname}` === "GET /v1/apps") {
+          return json(200, {
+            items: [
+              app({ app_id: "zed", name: "Zed", description: "Editor" }),
+              app({ app_id: "aws", name: "AWS", description: "S3 and EC2" }),
+              app({ app_id: "linear", name: "Linear", connection_count: 1, accounts: [{ id: "1", name: "main", agent_ids: [] }] }),
+              needsAdmin({ app_id: "gmail", name: "Gmail", package_id: "google-mail", description: "Mail" }),
+            ],
+          });
+        }
+        return json(200, {});
+      }),
+    );
+  }
+  const names = (list: HTMLElement) => within(list).getAllByRole("listitem").map((li) => within(li).getAllByRole("link").map((a) => a.textContent)[0] ?? li.textContent);
+
+  it("draws Connected, Ready to connect and Needs an admin first as grids, A to Z, with the admin line in role words", async () => {
+    stubApps();
+    wrap(<AppsTab workspaceId="w1" orgId="o1" canOwn />);
+    const ready = await screen.findByRole("list", { name: "Apps: Ready to connect" });
+    expect(names(ready).map((n) => n?.slice(0, 3))).toEqual(["AWS", "Zed"]);
+    expect(ready.className).toMatch(/grid/);
+    expect(within(screen.getByRole("list", { name: "Apps: Connected" })).getByText("Connected · main")).toBeInTheDocument();
+    const blocked = screen.getByRole("list", { name: "Apps: Needs an admin first" });
+    expect(within(blocked).getByText("An admin sets up Google sign-in once")).toBeInTheDocument();
+    expect(within(blocked).getByRole("button", { name: "Ask an admin to set up Gmail" })).toBeInTheDocument();
+  });
+
+  it("search narrows the groups, drops empty ones, and says when nothing matches", async () => {
+    stubApps();
+    wrap(<AppsTab workspaceId="w1" orgId="o1" canOwn />);
+    const box = await screen.findByRole("searchbox", { name: "Search apps" });
+    fireEvent.change(box, { target: { value: "s3" } });
+    expect(screen.getByRole("list", { name: "Apps: Ready to connect" })).toHaveTextContent("AWS");
+    expect(screen.queryByRole("list", { name: "Apps: Connected" })).toBeNull();
+    expect(screen.queryByRole("list", { name: "Apps: Needs an admin first" })).toBeNull();
+    fireEvent.change(box, { target: { value: "nope" } });
+    expect(screen.getByText("No app matches “nope”.")).toBeInTheDocument();
   });
 });

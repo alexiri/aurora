@@ -62,6 +62,7 @@ export function ErrorBlock({
   children?: React.ReactNode;
 }) {
   const copy = errorCopy(code, message);
+  const [details, setDetails] = useState(false);
   // The chat lives on the agent page, so its tabs are addressed relative to the current path (`?tab=`, C-506).
   const pathname = usePathname() ?? "";
   // `base` is the workspace's own `/o/<org>/w/<ws>`: the route helper builds the agent's page from its parts.
@@ -105,7 +106,19 @@ export function ErrorBlock({
         ) : null}
         {copy.link && copy.link.path === "computer" ? <span> (see the Computer tab)</span> : null}
       </p>
-      {copy.showServerMessage && message ? <p className="mt-1 break-words text-xs">{message}</p> : null}
+      {/* (chat-7) One red box; the technical line is under Details, never in the sentence. */}
+      {copy.showServerMessage && message ? (
+        <div className="mt-1">
+          <button
+            type="button"
+            aria-expanded={details}
+            onClick={() => setDetails((d) => !d)}
+            className="inline-flex min-h-11 items-center text-sm underline md:min-h-0">
+            {details ? "Hide details" : "Details"}
+          </button>
+          {details ? <p className="mt-1 break-words rounded-control bg-canvas px-3 py-2 font-mono text-xs text-ink">{message}</p> : null}
+        </div>
+      ) : null}
       {children}
     </div>
   );

@@ -85,15 +85,11 @@ for (const scheme of ["light", "dark"] as const) {
         expect(bad).toEqual([]);
       });
 
-      test("a confirm dialog (Delete this agent) and a menu open and close without a console error or ring", async ({ page }) => {
+      test("a confirm dialog (Delete this agent, from Settings) opens and closes without a console error or ring", async ({ page }) => {
         const bad = watchConsole(page);
         await openRoute(page, "/o/acme/w/main/agents/daneel", scheme);
-        await page.getByRole("button", { name: "Agent actions" }).click();
-        const menu = page.getByRole("menu");
-        await expect(menu).toBeVisible();
-        // No ring on the menu panel itself.
-        expect(await menu.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe("none");
-        await page.getByRole("menuitem", { name: /Delete agent/ }).click();
+        await page.getByRole("button", { name: "Settings" }).click();
+        await page.getByRole("button", { name: "Delete Daneel…" }).click();
         const dialog = page.getByRole("dialog", { name: "Delete this agent" });
         await checkDialog(page, dialog);
         await dialog.getByRole("button", { name: "Close" }).click();

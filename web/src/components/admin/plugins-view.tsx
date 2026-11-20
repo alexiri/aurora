@@ -206,10 +206,17 @@ export function PluginsView() {
   const [showAll, setShowAll] = useState(false);
   const approved = useSearchParams().get("approved");
   const q = usePlugins("");
-  const items = q.data?.items ?? [];
+  const [search, setSearch] = useState("");
+  const all = q.data?.items ?? [];
+  // (P5-REFINE-18 #12, admin-11) A to Z in every list, and one search over all of them.
+  const term = search.trim().toLowerCase();
+  const items = all
+    .filter((p) => !term || packageName(p).toLowerCase().includes(term) || p.package_id.toLowerCase().includes(term))
+    .sort((a, b) => packageName(a).localeCompare(packageName(b), undefined, { sensitivity: "base" }));
   const waiting = items.filter((p) => p.status === "pending_approval" && p.origin !== "aurora");
   const fromAurora = items.filter((p) => p.origin === "aurora" && p.status !== "superseded");
   const others = items.filter((p) => !waiting.includes(p) && p.origin !== "aurora" && p.status !== "superseded");
+  const appCount = all.filter((p) => p.status !== "superseded").length;
   const updates = items.filter((p) => p.update_available).length;
   const shown = showAll ? fromAurora : fromAurora.slice(0, FIRST_AURORA);
   return (
@@ -245,7 +252,24 @@ export function PluginsView() {
       <CheckForUpdates />
       {q.isPending ? <Loading /> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
-      {q.data && items.length === 0 ? <EmptyState title="No apps yet" /> : null}
+      {q.data && all.length === 0 ? <EmptyState title="No apps yet" /> : null}
+      {all.length > 0 ? (
+        <div className="max-w-md">
+          <label htmlFor="apps-search" className="sr-only">
+            Search apps
+          </label>
+          <input
+            id="apps-search"
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={`Search ${appCount} apps`}
+            autoComplete="off"
+            className={inputClass}
+          />
+        </div>
+      ) : null}
+      {q.data && all.length > 0 && items.length === 0 ? <p className="text-sm text-ink-2">{`No app matches "${search.trim()}".`}</p> : null}
       {q.data && items.length > 0 ? (
         <>
           <section aria-labelledby="apps-waiting" className="space-y-3">

@@ -1,5 +1,8 @@
-import { screen, waitFor } from "@testing-library/react";
+import { useMutation } from "@tanstack/react-query";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+
+import { useRefreshAttentionOnMutation } from "@/lib/api/attention";
 
 import { AttentionBadge } from "@/components/admin/attention-badge";
 import { AttentionSection } from "@/components/admin/attention-section";
@@ -60,6 +63,33 @@ describe("Administration attention badge", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByTestId("admin-attention-badge")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+function Resolver() {
+  useRefreshAttentionOnMutation(true);
+  const m = useMutation({ mutationFn: async () => "ok" });
+  return (
+    <button type="button" onClick={() => m.mutate()}>
+      Resolve
+    </button>
+  );
+}
+
+describe("the count follows what is resolved (P5-REFINE-18 #18)", () => {
+  it("refetches the count after any mutation succeeds, without a reload", async () => {
+    let items = [decision, info];
+    mockFetch({ "GET /v1/admin/attention": () => json(200, { items }) });
+    wrap(
+      <>
+        <AttentionBadge />
+        <Resolver />
+      </>,
+    );
+    expect(await screen.findByTestId("admin-attention-badge")).toHaveTextContent("2");
+    items = [info];
+    fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
+    await waitFor(() => expect(screen.getByTestId("admin-attention-badge")).toHaveTextContent("1"));
   });
 });
 

@@ -7,10 +7,11 @@
 export const ROLES = ["large", "medium", "small"] as const;
 export type Role = (typeof ROLES)[number];
 
-export const ROLE_LABEL: Record<Role, string> = { large: "Large", medium: "Medium", small: "Small" };
-
-/** (P5-REFINE-12) What a person sees for a role on an agent's Advanced fold: no size words, no alias. */
+/** (P5-REFINE-12, D-426) What a person sees for a role everywhere, Administration included: no size words, no alias. */
 export const ROLE_NAME: Record<Role, string> = { large: "Strongest model", medium: "Everyday model", small: "Fastest model" };
+
+/** The same words (D-426: one vocabulary on the agent's pages, the endpoint pages and the readiness notes). */
+export const ROLE_LABEL: Record<Role, string> = ROLE_NAME;
 
 /** `MODEL_ID_PATTERN` (C-875): `^[A-Za-z0-9._:/@-]{1,200}$`. */
 export const MODEL_ID_PATTERN = /^[A-Za-z0-9._:/@-]{1,200}$/;
@@ -40,7 +41,7 @@ export function subagentWarning(subagent: string, warning: string): string {
 /** A role the agent set that is no longer usable and is left out of the next turn. */
 export function droppedRoleWarning(role: string): string {
   const name = isRole(role) ? ROLE_LABEL[role] : role;
-  return `The ${name} model set for this agent is no longer usable, so the next turn leaves it out. Choose another.`;
+  return `The ${name} set for this agent is no longer usable, so the next turn leaves it out. Choose another.`;
 }
 
 /** The field a 422 `model_id_invalid` / `llm_model_not_allowed` names (`details.field`): a role, `subagent_model` or the model. */

@@ -4,8 +4,11 @@ import { useEffect, useRef, useState, type KeyboardEventHandler, type ReactNode 
 
 import { cn } from "@/lib/utils";
 
-/** Below this window width the expanded status rail overlays the thread instead of pushing it (D-201, owner 2026-11-14). */
-export const RAIL_OVERLAY_BELOW = 1100;
+/**
+ * Below this window width the expanded status rail overlays the thread instead of pushing it (D-201, owner 2026-11-14;
+ * P5-REFINE-11, chat-6: 1100 → 1400, so the chat is never squeezed to 300 px and the composer keeps one row).
+ */
+export const RAIL_OVERLAY_BELOW = 1400;
 
 /**
  * The messaging panel (D-102): one card that fills the rest of the viewport below the agent header (at least
@@ -13,7 +16,7 @@ export const RAIL_OVERLAY_BELOW = 1100;
  * the list and the thread are two views and `threadOpen` picks one, with no rail. The page does not scroll: the list,
  * the transcript and the rail scroll inside the panel.
  *
- * `rail` is given whether it should overlay (window narrower than 1100 px); while an expanded rail overlays, the list
+ * `rail` is given whether it should overlay (window narrower than 1400 px); while an expanded rail overlays, the list
  * and the thread are inert so focus stays in the rail.
  */
 export function ChatPanel({

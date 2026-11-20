@@ -549,6 +549,40 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     the page; Instructions keeps its Instructions · Memory · Skills · Tests row. `?tab=` ids are
     unchanged. A BYO agent (no Chat) opens on Instructions as before. This replaces the five-section order
     above wherever they disagree.
+  - (phase 5, **P5-REFINE-11, D-408, D-409, D-415, D-407; supersedes the D-382 bullet above and the "Agent actions" menu
+    in the header paragraph**) **The Settings button and page.** The header has the tabs **Chat · Automations · Computer**
+    (BYO: Computer) and a **labelled outline button "Settings" with a gear** (accent outline while a Settings page is open; it
+    keeps its label at 390 px). It opens the **Settings page directly** (on Instructions): the page header (back link, the page's
+    name, a one-line lead: Instructions "Name, instructions, model", Apps & access "Apps, accounts and the AI key it uses",
+    Memory "What it remembers", Skills "What it knows how to do"), a **left sub-nav** (Instructions · Apps & access · Memory ·
+    Skills · Tests* · Other agents*, * Expert altitude) that is the segmented `Tabs` under 768 px, the page, and at the bottom a **danger
+    zone** with **Pause <Agent>** ("Stops it until you resume it"; **Resume <Agent>** when paused) and **Delete <Agent>…**, for
+    workspace owners only (members see the pages read-only and no zone). `?tab=` ids are unchanged. Section ids are now `chat`,
+    `triggers`, `computer`, `settings`. The computer's secondary tabs (Terminal, Files, …) collapse into a **More** menu rather
+    than scrolling sideways.
+  - **The header state** (D-408) is one `StatusLine`: **Can't answer: <reason>** (`no AI key`, `the key stopped working`,
+    `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; an action slot
+    beside it is P5-REFINE-12's) → **Needs you** → **Working** → **Starting its computer…** (spinner, `aria-live` polite) →
+    **Asleep** → **Ready**; **Ready only when the computer answers** (`SandboxView.computer.ready`, C-1059). Without computer
+    data (not loaded, BYO) the older words apply.
+  - **The rail** (D-201, D-415, P5-REFINE-11) has three headings: **Needs you · Doing now · What <Agent> did**. The Computer is
+    one line under Doing now ("On its computer · Awake / Asleep / Starting its computer… · Open"); About moved into Settings;
+    "What <Agent> did" is today's list of recent requests with an "All" link to Activity until the agent timeline
+    (P5-REFINE-9, C-1083) feeds it live. Collapsed, each icon has a visible three-letter word (Need · Now · Did). The expanded
+    panel **overlays the transcript below 1400 px** (it no longer squeezes the chat), pushes from 1400 px up.
+  - **Chat** (P5-REFINE-11): the composer is **one row until Aa** opens the formatting toolbar (the choice is kept) and Preview grows
+    with its content; after sending, the transcript **always scrolls to the bottom** (and again when an image finishes loading),
+    with no "Jump to latest"; an image attachment is an inline thumbnail with "name · size · Image" (the type also comes from
+    the content route and the file name, not only the message); a search result shows its conversation's title, the sentence
+    with the match in bold, who spoke ("Daneel: …") and the full date and time ("19 Nov 23:50"); **an error shows once**, as one
+    red box with a plain sentence, a **Details** fold with the technical line and no repeating agent bubble; **archiving**
+    leaves the Active list at once and after a reload, shows an Undo toast, and the thread reads "Archived 19 Nov 2026 · read only"
+    with **Restore** and no composer; the empty Active list says "No active conversations" with **New chat**; **on a phone the Chat tab opens
+    the person's conversation** with the composer ready, "Conversations" one tap back. **First successes** (first answer, first
+    app, first approval, first schedule run) are `Notice` cards with **Got it**, shown once per person (server-side
+    `notices_seen` keys `first-answer`, `first-app`, `first-approval`, `first-run`).
+  - *Waiting for other briefs:* several chats, Rename, auto-titles, run threads and the stopped-answer marker (P5-REFINE-7),
+    "can't answer" fix button (P5-REFINE-12), the timeline feed (P5-REFINE-9), the Needs-you badge on the Agents list (C-1082, P5-REFINE-8).
   - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
     page (Triggers section), bound to `narration_cards` (off by default). Help text: "Posts one message
     per reply that lists the steps the agent takes, updated as they run and shrunk to one line when the answer
@@ -1330,6 +1364,20 @@ connects), `/setup-error` (missing required configuration reported by
 `/v1/instance`).
 
 ### Account (`/account/*`)
+(phase 5, P5-REFINE-16, account-1..5) **Rail:** Profile · Security · **Notifications** · **SSH keys** (only while
+`features.ssh` is on) · API keys · Chat platforms · Delete account. **Notifications** (`/account/notifications`) holds
+"Approval notifications" ("How you hear about approvals that need a decision."): the e-mail switch, the browser
+opt-in and the push devices. The red "Notifications are blocked for this site…" shows only after the person asked
+(they just turned the browser switch on and the browser refused, or the switch is on while the browser blocks); a
+browser that blocks by default shows nothing. Profile is only the profile (display name, default organization, time
+zone) with, below, the groups and roles, roles from sign-in, tour replays and appearance. **API keys** has
+**Create key**: "Create an API key" with **Name** and **Workspace** (every workspace the person is in; "The key can act
+only in this workspace."), created through the per-workspace route; the secret opens once. **SSH keys:** a pasted
+key is judged as it is typed: one `ssh-ed25519 <base64>` line is valid; anything else says "Only ed25519 keys are
+supported. Create one with ssh-keygen -t ed25519."; a private key says "That's a private key. Paste the public key
+(the file ending in .pub)." and is never sent; **Add key** stays disabled until valid (the server stays authoritative).
+**Chat platforms** naming the platform and the bot waits for a member-readable read (C-1089).
+
 Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 (personal workspace keys), (phase 5) SSH keys, chat platform links, DM defaults, delete account
 (phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`). (phase 4, P4-GRP-1) Profile
@@ -1961,6 +2009,7 @@ table view; durations "3 h 20 min", "45 min", "under 1 min"; dates as the dashbo
 "UTC" in the opening sentence only.
 
 ### Instance administration (`/admin/*`, instance admins only)
+(phase 5, P5-REFINE-18, first part) **Policy presets** (D-410): Administration › Internet access opens with "How much may agents do here?" (`components/policy/policy-presets.tsx`, mapping `lib/policy-presets.ts`): **Open** (default; equals a fresh install's registry defaults, a test pins it), **Balanced**, **Locked down**, each with a sentence of consequences. Choosing one previews, then writes the mapped `governance` keys through the section's PUT; a loosening asks in sentences. A value edited by hand reads "Custom · based on Open"; a Helm-locked value that keeps a preset from applying shows "Open (2 settings set in Helm)" with a lock pill, never an error. Today's fields are behind **Customise ▸** (open when custom). The organization AI models / Internet access pages and the "What agents may do · Open · Change" checklist line are not built yet. **Confirm in sentences** (admin-3): a save that loosens opens "Allow more than before?" with a heading per section and one sentence per change (`describeChange` in `lib/settings-words.ts`), **Go back** / **Yes, save**; keys and reasons only under Technical details. **A refused key-origin save** (admin-1, C-1066) leaves "Check where AI keys come from" Off and shows "Not turned on. … Nothing changed" with the endpoints by display name until dismissed. **Apps** (admin-11) are A to Z with a search ("Search 14 apps"). A single-line string setting (the mail server address) is an input, not a text area. **The Administration count** (P5-REFINE-18 item 18) is on every entry: the sidebar-foot link, the account menu and Overview in the Administration rail, refetched on focus, every 5 minutes and after any successful mutation.
 (phase 5, P5-ADMDEL, D-234) **Organizations** (`/admin/orgs`): a `DataTable` of every
 organization — name, slug, members, workspaces, agents, created, state badges ("Paused",
 "No owner") — with a row **Actions** menu: Pause / Resume (D-407), **Workspaces**
@@ -2031,7 +2080,7 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   compatible base URL, auth header and models path) and hides `allowed_paths` for Bedrock and
   Vertex. Each row shows the harnesses the endpoint serves as `Badge`s and, when it serves none,
   a `Notice` ("No enabled harness speaks this API. Put a LiteLLM endpoint in front to translate.").
-  (phase 5, P5-MODELS-3, C-875) The dialog also has **Model roles** (Large, Medium, Small: the
+  (phase 5, P5-MODELS-3, C-875) The dialog also has **Model roles** (Strongest model, Everyday model, Fastest model, D-426: one vocabulary on the agent's pages and here; the stored roles stay `large`/`medium`/`small`; the
   endpoint's models or free text checked against `MODEL_ID_PATTERN`) and **Model details**, a keyed
   list of model id → context window and capability checkboxes. Its help text reads "For models the
   harness does not recognise, such as non-Claude models behind LiteLLM". A `Notice` on an endpoint
@@ -2676,6 +2725,11 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   | a rule asks | "A rule asks you first on 2 websites." |
   | a new agent | "Daneel can't use any app yet. It can reach any website." |
 
+  **Welcome's variant (P5-REFINE-16, firstday-5):** only on Welcome, "It can reach any website." reads
+  "It can reach websites; you can limit that." (**you can limit that** links to Internet access, owners
+  only) or "It can reach websites." (members). Every other sentence of the table, and every other page,
+  keeps the exact table; `reachSentence` is unchanged.
+
   The agent's summary appears on Welcome ("Daneel is your agent") and at the top of the agent's Access
   tab. The Internet access page opens with the same website sentences for the level ("Agents here can
   reach any website. Nothing asks you first."). Welcome makes no promise the summary does not show.
@@ -2692,6 +2746,36 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 - **Rules are for websites that are not accounts.** The page's two Common changes are **Ask before
   changes on a website** and **Block a website** (C-989). The first uses the words of the access choice
   on purpose: it is the same behaviour, for a site where the agent has no account to set access on.
+
+### Workspace pages (P5-REFINE-16, workspace-1..12)
+
+- **Check a request** answers in a sentence ("**Blocked.** Your rule X stops it." / "**Allowed.** …" / "**<Agent> will ask you
+  first.** …"), then one explaining line, then **Technical details** (verdict, guidance code, winning credential,
+  trace); **Check another** and **Done**.
+- **Activity** reads as sentences ("Dani answered you", "Dani called GitHub · Blocked by your rule 'X'", "Dani asked before
+  changing docs.example.org · Waiting for you in Approvals") with a time and **Details** (the raw request); filters in
+  words (Everything / Any agent / Any outcome). The request log is the **Technical view**, at Expert, stacked under 900 px.
+  A model call is one *answered* row. The live per-agent timeline (D-415) follows brief 9.
+- **Audit** is "Bob revoked the API key ci-script" with the person's, key's or app's name (never an id; "a deleted API key"
+  when gone), **Critical** (red) / **Important** (amber) / **Routine**, stacked rows; the raw event is under Details.
+- **People:** Add people says before submit that Aurora sends no e-mail and where the person opens the workspace (**Copy
+  link**); only a change **to Owner** asks ("Make Carol an Owner?", what an Owner can do, **Make Owner**), Approver and
+  Member apply at once with "Saved"; a person whose `signed_in` is false shows "Not signed in yet" with **Copy link**
+  (C-1086); "What can each role do?" is open in the Add people dialog. The role lists are `ROLE_CAN`
+  (`lib/roles-explain.ts`), shared with the organization pages.
+- **API keys:** "A key acts as you in this workspace through the Aurora API. Anyone who has it can do what you can, so keep
+  it secret." and **API documentation**; rows say "Can do everything you can in <workspace> · created … · last used …"
+  and **Revoke** asks; **New API key** opens a small dialog; the secret opens once.
+- **General** says "Saved. The workspace is now called Bob's Lab." and the switcher shows the new name at once; **Delete
+  workspace** asks for the visible name.
+- **Apps** keeps its grid of square cards with **Search apps** and the groups **Connected**, **Ready to connect**, **Needs an
+  admin first** (A to Z; empty groups not drawn); the line for an app that needs an admin is "An admin sets up <what>
+  once" (a role, never a name). **Skills** opens with what a skill is and keeps the precedence in the closed **How skills
+  combine** fold. **Approvals** shows "Nothing is waiting for you." once and an **Example** card (built from the real
+  question, never counted or sent; each answer explains itself) only while nothing is waiting.
+- **Badges:** the Approvals count in the rail (and the phone menu's dot) is read again on focus and every 30 s, counts
+  action approvals too, has screen-reader words ("2 need your attention"), is absent at zero and for people who cannot
+  decide. Overview's count and the Needs you feed rows follow brief 8 (C-1082).
 
 ### 9. First run (P5-UX-1, P5-UX-6, P5-UX-7, D-323, D-326, C-916, C-922..C-924, C-927)
 

@@ -191,3 +191,19 @@ describe("the agent's summary: a table of conditions", () => {
     });
   }
 });
+
+describe("Welcome's reach clause (firstday-5)", () => {
+  const open = { withoutAccount: "allow" as const, allowlist: 0, rules: [] };
+  const base = { agent: "Daneel", agentId: "a1", accounts: [], internet: open };
+  it("owners get a way out; members a plain fact; every other page keeps the table of 14 §8", () => {
+    expect(agentSummary({ ...base, welcome: { canLimit: true } })).toEqual(["Daneel can't use any app yet. It can reach websites; you can limit that."]);
+    expect(agentSummary({ ...base, welcome: { canLimit: false } })).toEqual(["Daneel can't use any app yet. It can reach websites."]);
+    expect(agentSummary(base)).toEqual(["Daneel can't use any app yet. It can reach any website."]);
+  });
+  it("keeps the exact sentence where it says more than 'any website'", () => {
+    const blocks = { ...open, rules: [{ enabled: true, action: "block" as const, hosts: ["x.example"], requireApproval: false }] };
+    expect(agentSummary({ ...base, internet: blocks as never, welcome: { canLimit: true } })).toEqual([
+      "Daneel can't use any app yet. It can reach any website, except where a rule blocks it.",
+    ]);
+  });
+});

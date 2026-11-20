@@ -167,7 +167,7 @@ function HarnessLine({ harnesses }: { harnesses: string[] | undefined }) {
 const KIND_LABEL: Record<string, string> = { litellm: "LiteLLM gateway" };
 const kindLabel = (p: string): string => KIND_LABEL[p] ?? label(p);
 
-/** "Large, Medium and Small" */
+/** "Strongest model, Everyday model and Fastest model" (D-426) */
 function roleList(roles: string[]): string {
   const names = roles.map((r) => ROLE_LABEL[r as keyof typeof ROLE_LABEL] ?? r);
   return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : (names[0] ?? "");

@@ -41,6 +41,8 @@ export function ThreadHeader({
       ) : null}
       <div className="min-w-0 flex-1">
         <h2 className="truncate font-display text-base font-semibold text-ink">{title}</h2>
+        {/* (chat-11) On a phone the list is one tap back: the arrow and its word, "Conversations", under the title. */}
+        {onBack ? <p className="text-xs text-muted md:hidden">Conversations</p> : null}
         <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted">
           {visibility ? (
             <span className="inline-flex min-w-0 items-center gap-1">

@@ -102,8 +102,11 @@ describe("catalogue and connect window", () => {
   it("shows one tile per product: GitHub (both deployments' connections) and Solo", async () => {
     stub();
     wrap(<AppsTab workspaceId="w1" orgId="o1" canOwn />);
-    const list = await screen.findByRole("list", { name: "Apps" });
-    const tiles = within(list).getAllByRole("listitem");
+    await screen.findAllByRole("list", { name: /^Apps: / });
+    // (workspace-9) The tiles sit in groups (Connected, Ready to connect…); together there is one per product.
+    const lists = screen.getAllByRole("list", { name: /^Apps: / });
+    const list = screen.getByRole("list", { name: "Apps: Connected" });
+    const tiles = lists.flatMap((l) => within(l).getAllByRole("listitem"));
     expect(tiles).toHaveLength(2);
     expect(within(list).getByText("GitHub")).toBeInTheDocument();
     expect(within(list).queryByText("GitHub Enterprise Server")).toBeNull();

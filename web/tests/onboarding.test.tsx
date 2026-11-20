@@ -106,7 +106,7 @@ describe("getting-started guide: every state", () => {
     expect(screen.queryByLabelText("New LLM key")).not.toBeInTheDocument();
     expect(screen.queryByText("Choose a model")).not.toBeInTheDocument();
     const hello = await screen.findByRole("link", { name: "Say hello to Daneel" });
-    expect(hello).toHaveAttribute("href", expect.stringContaining("/o/acme/w/ops/agents/daneel?tab=chat&open=direct&draft="));
+    expect(hello).toHaveAttribute("href", expect.stringContaining("/o/acme/w/ops/agents/daneel?tab=chat&draft="));
     // Two steps (C-927): the key is done, one left.
     expect(screen.getByText("1 of 2 done")).toBeInTheDocument();
     expect(screen.queryByText(/Give Daneel access to/)).not.toBeInTheDocument();
@@ -118,7 +118,18 @@ describe("getting-started guide: every state", () => {
     expect(await screen.findByText(/An AI key is the password to the AI service/)).toBeInTheDocument();
     expect(await screen.findByLabelText("New LLM key")).toBeInTheDocument();
     expect(screen.getByText("0 of 2 done")).toBeInTheDocument();
-    expect(screen.getByText("Comes after the steps above.")).toBeInTheDocument();
+    expect(screen.getByText("Comes after the step above.")).toBeInTheDocument();
+  });
+
+  it("a key still being checked does not count: 0 of 2 done, and hello comes after the step above (firstday-3)", async () => {
+    world({
+      readiness: readiness([keyRow({ scope: "workspace", name: "My Anthropic key", secret_id: "k9" })]),
+      wsKeys: [{ ...llmSecret("k9", "My Anthropic key", "workspace"), verification: { state: "checking", checked_at: null } }],
+    });
+    guide();
+    expect(await screen.findByText("My Anthropic key is still being checked. It counts once it has answered.")).toBeInTheDocument();
+    expect(screen.getByText("0 of 2 done")).toBeInTheDocument();
+    expect(screen.getByText("Comes after the step above.")).toBeInTheDocument();
   });
 
   it("not granted: the access step names the key and preselects the agent", async () => {
@@ -144,7 +155,7 @@ describe("getting-started guide: every state", () => {
     fireEvent.change(select, { target: { value: "litellm\u0000claude-sonnet" } });
     fireEvent.click(screen.getByRole("button", { name: "Use this model" }));
     await waitFor(() => expect(calls.find((c) => c.key === "PATCH /v1/agents/a1")?.body).toEqual({ model_endpoint_id: "litellm", model_id: "claude-sonnet" }));
-    expect(screen.getByText("Comes after the steps above.")).toBeInTheDocument();
+    expect(screen.getByText("Comes after the step above.")).toBeInTheDocument();
   });
 
   it("done: an answer from the agent completes it, whatever else is missing", async () => {
@@ -300,7 +311,11 @@ describe("tour (D-141)", () => {
     act(() => startTour());
     const dialog = await screen.findByRole("dialog", { name: "Overview" });
     await waitFor(() => expect(dialog).toHaveFocus());
-    expect(within(dialog).getByText("Stop 1 of 8")).toBeInTheDocument();
+    expect(within(dialog).getByText("Step 1 of 8")).toBeInTheDocument();
+    // (firstday-4) The page is dimmed around the link, and nothing is made inert, so keys still reach the tour.
+    const backdrop = screen.getByTestId("tour-backdrop");
+    expect(backdrop.className).toMatch(/pointer-events-none/);
+    expect(document.querySelector("[inert]")).toBeNull();
     expect(screen.getByRole("link", { name: "overview" })).toHaveAttribute("data-tour-active", "true");
     expect(setNavOpen).not.toHaveBeenCalledWith(true);
 
@@ -380,12 +395,12 @@ describe("tour (D-141)", () => {
       </>,
     );
     act(() => startTour());
-    expect(await screen.findByText("Stop 1 of 5", undefined)).toBeInTheDocument();
+    expect(await screen.findByText("Step 1 of 5", undefined)).toBeInTheDocument();
     // The Agents stop says an agent gets apps on its Access tab (C-975).
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByText(/Give <Agent> an app/)).toBeInTheDocument();
     for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("Stop 5 of 5")).toBeInTheDocument();
+    expect(await screen.findByText("Step 5 of 5")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(calls.some((c) => c.key === "PATCH /v1/me/onboarding")).toBe(true);

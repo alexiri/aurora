@@ -104,3 +104,38 @@ describe("the apps list", () => {
     expect((await screen.findByTestId("approved-toast")).textContent).toContain("Acme tracker approved");
   });
 });
+
+// P5-REFINE-18 #12 (admin-11): A to Z, and one search with the count.
+describe("the apps list: A to Z and search", () => {
+  const serve = () =>
+    mockFetch({
+      "GET /v1/admin/plugins": () => json(200, { items: AURORA, next_cursor: null }),
+      "GET /v1/admin/addon-sources": () => json(200, { items: [] }),
+    });
+
+  it("lists apps A to Z whatever order the server answers in", async () => {
+    search = "";
+    serve();
+    wrap(<PluginsView />);
+    const aurora = await screen.findByRole("region", { name: "From Aurora" });
+    fireEvent.click(within(aurora).getByRole("button", { name: "2 more" }));
+    const names = within(aurora)
+      .getAllByRole("link", { name: /^(GitHub|Google Workspace|Jira|Sentry|Slack)$/ })
+      .map((a) => a.textContent);
+    expect(names).toEqual(["GitHub", "Google Workspace", "Jira", "Sentry", "Slack"]);
+  });
+
+  it("searches by name with the count in the placeholder, and says when nothing matches", async () => {
+    search = "";
+    serve();
+    wrap(<PluginsView />);
+    const box = await screen.findByRole("searchbox", { name: "Search apps" });
+    expect(box).toHaveAttribute("placeholder", "Search 5 apps");
+    fireEvent.change(box, { target: { value: "sen" } });
+    const aurora = screen.getByRole("region", { name: "From Aurora" });
+    expect(aurora.textContent).toContain("1 app, approved with this release");
+    expect(within(aurora).getByText("Sentry")).toBeTruthy();
+    fireEvent.change(box, { target: { value: "zzz" } });
+    expect(screen.getByText('No app matches "zzz".')).toBeTruthy();
+  });
+});

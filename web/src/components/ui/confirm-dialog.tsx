@@ -21,9 +21,12 @@ export function ConfirmDialog({
   confirmLabel,
   danger = false,
   busy = false,
+  cancelLabel = "Cancel",
   onConfirm,
   children,
 }: {
+  /** The button that goes back (default "Cancel"). */
+  cancelLabel?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
@@ -40,7 +43,7 @@ export function ConfirmDialog({
         {children}
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           <DialogClose asChild>
-            <Button variant="outline">Cancel</Button>
+            <Button variant="outline">{cancelLabel}</Button>
           </DialogClose>
           <Button variant={danger ? "danger" : "primary"} disabled={busy} onClick={onConfirm}>
             {confirmLabel}

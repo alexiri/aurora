@@ -44,6 +44,17 @@ describe("getting-started guide: computed from real state (D-141)", () => {
     expect(g).toMatchObject({ total: 2, done: 1, complete: false });
   });
 
+  it("a key that is still being checked is a step in its own state; it counts once it has answered (firstday-3)", () => {
+    const checking: GuideKey = { ...ORG_KEY, verification: "checking" };
+    const g = computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [checking], replied: false });
+    expect(states(g)).toEqual({ key: "checking", access: "skipped", hello: "waiting" });
+    expect(g.steps[0].checkingName).toBe("AIGW");
+    expect(g).toMatchObject({ total: 2, done: 0, complete: false });
+    // Once it works, or when it was never checked, it counts as before.
+    expect(states(computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [{ ...ORG_KEY, verification: "works" }], replied: false })).key).toBe("done");
+    expect(states(computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [{ ...ORG_KEY, verification: "not_checked" }], replied: false })).key).toBe("done");
+  });
+
   it("key missing: the key step is the one to do, hello waits", () => {
     const g = computeGuide({ isOwner: true, readiness: readiness([]), keys: [], replied: false });
     expect(states(g)).toEqual({ key: "todo", access: "skipped", hello: "waiting" });

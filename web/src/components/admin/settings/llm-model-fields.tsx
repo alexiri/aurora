@@ -22,7 +22,7 @@ export const CAPABILITIES: { id: string; label: string }[] = [
 ];
 
 /**
- * (phase 5, P5-MODELS-3, C-875) **Model roles** of an endpoint: Large, Medium and Small, each one of the endpoint's
+ * (phase 5, P5-MODELS-3, C-875) **Model roles** of an endpoint: the strongest, everyday and fastest model (D-426), each one of the endpoint's
  * models or free text. A non-Anthropic endpoint without roles gets the notice that agents will ask for Claude names.
  */
 export function ModelRolesFieldset({

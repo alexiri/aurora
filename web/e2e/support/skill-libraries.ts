@@ -100,7 +100,7 @@ export async function openLibraryScreen(page: Page, screen: LibraryScreen, schem
     return;
   }
   if (screen === "review") {
-    await page.getByRole("button", { name: /code-review/ }).first().click();
+    await page.getByRole("button", { name: /^Code review/ }).first().click();
     await page.getByRole("button", { name: "Review update" }).click();
     await page.getByRole("button", { name: "Approve" }).waitFor();
     return;

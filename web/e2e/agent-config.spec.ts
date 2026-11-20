@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { serious } from "./support/axe";
 import { openRoute, overflow } from "./support/open";
 
-// P5-POLISH-6 (D-382, D-385): Behaviour and Access are configuration pages opened from the … menu, not tabs. No section tab is
+// P5-REFINE-11 (D-408, was P5-POLISH-6 D-382): the Settings pages open from the labelled Settings button, not tabs. No section tab is
 // selected on them, the page has a back link, its name and one sentence; old `?tab=` links open them; Instructions is one
 // card whose save bar appears only after a change. Both themes at 1280 px and 390 px, axe, no horizontal scroll, no console error.
 
@@ -14,15 +14,17 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("the tab bar is Chat · Automations · Computer; Instructions and Apps & access open from the … menu", async ({ page }) => {
+      test("the tab bar is Chat · Automations · Computer; the labelled Settings button opens Settings with Pause and Delete at its bottom", async ({ page }) => {
         await openRoute(page, AGENT, scheme);
         const tabs = page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab");
         await expect(tabs).toHaveText(["Chat", "Automations", "Computer"]);
-        await page.getByRole("button", { name: "Agent actions" }).click();
-        await expect(page.getByRole("menuitem", { name: /Pause Daneel/ })).toBeVisible();
-        await page.getByRole("menuitem", { name: /^Apps & access/ }).click();
+        await page.getByRole("button", { name: "Settings" }).click();
+        await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Pause Daneel" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Delete Daneel…" })).toBeVisible();
+        await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Apps & access" }).click();
         await expect(page.getByRole("heading", { name: "Apps & access", level: 2 })).toBeVisible();
-        await expect(page.getByText("What Daneel can use: apps, accounts and its AI key.")).toBeVisible();
+        await expect(page.getByText("Apps, accounts and the AI key it uses")).toBeVisible();
         await expect(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { selected: true })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);

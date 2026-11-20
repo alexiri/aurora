@@ -78,14 +78,17 @@ const fits = (page: Page) => page.evaluate(() => document.scrollingElement!.scro
 test.describe("1280×800", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test("collapsed by default: no page scroll, five icons with state in words, the choice persists across reloads", async ({ page }) => {
+  test("collapsed by default: no page scroll, three icons with a visible label and state in words, the choice persists across reloads", async ({ page }) => {
     await open(page, "light");
     const strip = rail(page);
     await expect(strip.getByRole("button", { name: "Expand status panel" })).toBeVisible();
-    await expect(strip.getByRole("button")).toHaveCount(6); // expand + the five parts
+    await expect(strip.getByRole("button")).toHaveCount(4); // expand + the three parts
     await expect(strip.getByRole("button", { name: "Needs you: 2 approvals waiting" })).toBeVisible();
-    await expect(strip.getByRole("button", { name: /^Recent actions: some were denied or failed/ })).toBeVisible();
-    await expect(strip.getByRole("button", { name: /^Computer: Sandbox running/ })).toBeVisible();
+    await expect(strip.getByRole("button", { name: /^What Daneel did: some requests were denied or failed/ })).toBeVisible();
+    // (rec 3) Each part has a visible word under its icon.
+    await expect(strip.getByText("Need", { exact: true })).toBeVisible();
+    await expect(strip.getByText("Now", { exact: true })).toBeVisible();
+    await expect(strip.getByText("Did", { exact: true })).toBeVisible();
     expect(await fits(page), "the page scrolls").toBeLessThanOrEqual(0);
     expect(await overflow(page)).toBeLessThanOrEqual(0);
     expect(await page.evaluate((k) => window.localStorage.getItem(k), KEY)).toBeNull();
@@ -97,7 +100,7 @@ test.describe("1280×800", () => {
     await strip.getByRole("button", { name: "Expand status panel" }).click();
     const panel = rail(page);
     await expect(panel.getByRole("heading", { name: "Status", level: 2 })).toBeVisible();
-    await expect(panel.getByRole("heading", { level: 3 })).toHaveText(["Needs you2", "Doing now", "Recent actions", "Computer", "About"]);
+    await expect(panel.getByRole("heading", { level: 3 })).toHaveText(["Needs you2", "Doing now", "What Daneel did"]);
     expect(await fits(page), "the page scrolls with the rail open").toBeLessThanOrEqual(0);
     expect(await page.evaluate((k) => window.localStorage.getItem(k), KEY)).toBe("expanded");
     expect(requests.filter((r) => r.startsWith("PUT ") || r.startsWith("PATCH ") || r.startsWith("POST "))).toEqual([]);
@@ -135,16 +138,15 @@ test.describe("1280×800", () => {
   });
 
   for (const scheme of ["light", "dark"] as const) {
-    test(`axe: Chat with the rail collapsed and expanded, one Behaviour page (${scheme})`, async ({ page }) => {
+    test(`axe: Chat with the rail collapsed and expanded, one Settings page (${scheme})`, async ({ page }) => {
       await open(page, scheme);
       expect(await serious(page), "collapsed").toEqual([]);
       await rail(page).getByRole("button", { name: "Expand status panel" }).click();
       await expect(rail(page).getByRole("heading", { name: "Status", level: 2 })).toBeVisible();
       expect(await serious(page), "expanded").toEqual([]);
       await page.screenshot({ path: `${SHOTS}/expanded-1280-${scheme}.png` });
-      await page.getByRole("button", { name: "Agent actions" }).click();
-      await page.getByRole("menuitem", { name: /Instructions/ }).click();
-      await expect(page.getByRole("tablist", { name: "Instructions pages" })).toBeVisible();
+      await page.getByRole("button", { name: "Settings" }).click();
+      await expect(page.getByRole("tablist", { name: "Settings pages" })).toBeVisible();
       expect(await serious(page), "behaviour").toEqual([]);
     });
   }
@@ -187,21 +189,22 @@ test.describe("1280×800", () => {
   }
 
   for (const scheme of ["light", "dark"] as const) {
-    test(`header is one ~56 px row, the card fills the height, the expanded rail pushes the thread (${scheme})`, async ({ page }) => {
+    test(`header is one ~56 px row, the card fills the height, the expanded rail overlays the thread below 1400 px (${scheme})`, async ({ page }) => {
       await page.addInitScript((k) => window.localStorage.setItem(k, "expanded"), KEY);
       await open(page, scheme);
       const header = pageHeader(page);
       const h = await sizeOf(header);
       expect(h.height, "header height").toBeLessThanOrEqual(64);
-      // Breadcrumb above the name, beside the avatar; switcher and Agent actions on the same row.
+      // Breadcrumb above the name, beside the avatar; switcher and the Settings button on the same row.
       const crumb = await sizeOf(page.getByRole("navigation", { name: "Breadcrumb" }));
       const name = await sizeOf(header.getByRole("heading", { level: 1 }));
       expect(crumb.y + crumb.height, "breadcrumb sits above the name").toBeLessThanOrEqual(name.y + 2);
       const switcher = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }));
-      const actions = page.getByRole("button", { name: "Agent actions" });
+      const actions = page.getByRole("button", { name: "Settings" });
       const a = await sizeOf(actions);
-      expect(Math.round(a.width)).toBe(36);
+      // (D-408) A labelled button, not a 36 px icon: 36 px high, as wide as its words.
       expect(Math.round(a.height)).toBe(36);
+      expect(a.width, "Settings keeps its label").toBeGreaterThan(80);
       // FIX-186: the track ends where the last tab ends.
       const lastTab = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab").last());
       expect(Math.abs(switcher.x + switcher.width - (lastTab.x + lastTab.width)), "no empty track after the last tab").toBeLessThanOrEqual(4);
@@ -214,10 +217,12 @@ test.describe("1280×800", () => {
       const card = await sizeOf(chatCard(page));
       expect(800 - (card.y + card.height), "gap under the card").toBeLessThanOrEqual(40);
       expect(await fits(page), "the page scrolls").toBeLessThanOrEqual(0);
-      // The expanded rail pushes the thread aside at 1280 px: the thread ends where the rail starts.
+      // (chat-6) At 1280 px the expanded rail lies over the thread's right edge instead of squeezing it: the thread keeps
+      // its width (the card minus the list and the 56 px strip) and the rail starts inside it.
       const thread = await sizeOf(page.getByRole("region", { name: "Chat" }));
       const r = await sizeOf(rail(page).filter({ has: page.getByRole("heading", { name: "Status", level: 2 }) }));
-      expect(thread.x + thread.width).toBeLessThanOrEqual(r.x + 1);
+      expect(r.x, "the rail overlays the thread").toBeLessThan(thread.x + thread.width);
+      expect(thread.width, "the thread is not squeezed").toBeGreaterThan(600);
       await page.screenshot({ path: `${SHOTS}/header-1280-${scheme}.png` });
     });
   }
@@ -266,7 +271,7 @@ test.describe("phone, 390 px", () => {
     expect(await overflow(page)).toBeLessThanOrEqual(0);
     await banner.click();
     const sheet = page.getByRole("dialog", { name: "Status" });
-    await expect(sheet.getByRole("heading", { level: 3 })).toHaveText(["Needs you2", "Doing now", "Recent actions", "Computer", "About"]);
+    await expect(sheet.getByRole("heading", { level: 3 })).toHaveText(["Needs you2", "Doing now", "What Daneel did"]);
     await page.screenshot({ path: `${SHOTS}/sheet-390.png` });
     await page.keyboard.press("Escape");
     await expect(sheet).toHaveCount(0);
@@ -285,9 +290,9 @@ test.describe("phone, 390 px", () => {
       expect(h.height, "header height").toBeLessThanOrEqual(112);
       const back = await sizeOf(page.getByRole("link", { name: "Back to agents" }));
       const name = await sizeOf(header.getByRole("heading", { level: 1 }));
-      const actions = await sizeOf(page.getByRole("button", { name: "Agent actions" }));
+      const actions = await sizeOf(page.getByRole("button", { name: "Settings" }));
       expect(back.width).toBeGreaterThanOrEqual(44);
-      expect(actions.width).toBeGreaterThanOrEqual(44);
+      expect(actions.width, "Settings keeps its label").toBeGreaterThan(80);
       expect(actions.height).toBeGreaterThanOrEqual(44);
       expect(Math.abs(back.y + back.height / 2 - (actions.y + actions.height / 2)), "back and actions share a row").toBeLessThanOrEqual(4);
       expect(name.y).toBeLessThan(back.y + back.height);

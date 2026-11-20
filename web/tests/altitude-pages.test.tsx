@@ -29,7 +29,7 @@ describe("Activity at Use", () => {
   it("shows a collapsed line instead of the request log, and no Expert strings", async () => {
     routes();
     wrap(<ActivityView wsId="w1" base="/o/x/w/y" />, { moreControls: false });
-    expect(await screen.findByText(/Request log: every request/)).toBeInTheDocument();
+    expect(await screen.findByText(/Technical view: every request/)).toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "Request activity" })).toBeNull();
     expect(screen.getByText(/1 more control hidden/)).toBeInTheDocument();
     // Show on the footer turns the switch on; the table then renders in place.
@@ -41,6 +41,6 @@ describe("Activity at Use", () => {
     routes();
     wrap(<ActivityView wsId="w1" base="/o/x/w/y" />, { moreControls: true });
     expect(await screen.findByRole("table", { name: "Request activity" })).toBeInTheDocument();
-    expect(screen.queryByText(/Request log: every request/)).toBeNull();
+    expect(screen.queryByText(/Technical view: every request/)).toBeNull();
   });
 });

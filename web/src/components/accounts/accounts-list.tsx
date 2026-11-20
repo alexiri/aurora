@@ -107,7 +107,7 @@ export function AccountsList({
   );
 
   const org = useOrg(scope.kind === "organization" ? orgId : undefined);
-  if (accounts.isPending) return <Loading variant="rows" />;
+  if (accounts.isPending) return <Loading variant="rows" label="Loading your accounts…" />;
   if (accounts.isError) return <ErrorState error={accounts.error} onRetry={() => accounts.refetch()} />;
   const items = accounts.data.items.filter((a) => (!kind || a.kind === kind) && (!appId || a.app?.app_id === appId));
   // A workspace owner reconnects the workspace's own accounts; an organization owner or admin the organization's (C-937).

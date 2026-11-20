@@ -54,9 +54,13 @@ export interface ApprovalQuestionProps {
   ws: string;
   /** The conversation's compact variant. */
   compact?: boolean;
+  /** False for a sample (no countdown). */
+  showExpiry?: boolean;
+  /** False for a sample (no method and address line). */
+  showRequest?: boolean;
 }
 
-export function ApprovalQuestion({ approval: a, now, onDecide, pending, message, focused = false, canApprove, approvers = [], org, ws, compact = false }: ApprovalQuestionProps) {
+export function ApprovalQuestion({ approval: a, now, onDecide, pending, message, focused = false, canApprove, approvers = [], org, ws, compact = false, showExpiry = true, showRequest = true }: ApprovalQuestionProps) {
   const [confirming, setConfirming] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -69,7 +73,7 @@ export function ApprovalQuestion({ approval: a, now, onDecide, pending, message,
         <Avatar name={a.sentence.agent.name} tintKey={a.sentence.agent.id} size={24} />
         {a.agent ? <span className="font-mono text-muted">@{a.agent.handle}</span> : null}
         {a.parked ? <ParkedChip /> : null}
-        {left ? <span className="ml-auto font-medium tabular-nums text-pending-ink">Expires in {left}</span> : null}
+        {left && showExpiry ? <span className="ml-auto font-medium tabular-nums text-pending-ink">Expires in {left}</span> : null}
       </div>
       <p className={cn("font-display font-medium", compact ? "text-base" : "text-xl")}>
         <Sentence a={a} />
@@ -89,13 +93,15 @@ export function ApprovalQuestion({ approval: a, now, onDecide, pending, message,
           </div>
         ) : null}
       </dl>
-      <p className="flex min-w-0 flex-wrap items-center gap-2 rounded-control bg-canvas px-3 py-2 font-mono text-xs text-ink-2">
-        <span className="rounded bg-subtle px-1.5 py-0.5 font-semibold text-ink">{a.method}</span>
-        <span className="min-w-0 break-all">
-          {a.host}
-          {a.path}
-        </span>
-      </p>
+      {showRequest ? (
+        <p className="flex min-w-0 flex-wrap items-center gap-2 rounded-control bg-canvas px-3 py-2 font-mono text-xs text-ink-2">
+          <span className="rounded bg-subtle px-1.5 py-0.5 font-semibold text-ink">{a.method}</span>
+          <span className="min-w-0 break-all">
+            {a.host}
+            {a.path}
+          </span>
+        </p>
+      ) : null}
       {a.parked ? <ParkedNote /> : null}
       {a.asked_by?.kind === "rule" ? (
         <p className="text-sm text-ink-2" data-testid="asked-by-rule">

@@ -5,6 +5,9 @@ import { useState, type FormEvent } from "react";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { TechnicalDetails } from "@/components/ui/technical-details";
+import { simWords } from "@/lib/labels";
 import { Section } from "@/components/ui/section";
 import { useSimulate, type Simulation } from "@/lib/api/policy";
 import { fmtSecs } from "@/lib/approval-limits";
@@ -31,13 +34,29 @@ function TraceList({ title, trace }: { title: string; trace: Simulation["trace"]
   );
 }
 
-export function SimulationResult({ sim }: { sim: Simulation }) {
+/** The rule that decided: the matched entry of the workspace trace, else the organization's. */
+function decidingRule(sim: Simulation): string | null {
+  const hit = [...sim.trace.workspace.considered, ...sim.trace.organization.considered].find((c) => c.matched && c.source !== "default");
+  return hit?.rule_name ?? null;
+}
+
+/**
+ * (P5-REFINE-16, workspace-1) The answer in a sentence, then the explanation, then the raw verdict, guidance code and winning
+ * credential collapsed under Technical details.
+ */
+export function SimulationResult({ sim, agentName = "The agent" }: { sim: Simulation; agentName?: string }) {
+  const words = simWords(sim, decidingRule(sim), agentName);
   return (
-    <div className="space-y-3 rounded-card border border-line bg-surface p-4 text-ink shadow-card" aria-label="Result">
-      <p className="text-sm">
-        Verdict: <strong data-testid="verdict">{sim.verdict}</strong>
-        {sim.reason ? <span className="text-ink-2"> ({sim.reason})</span> : null}
-      </p>
+    <div className="space-y-3" aria-label="Result">
+      <Notice tone={sim.verdict === "allow" ? "accent" : sim.verdict === "block" ? "danger" : "pending"} className="space-y-1" data-testid="sim-answer">
+        <p className="text-sm">
+          <strong>{words.lead}</strong>
+          {words.before}
+          {words.ruleName ? <strong>{words.ruleName}</strong> : null}
+          {words.after}
+        </p>
+        {words.second ? <p className="text-xs">{words.second}</p> : null}
+      </Notice>
       {sim.verdict === "needs_approval" && (sim.approval_parks || sim.approval_timeout_clamped) ? (
         // (P4-011B-4, C-829) What the approval would do: park (the agent stops waiting) and/or a timeout cut to the maximum.
         <p className="text-sm" data-testid="approval-timing">
@@ -47,21 +66,6 @@ export function SimulationResult({ sim }: { sim: Simulation }) {
           ) : null}
         </p>
       ) : null}
-      {sim.guidance_code ? (
-        <p className="text-sm">
-          Guidance: <code className="font-mono">{sim.guidance_code}</code>
-        </p>
-      ) : null}
-      <p className="text-sm">
-        Winning credential:{" "}
-        {sim.winning_credential ? (
-          <span>
-            {sim.winning_credential.name} ({sim.winning_credential.kind})
-          </span>
-        ) : (
-          <span className="text-ink-2">none</span>
-        )}
-      </p>
       {sim.app ? (
         <p className="text-sm" data-testid="recognized-as">
           Recognized as: <strong>{sim.app.app_id}</strong>
@@ -74,8 +78,29 @@ export function SimulationResult({ sim }: { sim: Simulation }) {
           {sim.winning_credential ? <span>, with the account {sim.winning_credential.name}</span> : null}
         </p>
       ) : null}
-      <TraceList title="Organization" trace={sim.trace.organization} />
-      <TraceList title="Workspace" trace={sim.trace.workspace} />
+      <TechnicalDetails bodyClassName="space-y-3 text-ink" data-testid="sim-technical">
+        <p className="text-sm">
+          Verdict: <strong data-testid="verdict">{sim.verdict}</strong>
+          {sim.reason ? <span className="text-ink-2"> ({sim.reason})</span> : null}
+        </p>
+        {sim.guidance_code ? (
+          <p className="text-sm">
+            Guidance: <code className="font-mono">{sim.guidance_code}</code>
+          </p>
+        ) : null}
+        <p className="text-sm">
+          Winning credential:{" "}
+          {sim.winning_credential ? (
+            <span>
+              {sim.winning_credential.name} ({sim.winning_credential.kind})
+            </span>
+          ) : (
+            <span className="text-ink-2">none</span>
+          )}
+        </p>
+        <TraceList title="Organization" trace={sim.trace.organization} />
+        <TraceList title="Workspace" trace={sim.trace.workspace} />
+      </TechnicalDetails>
     </div>
   );
 }
@@ -91,7 +116,9 @@ export function SimulatePanel({
   agents,
   users = [],
   currentUserId,
+  onDone,
 }: {
+  onDone?: () => void;
   wsId: string;
   agents: Agent[];
   users?: { id: string; label: string }[];
@@ -204,7 +231,19 @@ export function SimulatePanel({
           </Button>
         </form>
         {sim.isError ? <ErrorState error={sim.error} /> : null}
-        {sim.data ? <SimulationResult sim={sim.data} /> : null}
+        {sim.data ? <SimulationResult sim={sim.data} agentName={agents.find((a) => a.id === agentId)?.name} /> : null}
+        {sim.data ? (
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => sim.reset()}>
+              Check another
+            </Button>
+            {onDone ? (
+              <Button type="button" onClick={onDone}>
+                Done
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </Section>
   );

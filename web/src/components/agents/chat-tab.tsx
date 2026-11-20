@@ -18,7 +18,8 @@ import type { AgentIdent } from "@/components/chat/types";
 import { ErrorState, Loading } from "@/components/states";
 import { ChevronRightIcon } from "@/components/ui/icons";
 import { useApprovalsStream, useCanApprove } from "@/lib/api/approvals";
-import { useConversationById, useConversations, useDirectConversation, type Conversation } from "@/lib/api/conversations";
+import { chatApi, useConversationById, useConversations, useDirectConversation, type Conversation } from "@/lib/api/conversations";
+import { refreshConversations } from "./conversation-actions";
 import { useRetention } from "@/lib/api/org";
 import { conversationTitle, filterConversations, groupConversations, sortByActivity, type ListGroups } from "@/lib/chat/layout";
 
@@ -109,6 +110,8 @@ export function ChatTab({
   const qc = useQueryClient();
   const direct = useDirectConversation(agentId);
   const [archived, setArchived] = useState(false);
+  // (chat-11) The phone's list is shown only after the person taps back.
+  const [listShown, setListShown] = useState(false);
   // (P5-CHAT-4) The search box: `text` filters titles as you type; Enter submits a message search (`submitted`).
   const [query, setQuery] = useState("");
   const [chips, setChips] = useState<FilterChip[]>([]);
@@ -136,21 +139,9 @@ export function ChatTab({
   // page during a client-side navigation) and kept here until the person edits the box or sends, so a remount of the
   // composer (the direct chat resolving, the transcript loading) cannot lose it. A draft opens the direct chat.
   // `useSearchParams()` is null outside the app router (tests rendering the tab alone), as approvals-view handles.
-  const routerParams = useSearchParams();
-  const routerDraft = routerParams?.get("draft") ?? null;
-  const routerOpensDirect = routerParams?.get("open") === "direct";
+  const routerDraft = useSearchParams()?.get("draft") ?? null;
   const [draft, setDraft] = useState<string | null>(null);
   const [seenDraft, setSeenDraft] = useState<string | null>(null);
-  // On a phone the conversation and the list are two views. A link that means "open the chat with this agent" (the connect
-  // journey's Try it in chat / Open chat, the guide's Say hello) carries `open=direct`: the direct conversation's thread
-  // opens, with its box, and stays open until the person goes back to the list. A plain link to the Chat tab (and a draft
-  // alone) lands on the list, as before.
-  const [directOpen, setDirectOpen] = useState(false);
-  const [seenOpen, setSeenOpen] = useState(false);
-  if (routerOpensDirect !== seenOpen) {
-    setSeenOpen(routerOpensDirect);
-    if (routerOpensDirect) setDirectOpen(true);
-  }
   if (routerDraft !== seenDraft) {
     setSeenDraft(routerDraft);
     if (routerDraft) setDraft(routerDraft.slice(0, 500));
@@ -159,7 +150,6 @@ export function ChatTab({
   const select = useCallback(
     (id: string | null, mode?: "push" | "replace", seq?: number) => {
       setDraft(null);
-      setDirectOpen(false);
       selectRaw(id, mode, seq);
     },
     [selectRaw],
@@ -178,7 +168,8 @@ export function ChatTab({
   const convs = useMemo(() => list.data?.items ?? [], [list.data]);
   const activeConvs = useMemo(() => {
     const items = activeList.data?.items ?? [];
-    return directConv && !items.some((c) => c.id === directConv.id) ? [directConv, ...items] : items;
+    // (chat-1) The person's own chat is listed first even before the list has it, but never while it is archived.
+    return directConv && !directConv.archived_at && !items.some((c) => c.id === directConv.id) ? [directConv, ...items] : items;
   }, [activeList.data, directConv]);
   // The conversation list carries `active_turn` but is not streamed: look again while the page is visible.
   useEffect(() => {
@@ -189,7 +180,7 @@ export function ChatTab({
   }, [qc, agentId]);
   const groups: ListGroups = useMemo(() => {
     if (archived) return { mine: null, others: sortByActivity(filterConversations(convs, query)), memberDirects: [] };
-    const all = directConv && !convs.some((c) => c.id === directConv.id) ? [directConv, ...convs] : convs;
+    const all = directConv && !directConv.archived_at && !convs.some((c) => c.id === directConv.id) ? [directConv, ...convs] : convs;
     return groupConversations(filterConversations(all, query), directConv?.id ?? null);
   }, [archived, convs, directConv, query]);
 
@@ -267,7 +258,19 @@ export function ChatTab({
     setArchived(false);
     select(null, "replace");
   };
-  const threadOpen = picked !== null || (directOpen && !archived);
+  // (chat-11) On a phone the Chat tab opens the person's conversation (the composer ready); the list is one tap back.
+  // Picking, deep links and the Archived view keep working; the desktop shows both panes whatever this says.
+  const threadOpen = picked !== null || (!listShown && !archived && convId !== null);
+  // (chat-1) Until several chats exist (P5-REFINE-7) "New chat" opens the person's chat, restoring it when it was archived.
+  const newChat = () => {
+    setArchived(false);
+    if (directConv?.archived_at) {
+      void chatApi.unarchive(directConv.id).then(() => {
+        refreshConversations(qc, agentId, directConv.id);
+        select(directConv.id);
+      });
+    } else select(directConv?.id ?? null);
+  };
   const titleOf = (c: Conversation) => conversationTitle(c);
   const ctx: RailContext = {
     status,
@@ -313,8 +316,11 @@ export function ChatTab({
           waitingIds={waitingIds}
           groups={groups}
           selectedId={convId}
+          agentName={agent?.name}
+          onNewChat={newChat}
           archived={archived}
           onArchivedChange={(a) => {
+            setListShown(true);
             setArchived(a);
             select(null, "replace");
           }}
@@ -375,10 +381,14 @@ export function ChatTab({
             archived={archived || !!conv?.archived_at}
             retentionDays={retention.data?.conversations_days ?? null}
             onGone={done}
-            onBack={() => select(null)}
+            onBack={() => {
+              setListShown(true);
+              select(null);
+            }}
             onTurn={setOpenTurn}
             initialDraft={draft ?? undefined}
             onDraftUsed={onDraftUsed}
+            onSeeWhatItDid={() => (window.innerWidth < 768 ? onStatusSheetOpenChange?.(true) : setRailExpanded(true))}
           />
         ) : (
           <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-ink-2">

@@ -77,8 +77,18 @@ export function useCanApprove(wsId: string | undefined): boolean {
   return role === "owner" || role === "approver";
 }
 
-export function usePendingApprovals(wsId: string, enabled = true) {
-  return useQuery({ queryKey: approvalKeys.pending(wsId), queryFn: () => fetchPending(wsId), enabled: !!wsId && enabled, retry: retryUnlessClientError });
+/** How often the count in the rail is read again where no stream is open (P5-REFINE-16, badges). */
+export const PENDING_POLL_MS = 30_000;
+
+export function usePendingApprovals(wsId: string, enabled = true, opts: { poll?: boolean } = {}) {
+  return useQuery({
+    queryKey: approvalKeys.pending(wsId),
+    queryFn: () => fetchPending(wsId),
+    enabled: !!wsId && enabled,
+    retry: retryUnlessClientError,
+    // A list that nothing refreshes goes stale (the rail's pill): read it again on focus and every 30 s while the tab is visible.
+    ...(opts.poll ? { refetchInterval: () => (typeof document === "undefined" || document.visibilityState === "visible" ? PENDING_POLL_MS : false), refetchOnWindowFocus: true } : {}),
+  });
 }
 
 /**

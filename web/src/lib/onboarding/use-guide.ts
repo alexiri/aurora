@@ -49,8 +49,13 @@ export function useAgentReplied(agentId: string | undefined, enabled = true) {
   });
 }
 
-function llmKeys(items: { id: string; name: string; kind: string; status: string }[] | undefined, scope: GuideKey["scope"]): GuideKey[] {
-  return (items ?? []).filter((s) => s.kind === "llm" && s.status === "active").map((s) => ({ id: s.id, name: s.name, scope }));
+function llmKeys(
+  items: { id: string; name: string; kind: string; status: string; verification?: { state: NonNullable<GuideKey["verification"]> } | null }[] | undefined,
+  scope: GuideKey["scope"],
+): GuideKey[] {
+  return (items ?? [])
+    .filter((s) => s.kind === "llm" && s.status === "active")
+    .map((s) => ({ id: s.id, name: s.name, scope, verification: s.verification?.state }));
 }
 
 export interface GuideState {

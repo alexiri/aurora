@@ -288,6 +288,95 @@ fn a_code_pair_across_a_block_boundary_leaves_no_bare_url() {
     );
 }
 
+/// FIX-195 (D-270): an `<a href>` (or any tag with a URL in an attribute) leaves no bare URL
+/// however it is nested — inside another anchor's label, in a table cell (also one beyond the
+/// header's width, which GFM drops but Mattermost renders), a list item, a quote, a heading.
+#[test]
+fn a_nested_url_attribute_leaves_no_bare_url() {
+    // The CI Watcher's minimal case (CI run 44731990142, proptest seed `cc 0bee1d64…`).
+    let ci = "<a href=\"https://a.example\"> |a|b|\n|-|-|\n|1|![x](u)| <a href=\"https://a.example\">t</a> see https://e.example/?d=SECRET now </a>".to_owned();
+    // The same 600-case proptest after the first fix: the label, read as a document of its own,
+    // opened an HTML block whose text is escaped (the core's `[url](url)` became a bare URL).
+    let block = "<a href=\"https://a.example\"> <details><summary>s</summary>b</details> see https://e.example/?d=SECRET now [ </a>".to_owned();
+    let mut cases = vec![ci, block];
+    for (pre, sep) in [("", "\n"), ("", "\n    "), ("> ", "\n> "), ("- ", "\n  ")] {
+        for starter in [
+            "<details>s</details>",
+            "<div>d</div>",
+            "<p>",
+            "# h",
+            "> q",
+            "- i",
+            "1. i",
+            "```",
+            "|a|b|\n|-|-|\n|1|2|3|",
+            "[r]: https://e.example/r",
+            "    code",
+        ] {
+            cases.push(format!(
+                "{pre}<a href=\"https://o.example\">x{sep}{starter} see https://e.example/?d=S now{sep}<a href=\"https://p.example\">t</a> y</a>"
+            ));
+            cases.push(format!(
+                "{pre}<a href=\"https://o.example\">{starter} see https://e.example/?d=S</a>"
+            ));
+        }
+    }
+    cases.push("see[^a]\n\n[^a]: <details>s</details> see https://e.example/?d=S".to_owned());
+    cases.push("<a href=\"https://o.example\">a <p> b</a>".to_owned());
+    let tags = [
+        "<a href=\"https://a.example/t\">t</a>",
+        "<a href=\"javascript:alert('https://a.example/j')\">t</a>",
+        "<a href=\"data:text/html,https://a.example/d\">t</a>",
+        "<img src=\"https://a.example/i.png\">",
+        "<iframe src=\"https://a.example/f\"></iframe>",
+        "<link href=\"https://a.example/l\">",
+        "<area href=\"https://a.example/r\">",
+        "<form action=\"https://a.example/p\"></form>",
+    ];
+    for t in tags {
+        for pos in [
+            // nested in an anchor
+            format!("<a href=\"https://o.example\">x {t} y</a>"),
+            format!("<a href=\"https://o.example\"><a href=\"https://p.example\">{t}</a></a>"),
+            // a table cell, inside the header width and beyond it
+            format!("|a|b|\n|-|-|\n|1|{t}|"),
+            format!("|a|b|\n|-|-|\n|1|2|{t}|"),
+            format!("a | b\n--|--\n1 | 2 | {t} | z"),
+            // the same tables inside an anchor's label (the CI case's shape)
+            format!("<a href=\"https://o.example\"> |a|b|\n|-|-|\n|1|2| {t} </a>"),
+            format!("<a href=\"https://o.example\">x\n|a|b|\n|-|-|\n|1|2|3| {t} |</a>"),
+            format!("> <a href=\"https://o.example\"> |a|b|\n> |-|-|\n> |1|2| {t} </a>"),
+            // a list item, a quote, a heading, a footnote
+            format!("- {t}\n- <a href=\"https://o.example\">{t}</a>"),
+            format!("> {t}\n> <a href=\"https://o.example\">q {t}</a>"),
+            format!("# {t}\n## <a href=\"https://o.example\">{t}</a>"),
+            format!("see[^a]\n\n[^a]: note {t}"),
+            format!("<div>\n{t}\n</div>"),
+            format!("<table><tr><td>{t}</td></tr></table>"),
+        ] {
+            cases.push(pos);
+        }
+    }
+    for src in &cases {
+        for p in posts(src) {
+            assert!(
+                violation(&p).is_none(),
+                "{src:?} -> {p:?}: {:?}",
+                violation(&p)
+            );
+            assert!(
+                !aurora_connector_mattermost::convert::has_bare_url(&p),
+                "{src:?} -> {p:?}"
+            );
+        }
+    }
+    // An ordinary top-level link is unchanged.
+    assert_eq!(
+        posts("see <a href=\"https://x.example/p\">docs</a> now"),
+        vec!["see [docs](https://x.example/p) now".to_owned()]
+    );
+}
+
 #[test]
 fn here_typed_in_code_never_goes_live_through_the_chunker() {
     let big: String = (0..40).map(|i| format!("    line {i} @here\n")).collect();

@@ -885,6 +885,162 @@ fn table_excess_edits(
     }
 }
 
+/// `src` with every table cell beyond the header's width made text of the row's last cell (the
+/// pipe that would start it, and each one after it, backslash-escaped; [`table_excess_edits`]).
+/// For a converter that parses text whose structure differs from what [`markdown_safe`] saw (the
+/// label of an HTML anchor, read as a document of its own, can be a table): a cell the parser
+/// drops gives no event, so raw HTML in it would never be converted (FIX-195, D-270).
+pub fn escape_table_excess(src: &str) -> String {
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for (ev, r) in Parser::new_ext(src, options()).into_offset_iter() {
+        if let Event::Start(Tag::Table(aligns)) = ev {
+            table_excess_edits(src, &r, aligns.len(), &mut edits);
+        }
+    }
+    if edits.is_empty() {
+        return src.to_owned();
+    }
+    edits.sort_by_key(|e| e.0);
+    edits.dedup_by_key(|e| e.0);
+    let mut out = String::with_capacity(src.len() + edits.len());
+    let mut at = 0;
+    for (a, _, ins) in edits {
+        out.push_str(&src[at..a]);
+        out.push_str(&ins);
+        at = a;
+    }
+    out.push_str(&src[at..]);
+    out
+}
+
+/// Spaces and tabs, then at most one line break followed by the line's indentation and quote
+/// markers: the gap a reference definition allows between its parts.
+fn skip_def_space(b: &[u8], mut i: usize) -> usize {
+    while matches!(b.get(i), Some(b' ' | b'\t')) {
+        i += 1;
+    }
+    if b.get(i) == Some(&b'\r') {
+        i += 1;
+    }
+    if b.get(i) == Some(&b'\n') {
+        i += 1;
+        while matches!(b.get(i), Some(b' ' | b'\t' | b'>')) {
+            i += 1;
+        }
+    }
+    i
+}
+
+/// The title of a reference definition at the start of `s` (`[label]: dest "title"`, `'title'`
+/// or `(title)`), from the end of the destination through its closing delimiter.
+fn def_title(s: &str) -> Option<Range<usize>> {
+    let b = s.as_bytes();
+    let mut i = 1;
+    loop {
+        match *b.get(i)? {
+            b'\\' => i += 2,
+            b']' => break,
+            b'[' => return None,
+            _ => i += 1,
+        }
+    }
+    if b.get(i + 1) != Some(&b':') {
+        return None;
+    }
+    i = skip_def_space(b, i + 2);
+    // The destination, as the connector's re-check reads it: `<…>` or a run without whitespace.
+    let start = i;
+    if b.get(i) == Some(&b'<') {
+        loop {
+            i += 1;
+            match *b.get(i)? {
+                b'\\' => i += 1,
+                b'>' => break,
+                b'\n' => return None,
+                _ => {}
+            }
+        }
+        i += 1;
+    } else {
+        while b.get(i).is_some_and(|c| !c.is_ascii_whitespace()) {
+            i += 1;
+        }
+    }
+    if i == start {
+        return None;
+    }
+    let dest_end = i;
+    let j = skip_def_space(b, i);
+    let close = match *b.get(j)? {
+        b'"' => b'"',
+        b'\'' => b'\'',
+        b'(' => b')',
+        _ => return None,
+    };
+    let mut k = j + 1;
+    loop {
+        match *b.get(k)? {
+            b'\\' => k += 2,
+            c if c == close => break,
+            b'(' if close == b')' => return None,
+            _ => k += 1,
+        }
+    }
+    Some(dest_end..k + 1)
+}
+
+/// FIX-195 (D-270): a reference definition gives the parser no event — no other rewrite reaches
+/// it — and its title is never shown, but a platform's preview, or a re-check, reads the URL in
+/// it as bare text. A title that holds a preview URL (`http(s)://`, `ftp://`, `www.`, an autolink)
+/// is dropped; the label and the destination stay, a title without one stays. Definitions are
+/// found as text no event covers (outside containers' markers), so a repeated label — which the
+/// parser's own list of definitions keeps only once — is found too.
+fn def_title_edits(
+    src: &str,
+    evs: &[(Event<'_>, Range<usize>)],
+    edits: &mut Vec<(usize, usize, String)>,
+) {
+    use pulldown_cmark::TagEnd;
+    let covered: Vec<&Range<usize>> = evs
+        .iter()
+        .filter(|(e, _)| {
+            !matches!(
+                e,
+                Event::Start(
+                    Tag::BlockQuote(_)
+                        | Tag::List(_)
+                        | Tag::Item
+                        | Tag::FootnoteDefinition(_)
+                        | Tag::DefinitionList
+                        | Tag::DefinitionListTitle
+                        | Tag::DefinitionListDefinition
+                ) | Event::End(
+                    TagEnd::BlockQuote(_)
+                        | TagEnd::List(_)
+                        | TagEnd::Item
+                        | TagEnd::FootnoteDefinition
+                        | TagEnd::DefinitionList
+                        | TagEnd::DefinitionListTitle
+                        | TagEnd::DefinitionListDefinition
+                )
+            )
+        })
+        .map(|(_, r)| r)
+        .collect();
+    let in_gap = |r: &Range<usize>| !covered.iter().any(|c| c.start < r.end && r.start < c.end);
+    for (p, _) in src.match_indices('[') {
+        if !in_gap(&(p..p + 1)) {
+            continue;
+        }
+        if let Some(t) = def_title(&src[p..]) {
+            let t = p + t.start..p + t.end;
+            if in_gap(&t) && has_preview_url(&src[t.clone()]) {
+                edits.push((t.start, t.end, String::new()));
+            }
+        }
+    }
+}
+
 /// One pass of the exceptions 1–3 (byte-range edits), then exception 4.
 fn rewrite(src: &str) -> String {
     let evs: Vec<(Event<'_>, Range<usize>)> =
@@ -1020,6 +1176,7 @@ fn rewrite(src: &str) -> String {
             _ => {}
         }
     }
+    def_title_edits(src, &evs, &mut edits);
     edits.sort_by_key(|e| (e.0, e.1));
     let mut out = String::with_capacity(src.len() + 64);
     let mut at = 0;

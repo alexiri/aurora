@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
+import { copyLabel, useCopy } from "@/lib/use-copy";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Avatar } from "@/components/agent-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
+import { ROLE_CAN } from "@/lib/roles-explain";
 import { formatWhen } from "@/lib/format-date";
 import { When } from "@/components/ui/when";
 import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
@@ -36,14 +39,18 @@ import { useWorkspaceOffboarding } from "@/lib/api/automations";
 
 type Role = "owner" | "approver" | "member";
 
-/** One-line explanation of each role (phase 2, RFE-012). */
 const ROLE_LABEL: Record<Role, string> = { owner: "Owner", approver: "Approver", member: "Member" };
 
-export const ROLE_HELP: Record<Role, string> = {
-  owner: "Owner: manages the workspace, its access and settings, and can decide approvals.",
-  approver: "Approver: chats with agents and can decide approvals.",
-  member: "Member: chats with agents; cannot decide approvals.",
-};
+const ROLE_ORDER: Role[] = ["owner", "approver", "member"];
+
+function CopyLink({ address }: { address: string }) {
+  const { state, copy } = useCopy();
+  return (
+    <Button type="button" variant="ghost" size="sm" onClick={() => copy(address)}>
+      {copyLabel(state, "Copy link")}
+    </Button>
+  );
+}
 
 function AddBinding({
   wsId,
@@ -160,7 +167,10 @@ function Row({
   mine,
   lastOwner,
   orgName,
+  address,
 }: {
+  /** The workspace's full address to send, for a person who has not signed in yet. */
+  address?: string;
   orgName?: string;
   b: AccessBinding;
   /** This row is the viewer's own: no menu and no role change. */
@@ -236,22 +246,59 @@ function Row({
           ROLE_LABEL[b.role as Role] ?? b.role
         )}
       </Td>
-      <Td label="Joined" className="whitespace-nowrap text-ink-2">
-        {b.joined_at ? <When value={b.joined_at} /> : <span className="text-muted">—</span>}
+      <Td label="Joined" className="text-ink-2">
+        {/* (workspace-4, C-1086) `signed_in` is false until the person's first sign-in: "Not signed in yet" and the link to send. */}
+        {(b as { signed_in?: boolean }).signed_in === false ? (
+          <span className="flex flex-wrap items-center gap-2" data-testid="not-signed-in">
+            <span className="rounded-full bg-pending-panel px-2 py-0.5 text-label font-medium leading-4 text-pending-ink">Not signed in yet</span>
+            {b.joined_at ? <span className="whitespace-nowrap">added <When value={b.joined_at} /></span> : null}
+            {address ? <CopyLink address={address} /> : null}
+          </span>
+        ) : b.joined_at ? (
+          <When value={b.joined_at} className="whitespace-nowrap" />
+        ) : (
+          <span className="text-muted">—</span>
+        )}
       </Td>
       <Td cell="actions" className="text-right">
-        <ConfirmDialog
-          open={promote}
-          onOpenChange={setPromote}
-          title={`Make ${who} an owner?`}
-          description="Owners can manage the workspace, its access and settings, and decide approvals."
-          confirmLabel="Promote to Owner"
-          busy={put.isPending}
-          onConfirm={() => {
-            setPromote(false);
-            put.mutate({ user: b.user_id, role: "owner" }, { onError });
-          }}
-        />
+        {/* (workspace-5) Only a change to Owner asks: what an Owner can do, then Make Owner. */}
+        <Dialog open={promote} onOpenChange={setPromote}>
+          <DialogContent title={`Make ${who} an Owner?`}>
+            <div className="space-y-3 text-sm text-ink-2">
+              <div className="flex items-center gap-3" data-testid="promote-person">
+                <Avatar name={who} tintKey={b.user_id} size={32} />
+                <span>
+                  <strong className="text-ink">{who}</strong>
+                  <br />
+                  <span className="text-xs text-muted">{ROLE_LABEL[b.role as Role] ?? b.role} now → Owner</span>
+                </span>
+              </div>
+              <p>Owners can, in addition to what members can do:</p>
+              <ul className="space-y-1" aria-label="What an Owner can do">
+                {ROLE_CAN.workspace.owner.can.map((c) => (
+                  <li key={c} className="flex items-center gap-1.5">
+                    <span aria-hidden="true" className="text-accent">✓</span> {c}
+                  </li>
+                ))}
+              </ul>
+              <p>You can change them back to Member at any time.</p>
+            </div>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <DialogClose asChild>
+                <Button variant="outline">Cancel</Button>
+              </DialogClose>
+              <Button
+                disabled={put.isPending}
+                onClick={() => {
+                  setPromote(false);
+                  put.mutate({ user: b.user_id, role: "owner" }, { onError, onSuccess: () => saved.flash() });
+                }}
+              >
+                Make Owner
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
         {/* (P5-POLISH-7, D6) A … menu; never on your own row, and not for access that comes from the organization or the IdP. */}
         {canOwn && !b.implicit && !b.idp_value && !mine ? (
           <Menu>
@@ -337,6 +384,12 @@ export function AccessTab({
   const access = useAccess(wsId);
   const meId = useMe().data?.user.id;
   const org = useOrg(orgId);
+  const origin = useSyncExternalStore(
+    () => () => {},
+    () => window.location.origin,
+    () => "",
+  );
+  const address = people ? `${origin}${people.workspacePath}` : undefined;
   const [err, setErr] = useState<unknown>(null);
   if (access.isPending) return <Loading />;
   if (access.isError) return <ErrorState error={access.error} onRetry={() => access.refetch()} />;
@@ -375,6 +428,7 @@ export function AccessTab({
                 mine={b.user_id === meId}
                 lastOwner={b.role === "owner" && !b.implicit && directOwners === 1}
                 orgName={org.data?.name}
+                address={address}
                 wsId={wsId}
                 canOwn={canOwn}
                 candidates={items
@@ -412,8 +466,10 @@ export function AccessTab({
       <details className="text-sm text-ink-2">
         <summary className="cursor-pointer font-medium text-ink">What can each role do?</summary>
         <ul aria-label="Roles" className="mt-2 space-y-0.5">
-          {(Object.keys(ROLE_HELP) as Role[]).map((r) => (
-            <li key={r}>{ROLE_HELP[r]}</li>
+          {ROLE_ORDER.map((r) => (
+            <li key={r}>
+              <strong className="text-ink">{ROLE_CAN.workspace[r].label}:</strong> {ROLE_CAN.workspace[r].summary} {ROLE_CAN.workspace[r].can.join(" · ")}.
+            </li>
           ))}
         </ul>
       </details>

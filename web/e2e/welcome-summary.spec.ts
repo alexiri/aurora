@@ -58,7 +58,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByText("1 of 2 done")).toBeVisible();
         await expect(page.getByText("Your organization provides an AI key: AIGW")).toBeVisible();
         const summary = page.getByRole("region", { name: "Daneel is your agent" });
-        await expect(summary).toContainText("Daneel can't use any app yet. It can reach any website.");
+        await expect(summary).toContainText("Daneel can't use any app yet. It can reach websites; you can limit that.");
         await expect(page.getByRole("region", { name: "How it stays safe" })).toContainText("puts anything that needs your say in Approvals.");
         await expect(page.getByRole("link", { name: "Say hello to Daneel" })).toBeVisible();
         await check(page);

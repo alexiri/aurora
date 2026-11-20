@@ -4,12 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 
 import { Badge } from "@/components/ui/badge";
 import { DownloadIcon, FileIcon, XIcon } from "@/components/ui/icons";
-import { attachmentUrl, canThumbnail, fetchAttachmentFacts, formatBytes, type Attachment } from "@/lib/api/attachments";
+import { attachmentUrl, canThumbnail, effectiveContentType, fetchAttachmentFacts, formatBytes, type Attachment } from "@/lib/api/attachments";
 import type { PurgeReason } from "@/lib/chat/transcript";
 
+/** (chat-10) The kind in a word: PDF and the like by name, plain text and unknown types as "File". */
 const typeLabel = (contentType?: string): string => {
   const t = (contentType ?? "").split(";")[0].trim();
-  if (!t) return "File";
+  if (!t || t === "application/octet-stream" || t.startsWith("text/")) return "File";
   const sub = t.split("/")[1] ?? t;
   return sub
     .replace(/^x-/, "")
@@ -57,17 +58,23 @@ export function AttachmentCard({
       </span>
     );
   }
-  const meta = [size !== undefined ? formatBytes(size) : "", typeLabel(contentType)].filter(Boolean).join(" · ");
+  const type = effectiveContentType(contentType || facts.data?.contentType, filename);
+  const image = canThumbnail(type);
+  // (chat-10) "pic.png · 179 B · Image", "notes.txt · 44 B · File": a word for the kind, not the MIME subtype.
+  const meta = [size !== undefined ? formatBytes(size) : "", image ? "Image" : typeLabel(type)].filter(Boolean).join(" · ");
   return (
-    <span className="flex max-w-full flex-col gap-1.5">
-      {canThumbnail(contentType) ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt="" className="max-h-60 max-w-60 rounded-control border border-line object-cover" />
-      ) : null}
-      <span className="flex min-w-0 items-center gap-2.5 rounded-control border border-line bg-surface px-2.5 py-2 text-sm text-ink dark:bg-canvas">
-        <span aria-hidden="true" className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-subtle text-ink-2">
-          <FileIcon width={18} height={18} />
-        </span>
+    <span className="flex max-w-full flex-col">
+      <span className="flex min-w-0 flex-col overflow-hidden rounded-control border border-line bg-surface text-sm text-ink dark:bg-canvas">
+        {image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={url} alt="" loading="lazy" className="max-h-60 w-full max-w-60 border-b border-line bg-subtle object-cover" />
+        ) : null}
+      <span className="flex min-w-0 items-center gap-2.5 px-2.5 py-2">
+        {image ? null : (
+          <span aria-hidden="true" className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-subtle text-ink-2">
+            <FileIcon width={18} height={18} />
+          </span>
+        )}
         <span className="min-w-0 flex-1">
           <a className="block truncate font-medium text-link underline" href={url} download={filename || undefined}>
             {name}
@@ -75,6 +82,7 @@ export function AttachmentCard({
           <span className="block truncate text-xs text-muted">{meta}</span>
         </span>
         <DownloadIcon aria-hidden="true" className="shrink-0 text-ink-2" />
+      </span>
       </span>
     </span>
   );

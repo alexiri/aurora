@@ -75,6 +75,9 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
       // FIX-021: the link opens the LLM keys tab, owners also get "Agent access", the reason counts show under the copy.
       await expect(page.getByRole("link", { name: "Open AI keys" })).toHaveAttribute("href", /\/apps\?tab=accounts&kind=ai-key$/);
       await expect(page.getByRole("link", { name: "Agent access" })).toHaveAttribute("href", /\/agents\/[^/?]+\?tab=access$/);
+      // (chat-7) The technical line is under Details.
+      await expect(page.getByText("1 granted key not usable (origin_unverified)")).toBeHidden();
+      await page.getByRole("button", { name: "Details" }).click();
       await expect(page.getByText("1 granted key not usable (origin_unverified)")).toBeVisible();
     },
   },
@@ -91,15 +94,25 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
       await expect(page.getByText("Reconnecting")).toHaveCount(0);
     },
   },
-  { name: "phone-list", fx: DEFAULT, query: () => "", phoneOnly: true },
+  {
+    // (chat-11) The phone opens the person's conversation; the list is one tap back.
+    name: "phone-list",
+    fx: DEFAULT,
+    query: () => "",
+    phoneOnly: true,
+    prepare: async (page) => {
+      await page.getByRole("button", { name: "Back to conversations" }).click();
+      await expect(page.getByRole("tab", { name: "Active" })).toBeVisible();
+    },
+  },
   {
     name: "phone-thread",
     fx: DEFAULT,
     query: () => "",
     phoneOnly: true,
     prepare: async (page) => {
-      await page.getByRole("button", { name: /Direct chat/ }).first().click();
       await expect(page.getByRole("button", { name: "Back to conversations" })).toBeVisible();
+      await expect(page.getByPlaceholder(/^(Message Daneel…|Add a follow-up…)$/)).toBeVisible();
     },
   },
 ];
@@ -217,10 +230,10 @@ test.describe("layout, 1280 px", () => {
       expect(await page.evaluate(() => document.scrollingElement!.scrollHeight - window.innerHeight), "page scrolls").toBeLessThanOrEqual(0);
       await page.screenshot({ path: `${dir}/chat-${scheme}-1280x800.png` });
       expect(await serious(page)).toEqual([]);
-      // (D-200) Every section has the same one-line header; Freeze and Delete are in Agent actions.
-      await page.getByRole("button", { name: "Agent actions" }).click();
-      await page.getByRole("menuitem", { name: /Instructions/ }).click();
-      await expect(page.getByRole("button", { name: "Agent actions" })).toBeVisible();
+      // (D-200, D-408) Every section has the same one-line header; Pause and Delete are at the bottom of Settings.
+      await page.getByRole("button", { name: "Settings" }).click();
+      await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Settings" })).toBeVisible();
       // (P5-POLISH-6) The model field is "Model"; the roles and the subagent default sit under Advanced.
       await expect(page.getByLabel("Model", { exact: true })).toBeVisible();
       // (P5-REFINE-3, P5-REFINE-12) Advanced is Expert: at Use it is one collapsed line whose Show opens it in place.
@@ -322,9 +335,14 @@ test.describe("layout, 1280 px", () => {
 test.describe("layout, 390 px", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("the list and the thread are two views; Back and the browser's back return to the list", async ({ page }) => {
+  test("the list and the thread are two views; the phone opens the thread, Back returns to the list", async ({ page }) => {
     await openChat(page, "light", DEFAULT);
     const list = page.getByRole("navigation", { name: "Conversations" });
+    // (chat-11) The Chat tab opens the person's conversation with the composer ready; the list is one tap back.
+    await expect(page.getByRole("log")).toBeVisible();
+    await expect(list).toBeHidden();
+    await expect(page.getByPlaceholder(/^(Message Daneel…|Add a follow-up…)$/)).toBeVisible();
+    await page.getByRole("button", { name: "Back to conversations" }).click();
     await expect(list).toBeVisible();
     await expect(page.getByRole("log")).toBeHidden();
     expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -389,7 +407,8 @@ for (const width of [1250, 390]) {
 
     test("wraps instead of clipping or scrolling", async ({ page }) => {
       await openChat(page, "light", DEFAULT, `?c=${MINE.id}`);
-      if (width < 768) await page.getByRole("button", { name: "Formatting" }).click();
+      // (chat-8) At every width the row opens with Aa.
+      await page.getByRole("button", { name: "Formatting" }).click();
       const row = page.getByTestId("formatting-row");
       await expect(row).toBeVisible();
       const buttons = row.getByRole("toolbar", { name: "Formatting" }).getByRole("button");

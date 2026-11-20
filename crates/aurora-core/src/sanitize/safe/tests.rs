@@ -690,6 +690,84 @@ fn cells_beyond_the_header_are_part_of_the_last_cell() {
         "|a|b|\n|-|-|\n|1|",
     ] {
         assert_eq!(md(same), same);
+        assert_eq!(escape_table_excess(same), same);
+    }
+}
+
+/// FIX-195 (third finding, D-270): a reference definition's title gets no event, so no other
+/// rewrite reached a URL in it. A title that holds a preview URL is dropped (it is never shown);
+/// the label and the destination stay as they are, a title without one stays.
+#[test]
+fn a_definition_title_with_a_preview_url_is_dropped() {
+    for (src, want) in [
+        (
+            "[x][r]\n\n[r]: https://e.example/ ( ftp://e.example/x and <www.e.example/y> )",
+            "[x][r]\n\n[r]: https://e.example/",
+        ),
+        (
+            "[x][r]\n\n[r]: https://e.example/ \"see https://f.example/?d=S\"",
+            "[x][r]\n\n[r]: https://e.example/",
+        ),
+        (
+            "[x][r]\n\n[r]: <https://e.example/a> 'www.f.example'",
+            "[x][r]\n\n[r]: <https://e.example/a>",
+        ),
+        (
+            "[x][r]\n\n[r]: https://e.example/\n  \"<https://f.example/>\"\n\nnext",
+            "[x][r]\n\n[r]: https://e.example/\n\nnext",
+        ),
+        (
+            "> [x][r]\n>\n> [r]: https://e.example/\n> (http://f.example/q)",
+            "> [x][r]\n>\n> [r]: https://e.example/",
+        ),
+        // A repeated label: the parser keeps only the first definition, the second is still text
+        // no event covers.
+        (
+            "[x][r]\n\n[r]: https://e.example/ \"a\"\n[r]: https://g.example/ \"ftp://f.example/\"",
+            "[x][r]\n\n[r]: https://e.example/ \"a\"\n[r]: https://g.example/",
+        ),
+        (
+            "- [x][r]\n\n  [r]: https://e.example/ \"https://f.example/\"",
+            "- [x][r]\n\n  [r]: https://e.example/",
+        ),
+    ] {
+        let out = md(src);
+        assert_eq!(out, want, "{src:?}");
+        assert_eq!(md(&out), out, "idempotent: {src:?}");
+    }
+    // The destination is neutralised as before, a title without a URL is kept, and a definition
+    // look-alike in prose is still broken, not cut.
+    for same in [
+        "[x][r]\n\n[r]: https://e.example/",
+        "[x][r]\n\n[r]: https://e.example/ \"plain title\"",
+        "[x][r]\n\n[r]: https://e.example/ (example.org is no URL)",
+    ] {
+        assert_eq!(md(same), same, "{same:?}");
+    }
+    let prose = md("para\n[r]: https://e.example/ \"https://f.example/\"\n[x][r]");
+    assert!(prose.contains("[r]\\:"), "{prose:?}");
+    assert!(!bare_url_left(&prose), "{prose:?}");
+}
+
+/// FIX-195: the same escaping on its own, for a converter that parses a piece of text (an anchor's
+/// label) whose structure the sanitizer never saw; idempotent.
+#[test]
+fn escape_table_excess_makes_extra_cells_text_of_the_last_cell() {
+    for (src, want) in [
+        (
+            "|a|b|\n|-|-|\n|1|2|<a href=\"https://x\">t</a>|",
+            "|a|b|\n|-|-|\n|1|2\\|<a href=\"https://x\">t</a>\\|",
+        ),
+        (
+            "a | b\n--|--\n1 | 2 | 3 | 4",
+            "a | b\n--|--\n1 | 2 \\| 3 \\| 4",
+        ),
+        ("> |a|\n> |-|\n> |1|2|", "> |a|\n> |-|\n> |1\\|2\\|"),
+        ("not a table | x", "not a table | x"),
+    ] {
+        let out = escape_table_excess(src);
+        assert_eq!(out, want, "{src:?}");
+        assert_eq!(escape_table_excess(&out), out, "idempotent: {src:?}");
     }
 }
 
