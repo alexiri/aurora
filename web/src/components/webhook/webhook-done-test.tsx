@@ -59,6 +59,7 @@ export function WebhookDoneTest({ connectionId, onEditAddress }: { connectionId:
           <p className="text-xs text-muted">This sends the example message to the address.</p>
         </>
       )}
+      <p className="text-xs text-muted">An address can&apos;t be changed once saved: Edit address makes a new account with the corrected one and removes this one.</p>
       {failure ? (
         <Notice tone="danger" role="alert">
           <p className="font-semibold">The test did not go through</p>

@@ -1,5 +1,6 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
 
+import { chooseService } from "./support/llm";
 import { PLACEMENT_ADMIN } from "./support/placement";
 
 // P4-ONB-2 (D-141): the three onboarding journeys on the kind dev stack with the --llm-mock profile
@@ -12,9 +13,9 @@ import { PLACEMENT_ADMIN } from "./support/placement";
 // The mock: endpoint `litellm-mock` defaults to the model alias `scn-pong`, which VidaiMock answers with "pong".
 const MOCK_KEY = "sk-aurora-mock-dev"; // dev-only dummy master key (docs/operator/llm-endpoints.md)
 const MOCK_REPLY = "pong";
-// The endpoint is chosen by its id (deploy/kind/values-llm-mock.yaml), not its label: the label carries hints that
-// change ("— Works with Claude Code" since P4-LLM-6), and a stale label waits out the whole test timeout.
-const ENDPOINT_ID = "litellm-mock";
+// The endpoint's card is found by its name (display_name in deploy/kind/values-llm-mock.yaml); the line under the name
+// carries hints that change, so only the start of the card's label is matched.
+const ENDPOINT_NAME = "LiteLLM (VidaiMock, dev only)";
 
 test.describe.configure({ mode: "serial" });
 
@@ -89,8 +90,8 @@ test("1. fresh instance: the admin walks the five-step checklist to a working ch
   await steps.locator("#setup-key").getByRole("button", { name: /Add key|Add another/ }).click();
   const dialog = page.getByRole("dialog", { name: "Add an organization AI key" });
   const form = dialog.getByRole("form", { name: "New LLM key" });
+  await chooseService(dialog, ENDPOINT_NAME);
   await form.getByLabel("Name").fill("Mock LLM");
-  await form.getByLabel("Which service is this key for?").selectOption(ENDPOINT_ID);
   await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
   await dialog.getByRole("button", { name: "Add key" }).click();
   await expect(page.getByTestId("setup-toast")).toContainText("AI key added", { timeout: 60_000 });
