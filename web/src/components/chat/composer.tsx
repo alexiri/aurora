@@ -89,7 +89,10 @@ export function Composer({
   initialDraft,
   onDraftUsed,
   onSent,
+  draftRef,
 }: {
+  /** (item 9) Lets the thread put a suggested message in the box (focused, never sent). */
+  draftRef?: MutableRefObject<((text: string) => void) | null>;
   /** (chat-2) The message was accepted: the transcript scrolls to the bottom. */
   onSent?: () => void;
   /** (P5-REFINE-13, C-1035) A link's suggested message (`?draft=`), already read from the router. Never sent for the person. */
@@ -311,6 +314,17 @@ export function Composer({
       attachRef.current = null;
     };
   });
+
+  useEffect(() => {
+    if (!draftRef) return;
+    draftRef.current = (t) => {
+      setText(t.slice(0, 500));
+      area.current?.focus();
+    };
+    return () => {
+      draftRef.current = null;
+    };
+  }, [draftRef]);
 
   async function act(fn: () => Promise<unknown>) {
     setSendErr(null);

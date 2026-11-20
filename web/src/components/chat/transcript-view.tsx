@@ -34,7 +34,10 @@ export function TranscriptView({
   jump = null,
   onJumpMissing,
   sent = 0,
+  after,
 }: {
+  /** (item 9) Cards under the latest rows: the first successes. */
+  after?: ReactNode;
   /** (chat-2) Bumped for every message the person sends: the log goes to the bottom, whatever it was following. */
   sent?: number;
   /** Scroll to (and highlight) the message with this `seq`; a new `n` repeats the request (P5-CHAT-2). */
@@ -187,6 +190,7 @@ export function TranscriptView({
           <StreamingBubble key={d.messageId} text={d.text} agent={agent} />
         ))}
         {active ? <TypingRow agent={agent} line={turn ? state.activity[turn] : undefined} /> : null}
+        {after}
       </div>
       {leftAt !== null ? (
         <JumpToLatest

@@ -425,13 +425,54 @@ that must be exactly right. Not Haiku; Opus review at integration only for the S
 
 ## Completion report
 
-(Fill in when done; P5-REFINE-20 reads this.)
+Lane A, branch `alexiri/p5-polish-a`, master at 6cbf3a12 then re-merged at 4c92cc7d (brief 13 item 1 and brief 4 are in).
+**Status: partly done; items 6, 7, 11 and the live part of 3 wait (list below).**
 
-- **Items done** (scope items 1–10, each with commit id; say which were done after which backend merge):
-- **Deviations from this brief, and why** (including the Settings menu-versus-danger-zone choice and whether the owner
-  wants the other reading):
-- **Verify-first findings** (chat-8 `Aa`, chat-10 thumbnail: what was already right, what was changed and why):
-- **Screenshots compared** (path of each screenshot beside its mockup; both themes; 1256 and 390 px): chat-1, chat-2, chat-3,
-  chat-4, chat-5, chat-6, chat-7, chat-8, chat-9, chat-10, chat-11, access-3 (header part):
-- **Gate counts:** typecheck, lint, vitest files and tests, Playwright specs and tests, axe:
-- **Open questions for the owner:**
+- **Items done** (commit ids on the branch):
+  - **1 Settings button, tabs, Settings page, danger zone** — `bbaa62e9` (after -1, -2, -3). `sections.ts` has a `settings` section
+    (instructions, access, memory, skills, evals, peers); `components/agents/settings-shell.tsx` is the frame (back link, name, lead,
+    left sub-nav that is the segmented `Tabs` under 768 px, danger zone). `?tab=` ids unchanged.
+  - **3 Rail** — `1986b503`: Need · Now · Did labels, headings Needs you · Doing now · What <Agent> did, Computer as one line under
+    Doing now, About removed, `RAIL_OVERLAY_BELOW` 1100 → 1400. "What <Agent> did" still shows today's request list (waits for -9).
+  - **2 + 7(header) Header state** — `63f8023e`: `agentStateOf` order Can't answer → Needs you → Working → Starting its computer… → Asleep →
+    Ready from `SandboxView.computer` (after -4, C-1059); "Can't answer: <reason>" from `answer-readiness` (after -5, C-1062); `action` slot left empty
+    for -12. **Done after -4 and -5 merged.**
+  - **4, 5, 8** — `f2ff5544` (plus `wip` commit): chat-8 (one row until Aa, Preview grows), chat-6 (hint truncates, 1400 overlay), chat-2
+    (scroll to bottom on send via `onSent`, again after image load, no Jump pill), chat-10, chat-9, chat-7, chat-1 (archived thread read-only,
+    Restore, Undo toast, empty Active list with New chat), chat-11 (phone opens the conversation).
+  - **9 First successes** — see the final commit: `lib/chat/first-success.ts`, `components/chat/first-success.tsx`.
+  - **10 Pause everywhere** — the agent page, banner and Settings read Pause/Resume (strings from -1); checked, none left.
+  - **Send-back from the coordinator (P5-REFINE-1 failures)** — `c154e215` (agent-evals, app-setup, internet-access specs); altitude `?tab=evals`
+    is fixed by the Settings page (its heading is "Tests"); the 390 px tablist overflow: the Computer sub-tabs now use `overflow="menu"`
+    (More menu) — **please have the CI Watcher run `agent-tabs.spec.ts` and `files.spec.ts` at 390 px** (Playwright is refused in this lane).
+- **Waiting (not done, with what they wait for):** item 6 several chats / Rename / auto-titles / run-thread folding / `useDirectConversation`
+  no longer the default → **P5-REFINE-7**; item 7 Stop keeps the partial answer + "You stopped this answer" → **-7**; item 3's live
+  "What <Agent> did" (last five timeline rows, `useTimelineStream`) → **-9**; item 8's "<Agent> has no AI model yet" card with Add a key / Ask an
+  admin (header words are done) → needs **-8**'s Ask reason and is -12's button; chat-7's person-facing sentence from the split event → -7;
+  item 11 the Needs-you count on the agent's Agents-list row (`C-1082`) → **-8** (the rail's own count on the icon and in the heading already
+  existed and is kept); the first-run card's "Open the run" button → -7.
+- **Deviations from this brief, and why:**
+  - Settings: followed the coordinator's decision (button opens the page; Pause and Delete in the danger zone at the bottom), not the
+    mockup's menu. Pause in the zone is an outline button; Delete a danger button.
+  - Rail: Terminal, Files and SSH buttons left the rail with the Computer part (the brief makes it one line); they are pages of the Computer tab.
+    `RailContext.terminalAvailable/sshAvailable` are now unused (kept to avoid churn).
+  - Header: a computer that failed to start reads "Can't answer: its computer couldn't start" (not in the brief's word list; "Ready" would be false).
+  - First-success keys are dashed (`first-answer`, …) because the API accepts only lowercase letters, digits and dashes (so no question to the Orchestrator was needed).
+    The first-answer card does not name the key ("thought with the Company key"): members cannot see it; it says "changed nothing outside this chat" only when the
+    turn used no tools, else "answered and used N tools". The cards sit at the end of the transcript (under the latest rows), not pinned under the exact event.
+    A card appears only for a success from the last 24 hours.
+  - chat-9: no "Replying to …" line — `SearchItem` carries no reply information (needs an API field). Titles of direct chats stay "Direct chat" until -7 auto-titles.
+  - chat-7: the error event's `message` and the agent bubble that repeats it (same turn, text equal to or contained in the message) are handled client-side; -7's split event makes it cleaner.
+- **Verify-first findings:** chat-8: `Aa` existed (P5-UX-1) but the row was **open by default from 768 px** — now closed at every width, remembered once chosen.
+  chat-10: `attachments.tsx` did render an `<img>`, but a person's own message names attachments by id only, so no content type reached `canThumbnail` and
+  uploads typed `application/octet-stream` were file cards: the card now reads the type from the HEAD response and the file name, and shows one card
+  (thumbnail over name · size · Image) instead of a thumbnail plus a card.
+- **Screenshots compared:** none taken (Playwright and a browser are refused in this lane); P5-REFINE-20 compares chat-1..chat-11 and access-3 against the mockups.
+- **Gate counts:** typecheck clean; eslint clean on the touched trees; full web vitest **191 files, 2737 tests** (all passed after fixing one test's query-client seed; the fixed file re-ran green, 6/6);
+  `scripts/guards/run-all.sh`: all guards passed. No Rust or API change, so `cargo fmt/clippy` and `extract-schema --check` were not run. Playwright mocked specs: edited by reading, **not run**.
+- **Tests changed / added:** changed `agent-page-header`, `agent-sections`, `status-rail`, `ssh-sessions` (rail SSH button removed with the feature: replaced by a computer-line test),
+  `agent-sandbox-failure`, `chat-search`, `chat-v2`, `fix-170`; added `agent-state`, `refine-11-chat`, `first-success`; specs changed `agent-tabs`, `agent-config`,
+  `agent-page-p5`, `dialogs`, `dialogs.prod`, `chat-v2`, `chat-composer`, `chat-search`, `agent-evals`, `app-setup`, `internet-access`; added `refine-11-chat.spec.ts`.
+  Removed: the `dialogs.spec` menu-ring assertion (the agent actions menu is gone) and the rail's Terminal/Files/SSH/About assertions (those controls left the rail).
+- **Production specs only the nightly runs:** `dialogs.prod.spec.ts` (Settings → Delete flow, read not run).
+- **Open questions for the owner:** none new; the Settings page's other sub-pages keep their old bodies until -12.

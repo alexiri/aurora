@@ -388,6 +388,7 @@ export function ChatTab({
             onTurn={setOpenTurn}
             initialDraft={draft ?? undefined}
             onDraftUsed={onDraftUsed}
+            onSeeWhatItDid={() => (window.innerWidth < 768 ? onStatusSheetOpenChange?.(true) : setRailExpanded(true))}
           />
         ) : (
           <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-ink-2">

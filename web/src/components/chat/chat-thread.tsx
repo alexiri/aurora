@@ -18,6 +18,7 @@ import { useTranscript } from "@/lib/chat/use-transcript";
 import { ChatActionsContext, type ChatActions, type ReplyTarget } from "./chat-actions";
 import { AccountsBanner } from "@/components/accounts/attention";
 import { Composer } from "./composer";
+import { FirstSuccessCards } from "./first-success";
 import { ThreadHeader } from "./thread-header";
 import { TranscriptView } from "./transcript-view";
 import type { AgentIdent } from "./types";
@@ -42,7 +43,10 @@ export function ChatThread({
   agent,
   initialDraft,
   onDraftUsed,
+  onSeeWhatItDid,
 }: {
+  /** (item 9) The first-answer card's "See what it did": opens the rail's "What <Agent> did". */
+  onSeeWhatItDid?: () => void;
   /** (P5-REFINE-13) A link's suggested message for the composer. */
   initialDraft?: string;
   onDraftUsed?: () => void;
@@ -77,6 +81,8 @@ export function ChatThread({
   const [reply, setReply] = useState<ReplyTarget | null>(null);
   // Files dropped anywhere on the thread pane go to the composer's uploader (P5-CHAT-3).
   const attachRef = useRef<((files: File[]) => void) | null>(null);
+  // (item 9) A first-success card's suggested message goes into the composer, never sent.
+  const draftRef = useRef<((text: string) => void) | null>(null);
   // A permalink (`?c=&m=`) is read at mount; the transcript performs the jump once its history is shown.
   const [jump, setJump] = useState<{ seq: number; n: number } | null>(() => {
     const seq = typeof window === "undefined" ? null : permalinkSeq(window.location.search, convId);
@@ -170,6 +176,18 @@ export function ChatThread({
             agent={agent}
             active={!!active}
             sent={sent}
+            after={
+              readOnly || archived ? null : (
+                <FirstSuccessCards
+                  events={state.events}
+                  conversation={conversation ?? direct}
+                  agentName={agentName}
+                  wsId={wsId}
+                  onSeeWhatItDid={onSeeWhatItDid}
+                  onTry={(t) => draftRef.current?.(t)}
+                />
+              )
+            }
             empty={
               empty ? (
                 <div className="mx-auto flex max-w-sm flex-col items-center gap-2 text-center">
@@ -234,6 +252,7 @@ export function ChatThread({
             attachRef={attachRef}
             initialDraft={initialDraft}
             onDraftUsed={onDraftUsed}
+            draftRef={draftRef}
             onSent={() => setSent((n) => n + 1)}
           />
           </>
