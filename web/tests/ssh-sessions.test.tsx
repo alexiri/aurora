@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SshKeysView } from "@/components/account/ssh-keys-view";
 import { SshLine } from "@/components/admin/ssh-line";
 import { SshPage } from "@/components/agents/ssh-page";
-import { ComputerPart } from "@/components/agents/status-rail/parts";
+import { ComputerLine } from "@/components/agents/status-rail/parts";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
 
@@ -240,14 +240,13 @@ describe("Admin › Overview SSH line", () => {
   });
 });
 
-describe("The status rail's SSH link", () => {
-  it("offers SSH beside the other Computer links only when the page exists, and opens it", () => {
+describe("The status rail's computer line", () => {
+  it("is one line with one Open link to the Computer tab; Terminal, Files and SSH are pages of that tab, not rail buttons (P5-REFINE-11)", () => {
     const go = vi.fn();
-    const { rerender } = render(<ComputerPart sandbox={undefined} terminalAvailable sshAvailable onNavigate={go} />);
-    fireEvent.click(screen.getByRole("button", { name: "SSH" }));
-    expect(go).toHaveBeenCalledWith("ssh");
-    rerender(<ComputerPart sandbox={undefined} terminalAvailable onNavigate={go} />);
+    render(<ComputerLine sandbox={undefined} onNavigate={go} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Open .*computer$/ }));
+    expect(go).toHaveBeenCalledWith("computer");
     expect(screen.queryByRole("button", { name: "SSH" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Terminal" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Terminal" })).toBeNull();
   });
 });

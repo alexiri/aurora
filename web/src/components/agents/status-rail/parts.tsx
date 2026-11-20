@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import type { AgentPageId } from "@/components/agents/sections";
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +32,7 @@ export function showApprovalInConversation(approvalId: string): boolean {
 /** A part's heading inside the expanded rail and the sheet (the collapsed strip shows only the icon). */
 export function PartHeading({ icon, children, id, pending = false }: { icon: ReactNode; children: ReactNode; id: string; pending?: boolean }) {
   return (
-    <h3 id={id} className="flex items-center gap-2 text-sm font-semibold text-ink-2">
+    <h3 id={id} className="flex items-center gap-2 text-label font-semibold uppercase tracking-label text-muted">
       {/* Needs you carries its icon on a `pending-soft` tile (the board's Needs-you heading). */}
       <span aria-hidden="true" className={cn("inline-flex", pending && "size-6 items-center justify-center rounded-md bg-pending-soft text-pending-ink")}>
         {icon}
@@ -185,10 +185,14 @@ export function DoingNow({
 
 // ---- Recent tool calls -----------------------------------------------------------------------------------------
 
+/**
+ * (P5-REFINE-11, D-415) "What <Agent> did": until the agent timeline (P5-REFINE-9) is wired here this is today's list of the
+ * agent's recent requests to apps and websites, under the new heading.
+ */
 export function RecentCalls({ status, activityHref }: { status: AgentStatus; activityHref: string }) {
   return (
     <div className="space-y-2">
-      <p className="text-xs text-muted">Only actions in apps and websites; thinking isn&apos;t listed.</p>
+      <p className="text-xs text-muted">The latest things it did in apps and on websites.</p>
       {status.recentLoading ? <p className="text-sm text-muted">Loading…</p> : null}
       {status.recentError ? <p className="text-sm text-danger-ink">Could not load recent actions.</p> : null}
       {!status.recentLoading && !status.recentError && status.recent.length === 0 ? (
@@ -210,8 +214,8 @@ export function RecentCalls({ status, activityHref }: { status: AgentStatus; act
           })}
         </ul>
       ) : null}
-      <Link href={activityHref} className="block text-sm text-link underline">
-        All activity
+      <Link href={activityHref} aria-label="All activity" className="block text-sm text-link underline">
+        All
       </Link>
     </div>
   );
@@ -219,101 +223,38 @@ export function RecentCalls({ status, activityHref }: { status: AgentStatus; act
 
 // ---- Computer ---------------------------------------------------------------------------------------------------
 
-export function ComputerPart({
+/**
+ * (P5-REFINE-11, rec 3) The Computer is one line under Doing now: "On its computer · <state> · Open", the link opening the
+ * Computer tab (Terminal, Files and SSH are pages of that tab). The state in words: Awake, Asleep, Starting its computer…,
+ * Couldn't start.
+ */
+export function ComputerLine({
   agentName = "the agent",
   sandbox,
-  terminalAvailable,
-  sshAvailable = false,
   onNavigate,
 }: {
   agentName?: string;
   sandbox: AgentStatus["sandbox"];
-  terminalAvailable: boolean;
-  sshAvailable?: boolean;
   onNavigate: (page: AgentPageId) => void;
 }) {
   const look = sandbox ? sandboxLook(sandbox) : null;
   return (
-    <div className="space-y-2">
-      {/* (P5-POLISH-6) The state as a sentence, not "stopped": asleep, awake, starting, or why it could not start. */}
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-ink-2" data-testid="computer-line">
+      <span>On its computer</span>
       {sandbox ? (
-        <StatusLine tone={look?.tone === "danger" ? "fail" : sandbox.state === "running" ? "ok" : "idle"} data-testid="computer-state">
+        <StatusLine tone={look?.tone === "danger" ? "fail" : sandbox.state === "running" ? "ok" : "idle"} className="w-auto" data-testid="rail-computer-state">
           {sandbox.state === "running"
             ? "Awake"
             : sandbox.state === "starting"
-              ? "Starting…"
+              ? "Starting its computer…"
               : sandbox.state === "failed"
                 ? `Couldn't start${sandbox.failure_message ? `: ${sandbox.failure_message}` : ""}`
-                : `Asleep. It wakes when ${agentName} needs it.`}
+                : "Asleep"}
         </StatusLine>
-      ) : (
-        <p className="text-sm text-muted">Computer state unknown</p>
-      )}
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => onNavigate("computer")}>
-          Open Computer
-        </Button>
-        {terminalAvailable ? (
-          <Button type="button" variant="outline" size="sm" onClick={() => onNavigate("terminal")}>
-            Terminal
-          </Button>
-        ) : null}
-        {/* (P5-FILES-2, D-316) Files exists exactly where the Terminal does. */}
-        {terminalAvailable ? (
-          <Button type="button" variant="outline" size="sm" onClick={() => onNavigate("files")}>
-            Files
-          </Button>
-        ) : null}
-        {/* (P4-SSH-2, C-795) the agent's SSH page: how to connect and the open sessions. */}
-        {sshAvailable ? (
-          <Button type="button" variant="outline" size="sm" onClick={() => onNavigate("ssh")}>
-            SSH
-          </Button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-// ---- About ------------------------------------------------------------------------------------------------------
-
-export function AboutPart({
-  kind,
-  isDefault,
-  brief,
-  onNavigate,
-}: {
-  kind: string;
-  isDefault: boolean;
-  brief: string | null | undefined;
-  onNavigate: (page: AgentPageId) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="space-y-2">
-      {/* (P5-POLISH-6) No HOSTED/DEFAULT chips: the kind is plain text, and only when it matters. */}
-      {kind !== "hosted" || isDefault ? (
-        <p className="text-xs text-muted">
-          {kind !== "hosted" ? "Runs on your own computer" : null}
-          {kind !== "hosted" && isDefault ? " · " : null}
-          {isDefault ? "Came with this workspace" : null}
-        </p>
       ) : null}
-      {brief ? (
-        <p className={open ? "text-sm text-ink-2" : "line-clamp-3 text-sm text-ink-2"}>
-          {brief}
-          {brief.length > 140 ? (
-            <button type="button" className="ml-1 text-link underline" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-              {open ? "Less" : "More"}
-            </button>
-          ) : null}
-        </p>
-      ) : (
-        <p className="text-sm text-muted">No brief yet.</p>
-      )}
-      <Button type="button" variant="outline" size="sm" onClick={() => onNavigate("instructions")}>
-        Edit instructions
-      </Button>
+      <button type="button" aria-label={`Open ${agentName}'s computer`} className="text-link underline" onClick={() => onNavigate("computer")}>
+        Open
+      </button>
     </div>
   );
 }
