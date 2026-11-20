@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use aurora_config::{OrphanReap, RunnerConfig};
 use aurora_protocol::runner::{
-    Capacity, HarnessId, MAX_WAIT_SECS, RegisterRequest, ReportBody, SandboxDefaults, WorkRequest,
-    frame_report_id,
+    Capacity, HarnessId, MAX_WAIT_SECS, RegisterRequest, ReportBody, SandboxDefaults,
+    StreamsConfig, WorkRequest, frame_report_id,
 };
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -100,6 +100,14 @@ impl RunnerSettings {
     }
 }
 
+/// (P5-REFINE-4, C-1057) Apply the API's stream-listener flags (registration's `RunnerConfig`
+/// or a work poll's `streams`): the :4108 listener opens the first time either feature is on
+/// and stays open for the life of the process; `auz_` SSH grants follow `ssh_enabled` both ways.
+pub fn apply_streams(hub: &dyn ChannelHub, streams: StreamsConfig) {
+    hub.set_previews_enabled(streams.listener_on());
+    hub.set_ssh_enabled(streams.ssh_enabled);
+}
+
 /// First 16 hex of `sha256(token)`; labels every infrastructure object.
 pub fn installation_fingerprint(token: &str) -> String {
     let d = Sha256::digest(token.as_bytes());
@@ -179,10 +187,16 @@ impl Runner {
         let cfg = registered.config;
         // (P4-PRV-2, W18) The API decides whether this runner serves preview byte streams;
         // (P4-TERM, C-623) terminal grants share the listener: the port opens when either
-        // feature is enabled.
-        self.hub
-            .set_previews_enabled(cfg.previews || cfg.terminal || cfg.ssh_enabled);
-        self.hub.set_ssh_enabled(cfg.ssh_enabled);
+        // feature is enabled. (P5-REFINE-4, C-1057) This is the first answer; every work poll
+        // re-decides (`apply_streams` below).
+        apply_streams(
+            self.hub.as_ref(),
+            StreamsConfig {
+                previews: cfg.previews,
+                terminal: cfg.terminal,
+                ssh_enabled: cfg.ssh_enabled,
+            },
+        );
         let fingerprint = installation_fingerprint(&s.token);
 
         let (sink, reporter_task) =
@@ -263,6 +277,12 @@ impl Runner {
             match polled {
                 Ok(resp) => {
                     failures = 0;
+                    // (P5-REFINE-4, C-1057, D-416) A runner that registered with an API pod that
+                    // said "off" opens :4108 within one poll of the setting turning on. An older
+                    // API omits `streams`: the registration's answer stands.
+                    if let Some(streams) = resp.streams {
+                        apply_streams(self.hub.as_ref(), streams);
+                    }
                     let empty = resp.items.is_empty();
                     for item in resp.items {
                         exec.submit(item);
@@ -353,5 +373,49 @@ pub fn translate(sink: &ReportSink, ev: HubEvent) {
             b,
         )),
         Err(e) => tracing::warn!(%kind, error = %e, "undecodable supervisor frame dropped"),
+    }
+}
+
+#[cfg(test)]
+mod apply_streams_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::channel::{ChannelServer, ChannelSettings};
+
+    fn cfg(previews: bool, terminal: bool, ssh_enabled: bool) -> StreamsConfig {
+        StreamsConfig {
+            previews,
+            terminal,
+            ssh_enabled,
+        }
+    }
+
+    /// Whether the listener's wait for "on" has resolved.
+    async fn port_on(hub: &ChannelServer) -> bool {
+        let (_tx, mut stop) = watch::channel(false);
+        tokio::time::timeout(Duration::from_millis(50), hub.previews_wait(&mut stop))
+            .await
+            .is_ok()
+    }
+
+    #[tokio::test]
+    async fn any_stream_feature_opens_the_port_and_ssh_follows_its_flag() {
+        let hub = ChannelServer::new(ChannelSettings::new([1; 32]));
+        apply_streams(&hub, cfg(false, false, false));
+        assert!(!port_on(&hub).await && !hub.ssh_enabled());
+        for (p, t, s) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            let hub = ChannelServer::new(ChannelSettings::new([1; 32]));
+            apply_streams(&hub, cfg(p, t, s));
+            assert!(port_on(&hub).await, "{p} {t} {s}");
+            assert_eq!(hub.ssh_enabled(), s);
+        }
+        apply_streams(&hub, cfg(false, true, true));
+        assert!(port_on(&hub).await && hub.ssh_enabled());
+        apply_streams(&hub, cfg(false, true, false));
+        assert!(!hub.ssh_enabled(), "ssh turns off again");
     }
 }

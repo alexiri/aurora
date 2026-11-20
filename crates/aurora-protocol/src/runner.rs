@@ -289,6 +289,30 @@ pub struct WorkResponse {
     /// True only for the oldest live replica of the runner, computed at poll time (S-08).
     #[serde(default)]
     pub reconciler: bool,
+    /// (phase 5, P5-REFINE-4, C-1057, D-416) The stream listener's flags, re-decided at every
+    /// poll from the live configuration with the same rules as `RunnerConfig` at registration.
+    /// Absent from an older API: the runner then keeps what its registration said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streams: Option<StreamsConfig>,
+}
+
+/// (phase 5, P5-REFINE-4, C-1057) The three flags of `RunnerConfig` that decide the :4108
+/// stream listener, answered again at every `POST /work`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamsConfig {
+    #[serde(default)]
+    pub previews: bool,
+    #[serde(default)]
+    pub terminal: bool,
+    #[serde(default)]
+    pub ssh_enabled: bool,
+}
+
+impl StreamsConfig {
+    /// Whether the :4108 listener must be open (C-623: either feature opens it).
+    pub fn listener_on(self) -> bool {
+        self.previews || self.terminal || self.ssh_enabled
+    }
 }
 
 /// `[key, value]` pairs, as on the wire.

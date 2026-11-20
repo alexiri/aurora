@@ -39,6 +39,7 @@ mod chat_reply;
 mod chat_search;
 mod cli;
 mod common;
+mod computer_view;
 mod connect;
 mod connect_access;
 mod connector_ops;

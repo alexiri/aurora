@@ -53,6 +53,8 @@ uuid = { workspace = true, features = ["v4", "v5"] }
 aurora-testkit = { workspace = true }
 tower = { workspace = true }
 wiremock = { workspace = true }
+# (P5-REFINE-4) `start_paused` / `advance` for the keep-awake heartbeat tests.
+tokio = { workspace = true, features = ["test-util"] }
 # FIX-146: executor tracing test (the work span is a child of the item's trace context)
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }

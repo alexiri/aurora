@@ -289,8 +289,8 @@ pub(crate) struct Shared {
     /// (P4-PRV-2, W18) The relay-facing stream listener, when opened; supervisors' stream
     /// traffic is routed here.
     pub streams: streams_cell::StreamsCell,
-    /// (P4-PRV-2, W18) Set by the runner when the API reported `previews.enabled` at
-    /// registration: the stream listener's port opens only then.
+    /// (P4-PRV-2, W18) Set by the runner from the API's answer (registration, then every work
+    /// poll, C-1057): the stream listener's port opens the first time it is on.
     previews_on: watch::Sender<bool>,
     /// (P4-SSH-2, D-239) Set after registration when the API answered `ssh_enabled`: the
     /// listener then also redeems `auz_` SSH grants (and opens the port for them).
@@ -485,9 +485,10 @@ impl ChannelServer {
         self.0.api_watch()
     }
 
-    /// (P4-PRV-2, W18) Flip when the API reported `previews.enabled` at registration; the
-    /// stream listener's port opens only then. Never un-flipped (a running process keeps the
-    /// listener; the next registration re-decides).
+    /// (P4-PRV-2, W18) Set from the API's answer at registration and at every work poll
+    /// (P5-REFINE-4, C-1057); the stream listener's port opens the first time it is on. Turning
+    /// it off later does not close an open listener (the process keeps it; every grant is
+    /// re-checked live by the API).
     pub fn set_previews_enabled(&self, on: bool) {
         let _ = self.0.previews_on.send_replace(on);
     }
@@ -524,8 +525,8 @@ impl ChannelServer {
         }))
     }
 
-    /// (P4-SSH-2) Flip when the API answered `ssh_enabled` at registration (re-decided at each
-    /// registration, so it can also turn off).
+    /// (P4-SSH-2) Set from the API's `ssh_enabled` at registration and at every work poll
+    /// (P5-REFINE-4, C-1057), so it can also turn off.
     pub fn set_ssh_enabled(&self, on: bool) {
         let _ = self.0.ssh_on.send_replace(on);
     }
