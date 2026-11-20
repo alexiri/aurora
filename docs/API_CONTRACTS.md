@@ -1763,6 +1763,7 @@ Briefs, in four fixed waves (D-352, order inside the waves per D-353; "→" mean
   - **Administration:** the `governance` section's egress and browser-connection keys (C-971) and the organizations table.
   - Members see the pages read-only (C-961).
 - C-989 **One way to save Internet access, and Common changes.**
+  - (P5-REFINE-2, web only, no API change) `ApplyBar` is retired for the shared `SaveBar`: "n changes not applied yet" is "n unsaved changes", **Apply changes** is **Save**, and "Saved" shows for two seconds. Everything below about what the button does is unchanged.
   - The page has one pending-changes bar: **Apply changes** and **Discard**. There is no "Save draft" button; edits to rules and workspace defaults are saved to the policy draft as they are made.
   - Workspace: Apply publishes the draft (`07 §Authoring`, routes unchanged).
   - Organization: Apply sends the governance document (`PUT /v1/orgs/{org}/governance`) when it changed, then publishes the policy draft. If the second step fails, the bar says which part was applied and keeps the rest pending.

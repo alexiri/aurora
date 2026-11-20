@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api/client";
 import { errorDetail } from "@/lib/api/errors";
+import { HARNESS, harnessVisible, label } from "@/lib/labels";
 
 /** The shape of an LLM secret value per auth mode (C-801, C-802 `value_shape`). */
 export type ValueShape = "string" | "aws_sigv4" | "aws_assume_role" | "azure_entra" | "gcp_service_account";
@@ -151,19 +152,19 @@ export function keyReasonMessage(err: unknown): string | undefined {
 }
 
 /** Display names of the harness ids an endpoint serves (C-802). */
-export const HARNESS_LABEL: Record<string, string> = {
-  claude_code: "Claude Code",
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  pi: "Pi",
-  goose: "goose",
-  opencode: "OpenCode",
-};
+export const HARNESS_LABEL: Record<string, string> = Object.fromEntries(Object.entries(HARNESS).map(([k, v]) => [k, v.label]));
+
+/** "Claude Code, Codex": the harnesses in words, the test harness only in development builds. */
+export const harnessNames = (harnesses: string[]): string =>
+  harnesses
+    .filter(harnessVisible)
+    .map((h) => label(HARNESS, h))
+    .join(", ");
 
 export const NO_HARNESS =
   "No enabled harness speaks this endpoint's API — use a LiteLLM endpoint to translate.";
 
 /** "Works with Claude Code, Codex" — empty when the endpoint serves none. */
 export function harnessHint(harnesses: string[]): string {
-  return harnesses.length === 0 ? "" : `Works with ${harnesses.map((h) => HARNESS_LABEL[h] ?? h).join(", ")}`;
+  return harnesses.length === 0 ? "" : `Works with ${harnessNames(harnesses)}`;
 }

@@ -490,7 +490,7 @@ export function AddonSourcesView() {
         description={
           removing
             ? `Packages already installed from ${removing.name} stay installed and keep working, and the trusted key stays trusted; Aurora stops checking this repository for new versions. Removal is refused while any of its packages is active.`
-            : undefined
+            : ""
         }
         confirmLabel="Remove source"
         danger

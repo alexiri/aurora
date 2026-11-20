@@ -67,6 +67,9 @@ const org = (over: Record<string, unknown> = {}) => ({
 const openMenu = async (name: string) => {
   fireEvent.keyDown(await screen.findByRole("button", { name }), { key: "Enter" });
 };
+/** The delete dialogs ask for the visible name (P5-REFINE-2), never the slug. */
+const ORG_LABEL = "Type the organization name to confirm: Acme";
+const WS_LABEL = "Type the workspace name to confirm: Main";
 const type = (label: string, value: string) => fireEvent.change(within(screen.getByRole("dialog")).getByLabelText(label), { target: { value } });
 
 describe("Admin › Organizations (P5-ADMDEL)", () => {
@@ -118,11 +121,11 @@ describe("Admin › Organizations (P5-ADMDEL)", () => {
     expect(dialog).toHaveTextContent("the audit log and usage records are kept");
     const submit = within(dialog).getByRole("button", { name: "Delete organization" });
     expect(submit).toBeDisabled();
-    type("Type acme to confirm", "acm");
+    type(ORG_LABEL, "acme");
     expect(submit).toBeDisabled();
-    type("Type acme to confirm", "acme");
+    type(ORG_LABEL, "Acme");
     expect(submit).toBeEnabled();
-    type("Type acme to confirm", "acmex");
+    type(ORG_LABEL, "Acmex");
     expect(submit).toBeDisabled();
   });
 
@@ -139,7 +142,7 @@ describe("Admin › Organizations (P5-ADMDEL)", () => {
     });
     wrap(<AdminOrgsView />);
     const dialog = await openDelete();
-    type("Type acme to confirm", "acme");
+    type(ORG_LABEL, "Acme");
     expect(within(dialog).queryByRole("link", { name: /Sign in again/ })).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete organization" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -155,7 +158,7 @@ describe("Admin › Organizations (P5-ADMDEL)", () => {
     });
     wrap(<AdminOrgsView />);
     const dialog = await openDelete();
-    type("Type acme to confirm", "acme");
+    type(ORG_LABEL, "Acme");
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete organization" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("The confirmation text does not match.");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
@@ -225,7 +228,7 @@ describe("Admin › one organization (P5-ADMDEL)", () => {
     expect(dialog).toHaveTextContent("Deletes the workspace Main with its 3 agents");
     const submit = within(dialog).getByRole("button", { name: "Delete workspace" });
     expect(submit).toBeDisabled();
-    type("Type main to confirm", "main");
+    type(WS_LABEL, "Main");
     fireEvent.click(submit);
     expect(await screen.findByTestId("admin-orgs-done")).toHaveTextContent("Deleted the workspace Main (main).");
     expect(calls).toBe(1);
@@ -240,7 +243,7 @@ describe("Admin › one organization (P5-ADMDEL)", () => {
     wrap(<OrgDetailView orgId={ORG} />);
     fireEvent.click(await screen.findByRole("button", { name: "Delete organization…" }));
     const dialog = await screen.findByRole("dialog");
-    type("Type acme to confirm", "acme");
+    type(ORG_LABEL, "Acme");
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete organization" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/people?tab=organizations"));
   });

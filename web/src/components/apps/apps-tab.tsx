@@ -131,7 +131,7 @@ export function AppsTab({ workspaceId, orgId, canOwn }: { workspaceId: string; o
   // Another dashboard tab finished a sign-in: refresh the lists (the waiting dialog handles its own result).
   useConnectChannel(refresh);
 
-  if (apps.isPending) return <Loading />;
+  if (apps.isPending) return <Loading variant="rows" />;
   if (apps.isError) return <ErrorState error={apps.error} onRetry={() => apps.refetch()} />;
   const items = apps.data.items;
   if (items.length === 0) return <EmptyState title="No apps installed" />;

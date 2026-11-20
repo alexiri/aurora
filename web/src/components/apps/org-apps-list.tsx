@@ -6,6 +6,7 @@ import { useState } from "react";
 import { EmptyState } from "@/components/states";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
+import { SkeletonRows } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ItemList, ListRow } from "@/components/ui/section";
@@ -87,7 +88,7 @@ export function ConnectInWorkspaceDialog({
     <Dialog open onOpenChange={(o) => (o ? undefined : onClose())}>
       <DialogContent title={`Connect ${appDisplayName(app)}`} description="Choose where to connect it.">
         {workspaces.isPending ? (
-          <p className="text-sm text-ink-2">Loading…</p>
+          <SkeletonRows rows={2} />
         ) : owned.length === 0 && !canOrg ? (
           <p className="text-sm text-ink-2">
             Only a workspace owner can connect apps. You are not an owner of any workspace in this organization: ask an

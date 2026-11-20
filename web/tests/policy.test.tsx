@@ -134,7 +134,7 @@ describe("Internet access page (InternetLevel)", () => {
     // The move is written to the draft as it is made, not at Apply.
     await waitFor(() => expect(putBody).not.toBeNull());
     expect(pubBody).toBeNull();
-    fireEvent.click(await screen.findByText("Apply changes"));
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
     await waitFor(() => expect(pubBody).toEqual({ revision: 4 }));
     expect(putBody!.revision).toBe(3);
     expect(putBody!.rules.map((r) => r.name)).toEqual(["Other", "Allow x"]);

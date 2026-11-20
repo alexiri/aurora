@@ -3,16 +3,15 @@
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 
-import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { ErrorNotice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Select } from "@/components/ui/select";
 import { SwitchField } from "@/components/ui/switch";
 import { useHarnesses, usePatchAgent } from "@/lib/api/agents";
 import { ApiError } from "@/lib/api/client";
 import { useModelReadiness } from "@/lib/api/credential-grants";
-import { fieldErrors } from "@/lib/api/errors";
+import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useModels } from "@/lib/api/conversations";
 import { useMe, type Agent } from "@/lib/api/queries";
 import { errorTarget, ROLES } from "@/lib/model-roles";
@@ -41,7 +40,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
   const initialModel = agent.model_endpoint_id && agent.model_id ? `${agent.model_endpoint_id}\u0000${agent.model_id}` : "";
   const [model, setModel] = useState(initialModel);
   const [clientErr, setClientErr] = useState("");
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
   const fe = patch.error ? fieldErrors(patch.error) : {};
 
   // (FIX-170) The chat's "Choose a model" link ends in `#a-model`: scroll to the Model field and focus it
@@ -97,6 +96,10 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     return same ? null : { model_roles: next };
   }
 
+  // What the form holds, so "Saved" stays only while nothing was edited after the save.
+  const draftSig = JSON.stringify([name, brief, effort, proactive, model, harness, roles, subagent]);
+  const [savedSig, setSavedSig] = useState<string | null>(null);
+  const justSaved = bar.saved && savedSig === draftSig;
   const dirty =
     name !== agent.name ||
     brief !== agent.brief ||
@@ -117,7 +120,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     setRoles(rolesFor(agent.model_endpoint_id && agent.model_id ? agent.model_endpoint_id : (defaultView?.endpoint_id ?? null)));
     setSubagent(agent.subagent_model);
     setClientErr("");
-    setSaved(false);
+    bar.clear();
     patch.reset();
   }
 
@@ -134,7 +137,8 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         ...(rolesPatch() ?? {}),
         ...(agent.kind === "hosted" && !roleless && subagent !== agent.subagent_model ? { subagent_model: subagent } : {}),
       });
-      setSaved(true);
+      setSavedSig(draftSig);
+      bar.flash();
     } catch {
       // surfaced via patch.error
     }
@@ -142,7 +146,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    setSaved(false);
+    bar.clear();
     const n = name.trim();
     if (!n || n.length > 80) return setClientErr("Name must be 1 to 80 characters.");
     setClientErr("");
@@ -285,31 +289,16 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
             </Field>
           </div>
         </Altitude>
-        {patch.error && Object.keys(fe).length === 0 && !hasRoleError(roleErrors) ? (
-          <ErrorNotice error={patch.error} />
-        ) : null}
-        {saved ? (
-          <p role="status" className="text-sm text-accent-ink">
-            Saved
-          </p>
-        ) : null}
-        {/* (P5-POLISH-6) The save bar: only after a change, at the bottom of the viewport. There is no Save at the end of the page. */}
-        {dirty ? (
-          <div
-            role="region"
-            aria-label="Unsaved changes"
-            className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-xl items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-pop">
-            <span className="text-sm font-medium text-ink">Unsaved changes</span>
-            <span className="flex items-center gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={discard} disabled={patch.isPending}>
-                Discard
-              </Button>
-              <Button type="submit" size="sm" disabled={patch.isPending}>
-                {patch.isPending ? "Saving…" : "Save"}
-              </Button>
-            </span>
-          </div>
-        ) : null}
+        {/* (P5-POLISH-6, P5-REFINE-2) The one save bar: only after a change, at the bottom of the viewport; "Saved" for two seconds. */}
+        <SaveBar
+          // "Saved" shows even while the agent has not been refetched yet.
+          dirty={dirty && !justSaved}
+          saving={patch.isPending}
+          saved={justSaved}
+          errorCount={Object.keys(fe).length + (clientErr ? 1 : 0) + (hasRoleError(roleErrors) ? 1 : 0)}
+          error={patch.error && Object.keys(fe).length === 0 && !hasRoleError(roleErrors) ? errorMessage(patch.error) : undefined}
+          onDiscard={discard}
+        />
       </form>
       <ConfirmDialog
         open={confirmSwitch}

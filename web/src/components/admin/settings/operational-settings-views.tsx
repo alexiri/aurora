@@ -2,6 +2,8 @@
 
 import { useState, type ReactNode } from "react";
 
+import { formatExact } from "@/lib/format-date";
+
 import { harnessChoices, harnessControls, harnessName, useMovedDefault } from "@/components/admin/settings/harness-controls";
 import {
   SettingsSectionForm,
@@ -28,7 +30,7 @@ import { useSettingsSection, useSettingsSections, type SettingsSection } from "@
  */
 
 function when(iso: string | null | undefined): string {
-  return iso ? new Date(iso).toLocaleString() : "never";
+  return iso ? formatExact(iso) : "never";
 }
 
 export interface OperationalPage {
@@ -449,7 +451,7 @@ export function LimitsSettingsView() {
       sectionId="limits"
       page={LIMITS_PAGE}
       notice={() => (
-        <Notice tone="danger" role="status" className="max-w-3xl">
+        <Notice tone="neutral" role="status" className="max-w-3xl">
           <strong>Private destinations.</strong> Every entry in the allowed-private list opens an address range to agents, apps
           and the gateway&apos;s own connections. Add only what they must reach; the confirmation lists what a change opens.
         </Notice>

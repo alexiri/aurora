@@ -2,12 +2,11 @@
 
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { ErrorNotice, SavedNotice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { ScopeLadder, type LadderAbove } from "@/components/ui/scope-ladder";
 import { usePatchWorkspace } from "@/lib/api/account";
-import { fieldErrors } from "@/lib/api/errors";
+import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { byoOptionsFrom, useEffectiveGovernance, type ByoPosture } from "@/lib/api/governance";
 import type { Workspace } from "@/lib/api/queries";
 import { whoCanFromContacts } from "@/lib/who-can";
@@ -48,7 +47,7 @@ function ByoRow({ workspace, above }: { workspace: Workspace; above: Above | nul
   const patch = usePatchWorkspace(workspace.id);
   const own = workspace.byo_posture ?? "";
   const [choice, setChoice] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
   const effective = workspace.effective_byo_posture;
   if (!above) return null;
   const source: LadderAbove["source"] = above.source === "instance" ? "instance" : "org";
@@ -83,7 +82,7 @@ function ByoRow({ workspace, above }: { workspace: Workspace; above: Above | nul
                   disabled={patch.isPending}
                   onChange={(e) => {
                     setChoice(e.target.value);
-                    setSaved(false);
+                    bar.clear();
                   }}
                 >
                   <option value="">Same as the organization ({words(above.value)})</option>
@@ -96,17 +95,18 @@ function ByoRow({ workspace, above }: { workspace: Workspace; above: Above | nul
                     ))}
                 </select>
               </Field>
-              {patch.error && Object.keys(fe).length === 0 ? (
-                <ErrorNotice error={patch.error} />
-              ) : null}
-              <SavedNotice show={saved}>Saved.</SavedNotice>
-              <Button
-                type="button"
-                disabled={patch.isPending || value === own}
-                onClick={() => patch.mutate({ byo_posture: value || null }, { onSuccess: () => { setSaved(true); setChoice(null); } })}
-              >
-                {patch.isPending ? "Saving…" : "Save"}
-              </Button>
+              <SaveBar
+                dirty={value !== own}
+                saving={patch.isPending}
+                saved={bar.saved}
+                errorCount={Object.keys(fe).length}
+                error={patch.error && Object.keys(fe).length === 0 ? errorMessage(patch.error) : undefined}
+                onSave={() => patch.mutate({ byo_posture: value || null }, { onSuccess: () => { bar.flash(); setChoice(null); } })}
+                onDiscard={() => {
+                  setChoice(null);
+                  patch.reset();
+                }}
+              />
             </div>
           ) : undefined
         }

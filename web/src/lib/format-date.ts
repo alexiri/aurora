@@ -1,14 +1,43 @@
 /**
- * (P5-POLISH-2, D-384) The one way to show a time. `formatWhen`: "Just now", "5 min ago", "2 h ago", "Yesterday", or a
- * short date in the browser's locale ("18 Nov", with the year when it is not this year). `formatExact` is the
- * `title` tooltip: locale date and time to the minute, no seconds. Both give "—" for a missing or invalid time.
+ * (P5-POLISH-2, D-384; P5-REFINE-2, D-405) The one way to show a time. `formatWhen`: "Just now", "5 min ago", "2 h ago",
+ * then the dated form "19 Nov, 23:50" (with the year when it is not this year: "19 Nov 2025, 23:50") in the person's
+ * locale and time zone. `formatExact` is the `title` tooltip: locale date and time to the minute, no seconds. Both give
+ * "—" for a missing or invalid time. `formatDay` is a date without a time ("19 Nov 2026"); `formatTime` a time only.
+ *
+ * The person's time zone (`GET /v1/me` `timezone`, C-1054) is set once by the app shell through `setDisplayTimeZone`;
+ * until then, and when it is empty, the browser's own zone is used.
  */
 const EMPTY = "—";
+
+let zone: string | undefined;
+
+/** Set the time zone every time is shown in (an IANA name); `null` goes back to the browser's. */
+export function setDisplayTimeZone(tz: string | null | undefined): void {
+  if (!tz) {
+    zone = undefined;
+    return;
+  }
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: tz });
+    zone = tz;
+  } catch {
+    zone = undefined;
+  }
+}
+
+/** The zone times are shown in. */
+export function displayTimeZone(): string | undefined {
+  return zone;
+}
 
 function parse(date: string | number | Date | null | undefined): Date | null {
   if (date === null || date === undefined || date === "") return null;
   const d = date instanceof Date ? date : new Date(date);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function yearOf(d: Date): number {
+  return Number(new Intl.DateTimeFormat("en-US", { year: "numeric", timeZone: zone }).format(d));
 }
 
 export function formatWhen(
@@ -21,14 +50,34 @@ export function formatWhen(
   if (secs < 60 && secs > -60) return "Just now";
   if (secs >= 60 && secs < 3600) return `${Math.floor(secs / 60)} min ago`;
   if (secs >= 3600 && secs < 86400) return `${Math.floor(secs / 3600)} h ago`;
-  const today = new Date(now);
-  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  if (d.getTime() >= startOfToday - 86_400_000 && d.getTime() < startOfToday) return "Yesterday";
-  const sameYear = d.getFullYear() === today.getFullYear();
-  return d.toLocaleDateString(undefined, sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
+  const sameYear = yearOf(d) === yearOf(new Date(now));
+  const dayPart = new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+    timeZone: zone,
+  }).format(d);
+  return `${dayPart}, ${formatTime(d)}`;
+}
+
+/** A clock time in the person's locale and zone ("23:50"), "—" when missing. */
+export function formatTime(date: string | number | Date | null | undefined, empty: string = EMPTY): string {
+  const d = parse(date);
+  return d ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", timeZone: zone }).format(d) : empty;
+}
+
+/** A date without a time ("19 Nov 2026"), "—" when missing. */
+export function formatDay(date: string | number | Date | null | undefined, empty: string = EMPTY): string {
+  const d = parse(date);
+  return d ? new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: zone }).format(d) : empty;
 }
 
 export function formatExact(date: string | number | Date | null | undefined, empty: string = EMPTY): string {
   const d = parse(date);
-  return d ? d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : empty;
+  return d ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(d) : empty;
+}
+
+/** A whole number with the locale's grouping ("1,234"). */
+export function formatCount(n: number): string {
+  return new Intl.NumberFormat(undefined).format(n);
 }

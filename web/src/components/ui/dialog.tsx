@@ -85,7 +85,9 @@ export function DialogContent({
       <DialogPrimitive.Content
         ref={heightRef}
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-card border border-line bg-surface text-ink shadow-pop outline-none",
+          // (P5-REFINE-2) Top-anchored at a fixed offset (12vh from 640 px, 1rem below), never vertically centred: a field
+          // or an error that appears does not move the title. `max-h` keeps the bottom 1rem free.
+          "fixed left-1/2 top-4 z-50 flex max-h-[calc(100dvh-2rem)] -translate-x-1/2 flex-col sm:top-[12vh] sm:max-h-[calc(88dvh-1rem)] overflow-hidden rounded-card border border-line bg-surface text-ink shadow-pop outline-none",
           SIZE[size],
           variant === "sheet" && SHEET,
           className,

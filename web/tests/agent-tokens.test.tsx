@@ -334,7 +334,7 @@ describe("Connect tab", () => {
     });
     wrap(<ConnectTab agent={agent(tokenView()) as never} wsId="w1" canOwn />);
     fireEvent.click(await screen.findByRole("button", { name: "Regenerate token" }));
-    fireEvent.click(screen.getByRole("button", { name: "Yes, regenerate" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Regenerate token" }));
     const note = await screen.findByTestId("revealed-expiry");
     expect(note.textContent).toMatch(/expires on/);
   });

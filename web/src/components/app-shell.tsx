@@ -12,6 +12,8 @@ import { useAltitude } from "@/lib/altitude";
 import { useMoreControls } from "@/lib/api/use-more-controls";
 import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
+import { ApiError } from "@/lib/api/client";
+import { lastScope } from "@/lib/nav/recent-scopes";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
 import { useTimezoneAutofill } from "@/lib/timezone";
@@ -25,7 +27,9 @@ import { Tour } from "./onboarding/tour";
 import { startTour } from "./onboarding/tour-events";
 import { ThemeSwitch } from "./theme/theme-switch";
 import { Avatar } from "./agent-avatar";
+import { NotFoundState, type NotFoundKind } from "./not-found-state";
 import { AuroraLogo } from "./ui/aurora-logo";
+import { UndoToastHost } from "./ui/undo-toast";
 import {
   ActivityIcon,
   ArrowLeftIcon,
@@ -426,6 +430,11 @@ function SidebarContent({
   );
 }
 
+/** A 404 from the API: the thing in the address does not exist (or the viewer may not know it does). */
+function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   useUnauthorizedRedirect();
   // (P4-011B-4, C-836) With the local Web Push opt-in marker: re-sync the browser's subscription once per load.
@@ -443,9 +452,27 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
   const orgSlug = params.org;
   const wsSlug = params.ws;
-  const resolved = useResolve(orgSlug, wsSlug).data;
+  const resolvedQuery = useResolve(orgSlug, wsSlug);
+  const resolved = resolvedQuery.data;
   const wsId = resolved?.workspace?.id;
-  const side = { orgSlug, wsSlug, wsId, pathname };
+  // (P5-REFINE-2, org-3) An unknown organization or workspace is a 404 *inside* the shell: the rail and switcher show the
+  // viewer's real organization, never the unknown slug, and the page body is the not-found state.
+  const orgQuery = useResolve(orgSlug);
+  const me = useMe();
+  const missing: NotFoundKind | null = !orgSlug
+    ? null
+    : isNotFound(orgQuery.error)
+      ? "organization"
+      : wsSlug && isNotFound(resolvedQuery.error)
+        ? "workspace"
+        : null;
+  const real = missing === "organization" ? lastScope(me.data?.user.id, me.data?.memberships) : undefined;
+  const side =
+    missing === "organization"
+      ? { orgSlug: real?.orgSlug, wsSlug: undefined, wsId: undefined, pathname }
+      : missing === "workspace"
+        ? { orgSlug, wsSlug: undefined, wsId: undefined, pathname }
+        : { orgSlug, wsSlug, wsId, pathname };
   // The switcher's menu lives in a portal outside the drawer: close the drawer when the page changes.
   const [seenPath, setSeenPath] = useState(pathname);
   if (seenPath !== pathname) {
@@ -512,9 +539,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="w-full min-w-0 space-y-4 px-4 py-6 md:px-8 md:py-8">
           <ApprovalNotifier />
           <FrozenEntityBanner />
-          {children}
+          {missing ? <NotFoundState kind={missing} slug={missing === "organization" ? orgSlug : wsSlug} /> : children}
         </main>
         <Tour setNavOpen={tourNavOpen} />
+        <UndoToastHost />
       </div>
     </div>
   );

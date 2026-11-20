@@ -3,10 +3,9 @@
 import { useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
-import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { Form, FormActions } from "@/components/ui/form";
-import { Notice, SavedNotice } from "@/components/ui/notice";
+import { Form } from "@/components/ui/form";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { ScopeLadder, type LadderAbove } from "@/components/ui/scope-ladder";
 import { errorMessage } from "@/lib/api/errors";
 import { usePutRetentionLimits, useRetention } from "@/lib/api/org";
@@ -32,7 +31,7 @@ export function OrgRetentionForm({ orgId }: { orgId: string }) {
   const put = usePutRetentionLimits(orgId);
   const [edit, setEdit] = useState<Partial<Fields>>({});
   const [errors, setErrors] = useState<FieldErrors>({});
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
   if (current.isPending) return <Loading />;
   if (current.isError) return <ErrorState error={current.error} onRetry={() => current.refetch()} />;
   const d = current.data;
@@ -53,12 +52,12 @@ export function OrgRetentionForm({ orgId }: { orgId: string }) {
 
   const change = (k: keyof Fields) => (e: { target: { value: string } }) => {
     setEdit((cur) => ({ ...cur, [k]: e.target.value }));
-    setSaved(false);
+    bar.clear();
   };
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    setSaved(false);
+    bar.clear();
     const conv = toNumber(value.conversations, 7, 3650);
     const files = toNumber(value.files, 7, 3650);
     const quota = toNumber(value.quota, 0, 1 << 30);
@@ -80,7 +79,7 @@ export function OrgRetentionForm({ orgId }: { orgId: string }) {
       {
         onSuccess: () => {
           setEdit({});
-          setSaved(true);
+          bar.flash();
         },
       },
     );
@@ -116,29 +115,19 @@ export function OrgRetentionForm({ orgId }: { orgId: string }) {
           >
             <input id="attachment-quota" inputMode="numeric" className={inputClass} value={value.quota} onChange={change("quota")} />
           </Field>
-          {serverErr ? (
-            <Notice tone="danger" role="alert">
-              {serverErr}
-            </Notice>
-          ) : null}
-          <SavedNotice show={saved}>Retention saved.</SavedNotice>
-          <FormActions>
-            <Button
-              type="button"
-              variant="outline"
-              size="lg"
-              disabled={!dirty || put.isPending}
-              onClick={() => {
-                setEdit({});
-                setErrors({});
-              }}
-            >
-              Discard changes
-            </Button>
-            <Button type="submit" size="lg" disabled={put.isPending}>
-              {put.isPending ? "Saving…" : "Save retention"}
-            </Button>
-          </FormActions>
+          <SaveBar
+            dirty={dirty}
+            saving={put.isPending}
+            saved={bar.saved}
+            errorCount={Object.keys(errors).length}
+            error={serverErr}
+            savedMessage="Saved. Retention applies from now on."
+            onDiscard={() => {
+              setEdit({});
+              setErrors({});
+              put.reset();
+            }}
+          />
         </Form>
       }
     />

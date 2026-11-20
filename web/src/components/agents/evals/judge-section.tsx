@@ -4,10 +4,10 @@ import { useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { CheckboxField, FormActions } from "@/components/ui/form";
+import { CheckboxField } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Section } from "@/components/ui/section";
 import { useModelReadiness } from "@/lib/api/credential-grants";
 import { useEvalSettings, usePutEvalSettings, type EvalSettings } from "@/lib/api/evals";
@@ -24,7 +24,7 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
   const [secretId, setSecretId] = useState(settings.judge?.secret_id ?? "");
   const [modelId, setModelId] = useState(settings.judge?.model_id ?? "");
   const [notify, setNotify] = useState(settings.regression_notify);
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
   const current = settings.judge;
   const keys = readiness.data?.keys ?? [];
   const known = keys.some((k) => k.secret_id === secretId);
@@ -34,7 +34,7 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    setSaved(false);
+    bar.clear();
     if (incomplete) return;
     // A person who is not an owner sends the judge as it is: only the notice changes.
     const judge = canOwn
@@ -44,7 +44,7 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
       : current
         ? { secret_id: current.secret_id, model_id: current.model_id }
         : null;
-    put.mutate({ judge, regression_notify: notify }, { onSuccess: () => setSaved(true) });
+    put.mutate({ judge, regression_notify: notify }, { onSuccess: () => bar.flash() });
   }
 
   return (
@@ -85,26 +85,23 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
         checked={notify}
         onChange={setNotify}
       />
-      {put.error ? (
-        <Notice tone="danger" role="alert">
-          {evalErrorMessage(put.error)}
-        </Notice>
-      ) : null}
       {incomplete ? (
         <Notice tone="pending" role="status">
           Enter the grader model to save this key.
         </Notice>
       ) : null}
-      <FormActions className="gap-2">
-        <Button type="submit" disabled={!changed || incomplete || put.isPending}>
-          Save grader settings
-        </Button>
-        {saved && !changed ? (
-          <span role="status" className="text-sm text-ink-2">
-            Saved.
-          </span>
-        ) : null}
-      </FormActions>
+      <SaveBar
+        dirty={changed}
+        saving={put.isPending}
+        saved={bar.saved}
+        error={put.error ? evalErrorMessage(put.error) : undefined}
+        onDiscard={() => {
+          setSecretId(settings.judge?.secret_id ?? "");
+          setModelId(settings.judge?.model_id ?? "");
+          setNotify(settings.regression_notify);
+          put.reset();
+        }}
+      />
     </form>
   );
 }

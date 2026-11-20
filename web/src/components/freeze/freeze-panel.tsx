@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent, type ReactNode } from "react";
 
+import { formatExact } from "@/lib/format-date";
+
 import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
@@ -22,7 +24,7 @@ const SUBJECT_LABEL: Record<FreezeSubject, string> = {
 const REASON_MAX = 500;
 
 function date(iso: string): string {
-  return new Date(iso).toLocaleString();
+  return formatExact(iso);
 }
 
 /** "Frozen by <name> on <date>: <reason>" (docs/14 §Agent page, RFE-006). */

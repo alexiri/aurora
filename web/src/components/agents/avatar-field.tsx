@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
+import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
 import {
   avatarErrorMessage,
   avatarProblem,
@@ -18,6 +19,7 @@ export function AvatarField({ agent, wsId, compact = false }: { agent: Agent; ws
   const upload = useUploadAvatar(wsId, agent.id);
   const remove = useRemoveAvatar(wsId, agent.id);
   const input = useRef<HTMLInputElement>(null);
+  const bar = useSaveBar();
   const [problem, setProblem] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const busy = upload.isPending || remove.isPending;
@@ -32,6 +34,7 @@ export function AvatarField({ agent, wsId, compact = false }: { agent: Agent; ws
     setPreview(URL.createObjectURL(file));
     try {
       await upload.mutateAsync(file);
+      bar.flash();
     } catch {
       // surfaced via upload.error
     } finally {
@@ -75,11 +78,12 @@ export function AvatarField({ agent, wsId, compact = false }: { agent: Agent; ws
             onClick={() => {
               setProblem("");
               upload.reset();
-              remove.mutate();
+              remove.mutate(undefined, { onSuccess: () => bar.flash() });
             }}>
             {remove.isPending ? "Removing…" : "Remove"}
           </button>
         ) : null}
+        <InlineSaved show={bar.saved} />
         {problem || serverError ? (
           <p role="alert" className="max-w-40 text-xs text-danger-ink">
             {problem || avatarErrorMessage(serverError)}

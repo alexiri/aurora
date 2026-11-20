@@ -211,7 +211,8 @@ describe("Admin › Settings › Sign-in (SET-4)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Remove corp" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByRole("alert");
+    // The bar says what failed, and the entry shows the server's words.
+    expect((await screen.findAllByRole("alert")).length).toBeGreaterThan(0);
   });
 
   it("lists the Helm-registered development sign-in read-only, and says 'No provider yet' only when there is none (E7)", async () => {
@@ -236,6 +237,7 @@ describe("Admin › Settings › Sign-in (SET-4)", () => {
     const details = screen.getByText("If nobody can sign in").closest("details")!;
     expect(details.open).toBe(false);
     expect(details.textContent).toContain("aurora-api settings reset sign_in");
-    expect(details.compareDocumentPosition(screen.getByRole("button", { name: "Save" })) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    // The save bar is fixed to the viewport and only appears after a change, so the disclosure ends the page's own content.
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 });

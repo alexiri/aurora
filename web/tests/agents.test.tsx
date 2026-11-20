@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ConnectTab } from "@/components/agents/connect-tab";
@@ -59,6 +59,7 @@ describe("create agent", () => {
     expect(screen.getByTestId("revealed-config")).toBeInTheDocument();
     expect(screen.getByTestId("proxy-tls-note")).toHaveTextContent("TLS-only");
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
     await waitFor(() => expect(screen.queryByTestId("secret-key")).not.toBeInTheDocument());
     expect(document.body.textContent).not.toContain("aug_SECRET");
   });
@@ -103,7 +104,7 @@ describe("regenerate token", () => {
     fireEvent.click(screen.getByRole("button", { name: "Regenerate token" }));
     const posted = () => fn.mock.calls.some(([r]) => r instanceof Request && r.method === "POST");
     expect(posted()).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Yes, regenerate" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Regenerate token" }));
     expect(await screen.findByTestId("secret-key")).toHaveTextContent("aug_NEW");
     expect(posted()).toBe(true);
   });

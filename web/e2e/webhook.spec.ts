@@ -47,7 +47,10 @@ for (const scheme of ["light", "dark"] as const) {
         await check(page);
         const connect = sent.find((s) => s.path.endsWith("/connect"))!;
         expect(connect.body).toMatchObject({ fields: { name: "ops-alerts", url: URL_CANARY }, webhook: { preset: "slack", signing: true } });
+        // Never copied: closing asks first (SecretOnce), then "Close anyway" drops the secret.
         await once.getByRole("button", { name: "I have saved it" }).click();
+        await expect(once).toContainText("You haven't copied it. Close anyway?");
+        await once.getByRole("button", { name: "Close anyway" }).click();
         const html = await page.content();
         expect(html).not.toContain("CANARY");
         expect(html).not.toContain(SIGNING);
@@ -108,8 +111,8 @@ for (const scheme of ["light", "dark"] as const) {
       test("the organization's Apps tab has the switch and limits; Admin › Advanced shows the settings section", async ({ page }) => {
         const { sent } = await openWebhook(page, "/o/acme/apps?tab=apps", scheme);
         await page.getByLabel(/Sends per minute/).fill("10");
-        await page.getByRole("button", { name: "Update outgoing webhooks" }).click();
-        await expect(page.getByText("Outgoing webhook settings updated.")).toBeVisible();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.getByText("Saved", { exact: true })).toBeVisible();
         expect(sent.find((s) => s.method === "PATCH")!.body).toMatchObject({ settings: { outgoing_webhooks_per_minute_max: 10 } });
         await check(page);
         await openWebhook(page, "/admin/apps?tab=advanced", scheme);

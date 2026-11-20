@@ -2,6 +2,8 @@
 
 import type { ReactNode } from "react";
 
+import { formatExact } from "@/lib/format-date";
+
 import {
   AgentsSettingsView,
   ApprovalsSettingsView,
@@ -34,7 +36,7 @@ const OPERATIONAL_VIEWS: Record<string, ReactNode> = {
 };
 
 function when(iso: string | null | undefined): string {
-  return iso ? new Date(iso).toLocaleString() : "never";
+  return iso ? formatExact(iso) : "never";
 }
 
 /** Admin › Settings › <section> (SET-1): the generic page; sections with their own editors replace the form. */

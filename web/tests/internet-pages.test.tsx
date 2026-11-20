@@ -148,7 +148,7 @@ describe("a workspace's Internet access page", () => {
     expect(await screen.findByRole("dialog", { name: "Try a request" })).toBeInTheDocument();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     // Nothing is pending: no bar.
-    expect(screen.queryByRole("region", { name: "Changes not applied" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Unsaved changes" })).toBeNull();
   });
 
   it("FIX-164: a member reads the summary and the published rules as text, with no controls, from the member route only", async () => {
@@ -195,14 +195,14 @@ describe("a workspace's Internet access page", () => {
     expect(puts[0].revision).toBe(3);
     expect(puts[0].rules).toMatchObject([{ name: "Block pastebin.com", action: "block", targets: [{ host: "pastebin.com" }] }]);
     expect(await screen.findByText("Not applied yet")).toBeInTheDocument();
-    const bar = screen.getByRole("region", { name: "Changes not applied" });
-    expect(within(bar).getByText("1 change not applied yet")).toBeInTheDocument();
+    const bar = screen.getByRole("region", { name: "Unsaved changes" });
+    expect(within(bar).getByText("1 unsaved change")).toBeInTheDocument();
     expect(publishes).toHaveLength(0);
-    fireEvent.click(within(bar).getByRole("button", { name: "Apply changes" }));
+    fireEvent.click(within(bar).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(publishes).toEqual([{ revision: 4 }]));
     // Applied: the rule is no longer marked and the bar is gone.
     await waitFor(() => expect(screen.queryByText("Not applied yet")).toBeNull());
-    expect(screen.queryByRole("region", { name: "Changes not applied" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Unsaved changes" })).toBeNull();
   });
 
   it("Ask before changes on a website adds an allow rule that needs approval on the changing methods", async () => {
@@ -235,11 +235,11 @@ describe("a workspace's Internet access page", () => {
     fireEvent.change(await screen.findByLabelText("Website"), { target: { value: "pastebin.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Show the rule" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add rule" }));
-    const bar = await screen.findByRole("region", { name: "Changes not applied" });
+    const bar = await screen.findByRole("region", { name: "Unsaved changes" });
     fireEvent.click(within(bar).getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(puts).toHaveLength(2));
     expect(puts[1].rules).toEqual([]);
-    await waitFor(() => expect(screen.queryByRole("region", { name: "Changes not applied" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Unsaved changes" })).toBeNull());
   });
 });
 
@@ -296,18 +296,18 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     fireEvent.change(await screen.findByLabelText("Website"), { target: { value: "pastebin.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Show the rule" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add rule" }));
-    const bar = await screen.findByRole("region", { name: "Changes not applied" });
-    await waitFor(() => expect(within(bar).getByText("2 changes not applied yet")).toBeInTheDocument());
-    fireEvent.click(within(bar).getByRole("button", { name: "Apply changes" }));
+    const bar = await screen.findByRole("region", { name: "Unsaved changes" });
+    await waitFor(() => expect(within(bar).getByText("2 unsaved changes")).toBeInTheDocument());
+    fireEvent.click(within(bar).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(srv.publishes).toHaveLength(1));
     expect(order).toEqual(["governance"]);
     expect(govBody!.revision).toBe(4);
     expect(govBody!.document.egress.posture).toBe("credentialed_only");
     // The limits are applied, the rule is not: the bar says so and counts only what is left.
     expect(await within(bar).findByText(/The limits were applied\. The rules and defaults were not/)).toBeInTheDocument();
-    await waitFor(() => expect(within(bar).getByText(/^1 change not applied yet/)).toBeInTheDocument());
+    await waitFor(() => expect(within(bar).getByText(/^1 unsaved change/)).toBeInTheDocument());
     // A retry sends only the rules: the document is not sent again.
-    fireEvent.click(within(bar).getByRole("button", { name: "Apply changes" }));
+    fireEvent.click(within(bar).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(srv.publishes).toHaveLength(2));
     expect(order).toEqual(["governance"]);
   });
@@ -326,8 +326,8 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     fireEvent.change(await screen.findByLabelText("Website"), { target: { value: "pastebin.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Show the rule" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add rule" }));
-    const bar = await screen.findByRole("region", { name: "Changes not applied" });
-    fireEvent.click(within(bar).getByRole("button", { name: "Apply changes" }));
+    const bar = await screen.findByRole("region", { name: "Unsaved changes" });
+    fireEvent.click(within(bar).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(order).toEqual(["governance"]));
     expect(await screen.findByText(/Below the minimum/)).toBeInTheDocument();
     expect(order).toEqual(["governance"]);

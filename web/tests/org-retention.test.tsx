@@ -71,9 +71,9 @@ describe("organization retention form (P5-IA-4, C-969)", () => {
     await waitFor(() => expect(conv.value).toBe("180"));
     const files = screen.getByLabelText(/Delete files after/);
     const quota = screen.getByLabelText(/Storage for files/);
-    const save = screen.getByRole("button", { name: "Save retention" });
-
     fireEvent.change(conv, { target: { value: "3" } });
+    const save = screen.getByRole("button", { name: "Save" });
+
     fireEvent.click(save);
     expect(await screen.findByText(/from 7 to 3650/)).toBeInTheDocument();
     fireEvent.change(conv, { target: { value: "400" } });
@@ -88,7 +88,7 @@ describe("organization retention form (P5-IA-4, C-969)", () => {
     fireEvent.change(files, { target: { value: "60" } });
     fireEvent.change(quota, { target: { value: "2048" } });
     fireEvent.click(save);
-    expect(await screen.findByText("Retention saved.")).toBeInTheDocument();
+    expect(await screen.findByText("Saved. Retention applies from now on.")).toBeInTheDocument();
     const puts = calls.filter((c) => c.method === "PUT");
     expect(puts).toHaveLength(1);
     expect(puts[0]!.body).toEqual({ conversations_days: 30, attachments_days: 60, attachment_quota_mib: 2048 });
@@ -104,10 +104,10 @@ describe("organization retention form (P5-IA-4, C-969)", () => {
     await waitFor(() => expect(conv.value).toBe("180"));
     expect(screen.queryByRole("region", { name: "Set for you by an Aurora administrator" })).toBeNull();
     fireEvent.change(conv, { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(conv.value).toBe("180");
     fireEvent.change(conv, { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save retention" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ conversations_days: null, attachments_days: null, attachment_quota_mib: null }));
   });
 });

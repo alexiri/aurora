@@ -29,13 +29,14 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(above).toContainText("Set for you by an Aurora administrator");
         const files = page.getByLabel(/Delete files after/);
         await files.fill("120");
-        await page.getByRole("button", { name: "Save retention" }).click();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.getByText("Administration allows at most 90 days.")).toBeVisible();
+        await expect(page.getByRole("alert").filter({ hasText: "1 field needs fixing" })).toBeVisible();
         await files.fill("60");
         const put = page.waitForRequest((r) => r.method() === "PUT" && /\/retention$/.test(r.url()));
-        await page.getByRole("button", { name: "Save retention" }).click();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
         expect((await put).postDataJSON()).toEqual({ conversations_days: 180, attachments_days: 60, attachment_quota_mib: null });
-        await expect(page.getByText("Retention saved.")).toBeVisible();
+        await expect(page.getByText("Saved. Retention applies from now on.")).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
         // Storage shows usage only: the limits are the form on the first tab.

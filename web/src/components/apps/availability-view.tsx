@@ -3,11 +3,11 @@
 import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
+import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
+import { errorMessage } from "@/lib/api/errors";
 import {
   toggleAllow,
   useApps,
@@ -40,19 +40,23 @@ export function AvailabilityEditor({
   const put = usePutAppAvailability(orgId);
   const [posture, setPosture] = useState<"open" | "restricted">(initial.posture === "restricted" ? "restricted" : "open");
   const [allow, setAllow] = useState(initial.allow);
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
+  // What is saved: the editor's start, and again after each save.
+  const [base, setBase] = useState({ posture, allow });
+  const dirty = posture !== base.posture || JSON.stringify(allow) !== JSON.stringify(base.allow);
   const orgWide = (id: string) => allow.some((e) => e.app_id === id && !e.workspace_id);
   const known = new Set(apps.map((a) => a.app_id));
   const restricted = posture === "restricted";
   const choose = (p: "open" | "restricted") => {
     setPosture(p);
-    setSaved(false);
+    bar.clear();
   };
   async function save() {
-    setSaved(false);
+    bar.clear();
     try {
       await put.mutateAsync({ posture, allow });
-      setSaved(true);
+      setBase({ posture, allow });
+      bar.flash();
     } catch {
       // shown below
     }
@@ -95,7 +99,7 @@ export function AvailabilityEditor({
                 isOn: (id) => orgWide(id),
                 onToggle: (id) => {
                   setAllow((cur) => toggleAllow(cur, id, null));
-                  setSaved(false);
+                  bar.clear();
                 },
                 disabled: !canEdit,
               }
@@ -105,14 +109,19 @@ export function AvailabilityEditor({
       {restricted && allow.filter((e) => e.workspace_id || !known.has(e.app_id)).length > 0 ? (
         <p className="text-xs text-muted">Workspace-specific or unknown entries are kept as they are.</p>
       ) : null}
-      <ErrorNotice error={put.error} />
-      <SavedNotice show={saved}>Saved.</SavedNotice>
       {canEdit ? (
-        <FormActions>
-          <Button size="lg" disabled={put.isPending} onClick={() => void save()}>
-            Save
-          </Button>
-        </FormActions>
+        <SaveBar
+          dirty={dirty}
+          saving={put.isPending}
+          saved={bar.saved}
+          error={put.error ? errorMessage(put.error) : undefined}
+          onSave={() => void save()}
+          onDiscard={() => {
+            setPosture(base.posture);
+            setAllow(base.allow);
+            put.reset();
+          }}
+        />
       ) : (
         <Notice role="status">Only owners and admins can change this.</Notice>
       )}

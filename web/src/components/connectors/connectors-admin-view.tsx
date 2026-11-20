@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
+import { SecretOnce } from "@/components/ui/secret-once";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -78,7 +78,7 @@ export function ConnectorsAdminView() {
       )}
       {body}
       {tokens}
-      <OneTimeKeyDialog
+      <SecretOnce
         secret={secret?.token ?? null}
         title="Copy the chat platform token"
         description={`Token for chat platform "${secret?.id ?? ""}". You won't see it again, so give it to the chat platform host now.`}

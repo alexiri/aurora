@@ -1,6 +1,7 @@
 "use client";
 
 import { Card } from "@/components/ui/card";
+import { formatWhen } from "@/lib/format-date";
 import { StatusDot } from "@/components/ui/status-dot";
 import { useInstance } from "@/lib/api/queries";
 import { useTerminators } from "@/lib/api/ssh";
@@ -26,7 +27,7 @@ export function SshLine() {
           {live.length === 0
             ? "No SSH terminator has reported in the last 90 seconds."
             : `${live.length} terminator ${live.length === 1 ? "replica" : "replicas"} live, ${sessions} open ${sessions === 1 ? "session" : "sessions"}` +
-              (last ? `, last ${new Date(last).toLocaleString()}` : "")}
+              (last ? `, last ${formatWhen(last)}` : "")}
         </span>
       </div>
     </Card>

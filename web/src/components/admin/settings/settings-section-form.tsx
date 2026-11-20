@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import {
   ChoiceListEditor,
@@ -16,9 +16,9 @@ import { ChoiceCards } from "@/components/ui/choice-cards";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
-import { FormActions } from "@/components/ui/form";
 import { LockPill } from "@/components/ui/lock-pill";
-import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { SaveBar, SAVED_MS } from "@/components/ui/save-bar";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
 import { SettingField, SettingsCard, settingControlId } from "@/components/ui/setting-field";
@@ -202,6 +202,12 @@ export function SettingsStackForm({
   const [drafts, setDrafts] = useState<Drafts>({});
   const [errors, setErrors] = useState<Record<string, unknown>>({});
   const [saved, setSaved] = useState(false);
+  // "Saved" stays for two seconds (and its Undo with it).
+  useEffect(() => {
+    if (!saved) return;
+    const t = setTimeout(() => setSaved(false), SAVED_MS);
+    return () => clearTimeout(t);
+  }, [saved]);
   const [confirm, setConfirm] = useState<{ part: StackPart; preview: SettingsPreview }[] | null>(null);
   const [busy, setBusy] = useState(false);
   const saver = useSettingsSaver();
@@ -232,9 +238,32 @@ export function SettingsStackForm({
     onReload();
   }
 
+  /** What a save replaced, so **Undo** can put it back: each section's saved values before the change. */
+  const [before, setBefore] = useState<{ section: string; values: SettingValues }[] | null>(null);
+  const undoable = before !== null && saved;
+  async function undo() {
+    if (!before) return;
+    setBusy(true);
+    try {
+      for (const b of before) {
+        const part = parts.find((p) => p.section.section === b.section);
+        if (!part) continue;
+        await saver.put(b.section, { generation: part.section.generation, values: b.values });
+      }
+      setBefore(null);
+      setSaved(false);
+      setErrors({});
+    } catch (e) {
+      setErrors({ [before[0]?.section ?? ""]: e });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function doPut(changed: typeof states) {
     const errs: Record<string, unknown> = {};
     let done = 0;
+    const snapshot = changed.map((s) => ({ section: s.part.section.section, values: toValues(s.part.section, s.initial) }));
     for (const s of changed) {
       try {
         await saver.put(s.part.section.section, {
@@ -250,7 +279,9 @@ export function SettingsStackForm({
     }
     setConfirm(null);
     setErrors(errs);
-    setSaved(done > 0 && Object.keys(errs).length === 0);
+    const ok = done > 0 && Object.keys(errs).length === 0;
+    setSaved(ok);
+    setBefore(ok ? snapshot : null);
   }
 
   async function submit(e?: FormEvent) {
@@ -290,10 +321,21 @@ export function SettingsStackForm({
     }
   }
 
+  // The bar's words: how many fields need fixing, or the one failure that is not a field's (stale revision, locked key).
+  let fieldErrorCount = 0;
+  let otherError: ReactNode = undefined;
+  for (const { part } of states) {
+    const err = errors[part.section.section];
+    if (!err) continue;
+    const known = new Set(part.section.settings.map((s) => s.key));
+    const fe = fieldErrors(err);
+    const mine = Object.keys(fe).filter((k) => known.has(k.split("/")[0] ?? k));
+    fieldErrorCount += mine.length;
+    if (mine.length === 0) otherError ??= errorMessage(err);
+  }
+
   return (
     <form onSubmit={(e) => void submit(e)} noValidate className="space-y-5">
-      <SavedNotice show={saved}>Saved. Applied to every replica within seconds.</SavedNotice>
-
       {states.map(({ part, draft }) => {
         const section = part.section;
         const error = errors[section.section];
@@ -383,23 +425,22 @@ export function SettingsStackForm({
 
       {footer && states[0] ? footer(toValues(states[0].part.section, states[0].draft), states[0].dirty) : null}
 
-      <FormActions>
-        <Button type="submit" disabled={busy || !dirty}>
-          {busy ? "Saving…" : "Save"}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={busy || !dirty}
-          onClick={() => {
-            setDrafts({});
-            setErrors({});
-            setSaved(false);
-          }}
-        >
-          Discard changes
-        </Button>
-      </FormActions>
+      {/* (P5-REFINE-2, admin-2) The one save bar: fixed at the bottom of the viewport, so it is always in view on a long page. */}
+      <SaveBar
+        // A save that went through shows "Saved" even while the section has not been refetched (the draft is cleared by the reload).
+        dirty={dirty && !saved}
+        saving={busy}
+        saved={saved}
+        errorCount={fieldErrorCount}
+        error={otherError}
+        savedMessage="Saved. Applied to every replica within seconds."
+        onUndo={undoable ? () => void undo() : undefined}
+        onDiscard={() => {
+          setDrafts({});
+          setErrors({});
+          setSaved(false);
+        }}
+      />
 
       <ConfirmDialog
         open={confirm !== null}
