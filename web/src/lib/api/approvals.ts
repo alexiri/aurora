@@ -170,6 +170,8 @@ export function useApprovalsStream(wsId: string): { live: boolean } {
       if (evt.event !== "created") void qc.invalidateQueries({ queryKey: [...approvalKeys.all(wsId), "history"] });
       // (P5-AGENT-2) The agent page's status rail reads its own agent-scoped list (C-700): refetch it on every event.
       void qc.invalidateQueries({ queryKey: approvalKeys.agentPending(wsId) });
+      // (P5-REFINE-16 G1) The rail's number (C-1082) follows the stream too.
+      void qc.invalidateQueries({ queryKey: ["attention", "counts"] });
     });
     return () => es.close();
   }, [qc, wsId]);

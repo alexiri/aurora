@@ -154,18 +154,21 @@ test.describe("phone only", () => {
 });
 
 test("the Approvals badge drops after deciding, without a reload", async ({ page }) => {
+  // (P5-REFINE-16 item 19, G1/G2) One count from C-1082: Approvals shows its part, Overview the whole; both drop together.
   let waiting = 2;
   await open(page, "/o/acme/w/main", "light", {
-    [`${WS}/approvals`]: () => ({
-      items: Array.from({ length: waiting }, (_, i) => ({ id: id(700 + i), created_at: now, deadline: new Date(Date.now() + 3_600_000).toISOString(), status: "pending", method: "POST", host: "x.test", path: "/", parked: false, can_always_allow: false, sentence: { agent: { id: id(20), name: "Dani" }, action: "do a thing" }, summary: { source: "generic", title: "t", fields: [] } })),
-      next_cursor: null,
-    }),
-    [`${WS}/action-approvals`]: () => ({ items: [], next_cursor: null }),
+    "/v1/attention/counts": () => ({ workspace: waiting === 0 ? { workspace_id: ws.id, count: 0, topics: {} } : { workspace_id: ws.id, count: waiting + 1, topics: { approvals: waiting } } }),
   });
   await expect(page.getByTestId("approvals-badge")).toContainText("2 need your attention");
+  await expect(page.getByTestId("overview-badge")).toContainText("3 need your attention");
   waiting = 1;
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await expect(page.getByTestId("approvals-badge")).toContainText("1 needs your attention", { timeout: 35_000 });
+  await expect(page.getByTestId("overview-badge")).toContainText("2 need your attention");
+  waiting = 0;
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.getByTestId("approvals-badge")).toHaveCount(0, { timeout: 35_000 });
+  await expect(page.getByTestId("overview-badge")).toHaveCount(0);
 });
 
 test("Check a request answers in a sentence with the raw verdict collapsed", async ({ page }) => {

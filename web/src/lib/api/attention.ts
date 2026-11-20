@@ -54,14 +54,18 @@ export function useAttentionFeed(level: AttentionLevel, id: string | undefined, 
  * (never an error). Refetched on window focus and every 5 minutes; deciding, declining or resolving an item
  * invalidates `attentionKeys.all`.
  */
-export function useAttentionCounts({ org, workspace }: { org?: string; workspace?: string }, enabled = true) {
+export function useAttentionCounts(
+  { org, workspace }: { org?: string; workspace?: string },
+  enabled = true,
+  { intervalMs = ATTENTION_REFETCH_MS, staleTime = 30_000 }: { intervalMs?: number; staleTime?: number } = {},
+) {
   return useQuery({
     queryKey: attentionKeys.counts(org, workspace),
     enabled,
     retry: false,
-    staleTime: 30_000,
+    staleTime,
     refetchOnWindowFocus: true,
-    refetchInterval: ATTENTION_REFETCH_MS,
+    refetchInterval: () => (typeof document === "undefined" || document.visibilityState === "visible" ? intervalMs : false),
     queryFn: () =>
       unwrap(
         api.GET("/v1/attention/counts", {
@@ -69,6 +73,21 @@ export function useAttentionCounts({ org, workspace }: { org?: string; workspace
         }),
       ),
   });
+}
+
+/** The workspace rail's numbers are read again this often (the pending approvals' own poll, P5-REFINE-16 G1). */
+export const WORKSPACE_COUNTS_MS = 30_000;
+
+/**
+ * (P5-REFINE-16 item 19, G1/G2/G6) The one hook behind every workspace count badge: Approvals, Overview, the phone drawer
+ * and the menu dot all read it, so they show the same number and ask once (one query key). `count` is the whole level
+ * (Overview), `topics` the part per page (`approvals`). Both are 0 for someone who cannot act there (the scope comes back
+ * `null`), while loading and when the read fails: a badge never shows an error.
+ */
+export function useWorkspaceCounts(wsId: string | undefined): { count: number; topics: Record<string, number> } {
+  const q = useAttentionCounts({ workspace: wsId }, !!wsId, { intervalMs: WORKSPACE_COUNTS_MS, staleTime: 0 });
+  const w = wsId && !q.isError ? q.data?.workspace : null;
+  return { count: w?.count ?? 0, topics: w?.topics ?? {} };
 }
 
 /** The badge refetches on window focus and at this interval (FIX-167, D-370). */
@@ -100,7 +119,10 @@ export function useRefreshAttentionOnMutation(enabled: boolean): void {
   useEffect(() => {
     if (!enabled) return;
     return qc.getMutationCache().subscribe((e) => {
-      if (e.type === "updated" && e.action.type === "success") void qc.invalidateQueries({ queryKey: attentionKey });
+      if (e.type === "updated" && e.action.type === "success") {
+        void qc.invalidateQueries({ queryKey: attentionKey });
+        void qc.invalidateQueries({ queryKey: attentionKeys.all });
+      }
     });
   }, [qc, enabled]);
 }

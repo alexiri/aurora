@@ -772,6 +772,25 @@ export async function mockApi(
       }
       return json({ section, title: section, description: "", generation: 1, updated_at: now, updated_by_label: null, extra: null, settings: [] });
     }
+    // (P5-REFINE-16, C-1080/C-1082) The workspace's attention feed and the rail's counts, from the same fixtures: the two
+    // pending approvals and the Linear account whose sign-in expired. Approvals' part of the count is 2, the whole 3.
+    if (/^\/v1\/workspaces\/[^/]+\/attention$/.test(p)) {
+      const since = now;
+      const row = (over: Record<string, unknown>) => ({
+        level: "workspace", actors: [], actors_total: 0, reason: null, own: false, can_decline: false, state: "open", closed_at: null, message: null,
+        closed_by_role: null, closed_by: null, since, ...over,
+      });
+      const base = "/o/acme/w/main";
+      return json({
+        count: 3,
+        items: [
+          row({ id: `approval:${approval.id}`, kind: "approval", topic: "approvals", subject_id: approval.id, title: "Daneel is waiting for your approval", detail: "merge a pull request", href: `${base}/approvals`, decision: true, action: { label: "Review", href: `${base}/approvals` } }),
+          row({ id: `approval:${parkedApproval.id}`, kind: "approval", topic: "approvals", subject_id: parkedApproval.id, title: "Daneel is waiting for your approval", detail: "delete a repository", href: `${base}/approvals`, decision: true, action: { label: "Review", href: `${base}/approvals` } }),
+          row({ id: `broken_account:${id(41)}`, kind: "broken_account", topic: "accounts", subject_id: id(41), title: "Product team needs you", detail: "Sign-in expired", href: `${base}/apps?tab=accounts`, decision: false, action: { label: "Sign in again", href: `${base}/apps?tab=accounts&reconnect=${id(41)}` } }),
+        ],
+      });
+    }
+    if (p === "/v1/attention/counts") return json({ workspace: { workspace_id: id(2), count: 3, topics: { approvals: 2, accounts: 1 } } });
     if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval, parkedApproval] : [], next_cursor: null });
     if (p.endsWith("/workspaces")) return json({ items: [ws] });
     // (P5-REFINE-17 brief-6) The organization's agents are `OrgAgent` rows: their workspace, kind and header state.

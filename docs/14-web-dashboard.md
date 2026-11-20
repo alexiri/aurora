@@ -2839,9 +2839,20 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   once" (a role, never a name). **Skills** opens with what a skill is and keeps the precedence in the closed **How skills
   combine** fold. **Approvals** shows "Nothing is waiting for you." once and an **Example** card (built from the real
   question, never counted or sent; each answer explains itself) only while nothing is waiting.
-- **Badges:** the Approvals count in the rail (and the phone menu's dot) is read again on focus and every 30 s, counts
-  action approvals too, has screen-reader words ("2 need your attention"), is absent at zero and for people who cannot
-  decide. Overview's count and the Needs you feed rows follow brief 8 (C-1082).
+- **Badges (item 19, G1/G2/G6):** one shared hook (`useWorkspaceCounts`, one query on `GET /v1/attention/counts?workspace=`,
+  C-1082) feeds every workspace count. **Approvals** shows the `approvals` part (gateway and action approvals the viewer can
+  decide), **Overview** the whole workspace count, and the phone drawer lists the same rail; the hamburger button shows a dot
+  with "Open menu, 3 need your attention" when anything waits. The count is read again on window focus, every 30 s while the
+  tab is visible, on each approvals stream event and after any successful change (deciding, resolving), so it drops without a
+  reload. Screen-reader words sit inside the link ("2 need your attention"); no badge at zero; none for people who cannot act
+  there (the server answers `null` for that scope; a member has no Approvals entry); amber only because the viewer can act
+  (D-384); fits at 390 px.
+- **Needs you** (Overview, D-417): the card reads the workspace attention feed (`GET /v1/workspaces/{ws}/attention`,
+  C-1080): one row per item with its sentence, detail, "Since <formatWhen>" and the one action (Review, Sign in again/Fix, Set
+  up…); the viewer's own open request reads "Waiting for an admin" and is listed but never counted. The heading's number is
+  the rail's Overview number. For an organization's owners and admins the organization's setup requests sit below under
+  **For your organization** with Set up and Not now (the organization feed's rows keep their own count on the organization's
+  rail). The Overview's one-line sentence uses the same numbers.
 
 ### 9. First run (P5-UX-1, P5-UX-6, P5-UX-7, D-323, D-326, C-916, C-922..C-924, C-927)
 

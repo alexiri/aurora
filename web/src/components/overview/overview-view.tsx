@@ -14,10 +14,10 @@ import { NeedsYou } from "@/components/overview/needs-you";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { StatusDot } from "@/components/ui/status-dot";
-import { useWorkspaceAttention } from "@/components/accounts/attention";
+import { useWorkspaceCounts } from "@/lib/api/attention";
 import { buttonVariants } from "@/components/ui/button";
 import { useMeOnboarding } from "@/lib/api/onboarding";
-import { useActivity, useApprovalsStream, useCanApprove, useNow, usePendingApprovals } from "@/lib/api/approvals";
+import { useActivity, useApprovalsStream, useCanApprove, useNow } from "@/lib/api/approvals";
 import { actionsOnly } from "@/components/agents/status-rail/status-data";
 import { useAccounts } from "@/lib/api/accounts";
 import { useOrgSetupRequests } from "@/lib/api/app-setup-requests";
@@ -100,14 +100,14 @@ function OverviewBody({
   const byId = new Map(agents.data?.items.map((a) => [a.id, a]) ?? []);
 
   // (P5-POLISH-7, D5) The sentence comes from state: what needs the person, else that the agent is ready.
-  const pendingApprovals = usePendingApprovals(wsId, canApprove);
-  const broken = useWorkspaceAttention(wsId);
+  // (P5-REFINE-16 item 19) The workspace's attention count (C-1082): the number on the rail's Overview entry and in the Needs you heading.
+  const counts = useWorkspaceCounts(wsId);
   const onboarding = useMeOnboarding();
   // (P5-POLISH-11) The same items as the Needs you panel below: app setup requests count too (owners and admins only).
   const orgData = useOrg(orgId);
   const isOrgAdmin = orgData.data?.my_role === "owner" || orgData.data?.my_role === "admin";
   const setups = useOrgSetupRequests(orgId, isOrgAdmin);
-  const needs = (canApprove ? (pendingApprovals.data?.items?.length ?? 0) : 0) + broken.length + (isOrgAdmin ? (setups.data?.length ?? 0) : 0);
+  const needs = counts.count + (isOrgAdmin ? (setups.data?.length ?? 0) : 0);
   const list = agents.data?.items ?? [];
   const sentence = overviewSentence(needs, list.map((a) => a.name));
   // The guide shows here only after Welcome has stopped being the landing page (it is seen), so never on both pages.

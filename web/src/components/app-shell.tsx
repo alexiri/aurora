@@ -5,8 +5,6 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode, type SVGProps } from "react";
 
-import { usePendingActionApprovals } from "@/lib/api/action-approvals";
-import { usePendingApprovals } from "@/lib/api/approvals";
 import { clearDrafts } from "@/components/chat/composer/drafts";
 import { logout, useInstance, useMe, useResolve, useWorkspace } from "@/lib/api/queries";
 import { useAltitude } from "@/lib/altitude";
@@ -21,7 +19,7 @@ import { accountRoutes, ADMIN_RAIL_GROUPS, ADMIN_RAIL_LABEL, adminRoutes, TOPIC_
 import { useTimezoneAutofill } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
-import { useRefreshAttentionOnMutation } from "@/lib/api/attention";
+import { useRefreshAttentionOnMutation, useWorkspaceCounts } from "@/lib/api/attention";
 import { AttentionBadge } from "./admin/attention-badge";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
@@ -208,28 +206,23 @@ function topicActive(pathname: string, href: string, topic: string): boolean {
 }
 
 /**
- * (P5-REFINE-16, badges G1, G6) How many approvals wait for the viewer: the gateway's and the action approvals, read again on
- * focus and every 30 s (and by the approvals stream where the Approvals page is open). Zero for someone who cannot decide.
+ * (P5-REFINE-16 item 19, badges G1, G2, G6) The workspace's numbers, from the one shared hook on C-1082
+ * (`useWorkspaceCounts`): `overview` is the whole level, `approvals` the part for that page. Zero for someone who cannot act
+ * (the server answers `null` for that scope), so a member sees no badge at all.
  */
 export function useWaitingCount(wsId: string | undefined): number {
-  const role = useWorkspace(wsId).data?.my_role;
-  const canAct = role === "owner" || role === "approver";
-  const pending = usePendingApprovals(wsId ?? "", canAct, { poll: true });
-  const actions = usePendingActionApprovals(canAct && wsId ? wsId : "");
-  if (!wsId || !canAct) return 0;
-  return (pending.data?.items.length ?? 0) + (actions.data?.items.length ?? 0);
+  return useWorkspaceCounts(wsId).count;
 }
 
 /** "1 needs your attention" / "2 need your attention": the words behind a badge. */
 export const attentionText = (n: number): string => (n === 1 ? "1 needs your attention" : `${n} need your attention`);
 
-/** The pending-count pill beside Approvals: no badge at zero, the words for a screen reader inside the link. */
-function PendingPill({ wsId }: { wsId: string }) {
-  const n = useWaitingCount(wsId);
+/** The count pill beside a rail entry: no badge at zero, the words for a screen reader inside the link, amber (the viewer can act, D-384). */
+function CountPill({ n, testId }: { n: number; testId: string }) {
   if (n === 0) return null;
   return (
     <span
-      data-testid="approvals-badge"
+      data-testid={testId}
       className="rounded-full bg-pending-soft px-1.5 text-label font-semibold leading-5 tabular-nums text-pending-ink"
     >
       <span aria-hidden="true">{n}</span>
@@ -251,6 +244,7 @@ export function WorkspaceNav({
   const role = useWorkspace(wsId).data?.my_role;
   // While the role loads, list what every member sees (Approvals, People and Settings wait for the role).
   const altitude = useAltitude({ wsId });
+  const counts = useWorkspaceCounts(wsId);
   const topics = visibleTopics("workspace", { instanceAdmin, workspace: role ?? (instanceAdmin ? undefined : "member") }, altitude);
   return (
     <nav aria-label="Workspace">
@@ -266,7 +260,13 @@ export function WorkspaceNav({
               label={TOPIC_LABEL[t]}
               icon={TOPIC_ICON[t]!}
               active={topicActive(pathname, href, t)}
-              badge={t === "approvals" && wsId ? <PendingPill wsId={wsId} /> : undefined}
+              badge={
+                t === "approvals" ? (
+                  <CountPill n={counts.topics.approvals ?? 0} testId="approvals-badge" />
+                ) : t === "overview" ? (
+                  <CountPill n={counts.count} testId="overview-badge" />
+                ) : undefined
+              }
             />
           );
         })}
@@ -433,7 +433,8 @@ function SidebarContent({
   // The admin navigation is for instance admins only (the page guard already refuses everyone else; the nav must not
   // advertise it to a signed-in member who typed an /admin path, WEBA-11).
   const isInstanceAdmin = useMe().data?.user.is_instance_admin === true;
-  useRefreshAttentionOnMutation(isInstanceAdmin);
+  // Any success may have decided or resolved something: refetch the active counts (nothing is fetched for a query nobody shows).
+  useRefreshAttentionOnMutation(true);
   const resolved = useResolve(orgSlug);
   useRememberReturn(orgSlug, wsSlug, resolved.data?.org.name, !inAdmin);
   const wsName = resolved.data?.workspace?.name;
