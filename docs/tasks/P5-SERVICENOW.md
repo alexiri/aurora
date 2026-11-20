@@ -63,9 +63,12 @@ declared **after** the unversioned ones, or separate items) and prove both in fi
   (`/api/now/cmdb/instance/*`, `…/*/*`).
 - Attachments: `/api/now/attachment` (list, by `table_sys_id`), `/api/now/attachment/*`,
   `/api/now/attachment/*/file`.
-- Aggregates: `/api/now/stats/*` ("how many open incidents in my group").
-- **`read_other_table`** (`GET /api/now/table/*`, declared last among reads): any other table, for questions
-  the list above misses. ServiceNow's own rules decide what comes back; grants can block it.
+- Aggregates: `/api/now/stats/*` ("how many open incidents in my group"), limited to the tables above (one
+  pattern per table, e.g. `/api/now/stats/incident`), for the same reason as below.
+- **No catch-all table read.** A `GET /api/now/table/*` tool would also classify `oauth_credential`,
+  `oauth_entity`, `sys_user_token`, `discovery_credentials` and similar tables as reads, and tool matching
+  has no exclusions (`09 §3.4` *Which tool a request is*), so it would break SEC-145. Every readable table is
+  named. If the report finds a table people need, name it in a follow-up.
 
 **Write (each with an approval template; `{request.host}` links to the record):**
 - `create_incident` (`POST /api/now/table/incident`): title "open an incident"; fields: short description,
@@ -82,8 +85,9 @@ declared **after** the unversioned ones, or separate items) and prove both in fi
 **Refused** (`REFUSED["servicenow"]`, each a `refused …` case): record deletion
 (`DELETE /api/now/table/*/*`), writes to any table not listed (`POST /api/now/table/sys_user`,
 `PATCH /api/now/table/sys_user/*`), writes to `sys_*` configuration tables (`POST
-/api/now/table/sys_script`), OAuth and credential tables (`oauth_entity`, `oauth_credential`,
-`sys_user` password fields; SEC-145), Import Set loads (`POST /api/now/import/*`), and scripted endpoints
+/api/now/table/sys_script`), **reads and writes** of OAuth and credential tables (`GET` and `POST
+/api/now/table/oauth_credential`, `GET /api/now/table/oauth_entity`, `GET /api/now/table/sys_user_token`,
+`GET /api/now/table/discovery_credentials`, and `GET /api/now/stats/oauth_credential`; SEC-145), Import Set loads (`POST /api/now/import/*`), and scripted endpoints
 (`/api/now/*` paths outside the catalogue are untooled anyway; prove one).
 
 ## Agent text
