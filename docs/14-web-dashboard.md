@@ -117,6 +117,24 @@ them, starts there.
 - **Keeping it current:** a spec change that changes a screen updates its board in the same change
   (the canvas is edited by whoever owns the spec batch).
 
+**UX review 5 (phase 5, P5-REFINE-1..20, D-405..D-419).** UX review 5 walked every page while
+configuring and using every feature: **“Aurora UX Review 5”**
+(<https://claude.ai/artifact/1YJcRA7Q84864pkim44Qnt>; findings at `#f-<key>`, e.g. `#f-access-1`; the
+second reviewer's recommendations at `#above`). Its 119 findings each carry a Before and an After
+mockup; with the owner's comments applied it is the reference for the P5-REFINE briefs and wins over
+older boards and the P5-POLISH mockups where they differ. Workers read the copy at
+`/home/alex/orca/workspaces/aurora/design-ux-review-5/` (`findings.md`, `layer-above.md`,
+`after/<key>.png` and `-lt.png`, `after/src/<key>.html`, `before/`, `screens/`). Rules it adds, for every
+screen: three altitudes (Use, Set up, Expert) with a per-person "Show more controls" switch (D-406); one
+vocabulary (D-407: Automations, Tests, Instructions, Apps & access, Other agents, Pause; admins named by
+role; no "What moved"); one save pattern (the floating save bar, "Saved" after saving, inline "Saved"
+for instant controls); one confirmation ladder (undoable: toast with Undo; disruptive: a dialog saying
+the consequence; permanent: type the visible name); `formatWhen` for every date and relative times that
+tick; tables become stacked rows under 900 px; identifiers, codes and config keys only inside Technical
+details; the agent page per D-408; several chats per person and one thread per automation run (D-409);
+one live timeline per agent (D-415); one Needs-you feed per level (D-417). The P5-REFINE briefs add the
+details to the sections below as they land.
+
 **UX fixes (phase 5, P5-POLISH, D-380..D-393).** UX review 4 walked the finished redesign
 (<https://claude.ai/artifact/33oHaXQpCU3oSVRVmgtY5Z>, 100 screens) and the owner accepted thirty
 before/after proposals, **“Aurora UX fixes”** (<https://claude.ai/artifact/WXbcpcrkbCLuxMSurpkuQW>,
@@ -471,8 +489,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     (C-506) and `?c=<id>` open what they open today; the section is derived from
     the page. A hosted agent opens on Chat, a BYO agent on Instructions. The
     Delete zone under Instructions is removed (Delete is in Agent actions).
-  - (phase 5, P5-POLISH-6, D-382, C-1036) **Behaviour and Access are configuration, reached from the …
-    menu.** The tab bar shows **Chat · Triggers · Computer** (BYO: Computer). The … menu (Agent
+  - (phase 5, P5-POLISH-6, D-382, C-1036; **amended by D-408**, P5-REFINE-11: a labelled **Settings**
+    button replaces the … menu and the tabs become Chat · Automations · Computer) **Behaviour and Access
+    are configuration, reached from the … menu.** The tab bar shows **Chat · Triggers · Computer** (BYO: Computer). The … menu (Agent
     actions) lists **Behaviour** ("Name, instructions, model, memory, skills"), **Access** ("Apps,
     accounts and the AI key it uses"), a separator, **Freeze <Agent>** ("Pauses it until you unfreeze
     it") and **Delete <Agent>…** (danger). On a Behaviour or Access page no tab is selected, the …
