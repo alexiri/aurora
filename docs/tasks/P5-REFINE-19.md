@@ -275,10 +275,53 @@ care. Split into two runs if useful: palette + shortcuts; bulk + export/import +
 
 ## Completion report
 
+Lane A, branch `alexiri/p5-polish-a` (2026-11-21). Every item is built; nothing waits.
+
 - **Items done** (Scope 1–7, each with the commit):
+  - 1 Command palette (`⌘K`/`Ctrl K`, rail footer button **Search · ⌘K**, nouns for everyone, verbs behind the switch) and
+    2 keyboard shortcuts (`lib/shortcuts.ts`, one listener, chords, the never-fire rule, the sheet, the account-menu entry
+    **Keyboard shortcuts**): `141633b9`.
+  - 5 Copy as curl: API keys (row menu, the "Acts as you in this workspace through the Aurora API." line, the OpenAPI link) `e1b7a2ad`;
+    webhook cards (own small commit) `b839498f`.
+  - 6 "From your terminal" fold (Computer, API keys) `2ed89885`; the Webhooks page's fold (own small commit) `98e8676e`.
+  - 4 Export and import of an agent (zip writer/reader, restricted YAML, dialogs, palette verbs, template = export): `db782cbe`.
+  - 3 Bulk actions: People (organization and workspace), Accounts, the Automations bar: `a28c79b0`; the checkboxes and the bar on an agent's
+    Schedules and Webhooks lists (own small commit) `22cecb8c`, with the mocked Playwright spec `web/e2e/refine-19.spec.ts`.
+  - 7 Docs: `docs/14` §Expert speed (palette, shortcut table and the never-fire rule, bulk, the export tree with an example `agent.yaml`
+    and automations, copy as curl, the CLI fold) and the altitude table rows; `docs/PROGRESS.md`, `docs/FEATURES.md`.
 - **Deviations and why** (including the template shape actually used):
+  - **Template shape.** `templates.ts` has no model, memories or skills, so `templateAsExport(t)` writes `{format: 1, name: nameSuggestion,
+    purpose: id, model: "default", may_message_first: false, instructions, memories: [], skills: [], automations: [the template's schedule,
+    paused]}`; a test reads every template back from a zip and compares (and an export built from the agent's own routes equals it).
+  - **Webhook automation files carry `instructions`** besides `kind, name, verification, enabled` (what the agent does when called; not a
+    secret). Without it an imported webhook would have no purpose. Still no address, no secret.
+  - **Skill files other than `SKILL.md` are not exported** and **one-time schedules (no cron) are not exported**: no route reads a skill file
+    back (the gap), and a one-time schedule has no cadence. The export dialog says both. Import does write the extra files of a skill it finds in a zip.
+  - **Import writes instructions, memories, skills, schedules and webhooks only.** `model` and `may_message_first` are in `agent.yaml` (the format)
+    but import does not apply them: the model may not exist on this instance's AI key, and the brief says import never changes the AI key.
+  - **Imported webhook:** created, then paused with a second call (the create route has no `enabled`); its fresh signing secret is shown once
+    (`SecretOnce`, one webhook at a time); its address is not shown (use **Rotate URL** on the card), said in the dialog.
+  - **Webhook card Copy as curl:** on master a card holds only `url_prefix`, so the command carries `<prefix>…` and a comment line "The full address was shown
+    once. Rotate the URL…" (as brief 14 says for the card). When brief 14's `lib/webhook-snippets.ts` lands, the card button should take its snippet from there (`lib/copy-as-curl.ts` is the stand-in).
+  - **Automations bulk** is on an agent's Schedules and Webhooks lists: brief 14's Automations list is not on master (lane B is building it); the bar is a separate component (`components/automations/automations-bulk.tsx`) so it moves over.
+  - **API keys line:** the pages already had a sentence; its words are now the brief's ("Acts as you in this workspace through the Aurora API."; organization keys "Acts for this organization through the Aurora API, with the scope each key was given."), and the **OpenAPI description** link is Expert.
+  - **`palette.verbs`** is a registry row marked `mark` (a list the registry builds, not a wrapper); `copy.curl` is a new row (webhook cards, API keys).
+  - **Resume <Agent>** (palette) goes to the Settings danger zone where its button is, instead of resuming: it never acts.
+  - **Accounts bulk "Give to an agent…"** gives apps at the lowest level that exists; a custom-only app (no level) is listed as not givable here.
+  - **`TypeToConfirm`** got an optional `typeLabel` (a bulk delete types the count: "Type the number of schedules to confirm: 3").
 - **CLI commands used in folds** (command → where confirmed):
+  - `aurora login` → `services/aurora-cli/src/main.rs` `Login {…}` ("Log in with the device flow and store an API key").
+  - `aurora ssh <handle>` → `services/aurora-cli/src/ssh.rs` `SshCmd` (positional `agent`: its id or handle) and `docs/14` §Computer.
+  - `aurora run --agent <handle> -- <command>` → `services/aurora-cli/src/main.rs` `Run { agent, … }`.
+  - No command to trigger or list automation runs exists in the CLI, so none is shown; the Webhooks fold has the curl call only. A vitest (`from-your-terminal.test.tsx`) reads `main.rs` for the three subcommands.
 - **Screenshots compared / recorded** (palette, shortcut sheet, bulk bar, import dialog; dark/light, 1256/390):
-- **Dependencies added** (none expected):
+  - None: no browser stack in this lane and the brief has no per-finding mockups (rec 14 is text). `web/e2e/refine-19.spec.ts` (written, not run here) opens the palette, a verb, the sheet and the chords at 1256 and 390 px in both themes with axe and the no-horizontal-scroll check. For P5-REFINE-20 / the nightly.
+- **Dependencies added** (none expected): none. The zip writer/reader and the YAML subset are in `web/src/lib/export/`.
 - **Tests run** (command and counts):
-- **Open questions:**
+  - Added: `command-palette.test.tsx` (13), `palette-registry.test.ts` (13), `shortcuts.test.ts` (13), `export-zip-yaml.test.ts` (14), `agent-export.test.ts` (13), `agent-import.test.tsx` (12), `copy-as-curl.test.tsx`, `copy-as-curl-webhook.test.tsx` (3), `from-your-terminal.test.tsx`, `bulk.test.tsx` (14), `bulk-automations-lists.test.tsx` (5).
+  - Changed: `context-switcher.test.tsx` (the account menu lists **Keyboard shortcuts** at Expert; two new tests), `account-settings.test.tsx` (the API keys sentence and the OpenAPI link), `e2e/p5-polish-8-switcher.spec.ts` (the account menu's items).
+  - Removed: none.
+  - `cd web && heavy.sh p5-polish-a pnpm exec vitest run` (whole suite, after the shared-UI changes): 227 files, 3109 passed, 1 failed, `files-viewer.test.tsx > opens the text, marks unsaved changes…`, a timing flake under load; the file alone: 26/26 passed.
+  - `pnpm typecheck` clean; `eslint` on every touched and new file: no errors (one pre-existing warning, `reconnectHref` in `account-row.tsx`); `scripts/guards/run-all.sh`: all guards passed (run again after the last commit). No API or schema change and no Rust touched, so `extract-schema --check`, `cargo fmt` and clippy were not run.
+  - Production Playwright specs: none changed. Mocked: `refine-19.spec.ts` (new) and `p5-polish-8-switcher.spec.ts` (updated) are for the nightly / P5-REFINE-20; not run here.
+- **Open questions:** none. (The palette's "Search" button text and the sheet's wording are mine: no mockup exists for rec 14.)
