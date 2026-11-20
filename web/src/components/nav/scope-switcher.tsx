@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { tintFor } from "@/components/agent-avatar";
 import { CountBadge } from "@/components/attention/count-badge";
 import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
-import { useOrgBadge } from "@/lib/api/attention-badges";
+import { useOrgBadge } from "@/lib/api/attention";
 import { ArrowLeftIcon, ArrowRightIcon, CheckIcon, ChevronsUpDownIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CreateOrgDialog } from "@/components/create-org-dialog";

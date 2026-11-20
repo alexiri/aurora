@@ -1,7 +1,7 @@
 "use client";
 
 import { CountBadge } from "@/components/attention/count-badge";
-import { useAdminBadge } from "@/lib/api/attention-badges";
+import { useAdminBadge } from "@/lib/api/attention";
 
 /**
  * (FIX-167 Part B, D-370; P5-REFINE-18 #18, C-1082) How many things wait in Administration. Without `topic` it is the total

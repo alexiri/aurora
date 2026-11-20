@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 
 import { CountBadge } from "@/components/attention/count-badge";
 import { ArrowLeftIcon } from "@/components/ui/icons";
-import { useOrgBadge } from "@/lib/api/attention-badges";
+import { useOrgBadge } from "@/lib/api/attention";
 import { useAltitude } from "@/lib/altitude";
 import { visibleTopics } from "@/lib/api/roles";
 import { useMe, useOrg, useResolve } from "@/lib/api/queries";
