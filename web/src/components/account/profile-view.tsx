@@ -119,6 +119,7 @@ export function ProfileView() {
       <Section id="profile" title="Profile" description="How you appear to other people in your organizations." card>
         <ProfileForm key={me.dataUpdatedAt} me={me.data} />
       </Section>
+      <p className="-mt-4 text-sm text-muted">Roles from sign-in, tour replays and appearance stay below.</p>
       {(me.data.groups ?? []).length > 0 || me.data.memberships.some((m) => m.status === "active" && m.effective_role !== m.role) ? (
         <Section
           id="my-groups"
@@ -149,26 +150,6 @@ export function ProfileView() {
           description="The role values your identity provider sent and what each one gives you here. Roles from the provider are changed there."
         >
           <IdpRolesList roles={me.data.idp_roles} />
-        </Section>
-      ) : null}
-      <Section
-        id="notifications"
-        title="Approval notifications"
-        description="How you hear about approvals that need a decision."
-        card
-      >
-        <ApprovalNotifications me={me.data} />
-      </Section>
-      {sshEnabled ? (
-        <Section
-          id="ssh-keys"
-          title="SSH keys"
-          description="Register the public keys you connect with, to open a shell in a hosted agent's sandbox."
-          card
-        >
-          <Link href={accountRoutes.ssh} className="font-medium text-accent-ink underline">
-            Manage your SSH keys
-          </Link>
         </Section>
       ) : null}
       <Section id="getting-started" title="Getting started" description="Replay the introduction to Aurora." card>

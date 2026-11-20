@@ -2,7 +2,8 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ProfileView } from "@/components/account/profile-view";
+import { AccountNavList } from "@/components/app-shell";
+import { checkSshKey, ONLY_ED25519, PRIVATE_KEY } from "@/lib/ssh-key";
 import { accountRoutes } from "@/lib/routes";
 import { SshKeysView } from "@/components/account/ssh-keys-view";
 import { SshPage } from "@/components/agents/ssh-page";
@@ -125,13 +126,13 @@ describe("SshKeysView", () => {
     expect(within(dialog).getByText("ssh-keygen -t ed25519")).toBeInTheDocument();
     const submit = within(dialog).getByRole("button", { name: "Add key" });
     expect(submit).toBeDisabled();
-    fireEvent.change(within(dialog).getByLabelText("Public key"), { target: { value: " ssh-ed25519 AAAA bob@x " } });
+    fireEvent.change(within(dialog).getByLabelText("Public key"), { target: { value: ` ${GOOD} ` } });
     fireEvent.change(within(dialog).getByLabelText(/Name/), { target: { value: "Work" } });
     for (const text of [/not an ed25519 public key/, /already added this key/, /at most 10 keys/]) {
       fireEvent.click(within(dialog).getByRole("button", { name: "Add key" }));
       expect(await within(dialog).findByText(text)).toBeInTheDocument();
     }
-    expect(bodies[0]).toEqual({ public_key: "ssh-ed25519 AAAA bob@x", name: "Work" });
+    expect(bodies[0]).toEqual({ public_key: GOOD, name: "Work" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Add key" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(post).toBe(4);
@@ -290,26 +291,58 @@ describe("SshPage", () => {
   });
 });
 
-describe("Your account links to the SSH keys page", () => {
-  const me = {
-    approval_email: true,
-    groups: [],
-    memberships: [],
-    user: { id: "u1", email: "a@b.c", display_name: "Ann", created_at: "2026-01-01T00:00:00Z" },
-  };
-  it("shows the link through accountRoutes.ssh only while features.ssh is on", async () => {
-    mockFetch({ "GET /v1/me": () => json(200, me), "GET /v1/instance": () => json(200, instance(true)) });
-    wrap(<ProfileView />);
-    const link = await screen.findByRole("link", { name: "Manage your SSH keys" });
+const GOOD = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN5ElGab515YLw7PcnKusC/LWNtScxqkSkx78EjhVfhl bob@x";
+
+describe("Account's rail lists SSH keys only while features.ssh is on (account-4)", () => {
+  it("has SSH keys between Notifications and API keys while features.ssh is on", async () => {
+    mockFetch({ "GET /v1/instance": () => json(200, instance(true)) });
+    wrap(<AccountNavList pathname="/account" />);
+    const link = await screen.findByRole("link", { name: "SSH keys" });
     expect(link).toHaveAttribute("href", accountRoutes.ssh);
     expect(accountRoutes.ssh).toBe("/account/ssh");
+    expect(screen.getAllByRole("link").map((l) => l.textContent)).toEqual(["Profile", "Security", "Notifications", "SSH keys", "API keys", "Chat platforms", "Delete account"]);
   });
 
-  it("has no link with features.ssh off", async () => {
-    mockFetch({ "GET /v1/me": () => json(200, me), "GET /v1/instance": () => json(200, instance(false)) });
-    wrap(<ProfileView />);
-    await screen.findByText("Appearance");
-    expect(screen.queryByRole("link", { name: "Manage your SSH keys" })).not.toBeInTheDocument();
+  it("has no SSH keys entry with features.ssh off", async () => {
+    mockFetch({ "GET /v1/instance": () => json(200, instance(false)) });
+    wrap(<AccountNavList pathname="/account" />);
+    await screen.findByRole("link", { name: "Notifications" });
+    expect(screen.queryByRole("link", { name: "SSH keys" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link").map((l) => l.textContent)).toEqual(["Profile", "Security", "Notifications", "API keys", "Chat platforms", "Delete account"]);
+  });
+});
+
+describe("the SSH key as it is pasted (account-5)", () => {
+  it("accepts one ed25519 line and refuses everything else with the right words", () => {
+    expect(checkSshKey("")).toEqual({ state: "empty" });
+    expect(checkSshKey(GOOD)).toEqual({ state: "ok" });
+    expect(checkSshKey("ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7abcdefghijklmnop")).toEqual({ state: "unsupported", message: ONLY_ED25519 });
+    expect(checkSshKey("ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTY")).toMatchObject({ state: "unsupported" });
+    expect(checkSshKey(`${GOOD}\n${GOOD}`)).toMatchObject({ state: "unsupported" });
+    expect(checkSshKey("-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----")).toEqual({ state: "private", message: PRIVATE_KEY });
+  });
+
+  it("an RSA paste says so at once and Add key stays disabled; a private key is refused and never sent", async () => {
+    const bodies: unknown[] = [];
+    mockFetch({
+      "GET /v1/instance": () => json(200, instance(true)),
+      "GET /v1/me/ssh-keys": () => json(200, { keys: [] }),
+      "POST /v1/me/ssh-keys": async (req) => {
+        bodies.push(await req.json());
+        return json(201, key(1));
+      },
+    });
+    wrap(<SshKeysView />);
+    await screen.findByText("No SSH keys yet");
+    fireEvent.click(screen.getByRole("button", { name: "Add key" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Public key"), { target: { value: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7abcdefghijklmnop" } });
+    expect(within(dialog).getByText(ONLY_ED25519)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Add key" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Public key"), { target: { value: "-----BEGIN OPENSSH PRIVATE KEY-----\nabc" } });
+    expect(within(dialog).getByText(PRIVATE_KEY)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Add key" })).toBeDisabled();
+    expect(bodies).toEqual([]);
   });
 });
 

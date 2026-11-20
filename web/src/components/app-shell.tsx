@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type C
 import { usePendingActionApprovals } from "@/lib/api/action-approvals";
 import { usePendingApprovals } from "@/lib/api/approvals";
 import { clearDrafts } from "@/components/chat/composer/drafts";
-import { logout, useMe, useResolve, useWorkspace } from "@/lib/api/queries";
+import { logout, useInstance, useMe, useResolve, useWorkspace } from "@/lib/api/queries";
 import { useAltitude } from "@/lib/altitude";
 import { useMoreControls } from "@/lib/api/use-more-controls";
 import { visibleTopics } from "@/lib/api/roles";
@@ -35,6 +35,7 @@ import { UndoToastHost } from "./ui/undo-toast";
 import {
   ActivityIcon,
   ArrowLeftIcon,
+  BellIcon,
   BotIcon,
   BookIcon,
   BuildingIcon,
@@ -272,19 +273,23 @@ export function WorkspaceNav({
   );
 }
 
-const ACCOUNT_LINKS: { href: string; label: string; icon: IconType }[] = [
+/** (account-4) Profile · Security · Notifications · SSH keys · API keys · Chat platforms · Delete account; SSH keys only while `features.ssh` is on. */
+export const ACCOUNT_LINKS: { href: string; label: string; icon: IconType; ssh?: boolean }[] = [
   { href: accountRoutes.profile, label: "Profile", icon: UserIcon },
   { href: accountRoutes.security, label: "Security", icon: LockIcon },
+  { href: accountRoutes.notifications, label: "Notifications", icon: BellIcon },
+  { href: accountRoutes.ssh, label: "SSH keys", icon: ServerIcon, ssh: true },
   { href: accountRoutes.apiKeys, label: "API keys", icon: KeyIcon },
   { href: accountRoutes.chatPlatforms, label: "Chat platforms", icon: LinkIcon },
   { href: accountRoutes.delete, label: "Delete account", icon: TrashIcon },
 ];
 
-function AccountNavList({ pathname }: { pathname: string }) {
+export function AccountNavList({ pathname }: { pathname: string }) {
+  const ssh = useInstance().data?.features?.ssh === true;
   return (
     <nav aria-label="Account">
       <ul className="space-y-0.5">
-        {ACCOUNT_LINKS.map((l) => (
+        {ACCOUNT_LINKS.filter((l) => !l.ssh || ssh).map((l) => (
           <NavItem key={l.href} href={l.href} label={l.label} icon={l.icon} active={pathname === l.href} />
         ))}
       </ul>
