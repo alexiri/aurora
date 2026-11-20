@@ -23,7 +23,8 @@ function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: Request | string | URL) => {
-      const req = input as Request;
+      // `useMe` fetches a plain path: build a Request for it.
+      const req = typeof input === "string" ? new Request(new URL(input, "http://localhost")) : (input as Request);
       const url = new URL(req.url, "http://localhost");
       const key = `${req.method} ${url.pathname}`;
       const text = req.method === "GET" || req.method === "DELETE" ? "" : await req.clone().text();
