@@ -39,10 +39,18 @@ describe("Webhook cards", () => {
     expect(await within(card).findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
-  it("has no Copy as curl with Show more controls off", async () => {
+  it("has a From your terminal fold with the signed call and $SECRET (item 6)", async () => {
+    routes();
+    wrap(<WebhooksTab agentId="a1" wsId="w1" canOwn />);
+    const fold = await screen.findByTestId("from-your-terminal");
+    expect(within(fold).getByLabelText("the curl command")).toHaveTextContent("-hmac \"$SECRET\"");
+  });
+
+  it("has no Copy as curl and no fold with Show more controls off", async () => {
     routes();
     wrap(<WebhooksTab agentId="a1" wsId="w1" canOwn />, { moreControls: false });
     await screen.findByText("Deploy notice");
     expect(screen.queryByRole("button", { name: "Copy as curl" })).toBeNull();
+    expect(screen.queryByTestId("from-your-terminal")).toBeNull();
   });
 });

@@ -20,6 +20,7 @@ import { Altitude } from "@/components/ui/altitude";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { fieldErrors } from "@/lib/api/errors";
 import { CopyCurlButton } from "@/components/ui/copy-curl";
+import { FromYourTerminal } from "@/components/ui/from-your-terminal";
 import { webhookCurl } from "@/lib/copy-as-curl";
 import { useVerb } from "@/lib/palette-verb";
 import {
@@ -304,6 +305,17 @@ export function WebhooksTab({ agentId, wsId, canOwn }: { agentId: string; wsId?:
             <WebhookRow key={w.id} agentId={agentId} w={w} wsId={wsId} canOwn={canOwn} onSecret={(url, name) => setShown({ url, name })} />
           ))}
         </ItemList>
+      ) : null}
+      {q.data.items.length > 0 ? (
+        <FromYourTerminal
+          commands={[
+            {
+              label: "the curl command",
+              text: webhookCurl({ url: "<webhook address>", kind: "hmac_sha256" }),
+              note: "Call a signed webhook from a shell: put its address and its secret ($SECRET) in. A card's Copy as curl does the same for that webhook's own verification.",
+            },
+          ]}
+        />
       ) : null}
       <SecretOnce
         secret={shown?.url ?? null}
