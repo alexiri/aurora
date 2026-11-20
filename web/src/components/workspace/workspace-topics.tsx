@@ -136,7 +136,7 @@ export function WorkspaceSettingsPage() {
             description="The workspace's name, API keys and audit log."
             tabs={[
               { id: "general", label: "General", content: <GeneralTab key={w.updated_at} workspace={w} canOwn={canOwn} /> },
-              { id: "api-keys", label: "API keys", content: <KeysTab wsId={w.id} /> },
+              { id: "api-keys", label: "API keys", content: <KeysTab wsId={w.id} workspaceName={w.name} /> },
               { id: "audit", label: "Audit", content: <AuditTab wsId={w.id} /> },
               {
                 id: "danger",

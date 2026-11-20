@@ -44,6 +44,34 @@ describe("SecretOnce", () => {
   });
 });
 
+describe("KeysTab rows and revoke (workspace-6)", () => {
+  it("says what a key can do and when it was used, and asks before revoking", async () => {
+    const key = (id: string, name: string, last: string | null) => ({
+      id, name, kind: "service", org_id: "o", workspace_id: "w", display_prefix: "auk_ab", owner: { id: "u", display_name: "U" },
+      created_at: "2026-01-01T00:00:00Z", last_used_at: last,
+    });
+    const revoked: string[] = [];
+    mockFetch({
+      "GET /v1/workspaces/w/api-keys": () => json(200, { items: [key("k1", "ci-script", "2026-11-20T10:00:00Z"), key("k2", "notebook", null)], next_cursor: null }),
+      "DELETE /v1/api-keys/k1": () => {
+        revoked.push("k1");
+        return json(204, null);
+      },
+    });
+    wrap(<KeysTab wsId="w" workspaceName="Bob's Lab" />);
+    const list = await screen.findByRole("list", { name: "API keys" });
+    expect(list).toHaveTextContent("ci-script");
+    expect(list).toHaveTextContent("Can do everything you can in Bob's Lab");
+    expect(list).toHaveTextContent("never used");
+    fireEvent.click(screen.getByRole("button", { name: "Revoke ci-script" }));
+    expect(await screen.findByText("Revoke ci-script?")).toBeInTheDocument();
+    expect(screen.getByText("Anything using it stops working now.")).toBeInTheDocument();
+    expect(revoked).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Revoke key" }));
+    await waitFor(() => expect(revoked).toEqual(["k1"]));
+  });
+});
+
 describe("KeysTab", () => {
   it("reveals the created key once and drops it on close", async () => {
     const apiKey = {
@@ -54,8 +82,11 @@ describe("KeysTab", () => {
       "GET /v1/workspaces/w/api-keys": () => json(200, { items: [], next_cursor: null }),
       "POST /v1/workspaces/w/api-keys": () => json(201, { api_key: apiKey, key: "auk_topsecret" }),
     });
-    wrap(<KeysTab wsId="w" />);
-    fireEvent.change(await screen.findByLabelText("Key name"), { target: { value: "ci" } });
+    wrap(<KeysTab wsId="w" workspaceName="Bob's Lab" />);
+    expect(await screen.findByText(/A key acts as you in this workspace through the Aurora API/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "API documentation" })).toHaveAttribute("href", "/v1/openapi.json");
+    fireEvent.click(await screen.findByRole("button", { name: "New API key" }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "ci" } });
     fireEvent.click(screen.getByRole("button", { name: "Create key" }));
     expect(await screen.findByTestId("secret-key")).toHaveTextContent("auk_topsecret");
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
