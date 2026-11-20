@@ -55,6 +55,7 @@ describe("palette items", () => {
         "New webhook for Daneel",
         "Pause Daneel",
         "Export Daneel",
+        "Import into Daneel",
         "Resume Giskard",
         "Open Approvals",
         "Add people",
@@ -74,7 +75,7 @@ describe("palette items", () => {
   it("leaves out the verbs a role may not use", () => {
     const member = labels(paletteVerbs({ ...base, role: "member" }));
     expect(member).toContain("New chat with Daneel");
-    for (const gone of ["Pause Daneel", "Give Daneel an app", "New schedule for Daneel", "Open Approvals", "Add people", "New agent", "Export Daneel"]) {
+    for (const gone of ["Pause Daneel", "Give Daneel an app", "New schedule for Daneel", "Open Approvals", "Add people", "New agent", "Export Daneel", "Import into Daneel"]) {
       expect(member).not.toContain(gone);
     }
     const approver = labels(paletteVerbs({ ...base, role: "approver" }));
@@ -88,6 +89,7 @@ describe("palette items", () => {
     expect(l).not.toContain("New chat with Hal");
     expect(l).not.toContain("New schedule for Hal");
     expect(l).not.toContain("Export Hal");
+    expect(l).not.toContain("Import into Hal");
   });
 });
 

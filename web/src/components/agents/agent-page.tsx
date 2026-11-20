@@ -38,6 +38,7 @@ import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
 import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, resolvePage, sectionLanding, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
 import { AgentState } from "./agent-state";
+import { AgentExportImport } from "./export-import";
 import { SettingsFrame } from "./settings-shell";
 import { SshPage } from "./ssh-page";
 import { TerminalTab } from "./terminal-tab";
@@ -238,6 +239,7 @@ export function AgentPage() {
                   canOwn,
                   frozen: agent.frozen,
                   onDelete: () => setDeleteOpen(true),
+                  extra: byo ? null : <AgentExportImport agent={agent} />,
                 }
               : null
           }>

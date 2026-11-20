@@ -47,8 +47,11 @@ export function SettingsShell({
   canOwn,
   frozen,
   onDelete,
+  extra,
   children,
 }: {
+  /** (P5-REFINE-19) Above the danger zone, for owners: Export and import (Expert). */
+  extra?: ReactNode;
   agentId: string;
   agentName: string;
   orgId?: string;
@@ -91,6 +94,7 @@ export function SettingsShell({
         {/* The page body brings its own tabpanel wrapper (agent-page.tsx). */}
         <div className="min-w-0 md:flex-1">{children}</div>
       </div>
+      {own ? extra : null}
       {own ? (
         <DangerZone id="agent-danger" title="Pause or delete" className="md:ml-58">
           <ul className="divide-y divide-line">

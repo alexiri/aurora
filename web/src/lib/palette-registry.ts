@@ -111,6 +111,7 @@ export function paletteVerbs(c: PaletteContext): PaletteItem[] {
           verb(`schedule:${a.id}`, `New schedule for ${a.name}`, ws.agent(a.handle, { tab: "schedules" }), "new-schedule", "Automations › Schedules");
           verb(`webhook:${a.id}`, `New webhook for ${a.name}`, ws.agent(a.handle, { tab: "webhooks" }), "new-webhook", "Automations › Webhooks");
           verb(`export:${a.id}`, `Export ${a.name}`, ws.agent(a.handle, { tab: "instructions" }), "export-agent", "A zip of what it knows and does");
+          verb(`import:${a.id}`, `Import into ${a.name}`, ws.agent(a.handle, { tab: "instructions" }), "import-agent", "From an Aurora export (.zip)");
         }
         // Pause opens the button's confirm; Resume goes to the danger zone, where the button is.
         if (a.paused) verb(`resume:${a.id}`, `Resume ${a.name}`, `${ws.agent(a.handle, { tab: "instructions" })}#agent-danger`, undefined, "Settings");

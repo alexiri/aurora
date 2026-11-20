@@ -2348,14 +2348,15 @@ which wraps it with the id given.
 | `log.requests` | the request-log table | Expert | Now |
 | `tech.details` | every "Technical details" fold | Set up and above; never for plain members | Now |
 | `export.yaml` | YAML/JSON export and Import of settings | Expert (Administration: visible) | Now |
-| `export.agent` | Export / Import an agent | Expert | Later: P5-REFINE-19 |
+| `export.agent` | Export / Import an agent | Expert | Now (P5-REFINE-19) |
+| `copy.curl` | Copy as curl (webhook cards, API key rows), the OpenAPI link | Expert | Now (P5-REFINE-19) |
 | `ws.memlang` | Memory language | Expert | Now |
 | `chat.redact` | "Remove this message's content…" (Redact) | Expert | Now |
 | `org.groups`, `org.directory` | Groups, Directory sync tabs | Expert unless a directory provider is configured (then Set up) | Now |
 | `apikeys` | Account › API keys explained | Set up | Now |
 | `palette.verbs`, `kbd` | palette verbs, keyboard shortcuts (and their sheet) | Expert | Now (P5-REFINE-19; `palette.verbs` is a list the registry builds, not a wrapper) |
 | `bulk` | bulk actions on lists | Expert | Later: P5-REFINE-19 |
-| `fold.cli` | "From your terminal" CLI/API snippets | Expert | Now (SSH snippet); later 14, 15, 19 |
+| `fold.cli` | "From your terminal" CLI/API snippets | Expert | Now (SSH, Computer, Webhooks, API keys) |
 
 A control not in the table is a gap in the classification: add the row (and the registry row) first.
 
@@ -2403,6 +2404,64 @@ account menu entry **Keyboard shortcuts**, shown only with the switch on) lists 
 **Never fires** when focus is in an `input`, `textarea`, `select`, a `contenteditable` or any `[data-no-shortcuts]` (the
 terminal, the file editor, the code field); with a modifier other than the chord's; while a dialog other than the sheet and
 the palette is open; on a touch-only device (no `hover: hover`). With the switch off only `⌘K` and `/` work.
+
+**Export and import an agent (`export.agent`, Expert; D-413).** On the agent's Settings page, for workspace owners of a
+hosted agent: a section **Export and import** with **Export <Agent>…** and **Import into <Agent>…** (also palette verbs).
+The zip is built and read in the browser (`lib/export/zip.ts`, a store-only writer and a reader that also inflates;
+`lib/export/yaml.ts`, a restricted YAML that refuses anchors, aliases, tags, block scalars, flow collections, tabs,
+documents and duplicate keys); no dependency was added. **A purpose template *is* an export with `purpose` set**
+(`templateAsExport`; a test reads every template back from a zip).
+
+```
+<handle>/
+  agent.yaml                 format, name, purpose?, model (default or a name), may_message_first
+  instructions.md            the instructions text
+  memory/<key>.md            front matter `key`, `updated`; then the text
+  skills/<name>/SKILL.md     front matter `name`, `use-it-when`; then the body
+  automations/<name>.yaml    a schedule or a webhook
+  README.md                  "Exported from Aurora on <date>. Secrets, accounts and conversations are not included."
+```
+
+```yaml
+# agent.yaml
+format: 1
+name: Daneel
+purpose: research
+model: default
+may_message_first: false
+```
+
+```yaml
+# automations/morning-check.yaml            # automations/deploy-notice.yaml
+kind: schedule                              kind: webhook
+name: Morning check                         name: Deploy notice
+prompt: Check the news.                     instructions: Say what shipped.
+cadence:                                    verification: signed
+  cron: 0 8 * * 1-5                         enabled: false
+time_zone: Europe/Zurich
+enabled: true
+```
+
+Never in an export: ids, secrets, webhook addresses, accounts, channels, conversations, the AI key. One-time schedules
+(no cron) and the files of a skill other than `SKILL.md` (no route reads one back) are left out, and the dialog says so.
+**Import** opens a dialog: pick or drop a `.zip` (at most 5 MB and 200 files; absolute, hidden and `..` names refused with one
+sentence), a checklist (*Instructions · 3 memories · 2 skills · 1 schedule · 1 webhook*, a checkbox per group) and **Keep mine**
+(default) or **Replace instructions**. **Import** creates through the existing routes; a name that already exists is skipped and
+listed (*Skipped: skill “release-notes” already exists*); schedules and webhooks are created **paused** (a webhook with a new
+signing secret shown once in `SecretOnce`; its address is on the card, *Rotate URL*); a failure is listed and the rest go on.
+Import never changes access, accounts or the AI key.
+
+**Copy as curl (`copy.curl`, Expert).** A webhook card's **Copy as curl** copies the call for its verification (signed: the
+`X-Signature: sha256=<hex>` recipe; password: the header; none: a plain POST) with `$SECRET`; a card holds only the address's
+prefix, so the command says the full address was shown once. Each API key's row menu has **Copy as curl** (`curl -H
+"Authorization: Bearer $AURORA_API_KEY" <origin>/v1/me`). Neither ever holds a secret or a key value. The API key pages say
+what a key acts as ("Acts as you in this workspace through the Aurora API."; organization keys: "Acts for this
+organization …") and link the **OpenAPI description** (`/v1/openapi.json`, Expert).
+
+**From your terminal (`fold.cli`, Expert).** `components/ui/from-your-terminal.tsx`: a closed `<details>` of copyable
+commands with a one-line note each, on Computer (`aurora ssh <handle>` where SSH is on, `aurora run --agent <handle> --
+<command>`), Webhooks (the signed curl) and the API key pages (`aurora login`, the curl call). Only commands the CLI has
+(`services/aurora-cli/src/main.rs`; a test reads the subcommands there).
 
 ## Agent settings pages (phase 5, P5-REFINE-12, D-406, D-407, D-411, D-413, D-414)
 
