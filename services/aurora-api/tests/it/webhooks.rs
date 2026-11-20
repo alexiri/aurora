@@ -1157,6 +1157,8 @@ async fn each_delivery_gets_its_own_thread_with_a_display_for_people() {
     assert_eq!(disp["size"], 7);
     assert_eq!(disp["truncated"], false);
     assert_eq!(disp["body"], r#"{"n":1}"#);
+    // (C-1097) An open webhook checked nothing.
+    assert_eq!(disp["verification"], "none");
     let shown = disp.to_string();
     assert!(!shown.contains("UNTRUSTED"), "{shown}");
     assert!(!shown.contains("Triage."), "{shown}");
@@ -1237,6 +1239,15 @@ async fn each_delivery_gets_its_own_thread_with_a_display_for_people() {
             .iter()
             .all(|t| t.as_deref() == Some("Release notice"))
     );
+    // (C-1098) Each thread remembers the name it had.
+    let (_, one) = r
+        .user(
+            Method::GET,
+            &format!("/v1/conversations/{}", threads[0].0),
+            None,
+        )
+        .await;
+    assert_eq!(one["automation"]["previous_name"], "Deploy notice");
     let (s, e) = r
         .user(
             Method::PATCH,
@@ -1274,4 +1285,104 @@ async fn each_delivery_gets_its_own_thread_with_a_display_for_people() {
         )
         .await;
     assert_eq!(f["items"][0]["deleted"], true);
+}
+
+/// (C-1097) A signed webhook's thread says "signed"; a bearer webhook's says "token".
+#[tokio::test]
+async fn the_first_line_records_how_a_delivery_was_verified() {
+    let r = rig().await;
+    let agent = r.agent("howverified").await;
+    let secret = "s3cr3t-value-123";
+    let (_, v) = r
+        .create(
+            agent,
+            json!({"name": "signed", "instructions": "x",
+                   "verification": {"kind": "hmac_sha256", "secret": secret}}),
+        )
+        .await;
+    let (url, id) = (
+        v["url"].as_str().unwrap().to_owned(),
+        v["webhook"]["id"].as_str().unwrap().to_owned(),
+    );
+    let body = br#"{"n":1}"#;
+    let sig = sign(secret, body);
+    let (s, _) = r.hook(&url, &[("x-signature", &sig)], body).await;
+    assert_eq!(s, 202);
+    let (_, v) = r
+        .create(
+            agent,
+            json!({"name": "token", "instructions": "x",
+                   "verification": {"kind": "bearer", "secret": "tok-tok-tok-1"}}),
+        )
+        .await;
+    let (url2, id2) = (
+        v["url"].as_str().unwrap().to_owned(),
+        v["webhook"]["id"].as_str().unwrap().to_owned(),
+    );
+    let (s, _) = r
+        .hook(&url2, &[("authorization", "Bearer tok-tok-tok-1")], body)
+        .await;
+    assert_eq!(s, 202);
+    for (wid, want) in [(id, "signed"), (id2, "token")] {
+        let got: Value = sqlx::query_scalar(
+            "SELECT e.payload->'display'->'verification' FROM conversations c
+               JOIN turns t ON t.conversation_id = c.id
+               JOIN transcript_events e ON e.turn_id = t.id AND e.type = 'turn.queued'
+             WHERE c.automation_kind = 'webhook' AND c.automation_id = $1::uuid",
+        )
+        .bind(&wid)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(got, want);
+    }
+}
+
+/// (C-1096) A person's pause names them; a resume clears it; a pause by anything else has no
+/// name.
+#[tokio::test]
+async fn a_pause_names_the_person_and_a_resume_clears_it() {
+    let r = rig().await;
+    let agent = r.agent("pausedby").await;
+    let (_, v) = r.create_open(agent, "pausable", "x").await;
+    let id = v["webhook"]["id"].as_str().unwrap().to_owned();
+    assert!(v["webhook"]["paused_by"].is_null());
+    let (s, v) = r
+        .user(
+            Method::PATCH,
+            &format!("/v1/webhooks/{id}"),
+            Some(json!({"enabled": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["disabled_reason"], "user");
+    let name: String = sqlx::query_scalar(
+        "SELECT u.display_name FROM webhooks w JOIN users u ON u.id = w.disabled_by WHERE w.id = $1::uuid",
+    )
+    .bind(&id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(v["paused_by"]["display_name"], name);
+    assert!(v["paused_by"]["id"].is_string());
+    let (_, v) = r
+        .user(
+            Method::PATCH,
+            &format!("/v1/webhooks/{id}"),
+            Some(json!({"enabled": true})),
+        )
+        .await;
+    assert!(v["paused_by"].is_null(), "{v}");
+    // A pause that is not a person's own names nobody.
+    sqlx::query(
+        "UPDATE webhooks SET enabled = false, disabled_reason = 'failures' WHERE id = $1::uuid",
+    )
+    .bind(&id)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let (_, v) = r
+        .user(Method::GET, &format!("/v1/webhooks/{id}"), None)
+        .await;
+    assert!(v["paused_by"].is_null(), "{v}");
 }

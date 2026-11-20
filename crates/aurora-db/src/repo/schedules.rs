@@ -23,6 +23,9 @@ pub struct ScheduleRow {
     pub gate_description: Option<String>,
     pub enabled: bool,
     pub disabled_reason: Option<String>,
+    /// (C-1096) The person whose own pause this is (`disabled_reason = 'user'`); else null.
+    pub disabled_by: Option<Uuid>,
+    pub disabled_by_name: Option<String>,
     pub consecutive_failures: i32,
     pub creator_user_id: Option<Uuid>,
     pub creator_name: Option<String>,
@@ -39,7 +42,9 @@ pub struct ScheduleRow {
 
 const COLS: &str = "s.id, s.agent_id, s.name, s.prompt, s.cron, s.run_at, s.completed_at, \
     s.timezone, s.gate_command, \
-    s.gate_description, s.enabled, s.disabled_reason, s.consecutive_failures, s.creator_user_id, \
+    s.gate_description, s.enabled, s.disabled_reason, s.disabled_by, \
+    (SELECT d.display_name FROM users d WHERE d.id = s.disabled_by) AS disabled_by_name, \
+    s.consecutive_failures, s.creator_user_id, \
     u.display_name AS creator_name, s.anchor, s.origin_conversation_id, s.run_conversation_id, \
     s.next_fire_at, s.last_fire_at, s.last_outcome, s.created_at, s.updated_at";
 const FROM: &str = "FROM schedules s LEFT JOIN users u ON u.id = s.creator_user_id";
@@ -156,6 +161,7 @@ pub async fn update(
             gate_description=$7, updated_at=now(),
             enabled = CASE WHEN $12 THEN $8 ELSE enabled END,
             disabled_reason = CASE WHEN $12 THEN $9 ELSE disabled_reason END,
+            disabled_by = CASE WHEN $12 THEN $15 ELSE disabled_by END,
             consecutive_failures = CASE WHEN $12 THEN $10 ELSE consecutive_failures END,
             next_fire_at = CASE WHEN $12 THEN $11 ELSE next_fire_at END,
             fire_lease_until = CASE WHEN $12 THEN NULL ELSE fire_lease_until END,
@@ -177,6 +183,7 @@ pub async fn update(
     .bind(reschedule)
     .bind(r.run_at)
     .bind(r.completed_at)
+    .bind(r.disabled_by)
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, r.id).await?.ok_or(DbError::NotFound)
@@ -195,6 +202,7 @@ pub async fn set_authority(
     sqlx::query(
         "UPDATE schedules SET creator_user_id = $2, anchor = $3, updated_at = now(),
             enabled = enabled OR $4, disabled_reason = CASE WHEN $4 THEN NULL ELSE disabled_reason END,
+            disabled_by = CASE WHEN $4 THEN NULL ELSE disabled_by END,
             consecutive_failures = CASE WHEN $4 THEN 0 ELSE consecutive_failures END,
             next_fire_at = CASE WHEN $4 THEN $5 ELSE next_fire_at END,
             fire_lease_until = CASE WHEN $4 THEN NULL ELSE fire_lease_until END
@@ -458,7 +466,7 @@ pub async fn disable(
     last_outcome: Option<&str>,
 ) -> Result<(), DbError> {
     sqlx::query(
-        "UPDATE schedules SET enabled = false, disabled_reason = $2, next_fire_at = NULL,
+        "UPDATE schedules SET enabled = false, disabled_reason = $2, disabled_by = NULL, next_fire_at = NULL,
             fire_lease_until = NULL, last_outcome = COALESCE($3, last_outcome), updated_at = now()
          WHERE id = $1",
     )
