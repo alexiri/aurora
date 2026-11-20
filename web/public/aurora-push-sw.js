@@ -15,6 +15,7 @@ const TYPES = [
   "app_setup_request",
   "app_setup_resolved",
   "app_setup_declined",
+  "schedule_answer",
 ];
 const URL_PATTERN = /^\/o\/[A-Za-z0-9._~%/-]+(\?[A-Za-z0-9._~%=&-]*)?$/;
 
@@ -65,6 +66,17 @@ function build(raw) {
       title: item ? "Aurora — " + item : fixed[0],
       body: fixed[1],
       tag: "aurora-app-setup",
+      url: URL_PATTERN.test(url) ? url : "/",
+    };
+  }
+  if (data.type === "schedule_answer") {
+    // (P5-SCHED-ONCE, C-835) Fixed text, never the answer; the schedule's name only when the device turned names on. The
+    // click opens exactly the conversation path the push carried.
+    const item = text(data.title, 80);
+    return {
+      title: item ? "Aurora — " + item : "Aurora — a scheduled task has an answer for you",
+      body: "Open the conversation to read it.",
+      tag: "aurora-schedule",
       url: URL_PATTERN.test(url) ? url : "/",
     };
   }
