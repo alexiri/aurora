@@ -598,11 +598,10 @@ const SERVICE_MODELS: Record<string, string> = {
   openai_compatible: "Your organization's own gateway",
 };
 
-/** "Anthropic — Claude models. Works with Claude Code." for the service picker: the name, then one plain line. */
-export function serviceOption(displayName: string, provider: string, harness: string): string {
-  const models = SERVICE_MODELS[provider];
-  const line = [models, harness].filter(Boolean).join(". ");
-  return line ? `${displayName} — ${line}.` : displayName;
+/** "Claude models. Works with Claude Code." under a service's name in the picker: one plain line. */
+export function serviceLine(provider: string, harness: string): string {
+  const line = [SERVICE_MODELS[provider], harness].filter(Boolean).join(". ");
+  return line ? `${line}.` : "";
 }
 
 /**

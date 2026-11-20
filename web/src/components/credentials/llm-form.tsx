@@ -12,7 +12,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
-import { serviceOption } from "@/lib/labels";
+import { serviceLine } from "@/lib/labels";
 import { errorMessage } from "@/lib/api/errors";
 import { preselectAgents } from "@/lib/accounts";
 import { useAgents, useOrg } from "@/lib/api/queries";
@@ -39,6 +39,16 @@ import {
 } from "./llm-key-modes";
 import { OriginView } from "./origin-view";
 import { ValueInput } from "./value-input";
+
+/** A service's logo tile: its initials (a logo is not served for AI endpoints). */
+function ServiceTile({ name }: { name: string }) {
+  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
+  return (
+    <span aria-hidden="true" className="flex size-12 shrink-0 items-center justify-center rounded-control bg-subtle text-sm font-semibold text-ink">
+      {initials}
+    </span>
+  );
+}
 
 /** The key file of a GCP service account: pasted, or read from a chosen file; never shown again. */
 function KeyFileInput({ id, value, onChange }: { id: string; value: string; onChange: (v: string) => void }) {
@@ -124,6 +134,7 @@ export function LlmKeyForm({
   const [fields, setFields] = useState<Record<string, string>>({});
   const [clientErr, setClientErr] = useState("");
   const [rejected, setRejected] = useState(false);
+  const [step, setStep] = useState<"service" | "key">("service");
   const [saved, setSaved] = useState<Secret | null>(null);
   // (C-988, C-925) A workspace's key is given to the ticked agents in the same request: the contextual agent, else the
   // only agent, else none. `picked` is what the person changed; until then the default applies.
@@ -156,6 +167,10 @@ export function LlmKeyForm({
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (step === "service") {
+      if (endpointId && scopeOk) setStep("key");
+      return;
+    }
     if (!name.trim() || !endpointId) return setClientErr("Name and endpoint are required.");
     if (!valueComplete(shape, value, fields)) return setClientErr("Fill in every required field.");
     setClientErr("");
@@ -225,36 +240,41 @@ export function LlmKeyForm({
         noValidate
         className={footerTarget !== undefined ? "max-w-none" : "rounded-card border border-line bg-surface p-4 shadow-card sm:p-5"}
         aria-label="New LLM key">
+        {step === "service" ? (
+          // (P5-REFINE-13, access-9) First the question, one card per service (a logo tile, the name and one plain line:
+          // "Anthropic — Claude models. Works with Claude Code."); no provider id, no scopes. Then the key.
+          <div className="space-y-2">
+            <ChoiceCards<string>
+              legend="Which service is this key for?"
+              value={endpointId}
+              onChange={(id) => {
+                setEndpointId(id);
+                setAuthMode("");
+                setValue("");
+                setFields({});
+              }}
+              options={endpoints.map((ep) => ({
+                value: ep.id,
+                label: ep.display_name,
+                description: serviceLine(ep.provider, harnessHint(ep.harnesses ?? [])),
+                icon: <ServiceTile name={ep.display_name} />,
+              }))}
+            />
+            {!scopeOk ? <p role="alert" className="text-xs text-danger-ink">{`Your organization does not permit ${scopeName}-level keys for this endpoint.`}</p> : null}
+          </div>
+        ) : (
+          <>
+        <p className="text-sm text-ink-2">
+          <span className="font-medium text-ink">{endpoint?.display_name}</span>
+          {" · "}
+          <button type="button" className="text-link underline" onClick={() => setStep("service")}>
+            Change service
+          </button>
+        </p>
         <Field id="l-name" label="Name">
           <input id="l-name" className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field
-          id="l-endpoint"
-          label="Which service is this key for?"
-          // (P5-REFINE-18 #16, setup-7) No "Allowed key scopes" line: the scope is the page's, and a refused one has its own error.
-          hint={endpoint && harnessLine ? `${harnessLine}.` : undefined}
-          error={scopeOk ? undefined : `Your organization does not permit ${scopeName}-level keys for this endpoint.`}
-        >
-          <select
-            id="l-endpoint"
-            className={inputClass}
-            value={endpointId}
-            onChange={(e) => {
-              setEndpointId(e.target.value);
-              setAuthMode("");
-              setValue("");
-              setFields({});
-            }}
-          >
-            <option value="">Choose a service</option>
-            {endpoints.map((ep) => (
-              // The name and one plain line ("Anthropic — Claude models. Works with Claude Code."): no provider id, no scopes.
-              <option key={ep.id} value={ep.id}>
-                {serviceOption(ep.display_name, ep.provider, harnessHint(ep.harnesses ?? []))}
-              </option>
-            ))}
-          </select>
-        </Field>
+        {harnessLine ? <p className="text-xs text-muted">{harnessLine}.</p> : null}
         {noHarness ? (
           <Notice tone="pending" role="status">
             {NO_HARNESS}
@@ -364,6 +384,8 @@ export function LlmKeyForm({
             )}
           </fieldset>
         ) : null}
+          </>
+        )}
         {clientErr || create.error ? (
           <Notice tone="danger" role="alert">
             {clientErr || keyReasonMessage(create.error) || errorMessage(create.error)}
@@ -375,13 +397,19 @@ export function LlmKeyForm({
             ? createPortal(
                 <>
                   {onCancel ? (
-                    <Button type="button" variant="outline" onClick={onCancel}>
+                    <Button type="button" variant="ghost" onClick={onCancel}>
                       Cancel
                     </Button>
                   ) : null}
-                  <Button type="submit" form={formId} disabled={create.isPending || !scopeOk}>
-                    {create.isPending ? "Verifying…" : submitLabel}
-                  </Button>
+                  {step === "service" ? (
+                    <Button type="button" className="ml-auto" disabled={!endpointId || !scopeOk} onClick={() => setStep("key")}>
+                      Next
+                    </Button>
+                  ) : (
+                    <Button type="submit" form={formId} className="ml-auto" disabled={create.isPending || !scopeOk}>
+                      {create.isPending ? "Verifying…" : submitLabel}
+                    </Button>
+                  )}
                 </>,
                 footerTarget,
               )
@@ -393,9 +421,15 @@ export function LlmKeyForm({
                 Cancel
               </Button>
             ) : null}
-            <Button type="submit" size="lg" disabled={create.isPending || !scopeOk}>
-              {create.isPending ? "Verifying…" : submitLabel}
-            </Button>
+            {step === "service" ? (
+              <Button type="button" size="lg" disabled={!endpointId || !scopeOk} onClick={() => setStep("key")}>
+                Next
+              </Button>
+            ) : (
+              <Button type="submit" size="lg" disabled={create.isPending || !scopeOk}>
+                {create.isPending ? "Verifying…" : submitLabel}
+              </Button>
+            )}
           </FormActions>
         )}
       </Form>
