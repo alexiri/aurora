@@ -314,6 +314,8 @@ pub struct AccessBinding {
     /// (direct or through a group) until restored. An `implicit` row's access comes from the org
     /// role and is not affected.
     pub status: AccessStatus,
+    /// (P5-REFINE-6, C-1086) The person has signed in at least once ("Not signed in yet").
+    pub signed_in: bool,
 }
 
 impl From<AccessRow> for AccessBinding {
@@ -327,6 +329,7 @@ impl From<AccessRow> for AccessBinding {
             idp_value: a.idp_value,
             joined_at: a.joined_at,
             status: AccessStatus::parse(&a.status),
+            signed_in: a.signed_in,
         }
     }
 }

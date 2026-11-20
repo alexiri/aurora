@@ -1,7 +1,8 @@
 //! Instance administration and the public catalogue of connectors (C-31, C-32).
 
 use super::dto::*;
-use super::{managed, manifest, setup};
+use super::managed::CatalogType;
+use super::{managed, manifest, readiness, setup};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use aurora_core::token::{self, TokenPrefix};
@@ -12,9 +13,43 @@ use aurora_db::{DbError, conflict_code};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-async fn view(s: &AppState, r: ConnectorRow, count: i64) -> Result<ConnectorAdmin, ApiError> {
+/// (C-1068) The facts besides the row that [`readiness::connector_readiness`] reads, from the
+/// view's own host reports and replicas.
+fn facts_from(
+    r: &ConnectorRow,
+    types: &[CatalogType],
+    host_status: &[HostStatusInfo],
+    live_replicas: usize,
+) -> readiness::Facts {
+    readiness::Facts {
+        announced: readiness::announced(r, types),
+        host_reports_running: host_status.iter().any(|h| h.state == HostState::Running),
+        live_replica: live_replicas > 0,
+    }
+}
+
+/// The same facts, read for one row (the availability list).
+async fn facts(
+    s: &AppState,
+    r: &ConnectorRow,
+    types: &[CatalogType],
+) -> Result<readiness::Facts, ApiError> {
     let online = limits::REPLICA_ONLINE_THRESHOLD.as_secs_f64();
     let replicas = connectors::list_live_replicas(&s.pool, &r.id, online)
+        .await?
+        .len();
+    let host_status = managed::managed_view(s, r).await?.host_status;
+    Ok(facts_from(r, types, &host_status, replicas))
+}
+
+async fn view(
+    s: &AppState,
+    r: ConnectorRow,
+    count: i64,
+    types: &[CatalogType],
+) -> Result<ConnectorAdmin, ApiError> {
+    let online = limits::REPLICA_ONLINE_THRESHOLD.as_secs_f64();
+    let replicas: Vec<ReplicaInfo> = connectors::list_live_replicas(&s.pool, &r.id, online)
         .await?
         .into_iter()
         .map(|p| ReplicaInfo {
@@ -38,7 +73,14 @@ async fn view(s: &AppState, r: ConnectorRow, count: i64) -> Result<ConnectorAdmi
     let approved = r.manifest.as_ref().and_then(manifest::approved_value);
     let mv = managed::managed_view(s, &r).await?;
     let has_icon = served_icon(&r).is_some();
+    let ready = readiness::connector_readiness(
+        Some(&r),
+        facts_from(&r, types, &mv.host_status, replicas.len()),
+    );
     Ok(ConnectorAdmin {
+        setup_state: ready.setup_state,
+        host_running: ready.host_running,
+        next_step: readiness::next_step(ready.setup_state, readiness::Viewer::Administration),
         has_icon,
         managed: r.managed,
         type_id: r.type_id.clone(),
@@ -66,18 +108,20 @@ async fn view(s: &AppState, r: ConnectorRow, count: i64) -> Result<ConnectorAdmi
 
 pub(super) async fn view_one(s: &AppState, r: ConnectorRow) -> Result<ConnectorAdmin, ApiError> {
     let n = integrations::count_for_connector(&s.pool, &r.id).await?;
-    view(s, r, n).await
+    let (_, types) = managed::live_catalogue(s).await?;
+    view(s, r, n, &types).await
 }
 
 pub async fn list(s: &AppState) -> Result<ConnectorAdminList, ApiError> {
     let counts = integrations::counts_by_connector(&s.pool).await?;
+    let (_, types) = managed::live_catalogue(s).await?;
     let mut items = Vec::new();
     for r in connectors::list(&s.pool).await? {
         let n = counts
             .iter()
             .find(|(id, _)| *id == r.id)
             .map_or(0, |(_, n)| *n);
-        items.push(view(s, r, n).await?);
+        items.push(view(s, r, n, &types).await?);
     }
     Ok(ConnectorAdminList { items })
 }
@@ -285,45 +329,58 @@ pub async fn catalogue(s: &AppState) -> Result<ConnectorInfoList, ApiError> {
 
 /// `GET /v1/connector-availability` (C-712, D-218): per connector type announced by a live host
 /// plus per unannounced connector row, how far it is from usable, and the instance admins' names.
-pub async fn availability(s: &AppState) -> Result<ConnectorAvailabilityList, ApiError> {
+/// (C-1068) The state comes from [`readiness::connector_readiness`], as on the admin list.
+pub async fn availability(
+    s: &AppState,
+    viewer: readiness::Viewer,
+) -> Result<ConnectorAvailabilityList, ApiError> {
     let (_, types) = managed::live_catalogue(s).await?;
     let rows = connectors::list(&s.pool).await?;
-    let state_of = |r: &ConnectorRow| match r.status.as_str() {
-        "active" => ConnectorSetupState::Active,
-        "disabled" => ConnectorSetupState::Disabled,
-        "pending_approval" => ConnectorSetupState::NeedsApproval,
-        _ => ConnectorSetupState::WaitingForHost,
-    };
     let icon =
         |r: &ConnectorRow| (r.status == "active").then(|| format!("/v1/connectors/{}/icon", r.id));
+    let item = |type_id: String, name: String, row: Option<&ConnectorRow>, f: readiness::Facts| {
+        let ready = readiness::connector_readiness(row, f);
+        ConnectorAvailability {
+            type_id,
+            name,
+            icon_url: row.and_then(icon),
+            setup_state: ready.setup_state,
+            connector_id: row.map(|r| r.id.clone()),
+            host_running: ready.host_running,
+            can_connect: ready.can_connect,
+            next_step: readiness::next_step(ready.setup_state, viewer),
+        }
+    };
     let mut items: Vec<ConnectorAvailability> = Vec::new();
     for t in &types {
         let row = rows
             .iter()
             .find(|r| r.id == t.type_id || r.type_id.as_deref() == Some(&t.type_id));
-        items.push(ConnectorAvailability {
-            type_id: t.type_id.clone(),
-            name: t.manifest.about.name.clone(),
-            icon_url: row.and_then(icon),
-            setup_state: row.map_or(ConnectorSetupState::NotAdded, state_of),
-            connector_id: row.map(|r| r.id.clone()),
-        });
+        let f = match row {
+            Some(r) => facts(s, r, &types).await?,
+            None => readiness::Facts {
+                announced: true,
+                ..readiness::Facts::default()
+            },
+        };
+        items.push(item(
+            t.type_id.clone(),
+            t.manifest.about.name.clone(),
+            row,
+            f,
+        ));
     }
     for r in &rows {
-        let announced = types
-            .iter()
-            .any(|t| t.type_id == r.id || r.type_id.as_deref() == Some(&t.type_id));
-        if announced {
+        if readiness::announced(r, &types) {
             continue;
         }
-        let state = state_of(r);
-        items.push(ConnectorAvailability {
-            type_id: r.type_id.clone().unwrap_or_else(|| r.id.clone()),
-            name: r.display_name.clone(),
-            icon_url: icon(r),
-            setup_state: state,
-            connector_id: Some(r.id.clone()),
-        });
+        let f = facts(s, r, &types).await?;
+        items.push(item(
+            r.type_id.clone().unwrap_or_else(|| r.id.clone()),
+            r.display_name.clone(),
+            Some(r),
+            f,
+        ));
     }
     items.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.type_id.cmp(&b.type_id)));
     let instance_admins = aurora_db::repo::users::instance_admin_names(&s.pool, 10)

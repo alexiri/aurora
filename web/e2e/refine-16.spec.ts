@@ -70,7 +70,7 @@ for (const scheme of ["light", "dark"] as const) {
           }),
         });
         await expect(page.getByText("Bob revoked the API key ci-script")).toBeVisible();
-        await expect(page.getByText("Critical")).toBeVisible();
+        await expect(page.getByText("Critical", { exact: true })).toBeVisible();
         await check(page, errors);
       });
 
@@ -93,7 +93,7 @@ for (const scheme of ["light", "dark"] as const) {
       });
 
       test("Apps: search narrows the groups", async ({ page }) => {
-        const errors = await open(page, "/o/acme/w/main/apps", scheme);
+        const errors = await open(page, "/o/acme/w/main/apps?tab=apps", scheme);
         const box = page.getByRole("searchbox", { name: "Search apps" });
         await expect(box).toBeVisible();
         await box.fill("zzz-no-such-app");
@@ -117,7 +117,9 @@ for (const scheme of ["light", "dark"] as const) {
       });
 
       test("the tour dims the page and says Step 1 of n", async ({ page }) => {
-        const errors = await open(page, "/o/acme/w/main?tour=1", scheme);
+        // Start it the way the product does: Show me around on the Welcome page (as onboarding.spec.ts).
+        const errors = await open(page, "/o/acme/w/main/welcome", scheme);
+        await page.getByRole("button", { name: "Show me around" }).click();
         await expect(page.getByText(/Step 1 of \d/)).toBeVisible();
         await expect(page.getByTestId("tour-backdrop")).toBeAttached();
         await page.keyboard.press("Escape");

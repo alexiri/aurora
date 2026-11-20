@@ -29,6 +29,265 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(self_container_config))
         .routes(routes!(create_context_credential))
         .routes(routes!(gateway_ca))
+        .routes(routes!(list_org_agents))
+}
+
+/// (P5-REFINE-6, C-1090) An organization's agent, with its workspace.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct OrgAgent {
+    pub id: Uuid,
+    pub name: String,
+    pub handle: String,
+    pub workspace: OrgAgentWorkspace,
+    /// `hosted` | `byo`.
+    pub kind: String,
+    /// (D-425) The state the agent's header shows, most urgent first: `paused` (it, its workspace
+    /// or the organization is paused) · `needs_key` (a hosted agent cannot answer: no usable AI
+    /// key or model, C-1062) · `failed` (its computer failed to start) · `working` (a turn or a
+    /// busy process runs) · `starting` · `asleep` (its computer is off) · `ready`. A BYO agent is
+    /// `paused`, `working` or `ready`.
+    pub state: OrgAgentState,
+    /// Its newest turn's creation time; `null` when it never ran.
+    pub last_active_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// (C-1090, D-425) The words "Paused", "Needs a key", "Can't start", "Working", "Starting its
+/// computer…", "Asleep", "Ready" are the dashboard's.
+#[derive(serde::Serialize, utoipa::ToSchema, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrgAgentState {
+    Paused,
+    NeedsKey,
+    Failed,
+    Working,
+    Starting,
+    Asleep,
+    Ready,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct OrgAgentWorkspace {
+    pub id: Uuid,
+    pub slug: String,
+    /// A personal workspace is named after its person (C-923).
+    pub name: String,
+    /// The person whose personal workspace it is; `null` for a team workspace.
+    pub personal_of: Option<crate::domains::tenancy::dto::PersonalOf>,
+}
+
+/// The facts [`org_agent_state`] reads.
+pub struct StateFacts<'a> {
+    pub hosted: bool,
+    pub paused: bool,
+    pub cannot_answer: bool,
+    pub active_turn: bool,
+    pub busy_process: bool,
+    /// The sandbox row's `state`, `start_phase` and `failure_code` (a hosted agent).
+    pub sandbox: Option<(&'a str, Option<&'a str>, Option<&'a str>)>,
+}
+
+/// (D-425) The agent header's precedence (P5-REFINE-11 `agentStateOf`) over the computer's words
+/// (C-1059 `computer_word`).
+#[must_use]
+pub fn org_agent_state(f: &StateFacts<'_>) -> OrgAgentState {
+    if f.paused {
+        return OrgAgentState::Paused;
+    }
+    if f.hosted && f.cannot_answer {
+        return OrgAgentState::NeedsKey;
+    }
+    let word = f
+        .sandbox
+        .filter(|_| f.hosted)
+        .map(|(state, phase, _)| crate::domains::hosted::dto::computer_word(state, phase).0);
+    if word == Some("failed") {
+        return OrgAgentState::Failed;
+    }
+    if f.active_turn || (f.hosted && f.busy_process) {
+        return OrgAgentState::Working;
+    }
+    // `asleep` of C-1059: off with no failure; `stopping` reads asleep too (as the header).
+    let asleep = f.sandbox.is_some_and(|(state, _, code)| {
+        matches!(state, "stopped" | "unprovisioned") && code.is_none()
+    });
+    match word {
+        Some("starting") => OrgAgentState::Starting,
+        Some("stopping") => OrgAgentState::Asleep,
+        Some(_) if asleep => OrgAgentState::Asleep,
+        // A hosted agent that never had a computer sleeps until its first message.
+        None if f.hosted => OrgAgentState::Asleep,
+        _ => OrgAgentState::Ready,
+    }
+}
+
+/// Every agent of an organization, personal workspaces included (organization owners and admins;
+/// C-1090).
+#[utoipa::path(
+    get,
+    path = "/orgs/{org}/agents",
+    operation_id = "listOrgAgents",
+    tag = "agents",
+    params(("org" = Uuid, Path, description = "Organization id"), PageParams),
+    responses(
+        (status = 200, description = "Agents", body = Page<OrgAgent>),
+        (status = 403, description = "Forbidden", body = ErrorEnvelope),
+        (status = 404, description = "Not found", body = ErrorEnvelope),
+    ),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn list_org_agents(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(org): Path<Uuid>,
+    Query(params): Query<PageParams>,
+) -> Result<Json<Page<OrgAgent>>, ApiError> {
+    let p = params.resolve()?;
+    caller.org(&state, org).await?.require_admin()?;
+    let rows = agents::list_for_org(&state.pool, org, p.after_key(), p.fetch()).await?;
+    let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(aurora_db::DbError::from)?;
+    let mut items = Vec::with_capacity(page.items.len());
+    for r in page.items {
+        let hosted = r.kind == "hosted";
+        // (D-425) "Needs a key" from the dispatcher's own readiness (C-1062); a paused agent is
+        // shown paused whatever its keys.
+        let cannot_answer = hosted
+            && !r.paused
+            && crate::domains::hosted::answer::reason_of(
+                &state,
+                &mut conn,
+                r.id,
+                org,
+                r.workspace_id,
+                r.harness.as_deref(),
+            )
+            .await?
+            .is_some();
+        let st = org_agent_state(&StateFacts {
+            hosted,
+            paused: r.paused,
+            cannot_answer,
+            active_turn: r.active_turn,
+            busy_process: r.busy_process,
+            sandbox: r
+                .sandbox_state
+                .as_deref()
+                .map(|s| (s, r.start_phase.as_deref(), r.failure_code.as_deref())),
+        });
+        items.push(OrgAgent {
+            id: r.id,
+            name: r.name,
+            handle: r.handle,
+            workspace: OrgAgentWorkspace {
+                id: r.workspace_id,
+                slug: r.workspace_slug,
+                name: r.workspace_name,
+                personal_of: r
+                    .personal_owner_id
+                    .zip(r.personal_owner_name)
+                    .map(|(id, name)| crate::domains::tenancy::dto::PersonalOf { id, name }),
+            },
+            kind: r.kind,
+            state: st,
+            last_active_at: r.last_active_at,
+        });
+    }
+    Ok(Json(Page {
+        items,
+        next_cursor: page.next_cursor,
+    }))
+}
+
+#[cfg(test)]
+mod org_agent_state_tests {
+    use super::*;
+
+    fn f<'a>(sandbox: Option<(&'a str, Option<&'a str>, Option<&'a str>)>) -> StateFacts<'a> {
+        StateFacts {
+            hosted: true,
+            paused: false,
+            cannot_answer: false,
+            active_turn: false,
+            busy_process: false,
+            sandbox,
+        }
+    }
+
+    #[test]
+    fn the_headers_precedence_over_the_computers_words() {
+        use OrgAgentState as S;
+        let on = Some(("running", Some("ready"), None));
+        assert_eq!(org_agent_state(&f(on)), S::Ready);
+        assert_eq!(
+            org_agent_state(&StateFacts {
+                paused: true,
+                cannot_answer: true,
+                ..f(on)
+            }),
+            S::Paused
+        );
+        assert_eq!(
+            org_agent_state(&StateFacts {
+                cannot_answer: true,
+                active_turn: true,
+                ..f(on)
+            }),
+            S::NeedsKey
+        );
+        assert_eq!(
+            org_agent_state(&StateFacts {
+                active_turn: true,
+                ..f(on)
+            }),
+            S::Working
+        );
+        assert_eq!(
+            org_agent_state(&StateFacts {
+                busy_process: true,
+                ..f(on)
+            }),
+            S::Working
+        );
+        assert_eq!(
+            org_agent_state(&f(Some(("failed", None, Some("sandbox_start_failed"))))),
+            S::Failed
+        );
+        assert_eq!(
+            org_agent_state(&f(Some(("starting", None, None)))),
+            S::Starting
+        );
+        assert_eq!(
+            org_agent_state(&f(Some(("running", Some("booting"), None)))),
+            S::Starting
+        );
+        assert_eq!(
+            org_agent_state(&f(Some(("stopped", None, None)))),
+            S::Asleep
+        );
+        assert_eq!(
+            org_agent_state(&f(Some(("unprovisioned", None, None)))),
+            S::Asleep
+        );
+        assert_eq!(org_agent_state(&f(None)), S::Asleep);
+        // A BYO agent has no computer: ready unless paused or working.
+        let byo = StateFacts {
+            hosted: false,
+            cannot_answer: true,
+            ..f(None)
+        };
+        assert_eq!(org_agent_state(&byo), S::Ready);
+        assert_eq!(
+            org_agent_state(&StateFacts {
+                active_turn: true,
+                ..byo
+            }),
+            S::Working
+        );
+    }
 }
 
 /// List the agents of a workspace (`can_use`).

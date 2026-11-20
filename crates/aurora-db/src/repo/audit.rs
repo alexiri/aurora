@@ -100,6 +100,36 @@ pub struct InstanceFilter<'a> {
     pub critical_only: bool,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
+    /// (P5-REFINE-6, C-1088) `false` leaves out the platform's own events (`actor_kind = system`).
+    pub include_system: bool,
+}
+
+/// (C-1088) The rows `list_instance` leaves out with `include_system = false`: how many system
+/// events match the other filters.
+pub async fn count_instance_system<'e, E: PgExecutor<'e>>(
+    exec: E,
+    f: &InstanceFilter<'_>,
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log a
+         WHERE a.actor_kind = 'system'
+           AND ($1 OR $2::uuid IS NOT NULL OR a.org_id IS NULL)
+           AND ($2::uuid IS NULL OR a.org_id = $2)
+           AND ($3::text IS NULL OR starts_with(a.action, $3))
+           AND ($4::uuid IS NULL OR a.actor_id = $4)
+           AND (NOT $5 OR a.critical)
+           AND ($6::timestamptz IS NULL OR a.created_at >= $6)
+           AND ($7::timestamptz IS NULL OR a.created_at < $7)",
+    )
+    .bind(f.all_orgs)
+    .bind(f.org)
+    .bind(f.action_prefix)
+    .bind(f.actor_id)
+    .bind(f.critical_only)
+    .bind(f.since)
+    .bind(f.until)
+    .fetch_one(exec)
+    .await?)
 }
 
 /// Instance audit list, newest first, keyset on `(created_at, id)`.
@@ -123,6 +153,7 @@ pub async fn list_instance<'e, E: PgExecutor<'e>>(
            AND ($6::timestamptz IS NULL OR a.created_at >= $6)
            AND ($7::timestamptz IS NULL OR a.created_at < $7)
            AND ($8::timestamptz IS NULL OR (a.created_at, a.id) < ($8, $9))
+           AND ($11 OR a.actor_kind <> 'system')
          ORDER BY a.created_at DESC, a.id DESC LIMIT $10",
     )
     .bind(f.all_orgs)
@@ -135,6 +166,7 @@ pub async fn list_instance<'e, E: PgExecutor<'e>>(
     .bind(t)
     .bind(id)
     .bind(fetch)
+    .bind(f.include_system)
     .fetch_all(exec)
     .await?)
 }
@@ -147,12 +179,14 @@ pub enum Scope {
 }
 
 /// Newest first, keyset on `(created_at, id)`.
+#[allow(clippy::too_many_arguments)]
 pub async fn list<'e, E: PgExecutor<'e>>(
     exec: E,
     scope: Scope,
     action: Option<&str>,
     actor_id: Option<Uuid>,
     critical_only: bool,
+    include_system: bool,
     after: After,
     fetch: i64,
 ) -> Result<Vec<AuditRow>, DbError> {
@@ -168,6 +202,7 @@ pub async fn list<'e, E: PgExecutor<'e>>(
          WHERE ($1::uuid IS NULL OR org_id = $1) AND ($2::uuid IS NULL OR workspace_id = $2)
            AND ($3::text IS NULL OR action = $3) AND ($4::uuid IS NULL OR actor_id = $4)
            AND (NOT $8 OR critical)
+           AND ($9 OR actor_kind <> 'system')
            AND ($5::timestamptz IS NULL OR (created_at, id) < ($5, $6))
          ORDER BY created_at DESC, id DESC LIMIT $7",
     )
@@ -179,6 +214,35 @@ pub async fn list<'e, E: PgExecutor<'e>>(
     .bind(id)
     .bind(fetch)
     .bind(critical_only)
+    .bind(include_system)
     .fetch_all(exec)
+    .await?)
+}
+
+/// (P5-REFINE-6, C-1088) The system events `list` leaves out with `include_system = false`.
+pub async fn count_system<'e, E: PgExecutor<'e>>(
+    exec: E,
+    scope: Scope,
+    action: Option<&str>,
+    actor_id: Option<Uuid>,
+    critical_only: bool,
+) -> Result<i64, DbError> {
+    let (org, ws) = match scope {
+        Scope::Org(o) => (Some(o), None),
+        Scope::Workspace(w) => (None, Some(w)),
+    };
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log
+         WHERE actor_kind = 'system'
+           AND ($1::uuid IS NULL OR org_id = $1) AND ($2::uuid IS NULL OR workspace_id = $2)
+           AND ($3::text IS NULL OR action = $3) AND ($4::uuid IS NULL OR actor_id = $4)
+           AND (NOT $5 OR critical)",
+    )
+    .bind(org)
+    .bind(ws)
+    .bind(action)
+    .bind(actor_id)
+    .bind(critical_only)
+    .fetch_one(exec)
     .await?)
 }

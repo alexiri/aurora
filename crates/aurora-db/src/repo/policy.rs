@@ -181,6 +181,25 @@ pub async fn lock_draft(
     .await?)
 }
 
+/// (P5-REFINE-6, C-1087) The generation before `number` in the same scope, if any.
+pub async fn predecessor<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    workspace: Option<Uuid>,
+    number: i32,
+) -> Result<Option<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM policy_generations \
+         WHERE org_id = $1 AND workspace_id IS NOT DISTINCT FROM $2 AND number < $3 \
+         ORDER BY number DESC LIMIT 1",
+    )
+    .bind(org)
+    .bind(workspace)
+    .bind(number)
+    .fetch_optional(exec)
+    .await?)
+}
+
 pub async fn rules_of<'e, E: PgExecutor<'e>>(
     exec: E,
     generation_id: Uuid,

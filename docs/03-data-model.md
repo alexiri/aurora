@@ -414,6 +414,8 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | secret_ref | text not null | SecretRef of secret fields JSON |
 | enabled | bool not null default true | |
 | instance_id | uuid null FK→app_instances (cascade) | (phase 2, D-74) a BYOC client bound to one self-hosted instance; its templated OAuth URLs resolve to that host |
+| last_test_at | timestamptz null | (phase 5, P5-REFINE-6, C-1070; migration `20261201000265_oauth_client_test.sql`) the last **Test** of the sign-in app (`POST /v1/oauth-clients/{id}/test`) |
+| last_test_result | text null CHECK in (`ok`,`rejected`,`unreachable`,`unexpected`) | how the provider answered then (`not_testable` is answered, never stored); no response text is stored. With `connection_count` it gives `OAuthClient.state` |
 | unique | (org_id, workspace_id, package_id, client_key, instance_id) nulls not distinct | one client per scope, key and instance |
 
 ### `app_instances` (self-hosted apps; phase 2, D-74)

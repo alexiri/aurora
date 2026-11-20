@@ -19,6 +19,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_org_clients, create_org_client))
         .routes(routes!(list_instance_clients, create_instance_client))
         .routes(routes!(patch_client, delete_client))
+        .routes(routes!(super::test::test_client))
 }
 
 /// List workspace OAuth clients (`can_own`; I-27).
@@ -167,7 +168,11 @@ async fn create_instance_client(
 }
 
 /// Resolve write access to a client: workspace `can_own`, org owner/admin, instance admin.
-async fn writable(caller: &Caller, state: &AppState, id: Uuid) -> Result<ClientRow, ApiError> {
+pub(super) async fn writable(
+    caller: &Caller,
+    state: &AppState,
+    id: Uuid,
+) -> Result<ClientRow, ApiError> {
     let row = repo::get(&state.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("OAuth client not found."))?;
@@ -183,7 +188,7 @@ async fn writable(caller: &Caller, state: &AppState, id: Uuid) -> Result<ClientR
     Ok(row)
 }
 
-fn actor(caller: &Caller, row: &ClientRow) -> AuditActor {
+pub(super) fn actor(caller: &Caller, row: &ClientRow) -> AuditActor {
     if row.org_id.is_none() {
         AuditActor::instance_admin(caller)
     } else {

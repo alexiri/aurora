@@ -376,6 +376,7 @@ fn connection_row(
                 })
             }),
             custom_only,
+            send_only: levels::send_only(&tools),
         }),
         scope: if org_account {
             "organization"

@@ -74,26 +74,57 @@ pub struct AuditQuery {
     pub actor_id: Option<Uuid>,
     /// `true` lists only the security-critical set; `false` or absent lists everything.
     pub critical: Option<bool>,
+    /// (P5-REFINE-6, C-1088) `false` leaves out the platform's own events (actor `system`) and
+    /// answers how many with `hidden_system`; absent or `true` lists them (the default for API
+    /// callers; the dashboard sends `false`).
+    pub include_system: Option<bool>,
 }
 
-async fn list(
-    s: &AppState,
-    scope: Scope,
-    q: AuditQuery,
-) -> Result<Json<Page<AuditEntry>>, ApiError> {
+/// (C-1088) An audit page; `hidden_system` is present only with `include_system=false`.
+#[derive(Serialize, ToSchema)]
+pub struct AuditPage {
+    pub items: Vec<AuditEntry>,
+    pub next_cursor: Option<String>,
+    /// System events matching the other filters that were left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hidden_system: Option<i64>,
+}
+
+/// (C-1088) The instance audit page.
+#[derive(Serialize, ToSchema)]
+pub struct InstanceAuditPage {
+    pub items: Vec<InstanceAuditEntry>,
+    pub next_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hidden_system: Option<i64>,
+}
+
+async fn list(s: &AppState, scope: Scope, q: AuditQuery) -> Result<Json<AuditPage>, ApiError> {
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
+    let include_system = q.include_system.unwrap_or(true);
+    let critical = q.critical.unwrap_or(false);
     let rows = audit::list(
         &s.pool,
         scope,
         q.action.as_deref(),
         q.actor_id,
-        q.critical.unwrap_or(false),
+        critical,
+        include_system,
         p.after_key(),
         p.fetch(),
     )
     .await?;
-    let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(page.map(AuditEntry::from)))
+    let hidden_system = if include_system {
+        None
+    } else {
+        Some(audit::count_system(&s.pool, scope, q.action.as_deref(), q.actor_id, critical).await?)
+    };
+    let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id)).map(AuditEntry::from);
+    Ok(Json(AuditPage {
+        items: page.items,
+        next_cursor: page.next_cursor,
+        hidden_system,
+    }))
 }
 
 /// An audit row with the organization it concerns (instance view).
@@ -122,19 +153,21 @@ pub struct InstanceAuditQuery {
     pub since: Option<DateTime<Utc>>,
     /// Exclusive upper bound on `created_at` (RFC 3339).
     pub until: Option<DateTime<Utc>>,
+    /// (P5-REFINE-6, C-1088) As on the organization's audit list.
+    pub include_system: Option<bool>,
 }
 
 /// Instance audit log (instance administrators): instance-level rows, or every row.
 #[utoipa::path(get, path = "/admin/audit", operation_id = "listInstanceAudit", tag = "audit",
     params(InstanceAuditQuery),
-    responses((status = 200, body = Page<InstanceAuditEntry>), (status = 403, body = ErrorEnvelope),
+    responses((status = 200, body = InstanceAuditPage), (status = 403, body = ErrorEnvelope),
         (status = 400, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn instance_audit(
     _c: InstanceAdmin,
     State(s): State<AppState>,
     Query(q): Query<InstanceAuditQuery>,
-) -> Result<Json<Page<InstanceAuditEntry>>, ApiError> {
+) -> Result<Json<InstanceAuditPage>, ApiError> {
     let all_orgs = match q.scope.as_deref() {
         None | Some("instance") => false,
         Some("all") => true,
@@ -148,23 +181,24 @@ async fn instance_audit(
     };
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let action = q.action.as_deref().map(str::trim).filter(|a| !a.is_empty());
-    let rows = audit::list_instance(
-        &s.pool,
-        &audit::InstanceFilter {
-            all_orgs,
-            org: q.org,
-            action_prefix: action,
-            actor_id: q.actor_id,
-            critical_only: q.critical.unwrap_or(false),
-            since: q.since,
-            until: q.until,
-        },
-        p.after_key(),
-        p.fetch(),
-    )
-    .await?;
+    let filter = audit::InstanceFilter {
+        all_orgs,
+        org: q.org,
+        action_prefix: action,
+        actor_id: q.actor_id,
+        critical_only: q.critical.unwrap_or(false),
+        since: q.since,
+        until: q.until,
+        include_system: q.include_system.unwrap_or(true),
+    };
+    let rows = audit::list_instance(&s.pool, &filter, p.after_key(), p.fetch()).await?;
+    let hidden_system = if filter.include_system {
+        None
+    } else {
+        Some(audit::count_instance_system(&s.pool, &filter).await?)
+    };
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(page.map(|r| InstanceAuditEntry {
+    let page = page.map(|r| InstanceAuditEntry {
         org_slug: r.org_slug.clone(),
         entry: AuditEntry::from(AuditRow {
             id: r.id,
@@ -183,13 +217,18 @@ async fn instance_audit(
             critical: r.critical,
             created_at: r.created_at,
         }),
-    })))
+    });
+    Ok(Json(InstanceAuditPage {
+        items: page.items,
+        next_cursor: page.next_cursor,
+        hidden_system,
+    }))
 }
 
 /// Organization audit log (owner/admin).
 #[utoipa::path(get, path = "/orgs/{org}/audit", operation_id = "listOrgAudit", tag = "audit",
     params(("org" = Uuid, Path, description = "Organization id"), AuditQuery),
-    responses((status = 200, body = Page<AuditEntry>), (status = 403, body = ErrorEnvelope),
+    responses((status = 200, body = AuditPage), (status = 403, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn org_audit(
@@ -197,7 +236,7 @@ async fn org_audit(
     State(s): State<AppState>,
     Path(org): Path<Uuid>,
     Query(q): Query<AuditQuery>,
-) -> Result<Json<Page<AuditEntry>>, ApiError> {
+) -> Result<Json<AuditPage>, ApiError> {
     c.org(&s, org).await?.require_admin()?;
     list(&s, Scope::Org(org), q).await
 }
@@ -205,7 +244,7 @@ async fn org_audit(
 /// Workspace audit log (workspace owners).
 #[utoipa::path(get, path = "/workspaces/{ws}/audit", operation_id = "listWorkspaceAudit", tag = "audit",
     params(("ws" = Uuid, Path, description = "Workspace id"), AuditQuery),
-    responses((status = 200, body = Page<AuditEntry>), (status = 403, body = ErrorEnvelope),
+    responses((status = 200, body = AuditPage), (status = 403, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn workspace_audit(
@@ -213,7 +252,7 @@ async fn workspace_audit(
     State(s): State<AppState>,
     Path(ws): Path<Uuid>,
     Query(q): Query<AuditQuery>,
-) -> Result<Json<Page<AuditEntry>>, ApiError> {
+) -> Result<Json<AuditPage>, ApiError> {
     let a = c.workspace(&s, ws).await?;
     require_own(&a)?;
     list(&s, Scope::Workspace(ws), q).await

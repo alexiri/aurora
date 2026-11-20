@@ -530,7 +530,8 @@ pub async fn usable_clients<'e, E: PgExecutor<'e>>(
 ) -> Result<Vec<super::oauth_clients::ClientRow>, DbError> {
     Ok(sqlx::query_as(
         "SELECT c.id, c.org_id, c.workspace_id, c.package_id, c.client_key, c.fields, c.secret_ref, \
-         c.enabled, c.instance_id, 0::bigint AS connection_count, c.created_at, c.updated_at \
+         c.enabled, c.instance_id, 0::bigint AS connection_count, c.created_at, c.updated_at, \
+         c.last_test_at, c.last_test_result, NULL::timestamptz AS last_connected_at \
          FROM app_oauth_clients c WHERE c.package_id = $1 AND c.client_key = $2 AND c.enabled \
          AND c.instance_id IS NOT DISTINCT FROM $5 \
          AND ((c.org_id IS NULL) OR (c.org_id = $3 AND (c.workspace_id IS NULL OR c.workspace_id = $4))) \

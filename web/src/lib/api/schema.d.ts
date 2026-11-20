@@ -3605,6 +3605,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/invitations/{id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-issue an invitation's link to copy (organization owner/admin; C-1069, SEC-140). The new link
+         *     replaces the old one, which stops working; the expiry is reset to 7 days. Shown once.
+         */
+        post: operations["createInvitationLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/invitations/{id}/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * E-mail an invitation again with a new link (organization owner/admin; C-1069). 409
+         *     `mail_disabled` when the instance's mail is log-only.
+         */
+        post: operations["resendInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/llm/providers": {
         parameters: {
             query?: never;
@@ -3709,6 +3749,26 @@ export interface paths {
         post?: never;
         /** Remove one of the caller's own channel links. */
         delete: operations["deleteMyChannelLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/chat-platforms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (P5-REFINE-6, C-1089) The chat platforms the caller can link: the connected integrations of
+         *     their organizations, one per kind, with the bot to message. No workspace, channel or token data.
+         */
+        get: operations["listMyChatPlatforms"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3960,6 +4020,23 @@ export interface paths {
         patch: operations["updateOauthClient"];
         trace?: never;
     };
+    "/v1/oauth-clients/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test a sign-in app against its provider (the callers who may `PATCH` it). */
+        post: operations["testOauthClient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/oauth/callback": {
         parameters: {
             query?: never;
@@ -4046,6 +4123,26 @@ export interface paths {
         };
         /** Live BYO agent tokens of an organization with expiry and use (org owner/admin). */
         get: operations["listOrgAgentTokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every agent of an organization, personal workspaces included (organization owners and admins;
+         *     C-1090).
+         */
+        get: operations["listOrgAgents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6294,6 +6391,8 @@ export interface components {
              */
             joined_at?: string | null;
             role: components["schemas"]["WorkspaceRole"];
+            /** @description (P5-REFINE-6, C-1086) The person has signed in at least once ("Not signed in yet"). */
+            signed_in: boolean;
             /**
              * @description (phase 5, P5-APIGAP-4, C-1051) `suspended`: the person has no access to this workspace
              *     (direct or through a group) until restored. An `implicit` row's access comes from the org
@@ -6411,6 +6510,8 @@ export interface components {
             custom_only: boolean;
             family?: components["schemas"]["AppFamily"] | null;
             name: string;
+            /** @description (P5-REFINE-6, C-1067) The app only sends (no read tool): `levels` are `ask` and `act`. */
+            send_only: boolean;
         };
         AccountCan: {
             change_access: boolean;
@@ -6668,6 +6769,11 @@ export interface components {
             /** Format: int64 */
             blob_count: number;
             /**
+             * @description (P5-REFINE-6, C-1072) Conversations, files and activity, summed from `tables`. Empty in a
+             *     snapshot written before this field existed (it shows once the snapshot is refreshed).
+             */
+            categories?: components["schemas"]["StorageCategory"][];
+            /**
              * Format: date-time
              * @description When these figures were computed (FIX-126); the page offers a refresh.
              */
@@ -6676,7 +6782,10 @@ export interface components {
             orgs: components["schemas"]["AdminOrgStorage"][];
             /** Format: int64 */
             purged_files: number;
-            /** @description `blobs`, `attachments`, `transcript_events`, `request_log`, `audit_log`. */
+            /**
+             * @description `blobs`, `attachments`, `transcript_events`, `transcript_search` (P5-REFINE-6),
+             *     `request_log`, `audit_log`, each with its `category`.
+             */
             tables: components["schemas"]["TableSize"][];
         };
         AdminUser: components["schemas"]["User"] & {
@@ -7017,6 +7126,8 @@ export interface components {
             oauth_clients: components["schemas"]["AppOauthClient"][];
             package_id: string;
             package_version: string;
+            /** @description (P5-REFINE-6, C-1067) as on `AppSummary`: the connect journey's level step reads it. */
+            send_only: boolean;
             /** @description (phase 4, P4-GSL) as on `AppSummary`. */
             serves_library: boolean;
             /** @description (P5-POLISH-3, C-1031) As on `AppSummary`. */
@@ -7186,6 +7297,12 @@ export interface components {
             package_id: string;
             package_version: string;
             readiness?: components["schemas"]["AppReadiness"] | null;
+            /**
+             * @description (P5-REFINE-6, C-1067, D-419) No tool of the app is in group `read` (the Outgoing webhook):
+             *     its levels are `ask` and `act` ("Ask before each send", "Send without asking"), never
+             *     `read`. Derived from the installed manifest, not stored.
+             */
+            send_only: boolean;
             /**
              * @description (phase 4, P4-GSL, D-149) the app declares a `library` block: it can serve a git skill
              *     library (the dashboard offers its org-scoped connections when connecting a repository).
@@ -7485,6 +7602,16 @@ export interface components {
             /** Format: uuid */
             workspace_id?: string | null;
         };
+        /** @description (C-1088) An audit page; `hidden_system` is present only with `include_system=false`. */
+        AuditPage: {
+            /**
+             * Format: int64
+             * @description System events matching the other filters that were left out.
+             */
+            hidden_system?: number | null;
+            items: components["schemas"]["AuditEntry"][];
+            next_cursor?: string | null;
+        };
         /** @description (C-802) One auth mode of a provider. */
         AuthModeInfo: {
             id: string;
@@ -7604,6 +7731,9 @@ export interface components {
             /** @description The agent's own source list (`null` = inherit). */
             source_cidrs?: string[] | null;
             token?: components["schemas"]["TokenView"] | null;
+        };
+        ChangeActor: {
+            display_name: string;
         };
         ChannelIntegration: {
             /**
@@ -7943,6 +8073,8 @@ export interface components {
             display_name: string;
             /** @description (C-1044, D-398) True exactly when `GET /v1/connectors/{id}/icon` serves a PNG. */
             has_icon: boolean;
+            /** @description (C-1068) As on the availability item. */
+            host_running: boolean;
             /** @description Managed only: reports of hosts seen recently. */
             host_status: components["schemas"]["HostStatusInfo"][];
             id: string;
@@ -7953,6 +8085,8 @@ export interface components {
             /** @description The announced manifest (opaque JSON), `null` until the first registration. */
             manifest?: Record<string, never> | null;
             manifest_digest?: string | null;
+            /** @description (C-1068) Administration's next step: `owner_connects` once usable. */
+            next_step: components["schemas"]["ConnectorNextStep"];
             /** @description (C-1021) The announced version while an update is pending; `null` otherwise. */
             pending_version?: string | null;
             /** @description Live (not retired, recently seen) replicas. */
@@ -7963,6 +8097,8 @@ export interface components {
             };
             /** @description Managed only: stored non-secret settings with defaults applied; `null` otherwise. */
             settings?: Record<string, never> | null;
+            /** @description (P5-REFINE-6, C-1068) The same readiness as `GET /v1/connector-availability`. */
+            setup_state: components["schemas"]["ConnectorSetupState"];
             status: components["schemas"]["ConnectorStatus"];
             /** @description Managed only: the built-in type. */
             type_id?: string | null;
@@ -7982,10 +8118,22 @@ export interface components {
             items: components["schemas"]["ConnectorAdmin"][];
         };
         ConnectorAvailability: {
+            /** @description (C-1068) `setup_state = active`: integrations can be connected now. */
+            can_connect: boolean;
             /** @description The connector's id when one exists. */
             connector_id?: string | null;
+            /**
+             * @description (C-1068) A live connector host announces the type or reports the connector running (a
+             *     self-hosted connector: it has a live replica).
+             */
+            host_running: boolean;
             icon_url?: string | null;
             name: string;
+            /**
+             * @description (C-1068) For this caller: `connect` for an organization owner or admin of an `active`
+             *     type, `owner_connects` for anyone else.
+             */
+            next_step: components["schemas"]["ConnectorNextStep"];
             setup_state: components["schemas"]["ConnectorSetupState"];
             type_id: string;
         };
@@ -8017,6 +8165,11 @@ export interface components {
         ConnectorInfoList: {
             items: components["schemas"]["ConnectorInfo"][];
         };
+        /**
+         * @description (P5-REFINE-6, C-1068) The next thing a person does about a connector.
+         * @enum {string}
+         */
+        ConnectorNextStep: "connect" | "owner_connects" | "start_host" | "approve" | "enable" | "add";
         /** @description State of one secret setting; the value is never returned. */
         ConnectorSecretInfo: {
             generated: boolean;
@@ -8028,7 +8181,7 @@ export interface components {
          * @description Where a connector type stands for an org admin who wants to use it (C-712).
          * @enum {string}
          */
-        ConnectorSetupState: "active" | "not_added" | "waiting_for_host" | "disabled" | "needs_approval";
+        ConnectorSetupState: "active" | "not_added" | "waiting_for_host" | "disabled" | "needs_approval" | "registering";
         /** @enum {string} */
         ConnectorStatus: "awaiting_registration" | "pending_approval" | "active" | "disabled";
         /** @description Returned once on rotation. */
@@ -9613,6 +9766,13 @@ export interface components {
             /** @description Slug of `org_id` (`null` for instance-level rows). */
             org_slug?: string | null;
         };
+        /** @description (C-1088) The instance audit page. */
+        InstanceAuditPage: {
+            /** Format: int64 */
+            hidden_system?: number | null;
+            items: components["schemas"]["InstanceAuditEntry"][];
+            next_cursor?: string | null;
+        };
         /** @description (phase 2, RFE-025) The instance level of BYO governance (`[byo]`). */
         InstanceByo: {
             default_source_cidrs: string[];
@@ -9706,7 +9866,10 @@ export interface components {
         };
         /** @enum {string} */
         IntegrationStatus: "validating" | "active" | "needs_attention" | "disabled";
-        /** @description An invitation. The token is never part of any response. */
+        /**
+         * @description An invitation. The token is never part of a list or a `GET`: only the `201` of the create
+         *     carries the link (C-1069, SEC-140).
+         */
         Invitation: {
             /** @description Workspaces bound as `approver` on accept (phase 2, RFE-012); disjoint from `workspace_ids`. */
             approver_workspace_ids: string[];
@@ -9718,11 +9881,23 @@ export interface components {
             /** Format: uuid */
             id: string;
             invited_by?: components["schemas"]["InviterRef"] | null;
+            /**
+             * @description (P5-REFINE-6, C-1069, SEC-140) `<external_url>/join?token=…`, present only in the `201` of
+             *     `POST /v1/orgs/{org}/invitations` (a create, or the re-issue of a pending e-mail).
+             */
+            link?: string | null;
             /** Format: uuid */
             org_id: string;
             role: components["schemas"]["InvitedRole"];
             status: components["schemas"]["InvitationStatus"];
             workspace_ids: string[];
+        };
+        /** @description (P5-REFINE-6, C-1069, SEC-140) A re-issued invitation link. The previous link no longer works. */
+        InvitationLink: {
+            /** Format: date-time */
+            expires_at: string;
+            /** @description `<external_url>/join?token=…`; shown once (`Cache-Control: no-store`). */
+            link: string;
         };
         InvitationPreview: {
             email: string;
@@ -10004,6 +10179,11 @@ export interface components {
             /** @description (phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`). */
             approval_email: boolean;
             /**
+             * @description (P5-REFINE-6, C-1072) `POST /v1/orgs` would work for this person: an instance admin, or
+             *     `auth.org_creation = anyone`. The switcher offers "New organization" exactly then.
+             */
+            can_create_org: boolean;
+            /**
              * @description (P2-FU-1, C-195) The caller's own client address as this API resolves it: the socket peer,
              *     or the rightmost untrusted `X-Forwarded-For` hop when the peer is in
              *     `server.trusted_proxies`. A hint for allow-lists; the gateway may see another address
@@ -10256,6 +10436,19 @@ export interface components {
         Models: {
             items: components["schemas"]["ModelItem"][];
         };
+        /** @description (P5-REFINE-6, C-1089) A chat platform the person can link. */
+        MyChatPlatform: {
+            /** @description The bot to message, when the connector reported one. */
+            bot_handle?: string | null;
+            display_name: string;
+            /** @description The connector type (its `type_id`). */
+            kind: string;
+            /** @description The person has linked their chat account there. */
+            linked: boolean;
+        };
+        MyChatPlatforms: {
+            platforms: components["schemas"]["MyChatPlatform"][];
+        };
         MySpace: {
             /** @description Always true: `spaces.list` is the bot's own view (C-714). */
             bot_present: boolean;
@@ -10313,10 +10506,37 @@ export interface components {
             package_id: string;
             /** @description `instance` | `organization` | `workspace`. */
             scope: string;
+            /**
+             * @description (C-1070) `disabled` when off; `ready` after an `ok` Test or once a connection was made
+             *     with it; `test_failed` when the last Test failed and nothing connected since; else
+             *     `ready_not_tested`.
+             */
+            state: components["schemas"]["OAuthClientState"];
+            test?: components["schemas"]["OAuthClientLastTest"] | null;
             /** Format: date-time */
             updated_at: string;
             /** Format: uuid */
             workspace_id?: string | null;
+        };
+        OAuthClientLastTest: {
+            /** Format: date-time */
+            at: string;
+            result: components["schemas"]["TestResult"];
+        };
+        /**
+         * @description (C-1070) Where a sign-in app stands.
+         * @enum {string}
+         */
+        OAuthClientState: "ready_not_tested" | "ready" | "test_failed" | "disabled";
+        /**
+         * @description (C-1070) `POST /v1/oauth-clients/{id}/test`. Nothing of the provider's answer but its host and
+         *     HTTP status.
+         */
+        OAuthClientTestResult: {
+            /** Format: date-time */
+            checked_at: string;
+            detail?: components["schemas"]["TestDetail"] | null;
+            result: components["schemas"]["TestResult"];
         };
         OauthClientField: {
             label: string;
@@ -10389,6 +10609,35 @@ export interface components {
             settings: components["schemas"]["OrgSettings"];
             slug: string;
         };
+        /** @description (P5-REFINE-6, C-1090) An organization's agent, with its workspace. */
+        OrgAgent: {
+            handle: string;
+            /** Format: uuid */
+            id: string;
+            /** @description `hosted` | `byo`. */
+            kind: string;
+            /**
+             * Format: date-time
+             * @description Its newest turn's creation time; `null` when it never ran.
+             */
+            last_active_at?: string | null;
+            name: string;
+            /**
+             * @description (D-425) The state the agent's header shows, most urgent first: `paused` (it, its workspace
+             *     or the organization is paused) · `needs_key` (a hosted agent cannot answer: no usable AI
+             *     key or model, C-1062) · `failed` (its computer failed to start) · `working` (a turn or a
+             *     busy process runs) · `starting` · `asleep` (its computer is off) · `ready`. A BYO agent is
+             *     `paused`, `working` or `ready`.
+             */
+            state: components["schemas"]["OrgAgentState"];
+            workspace: components["schemas"]["OrgAgentWorkspace"];
+        };
+        /**
+         * @description (C-1090, D-425) The words "Paused", "Needs a key", "Can't start", "Working", "Starting its
+         *     computer…", "Asleep", "Ready" are the dashboard's.
+         * @enum {string}
+         */
+        OrgAgentState: "paused" | "needs_key" | "failed" | "working" | "starting" | "asleep" | "ready";
         /** @description `organizations.governance.agent_tokens` (no column: `governance` is `jsonb`). */
         OrgAgentTokens: {
             /**
@@ -10397,6 +10646,14 @@ export interface components {
              * @default null
              */
             max_age_days: number | null;
+        };
+        OrgAgentWorkspace: {
+            /** Format: uuid */
+            id: string;
+            /** @description A personal workspace is named after its person (C-923). */
+            name: string;
+            personal_of?: components["schemas"]["PersonalOf"] | null;
+            slug: string;
         };
         /** @description An egress allow-list entry in policy host/path pattern syntax. */
         OrgAllowEntry: {
@@ -10589,6 +10846,11 @@ export interface components {
              */
             attachments_days_effective?: number | null;
             by_workspace: components["schemas"]["WorkspaceStorage"][];
+            /**
+             * @description (P5-REFINE-6, C-1072) The three categories; per organization only `files` is counted (the
+             *     organization's attachment bytes, live), `conversations` and `activity` are `null`.
+             */
+            categories: components["schemas"]["StorageCategory"][];
             /**
              * Format: date-time
              * @description When the file counts and the breakdown were computed (FIX-126).
@@ -11064,35 +11326,6 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
-        Page_AuditEntry: {
-            items: {
-                action: string;
-                /** Format: uuid */
-                actor_id?: string | null;
-                /** @description `user` | `service` | `agent` | `system` | `instance_admin` */
-                actor_kind: string;
-                actor_label: string;
-                /** Format: date-time */
-                created_at: string;
-                /** @description Row of the security-critical set (`04 §Audit`), written atomically with its change. */
-                critical: boolean;
-                /** Format: uuid */
-                id: string;
-                ip?: string | null;
-                metadata: unknown;
-                /** Format: uuid */
-                org_id?: string | null;
-                /** @description `success` | `failure` | `denied` */
-                outcome: string;
-                /** @description `dashboard` | `api` | `cli` | `channel` | `system` */
-                source: string;
-                target_id?: string | null;
-                target_kind?: string | null;
-                /** Format: uuid */
-                workspace_id?: string | null;
-            }[];
-            next_cursor?: string | null;
-        };
         Page_ChannelIntegration: {
             items: {
                 /**
@@ -11302,13 +11535,6 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
-        Page_InstanceAuditEntry: {
-            items: (components["schemas"]["AuditEntry"] & {
-                /** @description Slug of `org_id` (`null` for instance-level rows). */
-                org_slug?: string | null;
-            })[];
-            next_cursor?: string | null;
-        };
         Page_Invitation: {
             items: {
                 /** @description Workspaces bound as `approver` on accept (phase 2, RFE-012); disjoint from `workspace_ids`. */
@@ -11321,6 +11547,11 @@ export interface components {
                 /** Format: uuid */
                 id: string;
                 invited_by?: components["schemas"]["InviterRef"] | null;
+                /**
+                 * @description (P5-REFINE-6, C-1069, SEC-140) `<external_url>/join?token=…`, present only in the `201` of
+                 *     `POST /v1/orgs/{org}/invitations` (a create, or the re-issue of a pending e-mail).
+                 */
+                link?: string | null;
                 /** Format: uuid */
                 org_id: string;
                 role: components["schemas"]["InvitedRole"];
@@ -11406,6 +11637,13 @@ export interface components {
                 package_id: string;
                 /** @description `instance` | `organization` | `workspace`. */
                 scope: string;
+                /**
+                 * @description (C-1070) `disabled` when off; `ready` after an `ok` Test or once a connection was made
+                 *     with it; `test_failed` when the last Test failed and nothing connected since; else
+                 *     `ready_not_tested`.
+                 */
+                state: components["schemas"]["OAuthClientState"];
+                test?: components["schemas"]["OAuthClientLastTest"] | null;
                 /** Format: date-time */
                 updated_at: string;
                 /** Format: uuid */
@@ -11428,6 +11666,31 @@ export interface components {
                 name: string;
                 settings: components["schemas"]["OrgSettings"];
                 slug: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_OrgAgent: {
+            items: {
+                handle: string;
+                /** Format: uuid */
+                id: string;
+                /** @description `hosted` | `byo`. */
+                kind: string;
+                /**
+                 * Format: date-time
+                 * @description Its newest turn's creation time; `null` when it never ran.
+                 */
+                last_active_at?: string | null;
+                name: string;
+                /**
+                 * @description (D-425) The state the agent's header shows, most urgent first: `paused` (it, its workspace
+                 *     or the organization is paused) · `needs_key` (a hosted agent cannot answer: no usable AI
+                 *     key or model, C-1062) · `failed` (its computer failed to start) · `working` (a turn or a
+                 *     busy process runs) · `starting` · `asleep` (its computer is off) · `ready`. A BYO agent is
+                 *     `paused`, `working` or `ready`.
+                 */
+                state: components["schemas"]["OrgAgentState"];
+                workspace: components["schemas"]["OrgAgentWorkspace"];
             }[];
             next_cursor?: string | null;
         };
@@ -11560,6 +11823,12 @@ export interface components {
         };
         Page_PolicyGenerationSummary: {
             items: {
+                actor?: components["schemas"]["ChangeActor"] | null;
+                /**
+                 * @description (P5-REFINE-6, C-1087) What this generation changed against the one before it (at most
+                 *     20; `more` counts the rest). Empty for the first generation.
+                 */
+                changes: components["schemas"]["RuleChange"][];
                 /** Format: date-time */
                 created_at: string;
                 default_action: components["schemas"]["DefaultAction"];
@@ -11567,6 +11836,11 @@ export interface components {
                 draft_revision?: number | null;
                 /** Format: uuid */
                 id: string;
+                /**
+                 * Format: int64
+                 * @description (C-1087) Changes left out after the first 20.
+                 */
+                more: number;
                 /** Format: int32 */
                 number: number;
                 open_lane_posture: components["schemas"]["OpenLanePosture"];
@@ -12516,6 +12790,8 @@ export interface components {
             code: string;
             message: string;
             path: string;
+            /** @description (P5-REFINE-6, C-1071) The violation in words; absent on a package stored before it. */
+            sentence?: string | null;
         };
         PluginWidening: {
             detail: string;
@@ -12552,6 +12828,12 @@ export interface components {
         };
         /** @description A generation without its rules. */
         PolicyGenerationSummary: {
+            actor?: components["schemas"]["ChangeActor"] | null;
+            /**
+             * @description (P5-REFINE-6, C-1087) What this generation changed against the one before it (at most
+             *     20; `more` counts the rest). Empty for the first generation.
+             */
+            changes: components["schemas"]["RuleChange"][];
             /** Format: date-time */
             created_at: string;
             default_action: components["schemas"]["DefaultAction"];
@@ -12559,6 +12841,11 @@ export interface components {
             draft_revision?: number | null;
             /** Format: uuid */
             id: string;
+            /**
+             * Format: int64
+             * @description (C-1087) Changes left out after the first 20.
+             */
+            more: number;
             /** Format: int32 */
             number: number;
             open_lane_posture: components["schemas"]["OpenLanePosture"];
@@ -13268,6 +13555,13 @@ export interface components {
              */
             generation: number;
         };
+        /** @description (C-1087) One rule added, removed or edited. */
+        RuleChange: {
+            kind: components["schemas"]["RuleChangeKind"];
+            rule_name: string;
+        };
+        /** @enum {string} */
+        RuleChangeKind: "added" | "removed" | "edited";
         /** @description A rule in a draft body: no `priority` (array order), optional `logical_id` (C-08). */
         RuleInput: {
             action: components["schemas"]["Action"];
@@ -14455,6 +14749,20 @@ export interface components {
         };
         /** @enum {string} */
         StarterKind: "secret" | "connection";
+        /**
+         * @description (C-1072) The bytes of one category; `null` when it cannot be computed for this scope (an
+         *     organization's conversations and activity: only files are counted per organization).
+         */
+        StorageCategory: {
+            /** Format: int64 */
+            bytes?: number | null;
+            id: components["schemas"]["StorageCategoryId"];
+        };
+        /**
+         * @description (P5-REFINE-6, C-1072) What people store, as the dashboard names it.
+         * @enum {string}
+         */
+        StorageCategoryId: "conversations" | "files" | "activity";
         StoreCaps: {
             managed: boolean;
             references: boolean;
@@ -14538,6 +14846,7 @@ export interface components {
         TableSize: {
             /** Format: int64 */
             bytes: number;
+            category?: components["schemas"]["StorageCategoryId"] | null;
             table: string;
         };
         /** @description Rule target (I-12: tagged with `type`). */
@@ -14589,6 +14898,11 @@ export interface components {
         };
         TerminatorList: {
             terminators: components["schemas"]["TerminatorInfo"][];
+        };
+        TestDetail: {
+            host?: string | null;
+            /** Format: int32 */
+            status?: number | null;
         };
         TestRequest: {
             dry_run?: boolean;
@@ -16288,6 +16602,8 @@ export interface operations {
                 since?: string;
                 /** @description Exclusive upper bound on `created_at` (RFC 3339). */
                 until?: string;
+                /** @description (P5-REFINE-6, C-1088) As on the organization's audit list. */
+                include_system?: boolean;
             };
             header?: never;
             path?: never;
@@ -16300,7 +16616,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_InstanceAuditEntry"];
+                    "application/json": components["schemas"]["InstanceAuditPage"];
                 };
             };
             400: {
@@ -30463,6 +30779,132 @@ export interface operations {
             };
         };
     };
+    createInvitationLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Invitation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationLink"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    resendInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Invitation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Invitation"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listLlmProviders: {
         parameters: {
             query?: {
@@ -30815,6 +31257,42 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listMyChatPlatforms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyChatPlatforms"];
+                };
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -32124,6 +32602,65 @@ export interface operations {
             };
         };
     };
+    testOauthClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description OAuth client id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description How the provider answered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthClientTestResult"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many tests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     oauthCallback: {
         parameters: {
             query?: never;
@@ -32561,6 +33098,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listOrgAgents: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agents */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_OrgAgent"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
@@ -33124,6 +33725,12 @@ export interface operations {
                 actor_id?: string;
                 /** @description `true` lists only the security-critical set; `false` or absent lists everything. */
                 critical?: boolean;
+                /**
+                 * @description (P5-REFINE-6, C-1088) `false` leaves out the platform's own events (actor `system`) and
+                 *     answers how many with `hidden_system`; absent or `true` lists them (the default for API
+                 *     callers; the dashboard sends `false`).
+                 */
+                include_system?: boolean;
             };
             header?: never;
             path: {
@@ -33139,7 +33746,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_AuditEntry"];
+                    "application/json": components["schemas"]["AuditPage"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
@@ -41327,6 +41934,12 @@ export interface operations {
                 actor_id?: string;
                 /** @description `true` lists only the security-critical set; `false` or absent lists everything. */
                 critical?: boolean;
+                /**
+                 * @description (P5-REFINE-6, C-1088) `false` leaves out the platform's own events (actor `system`) and
+                 *     answers how many with `hidden_system`; absent or `true` lists them (the default for API
+                 *     callers; the dashboard sends `false`).
+                 */
+                include_system?: boolean;
             };
             header?: never;
             path: {
@@ -41342,7 +41955,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_AuditEntry"];
+                    "application/json": components["schemas"]["AuditPage"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */

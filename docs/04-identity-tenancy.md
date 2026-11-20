@@ -1306,6 +1306,17 @@ record and authority).
   the token.
 - Seat cap: if `organizations.settings.max_members` is set, active members +
   pending invitations must stay ≤ cap (422 `member_limit_reached`).
+- (phase 5, P5-REFINE-6, D-418, C-1069, SEC-140) **Invitation links in the dashboard.** The link
+  is a password: the token is stored only hashed and cannot be read back. It is in plaintext only
+  in the response of the call that made it, to an organization owner or admin of that
+  invitation's organization: the `201` of the create (`link`), and `POST /v1/invitations/{id}/link`,
+  which **re-issues** it (a new token replaces the old one, which stops working at once; the expiry
+  is reset to 7 days; `Cache-Control: no-store`). `POST /v1/invitations/{id}/resend` re-issues and
+  e-mails it, and is `409 mail_disabled` when the instance's mail is log-only. Both are audited
+  (`invitation.link`, `invitation.resend`: the invitation id and e-mail, never the token), limited
+  to 20 per organization per hour, and refused (409 `invitation_not_pending`) for an accepted,
+  cancelled or expired invitation. A link is no use to anyone but the invited person: acceptance
+  still needs a signed-in user whose verified e-mail equals the invitation's.
 
 ## Workspace access by e-mail (phase 5, P5-UX-5, D-325, SEC-128)
 

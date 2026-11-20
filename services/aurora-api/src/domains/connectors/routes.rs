@@ -90,10 +90,16 @@ async fn list_connectors(
     responses((status = 200, body = ConnectorAvailabilityList), (status = 401, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn connector_availability(
-    _c: Caller,
+    c: Caller,
     State(s): State<AppState>,
 ) -> Result<Json<ConnectorAvailabilityList>, ApiError> {
-    Ok(Json(admin::availability(&s).await?))
+    // (C-1068) Only the wording of `next_step` depends on the caller; nothing is authorized here.
+    let viewer = if aurora_db::repo::connectors::administers_an_org(&s.pool, c.user_id).await? {
+        super::readiness::Viewer::OrgAdmin
+    } else {
+        super::readiness::Viewer::Other
+    };
+    Ok(Json(admin::availability(&s, viewer).await?))
 }
 
 /// Connector icon (`image/png`).

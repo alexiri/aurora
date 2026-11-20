@@ -8,6 +8,7 @@ pub mod lifecycle;
 pub mod registry;
 mod routes;
 pub mod scan;
+pub mod sentences;
 pub mod service;
 pub mod supersede;
 pub mod upgrade;

@@ -43,7 +43,10 @@ export function isOneClick(type: Pick<ConnectorType, "instance_setup">): boolean
 }
 
 export type ConnectorAvailability = S["ConnectorAvailability"];
+/** (C-1068) Includes `registering`: a live host announces the type, the first registration is pending. */
 export type ConnectorSetupState = S["ConnectorSetupState"];
+/** (P5-REFINE-6, C-1068) The next thing a person does about a connector. */
+export type ConnectorNextStep = S["ConnectorNextStep"];
 
 export const connectorKeys = {
   admin: ["admin", "connectors"] as const,

@@ -55,9 +55,14 @@ pub struct InviterRef {
     pub display_name: String,
 }
 
-/// An invitation. The token is never part of any response.
+/// An invitation. The token is never part of a list or a `GET`: only the `201` of the create
+/// carries the link (C-1069, SEC-140).
 #[derive(Serialize, ToSchema)]
 pub struct Invitation {
+    /// (P5-REFINE-6, C-1069, SEC-140) `<external_url>/join?token=…`, present only in the `201` of
+    /// `POST /v1/orgs/{org}/invitations` (a create, or the re-issue of a pending e-mail).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
     pub id: Uuid,
     pub org_id: Uuid,
     pub email: String,
@@ -74,6 +79,7 @@ pub struct Invitation {
 impl From<InvitationRow> for Invitation {
     fn from(r: InvitationRow) -> Self {
         Self {
+            link: None,
             id: r.id,
             org_id: r.org_id,
             email: r.email,
@@ -104,6 +110,14 @@ pub struct CreateInvitationRequest {
     /// Phase 2, RFE-012: workspaces to bind as `approver` (never `owner`).
     #[serde(default)]
     pub approver_workspace_ids: Vec<Uuid>,
+}
+
+/// (P5-REFINE-6, C-1069, SEC-140) A re-issued invitation link. The previous link no longer works.
+#[derive(Serialize, ToSchema)]
+pub struct InvitationLink {
+    /// `<external_url>/join?token=…`; shown once (`Cache-Control: no-store`).
+    pub link: String,
+    pub expires_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize, IntoParams)]
