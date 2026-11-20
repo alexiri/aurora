@@ -2247,6 +2247,13 @@ Data (add to `docs/03-data-model.md` `user_onboarding`): row `| more_controls | 
 - C-1088 **Hide system events in the audit** (P5-REFINE-6 for P5-REFINE-18 admin-10). `GET /v1/admin/audit` (and the organization's audit list) take `include_system: boolean` (default `false` in the dashboard's request; the route's default stays `true` for API callers); system events are rows whose actor is the `system`/`plugin-builtin` service actor. The response carries `hidden_system: integer` (the count left out) when `include_system=false`.
 - C-1089 **Which chat platforms a person can link** (P5-REFINE-6 for P5-REFINE-16 account-3). `GET /v1/me/chat-platforms` (any signed-in person) → `{ platforms: { kind: string, display_name: string, bot_handle: string | null, linked: boolean }[] }` — the connected integrations of the organizations the person belongs to, by kind, with the bot's handle where the connector reports one; no workspace, channel or token data.
 - C-1090 **The organization's agents** (P5-REFINE-6 for P5-REFINE-17 org-6). `GET /v1/orgs/{org}/agents` (organization owners and admins) → `{ agents: { id, name, handle, workspace: { slug, name }, kind: "hosted" | "byo", state: string, last_active_at: string | null }[] }`, paged like other org lists (`limit`, `cursor`); personal workspaces' agents are included with the workspace named from the owner's side (C-923).
+- C-1091 **A form field names the connection** (FIX-194, D-420; `09 §3.4`).
+  - **Manifest:** `connect[].fields[].store` gains `label`, allowed only in a `kind: fields` method, at most one per method, `type: text` only. Linter codes `label_field_method`, `label_field_duplicate`, `label_field_type`. Additive in contract 1; never a widening.
+  - **Connect** (`POST` of a `fields` method, new or reconnect): the value is checked like `PATCH /v1/connections/{id}` `label` (`names::clean`, 1–120 characters, no invisible formatting characters); a failure is the usual 422 field error at `/fields/<name>`, and nothing is stored. The value is stored only as the connection's `label`, never in `metadata` or credentials.
+  - **Label precedence:** the field when non-empty, else the probe's `label`, else the hook's, else the app's name. On a reconnect an empty field keeps the current label.
+  - `FormField.store` (`GET /v1/apps/{app}`, the connect plan) may be `"label"`; the dashboard prefills that field with the connection's current label on a reconnect.
+  - The builtin `ics-calendar` 1.2.0, `webhook` 1.1.0 and `caldav` 1.3.0 declare their `name` field this way, replacing the API's hard-coded rule; CalDAV's `<username> at <host>` fallback stays.
+  - Additive: no response shape changes, and an existing package behaves as before.
 
 ## Shared schemas
 
