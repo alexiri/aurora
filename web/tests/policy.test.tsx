@@ -242,11 +242,36 @@ describe("SimulationResult", () => {
         workspace: { verdict: "needs_approval", considered: [{ rule_logical_id: "r1", rule_name: "Pay", source: "hand", matched: true, reason: "host matched" }] },
       },
     };
-    render(<SimulationResult sim={sim} />);
+    render(<SimulationResult sim={sim} agentName="Dani" />);
+    expect(screen.getByTestId("sim-answer")).toHaveTextContent("Dani will ask you first. Your rule Pay asks first.");
+    expect(screen.getByTestId("sim-technical").tagName).toBe("DETAILS");
+    expect(screen.getByTestId("sim-technical")).not.toHaveAttribute("open");
     expect(screen.getByTestId("verdict")).toHaveTextContent("needs_approval");
     expect(screen.getByText("approval_required")).toBeInTheDocument();
     expect(screen.getByText(/Stripe/)).toBeInTheDocument();
     expect(screen.getByText(/Matched · Pay/)).toBeInTheDocument();
+  });
+});
+
+describe("SimulationResult sentences (workspace-1)", () => {
+  const base = { approval_parks: false, approval_timeout_clamped: false, candidates: [], winning_credential: null, guidance_code: null };
+  const trace = (name: string | null) => ({
+    organization: { verdict: null, considered: [] },
+    workspace: { verdict: null, considered: name ? [{ rule_logical_id: "r1", rule_name: name, source: "hand" as const, matched: true, reason: "host matched" }] : [] },
+  });
+  it("names the rule that blocks and says nothing will ask", () => {
+    render(<SimulationResult sim={{ ...base, verdict: "block", reason: "rule", trace: trace("Block evil.example.org") }} agentName="Dani" />);
+    const a = screen.getByTestId("sim-answer");
+    expect(a).toHaveTextContent("Blocked. Your rule Block evil.example.org stops it.");
+    expect(a).toHaveTextContent("Dani can't reach this website, and nothing will ask you first.");
+  });
+  it("blocked by default, allowed by a rule, allowed with no rule", () => {
+    const { rerender } = render(<SimulationResult sim={{ ...base, verdict: "block", reason: "default_denied", trace: trace(null) }} agentName="Dani" />);
+    expect(screen.getByTestId("sim-answer")).toHaveTextContent("Blocked. No rule allows it, and the default for sites without an account is to block.");
+    rerender(<SimulationResult sim={{ ...base, verdict: "allow", reason: "rule", trace: trace("Allow docs") }} agentName="Dani" />);
+    expect(screen.getByTestId("sim-answer")).toHaveTextContent("Allowed. Your rule Allow docs allows it.");
+    rerender(<SimulationResult sim={{ ...base, verdict: "allow", reason: null, trace: trace(null) }} agentName="Dani" />);
+    expect(screen.getByTestId("sim-answer")).toHaveTextContent("Allowed. No rule stops it, so it goes through.");
   });
 });
 

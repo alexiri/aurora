@@ -37,7 +37,7 @@ const wrap = (ui: React.ReactElement) => render(<QueryClientProvider client={new
 
 const dialog = (props: Partial<React.ComponentProps<typeof AddPeople>> = {}) =>
   wrap(<AddPeople wsId="w1" orgId="o1" workspacePath="/o/acme/w/bob" hasApprover={false} initiallyOpen {...props} />);
-const fill = (email: string) => fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: email } });
+const fill = (email: string) => fireEvent.change(screen.getByLabelText("Who"), { target: { value: email } });
 
 describe("the words", () => {
   it("says the two results in one sentence each", () => {
@@ -60,6 +60,19 @@ describe("the words", () => {
 });
 
 describe("the Add people dialog", () => {
+  it("says before the person submits that Aurora sends nothing, with the link and the role fold open", async () => {
+    dialog();
+    await screen.findByRole("radiogroup", { name: "Role" });
+    expect(screen.getByTestId("how-they-open")).toHaveTextContent("Aurora doesn't send an e-mail. The person can open this workspace at");
+    fill("carol@example.org");
+    const note = screen.getByTestId("how-they-open");
+    expect(note).toHaveTextContent("carol@example.org can open this workspace at");
+    expect(note).toHaveTextContent("/o/acme/w/bob once they sign in.");
+    expect(within(note).getByRole("button", { name: "Copy link" })).toBeInTheDocument();
+    expect(screen.getByTestId("role-fold")).toHaveAttribute("open");
+    expect(screen.getByText("Give one person access to this workspace.")).toBeInTheDocument();
+  });
+
   it("offers Member and Owner, and Approver only in a workspace that already has one", async () => {
     const { unmount } = dialog();
     const group = await screen.findByRole("radiogroup", { name: "Role" });

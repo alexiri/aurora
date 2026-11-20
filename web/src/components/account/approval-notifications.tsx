@@ -28,10 +28,16 @@ export function ApprovalNotifications({ me }: { me: Me }) {
     () => false,
   );
   const denied = useSyncExternalStore(noop, read(() => Notification.permission === "denied"), () => false);
+  // (account-1) Blocked is news only after the person asked for notifications: they just tried, or the switch is already on.
+  const wanted = useSyncExternalStore(noop, read(() => isNotifyEnabled()), () => false);
+  const [tried, setTried] = useState(false);
 
   async function toggleBrowser(on: boolean) {
     if (!on) setNotifyEnabled(false);
-    else await enableBrowserNotifications();
+    else {
+      setTried(true);
+      await enableBrowserNotifications();
+    }
     bump((n) => n + 1);
   }
 
@@ -49,7 +55,7 @@ export function ApprovalNotifications({ me }: { me: Me }) {
         <span>
           E-mail me approvals nobody is watching
           <span className="block text-xs text-muted">
-            Only the title and a link to the dashboard are sent, never a way to decide from the e-mail.
+            Only the title and a link to the dashboard are sent.
           </span>
         </span>
       </label>
@@ -88,7 +94,7 @@ export function ApprovalNotifications({ me }: { me: Me }) {
         </span>
       </label>
       {!supported ? <p className="text-xs text-muted">This browser does not support notifications.</p> : null}
-      {denied ? (
+      {denied && (tried || wanted) ? (
         <Notice tone="danger" role="status">
           Notifications are blocked for this site. Allow them in the browser settings, then try again.
         </Notice>

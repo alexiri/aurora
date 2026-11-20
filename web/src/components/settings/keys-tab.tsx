@@ -2,32 +2,50 @@
 
 import { useState, type FormEvent } from "react";
 
-import { KeyTable } from "@/components/account/key-table";
-import { SecretOnce } from "@/components/ui/secret-once";
-import { ErrorState, Loading } from "@/components/states";
+import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { DateField } from "@/components/ui/date-field";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/notice";
-import { Section } from "@/components/ui/section";
-import { cn } from "@/lib/utils";
-import {
-  accountKeys,
-  useCreateWorkspaceKey,
-  useRevokeApiKey,
-  useWorkspaceKeys,
-} from "@/lib/api/account";
+import { SecretOnce } from "@/components/ui/secret-once";
+import { SkeletonRows } from "@/components/ui/skeleton";
+import { When } from "@/components/ui/when";
+import { EmptyState } from "@/components/states";
+import { accountKeys, useCreateWorkspaceKey, useRevokeApiKey, useWorkspaceKeys, type ApiKey } from "@/lib/api/account";
 import { fieldErrors } from "@/lib/api/errors";
+import { cn } from "@/lib/utils";
 
-export function KeysTab({ wsId }: { wsId: string }) {
+/** What a key can do, as the key row says it (the API has no scopes: a key acts as its owner in the workspace). */
+export function keyCanText(workspaceName: string): string {
+  return `Can do everything you can in ${workspaceName}`;
+}
+
+/**
+ * (P5-REFINE-16, workspace-6) API keys of the workspace: what a key can do, a New API key dialog, and a revoke that asks
+ * first. The secret is shown once in `SecretOnce`.
+ */
+export function KeysTab({ wsId, workspaceName = "this workspace" }: { wsId: string; workspaceName?: string }) {
   const keys = useWorkspaceKeys(wsId);
   const create = useCreateWorkspaceKey(wsId);
   const revoke = useRevokeApiKey(accountKeys.wsKeys(wsId));
+  const [dialog, setDialog] = useState(false);
   const [name, setName] = useState("");
   const [expires, setExpires] = useState("");
   const [clientErr, setClientErr] = useState("");
   const [created, setCreated] = useState<{ secret: string; name: string } | null>(null);
+  const [target, setTarget] = useState<ApiKey | null>(null);
   const fe = create.error ? fieldErrors(create.error) : {};
+
+  const close = (open: boolean) => {
+    setDialog(open);
+    if (!open) {
+      setName("");
+      setExpires("");
+      setClientErr("");
+      create.reset();
+    }
+  };
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -43,50 +61,90 @@ export function KeysTab({ wsId }: { wsId: string }) {
     try {
       const res = await create.mutateAsync({ name: n, expires_at });
       setCreated({ secret: res.key, name: res.api_key.name });
-      setName("");
-      setExpires("");
-      create.reset();
+      close(false);
     } catch {
       // surfaced through create.error
     }
   }
 
+  const active = (keys.data?.items ?? []).filter((k) => !k.revoked_at);
   return (
-    <div className="space-y-8">
-      <Section id="wkey-create" title="Create a key" description="The key is shown once, right after you create it." card>
-        <form onSubmit={(e) => void submit(e)} noValidate className="flex flex-wrap items-start gap-x-4 gap-y-3">
-          <Field id="key-name" label="Key name" error={clientErr || fe.name}>
-            <input
-              id="key-name"
-              className={cn(inputClass, "w-64 max-w-full")}
-              value={name}
-              maxLength={80}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </Field>
-          <Field id="key-exp" label="Expires (optional)" error={fe.expires_at}>
-            <DateField id="key-exp" value={expires} onChange={setExpires} />
-          </Field>
-          <Button type="submit" disabled={create.isPending} className="sm:mt-label-offset">
-            Create key
-          </Button>
-          {create.error && Object.keys(fe).length === 0 ? (
-            <ErrorNotice error={create.error} className="basis-full" />
-          ) : null}
-        </form>
-      </Section>
-      <Section id="wkeys" title="Keys">
-        {keys.isPending ? <Loading /> : null}
-        {keys.isError ? <ErrorState error={keys.error} onRetry={() => keys.refetch()} /> : null}
-        {keys.data ? (
-          <KeyTable
-            keys={keys.data.items}
-            onRevoke={(id) => revoke.mutateAsync(id)}
-            revoking={revoke.isPending}
-            error={revoke.error}
-          />
-        ) : null}
-      </Section>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-display text-lg font-semibold text-ink">API keys</h2>
+        <Button onClick={() => setDialog(true)}>New API key</Button>
+      </div>
+      <p className="text-sm text-ink-2">
+        A key acts as you in this workspace through the Aurora API. Anyone who has it can do what you can, so keep it secret.{" "}
+        {/* The instance serves its API description at /v1/openapi.json. */}
+        <a className="text-link underline" href="/v1/openapi.json" target="_blank" rel="noreferrer">
+          API documentation
+        </a>
+      </p>
+      {keys.isPending ? <SkeletonRows rows={2} label="Loading your keys…" /> : null}
+      {keys.isError ? <ErrorState error={keys.error} onRetry={() => keys.refetch()} /> : null}
+      {keys.data && active.length === 0 ? <EmptyState title="No API keys yet" /> : null}
+      <ErrorNotice error={revoke.error} />
+      {active.length > 0 ? (
+        <ul aria-label="API keys" className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface shadow-card">
+          {active.map((k) => (
+            <li key={k.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+              <div className="min-w-0 flex-1 basis-56">
+                <p className="text-sm font-medium text-ink">{k.name}</p>
+                <p className="text-xs text-muted">
+                  {keyCanText(workspaceName)} · created <When value={k.created_at} /> ·{" "}
+                  {k.last_used_at ? (
+                    <>
+                      last used <When value={k.last_used_at} />
+                    </>
+                  ) : (
+                    "never used"
+                  )}
+                </p>
+              </div>
+              <Button variant="danger" size="sm" aria-label={`Revoke ${k.name}`} onClick={() => setTarget(k)}>
+                Revoke
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <FormDialog
+        open={dialog}
+        onOpenChange={close}
+        title="New API key"
+        description="The key is shown once, right after you create it."
+        submitLabel="Create key"
+        busy={create.isPending}
+        error={create.error && Object.keys(fe).length === 0 ? create.error : null}
+        onSubmit={(e) => void submit(e)}
+      >
+        <Field id="key-name" label="Name" error={clientErr || fe.name}>
+          <input id="key-name" className={cn(inputClass, "w-full")} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field id="key-exp" label="Expires (optional)" error={fe.expires_at}>
+          <DateField id="key-exp" value={expires} onChange={setExpires} />
+        </Field>
+      </FormDialog>
+
+      <ConfirmDialog
+        open={target !== null}
+        onOpenChange={(o) => !o && setTarget(null)}
+        title={`Revoke ${target?.name ?? "this key"}?`}
+        description="Anything using it stops working now."
+        confirmLabel="Revoke key"
+        danger
+        busy={revoke.isPending}
+        onConfirm={() => {
+          if (!target) return;
+          void revoke.mutateAsync(target.id).then(
+            () => setTarget(null),
+            () => setTarget(null),
+          );
+        }}
+      />
+
       <SecretOnce
         secret={created?.secret ?? null}
         title="Copy your new API key"

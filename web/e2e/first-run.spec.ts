@@ -81,12 +81,15 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   await nav.getByRole("link", { name: "Activity" }).click();
   await expect(page).toHaveURL(/\/activity$/);
   // The gateway batches its request log (flush every 5 s) and the pages do not poll: reload until it shows.
-  const row = page.getByRole("row").filter({ hasText: LITELLM_HOST }).first();
+  // (P5-REFINE-16) The model call is one sentence ("<agent> answered you"); its raw request is under Details.
+  const row = page.getByTestId("activity-sentences").getByRole("listitem").filter({ hasText: "answered you" }).first();
   await expect(async () => {
     await page.goto(`${base}/activity`);
     await expect(row).toBeVisible({ timeout: 4_000 });
   }).toPass({ timeout: 60_000, intervals: [1_000] });
-  await expect(row.getByText("allow", { exact: true })).toBeVisible();
+  await row.getByRole("button", { name: "Details" }).click();
+  await expect(page.getByTestId("activity-raw")).toContainText(LITELLM_HOST);
+  await expect(page.getByTestId("activity-raw")).toContainText("allow");
   await nav.getByRole("link", { name: "Overview" }).click();
   // (P5-POLISH-7) The Overview's sentence comes from real state: the agent has a key and has answered. (The guide line
   // shows on Overview only once Welcome has been seen, never on both pages.)

@@ -170,7 +170,9 @@ export const accountRoutes = {
   security: "/account/security",
   apiKeys: "/account/api-keys",
   chatPlatforms: "/account/channels",
-  /** SSH keys (P4-SSH-1): linked from Your account when `features.ssh` is on; no sidebar entry. */
+  /** Approval notifications (account-4): the browser opt-in, the e-mail switch and push devices. */
+  notifications: "/account/notifications",
+  /** SSH keys (P4-SSH-1): a rail entry on Account while `features.ssh` is on. */
   ssh: "/account/ssh",
   delete: "/account/delete",
 } as const;

@@ -41,6 +41,56 @@ const routes = {
   "GET /v1/me": () => json(200, { user: { id: "me", display_name: "Ada", email: "ada@x.io", is_instance_admin: false }, memberships: [], default_org_id: null }),
 };
 
+describe("Not signed in yet (workspace-4, C-1086)", () => {
+  it("a person whose signed_in is false shows the chip, 'added …' and Copy link; one who has signed in shows the time", async () => {
+    mockFetch({
+      ...routes,
+      "GET /v1/workspaces/w/access": () =>
+        json(200, { ...access, items: [access.items[0], { ...access.items[1], joined_at: "2026-11-20T10:00:00Z", signed_in: false }] }),
+    });
+    wrap(<AccessTab wsId="w" orgId="o" canOwn people={{ workspacePath: "/o/acme/w/dev", initiallyOpen: false }} />);
+    const cell = await screen.findByTestId("not-signed-in");
+    expect(cell).toHaveTextContent("Not signed in yet");
+    expect(cell).toHaveTextContent(/added /);
+    expect(within(cell).getByRole("button", { name: "Copy link" })).toBeInTheDocument();
+    expect(within(screen.getByTestId("access-row-me")).queryByTestId("not-signed-in")).toBeNull();
+  });
+});
+
+describe("Promotion to Owner (workspace-5)", () => {
+  it("asks only for Owner, with what an Owner can do; Approver applies at once; the select keeps the old value until Make Owner", async () => {
+    const puts: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Request | string | URL) => {
+        const req = input as Request;
+        const url = new URL(req.url, "http://localhost");
+        if (req.method === "PUT" && url.pathname.startsWith("/v1/workspaces/w/access/")) {
+          puts.push(await req.json());
+          return json(200, { ...access.items[1], role: "owner" });
+        }
+        const h = (routes as Record<string, () => Response>)[`${req.method} ${url.pathname}`];
+        return h ? h() : json(404, { error: { code: "not_found", message: "nf" } });
+      }),
+    );
+    wrap(<AccessTab wsId="w" orgId="o" canOwn />);
+    const select = (await screen.findByLabelText("Role for carol@x.io")) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "approver" } });
+    await waitFor(() => expect(puts).toEqual([{ role: "approver" }]));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.change(select, { target: { value: "owner" } });
+    const dialog = await screen.findByRole("dialog", { name: "Make Carol an Owner?" });
+    expect(within(dialog).getByText("Member now → Owner")).toBeInTheDocument();
+    for (const t of ["Add and remove people", "Change other people's roles", "Delete this workspace"]) expect(within(dialog).getByText(t)).toBeInTheDocument();
+    expect(within(dialog).getByText("You can change them back to Member at any time.")).toBeInTheDocument();
+    expect(select.value).toBe("member");
+    expect(puts).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Make Owner" }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1]).toEqual({ role: "owner" });
+  });
+});
+
 describe("People table", () => {
   it("has no menu on your own row, a menu on others, a reason on inherited access and sentence-case roles", async () => {
     mockFetch(routes);

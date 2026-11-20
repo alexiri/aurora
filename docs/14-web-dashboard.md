@@ -1364,6 +1364,20 @@ connects), `/setup-error` (missing required configuration reported by
 `/v1/instance`).
 
 ### Account (`/account/*`)
+(phase 5, P5-REFINE-16, account-1..5) **Rail:** Profile · Security · **Notifications** · **SSH keys** (only while
+`features.ssh` is on) · API keys · Chat platforms · Delete account. **Notifications** (`/account/notifications`) holds
+"Approval notifications" ("How you hear about approvals that need a decision."): the e-mail switch, the browser
+opt-in and the push devices. The red "Notifications are blocked for this site…" shows only after the person asked
+(they just turned the browser switch on and the browser refused, or the switch is on while the browser blocks); a
+browser that blocks by default shows nothing. Profile is only the profile (display name, default organization, time
+zone) with, below, the groups and roles, roles from sign-in, tour replays and appearance. **API keys** has
+**Create key**: "Create an API key" with **Name** and **Workspace** (every workspace the person is in; "The key can act
+only in this workspace."), created through the per-workspace route; the secret opens once. **SSH keys:** a pasted
+key is judged as it is typed: one `ssh-ed25519 <base64>` line is valid; anything else says "Only ed25519 keys are
+supported. Create one with ssh-keygen -t ed25519."; a private key says "That's a private key. Paste the public key
+(the file ending in .pub)." and is never sent; **Add key** stays disabled until valid (the server stays authoritative).
+**Chat platforms** naming the platform and the bot waits for a member-readable read (C-1089).
+
 Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 (personal workspace keys), (phase 5) SSH keys, chat platform links, DM defaults, delete account
 (phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`). (phase 4, P4-GRP-1) Profile
@@ -2710,6 +2724,11 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   | a rule asks | "A rule asks you first on 2 websites." |
   | a new agent | "Daneel can't use any app yet. It can reach any website." |
 
+  **Welcome's variant (P5-REFINE-16, firstday-5):** only on Welcome, "It can reach any website." reads
+  "It can reach websites; you can limit that." (**you can limit that** links to Internet access, owners
+  only) or "It can reach websites." (members). Every other sentence of the table, and every other page,
+  keeps the exact table; `reachSentence` is unchanged.
+
   The agent's summary appears on Welcome ("Daneel is your agent") and at the top of the agent's Access
   tab. The Internet access page opens with the same website sentences for the level ("Agents here can
   reach any website. Nothing asks you first."). Welcome makes no promise the summary does not show.
@@ -2726,6 +2745,36 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 - **Rules are for websites that are not accounts.** The page's two Common changes are **Ask before
   changes on a website** and **Block a website** (C-989). The first uses the words of the access choice
   on purpose: it is the same behaviour, for a site where the agent has no account to set access on.
+
+### Workspace pages (P5-REFINE-16, workspace-1..12)
+
+- **Check a request** answers in a sentence ("**Blocked.** Your rule X stops it." / "**Allowed.** …" / "**<Agent> will ask you
+  first.** …"), then one explaining line, then **Technical details** (verdict, guidance code, winning credential,
+  trace); **Check another** and **Done**.
+- **Activity** reads as sentences ("Dani answered you", "Dani called GitHub · Blocked by your rule 'X'", "Dani asked before
+  changing docs.example.org · Waiting for you in Approvals") with a time and **Details** (the raw request); filters in
+  words (Everything / Any agent / Any outcome). The request log is the **Technical view**, at Expert, stacked under 900 px.
+  A model call is one *answered* row. The live per-agent timeline (D-415) follows brief 9.
+- **Audit** is "Bob revoked the API key ci-script" with the person's, key's or app's name (never an id; "a deleted API key"
+  when gone), **Critical** (red) / **Important** (amber) / **Routine**, stacked rows; the raw event is under Details.
+- **People:** Add people says before submit that Aurora sends no e-mail and where the person opens the workspace (**Copy
+  link**); only a change **to Owner** asks ("Make Carol an Owner?", what an Owner can do, **Make Owner**), Approver and
+  Member apply at once with "Saved"; a person whose `signed_in` is false shows "Not signed in yet" with **Copy link**
+  (C-1086); "What can each role do?" is open in the Add people dialog. The role lists are `ROLE_CAN`
+  (`lib/roles-explain.ts`), shared with the organization pages.
+- **API keys:** "A key acts as you in this workspace through the Aurora API. Anyone who has it can do what you can, so keep
+  it secret." and **API documentation**; rows say "Can do everything you can in <workspace> · created … · last used …"
+  and **Revoke** asks; **New API key** opens a small dialog; the secret opens once.
+- **General** says "Saved. The workspace is now called Bob's Lab." and the switcher shows the new name at once; **Delete
+  workspace** asks for the visible name.
+- **Apps** keeps its grid of square cards with **Search apps** and the groups **Connected**, **Ready to connect**, **Needs an
+  admin first** (A to Z; empty groups not drawn); the line for an app that needs an admin is "An admin sets up <what>
+  once" (a role, never a name). **Skills** opens with what a skill is and keeps the precedence in the closed **How skills
+  combine** fold. **Approvals** shows "Nothing is waiting for you." once and an **Example** card (built from the real
+  question, never counted or sent; each answer explains itself) only while nothing is waiting.
+- **Badges:** the Approvals count in the rail (and the phone menu's dot) is read again on focus and every 30 s, counts
+  action approvals too, has screen-reader words ("2 need your attention"), is absent at zero and for people who cannot
+  decide. Overview's count and the Needs you feed rows follow brief 8 (C-1082).
 
 ### 9. First run (P5-UX-1, P5-UX-6, P5-UX-7, D-323, D-326, C-916, C-922..C-924, C-927)
 

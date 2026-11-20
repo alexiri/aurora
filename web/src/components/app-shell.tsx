@@ -5,9 +5,10 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode, type SVGProps } from "react";
 
+import { usePendingActionApprovals } from "@/lib/api/action-approvals";
 import { usePendingApprovals } from "@/lib/api/approvals";
 import { clearDrafts } from "@/components/chat/composer/drafts";
-import { logout, useMe, useResolve, useWorkspace } from "@/lib/api/queries";
+import { logout, useInstance, useMe, useResolve, useWorkspace } from "@/lib/api/queries";
 import { useAltitude } from "@/lib/altitude";
 import { useMoreControls } from "@/lib/api/use-more-controls";
 import { visibleTopics } from "@/lib/api/roles";
@@ -34,6 +35,7 @@ import { UndoToastHost } from "./ui/undo-toast";
 import {
   ActivityIcon,
   ArrowLeftIcon,
+  BellIcon,
   BotIcon,
   BookIcon,
   BuildingIcon,
@@ -203,14 +205,33 @@ function topicActive(pathname: string, href: string, topic: string): boolean {
   return topic === "overview" || topic === "workspaces" ? pathname === path : pathname === path || pathname.startsWith(`${path}/`);
 }
 
-/** Pending-count pill; the query only runs where the approvals page exists (RFE-012). */
+/**
+ * (P5-REFINE-16, badges G1, G6) How many approvals wait for the viewer: the gateway's and the action approvals, read again on
+ * focus and every 30 s (and by the approvals stream where the Approvals page is open). Zero for someone who cannot decide.
+ */
+export function useWaitingCount(wsId: string | undefined): number {
+  const role = useWorkspace(wsId).data?.my_role;
+  const canAct = role === "owner" || role === "approver";
+  const pending = usePendingApprovals(wsId ?? "", canAct, { poll: true });
+  const actions = usePendingActionApprovals(canAct && wsId ? wsId : "");
+  if (!wsId || !canAct) return 0;
+  return (pending.data?.items.length ?? 0) + (actions.data?.items.length ?? 0);
+}
+
+/** "1 needs your attention" / "2 need your attention": the words behind a badge. */
+export const attentionText = (n: number): string => (n === 1 ? "1 needs your attention" : `${n} need your attention`);
+
+/** The pending-count pill beside Approvals: no badge at zero, the words for a screen reader inside the link. */
 function PendingPill({ wsId }: { wsId: string }) {
-  const pending = usePendingApprovals(wsId);
-  const n = pending.data?.items.length ?? 0;
+  const n = useWaitingCount(wsId);
   if (n === 0) return null;
   return (
-    <span className="rounded-full bg-pending-soft px-1.5 text-label font-semibold leading-5 tabular-nums text-pending-ink">
-      {n}
+    <span
+      data-testid="approvals-badge"
+      className="rounded-full bg-pending-soft px-1.5 text-label font-semibold leading-5 tabular-nums text-pending-ink"
+    >
+      <span aria-hidden="true">{n}</span>
+      <span className="sr-only">{attentionText(n)}</span>
     </span>
   );
 }
@@ -252,19 +273,23 @@ export function WorkspaceNav({
   );
 }
 
-const ACCOUNT_LINKS: { href: string; label: string; icon: IconType }[] = [
+/** (account-4) Profile · Security · Notifications · SSH keys · API keys · Chat platforms · Delete account; SSH keys only while `features.ssh` is on. */
+export const ACCOUNT_LINKS: { href: string; label: string; icon: IconType; ssh?: boolean }[] = [
   { href: accountRoutes.profile, label: "Profile", icon: UserIcon },
   { href: accountRoutes.security, label: "Security", icon: LockIcon },
+  { href: accountRoutes.notifications, label: "Notifications", icon: BellIcon },
+  { href: accountRoutes.ssh, label: "SSH keys", icon: ServerIcon, ssh: true },
   { href: accountRoutes.apiKeys, label: "API keys", icon: KeyIcon },
   { href: accountRoutes.chatPlatforms, label: "Chat platforms", icon: LinkIcon },
   { href: accountRoutes.delete, label: "Delete account", icon: TrashIcon },
 ];
 
-function AccountNavList({ pathname }: { pathname: string }) {
+export function AccountNavList({ pathname }: { pathname: string }) {
+  const ssh = useInstance().data?.features?.ssh === true;
   return (
     <nav aria-label="Account">
       <ul className="space-y-0.5">
-        {ACCOUNT_LINKS.map((l) => (
+        {ACCOUNT_LINKS.filter((l) => !l.ssh || ssh).map((l) => (
           <NavItem key={l.href} href={l.href} label={l.label} icon={l.icon} active={pathname === l.href} />
         ))}
       </ul>
@@ -447,6 +472,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const resolvedQuery = useResolve(orgSlug, wsSlug);
   const resolved = resolvedQuery.data;
   const wsId = resolved?.workspace?.id;
+  const waiting = useWaitingCount(wsId);
   // (P5-REFINE-2, org-3) An unknown organization or workspace is a 404 *inside* the shell: the rail and switcher show the
   // viewer's real organization, never the unknown slug, and the page body is the not-found state.
   const orgQuery = useResolve(orgSlug);
@@ -493,10 +519,13 @@ export function AppShell({ children }: { children: ReactNode }) {
             <DialogPrimitive.Trigger asChild>
               <button
                 type="button"
-                aria-label="Open menu"
-                className="inline-flex size-11 items-center justify-center rounded-control text-ink hover:bg-subtle"
+                aria-label={waiting > 0 ? `Open menu, ${attentionText(waiting)}` : "Open menu"}
+                className="relative inline-flex size-11 items-center justify-center rounded-control text-ink hover:bg-subtle"
               >
                 <MenuIcon className="size-5" />
+                {waiting > 0 ? (
+                  <span data-testid="menu-dot" className="absolute right-2 top-2 size-2 rounded-full bg-pending-ink" aria-hidden="true" />
+                ) : null}
               </button>
             </DialogPrimitive.Trigger>
             <DialogPrimitive.Portal>

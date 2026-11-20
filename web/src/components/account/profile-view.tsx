@@ -1,10 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-import { ApprovalNotifications } from "@/components/account/approval-notifications";
 import { IdpRolesList } from "@/components/identity/idp-roles-list";
 import { ErrorState, Loading } from "@/components/states";
 import { ThemeSwitch } from "@/components/theme/theme-switch";
@@ -20,9 +18,8 @@ import { useMoreControls } from "@/lib/api/use-more-controls";
 import { useUpdateMe } from "@/lib/api/account";
 import { fieldErrors } from "@/lib/api/errors";
 import { usePatchOnboarding } from "@/lib/api/onboarding";
-import { useInstance, useSession, type Me } from "@/lib/api/queries";
+import { useSession, type Me } from "@/lib/api/queries";
 import { timeZones } from "@/lib/nav/landing";
-import { accountRoutes } from "@/lib/routes";
 
 const ZONES = timeZones();
 
@@ -111,7 +108,6 @@ function ProfileForm({ me }: { me: Me }) {
 
 export function ProfileView() {
   const me = useSession();
-  const sshEnabled = useInstance().data?.features?.ssh === true;
   if (me.isPending) return <Loading />;
   if (me.isError) return <ErrorState error={me.error} onRetry={() => me.refetch()} />;
   return (
@@ -119,6 +115,7 @@ export function ProfileView() {
       <Section id="profile" title="Profile" description="How you appear to other people in your organizations." card>
         <ProfileForm key={me.dataUpdatedAt} me={me.data} />
       </Section>
+      <p className="-mt-4 text-sm text-muted">Roles from sign-in, tour replays and appearance stay below.</p>
       {(me.data.groups ?? []).length > 0 || me.data.memberships.some((m) => m.status === "active" && m.effective_role !== m.role) ? (
         <Section
           id="my-groups"
@@ -149,26 +146,6 @@ export function ProfileView() {
           description="The role values your identity provider sent and what each one gives you here. Roles from the provider are changed there."
         >
           <IdpRolesList roles={me.data.idp_roles} />
-        </Section>
-      ) : null}
-      <Section
-        id="notifications"
-        title="Approval notifications"
-        description="How you hear about approvals that need a decision."
-        card
-      >
-        <ApprovalNotifications me={me.data} />
-      </Section>
-      {sshEnabled ? (
-        <Section
-          id="ssh-keys"
-          title="SSH keys"
-          description="Register the public keys you connect with, to open a shell in a hosted agent's sandbox."
-          card
-        >
-          <Link href={accountRoutes.ssh} className="font-medium text-accent-ink underline">
-            Manage your SSH keys
-          </Link>
         </Section>
       ) : null}
       <Section id="getting-started" title="Getting started" description="Replay the introduction to Aurora." card>

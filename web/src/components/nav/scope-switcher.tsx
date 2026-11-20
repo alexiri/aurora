@@ -343,6 +343,17 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
   );
   const frame = "flex min-h-11 w-full items-center gap-2.5 rounded-control border border-line bg-surface px-2.5 py-1.5";
 
+  // (firstday-2) While the session loads the card is plainly not ready: muted, no hover, no chevron, busy. Loaded, it always opens its
+  // list, even with one workspace, except for the one member who can neither switch nor create anything (below).
+  if (me.isPending) {
+    return (
+      <div data-testid="scope-switcher" aria-busy="true" aria-disabled="true" className={cn(frame, "cursor-default opacity-70")}>
+        <span className="size-7 shrink-0 animate-pulse rounded-control bg-subtle motion-reduce:animate-none" aria-hidden="true" />
+        <span className="min-w-0 flex-1 text-left text-sm text-muted">Loading workspaces…</span>
+      </div>
+    );
+  }
+
   const single = orgs.length === 1 && orgs[0]!.workspaces.length === 1 && !canCreate && !canCreateOrg && me.data !== undefined && !instanceAdmin;
   if (single) {
     return (

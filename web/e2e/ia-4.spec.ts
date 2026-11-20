@@ -86,7 +86,7 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeClean(page)).toEqual([]);
         await openRoute(page, "/o/acme/w/main/settings", scheme);
         await expect(page.getByLabel("Time zone")).toBeVisible();
-        await expect(page.getByLabel("Language agents remember in")).toBeVisible();
+        await expect(page.getByLabel("Language your agents remember in")).toBeVisible();
         await expect(page.getByLabel("BYO agent posture")).toHaveCount(0);
       });
     });
