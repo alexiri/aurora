@@ -71,9 +71,9 @@ function Tasks({ agentId }: { agentId: string }) {
   const q = usePeerTasks(agentId);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (q.data.items.length === 0) return <p className="text-sm text-ink-2">No peer tasks yet.</p>;
+  if (q.data.items.length === 0) return <p className="text-sm text-ink-2">No tasks from other agents yet.</p>;
   return (
-    <ItemList aria-label="Peer tasks">
+    <ItemList aria-label="Tasks from other agents">
       {q.data.items.map((t) => (
         <ListRow key={t.id}>
           <div className="min-w-0 flex-1 space-y-1 text-sm">
@@ -110,7 +110,7 @@ export function PeersTab({ agentId }: { agentId: string }) {
       <Section id="agent-links" title="Agent links" description="Other agents this agent may hand tasks to or accept tasks from.">
         <Links agentId={agentId} />
       </Section>
-      <Section id="peer-tasks" title="Peer tasks">
+      <Section id="peer-tasks" title="Tasks from other agents">
         <Tasks agentId={agentId} />
       </Section>
     </div>

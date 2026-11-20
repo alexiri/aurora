@@ -51,7 +51,7 @@ export function SshPage({ agentId, frozen }: { agentId: string; frozen: boolean 
   if (frozen) {
     return (
       <Notice tone="neutral" role="status">
-        This agent is frozen. SSH is unavailable while it is frozen.
+        This agent is paused. SSH is unavailable while it is paused.
       </Notice>
     );
   }

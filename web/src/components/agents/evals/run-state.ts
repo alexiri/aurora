@@ -14,7 +14,7 @@ export function startBlockedReason(
   runs: EvalRun[],
   opts: { enabledQuestions: number; frozen: boolean; now?: Date },
 ): string | null {
-  if (opts.frozen) return "This agent is frozen, so no run can start.";
+  if (opts.frozen) return "This agent is paused, so no run can start.";
   if (opts.enabledQuestions === 0) return "Add at least one question that is included in runs.";
   if (runs.some(isActive)) return "A run is in progress. Wait for it to finish or cancel it.";
   const today = utcDay(opts.now ?? new Date());

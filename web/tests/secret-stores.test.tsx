@@ -83,7 +83,7 @@ describe("Admin › Secret stores", () => {
     const list = await screen.findByRole("list", { name: "Secret stores" });
     const rows = within(list).getAllByRole("listitem");
     const helm = rows.find((r) => within(r).queryByText("helmvault"))!;
-    expect(within(helm).getByText("Set in Helm")).toBeTruthy();
+    expect(within(helm).getByText("Set by the installation")).toBeTruthy();
     expect(within(helm).getByText(/Change it in the values file/)).toBeTruthy();
     expect(within(helm).queryByRole("button")).toBeNull();
     const mine = rows.find((r) => within(r).queryByText("mine"))!;

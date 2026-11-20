@@ -23,7 +23,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page).toHaveURL(/\/admin\/platform\?tab=secret-stores$/);
         await expect(page.getByRole("heading", { name: "Platform", level: 1 })).toBeVisible();
         const list = page.getByRole("list", { name: "Secret stores" });
-        await expect(list.getByText("Set in Helm").first()).toBeVisible();
+        await expect(list.getByText("Set by the installation").first()).toBeVisible();
         await expect(list.getByRole("button", { name: "Edit team-vault" })).toBeVisible();
         await expect(list.getByRole("button", { name: "Edit vault" })).toHaveCount(0);
         await expect(page.getByText("Not answering")).toBeVisible();

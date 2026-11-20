@@ -247,6 +247,61 @@ Also check the two other owner comments carried into the briefs: workspace Apps 
 with search and the two groups (workspace-9); schedule presets start at **Every 5 minutes** with the hint
 "Schedules run at most every 5 minutes" and a custom cron that flags too-frequent as you type (schedules-2).
 
+### G. Count badges in the navigation (owner, 2026-11-20)
+
+The owner: "make sure the numerical badges of pending tasks in the menu … actually work, I think some were supposed
+to be implemented already and I don't see them working." Check **every** count badge end to end, on a real stack, as
+a person would meet them. A badge that is missing, wrong, stale or shown to someone who cannot act is **Needs changes**
+and goes back to its owner brief like any other row.
+
+**The badges, what each counts, and who owns it:**
+
+| # | Where | Counts | Shown to | Today | Owner brief |
+|---|---|---|---|---|---|
+| G1 | Workspace rail › **Approvals** | pending approvals in this workspace the viewer can decide | owners, approvers | `PendingPill` (`components/app-shell.tsx` ~:219) reads `usePendingApprovals` (`lib/api/approvals.ts:80`): **no refetch interval and no stream outside the Approvals page**, so it is likely stale; RFE-012 | 16 |
+| G2 | Workspace rail › **Overview** (and the Overview's Needs you heading) | the workspace's attention items (C-1080/C-1082: approvals, requests, broken accounts, agents that can't answer…) | whoever can act on at least one | none | 16 (data: 8) |
+| G3 | Organization area (Manage <org>) entry and its Needs you | the organization's attention items, incl. requests to set up an app (P5-POLISH-4, D-386) | org owners and admins | none in the rail (requests show only on workspace Overviews) | 17 (data: 8) |
+| G4 | **Administration**: the sidebar-foot entry, the account-menu entry, Administration › Overview in its rail | instance attention (FIX-167, D-370, C-1022) plus requests only an instance admin can resolve (chat platforms; D-417) | instance admins | `AttentionBadge` (`components/admin/attention-badge.tsx`) is mounted **only in the account menu** (`app-shell.tsx` ~:155), not on the sidebar-foot Administration entry FIX-167 described; people's requests are not counted | 18 (data: 8) |
+| G5 | Agent page: the status rail's **Needs you** (collapsed: a count on its icon) and the agent's row in the Agents list | this agent's approvals and access requests waiting for the viewer | those who can decide | a dot, no count | 11 |
+| G6 | Phone: the navigation drawer shows the same counts; the hamburger button shows a dot when anything waits | as G1–G4 | as above | not checked in review 5 | 16 (17, 18 for their entries) |
+
+**How to check each badge (every row, both themes, 1256 and 390 px):**
+1. **Zero:** with nothing waiting, no badge (never "0").
+2. **Appears:** create the item it counts — an approval (use the LLM mock's tool-calling scenario so an agent asks
+   before a change, e.g. an "Ask before changes" app on the agent; if the mock cannot produce one, create a pending
+   approval through the API/fixture and say how in the report), an ask to an admin (Bob asks for Jira; Carol asks for a
+   chat platform), a broken account, an agent with no AI key. The badge appears **without a reload** within the
+   feed's live or polling interval (state the measured delay), with the right number.
+3. **Matches its list:** the number equals the items the badge's page lists for that viewer.
+4. **Goes down:** decide the approval / resolve or decline the request in another tab or as another person; the
+   badge decreases and disappears at zero **without a reload**.
+5. **Right people only:** a member who cannot act sees no badge (G1: a plain member; G3: a member; G4: a non-admin);
+   a workspace the viewer can't open never contributes.
+6. **Accessible:** the badge has screen-reader text ("2 need your attention"), sits inside the link (one tab stop), uses
+   the amber attention style only because the viewer can act (D-384), and fits at 390 px without wrapping the label.
+7. **Promised earlier:** for G1 (RFE-012) and G4 (FIX-167 Part B: "the Administration count"), record whether they
+   worked at all before the P5-REFINE changes (check `git log` for their merges and the old specs); if a promised badge
+   never worked, say so in the report so the owner knows it was a regression or a gap.
+
+Record each badge as a row of the registry (`G1`…`G6`) with screenshots before and after each step. **Send back** to
+the owner brief; when the owner brief has already merged and its lane closed, the Orchestrator opens a FIX for it.
+
+### H. The tests moved with the UI (owner, 2026-11-20)
+
+The owner: "I don't want a ton of broken tests because a button was renamed and the tests look for the old label."
+Every brief carries the section "Tests move with the UI". Check, for the whole set, as registry rows `H1`…`H5`:
+- **H1** master's GitHub CI is green on the merge of every P5-REFINE brief (`gh run list --branch master`); any red run
+  caused by a test that still expected old UI is a send-back to the brief that caused it (list the run ids).
+- **H2** the nightly / production Playwright project (`scripts/e2e/*.sh`, `--project production`) passes on your
+  throwaway cluster for the specs the completion reports listed as "nightly only" (run them; report failures).
+- **H3** no test was skipped, marked `fixme`, deleted or loosened to accept both old and new words across the set:
+  `git log -p <first P5-REFINE merge>..HEAD -- web/tests web/e2e scripts/e2e services crates | rg "\.skip\(|fixme|test\.only|^-\s*(it|test)\("`
+  and review each hit against the completion reports; an unexplained one is Needs changes.
+- **H4** no test still expects a retired word: `rg -n -i "Freeze|Unfreeze|Triggers|Evals|Behaviour|What moved|Ask alice|OAuth client|BYO" web/tests web/e2e scripts/e2e`
+  (and the other retired words of D-407's table); every hit is either a deliberate negative assertion ("never shows
+  Freeze") or a send-back.
+- **H5** every completion report has its "tests changed / removed / commands run" list (the brief's section item 5).
+
 ## Out of scope
 
 - New proposals. Ideas beyond the mockups go in a short "Further ideas" list in the report, for the owner.
@@ -276,6 +331,41 @@ with search and the two groups (workspace-9); schedule presets start at **Every 
 
 No new product tests. For a direct fix (Scope 7), add the targeted vitest or mocked Playwright spec for it.
 Run heavy commands only through `/home/alex/orca/workspaces/aurora/heavy.sh`. GitHub CI is the full gate.
+
+## Tests move with the UI (owner, 2026-11-20 — binding)
+
+The owner: "Make sure the briefs not only change the website, but also the tests that test it! I don't want a ton of
+broken tests because a button was renamed and the tests look for the old label." (P5-REFINE-1 merged with old labels
+in tests, and master's CI broke until the CI Watcher fixed it in `ee7bfa0d`.) So, in **every commit** of this brief:
+
+1. **Find every test that sees what you change.** Before committing a change to visible text, a label, an
+   `aria-label`, a role, a heading, a route or `?tab=` id, a page's structure, an API field, an error code or message,
+   search all test trees for the **old** strings, selectors and paths, and for the components you touched:
+   - `web/tests/**` (vitest + Testing Library);
+   - `web/e2e/**` (Playwright: the mocked default project **and** the `production` project that `scripts/e2e/*.sh`
+     run against a real stack — `first-run.sh`, `kind.sh`, `files.sh`, `ssh.sh`, `channels.sh`, `approvals-park.sh`…);
+   - `scripts/e2e/*.sh` themselves (they grep pages and call routes);
+   - Rust tests that assert a message, an error code or a response shape (`services/*/tests/**`, `crates/*/src/**`
+     `#[cfg(test)]`, `services/aurora-api/tests/it/**`);
+   - fixtures and mocks (`web/e2e/fixtures/**`, `web/tests/**/mocks*`, MSW handlers, `web/openapi.json` snapshots).
+   A plain `rg -n "<old text>|<old selector>" web/tests web/e2e scripts/e2e services crates` per change is the minimum.
+2. **Update them in the same commit as the change.** New expectations use the new words exactly as the mockup shows
+   them. Prefer `getByRole(…, { name })` or a `data-testid` over raw text where the text is not the point of the test;
+   where the words are the point (they are the fix), assert the new words. Never loosen an assertion so that both the
+   old and the new label pass, never `.skip`/`test.fixme`/delete a test to get green; a test is removed only when the
+   feature it covers is removed, and the completion report names it and why.
+3. **Run what you touched, plus everything that references it.** Through `heavy.sh`: every vitest file you changed
+   **and** every vitest file that renders a component you changed; every Playwright spec (mocked project) that visits a
+   page you changed. **Exception to the targeted-tests rule for this set (owner, 2026-11-20):** a commit that renames
+   or restructures shared UI (a primitive, the app shell, the rail, the agent page, a label used on several pages) runs
+   the **whole** web vitest suite once (`pnpm --dir web vitest run`, through `heavy.sh`) before handing over. Production
+   specs (`--project production`) can't run in a lane without a real stack: update them by reading, and list them in
+   the completion report so the nightly / P5-REFINE-20 runs them.
+4. **New behaviour gets new tests** (the brief's Tests section); old tests are **kept and updated**, not replaced.
+5. **The completion report lists** every test file changed (and why), every test removed (and the removed feature),
+   the commands run with their results, and the production specs that only the nightly will run.
+6. A merge that turns master's CI red because a test still expects old UI is a send-back to this lane, not the CI
+   Watcher's job.
 
 ## Docs to update
 

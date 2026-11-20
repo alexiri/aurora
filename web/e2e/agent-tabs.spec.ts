@@ -12,17 +12,17 @@ import { CANVAS, overflow, type Scheme } from "./support/open";
 /** Page id → the section that shows it (docs/14: the section is derived from the page). */
 const PAGES: [string, string][] = [
   ["chat", "Chat"],
-  ["instructions", "Behaviour"],
-  ["memory", "Behaviour"],
-  ["skills", "Behaviour"],
-  ["schedules", "Triggers"],
-  ["webhooks", "Triggers"],
-  ["peers", "Triggers"],
-  ["channels", "Triggers"],
+  ["instructions", "Instructions"],
+  ["memory", "Instructions"],
+  ["skills", "Instructions"],
+  ["schedules", "Automations"],
+  ["webhooks", "Automations"],
+  ["peers", "Automations"],
+  ["channels", "Automations"],
   ["computer", "Computer"],
   ["previews", "Computer"],
   ["terminal", "Computer"],
-  ["access", "Access"],
+  ["access", "Apps & access"],
 ];
 
 /** The shared mock plus the terminal socket, and the Access tab's grants (empty) the shared mock does not serve. */
@@ -64,7 +64,7 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
           await page.goto(`/o/acme/w/main/agents/daneel?tab=${tab}`);
           await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
           const sections = page.getByRole("tablist", { name: "Agent sections" });
-          if (section === "Behaviour" || section === "Access") {
+          if (section === "Instructions" || section === "Apps & access") {
             // (P5-POLISH-6, D-380) Behaviour and Access open from the Agent actions menu: no section tab is selected and
             // the page carries its own heading.
             await expect(page.getByRole("heading", { level: 2, name: section }), `${tab}: its page heading`).toBeVisible();
@@ -105,12 +105,12 @@ test.describe("agent page width", () => {
     await page.goto("/o/acme/w/main/agents/daneel");
     const sections = page.getByRole("tablist", { name: "Agent sections" });
     // (P5-POLISH-6, D-380) Three section tabs; Behaviour and Access are in the Agent actions menu.
-    await expect(sections.getByRole("tab")).toHaveText(["Chat", "Triggers", "Computer"]);
+    await expect(sections.getByRole("tab")).toHaveText(["Chat", "Automations", "Computer"]);
     await expect(sections.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
-    await sections.getByRole("tab", { name: "Triggers" }).click();
+    await sections.getByRole("tab", { name: "Automations" }).click();
     await expect(page).toHaveURL(/tab=schedules/);
-    await expect(page.getByRole("tablist", { name: "Triggers pages" }).getByRole("tab")).toHaveText(["Schedules", "Webhooks", "Channels", "Peers"]);
-    await page.getByRole("tablist", { name: "Triggers pages" }).getByRole("tab", { name: "Peers" }).click();
+    await expect(page.getByRole("tablist", { name: "Automations pages" }).getByRole("tab")).toHaveText(["Schedules", "Webhooks", "Channels", "Other agents"]);
+    await page.getByRole("tablist", { name: "Automations pages" }).getByRole("tab", { name: "Other agents" }).click();
     await expect(page).toHaveURL(/tab=peers/);
   });
 });

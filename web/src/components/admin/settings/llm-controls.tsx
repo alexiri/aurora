@@ -284,7 +284,7 @@ export function EndpointsControl({
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-ink">{e.id}</span>
-            <LockPill owner="Set in Helm" />
+            <LockPill owner="Set by the installation" />
           </div>
           <p className="text-xs text-ink-2">{kindLabel(String(v.provider ?? ""))}</p>
           {hostOf(v.base_url) ? <p className="break-all text-xs text-ink-2">{hostOf(v.base_url)}</p> : null}

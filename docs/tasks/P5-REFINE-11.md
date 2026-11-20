@@ -306,6 +306,13 @@ Words are the mockup's unless noted. "Matches" always means both themes at 1256 
     header and the Settings menu reads **Pause / Paused / Resume**. The strings come from P5-REFINE-1; this item checks
     none is left on the pages this brief edits.
 
+11. **Needs-you counts on the agent (owner, 2026-11-20; P5-REFINE-20 row G5).** The owner reported the navigation's
+    count badges don't work. The status rail's **Needs you** shows a count (not only a dot) on its icon when collapsed
+    and in its heading when open: this agent's approvals and access requests waiting for the viewer; the agent's row in
+    the Agents list shows the same count. Live from the approvals stream the page already opens. Same rules as
+    P5-REFINE-16 item 19 (no badge at zero, only for those who can decide, screen-reader text, fits at 390 px), with a
+    vitest and a mocked Playwright spec where the count drops after deciding.
+
 ## Out of scope
 
 - Settings page contents (instructions, memory, skills, tests, new agent, Other agents body): **P5-REFINE-12**.
@@ -368,6 +375,41 @@ Targeted only. Heavy commands through `heavy.sh`.
   - New chat and Rename, Stop keeps the partial text (after P5-REFINE-7, mocked events);
   - the phone opens the conversation, the list one tap back.
 - Update the existing specs that clicked the "…" or the Behaviour/Access tabs.
+
+## Tests move with the UI (owner, 2026-11-20 — binding)
+
+The owner: "Make sure the briefs not only change the website, but also the tests that test it! I don't want a ton of
+broken tests because a button was renamed and the tests look for the old label." (P5-REFINE-1 merged with old labels
+in tests, and master's CI broke until the CI Watcher fixed it in `ee7bfa0d`.) So, in **every commit** of this brief:
+
+1. **Find every test that sees what you change.** Before committing a change to visible text, a label, an
+   `aria-label`, a role, a heading, a route or `?tab=` id, a page's structure, an API field, an error code or message,
+   search all test trees for the **old** strings, selectors and paths, and for the components you touched:
+   - `web/tests/**` (vitest + Testing Library);
+   - `web/e2e/**` (Playwright: the mocked default project **and** the `production` project that `scripts/e2e/*.sh`
+     run against a real stack — `first-run.sh`, `kind.sh`, `files.sh`, `ssh.sh`, `channels.sh`, `approvals-park.sh`…);
+   - `scripts/e2e/*.sh` themselves (they grep pages and call routes);
+   - Rust tests that assert a message, an error code or a response shape (`services/*/tests/**`, `crates/*/src/**`
+     `#[cfg(test)]`, `services/aurora-api/tests/it/**`);
+   - fixtures and mocks (`web/e2e/fixtures/**`, `web/tests/**/mocks*`, MSW handlers, `web/openapi.json` snapshots).
+   A plain `rg -n "<old text>|<old selector>" web/tests web/e2e scripts/e2e services crates` per change is the minimum.
+2. **Update them in the same commit as the change.** New expectations use the new words exactly as the mockup shows
+   them. Prefer `getByRole(…, { name })` or a `data-testid` over raw text where the text is not the point of the test;
+   where the words are the point (they are the fix), assert the new words. Never loosen an assertion so that both the
+   old and the new label pass, never `.skip`/`test.fixme`/delete a test to get green; a test is removed only when the
+   feature it covers is removed, and the completion report names it and why.
+3. **Run what you touched, plus everything that references it.** Through `heavy.sh`: every vitest file you changed
+   **and** every vitest file that renders a component you changed; every Playwright spec (mocked project) that visits a
+   page you changed. **Exception to the targeted-tests rule for this set (owner, 2026-11-20):** a commit that renames
+   or restructures shared UI (a primitive, the app shell, the rail, the agent page, a label used on several pages) runs
+   the **whole** web vitest suite once (`pnpm --dir web vitest run`, through `heavy.sh`) before handing over. Production
+   specs (`--project production`) can't run in a lane without a real stack: update them by reading, and list them in
+   the completion report so the nightly / P5-REFINE-20 runs them.
+4. **New behaviour gets new tests** (the brief's Tests section); old tests are **kept and updated**, not replaced.
+5. **The completion report lists** every test file changed (and why), every test removed (and the removed feature),
+   the commands run with their results, and the production specs that only the nightly will run.
+6. A merge that turns master's CI red because a test still expects old UI is a send-back to this lane, not the CI
+   Watcher's job.
 
 ## Docs to update
 

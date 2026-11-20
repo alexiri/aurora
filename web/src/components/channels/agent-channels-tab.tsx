@@ -105,7 +105,7 @@ function AttachForm({ agentId, orgId }: { agentId: string; orgId?: string }) {
   return (
     <form className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" onSubmit={submit} aria-busy={attach.isPending}>
       <h3 className="font-display text-base font-semibold text-ink">
-        {usable.length === 1 ? `Attach this agent to ${usable[0]!.connector_name}` : "Attach to an integration"}
+        {usable.length === 1 ? `Attach this agent to ${usable[0]!.connector_name}` : "Attach to a chat platform"}
       </h3>
       <div className="space-y-1.5">
         <label htmlFor="att-int" className="block text-sm font-medium text-ink">
@@ -207,7 +207,7 @@ function PresenceRow({ agentId, p, connector }: { agentId: string; p: Presence; 
       <ConfirmDialog
         open={detaching}
         onOpenChange={setDetaching}
-        title="Detach this agent from the chat integration?"
+        title="Detach this agent from the chat platform?"
         description={`The agent stops answering in ${p.tenant_label} (${p.mode} identity). Conversations stay; you can attach it again later.`}
         confirmLabel="Detach"
         danger

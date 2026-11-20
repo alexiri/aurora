@@ -88,7 +88,7 @@ export function ByoPanel({
         <Field
           id="byo-posture"
           label="Who may create BYO agents"
-          hint={`Options below the instance floor (${b.floor}) are not offered. Workspaces can tighten further.${postureLocked ? " Enforced by instance." : ""}`}
+          hint={`Options below the instance floor (${b.floor}) are not offered. Workspaces can restrict further.${postureLocked ? " Enforced by instance." : ""}`}
           error={errorText(issuesUnder(issues, "/byo/posture"))}
         >
           <select

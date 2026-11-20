@@ -226,8 +226,8 @@ describe("ConnectorsAdminView", () => {
       "POST /v1/admin/connectors": () => json(201, { connector: { ...pending, status: "awaiting_registration", manifest: null }, token: "aun_once" }),
     });
     wrap(<ConnectorsAdminView />);
-    fireEvent.click(await screen.findByRole("button", { name: "Add connector" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Self-hosted connector (advanced)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add chat platform" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Self-hosted chat platform host (advanced)" }));
     fireEvent.change(await screen.findByLabelText("Connector id"), { target: { value: "slack" } });
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Slack" } });
     fireEvent.click(screen.getByRole("button", { name: "Provision" }));
@@ -245,7 +245,7 @@ describe("ConnectorsAdminView", () => {
     wrap(<ConnectorsAdminView />);
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("Integrations still use");
+    expect((await screen.findByRole("alert")).textContent).toContain("Chat platforms are still connected");
   });
 });
 
@@ -465,7 +465,7 @@ describe("AccountChannelsView", () => {
       "DELETE /v1/me/channel-links/l1": () => json(204, null),
     });
     wrap(<AccountChannelsView />);
-    const select = await screen.findByLabelText("Default agent for direct messages");
+    const select = await screen.findByLabelText("Agent that answers direct messages");
     await waitFor(() => expect(within(select).getAllByRole("option").length).toBe(2));
     fireEvent.change(select, { target: { value: "a1" } });
     expect((await screen.findByRole("alert")).textContent).toContain("cannot reach that agent");

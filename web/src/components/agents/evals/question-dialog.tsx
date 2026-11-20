@@ -111,7 +111,7 @@ export function QuestionDialog({
         <p className="text-xs text-muted">
           {question
             ? "The kind cannot be changed. Delete the question and add it again to change it."
-            : "Number and text answers are checked exactly. Judged answers are read by the judge model against your criteria."}
+            : "Number and text answers are checked exactly. Graded answers are read by the grader model against your criteria."}
         </p>
       </div>
 
@@ -131,7 +131,7 @@ export function QuestionDialog({
         </Field>
       ) : null}
       {draft.kind === "judged" ? (
-        <Field id="evq-criteria" label="Criteria" error={err.criteria} hint={`${charCount(draft.criteria)} of ${EVAL_CRITERIA_CHARS} characters. What a good answer contains; the judge sees this and the answer.`}>
+        <Field id="evq-criteria" label="Criteria" error={err.criteria} hint={`${charCount(draft.criteria)} of ${EVAL_CRITERIA_CHARS} characters. What a good answer contains; the grader sees this and the answer.`}>
           <textarea id="evq-criteria" className={inputClass} rows={3} value={draft.criteria} onChange={(e) => set("criteria", e.target.value)} />
         </Field>
       ) : null}

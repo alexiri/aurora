@@ -25,18 +25,18 @@ const app = (over: Record<string, unknown> = {}) =>
   }) as never;
 
 describe("apps: one status line and the button that follows it", () => {
-  it("says Ready, Connected (by account) and Needs <Name> first, and hides apps that are switched off", () => {
+  it("says Ready, Connected (by account) and Needs an admin first, and hides apps that are switched off", () => {
     expect(appStatus([app()])).toMatchObject({ kind: "ready", line: "Ready to connect" });
     expect(appStatus([app({ credential_free: true })]).line).toBe("Ready · no sign-in needed");
     expect(appStatus([app({ connection_count: 1, accounts: [{ id: "1", name: "acme-bot", agent_ids: [] }] })]).line).toBe("Connected · acme-bot");
     expect(appStatus([app({ connection_count: 2 })]).line).toBe("Connected · 2 accounts");
     const needs = app({ readiness: { state: "needs_admin", needs: ["oauth_client"], who_can: { action: "set_up", role: "org_admin", people: [{ name: "Alice Admin" }], you_can: false }, requested: { by_me: false, count: 0 } } });
-    expect(appStatus([needs])).toMatchObject({ kind: "needs_admin", line: "Needs Alice Admin first", firstName: "Alice", askedByMe: false });
+    expect(appStatus([needs])).toMatchObject({ kind: "needs_admin", line: "Needs an admin first", askedByMe: false });
     expect(isSwitchedOff([app({ readiness: { state: "needs_admin", needs: [] } })])).toBe(true);
     expect(isSwitchedOff([needs])).toBe(false);
   });
 
-  it("offers Connect, Connect another, or Ask <First name> (then Asked and Undo)", async () => {
+  it("offers Connect, Connect another, or Ask an admin (then Asked and Undo)", async () => {
     const posts: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -63,7 +63,7 @@ describe("apps: one status line and the button that follows it", () => {
     expect(screen.getByRole("button", { name: "Connect another Linear" })).toBeInTheDocument();
     expect(screen.queryByText("Switched off")).toBeNull();
     expect(screen.queryByText(/0 connections/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Ask Alice/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Ask an admin/ }));
     await vi.waitFor(() => expect(posts).toEqual(["/v1/workspaces/w1/apps/gdrive/setup-request"]));
   });
 });

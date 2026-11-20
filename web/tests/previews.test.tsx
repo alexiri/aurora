@@ -62,7 +62,8 @@ describe("PreviewsTab", () => {
   it("shows the frozen notice and hides row actions", async () => {
     mockFetch({ "GET /v1/agents/a1/previews": () => json(200, { shares: [share] }) });
     wrap(<PreviewsTab agentId="a1" frozen={true} />);
-    await screen.findByText(/frozen/i);
+    // (P5-REFINE-1) "frozen" is "paused" in the product's words.
+    await screen.findByText(/This agent is paused/);
     expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
   });

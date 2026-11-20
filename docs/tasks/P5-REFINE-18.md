@@ -390,6 +390,16 @@ Administration
     the allowed-private list open an address range to agents, apps and sign-in. Add only ranges you trust."); red appears only when
     a limit is actually being hit.
 
+### 18. The Administration count badge, everywhere it is entered (owner, 2026-11-20; P5-REFINE-20 row G4)
+
+The owner reported the navigation's count badges don't work. FIX-167 Part B (D-370, C-1022) promised "the
+Administration count", but `AttentionBadge` (`components/admin/attention-badge.tsx`) is mounted **only in the account
+menu** (`components/app-shell.tsx` ~:155). Show it on **every** Administration entry: the sidebar-foot Administration
+link, the account-menu entry, and Overview in the Administration rail. It counts the instance attention items plus the
+requests only an instance admin can resolve (C-1080/C-1082, P5-REFINE-8, D-417), for instance admins only, live (the
+existing refetch interval is fine; also on window focus). Same rules as P5-REFINE-16 item 19, with vitest for each
+mount point and a mocked Playwright spec where the count drops after an item is resolved, without a reload.
+
 ## Out of scope
 
 - Policy preset UI on pages outside Administration and the two organization pages; workspace Internet access.
@@ -436,6 +446,41 @@ never `localhost:4000` or the aurora-dev cluster.
   failing key-origin save; chat platforms; app review; add endpoint; audit toggle; decline with message; checklist with and without
   a key and Open chat; e-mail field; users; storage.
 - Update specs that read the old rail labels, "Not now", "Saved." at the top, "Verdict", "Show role values".
+
+## Tests move with the UI (owner, 2026-11-20 — binding)
+
+The owner: "Make sure the briefs not only change the website, but also the tests that test it! I don't want a ton of
+broken tests because a button was renamed and the tests look for the old label." (P5-REFINE-1 merged with old labels
+in tests, and master's CI broke until the CI Watcher fixed it in `ee7bfa0d`.) So, in **every commit** of this brief:
+
+1. **Find every test that sees what you change.** Before committing a change to visible text, a label, an
+   `aria-label`, a role, a heading, a route or `?tab=` id, a page's structure, an API field, an error code or message,
+   search all test trees for the **old** strings, selectors and paths, and for the components you touched:
+   - `web/tests/**` (vitest + Testing Library);
+   - `web/e2e/**` (Playwright: the mocked default project **and** the `production` project that `scripts/e2e/*.sh`
+     run against a real stack — `first-run.sh`, `kind.sh`, `files.sh`, `ssh.sh`, `channels.sh`, `approvals-park.sh`…);
+   - `scripts/e2e/*.sh` themselves (they grep pages and call routes);
+   - Rust tests that assert a message, an error code or a response shape (`services/*/tests/**`, `crates/*/src/**`
+     `#[cfg(test)]`, `services/aurora-api/tests/it/**`);
+   - fixtures and mocks (`web/e2e/fixtures/**`, `web/tests/**/mocks*`, MSW handlers, `web/openapi.json` snapshots).
+   A plain `rg -n "<old text>|<old selector>" web/tests web/e2e scripts/e2e services crates` per change is the minimum.
+2. **Update them in the same commit as the change.** New expectations use the new words exactly as the mockup shows
+   them. Prefer `getByRole(…, { name })` or a `data-testid` over raw text where the text is not the point of the test;
+   where the words are the point (they are the fix), assert the new words. Never loosen an assertion so that both the
+   old and the new label pass, never `.skip`/`test.fixme`/delete a test to get green; a test is removed only when the
+   feature it covers is removed, and the completion report names it and why.
+3. **Run what you touched, plus everything that references it.** Through `heavy.sh`: every vitest file you changed
+   **and** every vitest file that renders a component you changed; every Playwright spec (mocked project) that visits a
+   page you changed. **Exception to the targeted-tests rule for this set (owner, 2026-11-20):** a commit that renames
+   or restructures shared UI (a primitive, the app shell, the rail, the agent page, a label used on several pages) runs
+   the **whole** web vitest suite once (`pnpm --dir web vitest run`, through `heavy.sh`) before handing over. Production
+   specs (`--project production`) can't run in a lane without a real stack: update them by reading, and list them in
+   the completion report so the nightly / P5-REFINE-20 runs them.
+4. **New behaviour gets new tests** (the brief's Tests section); old tests are **kept and updated**, not replaced.
+5. **The completion report lists** every test file changed (and why), every test removed (and the removed feature),
+   the commands run with their results, and the production specs that only the nightly will run.
+6. A merge that turns master's CI red because a test still expects old UI is a send-back to this lane, not the CI
+   Watcher's job.
 
 ## Docs to update
 

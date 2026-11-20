@@ -113,7 +113,7 @@ function open(extra: Record<string, Handler> = {}) {
 async function pick(endpoint: string) {
   await screen.findByText(/Bedrock EU/);
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "k" } });
-  fireEvent.change(screen.getByLabelText("Provider endpoint"), { target: { value: endpoint } });
+  fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: endpoint } });
 }
 
 describe("LLM key form per auth mode (C-811)", () => {

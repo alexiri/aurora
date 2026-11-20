@@ -13,7 +13,7 @@ import { useAppInstances, useApps, type AppSummary } from "@/lib/api/apps";
 import { cn } from "@/lib/utils";
 
 import { DeploymentStep } from "../connect-dialog";
-import { firstName, needsReason, signInProvider } from "./logic";
+import { needsReason, signInProvider } from "./logic";
 
 export type AppChoice = { kind: "app"; appId: string; instanceId?: string } | { kind: "website" };
 
@@ -195,7 +195,6 @@ export function AppStep({
               const app = hostedOf(p);
               const r = app.readiness!;
               const who = r.who_can ?? null;
-              const name = firstName(who?.people[0]?.name);
               const provider = signInProvider(app);
               const shared = r.needs?.[0] === "oauth_client" && seenProviders.has(provider);
               if (r.needs?.[0] === "oauth_client") seenProviders.add(provider);
@@ -211,11 +210,11 @@ export function AppStep({
                       <span className="flex items-start gap-2">
                         <span aria-hidden="true" className="mt-1.5 size-2 shrink-0 rounded-full bg-accent" />
                         <span>
-                          Asked{asked[app.app_id] === "now" ? " just now" : ""}. You&apos;ll get a notice when it&apos;s ready, and {agentName}&apos;s Access tab will offer it.
+                          Asked{asked[app.app_id] === "now" ? " just now" : ""}. You&apos;ll get a notice when it&apos;s ready, and {agentName}&apos;s Apps &amp; access tab will offer it.
                         </span>
                       </span>
                     ) : (
-                      needsReason(r.needs, name ? (who?.people[0]?.name ?? name) : null, provider, shared)
+                      needsReason(r.needs, provider, shared)
                     )
                   }
                 >
@@ -239,7 +238,7 @@ export function AppStep({
                       disabled={busy}
                       onClick={() => ask.mutate(app.app_id, { onSuccess: () => setAsked((s) => ({ ...s, [app.app_id]: "now" })) })}
                     >
-                      {name ? `Ask ${name}` : "Ask an admin"}
+                      Ask an admin
                     </Button>
                   )}
                 </Row>

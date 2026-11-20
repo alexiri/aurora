@@ -336,7 +336,7 @@ function healthLabel(s: StoreView): string {
 }
 
 function SourceBadge({ s }: { s: StoreView }) {
-  if (s.source === "helm") return <LockPill owner="Set in Helm" />;
+  if (s.source === "helm") return <LockPill owner="Set by the installation" />;
   if (s.source === "builtin") return <Badge>Built in</Badge>;
   return <Badge tone="accent">Dashboard</Badge>;
 }

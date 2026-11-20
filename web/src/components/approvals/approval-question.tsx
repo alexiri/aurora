@@ -173,7 +173,7 @@ export function AlwaysAllowedNote({ agentName, agentHandle, action, appName, als
       {appName ? ` in ${appName}` : ""}.
       {alsoApproved > 0 ? ` ${alsoApproved} other waiting ${alsoApproved === 1 ? "request" : "requests"} of the same kind went ahead too.` : ""} Change this on{" "}
       <Link href={accessHref} className="font-medium text-link underline">
-        {agentName}&apos;s Access tab
+        {agentName}&apos;s Apps &amp; access tab
       </Link>
       .
     </p>

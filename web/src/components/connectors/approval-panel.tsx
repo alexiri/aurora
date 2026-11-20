@@ -18,7 +18,7 @@ export function ApprovalPanel({ c }: { c: ConnectorAdmin }) {
       <h4 className="font-medium">{c.update_pending ? "Update awaiting approval" : "Manifest awaiting approval"}</h4>
       {c.update_pending ? (
         <p>
-          {c.pending_version ? `Version ${c.pending_version} adds what is listed below. ` : ""}The connector keeps running at the level you approved; only what is new waits for you.
+          {c.pending_version ? `Version ${c.pending_version} adds what is listed below. ` : ""}The chat platform keeps running at the level you approved; only what is new waits for you.
         </p>
       ) : null}
       {c.widening.length ? (

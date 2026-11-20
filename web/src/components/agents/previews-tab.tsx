@@ -40,7 +40,7 @@ const STATUS_WORD: Record<string, string> = {
   waking: "Waking",
   not_listening: "Not listening",
   paused: "Paused",
-  frozen: "Frozen",
+  frozen: "Paused",
 };
 
 /** The status word is part of the chip text, never colour alone. */
@@ -329,7 +329,7 @@ export function PreviewsTab({ agentId, frozen }: { agentId: string; frozen: bool
     >
       {frozen ? (
         <Notice tone="pending" role="status">
-          This agent is frozen: its shares are kept but paused, and nothing can be woken or started.
+          This agent is paused: its shares are kept but paused, and nothing can be woken or started.
         </Notice>
       ) : null}
       {adding ? <ShareDialog agentId={agentId} onDone={() => setAdding(false)} /> : null}

@@ -110,7 +110,7 @@ for (const scheme of ["light", "dark"] as const) {
       await page.getByRole("complementary", { name: "Sidebar" }).getByRole("button", { name: /Ada Lovelace/ }).click();
       const menu = page.getByRole("menu");
       await expect(menu).toContainText("ada@example.test");
-      await expect(menu.getByRole("menuitem")).toHaveText(["Your account", "Administration", "Show me around", "What moved", "Sign out"]);
+      await expect(menu.getByRole("menuitem")).toHaveText(["Your account", "Administration", "Show me around", "Sign out"]);
     });
 
     test("Welcome says 'This is your workspace in <org>'", async ({ page }) => {

@@ -55,7 +55,7 @@ function Organizations() {
 export function AdminInternet() {
   return (
     <div className="max-w-page space-y-8">
-      <PageHeader title="Internet access" description="Which websites agents can reach. Organizations and workspaces can only tighten what you set here." className="mb-2" />
+      <PageHeader title="Internet access" description="Which websites agents can reach. Organizations and workspaces can only restrict further what you set here." className="mb-2" />
       <GovernanceFields part="internet" />
       <Organizations />
     </div>

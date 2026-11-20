@@ -66,7 +66,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(dialog.getByText("Carol@Example.org will have access as Member after they first sign in.")).toBeVisible();
         await expect(dialog.getByText("Aurora does not e-mail them. Send them this link:")).toBeVisible();
         await expect(dialog.getByText(/\/o\/acme\/w\/main$/)).toBeVisible();
-        await expect(dialog.getByText(/They also need to be invited to Acme Labs\. Ask Ada Lovelace or Alan Turing \(organization owners and admins\)\./)).toBeVisible();
+        await expect(dialog.getByText(/They also need to be invited to Acme Labs\. Ask an organization admin\./)).toBeVisible();
         await check(page);
         await dialog.getByRole("button", { name: "Done" }).click();
         const list = page.getByRole("list", { name: "Waiting for first sign-in" });

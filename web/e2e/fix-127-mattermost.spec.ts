@@ -16,7 +16,7 @@ test("journey: add Mattermost with zero typed fields, connect it picking a team,
   const mock = await openMattermost(page, "/admin/connectors", "light");
 
   // Instance: one click from the choose step, nothing typed.
-  await page.getByRole("button", { name: "Add connector" }).click();
+  await page.getByRole("button", { name: "Add chat platform" }).click();
   await page.getByRole("button", { name: "Add Mattermost" }).click();
   await page.getByRole("heading", { name: "Mattermost" }).first().waitFor();
   const added = mock.calls.find((c) => c.key === "POST /v1/admin/connectors");

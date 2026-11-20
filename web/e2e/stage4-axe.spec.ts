@@ -93,7 +93,7 @@ for (const scheme of ["light", "dark"] as const) {
   // The tabs that show the real built-in package icons (AppIcon), with the icons loaded.
   test.describe(`${scheme} theme, Apps & accounts tabs`, () => {
     for (const path of ["/o/acme/w/main/apps", "/o/acme/apps?tab=accounts"]) {
-      for (const tab of path.includes("/w/main") ? ["Accounts", "Apps"] : ["Accounts", "Apps", "OAuth clients", "Self-hosted apps"]) {
+      for (const tab of path.includes("/w/main") ? ["Accounts", "Apps"] : ["Accounts", "Apps", "Sign-in apps", "Self-hosted apps"]) {
         test(`${path} › ${tab}`, async ({ page }) => {
           await page.setViewportSize({ width: 1280, height: 900 });
           await openRoute(page, path, scheme);

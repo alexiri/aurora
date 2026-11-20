@@ -88,13 +88,12 @@ pub async fn apply<'e, E: PgExecutor<'e>>(
         None => (false, None),
     };
     Ok(sqlx::query_as(
-        // A new row starts with the notices of the column default seen (the 2026-11 renames: a
-        // person created after the release never saw the old pages), plus the one sent.
+        // A new row starts with only the notice sent (D-407: the 2026-11 renames notice is gone, so
+        // nothing is seeded; rows that already carry `renames-2026-11` keep it).
         "INSERT INTO user_onboarding
             (user_id, welcome_seen, guide_dismissed, tour_completed_at, notices_seen)
          VALUES ($1, COALESCE($2, false), COALESCE($3, '{}'), $5,
-            CASE WHEN $6::text IS NULL OR $6 = ANY (ARRAY['renames-2026-11'])
-                 THEN ARRAY['renames-2026-11'] ELSE ARRAY['renames-2026-11', $6::text] END)
+            CASE WHEN $6::text IS NULL THEN ARRAY[]::text[] ELSE ARRAY[$6::text] END)
          ON CONFLICT (user_id) DO UPDATE SET
             welcome_seen = COALESCE($2, user_onboarding.welcome_seen),
             guide_dismissed = COALESCE($3, user_onboarding.guide_dismissed),
