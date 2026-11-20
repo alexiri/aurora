@@ -4,6 +4,7 @@
 // ssh, the certificate download, the host key and what works. Hosted agents only, on an instance with `ssh.enabled`; the
 // API re-checks `can_use`, BYO and freeze on every request. P4-SSH-2 adds the sessions list (C-793).
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { CopyBlock } from "@/components/account/ssh-copy";
@@ -14,6 +15,7 @@ import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
+import { sshKeysHref } from "@/lib/back-link";
 import { accountRoutes } from "@/lib/routes";
 import {
   nextHourAt,
@@ -59,6 +61,9 @@ export function SshPage({ agentId, frozen }: { agentId: string; frozen: boolean 
 }
 
 function SshContent({ agentId }: { agentId: string }) {
+  // (P5-REFINE-2, org-3) The Account page offers "← Back to <Agent>": it needs to know where this page is.
+  const here = usePathname();
+  const keysHref = here.startsWith("/o/") ? sshKeysHref(here) : accountRoutes.ssh;
   const facts = useSshFacts();
   const keys = useSshKeys();
   const sessions = useAgentSshSessions(agentId);
@@ -97,7 +102,7 @@ function SshContent({ agentId }: { agentId: string }) {
               <li className="space-y-2">
                 <p>
                   <span className="font-medium text-ink">1. Add your key</span> on{" "}
-                  <Link href={accountRoutes.ssh} className="text-accent-ink underline">
+                  <Link href={keysHref} className="text-accent-ink underline">
                     Account › SSH keys
                   </Link>
                   .
@@ -105,7 +110,7 @@ function SshContent({ agentId }: { agentId: string }) {
                 {myKeys.length === 0 ? (
                   <Notice tone="pending" role="status">
                     You have no SSH key yet.{" "}
-                    <Link href={accountRoutes.ssh} className="font-medium underline">
+                    <Link href={keysHref} className="font-medium underline">
                       Add one under Account › SSH keys
                     </Link>{" "}
                     to get a certificate.

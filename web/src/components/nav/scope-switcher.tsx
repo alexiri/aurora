@@ -8,6 +8,7 @@ import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
 import { ArrowLeftIcon, ArrowRightIcon, CheckIcon, ChevronsUpDownIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useMe, useResolve, useWorkspaces } from "@/lib/api/queries";
+import { lastScope, readRecent, writeRecent } from "@/lib/nav/recent-scopes";
 import { orgRoutes, topicHref, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { workspaceDisplayName } from "@/lib/workspace-name";
@@ -34,25 +35,7 @@ interface OrgItem {
 
 const roleLabel = (r: string) => (r ? r.charAt(0).toUpperCase() + r.slice(1) : "");
 
-/* Last-used order, per person, in this browser only (the API has no "recently used"). */
-const recentKey = (userId: string | undefined) => `aurora.recent-scopes:${userId ?? "anon"}`;
-function readRecent(userId: string | undefined): string[] {
-  try {
-    const raw = window.localStorage.getItem(recentKey(userId));
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-function writeRecent(userId: string | undefined, key: string) {
-  try {
-    const next = [key, ...readRecent(userId).filter((k) => k !== key)].slice(0, 50);
-    window.localStorage.setItem(recentKey(userId), JSON.stringify(next));
-  } catch {
-    // Storage is blocked or full: the list keeps its default order.
-  }
-}
+/* Last-used order, per person, in this browser only (the API has no "recently used"): `lib/nav/recent-scopes`. */
 
 function Chip({ name, tintKey, square }: { name: string; tintKey?: string; square?: boolean }) {
   return (
@@ -316,18 +299,37 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
 
   // ---- the button ----
   const onWorkspace = orgSlug !== undefined && wsSlug !== undefined;
+  // (P5-REFINE-2, org-3) Pages outside an organization (Account) keep the last visited workspace instead of "Choose a workspace".
+  const last = orgSlug === undefined ? lastScope(viewer?.id, me.data?.memberships) : undefined;
   const first = onWorkspace
     ? currentWs
       ? label(currentWs)
       : (resolved.data?.workspace?.name ?? wsSlug)
     : orgSlug
       ? (current?.name ?? resolved.data?.org.name ?? orgSlug)
-      : "Choose a workspace";
-  const second = onWorkspace ? (current?.name ?? resolved.data?.org.name ?? orgSlug) : orgSlug ? "Organization" : undefined;
+      : last
+        ? (last.wsName ?? last.orgName)
+        : "Choose a workspace";
+  const second = onWorkspace
+    ? (current?.name ?? resolved.data?.org.name ?? orgSlug)
+    : orgSlug
+      ? "Organization"
+      : last
+        ? last.wsName
+          ? last.orgName
+          : "Organization"
+        : undefined;
+  const chipSlug = orgSlug ?? last?.orgSlug;
   const face = (
     <>
-      {first && orgSlug ? <Chip name={onWorkspace && currentWs ? chipName(currentWs) : first} tintKey={onWorkspace ? wsSlug : orgSlug} square={!onWorkspace} /> : null}
-      {first && orgSlug ? " " : null}
+      {first && chipSlug ? (
+        <Chip
+          name={onWorkspace && currentWs ? chipName(currentWs) : first}
+          tintKey={onWorkspace ? wsSlug : (last?.wsSlug ?? chipSlug)}
+          square={!onWorkspace && !last?.wsSlug}
+        />
+      ) : null}
+      {first && chipSlug ? " " : null}
       <span className="min-w-0 flex-1 text-left">
         <span className="block truncate text-sm font-semibold text-ink">{first}</span>
         {second ? <span className="block truncate text-xs text-muted">{second}</span> : null}

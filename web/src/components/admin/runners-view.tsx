@@ -17,6 +17,7 @@ import { Select } from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clockTime } from "@/lib/chat/layout";
+import { TechnicalDetails } from "@/components/ui/technical-details";
 
 // FIX-025 (C-586): instance admins see each runner and its recent start failures, so a start
 // that failed (`sandbox_start_failed`, `supervisor_unreachable`, …) is explained without kubectl.
@@ -319,18 +320,17 @@ function StartFailures({ runnerId }: { runnerId: string }) {
         </tbody>
       </DataTable>
       {q.data.items.some((f) => f.events.length > 0) ? (
-        <details className="mt-2 text-sm">
-          <summary className="cursor-pointer text-muted">Cluster events</summary>
+        <TechnicalDetails admin title="Cluster events" className="mt-2">
           <ul className="mt-1 space-y-1">
             {q.data.items.flatMap((f) =>
               f.events.map((e, i) => (
-                <li key={`${f.id}-${i}`} className="break-words font-mono text-xs text-ink-2">
+                <li key={`${f.id}-${i}`} className="break-words">
                   {e}
                 </li>
               )),
             )}
           </ul>
-        </details>
+        </TechnicalDetails>
       ) : null}
       <StartDiagnostics agentId={agent ?? ""} open={agent !== null} onOpenChange={(v) => !v && setAgent(null)} />
     </div>
