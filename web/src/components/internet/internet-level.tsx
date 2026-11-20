@@ -89,66 +89,66 @@ function ReadOnlyRules({ rules }: { rules: PublishedInternetAccess["rules"] }) {
   );
 }
 
-function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }) {
+/** (org-14) "History of internet rules": a page section, one row per published version, who changed what, Roll back. */
+function HistorySection({ scope, description }: { scope: PolicyScope; description: string }) {
   const gens = usePolicyGenerations(scope, true);
   const rollback = useRollback(scope);
   // Rollback replaces the draft: it carries the draft revision this list showed (409 otherwise).
   const draftRevision = gens.data?.items.find((g) => g.status === "draft")?.draft_revision ?? undefined;
   const [target, setTarget] = useState<number | null>(null);
+  const rows = gens.data?.items.filter((g) => g.status !== "draft") ?? [];
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title="History of changes" className="max-h-[90vh] overflow-y-auto">
-        {gens.isPending ? <Loading /> : null}
-        {gens.isError ? <ErrorState error={gens.error} /> : null}
-        {rollback.isError ? <ErrorState error={rollback.error} /> : null}
-        <ul className="space-y-2">
-          {gens.data?.items
-            .filter((g) => g.status !== "draft")
-            .map((g) => (
-              <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line p-2.5 text-sm text-ink">
-                <span className="flex min-w-0 items-center gap-3">
-                  <Avatar name={g.actor?.display_name ?? g.published_by?.display_name ?? "?"} tintKey={g.actor?.display_name ?? g.id} size={32} />
-                  <span className="min-w-0">
+    <Section id="internet-history" title="History of internet rules" description={description}>
+      {gens.isPending ? <Loading /> : null}
+      {gens.isError ? <ErrorState error={gens.error} /> : null}
+      {rollback.isError ? <ErrorState error={rollback.error} /> : null}
+      {rows.length > 0 ? (
+        <ul className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface shadow-card">
+          {rows.map((g) => (
+            <li key={g.id} className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-ink">
+              <span className="flex min-w-0 items-center gap-3">
+                <Avatar name={g.actor?.display_name ?? g.published_by?.display_name ?? "?"} tintKey={g.actor?.display_name ?? g.id} size={32} />
+                <span className="min-w-0">
                   {/* (org-14, C-1087) Who changed what, in a sentence from the generation's change list. */}
-                  <span className="block font-medium">{historySentence(g)}</span>
+                  <span className="block break-words font-medium">{historySentence(g)}</span>
                   <span className="block text-xs text-ink-2">
                     {g.published_at ? formatWhen(g.published_at) : formatWhen(g.created_at)}
                     {g.status === "published" ? " · current" : ""}
                   </span>
-                  </span>
                 </span>
-                {g.status === "published" ? (
-                  <Badge tone="accent">Current</Badge>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={rollback.isPending || draftRevision === undefined}
-                    aria-label={`Roll back to version ${g.number}`}
-                    onClick={() => setTarget(g.number)}
-                  >
-                    Roll back to this
-                  </Button>
-                )}
-              </li>
-            ))}
+              </span>
+              {g.status === "published" ? (
+                <Badge tone="accent">Current</Badge>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={rollback.isPending || draftRevision === undefined}
+                  aria-label={`Roll back to version ${g.number}`}
+                  onClick={() => setTarget(g.number)}
+                >
+                  Roll back to this
+                </Button>
+              )}
+            </li>
+          ))}
         </ul>
-        <ConfirmDialog
-          open={target !== null}
-          onOpenChange={(o) => {
-            if (!o) setTarget(null);
-          }}
-          title="Roll back to this version?"
-          description="Rules added since stop applying now."
-          confirmLabel="Roll back"
-          busy={rollback.isPending}
-          onConfirm={() => {
-            if (target === null || draftRevision === undefined) return;
-            rollback.mutate({ generation: target, expectRevision: draftRevision }, { onSuccess: onClose });
-          }}
-        />
-      </DialogContent>
-    </Dialog>
+      ) : null}
+      <ConfirmDialog
+        open={target !== null}
+        onOpenChange={(o) => {
+          if (!o) setTarget(null);
+        }}
+        title="Roll back to this version?"
+        description="Rules added since stop applying now."
+        confirmLabel="Roll back"
+        busy={rollback.isPending}
+        onConfirm={() => {
+          if (target === null || draftRevision === undefined) return;
+          rollback.mutate({ generation: target, expectRevision: draftRevision }, { onSuccess: () => setTarget(null) });
+        }}
+      />
+    </Section>
   );
 }
 
@@ -308,7 +308,6 @@ export function InternetLevel(p: InternetLevelProps) {
   const wsSecrets = useSecrets(workspace ? { kind: "workspace", id: p.scope.id } : { kind: "organization", id: p.orgId }, p.canEdit);
   const orgSecrets = useSecrets({ kind: "organization", id: p.orgId }, p.canEdit && workspace);
   const [editing, setEditing] = useState<{ index: number | null; rule: ReturnType<typeof newRule> } | null>(null);
-  const [history, setHistory] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [confirmBroad, setConfirmBroad] = useState(false);
   const [partial, setPartial] = useState<string | null>(null);
@@ -435,9 +434,6 @@ export function InternetLevel(p: InternetLevelProps) {
           // (P5-REFINE-17, org-8) The organization's page is two groups: Your rules and Set above you.
           <span data-testid="internet-summary">What agents in {p.orgName ?? "the organization"} may reach.</span>
         ),
-        <Button variant="outline" size="sm" onClick={() => setHistory(true)}>
-          {workspace ? "History of changes" : "History"}
-        </Button>,
       )}
 
       {ed.stale ? (
@@ -658,7 +654,12 @@ export function InternetLevel(p: InternetLevelProps) {
           }}
         />
       ) : null}
-      {history ? <History scope={p.scope} onClose={() => setHistory(false)} /> : null}
+      {p.canEdit ? (
+        <HistorySection
+          scope={p.scope}
+          description={workspace ? "Each change to what agents here may reach." : `Each change to what agents in ${p.orgName ?? "the organization"} may reach.`}
+        />
+      ) : null}
     </div>
   );
 }
