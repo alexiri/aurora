@@ -204,9 +204,13 @@ export function StatusRail({
               <PartLabel>Need</PartLabel>
               <Tip>Needs you</Tip>
               {status.needs.length > 0 ? (
-                <AttentionChip actionId="status-rail-needs" aria-hidden="true" className="absolute -right-1 -top-1 px-1.5 tabular-nums">
-                  {status.needs.length}
-                </AttentionChip>
+                // The count is drawn by CSS (`data-count`), not text: the button's visible text stays "Need", which its accessible
+                // name ("Needs you: 2 approvals waiting") contains (WCAG 2.5.3 label in name).
+                <span
+                  aria-hidden="true"
+                  data-count={status.needs.length}
+                  className="absolute -right-1 -top-1 inline-flex items-center rounded-full bg-pending-soft px-1.5 py-0.5 text-label font-medium leading-4 tabular-nums text-pending-ink after:content-[attr(data-count)]"
+                />
               ) : null}
             </button>
           </PopoverTrigger>

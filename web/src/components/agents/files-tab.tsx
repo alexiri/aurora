@@ -182,7 +182,7 @@ function FilesBrowser({ agentId, agentName, onOpenInstructions }: { agentId: str
   };
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 max-w-full space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <Breadcrumb
           label="Folder path"

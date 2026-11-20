@@ -62,11 +62,11 @@ function NameCell({ entry, onOpen }: { entry: FileEntry; onOpen: (e: FileEntry) 
               e.preventDefault();
               onOpen(entry);
             }}
-            className="break-all font-medium text-ink hover:underline">
+            className="break-all font-medium text-ink [overflow-wrap:anywhere] hover:underline">
             {entry.name}
           </Link>
         ) : (
-          <button type="button" onClick={() => onOpen(entry)} className="break-all text-left font-medium text-ink hover:underline">
+          <button type="button" onClick={() => onOpen(entry)} className="min-w-0 max-w-full break-all text-left font-medium text-ink [overflow-wrap:anywhere] hover:underline">
             {entry.name}
           </button>
         )}
