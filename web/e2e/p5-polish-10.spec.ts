@@ -187,7 +187,9 @@ for (const scheme of ["light", "dark"] as const) {
         await waiting.getByRole("link", { name: "Acme tracker", exact: true }).click();
         await expect(page).toHaveURL(new RegExp(`/admin/apps/packages/${UPLOADED}$`));
         await expect(page.getByRole("heading", { name: /Acme tracker/, level: 1 })).toBeVisible();
-        // Sections are open, words not codes, Approve enabled at once.
+        // (P5-REFINE-18 #8) The summary and Approve come first; the sections sit in the closed Technical details, open inside.
+        await expect(page.getByRole("heading", { name: "What this app does" })).toBeVisible();
+        await page.getByText("Technical details", { exact: true }).click();
         await expect(page.getByRole("button", { name: /Egress per hook/ })).toHaveAttribute("aria-expanded", "true");
         await expect(page.getByText("your server's address")).toBeVisible();
         await expect(page.getByText("First install", { exact: true })).toBeVisible();
