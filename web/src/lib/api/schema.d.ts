@@ -10441,7 +10441,7 @@ export interface components {
             /** @description The bot to message, when the connector reported one. */
             bot_handle?: string | null;
             display_name: string;
-            /** @description The connector type, e.g. `mattermost`. */
+            /** @description The connector type (its `type_id`). */
             kind: string;
             /** @description The person has linked their chat account there. */
             linked: boolean;
@@ -10616,13 +10616,28 @@ export interface components {
             id: string;
             /** @description `hosted` | `byo`. */
             kind: string;
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Its newest turn's creation time; `null` when it never ran.
+             */
             last_active_at?: string | null;
             name: string;
-            /** @description `active` | `paused` (the agent, its workspace or the organization is paused). */
-            state: string;
+            /**
+             * @description (D-425) The state the agent's header shows, most urgent first: `paused` (it, its workspace
+             *     or the organization is paused) · `needs_key` (a hosted agent cannot answer: no usable AI
+             *     key or model, C-1062) · `failed` (its computer failed to start) · `working` (a turn or a
+             *     busy process runs) · `starting` · `asleep` (its computer is off) · `ready`. A BYO agent is
+             *     `paused`, `working` or `ready`.
+             */
+            state: components["schemas"]["OrgAgentState"];
             workspace: components["schemas"]["OrgAgentWorkspace"];
         };
+        /**
+         * @description (C-1090, D-425) The words "Paused", "Needs a key", "Can't start", "Working", "Starting its
+         *     computer…", "Asleep", "Ready" are the dashboard's.
+         * @enum {string}
+         */
+        OrgAgentState: "paused" | "needs_key" | "failed" | "working" | "starting" | "asleep" | "ready";
         /** @description `organizations.governance.agent_tokens` (no column: `governance` is `jsonb`). */
         OrgAgentTokens: {
             /**
@@ -10633,8 +10648,11 @@ export interface components {
             max_age_days: number | null;
         };
         OrgAgentWorkspace: {
+            /** Format: uuid */
+            id: string;
             /** @description A personal workspace is named after its person (C-923). */
             name: string;
+            personal_of?: components["schemas"]["PersonalOf"] | null;
             slug: string;
         };
         /** @description An egress allow-list entry in policy host/path pattern syntax. */
@@ -11658,11 +11676,20 @@ export interface components {
                 id: string;
                 /** @description `hosted` | `byo`. */
                 kind: string;
-                /** Format: date-time */
+                /**
+                 * Format: date-time
+                 * @description Its newest turn's creation time; `null` when it never ran.
+                 */
                 last_active_at?: string | null;
                 name: string;
-                /** @description `active` | `paused` (the agent, its workspace or the organization is paused). */
-                state: string;
+                /**
+                 * @description (D-425) The state the agent's header shows, most urgent first: `paused` (it, its workspace
+                 *     or the organization is paused) · `needs_key` (a hosted agent cannot answer: no usable AI
+                 *     key or model, C-1062) · `failed` (its computer failed to start) · `working` (a turn or a
+                 *     busy process runs) · `starting` · `asleep` (its computer is off) · `ready`. A BYO agent is
+                 *     `paused`, `working` or `ready`.
+                 */
+                state: components["schemas"]["OrgAgentState"];
                 workspace: components["schemas"]["OrgAgentWorkspace"];
             }[];
             next_cursor?: string | null;

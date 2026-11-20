@@ -77,6 +77,24 @@ pub fn decide_reason(granted: usize, usable: usize, has_default: bool) -> Option
     }
 }
 
+/// (P5-REFINE-6, C-1090, D-425) Why a hosted agent cannot answer, without the caller's fix: the
+/// same facts as [`compute`] (the dispatcher's [`model::readiness`]; key listings are cached per
+/// endpoint, so a list fetches each endpoint's at most once). `None` = it can answer.
+pub async fn reason_of(
+    s: &AppState,
+    conn: &mut sqlx::PgConnection,
+    agent: uuid::Uuid,
+    org: uuid::Uuid,
+    workspace: uuid::Uuid,
+    harness: Option<&str>,
+) -> Result<Option<AnswerReason>, ApiError> {
+    let harness = harness.map_or_else(|| s.ops().hosted.default_harness.clone(), str::to_owned);
+    let llm = s.llm();
+    let r = model::readiness(s, &llm, conn, agent, org, workspace, &harness).await?;
+    let usable = r.keys.iter().filter(|k| k.reason.is_none()).count();
+    Ok(decide_reason(r.keys.len(), usable, r.default.is_some()))
+}
+
 /// What the caller can do and what exists (the inputs of [`choose_fix`]).
 pub struct FixInput {
     /// The caller owns the agent's workspace (the grant route's own check, `require_own`).

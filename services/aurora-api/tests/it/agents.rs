@@ -412,6 +412,30 @@ async fn an_organizations_agents_for_its_owners_and_admins() {
     let ws2 = h.workspace(org).await;
     let a1 = h.hosted_agent(org, ws1, "alpha").await;
     let a2 = h.byo_agent(org, ws2, "bravo", "Bravo").await;
+    // (D-425) One with a running turn (working, last used now), one idle (ready).
+    let a3 = h.byo_agent(org, ws2, "charlie", "Charlie").await;
+    let a4 = h.byo_agent(org, ws2, "delta", "Delta").await;
+    let conv = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'api',$1::text, now())",
+    )
+    .bind(conv)
+    .bind(a3)
+    .bind(ws2)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_label, text)
+         VALUES ($1,$2,$3,'turn','running','{}','system','s','hi')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(conv)
+    .bind(a3)
+    .execute(h.pool())
+    .await
+    .unwrap();
     let other = h.org().await;
     let ows = h.workspace(other).await;
     h.hosted_agent(other, ows, "elsewhere").await;
@@ -433,14 +457,20 @@ async fn an_organizations_agents_for_its_owners_and_admins() {
     let (s, v) = h.call_tok(&at, Method::GET, &uri, None).await;
     assert_eq!(s, 200, "{v}");
     let items = v["items"].as_array().unwrap();
-    assert_eq!(items.len(), 2, "{v}");
+    assert_eq!(items.len(), 4, "{v}");
     let find = |id: Uuid| items.iter().find(|a| a["id"] == json!(id)).unwrap();
     assert_eq!(find(a1)["kind"], "hosted");
-    assert_eq!(find(a1)["state"], "active");
+    // (D-425) A hosted agent with no AI key cannot answer: the header's "Needs a key".
+    assert_eq!(find(a1)["state"], "needs_key", "{v}");
     assert!(find(a1)["last_active_at"].is_null());
     assert!(find(a1)["workspace"]["slug"].is_string());
+    assert_eq!(find(a1)["workspace"]["id"], json!(ws1));
+    assert!(find(a1)["workspace"]["personal_of"].is_null());
     assert_eq!(find(a2)["kind"], "byo");
     assert_eq!(find(a2)["state"], "paused");
+    assert_eq!(find(a3)["state"], "working");
+    assert!(find(a3)["last_active_at"].is_string(), "{v}");
+    assert_eq!(find(a4)["state"], "ready");
     // Paged.
     let (_, p1) = h
         .call_tok(&at, Method::GET, &format!("{uri}?limit=1"), None)

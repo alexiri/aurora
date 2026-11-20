@@ -143,8 +143,14 @@ export function useResendInvitation(orgId: string) {
 
 export type OrgAgent = components["schemas"]["OrgAgent"];
 
-/** (P5-REFINE-6, C-1090) Every agent of the organization (owners and admins). */
-export function useOrgAgents(orgId: string | undefined) {
+export type OrgAgentState = components["schemas"]["OrgAgentState"];
+
+/**
+ * (P5-REFINE-6, C-1090, D-425) Every agent of the organization (owners and admins) in one route, with the header's
+ * state (`paused`, `needs_key`, `failed`, `working`, `starting`, `asleep`, `ready`) and its last use. Replaces the
+ * per-workspace fan-out of `components/org/org-agents-list.tsx` (P5-REFINE-17).
+ */
+export function useOrganizationAgents(orgId: string | undefined) {
   return useQuery({
     queryKey: ["orgs", orgId, "agents"] as const,
     queryFn: () =>

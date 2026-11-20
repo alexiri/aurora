@@ -52544,7 +52544,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "The connector type, e.g. `mattermost`."
+            "description": "The connector type (its `type_id`)."
           },
           "linked": {
             "type": "boolean",
@@ -53055,19 +53055,33 @@
               "string",
               "null"
             ],
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Its newest turn's creation time; `null` when it never ran."
           },
           "name": {
             "type": "string"
           },
           "state": {
-            "type": "string",
-            "description": "`active` | `paused` (the agent, its workspace or the organization is paused)."
+            "$ref": "#/components/schemas/OrgAgentState",
+            "description": "(D-425) The state the agent's header shows, most urgent first: `paused` (it, its workspace\nor the organization is paused) · `needs_key` (a hosted agent cannot answer: no usable AI\nkey or model, C-1062) · `failed` (its computer failed to start) · `working` (a turn or a\nbusy process runs) · `starting` · `asleep` (its computer is off) · `ready`. A BYO agent is\n`paused`, `working` or `ready`."
           },
           "workspace": {
             "$ref": "#/components/schemas/OrgAgentWorkspace"
           }
         }
+      },
+      "OrgAgentState": {
+        "type": "string",
+        "description": "(C-1090, D-425) The words \"Paused\", \"Needs a key\", \"Can't start\", \"Working\", \"Starting its\ncomputer…\", \"Asleep\", \"Ready\" are the dashboard's.",
+        "enum": [
+          "paused",
+          "needs_key",
+          "failed",
+          "working",
+          "starting",
+          "asleep",
+          "ready"
+        ]
       },
       "OrgAgentTokens": {
         "type": "object",
@@ -53088,13 +53102,29 @@
       "OrgAgentWorkspace": {
         "type": "object",
         "required": [
+          "id",
           "slug",
           "name"
         ],
         "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
           "name": {
             "type": "string",
             "description": "A personal workspace is named after its person (C-923)."
+          },
+          "personal_of": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PersonalOf",
+                "description": "The person whose personal workspace it is; `null` for a team workspace."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "slug": {
             "type": "string"
@@ -56335,14 +56365,15 @@
                     "string",
                     "null"
                   ],
-                  "format": "date-time"
+                  "format": "date-time",
+                  "description": "Its newest turn's creation time; `null` when it never ran."
                 },
                 "name": {
                   "type": "string"
                 },
                 "state": {
-                  "type": "string",
-                  "description": "`active` | `paused` (the agent, its workspace or the organization is paused)."
+                  "$ref": "#/components/schemas/OrgAgentState",
+                  "description": "(D-425) The state the agent's header shows, most urgent first: `paused` (it, its workspace\nor the organization is paused) · `needs_key` (a hosted agent cannot answer: no usable AI\nkey or model, C-1062) · `failed` (its computer failed to start) · `working` (a turn or a\nbusy process runs) · `starting` · `asleep` (its computer is off) · `ready`. A BYO agent is\n`paused`, `working` or `ready`."
                 },
                 "workspace": {
                   "$ref": "#/components/schemas/OrgAgentWorkspace"
