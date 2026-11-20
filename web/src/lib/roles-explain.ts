@@ -5,7 +5,24 @@
  */
 export type OrgRoleName = "member" | "admin" | "owner";
 
-export const ROLE_CAN: Record<"org", Record<OrgRoleName, { label: string; summary: string; can: string[] }>> = {
+export type WorkspaceRoleName = "member" | "approver" | "owner";
+export interface RoleCan {
+  label: string;
+  summary: string;
+  can: string[];
+}
+
+export const ROLE_CAN: { org: Record<OrgRoleName, RoleCan>; workspace: Record<WorkspaceRoleName, RoleCan> } = {
+  // (P5-REFINE-16 workspace-5) The workspace's own roles. `can` of Owner lists only what an owner adds to an approver's.
+  workspace: {
+    member: { label: "Member", summary: "Chats with agents; cannot decide approvals.", can: ["Chat with the agents", "See what they can use"] },
+    approver: { label: "Approver", summary: "Chats with agents and decides approvals.", can: ["Everything a member can do", "Decide approvals"] },
+    owner: {
+      label: "Owner",
+      summary: "Manages the workspace, its access and settings, and decides approvals.",
+      can: ["Add and remove people", "Change other people's roles", "Delete this workspace"],
+    },
+  },
   org: {
     member: {
       label: "Member",

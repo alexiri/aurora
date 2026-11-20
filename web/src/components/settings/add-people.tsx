@@ -18,6 +18,7 @@ import {
   useRemovePending,
   type AddByEmailResponse,
 } from "@/lib/api/pending-access";
+import { ROLE_CAN } from "@/lib/roles-explain";
 import { copyLabel, useCopy } from "@/lib/use-copy";
 import { askSentence, whoCanFromContacts } from "@/lib/who-can";
 
@@ -164,6 +165,17 @@ export function AddPeople({
                 <Segmented label="Role" value={role} options={options} onChange={setRole} />
                 <p className="text-sm text-ink-2">{roleHelp}</p>
               </div>
+              {/* (rec 16) Open here: the first owner never learns Approver exists otherwise. */}
+              <details open className="text-sm text-ink-2" data-testid="role-fold">
+                <summary className="cursor-pointer font-medium text-ink">What can each role do?</summary>
+                <ul aria-label="Roles" className="mt-2 space-y-0.5">
+                  {(["owner", "approver", "member"] as const).map((r) => (
+                    <li key={r}>
+                      <strong className="text-ink">{ROLE_CAN.workspace[r].label}:</strong> {ROLE_CAN.workspace[r].summary}
+                    </li>
+                  ))}
+                </ul>
+              </details>
               {add.error ? (
                 <Notice tone="danger" role="alert">
                   {addError(add.error, orgName)}
