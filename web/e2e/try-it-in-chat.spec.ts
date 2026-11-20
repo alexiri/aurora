@@ -83,8 +83,9 @@ for (const scheme of ["light", "dark"] as const) {
           await giveGithub(page, entry, scheme);
           await page.getByTestId("ws-connect-journey").getByRole("link", { name: "Try it in chat" }).click();
 
-          await expect(page.getByTestId("ws-connect-journey")).toHaveCount(0);
-          await expect(page.getByRole("heading", { name: "Direct chat" })).toBeVisible();
+          // The first visit to the agent page in a cold dev server compiles it: allow for that (the dialog itself closes at once).
+          await expect(page.getByTestId("ws-connect-journey")).toHaveCount(0, { timeout: 30_000 });
+          await expect(page.getByRole("heading", { name: "Direct chat" })).toBeVisible({ timeout: 30_000 });
           // (the composer's field is a combobox for the emoji suggestions; it is labelled "Message")
           const box = page.getByLabel("Message", { exact: true });
           await expect(box).toHaveValue(PROMPT);
@@ -105,8 +106,8 @@ for (const scheme of ["light", "dark"] as const) {
         });
         await giveGithub(page, "the agent's Access tab", scheme, { firstPrompt: null });
         await page.getByTestId("ws-connect-journey").getByRole("link", { name: "Open chat" }).click();
-        await expect(page.getByTestId("ws-connect-journey")).toHaveCount(0);
-        await expect(page.getByRole("heading", { name: "Direct chat" })).toBeVisible();
+        await expect(page.getByTestId("ws-connect-journey")).toHaveCount(0, { timeout: 30_000 });
+        await expect(page.getByRole("heading", { name: "Direct chat" })).toBeVisible({ timeout: 30_000 });
         await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
         expect(sent).toEqual([]);
       });

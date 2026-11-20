@@ -330,6 +330,19 @@ describe("the journey for a fixed agent and a given app", () => {
     expect(screen.queryByRole("link", { name: "Try it in chat" })).toBeNull();
   });
 
+  it("the Try it in chat link closes the dialog at once, without the host's onClose", async () => {
+    stub({ "POST /v1/apps/github/connect": () => json(200, { kind: "connected", connection: CONN, grants: [{ agent_id: "a1" }], missing_scopes: [] }) });
+    const onClose = open();
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    fireEvent.change(await screen.findByLabelText("Token"), { target: { value: "ghp_x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    const link = await screen.findByRole("link", { name: "Try it in chat" });
+    link.addEventListener("click", (e) => e.preventDefault());
+    fireEvent.click(link);
+    await waitFor(() => expect(screen.queryByTestId("ws-connect-journey")).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("Ask before changes: the Done sentence, the write permissions and level ask", async () => {
     const calls = stub({ "POST /v1/apps/github/connect": () => json(200, { kind: "connected", connection: CONN, grants: [{ agent_id: "a1" }], missing_scopes: [] }) });
     open();

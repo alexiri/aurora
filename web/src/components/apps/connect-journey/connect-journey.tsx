@@ -129,6 +129,9 @@ export function ConnectJourney({
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [giving, setGiving] = useState(false);
+  // A link out of the journey (Try it in chat, the Access tab) closes the dialog at once, without `onClose`: the host's
+  // close rewrites the URL (a History write on the page being left) and would undo the link's navigation.
+  const [leaving, setLeaving] = useState(false);
   const put = usePutAccess();
 
   const realApp = choice?.kind === "app" ? choice.appId : undefined;
@@ -462,7 +465,7 @@ export function ConnectJourney({
               <p className="text-ink-2">
                 {done.level ? `${LEVEL_LABEL[done.level]}. ` : ""}You can change this on{" "}
                 {accessTab ? (
-                  <Link href={accessTab} onClick={onClose} className="font-medium text-link underline">
+                  <Link href={accessTab} onClick={() => setLeaving(true)} className="font-medium text-link underline">
                     {who}&apos;s Apps &amp; access tab
                   </Link>
                 ) : (
@@ -508,7 +511,7 @@ export function ConnectJourney({
                 </Button>
               )}
               {chat ? (
-                <Link className={cn(buttonVariants({ size: "lg" }), "max-sm:order-first max-sm:w-full")} href={chat}>
+                <Link className={cn(buttonVariants({ size: "lg" }), "max-sm:order-first max-sm:w-full")} href={chat} onClick={() => setLeaving(true)}>
                   {prompt ? "Try it in chat" : "Open chat"}
                 </Link>
               ) : null}
@@ -538,6 +541,7 @@ export function ConnectJourney({
     body = <Loading />;
   }
 
+  if (leaving) return null;
   const shown = steps.filter((s) => s !== "agent" || !agent);
   const previous = prevStep(shape, step);
   return (

@@ -139,14 +139,21 @@ export function ChatTab({
   const routerDraft = useSearchParams()?.get("draft") ?? null;
   const [draft, setDraft] = useState<string | null>(null);
   const [seenDraft, setSeenDraft] = useState<string | null>(null);
+  // On a phone the conversation and the list are two views: a draft opens the direct chat's thread (the box with the
+  // suggestion) and it stays open when the draft is used up, until the person goes back to the list.
+  const [draftOpensThread, setDraftOpensThread] = useState(false);
   if (routerDraft !== seenDraft) {
     setSeenDraft(routerDraft);
-    if (routerDraft) setDraft(routerDraft.slice(0, 500));
+    if (routerDraft) {
+      setDraft(routerDraft.slice(0, 500));
+      setDraftOpensThread(true);
+    }
   }
   const picked = draft !== null ? null : pickedRaw;
   const select = useCallback(
     (id: string | null, mode?: "push" | "replace", seq?: number) => {
       setDraft(null);
+      setDraftOpensThread(false);
       selectRaw(id, mode, seq);
     },
     [selectRaw],
@@ -254,7 +261,7 @@ export function ChatTab({
     setArchived(false);
     select(null, "replace");
   };
-  const threadOpen = picked !== null;
+  const threadOpen = picked !== null || (draftOpensThread && !archived);
   const titleOf = (c: Conversation) => conversationTitle(c);
   const ctx: RailContext = {
     status,

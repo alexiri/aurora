@@ -88,8 +88,9 @@ for (const scheme of ["light", "dark"] as const) {
       test("Administration's catalogue entry links to the OAuth clients of the app, with its form open", async ({ page }) => {
         await openRoute(page, "/admin/apps/packages/github", scheme);
         await page.getByRole("link", { name: "Sign-in apps for this app" }).click();
-        await expect(page).toHaveURL(/\/admin\/apps\?tab=oauth-clients&package=github/);
-        await expect(page.locator("#oc-app")).toHaveValue("github|github");
+        // The first visit to /admin/apps in a cold dev server compiles the page (the light run goes first): allow for that.
+        await expect(page).toHaveURL(/\/admin\/apps\?tab=oauth-clients&package=github/, { timeout: 30_000 });
+        await expect(page.locator("#oc-app")).toHaveValue("github|github", { timeout: 15_000 });
       });
     });
   }
