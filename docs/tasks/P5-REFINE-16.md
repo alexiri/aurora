@@ -391,6 +391,21 @@ Every item: build what the After PNG shows, in both themes, at 1256 and 390 px, 
   private key pasted (`-----BEGIN`) says "That's a private key. Paste the public key (the file ending in .pub)." and never
   sends it anywhere. Server validation stays authoritative.
 
+### 19. Count badges in the workspace rail and on the phone (owner, 2026-11-20; P5-REFINE-20 rows G1, G2, G6)
+
+The owner reported the navigation's count badges don't work. This brief owns them for the workspace:
+- **Approvals** (G1): the count of pending approvals the viewer can decide. Today `PendingPill`
+  (`components/app-shell.tsx` ~:219) reads `usePendingApprovals` with no refetch and no stream outside the Approvals
+  page, so it goes stale. Read the count from C-1082 (`GET /v1/attention/counts`, P5-REFINE-8) when that has merged,
+  and keep it live (the approvals stream where it is open, else a refetch on focus and every 30 s); until then, at
+  least add the refetch on focus and the interval.
+- **Overview** (G2): the workspace's attention count (C-1082) next to Overview, and the same number in the Overview's
+  Needs you heading.
+- **Phone** (G6): the drawer shows the same badges; the hamburger button shows a dot when anything waits.
+- Rules: no badge at zero; only for people who can act; screen-reader text ("2 need your attention"); inside the link;
+  amber only because the viewer can act (D-384); fits at 390 px. Tests: vitest for zero/hidden, the count, and a
+  member who can't act; a mocked Playwright spec where the count drops after deciding, without a reload.
+
 ## Out of scope
 
 - Names and words of brief 1 (vocabulary), primitives of brief 2, altitude registry of brief 3. Use them.
@@ -439,6 +454,41 @@ never `localhost:4000` or the aurora-dev cluster.
 - **Rust:** `cargo test -p aurora-api` for the two `signed_in` views (targeted, through `heavy.sh`).
 - Update existing specs that read the old texts ("Verdict:", "Settings saved.", "Nothing is waiting for you." twice, the slug
   confirm, "Stop 1 of 8").
+
+## Tests move with the UI (owner, 2026-11-20 — binding)
+
+The owner: "Make sure the briefs not only change the website, but also the tests that test it! I don't want a ton of
+broken tests because a button was renamed and the tests look for the old label." (P5-REFINE-1 merged with old labels
+in tests, and master's CI broke until the CI Watcher fixed it in `ee7bfa0d`.) So, in **every commit** of this brief:
+
+1. **Find every test that sees what you change.** Before committing a change to visible text, a label, an
+   `aria-label`, a role, a heading, a route or `?tab=` id, a page's structure, an API field, an error code or message,
+   search all test trees for the **old** strings, selectors and paths, and for the components you touched:
+   - `web/tests/**` (vitest + Testing Library);
+   - `web/e2e/**` (Playwright: the mocked default project **and** the `production` project that `scripts/e2e/*.sh`
+     run against a real stack — `first-run.sh`, `kind.sh`, `files.sh`, `ssh.sh`, `channels.sh`, `approvals-park.sh`…);
+   - `scripts/e2e/*.sh` themselves (they grep pages and call routes);
+   - Rust tests that assert a message, an error code or a response shape (`services/*/tests/**`, `crates/*/src/**`
+     `#[cfg(test)]`, `services/aurora-api/tests/it/**`);
+   - fixtures and mocks (`web/e2e/fixtures/**`, `web/tests/**/mocks*`, MSW handlers, `web/openapi.json` snapshots).
+   A plain `rg -n "<old text>|<old selector>" web/tests web/e2e scripts/e2e services crates` per change is the minimum.
+2. **Update them in the same commit as the change.** New expectations use the new words exactly as the mockup shows
+   them. Prefer `getByRole(…, { name })` or a `data-testid` over raw text where the text is not the point of the test;
+   where the words are the point (they are the fix), assert the new words. Never loosen an assertion so that both the
+   old and the new label pass, never `.skip`/`test.fixme`/delete a test to get green; a test is removed only when the
+   feature it covers is removed, and the completion report names it and why.
+3. **Run what you touched, plus everything that references it.** Through `heavy.sh`: every vitest file you changed
+   **and** every vitest file that renders a component you changed; every Playwright spec (mocked project) that visits a
+   page you changed. **Exception to the targeted-tests rule for this set (owner, 2026-11-20):** a commit that renames
+   or restructures shared UI (a primitive, the app shell, the rail, the agent page, a label used on several pages) runs
+   the **whole** web vitest suite once (`cd web && /home/alex/orca/workspaces/aurora/heavy.sh <lane> pnpm exec vitest run` (not `pnpm --dir web …`, which fails here)) before handing over. Production
+   specs (`--project production`) can't run in a lane without a real stack: update them by reading, and list them in
+   the completion report so the nightly / P5-REFINE-20 runs them.
+4. **New behaviour gets new tests** (the brief's Tests section); old tests are **kept and updated**, not replaced.
+5. **The completion report lists** every test file changed (and why), every test removed (and the removed feature),
+   the commands run with their results, and the production specs that only the nightly will run.
+6. A merge that turns master's CI red because a test still expects old UI is a send-back to this lane, not the CI
+   Watcher's job.
 
 ## Docs to update
 

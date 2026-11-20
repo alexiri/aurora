@@ -105,7 +105,10 @@ describe("UI text rules (C-974)", () => {
 
   // ---------------------------------------------------------------- vocabulary (14 §Vocabulary)
   /** Retired words used as a page name, a label or a button: capitalised, whole word. */
-  const RETIRED = /\b(Governance|Policy|Policies|Credentials|Credential|Simulate|Simulation|Disable|Enable)\b/;
+  const RETIRED =
+    /\b(Governance|Policy|Policies|Credentials|Credential|Simulate|Simulation|Disable|Enable|Freeze|Unfreeze|Frozen|Triggers|Evals|Peers|Tighten|Tightened|Redact|Redacting)\b|Rules people wrote|Disabled \(user\)|Gate command|Provider endpoint|Limits from above|Default agent|Check what would happen\b(?!:)|What moved/;
+  /** (D-407) "OAuth client" is only a tab id and code; where a person reads it, it is "Sign-in app". */
+  const OAUTH_CLIENT = /OAuth clients?/;
   /** A string that is only a retired noun for an account (`grant`, `secret`, `connection`), used as a label. */
   const RETIRED_LABEL = /^(Grants?|Secrets?|Connections?)$/;
   const retired = (h: Hit) => RETIRED.test(h.text) || RETIRED_LABEL.test(h.text);
@@ -130,6 +133,18 @@ describe("UI text rules (C-974)", () => {
     expect(unlisted).toEqual([]);
     const stale = Object.keys(VOCABULARY_EXEMPT).filter((f) => !byFile.has(f));
     expect(stale, "listed files that no longer contain a retired word: remove them").toEqual([]);
+  });
+
+  it("says Sign-in app, never OAuth client, where a person reads it (D-407)", () => {
+    // The only strings that may hold the words are a tab id (`oauth-clients`, `oauth_client`) and a docs-style note in a sentence about code.
+    const bad = ALL.filter((h) => OAUTH_CLIENT.test(h.text));
+    expect(fmt(bad)).toEqual([]);
+  });
+
+  it("never names a person where an admin is meant (D-407)", () => {
+    // A literal "Ask alice", a "managed by" followed by a template expression of names, or the connector admins' names.
+    const bad = ALL.filter((h) => /\bAsk (alice|bob|ada|alan)\b/i.test(h.text) || /managed by \$\{/i.test(h.text) || /\bAsk: \$\{/.test(h.text));
+    expect(fmt(bad)).toEqual([]);
   });
 
   it("lists a file in the other exemptions only while it still has a spec reference or a raw id", () => {

@@ -300,9 +300,29 @@ tree.
 
 Fill in when done (P5-REFINE-20 reads this):
 
-- **Items done** (Scope 1–8, each with the commit):
+Lane A, branch `alexiri/p5-polish-a` (commits listed in the lane's worker_done message).
+
+- **Items done** (Scope 1–8):
+  - **1 What moved:** `renames-notice.tsx`, `lib/moved.ts`, the account-menu item, the render, `renames-notice.test.tsx`, the What moved cases in `context-switcher.test.tsx`, `ia-navigation.spec.ts` and `p5-polish-8-switcher.spec.ts` are gone; the Rust upsert and the "no row" answer no longer seed `renames-2026-11` (IT `onboarding` updated and green). `rg "What moved|showWhatMoved|RenamesNotice|movedRows" web/src web/tests web/e2e` finds nothing but the new words test. Commit "item 1".
+  - **2 Vocabulary table:** every row except those listed under Deviations: Instructions, Automations, Tests/Grader/Checked by, Other agents, Apps & access (tab, page, menu and the "… tab" sentences), Set for you by …, Set by the installation, Restrict further…, Restricted further below, Your rules, Try a request, Paused/On, webhook verification and delivery words, run outcome words, Only run when…, Keep running if I leave, Which service is this key for?, Sign-in app, Chat platform / Chat platform host, Web address (create form), Remove this message's content… (also the memory revision's "Remove content of #n"), Language agents remember in, Came with this workspace.
+  - **3 Pause/Resume:** agent menu, dialogs ("Pause Daneel?"), buttons, banners ("Paused by …"), Settings section titles, the 423-related texts in the web (`Files`, `Terminal`, `SSH`, Tests), organizations in Administration and Settings, "Paused organizations only". API names, routes, test ids and `lib/api/freeze.ts` are unchanged.
+  - **4/5 Admins by role:** `askSentence` prints the role only ("Ask an organization admin."); `Ask an admin`, "Asked the admins. You'll see it here when it's done.", "Needs an admin first", "Managed by your organization's admins" / "an Aurora administrator", chat platform blocked states ("Ask an Aurora administrator."), the apps journey and the member Chat platforms page ("Only organization owners and admins can connect a chat platform." + **Ask an admin**).
+  - **6 schedules-4 words:** a schedule/webhook that is off reads **Paused**, on reads **On**; "Disabled (user)" is gone.
+  - **8 Glossary and words test:** `docs/14` §Vocabulary has the full glossary with the **Introduced at** column and the order of introduction; `ui-text.test.ts` has the extended `RETIRED`, an "OAuth client" test and a "never names a person where an admin is meant" test; `VOCABULARY_EXEMPT` stays empty. `who-can.test.tsx` tests that `askSentence` never prints a name. Shown once locally: a string "Freeze this agent" in a component made the words test fail.
 - **Deviations from the brief and why:**
-- **Screenshots compared** (path, dark/light, 1256/390 px, verdict):
-- **Words I could not place** (a string that sits in a component another brief rewrites):
-- **Tests run** (command and counts):
-- **Open questions:**
+  - **Run outcome "Running"** is not shown: `ScheduleRun.outcome` only says how a run started (`fired`, `gated_quiet`, `gate_failed`, `skipped_unauthorized`, `coalesced`), so `fired` reads "Answered" for now. The turn's state arrives with brief 14.
+  - **Webhook "Duplicate, ignored"** is in the word table but the API never logs duplicates, so no row can show it today.
+  - **Memory language** reads "Language agents remember in" in both places (the workspace Settings page has no single agent to name).
+  - **The channels-3 "Slack, Teams or Mattermost" names** are not shown: no supported-chat-platform list is available to a member, so the sentence says "a chat platform" (the brief's fallback). The optional reason field is brief 14's.
+  - **Connector counts** ("2 connections") and "Chat platform" words in the Administration pages were renamed without a mockup (no mockup exists for them).
+  - **Not touched (server text):** the 423 message text and other messages that come from the Rust API ("agent is frozen" style) are the server's; only web strings changed. The DB column default of `user_onboarding.notices_seen` keeps `renames-2026-11` (the upsert never relies on it; no migration, as the brief says).
+  - `docs/05` has no change (no API change); `web/openapi.json`, `schema.d.ts` and `spec_schema.json` are untouched (`extract-schema --check` passes).
+- **Screenshots compared** (path, dark/light, 1256/390 px, verdict): none. This lane changed strings only and no cluster was started (rule: no aurora-dev, no Playwright); the words of `UXR5/after/firstday-1`, `channels-3` and `schedules-4` were matched from their markup (`after/src/*.html`), the layout parts belong to briefs 11/14. P5-REFINE-20 compares the pixels.
+- **Words I could not place** (a string that sits in a component another brief rewrites): the schedules and webhooks tabs ("Cron (5 fields)" stays: the plain-language cadence is brief 14); "Set in Helm" stays inside sentences of the Administration settings pages (the page's own name is brief 18's); server-side texts (above); "Users" as an organization name in `setup-copy` ("none is set up for this workspace, Users or Aurora") is data, not a word.
+- **Tests run** (all through heavy.sh):
+  - `pnpm vitest run` on the 68 test files that mention a changed word, plus `ui-text` and `memory-skills`: 68 files, 850 tests, all passed.
+  - `pnpm typecheck`: clean. `pnpm eslint` on the touched files: 0 errors (3 old warnings in files I touched: `terminal.spec.ts`, `account-row.tsx`, `accounts.test.tsx`).
+  - Rust: `cargo fmt --check` ok; `cargo clippy -p aurora-db -p aurora-api --all-targets -- -D warnings` clean; `cargo test -p aurora-api --test it onboarding` 4 passed (throwaway Postgres, stopped afterwards).
+  - `python3 scripts/extract-schema.py --check` up to date; `scripts/guards/run-all.sh` all guards passed.
+  - Playwright specs edited for the new words (not run, per the rules): `ia-navigation`, `p5-polish-8-switcher`, `agent-config`, `agent-tabs`, `agent-page-p5`, `agent-evals`, `chat-v2`, `connect-journey`, `app-setup`, `internet-access`, `workspace-pages`, `ia-3`, `ia-4`, `who-can`, `add-people`, `credential-access`, `first-run`, `p5-polish-10`, `welcome-summary`, `accounts`, `onboarding-journeys`, `llm-key-modes`, `admin-secret-stores`, `admin-settings`, `stage4-axe`, `fix-127-mattermost`, `support/connectors`, `files`, `terminal`.
+- **Open questions:** none blocking. For the owner/Orchestrator: should the server's own message texts that say "frozen" (423 `frozen`, approvals resume reasons) read "paused" too (a Rust-only follow-up)?

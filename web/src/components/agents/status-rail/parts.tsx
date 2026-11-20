@@ -296,7 +296,7 @@ export function AboutPart({
         <p className="text-xs text-muted">
           {kind !== "hosted" ? "Runs on your own computer" : null}
           {kind !== "hosted" && isDefault ? " · " : null}
-          {isDefault ? "Default agent" : null}
+          {isDefault ? "Came with this workspace" : null}
         </p>
       ) : null}
       {brief ? (

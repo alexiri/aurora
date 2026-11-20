@@ -16,6 +16,15 @@ export const ROLE_PHRASE: Record<WhoCanRole, string> = {
   instance_admin: "an Aurora administrator",
 };
 
+/** (D-407) Who to ask, in the singular: an administrator is a role, never a login (several people can hold it). */
+export const ASK_PHRASE: Record<WhoCanRole, string> = {
+  workspace_owner: "a workspace owner",
+  workspace_approver: "a workspace owner or approver",
+  org_admin: "an organization admin",
+  org_owner: "an organization owner",
+  instance_admin: "an Aurora administrator",
+};
+
 /**
  * What an action key reads as after "can": `Only workspace owners can <phrase>.` The server sends a snake_case key
  * (`view_this` and `change_this` when a refusal does not know better); a key the dashboard has no words for reads
@@ -58,16 +67,13 @@ export function onlySentence(w: Pick<WhoCanValue, "role" | "action">): string {
 }
 
 /**
- * The people to ask. With names and `withRole`: "Ask Ada Lovelace or Alan Turing (organization owners and admins)."
- * (the role is said nowhere else); without `withRole` (a sentence before it already named the role): "Ask Bob Builder."
- * An instance admin is never named: "An Aurora administrator can set this up." With no names for any other role the
- * role itself is asked: "Ask workspace owners."
+ * Who to ask (D-407): the role, never a name, because instance and organization admins can be several people:
+ * "Ask an organization admin." An instance admin: "An Aurora administrator can set this up." `people` is in the value
+ * (the data stays) but is not printed.
  */
-export function askSentence(w: Pick<WhoCanValue, "role" | "people">, withRole = true): string {
+export function askSentence(w: Pick<WhoCanValue, "role">): string {
   if (w.role === "instance_admin") return "An Aurora administrator can set this up.";
-  const names = w.people.map((p) => p.name).filter(Boolean);
-  if (names.length === 0) return `Ask ${ROLE_PHRASE[w.role]}.`;
-  return `Ask ${orList(names)}${withRole ? ` (${ROLE_PHRASE[w.role]})` : ""}.`;
+  return `Ask ${ASK_PHRASE[w.role]}.`;
 }
 
 /** The link text for a viewer who can do it themselves: "Add an account". */

@@ -187,7 +187,7 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     const list = screen.getByRole("list", { name: "Endpoints" });
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
-    expect(within(rows[0]!).getByText("Set in Helm")).toBeTruthy();
+    expect(within(rows[0]!).getByText("Set by the installation")).toBeTruthy();
     expect(within(rows[0]!).queryByRole("button", { name: /Edit|Remove/ })).toBeNull();
     expect(within(rows[1]!).getByRole("button", { name: "Edit team" })).toBeTruthy();
     expect(within(rows[1]!).getByRole("button", { name: "Remove team" })).toBeTruthy();

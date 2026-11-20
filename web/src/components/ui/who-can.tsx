@@ -10,9 +10,9 @@ import { cn } from "@/lib/utils";
  *
  * - The viewer can do it themselves (`you_can` with a `path`): the link, "Add an account"; never a sentence about asking.
  * - `lead`: the full sentence for an empty state or a page header, "Only workspace owners can add an account. Ask Bob
- *   Builder."
- * - Otherwise just who to ask, with the role in brackets: "Ask Ada Lovelace or Alan Turing (organization owners and
- *   admins)." Instance admins are never named: "An Aurora administrator can set this up."
+ *   owner."
+ * - Otherwise just who to ask, by role (D-407, never by name): "Ask an organization admin." Instance admins:
+ *   "An Aurora administrator can set this up."
  */
 export function WhoCan({
   value,
@@ -38,7 +38,7 @@ export function WhoCan({
   const text = lead
     ? value.role === "instance_admin"
       ? onlySentence(value)
-      : `${onlySentence(value)}${value.people.length > 0 ? ` ${askSentence(value, false)}` : ""}`
+      : `${onlySentence(value)}${value.people.length > 0 ? ` ${askSentence(value)}` : ""}`
     : askSentence(value);
   return <p className={cn("text-sm text-ink-2", className)}>{text}</p>;
 }

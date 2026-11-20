@@ -233,7 +233,7 @@ export function OrgDangerZone({
 /** Settings › Danger zone (P5-IA-1): freezing and deleting the organization, owners only. */
 export function OrgDangerSections({ org }: { org: Org }) {
   const router = useRouter();
-  if (org.my_role !== "owner") return <Notice role="status">Only organization owners can freeze or delete the organization.</Notice>;
+  if (org.my_role !== "owner") return <Notice role="status">Only organization owners can pause or delete the organization.</Notice>;
   return (
     <div className="space-y-8">
       <OrgFreeze orgId={org.id} name={org.name} frozen={org.frozen} />

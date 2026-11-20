@@ -14,14 +14,14 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("the tab bar is Chat · Triggers · Computer; Behaviour and Access open from the … menu", async ({ page }) => {
+      test("the tab bar is Chat · Automations · Computer; Instructions and Apps & access open from the … menu", async ({ page }) => {
         await openRoute(page, AGENT, scheme);
         const tabs = page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab");
-        await expect(tabs).toHaveText(["Chat", "Triggers", "Computer"]);
+        await expect(tabs).toHaveText(["Chat", "Automations", "Computer"]);
         await page.getByRole("button", { name: "Agent actions" }).click();
-        await expect(page.getByRole("menuitem", { name: /Freeze Daneel/ })).toBeVisible();
-        await page.getByRole("menuitem", { name: /^Access/ }).click();
-        await expect(page.getByRole("heading", { name: "Access", level: 2 })).toBeVisible();
+        await expect(page.getByRole("menuitem", { name: /Pause Daneel/ })).toBeVisible();
+        await page.getByRole("menuitem", { name: /^Apps & access/ }).click();
+        await expect(page.getByRole("heading", { name: "Apps & access", level: 2 })).toBeVisible();
         await expect(page.getByText("What Daneel can use: apps, accounts and its AI key.")).toBeVisible();
         await expect(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { selected: true })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -32,12 +32,12 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("old links ?tab=access and ?tab=instructions open the configuration pages", async ({ page }) => {
         await openRoute(page, `${AGENT}?tab=instructions`, scheme);
-        await expect(page.getByRole("heading", { name: "Behaviour", level: 2 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
         await expect(page.locator("#a-brief")).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
         await openRoute(page, `${AGENT}?tab=access`, scheme);
-        await expect(page.getByRole("heading", { name: "Access", level: 2 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Apps & access", level: 2 })).toBeVisible();
       });
 
       test("Instructions: the save bar appears only after a change, and Discard puts it back", async ({ page }) => {

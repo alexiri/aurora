@@ -55,7 +55,7 @@ export function validateQuestion(d: QuestionDraft): QuestionErrors {
     if (d.text.trim() === "") e.text = "Enter the expected answer.";
     else if (charCount(d.text) > EVAL_EXPECTED_TEXT_CHARS) e.text = `Keep the expected answer under ${EVAL_EXPECTED_TEXT_CHARS} characters.`;
   } else {
-    if (d.criteria.trim() === "") e.criteria = "Describe what a good answer contains. The judge reads this.";
+    if (d.criteria.trim() === "") e.criteria = "Describe what a good answer contains. The grader reads this.";
     else if (charCount(d.criteria) > EVAL_CRITERIA_CHARS) e.criteria = `Keep the criteria under ${EVAL_CRITERIA_CHARS} characters.`;
   }
   return e;
@@ -95,4 +95,4 @@ export function expectedSummary(q: EvalQuestion): string {
   return q.criteria ?? "";
 }
 
-export const KIND_LABEL: Record<string, string> = { numeric: "Number", text: "Text", judged: "Judged" };
+export const KIND_LABEL: Record<string, string> = { numeric: "Number", text: "Text", judged: "Graded" };

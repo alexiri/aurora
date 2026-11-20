@@ -17,7 +17,7 @@ describe("AgentsList", () => {
     expect(screen.getByText("Daneel")).toBeInTheDocument();
     expect(screen.getByText("@daneel")).toBeInTheDocument();
     expect(screen.getByText("byo")).toBeInTheDocument();
-    expect(screen.getAllByText("Default")).toHaveLength(1);
+    expect(screen.getAllByText("Came with this workspace")).toHaveLength(1);
   });
   it("shows empty state", () => {
     render(<AgentsList agents={[]} />);

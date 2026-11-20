@@ -102,16 +102,16 @@ describe("Internet access page (InternetLevel)", () => {
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
     expect(await screen.findByText("Allow x")).toBeInTheDocument();
     expect(await screen.findByText(/Shadowed by Allow x/)).toBeInTheDocument();
-    expect(screen.getByText("Rules people wrote")).toBeInTheDocument();
+    expect(screen.getByText("Your rules")).toBeInTheDocument();
   });
 
-  it("a member sees the limits from above and who to ask: no rules, no Common changes, no Tighten…, no policy reads", async () => {
+  it("a member sees the limits from above and who to ask: no rules, no Common changes, no Restrict further…, no policy reads", async () => {
     const fn = base();
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit={false} />);
     expect(await screen.findByText("Browser connections (not inspected)")).toBeInTheDocument();
     expect(screen.getByText("Only for listed websites")).toBeInTheDocument();
-    expect(screen.getByText("Set by Administration")).toBeInTheDocument();
-    for (const gone of ["Allow x", "Common changes", "Add rule", "Tighten…", "Apply changes"]) expect(screen.queryByText(gone)).toBeNull();
+    expect(screen.getByText("Set for you by an Aurora administrator")).toBeInTheDocument();
+    for (const gone of ["Allow x", "Common changes", "Add rule", "Restrict further…", "Apply changes"]) expect(screen.queryByText(gone)).toBeNull();
     const urls = fn.mock.calls.map((c) => (c[0] as Request).url);
     expect(urls.some((u) => u.includes("/policy"))).toBe(false);
   });
@@ -162,7 +162,7 @@ describe("Internet access page (InternetLevel)", () => {
     await waitFor(() => expect(rollbackBody).toEqual({ generation: 2, expect_revision: 7 }));
   });
 
-  it("keeps the four controls behind Tighten… and writes an edit to the draft at once", async () => {
+  it("keeps the four controls behind Restrict further… and writes an edit to the draft at once", async () => {
     let putBody: { open_lane_posture?: string } | null = null;
     base({
       "PUT /v1/workspaces/w1/policy/draft": async (req) => {
@@ -171,12 +171,12 @@ describe("Internet access page (InternetLevel)", () => {
       },
     });
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
-    // What Administration set is a limit from above, in words; the controls are closed until Tighten… is opened.
-    expect((await screen.findAllByText("Set by Administration")).length).toBeGreaterThan(0);
+    // What an Aurora administrator set is a limit set for you, in words; the controls are closed until Restrict further… is opened.
+    expect((await screen.findAllByText("Set for you by an Aurora administrator")).length).toBeGreaterThan(0);
     expect(screen.queryByLabelText("Browser connections (not inspected)")).toBeNull();
     expect(screen.queryByLabelText("Requests without an account")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Tighten…" }));
-    const sel = (await screen.findByLabelText("Browser connections (not inspected)")) as HTMLSelectElement;
+    fireEvent.click(screen.getByRole("button", { name: "Restrict further…" }));
+    const sel =(await screen.findByLabelText("Browser connections (not inspected)")) as HTMLSelectElement;
     expect(sel.value).toBe("enabled");
     expect(screen.getByLabelText("Requests without an account")).toBeInTheDocument();
     expect(screen.getByLabelText("Default rule")).toBeInTheDocument();
@@ -194,7 +194,7 @@ describe("Internet access page (InternetLevel)", () => {
     });
     for (const s of [scope, { kind: "organization", id: "o1" } as const]) {
       wrap(<PolicyView title="Policy" scope={s} orgId="o1" orgSlug="acme" canEdit />);
-      if (s.kind === "workspace") fireEvent.click(await screen.findByRole("button", { name: "Tighten…" }));
+      if (s.kind === "workspace") fireEvent.click(await screen.findByRole("button", { name: "Restrict further…" }));
       const note = await screen.findByTestId("default-rule-llm-note");
       expect(note.textContent).toMatch(/Does not affect AI endpoints\. See AI models/);
       expect(note.getAttribute("title")).toMatch(/explicit block rule that names an AI host still applies/);

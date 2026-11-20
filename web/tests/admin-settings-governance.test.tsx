@@ -127,7 +127,7 @@ describe("Admin › Settings › Governance (SET-2)", () => {
     const table = await screen.findByRole("region", { name: "Organizations and their effective governance" });
     expect(within(table).getByText("Acme")).toBeTruthy();
     expect(within(table).getByText("Globex")).toBeTruthy();
-    expect(within(table).getByText("Frozen")).toBeTruthy();
+    expect(within(table).getByText("Paused")).toBeTruthy();
     expect(within(table).getByText("byo.minimum_posture")).toBeTruthy();
     expect(within(table).getByRole("link", { name: "Acme" }).getAttribute("href")).toBe("/o/acme/ai-models");
   });
@@ -177,7 +177,7 @@ describe("Org governance pages: the instance link (SET-2, C-783)", () => {
   it("is plain text for everyone else", async () => {
     mockFetch(me(false));
     wrap(<Locked setting="governance.llm.minimum_posture" />);
-    await screen.findByText("Set by Administration");
+    await screen.findByText("Set for you by an Aurora administrator");
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole("link")).toBeNull();
   });

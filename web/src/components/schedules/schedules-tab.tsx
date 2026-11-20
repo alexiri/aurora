@@ -27,6 +27,15 @@ import {
   type Schedule,
 } from "@/lib/api/schedules";
 
+/** (D-407) A run's outcome in words. The log only stores how the run started; "Running" comes with the turn's state (brief 14). */
+const RUN_OUTCOME: Record<string, string> = {
+  fired: "Answered",
+  gated_quiet: "Skipped by the gate",
+  gate_failed: "Failed",
+  skipped_unauthorized: "Skipped: its owner can no longer run it",
+  coalesced: "Skipped: it was already running",
+};
+
 function Runs({ agentId, id }: { agentId: string; id: string }) {
   const q = useScheduleRuns(agentId, id, true);
   if (q.isPending) return <Loading />;
@@ -38,7 +47,7 @@ function Runs({ agentId, id }: { agentId: string; id: string }) {
       <DataTable caption="Runs">
         <thead>
           <tr>
-            <Th>Fired</Th>
+            <Th>When</Th>
             <Th>Outcome</Th>
           </tr>
         </thead>
@@ -46,7 +55,7 @@ function Runs({ agentId, id }: { agentId: string; id: string }) {
           {items.map((r) => (
             <tr key={r.id}>
               <Td className="whitespace-nowrap">{fmtDate(r.fired_at)}</Td>
-              <Td>{r.outcome}</Td>
+              <Td>{RUN_OUTCOME[r.outcome] ?? r.outcome}</Td>
             </tr>
           ))}
         </tbody>
@@ -122,16 +131,16 @@ export function ScheduleForm({
           <input id="sch-tz" className={inputClass} value={timezone} onChange={(e) => setTimezone(e.target.value)} />
         </Field>
       </div>
-      <Field id="sch-gate" label="Gate command (optional)" error={fe.gate_command} hint="Runs before each fire; the agent is only woken when it reports something to do.">
+      <Field id="sch-gate" label="Only run when… (a check command, optional)" error={fe.gate_command} hint="Runs before each run; the agent is only woken when it reports something to do.">
         <input id="sch-gate" className={`${inputClass} font-mono`} value={gateCommand} onChange={(e) => setGateCommand(e.target.value)} />
       </Field>
-      <Field id="sch-gate-desc" label="Gate description (optional)" error={fe.gate_description}>
+      <Field id="sch-gate-desc" label="What the check looks for (optional)" error={fe.gate_description}>
         <input id="sch-gate-desc" className={inputClass} value={gateDescription} onChange={(e) => setGateDescription(e.target.value)} />
       </Field>
       {!initial && canOwn ? (
-        <CheckboxField id="sch-anchored" label="Anchor to workspace (outlives any single member)" checked={anchored} onChange={setAnchored} />
+        <CheckboxField id="sch-anchored" label="Keep running if I leave (outlives any single member)" checked={anchored} onChange={setAnchored} />
       ) : null}
-      {initial ? <CheckboxField id="sch-enabled" label="Enabled" checked={enabled} onChange={setEnabled} /> : null}
+      {initial ? <CheckboxField id="sch-enabled" label="On" checked={enabled} onChange={setEnabled} /> : null}
       {mut.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={mut.error} />
       ) : null}
@@ -169,7 +178,7 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
         <code className="font-mono text-xs text-ink-2">{s.cron}</code>
         <span className="text-xs text-muted">{s.timezone}</span>
         <Badge className="sm:ml-auto" tone={s.enabled ? "accent" : "neutral"}>
-          {s.enabled ? "Enabled" : `Disabled${s.disabled_reason ? ` (${s.disabled_reason})` : ""}`}
+          {s.enabled ? "On" : "Paused"}
         </Badge>
       </div>
       <p className="whitespace-pre-wrap text-sm text-ink-2">{s.prompt}</p>
@@ -179,7 +188,7 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
       </p>
       {s.disabled_reason === "authorization" ? (
         <Notice tone="pending" role="status">
-          Disabled because its owner lost access. Reassign it to a current member to bring it back.
+          Paused because its owner lost access. Reassign it to a current member to bring it back.
         </Notice>
       ) : null}
       {canOwn ? <AnchorSwitch name={s.name} anchor={s.anchor} busy={upd.isPending} onChange={(anchor) => upd.mutate({ id: s.id, body: { anchor } })} /> : null}

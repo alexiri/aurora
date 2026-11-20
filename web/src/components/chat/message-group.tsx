@@ -123,7 +123,7 @@ function MessageToolbar({
                 {linked ? "Link copied" : "Copy link"}
               </MenuItem>
             ) : null}
-            <MenuItem onSelect={() => setRedact(true)}>Redact…</MenuItem>
+            <MenuItem onSelect={() => setRedact(true)}>Remove this message&apos;s content…</MenuItem>
           </MenuContent>
         </Menu>
       </div>

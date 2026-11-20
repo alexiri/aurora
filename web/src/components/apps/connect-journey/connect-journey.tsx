@@ -383,7 +383,7 @@ export function ConnectJourney({
           onChange={setLevel}
           legend={`What may ${who} do in ${appName}?`}
         />
-        <p className="text-xs text-muted">You can change this at any time on {chosenAgents.length === 1 ? `${who}'s` : "each agent's"} Access tab.</p>
+        <p className="text-xs text-muted">You can change this at any time on {chosenAgents.length === 1 ? `${who}'s` : "each agent's"} Apps &amp; access tab.</p>
         <ErrorNotice error={error} />
         <Footer
           onBack={back}
@@ -463,10 +463,10 @@ export function ConnectJourney({
                 {done.level ? `${LEVEL_LABEL[done.level]}. ` : ""}You can change this on{" "}
                 {accessTab ? (
                   <Link href={accessTab} onClick={onClose} className="font-medium text-link underline">
-                    {who}&apos;s Access tab
+                    {who}&apos;s Apps &amp; access tab
                   </Link>
                 ) : (
-                  `${who}'s Access tab`
+                  `${who}'s Apps & access tab`
                 )}
                 .
               </p>

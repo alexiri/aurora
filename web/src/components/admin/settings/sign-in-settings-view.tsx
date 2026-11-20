@@ -79,7 +79,7 @@ function ProvidersControl({ ctx, signedInWith }: { ctx: SettingControlCtx; signe
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-ink">{String(v.display_name ?? e.id)}</span>
-            <LockPill owner="Set in Helm" />
+            <LockPill owner="Set by the installation" />
             {signedInWith === e.id ? <Badge tone="accent">You signed in with this</Badge> : null}
           </div>
           <p className="break-all text-xs text-ink-2">{hostOf(v.issuer) || hostOf(v.issuer_url)}</p>
@@ -96,7 +96,7 @@ function ProvidersControl({ ctx, signedInWith }: { ctx: SettingControlCtx; signe
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-ink">{p.id === "dev" ? "Development sign-in" : p.display_name}</span>
-            <LockPill owner="Set in Helm" />
+            <LockPill owner="Set by the installation" />
             {signedInWith === p.id ? <Badge tone="accent">You signed in with this</Badge> : null}
           </div>
           {p.id === "dev" ? <p className="text-xs text-ink-2">Signs in without a password. For development only.</p> : null}

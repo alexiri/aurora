@@ -83,7 +83,7 @@ export function SimulationResult({ sim }: { sim: Simulation }) {
 const NO_SPEAKER = "none";
 
 /**
- * (C-926) **Check what would happen**: the agent, the method and the address are the question; the speaker, the lane, the
+ * (C-926, D-407) **Try a request** (check what would happen): the agent, the method and the address are the question; the speaker, the lane, the
  * body and whether to include the changes not applied yet sit under **More**. FIX-159's result text is unchanged.
  */
 export function SimulatePanel({
@@ -129,7 +129,7 @@ export function SimulatePanel({
   }
 
   return (
-    <Section id="policy-simulate" title="Check what would happen" description="Try a request against the rules, with or without the changes not applied yet.">
+    <Section id="policy-simulate" title="Try a request" description="Check what would happen: try a request against the rules, with or without the changes not applied yet.">
       <div className="space-y-4">
         <form onSubmit={submit} className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
           <Field id="sim-agent" label="Agent">

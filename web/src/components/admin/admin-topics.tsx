@@ -67,10 +67,10 @@ export function AdminAppsPage() {
       <TopicPage<Tabs<"adminApps">>
         idBase="admin-apps"
         title="Apps & accounts"
-        description="The app catalogue, the OAuth clients shared by every organization, and the apps people host themselves."
+        description="The app catalogue, the sign-in apps shared by every organization, and the apps people host themselves."
         tabs={[
           { id: "apps", label: "Apps", content: <PluginsView /> },
-          { id: "oauth-clients", label: "OAuth clients", content: <OAuthClientsPanel scope={{ kind: "instance" }} canOwn /> },
+          { id: "oauth-clients", label: "Sign-in apps", content: <OAuthClientsPanel scope={{ kind: "instance" }} canOwn /> },
           {
             id: "self-hosted",
             label: "Self-hosted apps",

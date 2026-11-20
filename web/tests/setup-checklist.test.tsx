@@ -205,7 +205,7 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     await waitFor(() => expect(within(key).getByRole("button", { name: "Add key" })).toBeEnabled());
     fireEvent.click(within(key).getByRole("button", { name: "Add key" }));
     fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "AIGW" } });
-    fireEvent.change(await screen.findByLabelText("Provider endpoint"), { target: { value: "litellm" } });
+    fireEvent.change(await screen.findByLabelText("Which service is this key for?"), { target: { value: "litellm" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-test" } });
     // (P5-POLISH-11) The dialog's buttons are P5-POLISH-7's: Cancel and "Add key".
     const dialog = screen.getByRole("dialog", { name: "Add an organization AI key" });

@@ -70,11 +70,11 @@ describe("redaction (RFE-010)", () => {
     events.list = [queued(2, "my secret")];
     const calls = mock({ "POST /v1/conversations/c1/events/2/redact": () => json(200, { redacted_seqs: [2], session_reset: true }) });
     wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} />);
-    pick("More message actions", "Redact…");
+    pick("More message actions", "Remove this message's content…");
     expect(await screen.findByText(/This is irreversible/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Reason (optional)"), { target: { value: "password" } });
     fireEvent.click(screen.getByLabelText(/reset the agent/));
-    fireEvent.click(screen.getByRole("button", { name: "Redact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove content" }));
     await waitFor(() => expect(calls.some((c) => c.path.endsWith("/redact"))).toBe(true));
     expect(calls.find((c) => c.path.endsWith("/redact"))?.body).toEqual({ reason: "password", reset_session: true });
   });
@@ -83,8 +83,8 @@ describe("redaction (RFE-010)", () => {
     events.list = [queued(2, "x")];
     mock({ "POST /v1/conversations/c1/events/2/redact": () => json(403, { error: { code: "forbidden", message: "no" } }) });
     wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} />);
-    pick("More message actions", "Redact…");
-    fireEvent.click(await screen.findByRole("button", { name: "Redact" }));
+    pick("More message actions", "Remove this message's content…");
+    fireEvent.click(await screen.findByRole("button", { name: "Remove content" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/not allowed/);
   });
 

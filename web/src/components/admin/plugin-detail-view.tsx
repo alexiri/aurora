@@ -199,7 +199,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           <dt className="text-muted">Sign-in</dt>
           <dd className="text-ink">
             <Link href={adminRoutes.oauthClients({ package: plugin.package_id })} className="font-medium text-link underline">
-              OAuth clients for this app
+              Sign-in apps for this app
             </Link>
           </dd>
           {plugin.apps.some((a) => a.library_host) ? (

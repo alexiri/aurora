@@ -115,7 +115,7 @@ export function RunsSection({
       ) : (
         <>
           <div className="hidden md:block">
-            <DataTable caption="Eval runs" className="min-w-0">
+            <DataTable caption="Test runs" className="min-w-0">
               <thead>
                 <tr>
                   <Th>Status</Th>
@@ -155,7 +155,7 @@ export function RunsSection({
               </tbody>
             </DataTable>
           </div>
-          <ItemList aria-label="Eval runs" className="md:hidden">
+          <ItemList aria-label="Test runs" className="md:hidden">
             {runs.map((r) => (
               <ListRow
                 key={r.id}

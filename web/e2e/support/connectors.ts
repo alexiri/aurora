@@ -17,13 +17,13 @@ export async function openConnectorScreen(page: Page, screen: ConnectorScreen, s
     await page.getByLabel("Callback URL").waitFor();
     return;
   }
-  await page.getByRole("button", { name: "Add connector" }).click();
+  await page.getByRole("button", { name: "Add chat platform" }).click();
   if (screen === "self-hosted") {
-    await page.getByRole("button", { name: "Self-hosted connector (advanced)" }).click();
+    await page.getByRole("button", { name: "Self-hosted chat platform host (advanced)" }).click();
     await page.getByLabel("Connector id").waitFor();
     return;
   }
-  await page.getByRole("list", { name: "Connector types" }).waitFor();
+  await page.getByRole("list", { name: "Chat platform types" }).waitFor();
   if (screen === "add-choose") return;
   await page.getByText("What Mattermost can do").click();
   await page.getByTestId("manifest-summary").waitFor();

@@ -129,15 +129,15 @@ for (const scheme of ["light", "dark"] as const) {
         // Another website or API is the last tile of the Ready group.
         await expect(ready.getByRole("button").last()).toHaveText(/Another website or API/);
         const group = dialog.getByRole("region", { name: "Needs an admin first · 5" });
-        await expect(group.getByText("Ada Lovelace needs to set up Sentry sign-in")).toBeVisible();
-        await expect(group.getByRole("button", { name: /^Ask Ada$/ })).toHaveCount(5);
+        await expect(group.getByText("An admin needs to set up Sentry sign-in")).toBeVisible();
+        await expect(group.getByRole("button", { name: /^Ask an admin$/ })).toHaveCount(5);
         await expect(dialog.getByRole("searchbox", { name: "Search apps" })).toBeVisible();
         await check(page, "needs-admin", scheme, width);
-        await group.getByRole("button", { name: "Ask Ada" }).first().click();
-        await expect(group.getByText(/Asked just now\. You'll get a notice when it's ready, and the agent's Access tab will offer it\./)).toBeVisible();
+        await group.getByRole("button", { name: "Ask an admin" }).first().click();
+        await expect(group.getByText(/Asked just now\. You'll get a notice when it's ready, and the agent's Apps & access tab will offer it\./)).toBeVisible();
         await check(page, "asked", scheme, width);
         await group.getByRole("button", { name: "Undo" }).click();
-        await expect(group.getByRole("button", { name: "Ask Ada" })).toHaveCount(5);
+        await expect(group.getByRole("button", { name: "Ask an admin" })).toHaveCount(5);
       });
 
       test("search filters the groups", async ({ page }) => {

@@ -32,11 +32,11 @@ for (const theme of ["light", "dark"] as const) {
 
     it("LockPill is a neutral pill with the owner, and the who-can sentence for assistive technology", () => {
       themed();
-      render(<LockPill owner="Set by Administration" whoCan={who} />);
-      const pill = screen.getByText(/Set by Administration/);
+      render(<LockPill owner="Set for you by an Aurora administrator" whoCan={who} />);
+      const pill = screen.getByText(/Set for you by an Aurora administrator/);
       expect(pill.closest("span")?.className).toContain("bg-subtle");
       expect(pill.closest("span")?.className).not.toContain("pending");
-      expect(screen.getByText(/Ask Alice Admin/)).toBeInTheDocument();
+      expect(screen.getByText(/Ask an organization admin/)).toBeInTheDocument();
     });
 
     it("LockPill with an href is a link", () => {
@@ -178,7 +178,7 @@ for (const theme of ["light", "dark"] as const) {
       );
       expect(screen.getAllByText(/Guide: “Limits”/)).toHaveLength(1);
       expect(screen.getByLabelText("Setting A")).toBeInTheDocument();
-      expect(screen.getByText("Set in Helm")).toBeInTheDocument();
+      expect(screen.getByText("Set by the installation")).toBeInTheDocument();
       expect(screen.getByTestId("c.d-locked-value")).toHaveTextContent("10");
       expect(screen.queryByText(/in the operator guide/)).toBeNull();
     });
