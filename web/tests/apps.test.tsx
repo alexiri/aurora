@@ -118,7 +118,7 @@ describe("availability editor", () => {
     fireEvent.click(screen.getByRole("switch", { name: "GitHub" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(puts).toEqual([{ posture: "restricted", allow: [{ app_id: "gh" }] }]));
-    await screen.findByText("Saved.");
+    await screen.findByText("Saved");
   });
 
   it("a restricted organization shows its switches; a member sees who can change them instead of Save", () => {

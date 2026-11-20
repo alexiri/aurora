@@ -134,7 +134,7 @@ describe("Internet access page (InternetLevel)", () => {
     // The move is written to the draft as it is made, not at Apply.
     await waitFor(() => expect(putBody).not.toBeNull());
     expect(pubBody).toBeNull();
-    fireEvent.click(await screen.findByText("Apply changes"));
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
     await waitFor(() => expect(pubBody).toEqual({ revision: 4 }));
     expect(putBody!.revision).toBe(3);
     expect(putBody!.rules.map((r) => r.name)).toEqual(["Other", "Allow x"]);
@@ -147,7 +147,8 @@ describe("Internet access page (InternetLevel)", () => {
         json(200, {
           items: [
             { id: "g3", number: 3, status: "draft", rule_count: 0, draft_revision: 7, created_at: "2026-01-03T00:00:00Z" },
-            { id: "g2", number: 2, status: "published", rule_count: 1, draft_revision: null, created_at: "2026-01-02T00:00:00Z" },
+            { id: "g4", number: 4, status: "published", rule_count: 2, draft_revision: null, created_at: "2026-01-04T00:00:00Z" },
+            { id: "g2", number: 2, status: "superseded", rule_count: 1, draft_revision: null, created_at: "2026-01-02T00:00:00Z" },
           ],
           next_cursor: null,
         }),
@@ -158,7 +159,13 @@ describe("Internet access page (InternetLevel)", () => {
     });
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
     fireEvent.click(await screen.findByText("History of changes"));
-    fireEvent.click(await screen.findByLabelText("Roll back to generation 2"));
+    // (org-14) Rows read as sentences; rolling back asks first.
+    expect(await screen.findByText("Someone published version 2")).toBeInTheDocument();
+    expect(screen.getByText("Current")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Roll back to version 4")).toBeNull();
+    fireEvent.click(await screen.findByLabelText("Roll back to version 2"));
+    expect(await screen.findByText("Rules added since stop applying now.")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Roll back" }));
     await waitFor(() => expect(rollbackBody).toEqual({ generation: 2, expect_revision: 7 }));
   });
 

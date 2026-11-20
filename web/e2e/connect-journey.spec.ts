@@ -79,7 +79,9 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(dialog.getByText(`“${PROMPT}”`)).toBeVisible();
         const chat = dialog.getByRole("link", { name: "Try it in chat" });
         await expect(chat).toBeVisible();
-        expect(new URL((await chat.getAttribute("href"))!, "http://x").searchParams.get("draft")).toBe(PROMPT);
+        const chatUrl = new URL((await chat.getAttribute("href"))!, "http://x");
+        expect(chatUrl.searchParams.get("tab")).toBe("chat");
+        expect(chatUrl.searchParams.get("draft")).toBe(PROMPT);
         await expect(dialog.getByRole("button", { name: "Another app" })).toBeVisible();
 
         await dialog.getByRole("button", { name: "Close", exact: true }).last().click();

@@ -14,6 +14,7 @@ import { OrgAuditView } from "@/components/org/audit-view";
 import { OrgDirectoryView } from "@/components/org/directory-view";
 import { OrgKeysView } from "@/components/org/keys-view";
 import { OrgGate } from "@/components/org/org-gate";
+import { OrgAgentsList } from "@/components/org/org-agents-list";
 import { MembersView } from "@/components/org/members-view";
 import { OrgDangerSections, GeneralForm, PreviewsForm } from "@/components/org/settings-view";
 import { OrgRetentionForm } from "@/components/org/retention-form";
@@ -61,16 +62,7 @@ export function OrgAgentsPage() {
       {(org) =>
         // (P5-POLISH-9, D-390) A member reads the sentence and who changes it, not a red refusal.
         isAdmin(org) ? (
-          <TopicPage<Tabs<"orgAgents">>
-            idBase="org-agents"
-            title="Agents"
-            description="Rules for bring-your-own agents, the skills every agent has, and previews."
-            tabs={[
-              { id: "byo", label: "BYO", content: <OrgByo org={org} /> },
-              { id: "skills", label: "Skills", content: <OrgSkills /> },
-              { id: "previews", label: "Previews", content: <PreviewsForm org={org} /> },
-            ]}
-          />
+          <AdminOrgAgents org={org} slug={slug} />
         ) : (
           <div className="max-w-page-narrow space-y-4" data-testid="member-org-agents">
             <PageHeader title="Agents" description="These rules apply to your organization. Only owners and admins can change them." className="mb-2" />
@@ -79,6 +71,44 @@ export function OrgAgentsPage() {
         )
       }
     </OrgGate>
+  );
+}
+
+/**
+ * (P5-REFINE-17, org-6) Agents opens on the list of every agent in the organization; Bring your own (with Previews as a
+ * second section) and Skills are Expert, behind "Show more controls".
+ */
+function AdminOrgAgents({ org, slug }: { org: Org; slug: string }) {
+  const alt = useAltitude();
+  const showByo = alt.allows(ALTITUDE_REGISTRY["org.byo"].altitude);
+  const showSkills = alt.allows(ALTITUDE_REGISTRY["org.skills"].altitude);
+  const hidden = (showByo ? 0 : 1) + (showSkills ? 0 : 1);
+  const tabs: TopicTab<Tabs<"orgAgents">>[] = [
+    { id: "agents", label: "Agents", content: <OrgAgentsList orgId={org.id} orgSlug={slug} /> },
+    ...(showByo
+      ? [
+          {
+            id: "byo" as const,
+            label: "Bring your own",
+            content: (
+              <div className="space-y-6">
+                <OrgByo org={org} />
+                <Section id="org-previews" title="Previews">
+                  <PreviewsForm org={org} />
+                </Section>
+              </div>
+            ),
+          },
+        ]
+      : []),
+    ...(showSkills ? [{ id: "skills" as const, label: "Skills", content: <OrgSkills /> }] : []),
+  ];
+  return (
+    <AltitudeScope>
+      <ReportHidden n={hidden} />
+      <TopicPage idBase="org-agents" title="Agents" description={`Every agent in ${org.name}, by workspace.`} tabs={tabs} />
+      <MoreControlsLine className="pt-4" />
+    </AltitudeScope>
   );
 }
 

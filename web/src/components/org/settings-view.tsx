@@ -4,14 +4,14 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { OrgFreeze } from "@/components/freeze/freeze-sections";
-import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { CheckboxField, Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
+import { CheckboxField, Form } from "@/components/ui/form";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { DangerZone, Section } from "@/components/ui/section";
-import { TypeToConfirmDelete } from "@/components/ui/type-to-confirm-delete";
-import { fieldErrors } from "@/lib/api/errors";
+import { DeleteWithName } from "@/components/ui/type-to-confirm";
+import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { deleteOrg, usePatchOrg } from "@/lib/api/org";
 import { useInstance } from "@/lib/api/queries";
 import { orgRoutes } from "@/lib/routes";
@@ -34,12 +34,22 @@ export function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
   const [maxMembers, setMaxMembers] = useState(org.settings.max_members?.toString() ?? "");
   const [maxAgents, setMaxAgents] = useState(org.settings.max_agents?.toString() ?? "");
   const [clientErr, setClientErr] = useState<Record<string, string>>({});
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
+  // What is saved: the form's start, and again after each save.
+  const [base, setBase] = useState({
+    name: org.name,
+    slug: org.slug,
+    canCreate: org.settings.members_can_create_workspaces,
+    maxMembers: org.settings.max_members?.toString() ?? "",
+    maxAgents: org.settings.max_agents?.toString() ?? "",
+  });
+  const dirty =
+    name !== base.name || slug !== base.slug || canCreate !== base.canCreate || maxMembers !== base.maxMembers || maxAgents !== base.maxAgents;
   const fe = patch.error ? fieldErrors(patch.error) : {};
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    setSaved(false);
+    bar.clear();
     const errs: Record<string, string> = {};
     const n = name.trim();
     const s = slug.trim();
@@ -63,7 +73,8 @@ export function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
       },
       {
         onSuccess: (updated) => {
-          setSaved(true);
+          setBase({ name, slug, canCreate, maxMembers, maxAgents });
+          bar.flash();
           if (updated.slug !== org.slug) router.replace(orgRoutes(updated.slug).settings());
         },
       },
@@ -126,16 +137,23 @@ export function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
           />
         </Field>
       </fieldset>
-      {patch.error && Object.keys(fe).length === 0 ? (
-        <ErrorNotice error={patch.error} />
-      ) : null}
-      <SavedNotice show={saved}>Settings saved.</SavedNotice>
       {isOwner ? (
-        <FormActions>
-          <Button type="submit" size="lg" disabled={patch.isPending}>
-            {patch.isPending ? "Saving…" : "Save changes"}
-          </Button>
-        </FormActions>
+        <SaveBar
+          dirty={dirty}
+          saving={patch.isPending}
+          saved={bar.saved}
+          errorCount={Object.keys(clientErr).length + Object.keys(fe).length}
+          error={patch.error && Object.keys(fe).length === 0 ? errorMessage(patch.error) : undefined}
+          onDiscard={() => {
+            setName(base.name);
+            setSlug(base.slug);
+            setCanCreate(base.canCreate);
+            setMaxMembers(base.maxMembers);
+            setMaxAgents(base.maxAgents);
+            setClientErr({});
+            patch.reset();
+          }}
+        />
       ) : null}
     </Form>
   );
@@ -201,30 +219,29 @@ function isOwnerAdmin(org: Org): boolean {
 export function OrgDangerZone({
   orgId,
   slug,
+  name,
   onDeleted,
 }: {
   orgId: string;
   slug: string;
+  /** The organization's visible name, which the person types to confirm. */
+  name: string;
   onDeleted: () => void;
 }) {
   return (
     <DangerZone
       id="delete-org"
       title="Delete this organization"
-      description={
-        <>
-          This permanently deletes the organization, its workspaces and everything in them. Type{" "}
-          <code className="font-mono text-ink">{slug}</code> to confirm.
-        </>
-      }
+      description="This permanently deletes the organization, its workspaces and everything in them."
     >
-      <TypeToConfirmDelete
-        id="del-org"
-        fieldLabel="Organization URL name"
-        slug={slug}
+      <DeleteWithName
         buttonLabel="Delete organization"
-        remove={(confirm) => deleteOrg(orgId, confirm)}
-        onDeleted={onDeleted}
+        title={`Delete ${name}?`}
+        consequence="This deletes the organization, its workspaces, agents, files and conversations. It can't be undone."
+        noun="organization"
+        name={name}
+        run={() => deleteOrg(orgId, slug)}
+        onDone={onDeleted}
       />
     </DangerZone>
   );
@@ -237,7 +254,7 @@ export function OrgDangerSections({ org }: { org: Org }) {
   return (
     <div className="space-y-8">
       <OrgFreeze orgId={org.id} name={org.name} frozen={org.frozen} />
-      <OrgDangerZone orgId={org.id} slug={org.slug} onDeleted={() => router.replace("/")} />
+      <OrgDangerZone orgId={org.id} slug={org.slug} name={org.name} onDeleted={() => router.replace("/")} />
     </div>
   );
 }

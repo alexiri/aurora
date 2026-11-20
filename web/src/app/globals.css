@@ -85,6 +85,10 @@
 }
 
 @theme inline {
+  /* (P5-REFINE-2) Tables become stacked rows below this width: `stack:` and `max-stack:` variants. */
+  --breakpoint-stack: 900px;
+  /* (P5-REFINE-2, admin-11) The light plate behind a logo that has no dark variant (white at 92 %). */
+  --color-plate: rgb(255 255 255 / 0.92);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
   --color-muted: var(--muted);
@@ -559,6 +563,73 @@
 }
 .md .hljs-strong {
   font-weight: 700;
+}
+
+/*
+ * Stacked tables (P5-REFINE-2, D-405; org-13, computer-5). A `<table data-stack="900">` is a normal table from 900 px up
+ * and below it one card per row: the `data-cell="title"` cell on the first line, the `data-cell="actions"` cell at the
+ * right edge of that line, every other cell as a line of its own (with its `data-label` before the value). One DOM, no
+ * JS width listener, so the server markup matches. In `@layer components` (an unlayered element rule beats every layered
+ * one, D-393); `!important` so it still wins over the cells' own utility padding and borders (important declarations
+ * of an earlier layer beat those of a later one).
+ */
+@layer components {
+  @media (max-width: 899.98px) {
+    table[data-stack="900"],
+    table[data-stack="900"] > tbody {
+      display: block !important;
+      width: 100% !important;
+      min-width: 0 !important;
+    }
+    table[data-stack="900"] > thead {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      overflow: hidden !important;
+      clip: rect(0 0 0 0) !important;
+    }
+    table[data-stack="900"] > tbody > tr {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) auto;
+      column-gap: 0.75rem;
+      padding: 0.75rem 1rem !important;
+      border-top: 1px solid var(--line) !important;
+    }
+    table[data-stack="900"] > tbody > tr:first-child {
+      border-top: 0 !important;
+    }
+    table[data-stack="900"] > tbody > tr > td {
+      display: block !important;
+      grid-column: 1 / -1;
+      min-width: 0;
+      margin-top: 0.25rem;
+      padding: 0 !important;
+      border: 0 !important;
+      text-align: left !important;
+      white-space: normal !important;
+    }
+    table[data-stack="900"] > tbody > tr > td:empty {
+      display: none !important;
+    }
+    table[data-stack="900"] > tbody > tr > td[data-cell="title"] {
+      grid-column: 1;
+      grid-row: 1;
+      margin-top: 0;
+    }
+    table[data-stack="900"] > tbody > tr > td[data-cell="actions"] {
+      grid-column: 2;
+      grid-row: 1;
+      align-self: start;
+      justify-self: end;
+      margin-top: 0;
+      white-space: nowrap !important;
+    }
+    table[data-stack="900"] > tbody > tr > td[data-label]::before {
+      content: attr(data-label) " ";
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+  }
 }
 
 @layer base {

@@ -144,7 +144,7 @@ export function WorkspaceSettingsPage() {
                 content: (
                   <div className="space-y-6">
                     <WorkspaceFreeze wsId={w.id} name={w.name} orgId={w.org_id} frozen={w.frozen} />
-                    <DangerTab wsId={w.id} slug={w.slug} onDeleted={() => router.replace(orgRoutes(org).home())} />
+                    <DangerTab wsId={w.id} slug={w.slug} name={w.name} onDeleted={() => router.replace(orgRoutes(org).home())} />
                   </div>
                 ),
               },

@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 
 import { AgentAvatar } from "@/components/agent-avatar";
 import { Button } from "@/components/ui/button";
-import { Notice } from "@/components/ui/notice";
+import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
 import {
   avatarErrorMessage,
   avatarProblem,
@@ -13,11 +13,16 @@ import {
 } from "@/lib/api/avatar";
 import type { Agent } from "@/lib/api/queries";
 
-/** Avatar upload / preview / remove for the Instructions tab (acts immediately, not on Save). */
-export function AvatarField({ agent, wsId, compact = false }: { agent: Agent; wsId: string; compact?: boolean }) {
+/**
+ * (P5-REFINE-12, behaviour-8) The agent's picture on the Instructions page: the round picture, a visible **Change
+ * picture** button, a real **Remove** button and the limit in words. It acts at once (not on Save) and says "Saved"
+ * beside itself.
+ */
+export function AvatarField({ agent, wsId }: { agent: Agent; wsId: string }) {
   const upload = useUploadAvatar(wsId, agent.id);
   const remove = useRemoveAvatar(wsId, agent.id);
   const input = useRef<HTMLInputElement>(null);
+  const bar = useSaveBar();
   const [problem, setProblem] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const busy = upload.isPending || remove.isPending;
@@ -32,6 +37,7 @@ export function AvatarField({ agent, wsId, compact = false }: { agent: Agent; ws
     setPreview(URL.createObjectURL(file));
     try {
       await upload.mutateAsync(file);
+      bar.flash();
     } catch {
       // surfaced via upload.error
     } finally {
@@ -43,10 +49,11 @@ export function AvatarField({ agent, wsId, compact = false }: { agent: Agent; ws
     }
   }
 
-  // (P5-POLISH-6, C3) Compact: the avatar is the button that changes it; Remove is a small link under it.
-  if (compact) {
-    return (
-      <div className="flex shrink-0 flex-col items-center gap-1">
+  return (
+    <div className="flex items-start gap-4">
+      <AgentAvatar name={agent.name} url={preview ?? agent.avatar_url} size={64} />
+      <div className="min-w-0 space-y-2">
+        <p className="text-sm font-medium text-ink">Picture</p>
         <input
           ref={input}
           id="a-avatar"
@@ -54,81 +61,38 @@ export function AvatarField({ agent, wsId, compact = false }: { agent: Agent; ws
           accept="image/png,image/jpeg,image/webp"
           className="sr-only"
           aria-label="Avatar file"
+          tabIndex={-1}
           disabled={busy}
           onChange={(e) => void onPick(e.target.files?.[0])}
         />
-        <button
-          type="button"
-          disabled={busy}
-          aria-label={agent.avatar_url ? "Change avatar" : "Upload avatar"}
-          title="PNG, JPEG or WebP, up to 512 KiB"
-          onClick={() => input.current?.click()}
-          className="rounded-full">
-          <AgentAvatar name={agent.name} url={preview ?? agent.avatar_url} size={56} />
-        </button>
-        {agent.avatar_url ? (
-          <button
-            type="button"
-            disabled={busy}
-            aria-label="Remove avatar"
-            className="text-xs text-muted underline hover:text-ink"
-            onClick={() => {
-              setProblem("");
-              upload.reset();
-              remove.mutate();
-            }}>
-            {remove.isPending ? "Removing…" : "Remove"}
-          </button>
-        ) : null}
-        {problem || serverError ? (
-          <p role="alert" className="max-w-40 text-xs text-danger-ink">
-            {problem || avatarErrorMessage(serverError)}
-          </p>
-        ) : null}
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-4">
-        <AgentAvatar name={agent.name} url={preview ?? agent.avatar_url} size={64} />
         <div className="flex flex-wrap items-center gap-2">
-          <input
-            ref={input}
-            id="a-avatar"
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="sr-only"
-            aria-label="Avatar file"
-            disabled={busy}
-            onChange={(e) => void onPick(e.target.files?.[0])}
-          />
-          <Button type="button" variant="outline" disabled={busy} onClick={() => input.current?.click()}>
-            {upload.isPending ? "Uploading…" : agent.avatar_url ? "Change avatar" : "Upload avatar"}
+          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => input.current?.click()}>
+            {upload.isPending ? "Uploading…" : "Change picture"}
           </Button>
           {agent.avatar_url ? (
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
+              size="sm"
               disabled={busy}
+              aria-label="Remove picture"
               onClick={() => {
                 setProblem("");
                 upload.reset();
-                remove.mutate();
-              }}
-            >
-              {remove.isPending ? "Removing…" : "Remove avatar"}
+                remove.mutate(undefined, { onSuccess: () => bar.flash() });
+              }}>
+              {remove.isPending ? "Removing…" : "Remove"}
             </Button>
           ) : null}
+          <InlineSaved show={bar.saved} />
         </div>
+        <p className="text-xs text-muted">PNG, JPG or WebP, up to 512 KiB. Shown round.</p>
+        {problem || serverError ? (
+          <p role="alert" className="text-xs text-danger-ink">
+            {problem || avatarErrorMessage(serverError)}
+          </p>
+        ) : null}
       </div>
-      <p className="text-xs text-muted">PNG, JPEG or WebP, up to 512 KiB. It is cropped to a square and resized to 256×256.</p>
-      {problem || serverError ? (
-        <Notice tone="danger" role="alert">
-          {problem || avatarErrorMessage(serverError)}
-        </Notice>
-      ) : null}
     </div>
   );
 }

@@ -159,6 +159,52 @@ adds to this section, for every screen:
 - **Focus** is one ring from `:focus-visible`; a container with a focused field changes its border;
   menus and popovers have no outline (D-393).
 
+**Shared patterns (phase 5, P5-REFINE-2, D-405, UX review 5).** One primitive for each thing every page used
+to do its own way. A page uses these; a new page never invents its own. (Mock-ups: UX review 5,
+<https://claude.ai/artifact/1YJcRA7Q84864pkim44Qnt>; local copy `design-ux-review-5/`.)
+- **Save.** `SaveBar` (`ui/save-bar.tsx`) is the only way a settings form saves. Hidden until the first
+  change; then a bar fixed at the bottom of the viewport (inset 1 rem, 36 rem wide, centred): **Unsaved
+  changes** with **Discard** and **Save**; **Saving…**; then a check and **Saved** (or the form's own
+  sentence, with **Undo** where a save can be undone, as on Administration defaults) for two seconds;
+  on a failure "2 fields need fixing" (the page scrolls to and focuses the first bad field) or the failure's
+  sentence with Save still enabled. There is no "Saved." line at the top of a page and no green banner. A
+  control that saves on its own (a switch, a select in a row, the avatar, an access level) shows the small
+  **InlineSaved** next to it. `ApplyBar` is retired.
+- **One-time secrets.** `SecretOnce` (`ui/secret-once.tsx`) shows every key, token, signing secret and
+  webhook URL: the value in a mono box that scrolls and never wraps, **Copy** → **Copied**; closing (the X,
+  Escape, the overlay or the button) before it was copied asks "You haven't copied it. Close anyway?" with
+  **Copy** and **Close anyway**. The value lives only in the opener's state.
+- **Confirm ladder.** Undoable actions (pause, remove from a list, turn off) do not ask: a toast with
+  **Undo** (`useUndoToast`, six seconds). Reversible but disruptive actions (rotate, promote, pause an
+  agent, workspace or organization) open a `ConfirmDialog` whose **consequence sentence is required** and
+  whose button is the verb ("Rotate URL", "Promote to Owner"). Permanent actions (delete) open
+  `TypeToConfirm`: a red consequence line, then "Type the workspace name to confirm: **<visible name>**",
+  never a slug; the danger button stays disabled until it matches (case-sensitive, trimmed). A deleted
+  item is named by its visible name in every dialog.
+- **Dates.** `formatWhen` is the one way to show a time: "Just now", "n min ago", "n h ago", then
+  "19 Nov, 23:50" (with the year when it is not this year), in the person's locale and time zone
+  (`GET /v1/me` `timezone`, else the browser's). `<When>` renders `<time>` with the exact time as its
+  title and re-renders every 30 seconds through one timer for the page. Date inputs are `DateField`: the
+  browser locale's order, ISO on the wire.
+- **Tables on small screens.** `ResponsiveTable` (or `DataTable stackBelow={900}` with `Td cell="title"`,
+  `cell="actions"`, `label=`) is a table from 900 px up and one card per row below it: the title line with
+  its actions at the right edge, then "label value" lines. Nothing hides behind an inner scrollbar. One DOM,
+  CSS breakpoint.
+- **Colour meaning.** Red is a failure, amber is something the viewer can do, green is good news only,
+  neutral is information. A logo without a dark variant sits on a light plate in the dark theme. Row action
+  buttons use the regular icon colour.
+- **Dialogs and loading.** A dialog is anchored at a fixed offset from the top (12 vh from 640 px), so a
+  field that appears does not move the title. A form keeps a one-line slot for its error. A list that is
+  loading shows `SkeletonRows`, not "Loading…".
+- **Not found and context.** An unknown organization, workspace or path is a `NotFoundState` inside the
+  app shell, with the viewer's real organization in the rail; the shell never takes an unknown slug as the
+  current organization. Account pages keep the last visited workspace in the switcher. A link that goes to
+  another page and back carries `?from=<same-origin /o/… path>` and the target shows "← Back to <name>".
+- **Copy system.** `lib/labels.ts` is the only map from an enumeration the API returns to words (`label()`
+  gives "?" for an unknown key, never the key). `copy-guard.test.ts` fails on a snake_case word, a UUID or a
+  dotted key shown outside `<code>` or **Technical details**. `TechnicalDetails` is the one fold for
+  machinery.
+
 **Scope: the whole dashboard.** This section is the dashboard's visual
 identity, not a restyle of individual screens. **Every** screen MUST follow
 it — the screens in the mock-ups and every other existing screen (org,
@@ -459,6 +505,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   starting or running; errors through the shared notice) and says "Sleeps after
   n minutes of quiet" in words from `SandboxView.idle_stop_after_secs`, nothing
   when it is null.
+  (P5-REFINE-4, D-412, SEC-141) The engine's details (image, runner, pod events,
+  start-attempt and start-log detail) are instance-admin only: the API returns them
+  to nobody else, so the Computer page shows everyone else the computer in words
+  (`SandboxView.computer`); the UI is P5-REFINE-15's.
 - **Agent page (phase 5)** (P5-AGENT-2, D-200, D-201; design: the "Agent page
   redesign" canvas, boards "Chosen · Rail expanded", "Chosen · Rail collapsed"
   and "A · Phone"; its "New conversation" button is not part of the design).
@@ -499,6 +549,40 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     the page; Instructions keeps its Instructions · Memory · Skills · Tests row. `?tab=` ids are
     unchanged. A BYO agent (no Chat) opens on Instructions as before. This replaces the five-section order
     above wherever they disagree.
+  - (phase 5, **P5-REFINE-11, D-408, D-409, D-415, D-407; supersedes the D-382 bullet above and the "Agent actions" menu
+    in the header paragraph**) **The Settings button and page.** The header has the tabs **Chat · Automations · Computer**
+    (BYO: Computer) and a **labelled outline button "Settings" with a gear** (accent outline while a Settings page is open; it
+    keeps its label at 390 px). It opens the **Settings page directly** (on Instructions): the page header (back link, the page's
+    name, a one-line lead: Instructions "Name, instructions, model", Apps & access "Apps, accounts and the AI key it uses",
+    Memory "What it remembers", Skills "What it knows how to do"), a **left sub-nav** (Instructions · Apps & access · Memory ·
+    Skills · Tests* · Other agents*, * Expert altitude) that is the segmented `Tabs` under 768 px, the page, and at the bottom a **danger
+    zone** with **Pause <Agent>** ("Stops it until you resume it"; **Resume <Agent>** when paused) and **Delete <Agent>…**, for
+    workspace owners only (members see the pages read-only and no zone). `?tab=` ids are unchanged. Section ids are now `chat`,
+    `triggers`, `computer`, `settings`. The computer's secondary tabs (Terminal, Files, …) collapse into a **More** menu rather
+    than scrolling sideways.
+  - **The header state** (D-408) is one `StatusLine`: **Can't answer: <reason>** (`no AI key`, `the key stopped working`,
+    `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; an action slot
+    beside it is P5-REFINE-12's) → **Needs you** → **Working** → **Starting its computer…** (spinner, `aria-live` polite) →
+    **Asleep** → **Ready**; **Ready only when the computer answers** (`SandboxView.computer.ready`, C-1059). Without computer
+    data (not loaded, BYO) the older words apply.
+  - **The rail** (D-201, D-415, P5-REFINE-11) has three headings: **Needs you · Doing now · What <Agent> did**. The Computer is
+    one line under Doing now ("On its computer · Awake / Asleep / Starting its computer… · Open"); About moved into Settings;
+    "What <Agent> did" is today's list of recent requests with an "All" link to Activity until the agent timeline
+    (P5-REFINE-9, C-1083) feeds it live. Collapsed, each icon has a visible three-letter word (Need · Now · Did). The expanded
+    panel **overlays the transcript below 1400 px** (it no longer squeezes the chat), pushes from 1400 px up.
+  - **Chat** (P5-REFINE-11): the composer is **one row until Aa** opens the formatting toolbar (the choice is kept) and Preview grows
+    with its content; after sending, the transcript **always scrolls to the bottom** (and again when an image finishes loading),
+    with no "Jump to latest"; an image attachment is an inline thumbnail with "name · size · Image" (the type also comes from
+    the content route and the file name, not only the message); a search result shows its conversation's title, the sentence
+    with the match in bold, who spoke ("Daneel: …") and the full date and time ("19 Nov 23:50"); **an error shows once**, as one
+    red box with a plain sentence, a **Details** fold with the technical line and no repeating agent bubble; **archiving**
+    leaves the Active list at once and after a reload, shows an Undo toast, and the thread reads "Archived 19 Nov 2026 · read only"
+    with **Restore** and no composer; the empty Active list says "No active conversations" with **New chat**; **on a phone the Chat tab opens
+    the person's conversation** with the composer ready, "Conversations" one tap back. **First successes** (first answer, first
+    app, first approval, first schedule run) are `Notice` cards with **Got it**, shown once per person (server-side
+    `notices_seen` keys `first-answer`, `first-app`, `first-approval`, `first-run`).
+  - *Waiting for other briefs:* several chats, Rename, auto-titles, run threads and the stopped-answer marker (P5-REFINE-7),
+    "can't answer" fix button (P5-REFINE-12), the timeline feed (P5-REFINE-9), the Needs-you badge on the Agents list (C-1082, P5-REFINE-8).
   - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
     page (Triggers section), bound to `narration_cards` (off by default). Help text: "Posts one message
     per reply that lists the steps the agent takes, updated as they run and shrunk to one line when the answer
@@ -1259,6 +1343,9 @@ guide links, ladder rows and the organization's accounts.
 - Enumerations are `ChoiceCards` with a sentence per choice (never `sanctioned_only`). Lists are list
   editors (never JSON).
 - The **Default** badge reads "Default: <value in words>".
+- (P5-REFINE-2) Enumerations the API returns are worded in `web/src/lib/labels.ts`, one table per enum;
+  the settings words (`lib/settings-words.ts`) and error words (`lib/api/errors.ts`) stay where they are. An
+  enum value without a label fails `labels.test.ts`.
 - UI text never cites spec sections ("08 §11.1") or repository paths. Operator docs are linked by title.
   A test fails on `§` or `docs/` in dashboard strings, and on the retired words of the vocabulary table
   (C-974).
@@ -1327,8 +1414,29 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 (Phase 5, P5-IA-1, D-338, C-961: navigation and page names follow §Information architecture › "One
-structure for every level". An org member sees Workspaces and read-only AI models and Internet access;
+structure for every level". An org member sees Overview and read-only AI models and Internet access;
 every other topic is owners/admins and is not listed for a member.)
+- **Manage <org>, an area, not a second rail** (P5-REFINE-17, rec 8). On `/o/<org>/…` (not `/w/…`) the rail stays the
+  **workspace rail** of the workspace the person was in (remembered per browser tab; else their personal workspace; else
+  the first). The page area carries a **← Back to <workspace>** link, the **Manage <org>** header (the only place the
+  organization is named) and a sub-nav: Overview · Agents · People · Apps & accounts · Chat platforms · AI models ·
+  Internet access · Data · Settings (a column on a desktop, a select on a phone; filtered by role with
+  `visibleTopics("org", …)`: a member keeps Overview, AI models and Internet access). The switcher's **Manage <org>** row
+  (was "Organization settings") opens the Overview; its last row **New organization** opens a dialog (shown where sign-up
+  lets the person create one). Every old address keeps working (C-960).
+- **Overview** (`/o/<org>`): **Needs you** (requests for apps, chat platforms and AI keys an admin can resolve, and the
+  invitations waiting), **People** (count, invitations waiting, **Invite**), **Workspaces** (team first, personal
+  below, **New workspace**), **Agents** (the five most recently changed, **All agents**) and the two rules that apply
+  (AI models, Internet access). Members see Workspaces and the two rules only.
+- **Agents** opens on **Agents** (every agent by workspace: team workspaces A–Z, then personal ones by owner), then
+  **Bring your own** (with Previews as a second section) and **Skills**, the last two Expert (behind "Show more
+  controls"). The list reads each workspace's agents until the organization-wide route (C-1090) lands.
+- **People**: a promotion to Admin or Owner asks first ("Make Bob an Admin of Acme?" with what the role can do and
+  "What can each role do?", `ROLE_CAN` in `lib/roles-explain.ts`); lowering and Member changes apply at once. The invite
+  dialog ("Invite someone to Acme") lists team workspaces only; everyone's personal workspace is made on accept.
+  Pending invitations are stacked rows at 390 px.
+- **Internet access › History of changes**: rows read "<Person> published version N" with **Current** on the live one
+  and **Roll back to this version** (asks first) on the others.
 - **Workspaces** (all members: those they can access; owners/admins: all).
 - **Members**: list, roles, suspend/remove, invitations. (phase 2, RFE-021)
   Suspend/remove first opens the **offboarding view** — "Removing Alice disables
@@ -2089,7 +2197,7 @@ inside a page. Disclosure now has one home.
 and the owner of a **team** workspace start at **Set up**; an instance admin inside Administration starts at
 **Expert**; a workspace member, an approver, an organization member and the owner of the person's own
 **personal** workspace start at **Use** (the walk-through of "the first ten minutes" shows a person who owns
-their personal workspace with Overview, Agents and Approvals only; one line in `viewerFloor` changes this).
+their personal workspace with Overview, Agents and Approvals only; confirmed by the owner, D-423).
 While a role loads the floor is Use, so nothing deeper flashes in.
 
 **One per-person switch**, "Show more controls", stored server-side on `GET`/`PATCH /v1/me/onboarding`
@@ -2154,6 +2262,51 @@ A control not in the table is a gap in the classification: add the row (and the 
 **The lint** (`tests/altitude-registry.test.ts`): every `<Altitude id level>` names a registry id at its level;
 every row not marked later or rule-only is used in the code; rendered at Use with the switch off, the Expert
 strings are absent.
+
+## Agent settings pages (phase 5, P5-REFINE-12, D-406, D-407, D-411, D-413, D-414)
+
+**New agent.** The dialog "New agent" starts from a purpose: a row of chips **Start from** (General assistant,
+Research, Ops helper, Calendar secretary, Writer, A blank agent; General assistant by default). A template sets
+the name suggestion (only while Name is empty), the editable Instructions and a suggested first message; it never
+changes access. The templates are data in `web/src/lib/onboarding/templates.ts` (no API, not editable per
+organization; an optional `schedule { cron, prompt }` is data for the schedule form of P5-REFINE-14). Fields: Name,
+Handle (optional; follows the name until edited), **Where it runs** ("Runs on Aurora (recommended)" by default;
+bring-your-own appears only under "More options: bring your own agent…" and is disabled with its reason when the
+posture forbids it; when the instance has no hosted agents the dialog says so and BYO is the only choice) and
+**Instructions (optional)**. After Create: the toast "<Agent> is ready" and the new agent's chat, with the
+template's first message in the composer as a `?draft=` (C-1035), not sent. A BYO agent opens on Connect after its
+token has been copied.
+
+**Instructions.** The picture is a visible **Change picture** button with a real **Remove** and the hint "PNG, JPG
+or WebP, up to 512 KiB. Shown round." (the API's true limit). Models show display names only. **Advanced** (Expert)
+opens with "Advanced is for admins and power users. Most people never need it." and names the roles **Strongest
+model · Everyday model · Fastest model**, each defaulting to "Same as the default"; the harness is "Agent program".
+One save bar; "Saved" for two seconds.
+
+**Memory.** One box: "What should <Agent> remember?", an optional Title, Save, Cancel. The key is made by Aurora
+(`lib/memory-key.ts`): from the title, else the first six words; kebab-case ASCII, at most 64 characters, `note`
+when nothing is left, unique by a numeric suffix, one retry on a 409. Lists show the title (else the first line,
+60 characters) and a preview, never the key; the key is in Technical details at Expert (`memory.key`).
+
+**Skills.** Name, "Use it when…" (the API's one-line `description`), Instructions (the `body`), "On for <Agent>",
+Save and Delete. The folder name is made by Aurora (`lib/skill-name.ts`: kebab-case, at most 64 characters, `aurora-`
+prefixed names become `my-aurora-…`, unique by suffix, one retry on a 409). **Advanced: files and scripts** (Expert,
+`skill.files`) holds the folder name, the files, Executable and the precedence rule. The form is shared with the
+workspace and organization pages.
+
+**Tests.** A run is "Test run, <date>" with "Started by …"; tiles Pass rate · Passed · Failed · Couldn't be
+checked; Refused writes under Details; the configuration hash in Technical details. A result row says `Matches 42`
+or `Answer was "pong", expected 42`; a missing ANSWER line is "<Agent>'s reply had no ANSWER line, so Aurora could
+not compare it. The reply is shown below." (never blaming the agent). An active run reads "Running · 1 of 2 done ·
+started by …" with live counters (C-864 amendment) and each row has **Re-run** (`question_ids`, disabled with its
+reason while a run is active). Saving a judge says "Judge saved and tested: it answered in 3 s." or "Judge saved, but
+the test failed: …" from the settings response's `test` (C-863 amendment).
+
+**The missing AI key.** On Access, a card "<Agent> can't answer yet: it has no AI key." with **Give <Agent> the
+<key name>** (one click, toast "<Agent> can answer now") and **Choose another**, when the organization has a
+starter key the agent was not given. Other agents (Link another agent) and the header action wait for P5-REFINE-10
+and -11.
+
 
 ## Onboarding (phase 4, P4-ONB-2, D-141)
 
@@ -2345,7 +2498,9 @@ and **the typed values stay, secrets included** (component state only, masked, n
 P5-UX-3's "typed values that are not secret survive"); a choice of ways ("Sign in with:") appears only when
 more than one works, **More options** holds scopes, the OAuth client and the server. Done names the account
 and the access ("Daneel can now read Team calendar", "Read only. You can change this on Daneel's Access tab."),
-shows the package's `first_prompt` and **Try it in chat** opens the agent's chat with `?draft=` (C-1035).
+shows the package's `first_prompt` and **Try it in chat** opens the agent's Chat tab (`?tab=chat&draft=`, C-1035; one click, the dialog closes, the box
+holds the prompt and has focus, nothing is sent) from every place the journey opens: the agent's Access tab, Apps,
+Accounts and an app's page. The agent page follows the router, and the composer reads the draft from it.
 
 **What the buttons say.** One rule, so that one flow has one name:
 

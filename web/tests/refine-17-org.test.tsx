@@ -1,0 +1,85 @@
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
+import { historySentence } from "@/components/internet/internet-level";
+import { expiresIn, peopleLine } from "@/components/org/members-view";
+import { agentRowState, groupAgents, groupTitle, type OrgAgentRow } from "@/components/org/org-agents-list";
+import { OrgRoleHelp } from "@/components/org/role-help";
+import { pickRailWorkspace } from "@/lib/nav/manage-return";
+import { ROLE_CAN } from "@/lib/roles-explain";
+
+// P5-REFINE-17: the Manage area, the organization's agents list, invitations and role words.
+
+const ws = (id: string, name: string, personal_of: { id: string; name: string } | null = null) =>
+  ({ id, slug: id, name, personal_of }) as OrgAgentRow["ws"];
+const row = (id: string, w: OrgAgentRow["ws"], effective_frozen = false) =>
+  ({ agent: { id, name: id, handle: id, effective_frozen } as OrgAgentRow["agent"], ws: w });
+
+describe("org agents list (org-6)", () => {
+  it("groups team workspaces first A to Z, then personal ones by owner name, with the mockup's headers", () => {
+    const acme = ws("acme", "Acme Team");
+    const research = ws("research", "Research");
+    const bob = ws("bob", "Your workspace", { id: "u2", name: "Bob Builder" });
+    const carol = ws("carol", "Your workspace", { id: "u3", name: "Carol Member" });
+    const groups = groupAgents([row("d1", carol), row("d2", research), row("d3", bob), row("d4", acme)]);
+    expect(groups.map((g) => g.title)).toEqual(["Acme Team", "Research", "Bob Builder (personal)", "Carol Member (personal)"]);
+    expect(groupTitle(bob)).toBe("Bob Builder (personal)");
+  });
+
+  it("says Paused for a paused agent and Ready otherwise", () => {
+    expect(agentRowState({ effective_frozen: true }).word).toBe("Paused");
+    expect(agentRowState({ effective_frozen: false }).word).toBe("Ready");
+  });
+});
+
+describe("invitations and people (org-4, org-13)", () => {
+  const now = Date.parse("2026-11-20T12:00:00Z");
+  it("reads when an invitation stops working", () => {
+    expect(expiresIn("2026-11-26T12:00:00Z", now)).toBe("in 6 days");
+    expect(expiresIn("2026-11-21T12:00:00Z", now)).toBe("in 1 day");
+    expect(expiresIn("2026-11-20T18:00:00Z", now)).toBe("in 6 h");
+    expect(expiresIn("2026-11-19T12:00:00Z", now)).toBe("expired");
+  });
+  it("sums up people and waiting invitations for the Overview", () => {
+    expect(peopleLine(3, 1)).toBe("3 people · 1 invitation waiting");
+    expect(peopleLine(1, 0)).toBe("1 person");
+  });
+});
+
+describe("the Manage area's rail workspace (rec 8)", () => {
+  const memberships = [
+    {
+      org: { slug: "acme" },
+      workspaces: [
+        { slug: "team", name: "Team", personal: false },
+        { slug: "bob", name: "Bob", personal: true },
+      ],
+    },
+  ];
+  it("keeps the remembered workspace of this organization", () => {
+    expect(pickRailWorkspace("acme", { orgSlug: "acme", wsSlug: "team", wsName: "Team" }, memberships)).toEqual({ wsSlug: "team", wsName: "Team" });
+  });
+  it("else the personal workspace, else the first", () => {
+    expect(pickRailWorkspace("acme", null, memberships)?.wsSlug).toBe("bob");
+    expect(pickRailWorkspace("acme", { orgSlug: "other", wsSlug: "x", wsName: "X" }, [{ org: { slug: "acme" }, workspaces: [{ slug: "team", name: "Team" }] }])?.wsSlug).toBe("team");
+    expect(pickRailWorkspace("nope", null, memberships)).toBeNull();
+  });
+});
+
+describe("roles in words (org-9)", () => {
+  it("an Admin can invite people, set up apps and chat platforms, and change internet and AI model settings", () => {
+    expect(ROLE_CAN.org.admin.can).toEqual(["Invite and remove people", "Set up apps and chat platforms", "Change internet and AI model settings"]);
+  });
+  it("the fold lists the three roles", () => {
+    render(<OrgRoleHelp open />);
+    expect(screen.getByText("What can each role do?")).toBeInTheDocument();
+    for (const r of ["Member", "Admin", "Owner"]) expect(screen.getByText(r)).toBeInTheDocument();
+  });
+});
+
+describe("history sentence (org-14)", () => {
+  it("names who published which version", () => {
+    expect(historySentence({ number: 4, published_by: { display_name: "Alice Admin" } })).toBe("Alice Admin published version 4");
+    expect(historySentence({ number: 2 })).toBe("Someone published version 2");
+  });
+});

@@ -24,7 +24,7 @@ for (const scheme of ["light", "dark"] as const) {
 
         await ways.getByRole("button", { name: "Register a sign-in app for this workspace" }).click();
         const dialog = page.getByRole("dialog", { name: "Register a sign-in app" });
-        await expect(dialog.getByLabel("App")).toHaveValue("linear|linear");
+        await expect(dialog.getByLabel("App", { exact: true })).toHaveValue("linear|linear");
         await expect(dialog.getByRole("option", { name: "Linear — for Sign in with Linear" })).toHaveCount(1);
         await expect(dialog.getByText("https://aurora.example.org/v1/oauth/callback")).toBeVisible();
         await dialog.getByLabel("Client ID").fill("lin_abc");

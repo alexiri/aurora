@@ -105,8 +105,8 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
             if (!o) regen.reset();
           }}
           title="Regenerate the agent token?"
-          description={`Regenerate the token for @${agent.handle}? The previous token stops working immediately.`}
-          confirmLabel="Yes, regenerate"
+          description={`The old token for @${agent.handle} stops working now. Whatever uses it stops until you give it the new token, which is shown once.`}
+          confirmLabel="Regenerate token"
           danger
           busy={regen.isPending}
           onConfirm={() => void regenerate()}

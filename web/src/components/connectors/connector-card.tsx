@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ConfirmButton } from "@/components/ui/confirm-button";
+import { ConfirmAction } from "@/components/ui/confirm-dialog";
 import { useConnectorTypes, useDeleteConnector, useRotateConnectorToken, type ConnectorAdmin } from "@/lib/api/connectors";
 import { plural } from "@/lib/utils";
 
@@ -65,7 +65,15 @@ export function ConnectorCard({
               >
                 Rotate token
               </Button>
-              <ConfirmButton size="sm" pending={del.isPending} onConfirm={() => del.mutate(c.id)} />
+              <ConfirmAction
+                label="Delete"
+                size="sm"
+                title={`Remove ${c.display_name}?`}
+                description="Its connections stop working and its token stops being accepted. You can add the chat platform again later."
+                confirmLabel="Remove chat platform"
+                pending={del.isPending}
+                onConfirm={() => del.mutate(c.id)}
+              />
             </div>
             <ConnectorError error={rotate.error ?? del.error} />
           </>

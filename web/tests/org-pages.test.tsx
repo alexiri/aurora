@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { InviteForm } from "@/components/org/invite-dialog";
@@ -115,8 +115,8 @@ describe("invite form", () => {
   it("blocks invalid email without calling the API", () => {
     const fetchFn = mockFetch({});
     wrap(<InviteForm orgId="o1" onDone={() => {}} />);
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "bad" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "bad" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
     expect(screen.getByRole("alert")).toHaveTextContent(/valid email/);
     expect(fetchFn.mock.calls.some(([r]) => (r as Request).method === "POST")).toBe(false);
   });
@@ -129,28 +129,56 @@ describe("invite form", () => {
     });
     const onDone = vi.fn();
     wrap(<InviteForm orgId="o1" onDone={onDone} />);
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@b.co" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "a@b.co" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(/member limit/i),
     );
     expect(onDone).not.toHaveBeenCalled();
   });
+
+  it("(org-11) lists team workspaces only, names the person's own workspace line, and offers Cancel", async () => {
+    mockFetch({
+      "GET /v1/orgs/o1/workspaces": () =>
+        json(200, {
+          items: [
+            { id: "w1", slug: "research", name: "Research", personal_of: null },
+            { id: "w2", slug: "bob", name: "Your workspace", personal_of: { id: "u2", name: "Bob Builder" } },
+          ],
+          next_cursor: null,
+        }),
+    });
+    const onCancel = vi.fn();
+    wrap(<InviteForm orgId="o1" onDone={() => {}} onCancel={onCancel} />);
+    expect(await screen.findByLabelText("Research")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Your workspace")).toBeNull();
+    expect(screen.getByText("Also add to team workspaces")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "dana@example.test" } });
+    expect(screen.getByText("Dana gets their own personal workspace automatically.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCancel).toHaveBeenCalled();
+  });
 });
 
 describe("org danger zone", () => {
-  it("only enables delete when the slug matches", async () => {
+  it("asks for the visible name, only enables delete when it matches, and sends the slug", async () => {
     const fetchFn = mockFetch({ "DELETE /v1/orgs/o1": () => json(204, null) });
     const onDeleted = vi.fn();
-    render(<OrgDangerZone orgId="o1" slug="acme" onDeleted={onDeleted} />);
-    const btn = screen.getByRole("button", { name: "Delete organization" });
+    render(<OrgDangerZone orgId="o1" slug="acme" name="Acme Corp" onDeleted={onDeleted} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete organization" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("It can't be undone.");
+    const btn = within(dialog).getByRole("button", { name: "Delete organization" });
     expect(btn).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Organization URL name"), { target: { value: "acm" } });
+    const field = within(dialog).getByLabelText(/Type the organization name to confirm/);
+    expect(dialog).not.toHaveTextContent("URL name");
+    fireEvent.change(field, { target: { value: "acme" } });
     expect(btn).toBeDisabled();
     expect(fetchFn).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Organization URL name"), { target: { value: "acme" } });
+    fireEvent.change(field, { target: { value: "Acme Corp" } });
     expect(btn).toBeEnabled();
     fireEvent.click(btn);
     await waitFor(() => expect(onDeleted).toHaveBeenCalled());
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });

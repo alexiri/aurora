@@ -67,7 +67,7 @@ test.describe("Internet access (mocked API)", () => {
     await expect(page.getByLabel("Browser connections (not inspected)")).toBeVisible();
     await expect(page.getByLabel("Default rule")).toBeVisible();
     // One bar, and none until something is pending.
-    await expect(page.getByRole("region", { name: "Changes not applied" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Unsaved changes" })).toHaveCount(0);
     expect(await overflow(page)).toBeLessThanOrEqual(0);
   });
 
@@ -81,9 +81,9 @@ test.describe("Internet access (mocked API)", () => {
     await expect(page.getByTestId("common-change-rule")).toContainText("Block pastebin.com");
     await page.getByRole("button", { name: "Add rule" }).click();
     await expect(page.getByText("Not applied yet", { exact: true })).toBeVisible();
-    const bar = page.getByRole("region", { name: "Changes not applied" });
-    await expect(bar).toContainText("1 change not applied yet");
-    await bar.getByRole("button", { name: "Apply changes" }).click();
+    const bar = page.getByRole("region", { name: "Unsaved changes" });
+    await expect(bar).toContainText("1 unsaved change");
+    await bar.getByRole("button", { name: "Save", exact: true }).click();
     await expect.poll(() => server.published.length).toBe(1);
     await expect(page.getByText("Not applied yet", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Block pastebin.com")).toBeVisible();
@@ -121,17 +121,19 @@ test.describe("Internet access (mocked API)", () => {
     await statefulPolicy(page, `/v1/orgs/${org.id}/policy`, "organization");
     await statefulPolicy(page, `/v1/workspaces/${ws.id}/policy`, "workspace");
     await open(page, "/o/acme/internet-access");
+    // (P5-REFINE-17, org-8) The organization's own limits sit behind "More settings".
+    await page.getByText("More settings").click();
     await page.getByLabel("Which websites agents may reach").selectOption("credentialed_only");
-    const bar = page.getByRole("region", { name: "Changes not applied" });
-    await expect(bar).toContainText("1 change not applied yet");
-    await bar.getByRole("button", { name: "Apply changes" }).click();
+    const bar = page.getByRole("region", { name: "Unsaved changes" });
+    await expect(bar).toContainText("1 unsaved change");
+    await bar.getByRole("button", { name: "Save", exact: true }).click();
     await expect(bar).toHaveCount(0);
     await expect.poll(() => posture).toBe("credentialed_only");
     await open(page, "/o/acme/w/main/internet-access");
     const limits = page.getByRole("region", { name: /^Set for you by/ });
     await expect(limits.getByText("Websites agents may reach")).toBeVisible();
     await expect(limits.getByText("Only listed websites")).toBeVisible();
-    await expect(limits.getByText("Set by your organization").first()).toBeVisible();
+    await expect(limits.getByText("Set for you by your organization's admins").first()).toBeVisible();
     await expect(page.getByTestId("internet-summary")).toContainText("can reach only the websites on the allow-list");
   });
 
@@ -139,6 +141,7 @@ test.describe("Internet access (mocked API)", () => {
     await mockApi(page);
     await statefulPolicy(page, `/v1/orgs/${org.id}/policy`, "organization");
     await open(page, "/o/acme/internet-access");
+    await page.getByText("More settings").click();
     const row = page.getByRole("row").filter({ hasText: "Main workspace" });
     await expect(row).toContainText("Blocked unless listed");
     await expect(row).toContainText("Turned off");

@@ -957,3 +957,81 @@ async fn deleting_a_run_needs_an_owner_and_removes_its_conversations() {
         .await;
     assert_eq!(s, 404);
 }
+
+/// (P5-REFINE-12, C-864) A run that is still active reads its counts from the rows that have
+/// ended so far, and `question_ids` runs only those questions.
+#[tokio::test]
+async fn counts_are_live_while_a_run_is_active_and_question_ids_pick_the_questions() {
+    let w = world().await;
+    let q1 = w.numeric("What is 6 times 7?", 42.0).await;
+    let q2 = w.numeric("What is 2 plus 2?", 4.0).await;
+    let q3 = w.numeric("What is 1 plus 1?", 2.0).await;
+    let uri = format!("/v1/agents/{}/eval-runs", w.agent);
+    let start = |body: Option<Value>| w.call(&w.member, Method::POST, &uri, body);
+    // A foreign (or unknown) id, an empty list and a duplicate are refused; nothing is created.
+    for body in [
+        json!({"question_ids": [Uuid::now_v7()]}),
+        json!({"question_ids": []}),
+        json!({"question_ids": [q1["id"], q1["id"]]}),
+    ] {
+        let (s, v) = start(Some(body)).await;
+        assert_eq!(s, 422, "{v}");
+        assert_eq!(v["error"]["code"], "invalid", "{v}");
+    }
+    let (s, v) = start(Some(json!({"question_ids": [q2["id"], q3["id"]]}))).await;
+    assert_eq!(s, 202, "{v}");
+    assert_eq!(v["counts"]["total"], 2, "only the chosen questions");
+    let id = v["id"].as_str().unwrap().to_owned();
+
+    w.tick().await;
+    w.answer(Some("Two plus two is 4.\nANSWER: 4"), "done", None)
+        .await;
+    w.tick().await;
+    // Mid-run: one question ended, the run is still active, and the counts say so.
+    let v = w.run(&id).await;
+    assert_eq!(v["status"], "running", "{v}");
+    assert_eq!(v["counts"]["total"], 2);
+    assert_eq!(v["counts"]["passed"], 1, "{v}");
+    assert_eq!(v["counts"]["failed"], 0);
+    assert_eq!(
+        v["counts"]["not_scored"], 0,
+        "an open row is not counted yet"
+    );
+    let stored: i64 = w
+        .scalar(
+            "SELECT questions_passed::bigint FROM eval_runs WHERE id = $1::uuid",
+            &id,
+        )
+        .await;
+    assert_eq!(stored, 0, "the stored column is only written at the finish");
+
+    w.answer(Some("It is 5.\nANSWER: 5"), "done", None).await;
+    w.tick().await;
+    w.settle(&id).await;
+    let v = w.run(&id).await;
+    assert_eq!(v["status"], "done", "{v}");
+    assert_eq!(
+        (
+            v["counts"]["passed"].as_i64(),
+            v["counts"]["failed"].as_i64()
+        ),
+        (Some(1), Some(1))
+    );
+    assert_eq!(results(&v).len(), 2);
+    let ids: Vec<_> = results(&v)
+        .iter()
+        .map(|r| r["question"]["id"].clone())
+        .collect();
+    assert_eq!(ids, [q2["id"].clone(), q3["id"].clone()]);
+    // No body at all still runs every enabled question.
+    let (s, v) = w
+        .call(
+            &w.member,
+            Method::POST,
+            &format!("/v1/agents/{}/eval-runs", w.agent),
+            None,
+        )
+        .await;
+    assert_eq!(s, 202, "{v}");
+    assert_eq!(v["counts"]["total"], 3);
+}

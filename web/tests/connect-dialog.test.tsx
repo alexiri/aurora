@@ -92,7 +92,7 @@ describe("every dialog has a close icon", () => {
   it("ConfirmDialog and FormDialog show it, and show only one close control in the header", () => {
     render(
       <>
-        <ConfirmDialog open onOpenChange={() => {}} title="Sure?" confirmLabel="Yes" onConfirm={() => {}} />
+        <ConfirmDialog open onOpenChange={() => {}} title="Sure?" description="It stops working now." confirmLabel="Yes" onConfirm={() => {}} />
         <FormDialog open onOpenChange={() => {}} title="Fill" submitLabel="Save" onSubmit={() => {}}>
           <input aria-label="x" />
         </FormDialog>

@@ -176,8 +176,26 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     expect(rows.every((r) => /Set for you by an Aurora administrator/.test(r) && /An Aurora administrator can set this up|administrator/.test(r))).toBe(true);
     expect(rows.some((r) => /Which AI keys agents may use/.test(r))).toBe(false);
     // Above the rules: the ladder's list comes first in the document.
-    const rules = screen.getByLabelText("LLM posture");
+    const rules = screen.getByLabelText("Which AI keys agents may use");
     expect(above.compareDocumentPosition(rules) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("(org-7) opens with the summary sentence and plain rows, endpoints and Advanced collapsed, origin as names", async () => {
+    mockFetch(routes({
+      "GET /v1/workspaces/w1/accounts": () =>
+        json(200, { items: [{ kind: "ai_key", scope: "organization", name: "Company key", ref: { type: "secret", id: "k1" }, agents: [], levels: [] }], next_cursor: null }),
+    }));
+    wrap(<OrgAiModels org={ORG} />);
+    await waitFor(() => expect(screen.getByTestId("models-summary").textContent).toBe("Agents in Acme use Company key. People may not add their own."));
+    expect(screen.getByText("Key agents use")).toBeTruthy();
+    expect(screen.getByText("Everyone in Acme")).toBeTruthy();
+    expect(screen.getByText("Endpoints (1)")).toBeTruthy();
+    expect((screen.getByTestId("models-endpoints") as HTMLDetailsElement).open).toBe(false);
+    expect((screen.getByTestId("models-advanced") as HTMLDetailsElement).open).toBe(false);
+    // No typed ids: the origin settings are pick lists, and the old jargon is gone.
+    expect(screen.queryByText(/Origin: organization ids/)).toBeNull();
+    expect(screen.queryByText("LLM posture")).toBeNull();
+    expect(screen.getByRole("list", { name: "Organizations" })).toBeTruthy();
   });
 
   it("names the posture as a limit when the instance sets it", async () => {

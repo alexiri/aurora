@@ -1,6 +1,8 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
+
+import { formatExact } from "@/lib/format-date";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -117,7 +119,7 @@ export function CliView() {
                 <dt className="text-ink-2">Requested by</dt>
                 <dd className="min-w-0 break-words font-mono">{pending.data.hostname}</dd>
                 <dt className="text-ink-2">Started</dt>
-                <dd>{new Date(pending.data.requested_at).toLocaleString()}</dd>
+                <dd>{formatExact(pending.data.requested_at)}</dd>
                 <dt className="text-ink-2">Address</dt>
                 <dd className="font-mono">{pending.data.address ?? "unknown"}</dd>
               </dl>

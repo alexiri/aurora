@@ -74,8 +74,12 @@ describe("Administration › Agents: stacked settings sections have one Save (P5
     view(<AgentsDefaultsView />);
     await screen.findByText("Words of approvals.timeout_secs");
     // One Save and one Discard for both sections; nothing to save yet.
+    // The save bar is hidden until the first change (P5-REFINE-2); one Save for both sections once something changed.
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    fireEvent.change(document.getElementById("approvals.timeout_secs-c")!, { target: { value: "901" } });
     expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(1);
-    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     // The Helm-locked deadline has no control.
     expect(document.getElementById("hosted.idle_stop_secs-c")).toBeNull();
     expect(screen.getByTestId("hosted.idle_stop_secs-locked-value").textContent).toBe("1800");
@@ -142,7 +146,7 @@ describe("Administration › Agents: stacked settings sections have one Save (P5
     });
     view(<ComputersView />);
     await screen.findByText("Words of previews.shares_per_agent");
-    expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     fireEvent.change(document.getElementById("terminal.awake_cap_secs-c")!, { target: { value: "7200" } });
     fireEvent.change(document.getElementById("previews.shares_per_agent-c")!, { target: { value: "20" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -167,7 +171,7 @@ describe("Administration › Agents: stacked settings sections have one Save (P5
     fireEvent.change(document.getElementById("hosted.turn_ceiling_secs-c")!, { target: { value: "7200" } });
     fireEvent.change(document.getElementById("approvals.timeout_secs-c")!, { target: { value: "99999999" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("The timeout is too long.")).toBeTruthy();
+    expect((await screen.findAllByText("The timeout is too long.")).length).toBeGreaterThan(0);
     expect((document.getElementById("approvals.timeout_secs-c") as HTMLInputElement).value).toBe("99999999");
     expect(screen.queryByText(/Saved\. Applied/)).toBeNull();
   });

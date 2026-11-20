@@ -109,6 +109,7 @@ describe("person attachments (WEBX-7)", () => {
 });
 
 describe("composer draft (WEBA-20)", () => {
+  // (the fallback when no page hands a draft over: ChatTab passes `initialDraft` from the router, P5-REFINE-13)
   it("fills the box from ?draft= once and drops the parameter from the URL", async () => {
     window.history.replaceState(null, "", "/o/acme/w/ops/agents/scout?tab=chat&draft=Say%20hello");
     mockFetch({});

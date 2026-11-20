@@ -793,12 +793,26 @@ async fn sandbox_view_carries_retryable_and_start_log() {
     assert_eq!(log.len(), 1, "{log:?}");
     assert_eq!(log[0]["kind"], "phase");
     assert_eq!(log[0]["phase"], "failed");
-    assert_eq!(log[0]["detail"], "the pod crashed");
+    // (P5-REFINE-4, SEC-141) The log's detail is for instance admins only.
+    assert!(log[0]["detail"].is_null(), "{log:?}");
+    let ia = r.h.user("ia-log@x.io", true).await;
+    r.h.member(r.org, ia, "member", "active").await;
+    r.h.bind_ws(r.ws, ia, "member").await;
+    let (_, sess) = r.h.good_session(ia).await;
+    let (_, v) =
+        r.h.get(
+            &format!("/v1/agents/{agent}/sandbox"),
+            &[("cookie", &cookie(&sess))],
+        )
+        .await;
+    assert_eq!(v["start_log"][0]["detail"], "the pod crashed", "{v}");
 }
 
 /// (FIX-093, D-178 Q-R5-5) A member who can use the agent sees a start failure's class and a
 /// hint — no pod/volume events, image, runner, start-attempt detail or internal address — on the
-/// sandbox view and the history; a workspace owner and an instance admin see everything.
+/// sandbox view and the history. (P5-REFINE-4, D-412, SEC-141) A workspace owner sees the same
+/// reduced sandbox view; the history (C-613, unchanged) still gives the owner the detail; an
+/// instance admin sees everything.
 #[tokio::test]
 async fn members_see_class_and_hint_owners_and_admins_see_detail() {
     let r = rig().await;
@@ -855,10 +869,34 @@ async fn members_see_class_and_hint_owners_and_admins_see_detail() {
     assert_eq!(v["items"][0]["code"], "home_volume_unbound");
     assert!(v["items"][0]["events"].as_array().unwrap().is_empty());
 
-    // The workspace owner sees the detail.
+    // (SEC-141) The workspace owner's sandbox view is the member's: class, hint, words.
     let od = r.owner_headers(2).await;
     let odr: Vec<(&str, &str)> = od.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let (_, v) = r.h.get(&format!("/v1/agents/{agent}/sandbox"), &odr).await;
+    let text = v.to_string();
+    assert!(
+        !text.contains("10.1.2.3") && !text.contains("FailedBinding"),
+        "owner view leaks detail: {text}"
+    );
+    assert!(v["start_attempt"]["events"].as_array().unwrap().is_empty());
+    assert_eq!(v["computer"]["word"], "failed", "{v}");
+    // The history route (C-613) is unchanged: the owner still gets its detail.
+    let (_, v) =
+        r.h.get(&format!("/v1/agents/{agent}/start-failures"), &odr)
+            .await;
+    assert_eq!(v["items"][0]["events"].as_array().unwrap().len(), 1, "{v}");
+
+    // An instance admin who can use the agent sees the engine on the sandbox view.
+    let ia = r.h.user("ia1@x.io", true).await;
+    r.h.member(r.org, ia, "member", "active").await;
+    r.h.bind_ws(r.ws, ia, "member").await;
+    let (_, isess) = r.h.good_session(ia).await;
+    let (_, v) =
+        r.h.get(
+            &format!("/v1/agents/{agent}/sandbox"),
+            &[("cookie", &cookie(&isess))],
+        )
+        .await;
     assert!(
         v["failure_message"].as_str().unwrap().contains("10.1.2.3"),
         "{v}"
@@ -868,10 +906,6 @@ async fn members_see_class_and_hint_owners_and_admins_see_detail() {
         1,
         "{v}"
     );
-    let (_, v) =
-        r.h.get(&format!("/v1/agents/{agent}/start-failures"), &odr)
-            .await;
-    assert_eq!(v["items"][0]["events"].as_array().unwrap().len(), 1, "{v}");
 
     // So does an instance admin (the agent's workspace is not theirs to own).
     let admin = r.h.user("ia2@x.io", true).await;

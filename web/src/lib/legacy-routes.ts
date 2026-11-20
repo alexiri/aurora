@@ -126,7 +126,7 @@ export function legacyTarget(pathname: string, searchInput: string | URLSearchPa
     case "skills/libraries":
       return join(o.skillLibraries(), search, hash);
     case "settings/previews":
-      return join(o.agents("previews"), search, hash);
+      return join(o.agents("byo"), search, hash);
     case "channels":
       return join(o.chatPlatforms(), search, hash);
     case "instances":
@@ -172,7 +172,7 @@ export const STATIC_REDIRECTS: { source: string; destination: string }[] = [
   { source: "/o/:org/policy", destination: "/o/:org/internet-access" },
   { source: "/o/:org/skills", destination: "/o/:org/agents?tab=skills" },
   { source: "/o/:org/skills/libraries", destination: "/o/:org/agents/skills/libraries" },
-  { source: "/o/:org/settings/previews", destination: "/o/:org/agents?tab=previews" },
+  { source: "/o/:org/settings/previews", destination: "/o/:org/agents?tab=byo" },
   { source: "/o/:org/channels", destination: "/o/:org/chat-platforms" },
   { source: "/o/:org/instances", destination: "/o/:org/apps?tab=self-hosted" },
   { source: "/o/:org/api-keys", destination: "/o/:org/settings?tab=api-keys" },

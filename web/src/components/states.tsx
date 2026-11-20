@@ -9,6 +9,7 @@ import { onlySentence, whoCanOf, type WhoCanValue } from "@/lib/who-can";
 
 import { Button } from "./ui/button";
 import { ScrollIcon } from "./ui/icons";
+import { SkeletonRows } from "./ui/skeleton";
 import { WhoCan } from "./ui/who-can";
 
 /**
@@ -37,7 +38,9 @@ export function RequestReference({ error }: { error: unknown }) {
   );
 }
 
-export function Loading({ label = "Loading…" }: { label?: string }) {
+/** `variant="rows"` shows skeleton rows (a list that is loading); the default is the inline spinner and words. */
+export function Loading({ label = "Loading…", variant = "inline", rows }: { label?: string; variant?: "inline" | "rows"; rows?: number }) {
+  if (variant === "rows") return <SkeletonRows rows={rows} label={label} />;
   return (
     <p role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-muted">
       <span

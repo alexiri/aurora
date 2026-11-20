@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 
-import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,13 +26,24 @@ import {
   type OrgRole,
 } from "@/lib/api/org";
 import { useOrgOffboarding } from "@/lib/api/automations";
-import { formatExact } from "@/lib/format-date";
+import { When, useWhenNow } from "@/components/ui/when";
+import { ResponsiveTable } from "@/components/ui/responsive-table";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useInstance, useMe, useOrg } from "@/lib/api/queries";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 
+import { Avatar } from "@/components/ui/avatar";
+import { CheckIcon } from "@/components/ui/icons";
+import { ROLE_CAN } from "@/lib/roles-explain";
+
 import { InviteDialog } from "./invite-dialog";
+import { OrgRoleHelp } from "./role-help";
 
 const cap = (s: string) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+
+const ROLE_RANK: Record<OrgRole, number> = { member: 0, admin: 1, owner: 2 };
+/** The name the promotion dialog uses: the first word of the display name, else the e-mail. */
+const firstName = (m: OrgMember) => (m.display_name?.trim().split(/\s+/)[0] || m.email) as string;
 
 export function MemberRow({
   m,
@@ -64,12 +74,12 @@ export function MemberRow({
   const manage = canManageMember(viewer, m.role) && !mine;
   return (
     <tr>
-      <Td>
+      <Td cell="title">
         <div className="font-medium">
           {m.display_name}
           {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
         </div>
-        <div className="text-muted">{m.email}</div>
+        <div className="break-all text-muted">{m.email}</div>
       </Td>
       <Td>
         {options.length > 0 ? (
@@ -123,10 +133,10 @@ export function MemberRow({
           </Badge>
         ) : null}
       </Td>
-      <Td className="whitespace-nowrap text-ink-2">
-        <span title={formatExact(m.created_at)}>{fmtDate(m.created_at)}</span>
+      <Td label="Joined" className="whitespace-nowrap text-ink-2">
+        <When value={m.created_at} />
       </Td>
-      <Td className="text-right">
+      <Td cell="actions" className="text-right">
         {manage && !(m.status === "pending" && fromIdp) ? (
           <Menu>
             <MenuTrigger asChild>
@@ -211,6 +221,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   const [err, setErr] = useState<unknown>(null);
   const [target, setTarget] = useState<{ m: OrgMember; mode: "remove" | "suspend" } | null>(null);
   const [dialogErr, setDialogErr] = useState<unknown>(null);
+  const [promote, setPromote] = useState<{ m: OrgMember; role: OrgRole } | null>(null);
 
   if (members.isPending) return <Loading />;
   if (members.isError) return <ErrorState error={members.error} onRetry={() => members.refetch()} />;
@@ -225,7 +236,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
       {items.length === 0 ? (
         <EmptyState title="No members" />
       ) : (
-        <DataTable caption="People">
+        <DataTable caption="People" stackBelow={900}>
             <thead>
               <tr>
                 <Th>Person</Th>
@@ -249,7 +260,9 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
                   orgName={orgName}
                   onRole={(role) => {
                     setErr(null);
-                    patch.mutate({ user: m.user_id, body: { role } }, { onError });
+                    // Second rung of the confirm ladder: a role that widens what the person can do asks first.
+                    if (ROLE_RANK[role] > ROLE_RANK[m.role] && role !== "member") setPromote({ m, role });
+                    else patch.mutate({ user: m.user_id, body: { role } }, { onError });
                   }}
                   onStatus={(status) => {
                     setErr(null);
@@ -264,6 +277,54 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
         </DataTable>
       )}
       <LoadMore query={members} />
+      {/* (P5-REFINE-17, org-9) The ask says what the role can do; the select keeps its old value until Make <Role>. */}
+      <ConfirmDialog
+        open={promote !== null}
+        onOpenChange={(o) => {
+          if (!o) setPromote(null);
+        }}
+        title={
+          promote
+            ? `Make ${firstName(promote.m)} ${promote.role === "owner" ? "an Owner" : "an Admin"} of ${orgName ?? "the organization"}?`
+            : "Change role"
+        }
+        description={
+          promote
+            ? `${promote.role === "owner" ? "Owners" : "Admins"} can, in addition to what ${promote.role === "owner" ? "admins" : "members"} can do:`
+            : ""
+        }
+        confirmLabel={promote ? (promote.role === "owner" ? "Make Owner" : "Make Admin") : "Change role"}
+        busy={patch.isPending}
+        onConfirm={() => {
+          if (!promote) return;
+          const { m, role } = promote;
+          setPromote(null);
+          patch.mutate({ user: m.user_id, body: { role } }, { onError });
+        }}
+      >
+        {promote ? (
+          <div className="space-y-3 text-sm">
+            <div className="flex items-center gap-3">
+              <Avatar name={promote.m.display_name || promote.m.email} tintKey={promote.m.user_id} size={36} />
+              <div className="min-w-0">
+                <p className="font-semibold text-ink">{promote.m.display_name || promote.m.email}</p>
+                <p className="text-ink-2">
+                  {cap(promote.m.role)} now → {cap(promote.role)}
+                </p>
+              </div>
+            </div>
+            <ul aria-label={`What ${cap(promote.role)}s can do`} className="space-y-1">
+              {ROLE_CAN.org[promote.role].can.map((c) => (
+                <li key={c} className="flex gap-2 text-ink">
+                  <CheckIcon className="mt-0.5 size-4 shrink-0 text-accent" />
+                  {c}
+                </li>
+              ))}
+            </ul>
+            <OrgRoleHelp />
+          </div>
+        ) : null}
+      </ConfirmDialog>
       <OffboardDialog
         orgId={orgId}
         target={target}
@@ -292,6 +353,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
 function Invitations({ orgId }: { orgId: string }) {
   const invites = useInvitations(orgId);
   const cancel = useCancelInvitation(orgId);
+  const now = useWhenNow();
   if (invites.isPending) return <Loading />;
   if (invites.isError) return <ErrorState error={invites.error} onRetry={() => invites.refetch()} />;
   const items = invites.data.items;
@@ -299,42 +361,56 @@ function Invitations({ orgId }: { orgId: string }) {
   return (
     <div className="space-y-3">
       <ErrorNotice error={cancel.error} />
-      <DataTable caption="Pending invitations">
-        <thead>
-          <tr>
-            <Th>Email</Th>
-            <Th>Role</Th>
-            <Th>Workspaces</Th>
-            <Th>Expires</Th>
-            <Th>
-              <span className="sr-only">Actions</span>
-            </Th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((i) => (
-            <tr key={i.id}>
-              <Td>{i.email}</Td>
-              <Td>{i.role}</Td>
-              <Td>{i.workspace_ids.length}</Td>
-              <Td className="whitespace-nowrap text-ink-2">{fmtDate(i.expires_at)}</Td>
-              <Td className="text-right">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={cancel.isPending}
-                  aria-label={`Cancel invitation for ${i.email}`}
-                  onClick={() => cancel.mutate(i.id)}
-                >
-                  Cancel
-                </Button>
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </DataTable>
+      {/* (P5-REFINE-17, org-13) Stacked cards under 900 px: the e-mail, who invited and the role, then the actions. */}
+      <ResponsiveTable
+        caption="Pending invitations"
+        title={{
+          header: "Email",
+          cell: (i) => (
+            <>
+              <div className="break-all font-medium">{i.email}</div>
+              {i.invited_by?.display_name ? <div className="text-xs text-muted">Invited by {i.invited_by.display_name}</div> : null}
+            </>
+          ),
+        }}
+        columns={[
+          { key: "role", header: "Role", cell: (i) => cap(i.role) },
+          { key: "workspaces", header: "Workspaces", cell: (i) => i.workspace_ids.length + i.approver_workspace_ids.length },
+          { key: "expires", header: "Expires", className: "whitespace-nowrap text-ink-2", cell: (i) => expiresIn(i.expires_at, now) },
+        ]}
+        rows={items}
+        rowKey={(i) => i.id}
+        actions={(i) => (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={cancel.isPending}
+            aria-label={`Cancel invitation for ${i.email}`}
+            onClick={() => cancel.mutate(i.id)}
+          >
+            Cancel
+          </Button>
+        )}
+      />
     </div>
   );
+}
+
+/** "3 people" / "1 person" and the invitations still waiting (the organization Overview's People card). */
+export function peopleLine(people: number, pending: number): string {
+  const p = `${people} ${people === 1 ? "person" : "people"}`;
+  return pending > 0 ? `${p} · ${pending} ${pending === 1 ? "invitation" : "invitations"} waiting` : p;
+}
+
+/** "in 6 days", "in 3 h", "today": when an invitation stops working. */
+export function expiresIn(iso: string, now: number): string {
+  const secs = Math.round((new Date(iso).getTime() - now) / 1000);
+  if (Number.isNaN(secs)) return "—";
+  if (secs <= 0) return "expired";
+  if (secs < 3600) return "in under an hour";
+  if (secs < 86400) return `in ${Math.floor(secs / 3600)} h`;
+  const days = Math.floor(secs / 86400);
+  return `in ${days} ${days === 1 ? "day" : "days"}`;
 }
 
 export function MembersView({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
@@ -349,6 +425,9 @@ export function MembersView({ orgId, viewer }: { orgId: string; viewer: OrgRole 
       />
       <Section id="members" title="People">
         <Members orgId={orgId} viewer={viewer} />
+        <div className="mt-3">
+          <OrgRoleHelp />
+        </div>
       </Section>
       <Section id="invites" title="Pending invitations">
         <div className="space-y-3">

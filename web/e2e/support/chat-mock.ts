@@ -90,7 +90,7 @@ export const DEFAULT: Fixture = {
 const ICON = readFileSync(join(BUILTIN, "github", "assets", "icon.png"));
 
 /** A fake EventSource the spec drives: `window.__es.emit(type, event)`, `window.__es.down()` / `.up()`. */
-const FAKE_EVENT_SOURCE = () => {
+export const FAKE_EVENT_SOURCE = () => {
   type Listener = (e: { data: string; type: string }) => void;
   const all: FakeES[] = [];
   let mode: "up" | "down" = "up";

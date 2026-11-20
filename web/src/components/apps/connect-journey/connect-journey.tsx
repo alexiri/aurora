@@ -434,7 +434,7 @@ export function ConnectJourney({
     const accessTab = first && org && ws ? wsRoutes(org, ws).agent(first.handle ?? first.id, { tab: "access" }) : null;
     // (C-1035) The suggested first question opens as an unsent draft in a new conversation; at most 500 characters.
     const prompt = done.firstPrompt?.trim() ? done.firstPrompt.trim().slice(0, 500) : null;
-    const chat = first && org && ws ? wsRoutes(org, ws).agent(first.handle ?? first.id, prompt ? { draft: prompt } : undefined) : null;
+    const chat = first && org && ws ? wsRoutes(org, ws).agent(first.handle ?? first.id, prompt ? { tab: "chat", draft: prompt } : { tab: "chat" }) : null;
     body = (
       <div role="status" className="space-y-4 text-sm">
         {done.grantFailed ? (

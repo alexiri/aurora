@@ -13,6 +13,7 @@ import { WhoCan } from "@/components/ui/who-can";
 import { type Account, type AgentAccess, type AppAccessTool, useAppAccess, usePutAccess } from "@/lib/api/accounts";
 import { useGrants } from "@/lib/api/policy";
 import { useApp } from "@/lib/api/apps";
+import { TechnicalDetails } from "@/components/ui/technical-details";
 import { counts, customBody, groupOf, initialDecisions, type Decision, type Tool } from "@/lib/grant-editor";
 import { orgRoutes, wsRoutes } from "@/lib/routes";
 
@@ -254,13 +255,10 @@ function Editor({
                       {t.description ? <p className="text-sm text-ink-2">{t.description}</p> : null}
                       <AsksFirst tool={t} canChange />
                       <Altitude id="tech.details" level="setup">
-                        <details className="mt-1 text-xs text-muted">
-                          <summary className="cursor-pointer">Technical details</summary>
-                          <p className="mt-1 break-all">
-                            {t.methods.join(", ") || "any method"} · {t.host}
-                            {t.path}
-                          </p>
-                        </details>
+                        <TechnicalDetails className="mt-1 text-xs" bodyClassName="mt-1 break-all font-mono">
+                          {t.methods.join(", ") || "any method"} · {t.host}
+                          {t.path}
+                        </TechnicalDetails>
                       </Altitude>
                     </div>
                     <div className="space-y-1 sm:text-right">

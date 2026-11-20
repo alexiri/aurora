@@ -28,6 +28,7 @@ import { LimitControl } from "./limit-control";
 import { AccessControl } from "./access-control";
 import { AccountHealth } from "./account-health";
 import { AccountMenu } from "./account-menu";
+import { TechnicalDetails } from "@/components/ui/technical-details";
 import { ConnectionDetails } from "./connection-details";
 
 /** One agent's entry in "who can use it": opens the access choice and **Remove access** (`14 §1`). */
@@ -279,12 +280,9 @@ export function AccountRow({
       )}
       {account.ref.type === "connection" ? (
         <Altitude id="tech.details" level="setup">
-          <details className="text-sm">
-            <summary className="cursor-pointer text-muted">Technical details</summary>
-            <div className="mt-2">
-              <ConnectionDetails scope={own} id={account.ref.id} canManage={account.can.manage} />
-            </div>
-          </details>
+          <TechnicalDetails bodyClassName="">
+            <ConnectionDetails scope={own} id={account.ref.id} canManage={account.can.manage} />
+          </TechnicalDetails>
         </Altitude>
       ) : null}
     </li>

@@ -5,7 +5,7 @@ import { useState, type ReactNode } from "react";
 
 import { EndpointDialog, HelmEndpointDialog, PROVIDER_LABEL } from "@/components/admin/settings/llm-endpoint-dialog";
 import type { SettingControlCtx } from "@/components/admin/settings/settings-section-form";
-import { HARNESS_LABEL } from "@/components/credentials/llm-key-modes";
+import { harnessNames } from "@/components/credentials/llm-key-modes";
 import { Badge } from "@/components/ui/badge";
 import { LockPill } from "@/components/ui/lock-pill";
 import { Button } from "@/components/ui/button";
@@ -158,7 +158,7 @@ function HarnessLine({ harnesses }: { harnesses: string[] | undefined }) {
   }
   return (
     <p className="text-xs text-ink-2" aria-label="Harnesses this endpoint serves">
-      Works with {harnesses.map((h) => HARNESS_LABEL[h] ?? h).join(", ")}
+      Works with {harnessNames(harnesses)}
     </p>
   );
 }

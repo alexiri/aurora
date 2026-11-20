@@ -25,7 +25,12 @@ export function AgentFreeze({
   menuExtra,
   menuLead,
   menuTriggerClassName,
+  buttonLabel,
+  buttonVariant,
 }: {
+  /** (P5-REFINE-11) The Pause button's words and look when it is a button in the Settings danger zone. */
+  buttonLabel?: string;
+  buttonVariant?: "danger" | "outline";
   menuLead?: ReactNode;
   menuTriggerClassName?: string;
   agentId: string;
@@ -43,7 +48,7 @@ export function AgentFreeze({
   // A workspace or organization freeze is shown by the shell banner (frozen-entity-banner).
   if (frozen && frozen.level !== "agent") return null;
   if (!canOwn) return frozen ? <FrozenBanner frozen={frozen} subject="agent" /> : null;
-  return <FreezeControl subject="agent" name={name} frozen={frozen} callerRank={rank} freeze={m.freeze} unfreeze={m.unfreeze} inMenu={inMenu} menuExtra={menuExtra} menuLead={menuLead} menuTriggerClassName={menuTriggerClassName} />;
+  return <FreezeControl subject="agent" name={name} frozen={frozen} callerRank={rank} freeze={m.freeze} unfreeze={m.unfreeze} inMenu={inMenu} menuExtra={menuExtra} menuLead={menuLead} menuTriggerClassName={menuTriggerClassName} buttonLabel={buttonLabel} buttonVariant={buttonVariant} />;
 }
 
 /** Workspace settings, danger zone (`can_own`). */

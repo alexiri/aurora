@@ -65,10 +65,10 @@ describe("visibleTopics by altitude", () => {
     expect(topics).not.toContain("people");
     expect(topics).not.toContain("approvals");
   });
-  it("an organization member lists Workspaces only at Use, then AI models and Internet access", () => {
+  it("an organization member lists Overview only at Use, then AI models and Internet access", () => {
     const m: ViewerRoles = { instanceAdmin: false, org: "member" };
-    expect(visibleTopics("org", m, { floor: "use", more: false })).toEqual(["workspaces"]);
-    expect(visibleTopics("org", m, { floor: "use", more: true })).toEqual(["workspaces", "ai-models", "internet-access"]);
+    expect(visibleTopics("org", m, { floor: "use", more: false })).toEqual(["overview"]);
+    expect(visibleTopics("org", m, { floor: "use", more: true })).toEqual(["overview", "ai-models", "internet-access"]);
   });
   it("lists every Administration topic to an instance admin, and none to others", () => {
     expect(visibleTopics("admin", { instanceAdmin: true }, { floor: "expert", more: false })).toHaveLength(10);

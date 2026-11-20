@@ -10,10 +10,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
+import { SecretOnce } from "@/components/ui/secret-once";
 import { Field, inputClass } from "@/components/ui/field";
-import { CheckboxField, Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
+import { CheckboxField, Form } from "@/components/ui/form";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
@@ -52,22 +53,27 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
   const [enabled, setEnabled] = useState(initial.enabled);
   const [exclusive, setExclusive] = useState(initial.exclusive);
   const [domains, setDomains] = useState(initial.email_domains.join(", "));
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
+  // What is saved: the form's start, and again after each save.
+  const [base, setBase] = useState({ enabled: initial.enabled, exclusive: initial.exclusive, domains: initial.email_domains.join(", ") });
+  const dirty = enabled !== base.enabled || exclusive !== base.exclusive || parseDomains(domains).join(",") !== parseDomains(base.domains).join(",");
   const fe = put.error ? errorMessage(put.error) : undefined;
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    setSaved(false);
+    bar.clear();
     const list = parseDomains(domains);
     const body: { enabled?: boolean; email_domains?: string[]; exclusive?: boolean } = {};
-    if (enabled !== initial.enabled) body.enabled = enabled;
-    if (exclusive !== initial.exclusive) body.exclusive = exclusive;
-    if (list.join(",") !== initial.email_domains.join(",")) body.email_domains = list;
-    if (Object.keys(body).length === 0) {
-      setSaved(true);
-      return;
-    }
-    put.mutate(body, { onSuccess: () => setSaved(true) });
+    if (enabled !== base.enabled) body.enabled = enabled;
+    if (exclusive !== base.exclusive) body.exclusive = exclusive;
+    if (list.join(",") !== parseDomains(base.domains).join(",")) body.email_domains = list;
+    if (Object.keys(body).length === 0) return;
+    put.mutate(body, {
+      onSuccess: () => {
+        setBase({ enabled, exclusive, domains });
+        bar.flash();
+      },
+    });
   }
 
   return (
@@ -93,7 +99,7 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
           autoComplete="off"
           onChange={(e) => {
             setDomains(e.target.value);
-            setSaved(false);
+            bar.clear();
           }}
         />
       </Field>
@@ -104,12 +110,18 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
         checked={exclusive}
         onChange={setExclusive}
       />
-      <SavedNotice show={saved}>Directory sync settings saved.</SavedNotice>
-      <FormActions>
-        <Button type="submit" size="lg" disabled={put.isPending}>
-          {put.isPending ? "Saving…" : "Save settings"}
-        </Button>
-      </FormActions>
+      <SaveBar
+        dirty={dirty}
+        saving={put.isPending}
+        saved={bar.saved}
+        errorCount={fe ? 1 : 0}
+        onDiscard={() => {
+          setEnabled(base.enabled);
+          setExclusive(base.exclusive);
+          setDomains(base.domains);
+          put.reset();
+        }}
+      />
     </Form>
   );
 }
@@ -120,7 +132,6 @@ function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
   const create = useCreateScimToken(orgId);
   const revoke = useRevokeScimToken(orgId);
   const [name, setName] = useState("");
-  const tokenCopy = useCopy();
   const [toRevoke, setToRevoke] = useState<ScimTokenEntry | null>(null);
   const err = create.error ?? revoke.error;
   const fe = err ? errorMessage(err) : undefined;
@@ -162,26 +173,12 @@ function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
         </Field>
       </Form>
       ) : null}
-      <Dialog open={!!created} onOpenChange={(o) => !o && create.reset()}>
-        <DialogContent
-          title="Your new token"
-          description="Store it in your identity provider now; it cannot be shown again."
-        >
-          <div className="flex items-center gap-2">
-            <code className="block min-w-0 max-w-full flex-1 break-all rounded bg-surface-2 px-2 py-1 font-mono text-xs">
-              {created}
-            </code>
-            <Button variant="outline" size="sm" onClick={() => tokenCopy.copy(created ?? "")}>
-              {copyLabel(tokenCopy.state)}
-            </Button>
-          </div>
-          <div className="mt-4 flex justify-end">
-            <DialogClose asChild>
-              <Button>Done</Button>
-            </DialogClose>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <SecretOnce
+        secret={created}
+        title="Your new token"
+        description="Store it in your identity provider now; it cannot be shown again."
+        onClose={() => create.reset()}
+      />
       {expiring.length > 0 ? (
         <Notice tone="pending" role="status">
           {expiring.length === 1

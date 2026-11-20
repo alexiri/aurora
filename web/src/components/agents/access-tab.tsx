@@ -7,6 +7,7 @@ import { StatusLine } from "@/components/ui/status-line";
 import { useModelReadiness } from "@/lib/api/credential-grants";
 
 import { AgentSummary } from "./agent-summary";
+import { StarterKeyCard } from "./starter-key-card";
 import { REASON_COPY } from "./model-readiness";
 
 /**
@@ -65,6 +66,8 @@ export function AccessTab({
 }) {
   return (
     <div className="space-y-6">
+      {/* (P5-REFINE-12, access-3) The organization's starter key, one click, when it is what this agent is missing. */}
+      {canOwn && hosted ? <StarterKeyCard agentId={agentId} agentName={agentName} orgId={orgId} /> : null}
       {/* The agent's summary (C-986): the same sentences as Welcome and the Overview, above the list they come from. */}
       <section aria-label={`What ${agentName} can do`} className="rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
         <h2 className="font-display text-base font-semibold text-ink">What {agentName} can do</h2>

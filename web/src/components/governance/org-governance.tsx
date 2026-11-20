@@ -406,7 +406,7 @@ export function OrgAiModels({ org }: { org: Org }) {
             here={
               <div className="space-y-5">
                 <h3 className="text-sm font-semibold text-ink">Rules for {org.name}</h3>
-                <ModelsTab form={form} patch={patch} issues={issues} readOnly={readOnly} />
+                <ModelsTab org={org} form={form} patch={patch} issues={issues} readOnly={readOnly} />
               </div>
             }
           />

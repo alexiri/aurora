@@ -236,7 +236,7 @@ export function SchedulesSection({ agentId, defaultTimezone, canOwn, onRunStarte
           if (!o) setRemoving(null);
         }}
         title="Delete this schedule?"
-        description={removing ? `${removing.name} stops starting runs. Runs it already started are kept.` : undefined}
+        description={removing ? `${removing.name} stops starting runs. Runs it already started are kept.` : ""}
         confirmLabel="Delete schedule"
         danger
         busy={del.isPending}

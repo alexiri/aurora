@@ -2,7 +2,8 @@
 
 import { useId, useState, type ReactNode } from "react";
 
-import { fmtDate } from "@/components/account/key-table";
+import { AUDIT_ACTION } from "@/lib/labels";
+import { When } from "@/components/ui/when";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -96,12 +97,12 @@ export function AuditPanel({
       {feed.isError ? <ErrorState error={feed.error} onRetry={() => void feed.refetch()} /> : null}
       {feed.data && items.length === 0 ? <EmptyState title="No audit entries" /> : null}
       {items.length > 0 ? (
-        <DataTable caption={title}>
+        <DataTable caption={title} stackBelow={900}>
           <thead>
             <tr>
+              <Th>Action</Th>
               <Th>When</Th>
               <Th>Actor</Th>
-              <Th>Action</Th>
               {showOrg ? <Th>Organization</Th> : null}
               <Th>Target</Th>
               <Th>Outcome</Th>
@@ -129,20 +130,26 @@ function AuditRow({ e, showOrg, columns }: { e: AuditEntry; showOrg: boolean; co
   return (
     <>
       <tr>
-        <Td className="whitespace-nowrap text-ink-2">{fmtDate(e.created_at)}</Td>
-        <Td>{e.actor_label}</Td>
-        <Td>
-          <span className="font-mono text-xs">{e.action}</span>
+        <Td cell="title">
+          {(AUDIT_ACTION as Record<string, { label: string } | undefined>)[e.action] ? (
+            <span title={e.action}>{(AUDIT_ACTION as Record<string, { label: string }>)[e.action]!.label}</span>
+          ) : (
+            <span className="font-mono text-xs">{e.action}</span>
+          )}
           {e.critical ? (
-            <Badge tone="accent" className="ml-2">
+            <Badge tone="danger" className="ml-2">
               Critical
             </Badge>
           ) : null}
         </Td>
-        {showOrg ? <Td className="text-ink-2">{e.org_id ? (e.org_slug ?? e.org_id) : "Instance"}</Td> : null}
-        <Td className="text-ink-2">{e.target_kind ? `${e.target_kind} ${e.target_id ?? ""}` : "—"}</Td>
-        <Td>{e.outcome}</Td>
-        <Td className="text-right">
+        <Td label="When" className="whitespace-nowrap text-ink-2">
+          <When value={e.created_at} />
+        </Td>
+        <Td label="By">{e.actor_label}</Td>
+        {showOrg ? <Td label="Organization" className="text-ink-2">{e.org_id ? (e.org_slug ?? e.org_id) : "Instance"}</Td> : null}
+        <Td label="Target" className="break-all text-ink-2">{e.target_kind ? `${e.target_kind} ${e.target_id ?? ""}` : "—"}</Td>
+        <Td label="Outcome">{e.outcome}</Td>
+        <Td cell="actions" className="text-right">
           <Button variant="outline" size="sm" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(!open)}>
             Details<span className="sr-only"> of {e.action}</span>
           </Button>

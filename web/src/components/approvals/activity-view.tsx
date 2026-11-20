@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { fmtDate } from "@/components/account/key-table";
+import { GATEWAY_DECISION, label } from "@/lib/labels";
+import { When } from "@/components/ui/when";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Altitude, AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
 import { Badge } from "@/components/ui/badge";
@@ -81,7 +82,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
           <Select id="act-agent" value={agent} className="w-48 max-w-full" placeholder="All agents" onChange={setAgent} options={agents.data?.items.map((a) => ({ value: a.id, label: a.name }))} />
         </Field>
         <Field id="act-decision" label="Decision">
-          <Select id="act-decision" value={decision} className="w-52 max-w-full" onChange={setDecision} options={DECISIONS.map((d) => ({ value: d, label: d || "All decisions" }))} />
+          <Select id="act-decision" value={decision} className="w-52 max-w-full" onChange={setDecision} options={DECISIONS.map((d) => ({ value: d, label: d ? label(GATEWAY_DECISION, d) : "All decisions" }))} />
         </Field>
         <Field id="act-host" label="Host">
           <input
@@ -102,17 +103,16 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
       {/* (P5-REFINE-3) Expert: the request log with its decision vocabulary. Below it, one collapsed line. */}
       {items.length > 0 ? (
         <Altitude id="log.requests" level="expert" label="Request log: every request, with the rule that decided it">
-        <DataTable caption="Request activity">
+        <DataTable caption="Request activity" stackBelow={900}>
           <thead>
             <tr>
+              <Th>Request</Th>
               <Th>When</Th>
               <Th>Agent</Th>
-              <Th>Request</Th>
               <Th>Model</Th>
               <Th>Decision</Th>
               <Th>Rule</Th>
               <Th>App / tool</Th>
-              <Th>Status</Th>
             </tr>
           </thead>
           <tbody>
@@ -120,17 +120,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
               const a = byId.get(e.agent_id);
               return (
                 <tr key={e.id}>
-                  <Td className="whitespace-nowrap text-ink-2">{fmtDate(e.ts)}</Td>
-                  <Td>
-                    {a ? (
-                      <Link className="text-link underline" href={`${base}/agents/${a.handle}`}>
-                        {a.name}
-                      </Link>
-                    ) : (
-                      "—"
-                    )}
-                  </Td>
-                  <Td className="font-mono text-xs">
+                  <Td cell="title" className="break-all font-mono text-xs">
                     {e.method} {e.host}
                     {e.path}
                     {e.context_label ? (
@@ -139,15 +129,27 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
                       </span>
                     ) : null}
                   </Td>
-                  <Td className="break-all font-mono text-xs" data-testid="llm-model">
+                  <Td label="When" className="whitespace-nowrap text-ink-2">
+                    <When value={e.ts} />
+                  </Td>
+                  <Td label="Agent">
+                    {a ? (
+                      <Link className="text-link underline" href={`${base}/agents/${a.handle}`}>
+                        {a.name}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
+                  </Td>
+                  <Td label="Model" className="break-all font-mono text-xs" data-testid="llm-model">
                     {e.llm_model ?? "—"}
                   </Td>
                   <Td>
-                    <Badge tone={decisionTone(e.decision)}>{e.decision}</Badge>
+                    <Badge tone={decisionTone(e.decision)}>{label(GATEWAY_DECISION, e.decision)}</Badge>
+                    {e.status ? <span className="ml-1.5 text-xs text-muted">{e.status}</span> : null}
                   </Td>
-                  <Td>{e.rule_name ?? "—"}</Td>
-                  <Td>{e.app_id ? `${e.app_id}${e.tool_id ? ` / ${e.tool_id}` : ""}` : "—"}</Td>
-                  <Td>{e.status}</Td>
+                  <Td label="Rule">{e.rule_name ?? "—"}</Td>
+                  <Td label="App / tool">{e.app_id ? `${e.app_id}${e.tool_id ? ` / ${e.tool_id}` : ""}` : "—"}</Td>
                 </tr>
               );
             })}

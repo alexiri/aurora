@@ -1072,6 +1072,8 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/agents/{agent}/sandbox", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/sandbox/retry", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/sandbox/wake", G::WsUse, false),
+    // (P5-REFINE-4, C-1060) Sleep now: the wake rule (can use the agent).
+    r("POST", "/v1/agents/{agent}/sandbox/sleep", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/start-failures", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/restart", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/models", G::WsUse, false),

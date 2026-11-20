@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+
+import { formatExact } from "@/lib/format-date";
 import { useState } from "react";
 
 import { ImportDialog } from "@/components/admin/settings/import-dialog";
@@ -34,7 +36,7 @@ function writeDismissed(v: string) {
 
 function when(iso: string | null | undefined): string {
   if (!iso) return "never";
-  return new Date(iso).toLocaleString();
+  return formatExact(iso);
 }
 
 type SectionRow = NonNullable<ReturnType<typeof useSettingsIndex>["data"]>["sections"][number];

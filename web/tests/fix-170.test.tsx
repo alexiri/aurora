@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { InstructionsTab } from "@/components/agents/instructions-tab";
@@ -31,7 +31,8 @@ describe("no_default_model links", () => {
     const choose = screen.getByRole("link", { name: "Choose a model" });
     expect(choose.getAttribute("href")).toBe("/o/acme/w/lab/agents/a-7?tab=instructions#a-model");
     expect(screen.queryByRole("link", { name: /guide/i })).toBeNull();
-    // The server message names the cause.
+    // (chat-7) The server message names the cause, under Details.
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(screen.getByText("The key serves no allowed chat model.")).toBeTruthy();
   });
 

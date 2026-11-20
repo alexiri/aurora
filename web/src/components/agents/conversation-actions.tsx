@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { CheckboxField } from "@/components/ui/form";
 import { MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Notice } from "@/components/ui/notice";
+import { useUndoToast } from "@/components/ui/undo-toast";
 import { ApiError } from "@/lib/api/client";
 import { chatApi, exportUrl } from "@/lib/api/conversations";
 
@@ -25,6 +26,36 @@ export function lifecycleError(err: unknown): string {
 }
 
 export const CONFIRM_WORD = "delete";
+
+/** Refresh every list and the one-conversation record after archive, restore or delete. */
+export function refreshConversations(qc: QueryClient, agentId: string, convId?: string) {
+  void qc.invalidateQueries({ queryKey: ["agents", agentId, "conversations"] });
+  void qc.invalidateQueries({ queryKey: ["agents", agentId, "direct"] });
+  if (convId) void qc.invalidateQueries({ queryKey: ["conversations", convId, "one"] });
+}
+
+/** (chat-1) The archived thread's **Restore** button. */
+export function RestoreButton({ agentId, convId }: { agentId: string; convId: string }) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={busy}
+      className="min-h-11 md:min-h-9"
+      onClick={() => {
+        setBusy(true);
+        chatApi
+          .unarchive(convId)
+          .then(() => refreshConversations(qc, agentId, convId))
+          .finally(() => setBusy(false));
+      }}>
+      {busy ? "Restoring…" : "Restore"}
+    </Button>
+  );
+}
 
 /**
  * The thread header's "Conversation actions" menu (RFE-010): archive/unarchive, export, and delete with a
@@ -51,10 +82,16 @@ export function ConversationActions({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const refresh = () => {
-    void qc.invalidateQueries({ queryKey: ["agents", agentId, "conversations"] });
-    void qc.invalidateQueries({ queryKey: ["agents", agentId, "direct"] });
-  };
+  const refresh = () => refreshConversations(qc, agentId, convId);
+  const toast = useUndoToast();
+  // (P5-REFINE-11, chat-1) Archiving is undoable, so no confirmation: the conversation stays open as a read-only thread
+  // (Restore in its header) and leaves the Active list; the toast offers Undo.
+  const archive = () =>
+    run(() => chatApi.archive(convId), () =>
+      toast("Conversation archived", () => {
+        void chatApi.unarchive(convId).then(refresh, () => onError?.("Could not restore the conversation."));
+      }),
+    );
 
   async function run(fn: () => Promise<unknown>, after?: () => void, inDialog = false) {
     setBusy(true);
@@ -98,7 +135,7 @@ export function ConversationActions({
         <MenuContent align="end">
           <MenuItem
             disabled={busy}
-            onSelect={() => void run(() => (archived ? chatApi.unarchive(convId) : chatApi.archive(convId)), archived ? undefined : onGone)}>
+            onSelect={() => void (archived ? run(() => chatApi.unarchive(convId)) : archive())}>
             {archived ? "Unarchive" : "Archive"}
           </MenuItem>
           <MenuItem asChild>

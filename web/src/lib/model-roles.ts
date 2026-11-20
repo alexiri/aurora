@@ -9,18 +9,13 @@ export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABEL: Record<Role, string> = { large: "Large", medium: "Medium", small: "Small" };
 
-/** The alias each role maps to in `claude-code` (`08 §Model roles`). */
-export const CLAUDE_CODE_ALIAS: Record<Role, string> = { large: "opus", medium: "sonnet", small: "haiku" };
+/** (P5-REFINE-12) What a person sees for a role on an agent's Advanced fold: no size words, no alias. */
+export const ROLE_NAME: Record<Role, string> = { large: "Strongest model", medium: "Everyday model", small: "Fastest model" };
 
 /** `MODEL_ID_PATTERN` (C-875): `^[A-Za-z0-9._:/@-]{1,200}$`. */
 export const MODEL_ID_PATTERN = /^[A-Za-z0-9._:/@-]{1,200}$/;
 
 export const isRole = (v: string): v is Role => (ROLES as readonly string[]).includes(v);
-
-/** `Large` or, for `claude-code`, `Large (opus)`. */
-export function roleLabel(role: Role, harnessId: string | undefined): string {
-  return harnessId === "claude-code" ? `${ROLE_LABEL[role]} (${CLAUDE_CODE_ALIAS[role]})` : ROLE_LABEL[role];
-}
 
 /** A role's readiness warning (`role_unset` | `role_not_allowed` | `role_not_served`) in words. */
 export function roleWarning(role: Role, warning: string, model?: string | null): string {

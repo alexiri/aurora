@@ -1,4 +1,5 @@
 import { Meter } from "@/components/ui/meter";
+import { formatCount } from "@/lib/format-date";
 import { meter } from "@/lib/api/memory";
 
 /** Accessible usage meter; turns red and announces when over the limit. */
@@ -17,7 +18,7 @@ export function SizeMeter({ label, used, max }: { label: string; used: number; m
         className="h-1.5"
       />
       <p className={m.over ? "text-xs text-danger-ink" : "text-xs text-muted"} role={m.over ? "alert" : undefined}>
-        {label}: {used.toLocaleString("en-US")} / {max.toLocaleString("en-US")} characters
+        {label}: {formatCount(used)} / {formatCount(max)} characters
         {m.over ? " (over the limit)" : ""}
       </p>
     </div>

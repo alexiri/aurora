@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent, type ReactNode } from "react";
 
+import { formatExact } from "@/lib/format-date";
+
 import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
@@ -22,7 +24,7 @@ const SUBJECT_LABEL: Record<FreezeSubject, string> = {
 const REASON_MAX = 500;
 
 function date(iso: string): string {
-  return new Date(iso).toLocaleString();
+  return formatExact(iso);
 }
 
 /** "Frozen by <name> on <date>: <reason>" (docs/14 §Agent page, RFE-006). */
@@ -78,7 +80,12 @@ export function FreezeControl({
   menuExtra,
   menuLead,
   menuTriggerClassName,
+  buttonLabel,
+  buttonVariant = "danger",
 }: {
+  /** (P5-REFINE-11) The button's words when it is not a menu entry ("Pause Daneel"); default "Pause agent". */
+  buttonLabel?: string;
+  buttonVariant?: "danger" | "outline";
   /** (P5-POLISH-6) Entries before Freeze, separated from it by a divider (the agent page's Behaviour and Access). */
   menuLead?: ReactNode;
   /** Extra classes of the menu's … button (the accent outline while a configuration page is open). */
@@ -164,15 +171,15 @@ export function FreezeControl({
             <MenuItem className="data-[highlighted]:bg-subtle" onSelect={() => setOpen(true)}>
               <span>
                 Pause {menuLead ? name : label}
-                {menuLead ? <span className="block text-xs text-muted">Pauses it until you resume it</span> : "…"}
+                {menuLead ? <span className="block text-xs text-muted">Stops it until you resume it</span> : "…"}
               </span>
             </MenuItem>
             {menuExtra}
           </MenuContent>
         </Menu>
       ) : (
-        <Button type="button" variant="danger" size="sm" onClick={() => setOpen(true)}>
-          Pause {label}
+        <Button type="button" variant={buttonVariant} size="sm" onClick={() => setOpen(true)}>
+          {buttonLabel ?? `Pause ${label}`}
         </Button>
       )}
       <FormDialog

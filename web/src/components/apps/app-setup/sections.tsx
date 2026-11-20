@@ -24,6 +24,7 @@ import {
   type SetupChip,
   type SetupView,
 } from "@/lib/apps/setup-copy";
+import { TechnicalDetails } from "@/components/ui/technical-details";
 import { orgRoutes } from "@/lib/routes";
 
 const CHIP_TONE: Record<SetupChip, "accent" | "neutral"> = { ready: "accent", needs_setup: "neutral", admin_only: "neutral" };
@@ -319,9 +320,8 @@ export function WhatItCanDo({ detail }: { detail: AppDetail }) {
       </div>
       {detail.hosts.length > 0 || detail.agent_instructions ? (
         <Altitude id="tech.details" level="setup">
-        <details className="text-sm">
-          <summary className="cursor-pointer font-medium text-ink">Technical details</summary>
-          <div className="mt-3 space-y-3">
+        <TechnicalDetails summaryClassName="font-medium text-ink" bodyClassName="mt-3 space-y-3 text-sm">
+          <div className="space-y-3">
             {detail.hosts.length > 0 ? (
               <section aria-label="Hosts" className="space-y-1.5">
                 <p className="font-medium text-ink">Hosts</p>
@@ -351,7 +351,7 @@ export function WhatItCanDo({ detail }: { detail: AppDetail }) {
               </section>
             ) : null}
           </div>
-        </details>
+        </TechnicalDetails>
         </Altitude>
       ) : null}
       {detail.api_docs ? (

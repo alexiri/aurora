@@ -6,6 +6,7 @@ import { ChatTab } from "@/components/agents/chat-tab";
 import { ResultRow } from "@/components/chat/search/search-results";
 import { HighlightedText } from "@/components/ui/highlighted-text";
 import { addChip, extractFilters, inTokenAtEnd, localDayStart, queryOf, tokenize, toSearchParams, type FilterChip } from "@/lib/chat/search-syntax";
+import { setDisplayTimeZone } from "@/lib/format-date";
 import { json } from "./support/api";
 
 // P5-CHAT-4 part B (D-229, C-727): the syntax parser, the highlight and result row, and the search box in the chat tab.
@@ -89,11 +90,14 @@ const item = (over: Record<string, unknown> = {}) =>
 
 describe("result row", () => {
   it("shows title, author, snippet with the highlight and an Archived badge", () => {
+    setDisplayTimeZone("UTC");
     render(<ResultRow item={item({ conversation: { id: "g1", title: "Team room", kind: "group", archived: true }, type: "attachment" })} now={new Date("2026-11-09T10:00:00Z")} showAgent={false} selected={false} href="?c=g1&m=4" local onOpen={() => {}} />);
     const link = screen.getByRole("link");
     expect(within(link).getByText("Team room")).toBeTruthy();
     expect(within(link).getByText("Archived")).toBeTruthy();
-    expect(link.textContent).toContain("Daneel · File");
+    // (chat-9) File marker and speaker in front of the sentence, then the full date and time on the right.
+    expect(link.textContent).toContain("File · Daneel: the release is ready");
+    expect(link.textContent).toContain("8 Nov 10:00");
     expect(link.querySelector("mark")!.textContent).toBe("release");
     expect(link.getAttribute("aria-current")).toBeNull();
   });

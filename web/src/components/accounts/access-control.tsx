@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
 import { WhoCan } from "@/components/ui/who-can";
 import { type Account, type AgentAccess, type Level, usePutAccess } from "@/lib/api/accounts";
 import { useGrants } from "@/lib/api/policy";
@@ -40,6 +41,7 @@ export function AccessControl({
   inRow?: boolean;
 }) {
   const put = usePutAccess();
+  const saved = useSaveBar();
   const grants = useGrants(entry.agent.id);
   const [table, setTable] = useState(startOpen);
   if (account.ref.type !== "connection") return null;
@@ -145,6 +147,7 @@ export function AccessControl({
       levels.length === 1 ? (
         <p className={cn("text-sm text-ink", inRow && "whitespace-nowrap")}>{LEVEL_LABEL[levels[0]!]}</p>
       ) : (
+        <span className="inline-flex items-center gap-2">
         <select
           aria-label={`${entry.agent.name}'s access to ${account.name}`}
           className={cn("h-9 rounded-control border border-line-strong bg-surface px-2 text-sm text-ink", inRow ? "w-auto max-w-56" : "w-full max-w-xs")}
@@ -153,7 +156,7 @@ export function AccessControl({
           onChange={(e) => {
             const v = e.target.value;
             if (v === CUSTOM || v === EXACTLY) setTable(true);
-            else put.mutate({ agentId: entry.agent.id, connectionId: account.ref.id, body: { level: v as Level } });
+            else put.mutate({ agentId: entry.agent.id, connectionId: account.ref.id, body: { level: v as Level } }, { onSuccess: () => saved.flash() });
           }}>
           {level === null && entry.level !== "custom" ? <option value="">Choose…</option> : null}
           {levels.map((l) => (
@@ -164,6 +167,8 @@ export function AccessControl({
           <option value={CUSTOM}>Custom…</option>
           <option value={EXACTLY}>What exactly?</option>
         </select>
+        <InlineSaved show={saved.saved} />
+        </span>
       );
   const rest = (
     <>

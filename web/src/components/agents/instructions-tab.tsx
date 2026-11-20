@@ -3,16 +3,16 @@
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 
-import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { ErrorNotice } from "@/components/ui/notice";
+import { Notice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Select } from "@/components/ui/select";
 import { SwitchField } from "@/components/ui/switch";
 import { useHarnesses, usePatchAgent } from "@/lib/api/agents";
 import { ApiError } from "@/lib/api/client";
 import { useModelReadiness } from "@/lib/api/credential-grants";
-import { fieldErrors } from "@/lib/api/errors";
+import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useModels } from "@/lib/api/conversations";
 import { useMe, type Agent } from "@/lib/api/queries";
 import { errorTarget, ROLES } from "@/lib/model-roles";
@@ -41,7 +41,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
   const initialModel = agent.model_endpoint_id && agent.model_id ? `${agent.model_endpoint_id}\u0000${agent.model_id}` : "";
   const [model, setModel] = useState(initialModel);
   const [clientErr, setClientErr] = useState("");
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
   const fe = patch.error ? fieldErrors(patch.error) : {};
 
   // (FIX-170) The chat's "Choose a model" link ends in `#a-model`: scroll to the Model field and focus it
@@ -97,6 +97,10 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     return same ? null : { model_roles: next };
   }
 
+  // What the form holds, so "Saved" stays only while nothing was edited after the save.
+  const draftSig = JSON.stringify([name, brief, effort, proactive, model, harness, roles, subagent]);
+  const [savedSig, setSavedSig] = useState<string | null>(null);
+  const justSaved = bar.saved && savedSig === draftSig;
   const dirty =
     name !== agent.name ||
     brief !== agent.brief ||
@@ -117,7 +121,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     setRoles(rolesFor(agent.model_endpoint_id && agent.model_id ? agent.model_endpoint_id : (defaultView?.endpoint_id ?? null)));
     setSubagent(agent.subagent_model);
     setClientErr("");
-    setSaved(false);
+    bar.clear();
     patch.reset();
   }
 
@@ -134,7 +138,8 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         ...(rolesPatch() ?? {}),
         ...(agent.kind === "hosted" && !roleless && subagent !== agent.subagent_model ? { subagent_model: subagent } : {}),
       });
-      setSaved(true);
+      setSavedSig(draftSig);
+      bar.flash();
     } catch {
       // surfaced via patch.error
     }
@@ -142,7 +147,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    setSaved(false);
+    bar.clear();
     const n = name.trim();
     if (!n || n.length > 80) return setClientErr("Name must be 1 to 80 characters.");
     setClientErr("");
@@ -150,19 +155,19 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     await save(n);
   }
 
-  const defaultModelLabel = defaultView ? `Workspace default · ${defaultView.model_id}` : "Workspace default";
+  // Display names only (behaviour-5): no provider or endpoint suffix; raw ids stay in Technical details.
+  const defaultModelName =
+    (models.data?.items ?? []).find((m) => m.endpoint_id === defaultView?.endpoint_id && m.model_id === defaultView?.model_id)?.display_name ??
+    defaultView?.model_id;
+  const defaultModelLabel = defaultModelName ? `Workspace default · ${defaultModelName}` : "Workspace default";
 
   return (
     <div className="space-y-6">
       <form onSubmit={(e) => void submit(e)} noValidate className="max-w-180 space-y-5 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
-        <div className="flex items-start gap-4">
-          <AvatarField agent={agent} wsId={wsId} compact />
-          <div className="min-w-0 flex-1">
-            <Field id="a-name" label="Name" error={clientErr || fe.name}>
-              <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
-            </Field>
-          </div>
-        </div>
+        <AvatarField agent={agent} wsId={wsId} />
+        <Field id="a-name" label="Name" error={clientErr || fe.name}>
+          <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+        </Field>
         <Field
           id="a-brief"
           label="Instructions"
@@ -170,7 +175,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
           hint={`What ${agent.name} should do and how. It reads these before every conversation.`}>
           <textarea id="a-brief" className={inputClass} rows={6} value={brief} onChange={(e) => setBrief(e.target.value)} />
         </Field>
-        <Field id="a-model" label="Model" error={roleErrors.model} hint={modelHint(agent.kind, models.data?.items.length, models.isError)}>
+        <Field id="a-model" label="Model" error={roleErrors.model} hint={modelHint(agent.kind, models.data?.items.length, models.isError, agent.name)}>
           <select
             id="a-model"
             className={inputClass}
@@ -186,7 +191,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
             ) : null}
             {(models.data?.items ?? []).map((m) => (
               <option key={`${m.endpoint_id}/${m.model_id}`} value={`${m.endpoint_id}\u0000${m.model_id}`}>
-                {m.display_name ?? m.model_id} ({m.provider})
+                {m.display_name ?? m.model_id}
               </option>
             ))}
           </select>
@@ -220,13 +225,14 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         <Altitude
           id="agent.roles"
           level="expert"
-          label="Model roles, effort and agent program"
+          label="Advanced"
           promote={!!fe.harness || !!fe.effort || hasRoleError(roleErrors)}>
           <div className="space-y-5 rounded-control border border-line px-3 py-3">
-            <p className="text-sm font-medium text-ink">Model roles, effort and agent program</p>
+            <p className="text-sm font-medium text-ink">Advanced</p>
+            <Notice role="status">Advanced is for admins and power users. Most people never need it.</Notice>
             <Field
               id="a-harness"
-              label="Harness"
+              label="Agent program"
               error={fe.harness}
               hint={
                 showPicker ? (
@@ -266,7 +272,6 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
             </Field>
             {agent.kind === "hosted" ? (
               <ModelRolesFields
-                harnessId={chosenHarness || undefined}
                 harnessName={harnessInfo?.display_name ?? "this harness"}
                 roleless={roleless}
                 mapped={harnessInfo?.model_roles ?? null}
@@ -275,7 +280,6 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
                 onRoles={setRoles}
                 subagent={subagent}
                 onSubagent={setSubagent}
-                readiness={defaultView}
                 errors={roleErrors}
                 disabled={!endpointId}
               />
@@ -285,38 +289,23 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
             </Field>
           </div>
         </Altitude>
-        {patch.error && Object.keys(fe).length === 0 && !hasRoleError(roleErrors) ? (
-          <ErrorNotice error={patch.error} />
-        ) : null}
-        {saved ? (
-          <p role="status" className="text-sm text-accent-ink">
-            Saved
-          </p>
-        ) : null}
-        {/* (P5-POLISH-6) The save bar: only after a change, at the bottom of the viewport. There is no Save at the end of the page. */}
-        {dirty ? (
-          <div
-            role="region"
-            aria-label="Unsaved changes"
-            className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-xl items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-pop">
-            <span className="text-sm font-medium text-ink">Unsaved changes</span>
-            <span className="flex items-center gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={discard} disabled={patch.isPending}>
-                Discard
-              </Button>
-              <Button type="submit" size="sm" disabled={patch.isPending}>
-                {patch.isPending ? "Saving…" : "Save"}
-              </Button>
-            </span>
-          </div>
-        ) : null}
+        {/* (P5-POLISH-6, P5-REFINE-2) The one save bar: only after a change, at the bottom of the viewport; "Saved" for two seconds. */}
+        <SaveBar
+          // "Saved" shows even while the agent has not been refetched yet.
+          dirty={dirty && !justSaved}
+          saving={patch.isPending}
+          saved={justSaved}
+          errorCount={Object.keys(fe).length + (clientErr ? 1 : 0) + (hasRoleError(roleErrors) ? 1 : 0)}
+          error={patch.error && Object.keys(fe).length === 0 && !hasRoleError(roleErrors) ? errorMessage(patch.error) : undefined}
+          onDiscard={discard}
+        />
       </form>
       <ConfirmDialog
         open={confirmSwitch}
         onOpenChange={setConfirmSwitch}
-        title="Change the harness?"
+        title="Change the agent program?"
         description="Starts fresh sessions for every conversation of this agent; the transcript is kept."
-        confirmLabel="Change harness"
+        confirmLabel="Change agent program"
         busy={patch.isPending}
         onConfirm={() => {
           setConfirmSwitch(false);
@@ -327,11 +316,11 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
   );
 }
 
-function modelHint(kind: string, count: number | undefined, isError: boolean): string {
+function modelHint(kind: string, count: number | undefined, isError: boolean, agentName: string): string {
   if (kind !== "hosted") return "Models apply to hosted agents.";
   if (isError) return "Could not load models.";
-  if (count === 0) return "Available when an LLM key is granted.";
-  return "The model the agent starts with. It may use other allowed models on the same endpoint, for example for subagents.";
+  if (count === 0) return "Available when an AI key is given to the agent.";
+  return `The model ${agentName} starts with.`;
 }
 
 const MESSAGE_MISMATCH =

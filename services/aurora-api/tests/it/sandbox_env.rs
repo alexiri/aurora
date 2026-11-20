@@ -321,8 +321,20 @@ async fn a_new_runner_image_flags_restart_to_update() {
     // image-only upgrade
     w.reregister("sandbox:B").await;
     let v = w.sandbox(agent).await;
-    assert_eq!(v["image"], "sandbox:B", "{v}");
     assert_eq!(v["restart_to_update"], true);
+    // (P5-REFINE-4, SEC-141) The image itself is for instance admins only.
+    assert!(v["image"].is_null(), "{v}");
+    let ia = w.h.user("ia@x.io", true).await;
+    w.h.member(w.org, ia, "member", "active").await;
+    w.h.bind_ws(w.ws, ia, "member").await;
+    let (_, sess) = w.h.good_session(ia).await;
+    let (_, v) =
+        w.h.get(
+            &format!("/v1/agents/{agent}/sandbox"),
+            &[("cookie", &cookie(&sess))],
+        )
+        .await;
+    assert_eq!(v["image"], "sandbox:B", "{v}");
 }
 
 #[tokio::test]

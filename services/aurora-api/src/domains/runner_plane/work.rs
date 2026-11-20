@@ -83,7 +83,14 @@ pub async fn poll(
     let reconciler =
         aurora_db::repo::runners::is_oldest_live(&s.pool, runner.id, replica, online_secs())
             .await?;
-    Ok(WorkResponse { items, reconciler })
+    // (P5-REFINE-4, C-1057) Re-decide the stream listener at every poll, with registration's rule.
+    // A runner whose stored capabilities do not parse gets no answer (it keeps its registration's).
+    let streams = caps_of(runner).map(|c| super::service::stream_flags(s, &c));
+    Ok(WorkResponse {
+        items,
+        reconciler,
+        streams,
+    })
 }
 
 pub(crate) fn caps_of(runner: &RunnerRow) -> Option<RunnerCapabilities> {

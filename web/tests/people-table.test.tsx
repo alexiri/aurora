@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { AccessTab, SUSPEND_KEEPS, SUSPEND_STOPS, joinedText } from "@/components/settings/access-tab";
+import { AccessTab, SUSPEND_KEEPS, SUSPEND_STOPS } from "@/components/settings/access-tab";
 import { formatExact, formatWhen } from "@/lib/format-date";
 import { json } from "./support/api";
 import { wrap } from "./support/render";
@@ -85,8 +85,8 @@ describe("People table", () => {
     const row = screen.getByTestId("access-row-c");
     const cell = within(row).getByTitle(formatExact("2025-03-04T10:00:00Z"));
     expect(cell).toHaveTextContent(formatWhen("2025-03-04T10:00:00Z"));
-    // The narrow-screen line under the person says it in words.
-    expect(within(row).getByText(joinedText("2025-03-04T10:00:00Z"))).toBeInTheDocument();
+    // The same cell is the "Joined …" line of the stacked row on a phone (its label comes from the stylesheet).
+    expect(cell.closest("td")).toHaveAttribute("data-label", "Joined");
   });
 
   it("suspends after a confirmation that says what stops, marks the row, and restores", async () => {

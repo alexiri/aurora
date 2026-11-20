@@ -17,7 +17,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { useAdminUsers, usePatchAdminUser, type AdminUser } from "@/lib/api/account";
 import { useSession } from "@/lib/api/queries";
 
-import { fmtDate } from "./key-table";
+import { When } from "@/components/ui/when";
 
 export function NotFoundPage() {
   return (
@@ -49,7 +49,7 @@ export function UsersTable({
 
   if (users.length === 0) return <EmptyState title="No users found" />;
   return (
-    <DataTable caption="Users">
+    <DataTable caption="Users" stackBelow={900}>
       <thead>
         <tr>
           <Th>User</Th>
@@ -67,11 +67,13 @@ export function UsersTable({
           const canDisable = !isSelf;
           return (
             <tr key={u.id}>
-              <Td>
+              <Td cell="title">
                 <div className="font-medium">{u.display_name}</div>
-                <div className="text-muted">{u.email}</div>
+                <div className="break-all text-muted">{u.email}</div>
               </Td>
-              <Td className="whitespace-nowrap text-ink-2">{fmtDate(u.last_login_at)}</Td>
+              <Td label="Last login" className="whitespace-nowrap text-ink-2">
+                <When value={u.last_login_at} />
+              </Td>
               <Td>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Badge tone={u.is_instance_admin ? "accent" : "neutral"}>
@@ -86,7 +88,7 @@ export function UsersTable({
                   </div>
                 ) : null}
               </Td>
-              <Td className="space-y-1">
+              <Td cell="actions" className="space-y-1">
                 {/* (P5-POLISH-10) Your own row offers neither "Remove admin" nor "Turn off", and the last instance admin
                     cannot be removed (the server refuses both already): they are not offered. Role values live here too. */}
                 {isSelf ? <p className="text-xs text-muted">This is you.</p> : null}

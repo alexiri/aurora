@@ -21,6 +21,7 @@ import { useParams } from "next/navigation";
 import { UsageCard } from "@/components/usage/usage-card";
 import { ShareDialog } from "@/components/agents/previews-tab";
 import { clockTime } from "@/lib/chat/layout";
+import { TechnicalDetails } from "@/components/ui/technical-details";
 import { errorCopy } from "@/lib/chat/transcript";
 
 import { readShell, SHELL_OPTIONS, writeShell, type Shell } from "./terminal-shell";
@@ -323,9 +324,13 @@ export function ComputerTab({
       ) : null}
       {/* (P5-POLISH-6) The engine's details are collapsed: the last start attempt, the start log, why it is awake, the processes. */}
       <Altitude id="tech.details" level="setup">
-      <details className="rounded-card border border-line bg-surface px-4 py-3 shadow-card" data-testid="technical-details">
-        <summary className="cursor-pointer text-sm font-medium text-ink">Technical details</summary>
-        <div className="mt-4 space-y-8">
+      <TechnicalDetails
+        className="rounded-card border border-line bg-surface px-4 py-3 shadow-card"
+        summaryClassName="font-medium text-ink"
+        bodyClassName="mt-4"
+        data-testid="technical-details"
+      >
+        <div className="space-y-8">
       {v.image ? <p className="text-xs text-muted">Image: {v.image}</p> : null}
       {v.start_attempt ? <StartAttempt a={v.start_attempt} /> : null}
       {/* (FIX-029, C-612/C-615) The boot's start log, live while starting, frozen at the failure. */}
@@ -372,7 +377,7 @@ export function ComputerTab({
         )}
       </Section>
         </div>
-      </details>
+      </TechnicalDetails>
       </Altitude>
     </div>
   );

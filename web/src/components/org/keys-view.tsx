@@ -3,9 +3,10 @@
 import { useState, type FormEvent } from "react";
 
 import { KeyTable } from "@/components/account/key-table";
-import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
+import { SecretOnce } from "@/components/ui/secret-once";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { DateField } from "@/components/ui/date-field";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
@@ -62,13 +63,7 @@ export function OrgKeysView({ orgId }: { orgId: string }) {
             />
           </Field>
           <Field id="okey-exp" label="Expires (optional)" error={fe.expires_at}>
-            <input
-              id="okey-exp"
-              type="date"
-              className={cn(inputClass, "w-48 max-w-full")}
-              value={expires}
-              onChange={(e) => setExpires(e.target.value)}
-            />
+            <DateField id="okey-exp" value={expires} onChange={setExpires} />
           </Field>
           <Button type="submit" disabled={create.isPending} className="sm:mt-label-offset">
             Create key
@@ -90,9 +85,10 @@ export function OrgKeysView({ orgId }: { orgId: string }) {
           />
         ) : null}
       </Section>
-      <OneTimeKeyDialog
+      <SecretOnce
         secret={created?.secret ?? null}
-        name={created?.name}
+        title="Copy your new API key"
+        description={`Key${created?.name ? ` "${created.name}"` : ""} created. You won't see it again, so store it somewhere safe now.`}
         onClose={() => setCreated(null)}
       />
     </div>

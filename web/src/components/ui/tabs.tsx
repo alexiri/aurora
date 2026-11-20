@@ -84,7 +84,10 @@ export function Tabs({
   className,
   overflow = "scroll",
   tabClassName,
+  columnFromMd = false,
 }: {
+  /** The strip becomes a left column from `md` (the Settings sub-nav): vertical arrows move too. */
+  columnFromMd?: boolean;
   items: TabItem[];
   value: string;
   onValueChange: (v: string) => void;
@@ -149,8 +152,9 @@ export function Tabs({
   function onKeyDown(e: KeyboardEvent) {
     const i = items.findIndex((t) => t.value === value);
     let next = -1;
-    if (e.key === "ArrowRight") next = (i + 1) % items.length;
-    else if (e.key === "ArrowLeft") next = (i - 1 + items.length) % items.length;
+    // (P5-REFINE-11) ArrowDown/ArrowUp also move when the strip is laid out as a column from `md` (the Settings sub-nav).
+    if (e.key === "ArrowRight" || (e.key === "ArrowDown" && columnFromMd)) next = (i + 1) % items.length;
+    else if (e.key === "ArrowLeft" || (e.key === "ArrowUp" && columnFromMd)) next = (i - 1 + items.length) % items.length;
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = items.length - 1;
     if (next < 0) return;

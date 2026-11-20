@@ -53,6 +53,21 @@ pub(crate) async fn rig(
     watch::Sender<bool>,
     watch::Sender<bool>,
 ) {
+    rig_with(api, StreamListener::new).await
+}
+
+/// [`rig`] with the listener built by `build` (tests that shorten its bounds).
+#[allow(clippy::type_complexity)]
+pub(crate) async fn rig_with(
+    api: &MockServer,
+    build: impl FnOnce(ChannelServer) -> Arc<StreamListener>,
+) -> (
+    std::net::SocketAddr,
+    std::net::SocketAddr,
+    ChannelServer,
+    watch::Sender<bool>,
+    watch::Sender<bool>,
+) {
     let server = ChannelServer::new(ChannelSettings::new(KEY));
     let retry = RetryPolicy {
         attempts: 1,
@@ -62,7 +77,7 @@ pub(crate) async fn rig(
     server.attach_api(Arc::new(
         ApiClient::new(&api.uri(), "aur_test", retry).unwrap(),
     ));
-    let streams = StreamListener::new(server.clone());
+    let streams = build(server.clone());
     server.set_streams(streams.clone());
 
     let ch = TcpListener::bind("127.0.0.1:0").await.unwrap();

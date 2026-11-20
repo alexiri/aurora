@@ -408,6 +408,7 @@ function DeleteGroup({ g, orgId, orgSlug }: { g: Group; orgId: string; orgSlug: 
           open={open}
           onOpenChange={setOpen}
           title={`Delete ${g.name}?`}
+          description="Members lose the access this group gave them. The people stay in the organization."
           confirmLabel="Delete group"
           danger
           busy={del.isPending}

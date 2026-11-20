@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { AuditPanel } from "@/components/audit/audit-panel";
+import { DateField } from "@/components/ui/date-field";
 import { inputClass } from "@/components/ui/field";
 import { Segmented } from "@/components/ui/segmented";
 import { useInstanceAudit, type InstanceAuditFilter } from "@/lib/api/admin-audit";
@@ -55,23 +56,11 @@ export function AdminAuditView() {
           ) : null}
           <label className="flex items-center gap-2 text-sm">
             From
-            <input
-              type="date"
-              aria-label="From date"
-              className={`${inputClass} w-auto`}
-              value={f.since}
-              onChange={(e) => setF({ ...f, since: e.target.value })}
-            />
+            <DateField aria-label="From date" value={f.since} onChange={(v) => setF({ ...f, since: v })} />
           </label>
           <label className="flex items-center gap-2 text-sm">
             To
-            <input
-              type="date"
-              aria-label="To date"
-              className={`${inputClass} w-auto`}
-              value={f.until}
-              onChange={(e) => setF({ ...f, until: e.target.value })}
-            />
+            <DateField aria-label="To date" value={f.until} onChange={(v) => setF({ ...f, until: v })} />
           </label>
         </>
       }

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { FileIcon, FileTextIcon, FolderIcon, ImageIcon, LinkIcon, MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
-import { cn } from "@/lib/utils";
+import { When } from "@/components/ui/when";
 import { downloadUrl, effectiveKind, humanSize, unopenable, type FileEntry } from "@/lib/api/files";
 import { formatExact, formatWhen } from "@/lib/format-date";
 
@@ -112,8 +112,8 @@ function RowMenu({ agent, entry, actions }: { agent: string; entry: FileEntry } 
  */
 export function FileList({ agent, entries, actions, now }: { agent: string; entries: FileEntry[]; actions: FileListActions; now?: number }) {
   return (
-    <DataTable caption="Files in this folder" className="max-md:block max-md:min-w-0">
-      <thead className="max-md:sr-only">
+    <DataTable caption="Files in this folder" stackBelow={900}>
+      <thead>
         <tr>
           <Th>Name</Th>
           <Th className="text-right">Size</Th>
@@ -123,20 +123,20 @@ export function FileList({ agent, entries, actions, now }: { agent: string; entr
           </Th>
         </tr>
       </thead>
-      <tbody className="max-md:block">
+      <tbody>
         {entries.map((e) => {
           return (
-            <tr key={e.path} className="max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-3 max-md:border-t max-md:border-line max-md:px-3 max-md:py-2">
-              <Td className="max-md:order-1 max-md:basis-3/4 max-md:flex-1 max-md:border-0 max-md:p-0">
+            <tr key={e.path}>
+              <Td cell="title">
                 <NameCell entry={e} onOpen={actions.onOpen} />
               </Td>
-              <Td className={cn("whitespace-nowrap text-right tabular-nums text-ink-2", "max-md:order-3 max-md:border-0 max-md:p-0 max-md:text-xs max-md:text-muted")}>
+              <Td className="whitespace-nowrap text-right tabular-nums text-ink-2 max-stack:text-xs max-stack:text-muted">
                 {e.kind === "dir" || e.kind === "symlink" ? "—" : humanSize(e.size)}
               </Td>
-              <Td className="whitespace-nowrap text-ink-2 max-md:order-4 max-md:border-0 max-md:p-0 max-md:text-xs max-md:text-muted">
-                <span title={e.modified_at ? formatExact(e.modified_at) : undefined}>{formatWhen(e.modified_at, { now })}</span>
+              <Td className="whitespace-nowrap text-ink-2 max-stack:text-xs max-stack:text-muted">
+                {now === undefined ? <When value={e.modified_at} /> : <span title={e.modified_at ? formatExact(e.modified_at) : undefined}>{formatWhen(e.modified_at, { now })}</span>}
               </Td>
-              <Td className="w-px text-right max-md:order-2 max-md:border-0 max-md:p-0">
+              <Td cell="actions" className="w-px text-right">
                 <RowMenu agent={agent} entry={e} actions={actions} />
               </Td>
             </tr>
