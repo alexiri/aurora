@@ -29,6 +29,67 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(self_container_config))
         .routes(routes!(create_context_credential))
         .routes(routes!(gateway_ca))
+        .routes(routes!(list_org_agents))
+}
+
+/// (P5-REFINE-6, C-1090) An organization's agent, with its workspace.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct OrgAgent {
+    pub id: Uuid,
+    pub name: String,
+    pub handle: String,
+    pub workspace: OrgAgentWorkspace,
+    /// `hosted` | `byo`.
+    pub kind: String,
+    /// `active` | `paused` (the agent, its workspace or the organization is paused).
+    pub state: String,
+    pub last_active_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct OrgAgentWorkspace {
+    pub slug: String,
+    /// A personal workspace is named after its person (C-923).
+    pub name: String,
+}
+
+/// Every agent of an organization, personal workspaces included (organization owners and admins;
+/// C-1090).
+#[utoipa::path(
+    get,
+    path = "/orgs/{org}/agents",
+    operation_id = "listOrgAgents",
+    tag = "agents",
+    params(("org" = Uuid, Path, description = "Organization id"), PageParams),
+    responses(
+        (status = 200, description = "Agents", body = Page<OrgAgent>),
+        (status = 403, description = "Forbidden", body = ErrorEnvelope),
+        (status = 404, description = "Not found", body = ErrorEnvelope),
+    ),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn list_org_agents(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(org): Path<Uuid>,
+    Query(params): Query<PageParams>,
+) -> Result<Json<Page<OrgAgent>>, ApiError> {
+    let p = params.resolve()?;
+    caller.org(&state, org).await?.require_admin()?;
+    let rows = agents::list_for_org(&state.pool, org, p.after_key(), p.fetch()).await?;
+    let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
+    Ok(Json(page.map(|r| OrgAgent {
+        id: r.id,
+        name: r.name,
+        handle: r.handle,
+        workspace: OrgAgentWorkspace {
+            slug: r.workspace_slug,
+            name: r.workspace_name,
+        },
+        kind: r.kind,
+        state: if r.paused { "paused" } else { "active" }.to_owned(),
+        last_active_at: r.last_active_at,
+    })))
 }
 
 /// List the agents of a workspace (`can_use`).

@@ -81,6 +81,48 @@ pub struct Me {
     pub can_create_org: bool,
 }
 
+/// (P5-REFINE-6, C-1089) A chat platform the person can link.
+#[derive(Debug, Serialize, ToSchema, PartialEq, Eq)]
+pub struct MyChatPlatform {
+    /// The connector type (its `type_id`).
+    pub kind: String,
+    pub display_name: String,
+    /// The bot to message, when the connector reported one.
+    pub bot_handle: Option<String>,
+    /// The person has linked their chat account there.
+    pub linked: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MyChatPlatforms {
+    pub platforms: Vec<MyChatPlatform>,
+}
+
+impl MyChatPlatforms {
+    /// One entry per kind: the first bot handle found, linked when linked on any integration.
+    #[must_use]
+    pub fn by_kind(rows: Vec<aurora_db::repo::channel_integrations::MyPlatformRow>) -> Self {
+        let mut platforms: Vec<MyChatPlatform> = Vec::new();
+        for r in rows {
+            match platforms.iter_mut().find(|p| p.kind == r.kind) {
+                Some(p) => {
+                    p.linked |= r.linked;
+                    if p.bot_handle.is_none() {
+                        p.bot_handle = r.bot_handle;
+                    }
+                }
+                None => platforms.push(MyChatPlatform {
+                    kind: r.kind,
+                    display_name: r.display_name,
+                    bot_handle: r.bot_handle,
+                    linked: r.linked,
+                }),
+            }
+        }
+        Self { platforms }
+    }
+}
+
 fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
 where
     D: serde::Deserializer<'de>,

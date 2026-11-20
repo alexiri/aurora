@@ -175,12 +175,11 @@ pub async fn generations(
         // (P5-REFINE-6, C-1087) What it changed against the generation before it.
         let g = &row.generation;
         let new_rules = repo::rules_of(&state.pool, g.id).await?;
-        let old_rules = match repo::predecessor(&state.pool, g.org_id, g.workspace_id, g.number)
-            .await?
-        {
-            Some(prev) => repo::rules_of(&state.pool, prev).await?,
-            None => Vec::new(),
-        };
+        let old_rules =
+            match repo::predecessor(&state.pool, g.org_id, g.workspace_id, g.number).await? {
+                Some(prev) => repo::rules_of(&state.pool, prev).await?,
+                None => Vec::new(),
+            };
         let (changes, more) = super::dto::rule_changes(&old_rules, &new_rules);
         let mut dto = summary_dto(row)?;
         dto.changes = changes;

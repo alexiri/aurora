@@ -27,8 +27,13 @@ pub fn violation_sentence(code: &str, path: &str, message: &str) -> String {
         "manifest_not_utf8" => "The package has no readable plugin.yaml.".to_owned(),
         "manifest_too_large" => "The package's plugin.yaml is too large.".to_owned(),
         "package_too_large" => too_large_sentence(),
-        "signature_missing" | "signature_untrusted" | "signature_malformed" | "key_revoked"
-        | "digest_mismatch" | "signer_not_source_key" | "builtin_not_project_signed" => {
+        "signature_missing"
+        | "signature_untrusted"
+        | "signature_malformed"
+        | "key_revoked"
+        | "digest_mismatch"
+        | "signer_not_source_key"
+        | "builtin_not_project_signed" => {
             "The package isn't signed by a key this server trusts.".to_owned()
         }
         _ => manifest_sentence(code, message).unwrap_or_else(|| {
@@ -93,14 +98,26 @@ mod tests {
         );
         assert_eq!(s("icon_not_png"), "The icon must be a square PNG.");
         assert_eq!(s("icon_not_square"), "The icon must be a square PNG.");
-        for c in ["path_traversal", "path_absolute", "path_duplicate", "path_invalid", "path_unknown"] {
+        for c in [
+            "path_traversal",
+            "path_absolute",
+            "path_duplicate",
+            "path_invalid",
+            "path_unknown",
+        ] {
             assert_eq!(
                 s(c),
                 "The package has a file with an unsafe name: icons/app.png."
             );
         }
-        assert_eq!(s("guide_not_utf8"), "The setup guide must be plain UTF-8 text.");
-        assert_eq!(s("package_too_large"), "That package is too large (limit 20 MB).");
+        assert_eq!(
+            s("guide_not_utf8"),
+            "The setup guide must be plain UTF-8 text."
+        );
+        assert_eq!(
+            s("package_too_large"),
+            "That package is too large (limit 20 MB)."
+        );
         assert_eq!(
             s("signature_untrusted"),
             "The package isn't signed by a key this server trusts."

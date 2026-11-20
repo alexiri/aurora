@@ -189,9 +189,8 @@ async fn an_organization_account_of_a_send_only_app_takes_no_read_limit() {
         "limit": "read"});
     b["fields"] = json!({"name": "Ops alerts", "url": "https://hooks.example/hooks/x"});
     b["webhook"] = webhook_config();
-    let (s, _, v) = l
-        .w
-        .call(
+    let (s, _, v) =
+        l.w.call(
             &l.w.owner,
             Method::POST,
             "/v1/apps/webhook/connect",

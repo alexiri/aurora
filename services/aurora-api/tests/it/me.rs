@@ -29,14 +29,21 @@ async fn can_create_org_matches_post_orgs() {
         let org = h.org().await;
         for admin in [false, true] {
             let u = h
-                .user(&format!("p{}{}@x.io", u8::from(anyone), u8::from(admin)), admin)
+                .user(
+                    &format!("p{}{}@x.io", u8::from(anyone), u8::from(admin)),
+                    admin,
+                )
                 .await;
             h.member(org, u, "member", "active").await;
             let (_, tok) = h.good_session(u).await;
             let (s, me) = call(&h, &tok, Method::GET, "/v1/me", None).await;
             assert_eq!(s, 200, "{me}");
             let want = admin || anyone;
-            assert_eq!(me["can_create_org"], json!(want), "anyone={anyone} admin={admin}");
+            assert_eq!(
+                me["can_create_org"],
+                json!(want),
+                "anyone={anyone} admin={admin}"
+            );
             let (s, v) = call(
                 &h,
                 &tok,

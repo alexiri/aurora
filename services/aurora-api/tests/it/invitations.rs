@@ -77,7 +77,13 @@ async fn create_list_cancel_permissions_and_flow() {
     // (C-1069, SEC-140) The 201 carries the link (the mailed one) and nothing else of the token.
     assert_eq!(
         v["link"].as_str(),
-        Some(format!("{}/join?token={tok}", h.state.config.external_url.trim_end_matches('/')).as_str()),
+        Some(
+            format!(
+                "{}/join?token={tok}",
+                h.state.config.external_url.trim_end_matches('/')
+            )
+            .as_str()
+        ),
         "{v}"
     );
     let mut without_link = v.clone();
@@ -414,7 +420,11 @@ async fn leaks(h: &Harness, c: &Ctx, tokens: &[String]) {
         let (s, v) = call(h, &c.admin_tok, Method::GET, &uri, None).await;
         assert_eq!(s, 200, "{v}");
         assert!(
-            v["items"].as_array().unwrap().iter().all(|i| i.get("link").is_none()),
+            v["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|i| i.get("link").is_none()),
             "no link in a list: {v}"
         );
         seen.push_str(&v.to_string());
@@ -457,11 +467,7 @@ async fn sec140_a_reissued_link_replaces_the_old_one_and_is_shown_once() {
     .await
     .unwrap();
     assert!(left > 6.9 * 86400.0, "expiry reset to 7 days: {left}");
-    assert_eq!(
-        v["expires_at"].as_str().map(str::len).is_some(),
-        true,
-        "{v}"
-    );
+    assert!(v["expires_at"].is_string(), "{v}");
     // The old link stops working at once; the new one works.
     let (s, _) = h
         .get(&format!("/v1/invitations/preview?token={t1}"), &[])
@@ -536,7 +542,10 @@ async fn sec140_only_the_organizations_owners_and_admins_get_a_link() {
     let oa = h.user("oa@x.io", false).await;
     h.member(other, oa, "admin", "active").await;
     let (_, oat) = h.good_session(oa).await;
-    for (t, id) in [(&oat, id.clone()), (&c.admin_tok, Uuid::now_v7().to_string())] {
+    for (t, id) in [
+        (&oat, id.clone()),
+        (&c.admin_tok, Uuid::now_v7().to_string()),
+    ] {
         for path in ["link", "resend"] {
             let (s, v) = call(
                 &h,
@@ -575,11 +584,13 @@ async fn sec140_no_link_for_a_cancelled_or_expired_invitation_and_the_hourly_cap
     assert_eq!((s, code(&v)), (409, "invitation_not_pending"));
     let (_, v) = invite(&h, &c, "y@x.io", "member", vec![]).await;
     let expired = v["id"].as_str().unwrap().to_owned();
-    sqlx::query("UPDATE invitations SET expires_at = now() - interval '1 hour' WHERE id = $1::uuid")
-        .bind(&expired)
-        .execute(h.pool())
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE invitations SET expires_at = now() - interval '1 hour' WHERE id = $1::uuid",
+    )
+    .bind(&expired)
+    .execute(h.pool())
+    .await
+    .unwrap();
     let (s, _, v) = link(&h, &c.admin_tok, &expired).await;
     assert_eq!((s, code(&v)), (409, "invitation_not_pending"));
     // 20 links per organization per hour (the two refusals above counted): the 21st is 429.

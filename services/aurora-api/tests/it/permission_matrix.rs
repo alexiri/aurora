@@ -683,6 +683,8 @@ const ROWS: &[Row] = &[
     // I-27: instance governance is config without secrets, readable by any signed-in user
     r("GET", "/v1/governance/instance", G::Auth, false),
     r("GET", "/v1/me", G::Auth, false),
+    // (P5-REFINE-6, C-1089) the chat platforms a person can link.
+    r("GET", "/v1/me/chat-platforms", G::Auth, false),
     r("PATCH", "/v1/me", G::Auth, false),
     r("DELETE", "/v1/me", G::Auth, true),
     r("GET", "/v1/me/api-keys", G::Auth, false),
@@ -781,6 +783,12 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/orgs/{org}/invitations", G::Admin, false),
     r("POST", "/v1/orgs/{org}/invitations", G::Admin, false),
     r("DELETE", "/v1/invitations/{id}", G::Admin, false),
+    // (P5-REFINE-6, C-1069, SEC-140) re-issue the link / resend: owners and admins of the
+    // invitation's organization (the full matrix is it/invitations.rs sec140_*).
+    r("POST", "/v1/invitations/{id}/link", G::Admin, false),
+    r("POST", "/v1/invitations/{id}/resend", G::Admin, false),
+    // (P5-REFINE-6, C-1090) the organization's agents: owners and admins.
+    r("GET", "/v1/orgs/{org}/agents", G::Admin, false),
     r("GET", "/v1/orgs/{org}/members", G::Admin, false),
     r("PATCH", "/v1/orgs/{org}/members/{user}", G::Admin, false),
     r("DELETE", "/v1/orgs/{org}/members/{user}", G::Admin, false),
@@ -799,6 +807,8 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/orgs/{org}/oauth-clients", G::Admin, false),
     r("PATCH", "/v1/oauth-clients/{id}", G::Admin, false),
     r("DELETE", "/v1/oauth-clients/{id}", G::Admin, false),
+    // (P5-REFINE-6, C-1070) Test a sign-in app: the callers of PATCH.
+    r("POST", "/v1/oauth-clients/{id}/test", G::Admin, false),
     r("GET", "/v1/orgs/{org}/policy", G::Admin, false),
     r("PUT", "/v1/orgs/{org}/policy/draft", G::Admin, false),
     r("GET", "/v1/orgs/{org}/policy/generations", G::Admin, false),

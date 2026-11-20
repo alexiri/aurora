@@ -1515,6 +1515,15 @@
               "type": "string",
               "format": "date-time"
             }
+          },
+          {
+            "name": "include_system",
+            "in": "query",
+            "description": "(P5-REFINE-6, C-1088) As on the organization's audit list.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1522,7 +1531,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_InstanceAuditEntry"
+                  "$ref": "#/components/schemas/InstanceAuditPage"
                 }
               }
             }
@@ -20916,6 +20925,178 @@
         ]
       }
     },
+    "/v1/invitations/{id}/link": {
+      "post": {
+        "tags": [
+          "invitations"
+        ],
+        "summary": "Re-issue an invitation's link to copy (organization owner/admin; C-1069, SEC-140). The new link\nreplaces the old one, which stops working; the expiry is reset to 7 days. Shown once.",
+        "operationId": "createInvitationLink",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Invitation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/invitations/{id}/resend": {
+      "post": {
+        "tags": [
+          "invitations"
+        ],
+        "summary": "E-mail an invitation again with a new link (organization owner/admin; C-1069). 409\n`mail_disabled` when the instance's mail is log-only.",
+        "operationId": "resendInvitation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Invitation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Invitation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/llm/providers": {
       "get": {
         "tags": [
@@ -21385,6 +21566,53 @@
         "security": [
           {
             "session": []
+          }
+        ]
+      }
+    },
+    "/v1/me/chat-platforms": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "(P5-REFINE-6, C-1089) The chat platforms the caller can link: the connected integrations of\ntheir organizations, one per kind, with the bot to message. No workspace, channel or token data.",
+        "operationId": "listMyChatPlatforms",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyChatPlatforms"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
           }
         ]
       }
@@ -23048,6 +23276,87 @@
         ]
       }
     },
+    "/v1/oauth-clients/{id}/test": {
+      "post": {
+        "tags": [
+          "oauth-clients"
+        ],
+        "summary": "Test a sign-in app against its provider (the callers who may `PATCH` it).",
+        "operationId": "testOauthClient",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "OAuth client id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "How the provider answered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClientTestResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many tests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/oauth/callback": {
       "get": {
         "tags": [
@@ -23677,6 +23986,107 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/agents": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Every agent of an organization, personal workspaces included (organization owners and admins;\nC-1090).",
+        "operationId": "listOrgAgents",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_OrgAgent"
                 }
               }
             }
@@ -24549,6 +24959,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "include_system",
+            "in": "query",
+            "description": "(P5-REFINE-6, C-1088) `false` leaves out the platform's own events (actor `system`) and\nanswers how many with `hidden_system`; absent or `true` lists them (the default for API\ncallers; the dashboard sends `false`).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -24556,7 +24975,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_AuditEntry"
+                  "$ref": "#/components/schemas/AuditPage"
                 }
               }
             }
@@ -36412,6 +36831,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "include_system",
+            "in": "query",
+            "description": "(P5-REFINE-6, C-1088) `false` leaves out the platform's own events (actor `system`) and\nanswers how many with `hidden_system`; absent or `true` lists them (the default for API\ncallers; the dashboard sends `false`).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -36419,7 +36847,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_AuditEntry"
+                  "$ref": "#/components/schemas/AuditPage"
                 }
               }
             }
@@ -39040,7 +39468,8 @@
           "display_name",
           "role",
           "implicit",
-          "status"
+          "status",
+          "signed_in"
         ],
         "properties": {
           "display_name": {
@@ -39070,6 +39499,10 @@
           },
           "role": {
             "$ref": "#/components/schemas/WorkspaceRole"
+          },
+          "signed_in": {
+            "type": "boolean",
+            "description": "(P5-REFINE-6, C-1086) The person has signed in at least once (\"Not signed in yet\")."
           },
           "status": {
             "$ref": "#/components/schemas/AccessStatus",
@@ -39419,7 +39852,8 @@
         "required": [
           "app_id",
           "name",
-          "custom_only"
+          "custom_only",
+          "send_only"
         ],
         "properties": {
           "app_id": {
@@ -39441,6 +39875,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "send_only": {
+            "type": "boolean",
+            "description": "(P5-REFINE-6, C-1067) The app only sends (no read tool): `levels` are `ask` and `act`."
           }
         }
       },
@@ -40260,6 +40698,13 @@
             "type": "integer",
             "format": "int64"
           },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StorageCategory"
+            },
+            "description": "(P5-REFINE-6, C-1072) Conversations, files and activity, summed from `tables`. Empty in a\nsnapshot written before this field existed (it shows once the snapshot is refreshed)."
+          },
           "computed_at": {
             "type": "string",
             "format": "date-time",
@@ -40281,7 +40726,7 @@
             "items": {
               "$ref": "#/components/schemas/TableSize"
             },
-            "description": "`blobs`, `attachments`, `transcript_events`, `request_log`, `audit_log`."
+            "description": "`blobs`, `attachments`, `transcript_events`, `transcript_search` (P5-REFINE-6),\n`request_log`, `audit_log`, each with its `category`."
           }
         }
       },
@@ -41278,6 +41723,7 @@
           "app_restrictions",
           "serves_library",
           "credential_free",
+          "send_only",
           "connect",
           "tools",
           "hosts",
@@ -41411,6 +41857,10 @@
           },
           "package_version": {
             "type": "string"
+          },
+          "send_only": {
+            "type": "boolean",
+            "description": "(P5-REFINE-6, C-1067) as on `AppSummary`: the connect journey's level step reads it."
           },
           "serves_library": {
             "type": "boolean",
@@ -41863,6 +42313,7 @@
           "app_restrictions",
           "serves_library",
           "credential_free",
+          "send_only",
           "accounts"
         ],
         "properties": {
@@ -41933,6 +42384,10 @@
                 "type": "null"
               }
             ]
+          },
+          "send_only": {
+            "type": "boolean",
+            "description": "(P5-REFINE-6, C-1067, D-419) No tool of the app is in group `read` (the Outgoing webhook):\nits levels are `ask` and `act` (\"Ask before each send\", \"Send without asking\"), never\n`read`. Derived from the installed manifest, not stored."
           },
           "serves_library": {
             "type": "boolean",
@@ -42875,6 +43330,35 @@
           }
         }
       },
+      "AuditPage": {
+        "type": "object",
+        "description": "(C-1088) An audit page; `hidden_system` is present only with `include_system=false`.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "hidden_system": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "System events matching the other filters that were left out."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEntry"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "AuthModeInfo": {
         "type": "object",
         "description": "(C-802) One auth mode of a provider.",
@@ -43251,6 +43735,17 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "ChangeActor": {
+        "type": "object",
+        "required": [
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
           }
         }
       },
@@ -44225,7 +44720,10 @@
           "managed",
           "secrets",
           "host_status",
-          "has_icon"
+          "has_icon",
+          "setup_state",
+          "host_running",
+          "next_step"
         ],
         "properties": {
           "approved_at": {
@@ -44267,6 +44765,10 @@
             "type": "boolean",
             "description": "(C-1044, D-398) True exactly when `GET /v1/connectors/{id}/icon` serves a PNG."
           },
+          "host_running": {
+            "type": "boolean",
+            "description": "(C-1068) As on the availability item."
+          },
           "host_status": {
             "type": "array",
             "items": {
@@ -44298,6 +44800,10 @@
               "null"
             ]
           },
+          "next_step": {
+            "$ref": "#/components/schemas/ConnectorNextStep",
+            "description": "(C-1068) Administration's next step: `owner_connects` once usable."
+          },
           "pending_version": {
             "type": [
               "string",
@@ -44328,6 +44834,10 @@
               "null"
             ],
             "description": "Managed only: stored non-secret settings with defaults applied; `null` otherwise."
+          },
+          "setup_state": {
+            "$ref": "#/components/schemas/ConnectorSetupState",
+            "description": "(P5-REFINE-6, C-1068) The same readiness as `GET /v1/connector-availability`."
           },
           "status": {
             "$ref": "#/components/schemas/ConnectorStatus"
@@ -44377,15 +44887,26 @@
         "required": [
           "type_id",
           "name",
-          "setup_state"
+          "setup_state",
+          "host_running",
+          "can_connect",
+          "next_step"
         ],
         "properties": {
+          "can_connect": {
+            "type": "boolean",
+            "description": "(C-1068) `setup_state = active`: integrations can be connected now."
+          },
           "connector_id": {
             "type": [
               "string",
               "null"
             ],
             "description": "The connector's id when one exists."
+          },
+          "host_running": {
+            "type": "boolean",
+            "description": "(C-1068) A live connector host announces the type or reports the connector running (a\nself-hosted connector: it has a live replica)."
           },
           "icon_url": {
             "type": [
@@ -44395,6 +44916,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "next_step": {
+            "$ref": "#/components/schemas/ConnectorNextStep",
+            "description": "(C-1068) For this caller: `connect` for an organization owner or admin of an `active`\ntype, `owner_connects` for anyone else."
           },
           "setup_state": {
             "$ref": "#/components/schemas/ConnectorSetupState"
@@ -44508,6 +45033,18 @@
           }
         }
       },
+      "ConnectorNextStep": {
+        "type": "string",
+        "description": "(P5-REFINE-6, C-1068) The next thing a person does about a connector.",
+        "enum": [
+          "connect",
+          "owner_connects",
+          "start_host",
+          "approve",
+          "enable",
+          "add"
+        ]
+      },
       "ConnectorSecretInfo": {
         "type": "object",
         "description": "State of one secret setting; the value is never returned.",
@@ -44539,7 +45076,8 @@
           "not_added",
           "waiting_for_host",
           "disabled",
-          "needs_approval"
+          "needs_approval",
+          "registering"
         ]
       },
       "ConnectorStatus": {
@@ -49530,6 +50068,34 @@
         ],
         "description": "An audit row with the organization it concerns (instance view)."
       },
+      "InstanceAuditPage": {
+        "type": "object",
+        "description": "(C-1088) The instance audit page.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "hidden_system": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstanceAuditEntry"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "InstanceByo": {
         "type": "object",
         "description": "(phase 2, RFE-025) The instance level of BYO governance (`[byo]`).",
@@ -49878,7 +50444,7 @@
       },
       "Invitation": {
         "type": "object",
-        "description": "An invitation. The token is never part of any response.",
+        "description": "An invitation. The token is never part of a list or a `GET`: only the `201` of the create\ncarries the link (C-1069, SEC-140).",
         "required": [
           "id",
           "org_id",
@@ -49924,6 +50490,13 @@
               }
             ]
           },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-REFINE-6, C-1069, SEC-140) `<external_url>/join?token=…`, present only in the `201` of\n`POST /v1/orgs/{org}/invitations` (a create, or the re-issue of a pending e-mail)."
+          },
           "org_id": {
             "type": "string",
             "format": "uuid"
@@ -49940,6 +50513,24 @@
               "type": "string",
               "format": "uuid"
             }
+          }
+        }
+      },
+      "InvitationLink": {
+        "type": "object",
+        "description": "(P5-REFINE-6, C-1069, SEC-140) A re-issued invitation link. The previous link no longer works.",
+        "required": [
+          "link",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "link": {
+            "type": "string",
+            "description": "`<external_url>/join?token=…`; shown once (`Cache-Control: no-store`)."
           }
         }
       },
@@ -50885,7 +51476,8 @@
           "admin_attention_email",
           "memberships",
           "groups",
-          "display_name_source"
+          "display_name_source",
+          "can_create_org"
         ],
         "properties": {
           "admin_attention_email": {
@@ -50895,6 +51487,10 @@
           "approval_email": {
             "type": "boolean",
             "description": "(phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`)."
+          },
+          "can_create_org": {
+            "type": "boolean",
+            "description": "(P5-REFINE-6, C-1072) `POST /v1/orgs` would work for this person: an instance admin, or\n`auth.org_creation = anyone`. The switcher offers \"New organization\" exactly then."
           },
           "client_address": {
             "type": [
@@ -51707,6 +52303,49 @@
           }
         }
       },
+      "MyChatPlatform": {
+        "type": "object",
+        "description": "(P5-REFINE-6, C-1089) A chat platform the person can link.",
+        "required": [
+          "kind",
+          "display_name",
+          "linked"
+        ],
+        "properties": {
+          "bot_handle": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The bot to message, when the connector reported one."
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "The connector type, e.g. `mattermost`."
+          },
+          "linked": {
+            "type": "boolean",
+            "description": "The person has linked their chat account there."
+          }
+        }
+      },
+      "MyChatPlatforms": {
+        "type": "object",
+        "required": [
+          "platforms"
+        ],
+        "properties": {
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MyChatPlatform"
+            }
+          }
+        }
+      },
       "MySpace": {
         "type": "object",
         "required": [
@@ -51830,7 +52469,8 @@
           "enabled",
           "connection_count",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "state"
         ],
         "properties": {
           "client_key": {
@@ -51882,6 +52522,21 @@
             "type": "string",
             "description": "`instance` | `organization` | `workspace`."
           },
+          "state": {
+            "$ref": "#/components/schemas/OAuthClientState",
+            "description": "(C-1070) `disabled` when off; `ready` after an `ok` Test or once a connection was made\nwith it; `test_failed` when the last Test failed and nothing connected since; else\n`ready_not_tested`."
+          },
+          "test": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OAuthClientLastTest",
+                "description": "(P5-REFINE-6, C-1070) The last Test; `null` until tested."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -51892,6 +52547,59 @@
               "null"
             ],
             "format": "uuid"
+          }
+        }
+      },
+      "OAuthClientLastTest": {
+        "type": "object",
+        "required": [
+          "result",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "result": {
+            "$ref": "#/components/schemas/TestResult"
+          }
+        }
+      },
+      "OAuthClientState": {
+        "type": "string",
+        "description": "(C-1070) Where a sign-in app stands.",
+        "enum": [
+          "ready_not_tested",
+          "ready",
+          "test_failed",
+          "disabled"
+        ]
+      },
+      "OAuthClientTestResult": {
+        "type": "object",
+        "description": "(C-1070) `POST /v1/oauth-clients/{id}/test`. Nothing of the provider's answer but its host and\nHTTP status.",
+        "required": [
+          "result",
+          "checked_at"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detail": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TestDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/TestResult"
           }
         }
       },
@@ -52099,6 +52807,48 @@
           }
         }
       },
+      "OrgAgent": {
+        "type": "object",
+        "description": "(P5-REFINE-6, C-1090) An organization's agent, with its workspace.",
+        "required": [
+          "id",
+          "name",
+          "handle",
+          "workspace",
+          "kind",
+          "state"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`hosted` | `byo`."
+          },
+          "last_active_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "`active` | `paused` (the agent, its workspace or the organization is paused)."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/OrgAgentWorkspace"
+          }
+        }
+      },
       "OrgAgentTokens": {
         "type": "object",
         "description": "`organizations.governance.agent_tokens` (no column: `governance` is `jsonb`).",
@@ -52112,6 +52862,22 @@
             "description": "Days, 1..=3650, never above the instance value; absent = no org limit.",
             "default": null,
             "minimum": 0
+          }
+        }
+      },
+      "OrgAgentWorkspace": {
+        "type": "object",
+        "required": [
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "A personal workspace is named after its person (C-923)."
+          },
+          "slug": {
+            "type": "string"
           }
         }
       },
@@ -52513,6 +53279,7 @@
           "files",
           "purged_files",
           "by_workspace",
+          "categories",
           "computed_at"
         ],
         "properties": {
@@ -52537,6 +53304,13 @@
             "items": {
               "$ref": "#/components/schemas/WorkspaceStorage"
             }
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StorageCategory"
+            },
+            "description": "(P5-REFINE-6, C-1072) The three categories; per organization only `files` is counted (the\norganization's attachment bytes, live), `conversations` and `activity` are `null`."
           },
           "computed_at": {
             "type": "string",
@@ -54074,109 +54848,6 @@
           }
         }
       },
-      "Page_AuditEntry": {
-        "type": "object",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "id",
-                "actor_kind",
-                "actor_label",
-                "action",
-                "outcome",
-                "source",
-                "metadata",
-                "critical",
-                "created_at"
-              ],
-              "properties": {
-                "action": {
-                  "type": "string"
-                },
-                "actor_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "format": "uuid"
-                },
-                "actor_kind": {
-                  "type": "string",
-                  "description": "`user` | `service` | `agent` | `system` | `instance_admin`"
-                },
-                "actor_label": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "critical": {
-                  "type": "boolean",
-                  "description": "Row of the security-critical set (`04 §Audit`), written atomically with its change."
-                },
-                "id": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "ip": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "metadata": {},
-                "org_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "format": "uuid"
-                },
-                "outcome": {
-                  "type": "string",
-                  "description": "`success` | `failure` | `denied`"
-                },
-                "source": {
-                  "type": "string",
-                  "description": "`dashboard` | `api` | `cli` | `channel` | `system`"
-                },
-                "target_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "target_kind": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "workspace_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "format": "uuid"
-                }
-              }
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
       "Page_ChannelIntegration": {
         "type": "object",
         "required": [
@@ -54935,43 +55606,6 @@
           }
         }
       },
-      "Page_InstanceAuditEntry": {
-        "type": "object",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/AuditEntry"
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "org_slug": {
-                      "type": [
-                        "string",
-                        "null"
-                      ],
-                      "description": "Slug of `org_id` (`null` for instance-level rows)."
-                    }
-                  }
-                }
-              ],
-              "description": "An audit row with the organization it concerns (instance view)."
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
       "Page_Invitation": {
         "type": "object",
         "required": [
@@ -54982,7 +55616,7 @@
             "type": "array",
             "items": {
               "type": "object",
-              "description": "An invitation. The token is never part of any response.",
+              "description": "An invitation. The token is never part of a list or a `GET`: only the `201` of the create\ncarries the link (C-1069, SEC-140).",
               "required": [
                 "id",
                 "org_id",
@@ -55027,6 +55661,13 @@
                       "type": "null"
                     }
                   ]
+                },
+                "link": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(P5-REFINE-6, C-1069, SEC-140) `<external_url>/join?token=…`, present only in the `201` of\n`POST /v1/orgs/{org}/invitations` (a create, or the re-issue of a pending e-mail)."
                 },
                 "org_id": {
                   "type": "string",
@@ -55267,7 +55908,8 @@
                 "enabled",
                 "connection_count",
                 "created_at",
-                "updated_at"
+                "updated_at",
+                "state"
               ],
               "properties": {
                 "client_key": {
@@ -55318,6 +55960,21 @@
                 "scope": {
                   "type": "string",
                   "description": "`instance` | `organization` | `workspace`."
+                },
+                "state": {
+                  "$ref": "#/components/schemas/OAuthClientState",
+                  "description": "(C-1070) `disabled` when off; `ready` after an `ok` Test or once a connection was made\nwith it; `test_failed` when the last Test failed and nothing connected since; else\n`ready_not_tested`."
+                },
+                "test": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuthClientLastTest",
+                      "description": "(P5-REFINE-6, C-1070) The last Test; `null` until tested."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "updated_at": {
                   "type": "string",
@@ -55410,6 +56067,65 @@
                 },
                 "slug": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_OrgAgent": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "(P5-REFINE-6, C-1090) An organization's agent, with its workspace.",
+              "required": [
+                "id",
+                "name",
+                "handle",
+                "workspace",
+                "kind",
+                "state"
+              ],
+              "properties": {
+                "handle": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "`hosted` | `byo`."
+                },
+                "last_active_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "description": "`active` | `paused` (the agent, its workspace or the organization is paused)."
+                },
+                "workspace": {
+                  "$ref": "#/components/schemas/OrgAgentWorkspace"
                 }
               }
             }
@@ -55864,9 +56580,29 @@
                 "uncredentialed_allowlist",
                 "open_lane_posture",
                 "rule_count",
-                "created_at"
+                "created_at",
+                "changes",
+                "more"
               ],
               "properties": {
+                "actor": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ChangeActor",
+                      "description": "(C-1087) Who made it: the publisher; `null` for a draft or an unknown publisher."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "changes": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RuleChange"
+                  },
+                  "description": "(P5-REFINE-6, C-1087) What this generation changed against the one before it (at most\n20; `more` counts the rest). Empty for the first generation."
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -55884,6 +56620,11 @@
                 "id": {
                   "type": "string",
                   "format": "uuid"
+                },
+                "more": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "(C-1087) Changes left out after the first 20."
                 },
                 "number": {
                   "type": "integer",
@@ -59086,6 +59827,13 @@
           },
           "path": {
             "type": "string"
+          },
+          "sentence": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-REFINE-6, C-1071) The violation in words; absent on a package stored before it."
           }
         }
       },
@@ -59214,9 +59962,29 @@
           "uncredentialed_allowlist",
           "open_lane_posture",
           "rule_count",
-          "created_at"
+          "created_at",
+          "changes",
+          "more"
         ],
         "properties": {
+          "actor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ChangeActor",
+                "description": "(C-1087) Who made it: the publisher; `null` for a draft or an unknown publisher."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleChange"
+            },
+            "description": "(P5-REFINE-6, C-1087) What this generation changed against the one before it (at most\n20; `more` counts the rest). Empty for the first generation."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -59234,6 +60002,11 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "more": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(C-1087) Changes left out after the first 20."
           },
           "number": {
             "type": "integer",
@@ -61406,6 +62179,30 @@
           }
         },
         "additionalProperties": false
+      },
+      "RuleChange": {
+        "type": "object",
+        "description": "(C-1087) One rule added, removed or edited.",
+        "required": [
+          "kind",
+          "rule_name"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RuleChangeKind"
+          },
+          "rule_name": {
+            "type": "string"
+          }
+        }
+      },
+      "RuleChangeKind": {
+        "type": "string",
+        "enum": [
+          "added",
+          "removed",
+          "edited"
+        ]
       },
       "RuleInput": {
         "type": "object",
@@ -65266,6 +66063,34 @@
           "connection"
         ]
       },
+      "StorageCategory": {
+        "type": "object",
+        "description": "(C-1072) The bytes of one category; `null` when it cannot be computed for this scope (an\norganization's conversations and activity: only files are counted per organization).",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "$ref": "#/components/schemas/StorageCategoryId"
+          }
+        }
+      },
+      "StorageCategoryId": {
+        "type": "string",
+        "description": "(P5-REFINE-6, C-1072) What people store, as the dashboard names it.",
+        "enum": [
+          "conversations",
+          "files",
+          "activity"
+        ]
+      },
       "StoreCaps": {
         "type": "object",
         "required": [
@@ -65522,6 +66347,17 @@
             "type": "integer",
             "format": "int64"
           },
+          "category": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StorageCategoryId",
+                "description": "(P5-REFINE-6, C-1072) The category the table counts in; `null` in a snapshot written\nbefore the categories existed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "table": {
             "type": "string"
           }
@@ -65745,6 +66581,25 @@
             "items": {
               "$ref": "#/components/schemas/TerminatorInfo"
             }
+          }
+        }
+      },
+      "TestDetail": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

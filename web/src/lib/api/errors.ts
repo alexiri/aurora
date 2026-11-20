@@ -106,6 +106,10 @@ export const ERROR_MESSAGES: Record<string, string> = {
   oauth_client_required: "Signing in to this app needs a sign-in app that an admin has to register first.",
   above_account_limit: "This is more than the account's limit allows. Whoever manages the account can raise the limit.",
   always_not_available: "\"Always allow\" is not available for this request.",
+  // (P5-REFINE-6, C-1067, C-1069) Send-only apps, invitation links.
+  level_not_offered: "This app only sends. Choose Ask before each send or Send without asking.",
+  invitation_not_pending: "This invitation was accepted, cancelled or has expired. Invite them again.",
+  mail_disabled: "This server can't send e-mail. Copy the invitation link instead.",
 };
 
 /** `details.conflict` of a 422 `instance_host_conflict` (FIX-132): who holds the host. */

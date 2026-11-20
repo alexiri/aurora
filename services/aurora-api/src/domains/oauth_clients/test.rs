@@ -18,8 +18,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 /// How the provider's answer maps to a result (C-1070). `invalid_grant` means the client was
-/// accepted and the made-up code refused; GitHub answers the same with `bad_verification_code`
-/// (HTTP 200) and a wrong client with `incorrect_client_credentials`.
+/// accepted and the made-up code refused; some providers answer the same with
+/// `bad_verification_code` (HTTP 200) and a wrong client with `incorrect_client_credentials`.
 #[must_use]
 pub fn classify(status: u16, error: Option<&str>) -> TestResult {
     match (status, error) {
@@ -117,7 +117,10 @@ mod tests {
             TestResult::Rejected
         );
         assert_eq!(classify(500, Some("invalid_grant")), TestResult::Unexpected);
-        assert_eq!(classify(400, Some("invalid_request")), TestResult::Unexpected);
+        assert_eq!(
+            classify(400, Some("invalid_request")),
+            TestResult::Unexpected
+        );
         assert_eq!(classify(200, None), TestResult::Unexpected);
         assert_eq!(classify(404, None), TestResult::Unexpected);
     }

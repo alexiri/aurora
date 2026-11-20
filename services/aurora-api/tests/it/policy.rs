@@ -265,7 +265,11 @@ async fn draft_validation_stale_publish_rollback() {
     );
     assert_eq!(g2["more"], 0);
     assert!(g2["actor"]["display_name"].is_string(), "{g2}");
-    assert_eq!(by_number(3)["changes"], json!([]), "the fresh draft copies gen 2");
+    assert_eq!(
+        by_number(3)["changes"],
+        json!([]),
+        "the fresh draft copies gen 2"
+    );
     assert!(by_number(3)["actor"].is_null(), "a draft has no publisher");
 
     // (FIX-109) Rollback replaces the draft: it needs the draft revision the caller last read,

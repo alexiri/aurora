@@ -118,10 +118,7 @@ pub async fn on_access_given(
             send_restart_text(&account, level),
         )
     } else {
-        (
-            done_sentence(&who, &app, level),
-            restart_text(&app, level),
-        )
+        (done_sentence(&who, &app, level), restart_text(&app, level))
     };
     report_given(tx, &req, &app, &sentence, &restart, level).await
 }
@@ -301,8 +298,8 @@ mod tests {
         );
         // Other apps are unchanged.
         assert_eq!(
-            done_sentence("Dani", "GitHub", Some(Level::Read)),
-            "Dani can now read GitHub."
+            done_sentence("Dani", "Acme", Some(Level::Read)),
+            "Dani can now read Acme."
         );
     }
 }

@@ -132,7 +132,10 @@ async fn sec10_token_is_hash_only_and_never_logged() {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     let logs = String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned();
     for t in &tokens {
-        assert!(!logs.contains(t.as_str()), "invitation token leaked into logs");
+        assert!(
+            !logs.contains(t.as_str()),
+            "invitation token leaked into logs"
+        );
     }
     assert!(
         !logs.is_empty(),

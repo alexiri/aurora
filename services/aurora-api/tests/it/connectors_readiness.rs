@@ -15,9 +15,8 @@ use uuid::Uuid;
 /// `register` on the connector plane as the host, for connector `id`, with `signature`.
 async fn register_as_host(m: &M, id: &str, manifest: &Value, signature: &str) -> (u16, Value) {
     let b = bearer(&m.host_token);
-    let (s, _, v) = m
-        .h
-        .send(
+    let (s, _, v) =
+        m.h.send(
             Method::POST,
             "/v1/connector/register",
             &[("authorization", b.as_str()), ("aurora-connector", id)],
@@ -197,18 +196,19 @@ async fn both_pages_report_the_same_state_for_every_state() {
             .unwrap_or_else(|| panic!("no {id}: {avail:?}"));
         let r = by_id(&admin, id);
         assert_eq!(a["setup_state"], state, "{id}: {a}");
-        assert_eq!(a["setup_state"], r["setup_state"], "{id}: the two pages agree");
+        assert_eq!(
+            a["setup_state"], r["setup_state"],
+            "{id}: the two pages agree"
+        );
         assert_eq!(a["host_running"], json!(running), "{id}: {a}");
-        assert_eq!(a["host_running"], r["host_running"], "{id}: the two pages agree");
+        assert_eq!(
+            a["host_running"], r["host_running"],
+            "{id}: the two pages agree"
+        );
         assert_eq!(a["can_connect"], json!(state == "active"), "{id}");
     }
-    let next = |id: &str| {
-        avail
-            .iter()
-            .find(|i| i["connector_id"] == id)
-            .unwrap()["next_step"]
-            .clone()
-    };
+    let next =
+        |id: &str| avail.iter().find(|i| i["connector_id"] == id).unwrap()["next_step"].clone();
     assert_eq!(next("charlie"), "enable");
     assert_eq!(next("delta"), "approve");
     assert_eq!(next("selfhosted"), "start_host");

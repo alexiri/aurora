@@ -299,7 +299,7 @@ pub enum ConnectorSetupState {
 pub enum ConnectorNextStep {
     /// An organization owner or admin connects it (the caller is one).
     Connect,
-    /// An organization owner connects it ("Next: an organization owner connects Mattermost").
+    /// An organization owner connects it ("Next: an organization owner connects <platform>").
     OwnerConnects,
     /// No live host announces the type: start the connector host.
     StartHost,

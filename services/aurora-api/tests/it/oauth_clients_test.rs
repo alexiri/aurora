@@ -29,14 +29,24 @@ impl W {
 
     async fn test_client(&self, who: &str, id: &str) -> (u16, Value) {
         let (s, _, v) = self
-            .call(who, Method::POST, &format!("/v1/oauth-clients/{id}/test"), None)
+            .call(
+                who,
+                Method::POST,
+                &format!("/v1/oauth-clients/{id}/test"),
+                None,
+            )
             .await;
         (s, v)
     }
 
     async fn client(&self, id: &str) -> Value {
         let (s, _, v) = self
-            .call(&self.owner, Method::GET, &format!("/v1/workspaces/{}/oauth-clients", self.ws), None)
+            .call(
+                &self.owner,
+                Method::GET,
+                &format!("/v1/workspaces/{}/oauth-clients", self.ws),
+                None,
+            )
             .await;
         assert_eq!(s, 200, "{v}");
         v["items"]
@@ -75,15 +85,26 @@ async fn the_four_answers_map_to_results_and_the_state_follows() {
     let (s, v) = w.test_client(&w.owner, &id).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["result"], "ok", "{v}");
-    assert_eq!(v["detail"], json!({"host": "accounts.example.com", "status": 400}));
+    assert_eq!(
+        v["detail"],
+        json!({"host": "accounts.example.com", "status": 400})
+    );
     assert!(v["checked_at"].is_string());
-    assert!(!v.to_string().contains(BODY_CANARY), "no upstream body: {v}");
+    assert!(
+        !v.to_string().contains(BODY_CANARY),
+        "no upstream body: {v}"
+    );
     let c = w.client(&id).await;
-    assert_eq!((c["state"].as_str(), c["test"]["result"].as_str()), (Some("ready"), Some("ok")));
+    assert_eq!(
+        (c["state"].as_str(), c["test"]["result"].as_str()),
+        (Some("ready"), Some("ok"))
+    );
     // The request was the code exchange's: the client's id and secret, the redirect URI, PKCE.
     let reqs = server.received_requests().await.unwrap();
     let form: std::collections::HashMap<String, String> =
-        url::form_urlencoded::parse(&reqs[0].body).into_owned().collect();
+        url::form_urlencoded::parse(&reqs[0].body)
+            .into_owned()
+            .collect();
     assert_eq!(form["grant_type"], "authorization_code");
     assert_eq!(form["client_id"], "cid");
     assert_eq!(form["client_secret"], "csec");
@@ -92,8 +113,12 @@ async fn the_four_answers_map_to_results_and_the_state_follows() {
     assert!(form.contains_key("code_verifier"), "the method uses PKCE");
 
     // The provider refuses the client.
-    answer(&server, 401, json!({"error": "invalid_client", "error_description": BODY_CANARY}))
-        .await;
+    answer(
+        &server,
+        401,
+        json!({"error": "invalid_client", "error_description": BODY_CANARY}),
+    )
+    .await;
     let (_, v) = w.test_client(&w.owner, &id).await;
     assert_eq!(v["result"], "rejected", "{v}");
     assert!(!v.to_string().contains(BODY_CANARY));
@@ -120,7 +145,10 @@ async fn the_four_answers_map_to_results_and_the_state_follows() {
     .fetch_all(w.h.pool())
     .await
     .unwrap();
-    let results: Vec<&str> = audit.iter().map(|m| m["result"].as_str().unwrap()).collect();
+    let results: Vec<&str> = audit
+        .iter()
+        .map(|m| m["result"].as_str().unwrap())
+        .collect();
     assert_eq!(results, ["ok", "rejected", "unexpected", "unreachable"]);
     assert_eq!(audit[0]["package_id"], "acme");
     assert_eq!(audit[0]["client_key"], "goog");
@@ -146,12 +174,22 @@ async fn the_caller_rule_is_patchs_and_a_disabled_client_is_not_testable() {
     let (s, v) = w.test_client(&w.member, &id).await;
     assert_eq!(s, 403, "{v}");
     let (s, _, _) = w
-        .call(&w.member, Method::PATCH, &format!("/v1/oauth-clients/{id}"), Some(json!({"enabled": false})))
+        .call(
+            &w.member,
+            Method::PATCH,
+            &format!("/v1/oauth-clients/{id}"),
+            Some(json!({"enabled": false})),
+        )
         .await;
     assert_eq!(s, 403);
     // Off: not testable, nothing sent, nothing stored.
     let (s, _, v) = w
-        .call(&w.owner, Method::PATCH, &format!("/v1/oauth-clients/{id}"), Some(json!({"enabled": false})))
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &format!("/v1/oauth-clients/{id}"),
+            Some(json!({"enabled": false})),
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["state"], "disabled");
@@ -171,7 +209,12 @@ async fn a_client_that_was_used_is_ready_without_a_test() {
     let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
     assert!(pg.contains("aurora:connected"), "{pg}");
     let (_, _, v) = w
-        .call(&w.owner, Method::GET, &format!("/v1/workspaces/{}/oauth-clients", w.ws), None)
+        .call(
+            &w.owner,
+            Method::GET,
+            &format!("/v1/workspaces/{}/oauth-clients", w.ws),
+            None,
+        )
         .await;
     let c = &v["items"][0];
     assert_eq!(c["connection_count"], 1, "{c}");

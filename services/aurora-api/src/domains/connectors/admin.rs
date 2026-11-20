@@ -338,10 +338,7 @@ pub async fn availability(
     let rows = connectors::list(&s.pool).await?;
     let icon =
         |r: &ConnectorRow| (r.status == "active").then(|| format!("/v1/connectors/{}/icon", r.id));
-    let item = |type_id: String,
-                name: String,
-                row: Option<&ConnectorRow>,
-                f: readiness::Facts| {
+    let item = |type_id: String, name: String, row: Option<&ConnectorRow>, f: readiness::Facts| {
         let ready = readiness::connector_readiness(row, f);
         ConnectorAvailability {
             type_id,

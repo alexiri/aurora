@@ -104,6 +104,51 @@ pub async fn list_for_workspace<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P5-REFINE-6, C-1090) One agent of an organization, with its workspace.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OrgAgentRow {
+    pub id: Uuid,
+    pub name: String,
+    pub handle: String,
+    pub kind: String,
+    pub workspace_slug: String,
+    pub workspace_name: String,
+    /// The agent, its workspace or its organization is paused (frozen).
+    pub paused: bool,
+    /// When its newest turn was created; `None` when it never ran.
+    pub last_active_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// (C-1090) Every agent of `org`, personal workspaces included, newest first, keyset on
+/// `(created_at, id)`.
+pub async fn list_for_org<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    after: After,
+    fetch: i64,
+) -> Result<Vec<OrgAgentRow>, DbError> {
+    let (t, id) = split(after);
+    Ok(sqlx::query_as(
+        "SELECT a.id, a.name, a.handle, a.kind, w.slug AS workspace_slug, w.name AS workspace_name,
+                (a.frozen_at IS NOT NULL OR w.frozen_at IS NOT NULL OR o.frozen_at IS NOT NULL) AS paused,
+                (SELECT max(t.created_at) FROM turns t WHERE t.agent_id = a.id) AS last_active_at,
+                a.created_at
+           FROM agents a
+           JOIN workspaces w ON w.id = a.workspace_id
+           JOIN organizations o ON o.id = a.org_id
+          WHERE a.org_id = $1
+            AND ($2::timestamptz IS NULL OR (a.created_at, a.id) < ($2, $3))
+          ORDER BY a.created_at DESC, a.id DESC LIMIT $4",
+    )
+    .bind(org)
+    .bind(t)
+    .bind(id)
+    .bind(fetch)
+    .fetch_all(exec)
+    .await?)
+}
+
 pub struct NewAgent<'a> {
     pub id: Uuid,
     pub org_id: Uuid,

@@ -1786,10 +1786,16 @@ pub(crate) async fn probe_token_endpoint(
     let Some(raw) = oauth_url(&ce.token_url, None, base) else {
         return Ok(TokenProbe::NotTestable);
     };
-    let host_of = |u: &str| reqwest::Url::parse(u).ok().and_then(|u| u.host_str().map(str::to_owned));
+    let host_of = |u: &str| {
+        reqwest::Url::parse(u)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+    };
     let env = &state.connect;
     let Ok(url) = env.prepare(&raw) else {
-        return Ok(TokenProbe::Unreachable { host: host_of(&raw) });
+        return Ok(TokenProbe::Unreachable {
+            host: host_of(&raw),
+        });
     };
     let host = host_of(&raw);
     let cf = client_fields(state, client).await.map_err(ApiError::from)?;

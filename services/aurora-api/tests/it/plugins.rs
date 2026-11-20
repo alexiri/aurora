@@ -141,7 +141,11 @@ async fn a_bad_package_says_so_in_words() {
     let a = setup(&h).await;
     let no_jargon = |v: &Value| {
         let mut texts = vec![v["error"]["message"].as_str().unwrap_or("").to_owned()];
-        for x in v["error"]["details"]["violations"].as_array().into_iter().flatten() {
+        for x in v["error"]["details"]["violations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
             texts.push(x["sentence"].as_str().unwrap().to_owned());
         }
         for t in texts {
@@ -159,7 +163,10 @@ async fn a_bad_package_says_so_in_words() {
     );
     let first = &v["error"]["details"]["violations"][0];
     assert_eq!(first["code"], "archive_corrupt");
-    assert!(first["message"].as_str().is_some_and(|m| !m.is_empty()), "the technical message stays");
+    assert!(
+        first["message"].as_str().is_some_and(|m| !m.is_empty()),
+        "the technical message stays"
+    );
     assert_eq!(first["sentence"], v["error"]["message"]);
     no_jargon(&v);
 
@@ -171,7 +178,9 @@ async fn a_bad_package_says_so_in_words() {
     let first = &v["error"]["details"]["violations"][0];
     assert!(first["code"].is_string(), "{v}");
     assert!(
-        first["sentence"].as_str().is_some_and(|s| s.contains("plugin.yaml")),
+        first["sentence"]
+            .as_str()
+            .is_some_and(|s| s.contains("plugin.yaml")),
         "{v}"
     );
     no_jargon(&v);

@@ -865,7 +865,12 @@ async fn storage_breakdowns_agree_with_the_tables_and_are_authorization_checked(
         "{v}"
     );
     assert_eq!(
-        v["tables"].as_array().unwrap().iter().find(|t| t["table"] == "audit_log").unwrap()["category"],
+        v["tables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["table"] == "audit_log")
+            .unwrap()["category"],
         "activity"
     );
     // An organization's page counts its files only.

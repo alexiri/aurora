@@ -13,7 +13,28 @@ use axum::http::StatusCode;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(get_me, patch_me, delete_me))
+    OpenApiRouter::new()
+        .routes(routes!(get_me, patch_me, delete_me))
+        .routes(routes!(my_chat_platforms))
+}
+
+/// (P5-REFINE-6, C-1089) The chat platforms the caller can link: the connected integrations of
+/// their organizations, one per kind, with the bot to message. No workspace, channel or token data.
+#[utoipa::path(get, path = "/me/chat-platforms", operation_id = "listMyChatPlatforms", tag = "me",
+    responses((status = 200, body = MyChatPlatforms), (status = 401, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn my_chat_platforms(
+    c: Caller,
+    State(s): State<AppState>,
+) -> Result<Json<MyChatPlatforms>, ApiError> {
+    let only_org = match c.principal {
+        Principal::ApiKey { org_id, .. } => Some(org_id),
+        _ => None,
+    };
+    let rows =
+        aurora_db::repo::channel_integrations::platforms_for_user(&s.pool, c.user_id, only_org)
+            .await?;
+    Ok(Json(MyChatPlatforms::by_kind(rows)))
 }
 
 /// The signed-in user with memberships and usable workspaces.

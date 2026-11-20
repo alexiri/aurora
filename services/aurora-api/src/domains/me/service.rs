@@ -76,8 +76,8 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
         .map(Into::into);
     let timezone = users::timezone(&state.pool, user_id).await?;
     // (P5-REFINE-6, C-1072) The rule `POST /v1/orgs` enforces.
-    let can_create_org = user.is_instance_admin
-        || state.auth().org_creation == aurora_config::OrgCreation::Anyone;
+    let can_create_org =
+        user.is_instance_admin || state.auth().org_creation == aurora_config::OrgCreation::Anyone;
     Ok(Me {
         can_create_org,
         groups,

@@ -93,8 +93,8 @@ mod tests {
 
     fn row(status: &str) -> ConnectorRow {
         ConnectorRow {
-            id: "mattermost".into(),
-            display_name: "Mattermost".into(),
+            id: "chat".into(),
+            display_name: "Chat".into(),
             version: None,
             contract: None,
             manifest: None,
@@ -105,7 +105,7 @@ mod tests {
             approved_at: None,
             created_at: chrono::Utc::now(),
             managed: true,
-            type_id: Some("mattermost".into()),
+            type_id: Some("chat".into()),
             settings: None,
             secret_owner: uuid::Uuid::nil(),
             secret_refs: serde_json::json!({}),
@@ -126,7 +126,12 @@ mod tests {
             (Some("pending_approval"), live, S::NeedsApproval, true),
             (Some("awaiting_registration"), live, S::Registering, true),
             (Some("active"), live, S::Active, true),
-            (Some("awaiting_registration"), none, S::WaitingForHost, false),
+            (
+                Some("awaiting_registration"),
+                none,
+                S::WaitingForHost,
+                false,
+            ),
             (Some("active"), none, S::Active, false),
         ];
         for (status, f, want, running) in cases {

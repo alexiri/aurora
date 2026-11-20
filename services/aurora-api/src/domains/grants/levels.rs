@@ -565,7 +565,7 @@ mod tests {
         assert_eq!(levels_for(&w, true, None), vec![Level::Ask]);
         assert_eq!(levels_for(&w, false, Some(Level::Ask)), vec![Level::Ask]);
         assert!(levels_for(&w, false, Some(Level::Read)).is_empty());
-        // GitHub-like (reads and writes) is unchanged; a custom-only one drops `act`.
+        // An app with reads and writes is unchanged; a custom-only one drops `act`.
         assert_eq!(
             levels_for(&two_writes(), false, None),
             vec![Level::Read, Level::Ask, Level::Act]

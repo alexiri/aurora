@@ -375,7 +375,8 @@ mod tests {
             t("audit_log", 6),
         ];
         let c = categories(&tables);
-        let got: Vec<(StorageCategoryId, Option<i64>)> = c.iter().map(|c| (c.id, c.bytes)).collect();
+        let got: Vec<(StorageCategoryId, Option<i64>)> =
+            c.iter().map(|c| (c.id, c.bytes)).collect();
         assert_eq!(
             got,
             [

@@ -124,7 +124,10 @@ pub async fn create(
 
     let link = join_link(state, &tok);
     let inviter_name = row.invited_by_name.as_deref().unwrap_or("A teammate");
-    mail::send_detached(&state.mailer, invitation_mail(&email, &org_name, inviter_name, &link));
+    mail::send_detached(
+        &state.mailer,
+        invitation_mail(&email, &org_name, inviter_name, &link),
+    );
     // (C-1069, SEC-140) The link is in this response only (the caller is an organization owner or
     // admin): never in a list, a `GET`, the audit row or a log.
     let mut inv: Invitation = row.into();
