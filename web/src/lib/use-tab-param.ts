@@ -41,6 +41,17 @@ export function useTabParam<T extends string>(
   const routerTab: T | null = routerRaw && (valid as readonly string[]).includes(routerRaw) ? (routerRaw as T) : null;
   const locRaw = new URLSearchParams(currentSearch()).get("tab");
   if (routerTab && routerTab !== tab && !(locRaw && (valid as readonly string[]).includes(locRaw))) setTabState(routerTab);
+  // (P5-REFINE-13) A navigation that arrives with *no* `tab` after one that had it (a link to the same agent without
+  // `?tab=`) lands on the default page, not on the page the person was on. A person's own tab click writes `tab=`
+  // into the URL, so it never looks like this.
+  const [prevRouterRaw, setPrevRouterRaw] = useState<string | null>(routerRaw);
+  if (routerRaw !== prevRouterRaw) {
+    setPrevRouterRaw(routerRaw);
+    if (prevRouterRaw && !routerRaw) {
+      const target = opts.initial?.(new URLSearchParams(searchParams.toString())) || fallback;
+      if (target !== tab) setTabState(target);
+    }
+  }
   const setTab = useCallback(
     (next: T) => {
       setTabState(next);
