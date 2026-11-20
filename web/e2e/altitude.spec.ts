@@ -69,7 +69,7 @@ for (const scheme of ["light", "dark"] as const) {
         }
         await expect(page.getByLabel("Name")).toBeVisible();
         await expect(page.getByLabel("Effort")).toHaveCount(0);
-        await expect(page.getByText("Model roles, effort and agent program")).toBeVisible();
+        await expect(page.getByText("Advanced")).toBeVisible();
         const footer = page.locator("[data-more-controls-line]");
         await expect(footer).toContainText(/more controls? hidden/);
         expect(await overflow(page)).toBeLessThanOrEqual(0);

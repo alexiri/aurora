@@ -196,11 +196,11 @@ describe("library skills", () => {
     });
     wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
     expect(await screen.findByText("Library · acme/agent-skills · 0123456")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /code-review/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Code review/ }));
     expect(await screen.findByText("Managed by a skill library; edit it in the repository or detach it.")).toBeTruthy();
-    expect((screen.getByLabelText("Description") as HTMLInputElement).readOnly).toBe(true);
-    expect((screen.getByLabelText("SKILL.md") as HTMLTextAreaElement).readOnly).toBe(true);
-    fireEvent.click(screen.getByLabelText("Enabled"));
+    expect((screen.getByLabelText("Use it when…") as HTMLInputElement).readOnly).toBe(true);
+    expect((screen.getByLabelText("Instructions") as HTMLTextAreaElement).readOnly).toBe(true);
+    fireEvent.click(screen.getByLabelText("On for the organization's agents"));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(patched).toEqual({ enabled: false }));
     // remove, not delete
@@ -218,7 +218,7 @@ describe("library skills", () => {
       },
     });
     wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    fireEvent.click(await screen.findByRole("button", { name: /code-review/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Code review/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Detach" }));
     expect(screen.getByText(/ordinary editable skill/)).toBeTruthy();
     expect(detached).toBe(false);
@@ -229,8 +229,8 @@ describe("library skills", () => {
   it("a detached skill is editable again and keeps its provenance note", async () => {
     mockFetch(skills([libSkill({ source: source({ detached: true, library_id: null }) as Skill["source"] })]));
     wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    fireEvent.click(await screen.findByRole("button", { name: /code-review/ }));
-    expect((await screen.findByLabelText("Description") as HTMLInputElement).readOnly).toBe(false);
+    fireEvent.click(await screen.findByRole("button", { name: /Code review/ }));
+    expect((await screen.findByLabelText("Use it when…") as HTMLInputElement).readOnly).toBe(false);
     expect(screen.getAllByText(/Detached · was acme\/agent-skills@0123456/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Managed by a skill library/)).toBeNull();
   });
@@ -253,7 +253,7 @@ describe("update review", () => {
   });
   const open = async (readOnly = false) => {
     wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" readOnly={readOnly} />);
-    fireEvent.click(await screen.findByRole("button", { name: /code-review/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Code review/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Review update" }));
     const dlg = await screen.findByRole("dialog");
     // the update is loaded when its buttons exist

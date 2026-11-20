@@ -30,28 +30,25 @@ export function useTabParam<T extends string>(
   const searchParams = useSearchParams();
   const [tab, setTabState] = useState<T>(() => {
     const params = new URLSearchParams(currentSearch());
-    const raw = params.get("tab");
+    // The router's value first: during a client navigation `window.location` can still show the previous page.
+    const raw = searchParams.get("tab") ?? params.get("tab");
     if (raw) return resolveTab(raw, valid, fallback);
     return opts.initial?.(params) || fallback;
   });
-  // A client-side navigation landed here with a `?tab=` the mount-time read missed (it raced the router):
-  // adopt the router's value. Only when window.location carries no valid `tab` — after a local setTab it
-  // already has the new one (written before the router catches up), and adopting then would undo the click.
+  // (P5-REFINE-17, org-2) The URL and the visible tab always agree: whenever the router's `?tab=` changes (a `<Link>`
+  // that only changes the search parameter, such as Set up on Google Drive), the tab follows it. A local `setTab`
+  // writes the same value through the History API, so adopting it then changes nothing.
   const routerRaw = searchParams.get("tab");
-  const routerTab: T | null = routerRaw && (valid as readonly string[]).includes(routerRaw) ? (routerRaw as T) : null;
-  const locRaw = new URLSearchParams(currentSearch()).get("tab");
-  if (routerTab && routerTab !== tab && !(locRaw && (valid as readonly string[]).includes(locRaw))) setTabState(routerTab);
-  // (P5-REFINE-13) The page follows the router when it *changes* `tab` (a link to the same agent: from `?tab=access` to
-  // `?tab=chat&draft=…`). The rule above cannot see that case: while the navigation renders, `window.location` still
-  // shows the previous page's valid `?tab=access`, so it declines to adopt, and nothing renders again once the location
-  // catches up. A person's own tab click writes the same value into the state first, so it is never a change here.
-  // A navigation that arrives with *no* `tab` after one that had it lands on the default page, not on the page the
-  // person was on.
+  // (P5-REFINE-13) A navigation that arrives with *no* `tab` after one that had it (a link to the same agent without
+  // `?tab=`) lands on the default page, not on the page the person was on. A person's own tab click writes `tab=`
+  // into the URL, so it never looks like this.
+  // Both react only to a *change* of the router's value, so a local setTab (whose History write the router then
+  // echoes as the same value) is never undone.
   const [prevRouterRaw, setPrevRouterRaw] = useState<string | null>(routerRaw);
   if (routerRaw !== prevRouterRaw) {
     setPrevRouterRaw(routerRaw);
-    if (routerTab) {
-      if (routerTab !== tab) setTabState(routerTab);
+    if (routerRaw && (valid as readonly string[]).includes(routerRaw)) {
+      if (routerRaw !== tab) setTabState(routerRaw as T);
     } else if (prevRouterRaw && !routerRaw) {
       const target = opts.initial?.(new URLSearchParams(searchParams.toString())) || fallback;
       if (target !== tab) setTabState(target);

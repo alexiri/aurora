@@ -11,11 +11,14 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
+import { TechnicalDetails } from "@/components/ui/technical-details";
+import { formatExact, formatWhen } from "@/lib/format-date";
 import {
   useCancelEvalRun,
   useDeleteEvalRun,
   useEvalRun,
   useEvalRuns,
+  useStartEvalRun,
   type EvalResult,
   type EvalRunDetail,
 } from "@/lib/api/evals";
@@ -38,11 +41,16 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
 }
 
 /** Why a result is what it is: the reason in words, the judge's rationale, the expected answer. */
-function why(r: EvalResult): string {
+function why(r: EvalResult, agentName: string): string {
   const parts: string[] = [];
-  if (r.reason_code) parts.push(reasonText(r.reason_code));
+  if (r.reason_code) parts.push(reasonText(r.reason_code, agentName));
+  // (behaviour-3) What happened, in numbers: "Matches 42" or `Answer was "pong", expected 42`.
+  else if (r.expected_kind !== "judged" && r.extracted_value) {
+    const want = expectedLine(r);
+    parts.push(r.outcome === "pass" ? `Matches ${want}` : r.outcome === "fail" ? `Answer was "${r.extracted_value}", expected ${want}` : "");
+  }
   if (r.judge?.rationale) parts.push(`Grader: ${r.judge.rationale}`);
-  return parts.join(" ");
+  return parts.filter(Boolean).join(" ");
 }
 
 function expectedLine(r: EvalResult): string {
@@ -58,6 +66,12 @@ function ResultDetails({ r }: { r: EvalResult }) {
     <details className="text-xs text-ink-2">
       <summary className="cursor-pointer font-medium text-ink">Details</summary>
       <dl className="mt-1.5 space-y-1.5">
+        {r.refused_writes > 0 ? (
+          <div>
+            <dt className="font-medium">Refused writes</dt>
+            <dd>{r.refused_writes}</dd>
+          </div>
+        ) : null}
         <div>
           <dt className="font-medium">Expected</dt>
           <dd className="break-words">{expectedLine(r) || "—"}</dd>
@@ -77,36 +91,67 @@ function ResultDetails({ r }: { r: EvalResult }) {
   );
 }
 
-function Results({ run }: { run: EvalRunDetail }) {
+/** (behaviour-4) A result row's own Re-run: a new run of just that question. Off, with the reason, while a run is active. */
+function RerunButton({ r, rerun }: { r: EvalResult; rerun: Rerun }) {
+  if (!r.question.id) return null;
+  const id = r.question.id;
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={rerun.blocked !== null || rerun.busy}
+      title={rerun.blocked ?? undefined}
+      aria-label={`Re-run question ${r.position}`}
+      onClick={() => rerun.start(id)}
+    >
+      Re-run
+    </Button>
+  );
+}
+
+interface Rerun {
+  /** Why a re-run cannot start now (a run is active), else null. */
+  blocked: string | null;
+  busy: boolean;
+  start: (questionId: string) => void;
+}
+
+function Results({ run, rerun }: { run: EvalRunDetail; rerun: Rerun }) {
+  const agentName = run.agent.name;
+  const active = isActive(run);
   if (run.results.length === 0) return <EmptyState title="No results yet">Results appear here as each question finishes.</EmptyState>;
+  // A row that has not finished while the run is active says what it waits for.
+  const pending = (r: EvalResult) => active && !r.finished_at;
   return (
     <>
       <div className="hidden md:block">
         <DataTable caption="Results" className="min-w-0">
           <thead>
             <tr>
-              <Th>#</Th>
-              <Th>Result</Th>
               <Th>Question</Th>
               <Th>Answer</Th>
               <Th>Why</Th>
-              <Th>Refused writes</Th>
+              <Th>
+                <span className="sr-only">Actions</span>
+              </Th>
             </tr>
           </thead>
           <tbody>
             {run.results.map((r) => (
               <tr key={r.position}>
-                <Td className="tabular-nums text-ink-2">{r.position}</Td>
-                <Td>
-                  <OutcomeBadge outcome={r.outcome} />
+                <Td className="max-w-xs whitespace-normal break-words">
+                  <span className="mr-2 tabular-nums text-ink-2">{r.position}.</span>
+                  {excerpt(r.question.text, 120)}
                 </Td>
-                <Td className="max-w-xs whitespace-normal break-words">{excerpt(r.question.text, 120)}</Td>
                 <Td className="max-w-sm whitespace-normal break-words text-ink-2">
-                  {excerpt(r.answer) || "—"}
+                  {pending(r) ? <span>Running…</span> : <OutcomeBadge outcome={r.outcome} />}
+                  <span className="mt-1 block">{excerpt(r.answer) || "—"}</span>
                   <ResultDetails r={r} />
                 </Td>
-                <Td className="max-w-xs whitespace-normal break-words text-ink-2">{why(r) || "—"}</Td>
-                <Td className="tabular-nums">{r.refused_writes}</Td>
+                <Td className="max-w-xs whitespace-normal break-words text-ink-2">{pending(r) ? "—" : why(r, agentName) || "—"}</Td>
+                <Td className="text-right">
+                  <RerunButton r={r} rerun={rerun} />
+                </Td>
               </tr>
             ))}
           </tbody>
@@ -114,16 +159,15 @@ function Results({ run }: { run: EvalRunDetail }) {
       </div>
       <ItemList aria-label="Results" className="md:hidden">
         {run.results.map((r) => (
-          <ListRow key={r.position}>
+          <ListRow key={r.position} actions={<RerunButton r={r} rerun={rerun} />}>
             <div className="min-w-0 flex-1 space-y-1.5 text-sm">
               <p className="flex flex-wrap items-center gap-2">
                 <span className="tabular-nums text-ink-2">{r.position}.</span>
-                <OutcomeBadge outcome={r.outcome} />
-                {r.refused_writes > 0 ? <span className="text-xs text-muted">{r.refused_writes} refused writes</span> : null}
+                {pending(r) ? <span className="text-xs text-ink-2">Running…</span> : <OutcomeBadge outcome={r.outcome} />}
               </p>
               <p className="break-words text-ink">{excerpt(r.question.text, 120)}</p>
               {r.answer ? <p className="break-words text-xs text-ink-2">{excerpt(r.answer)}</p> : null}
-              {why(r) ? <p className="break-words text-xs text-ink-2">{why(r)}</p> : null}
+              {!pending(r) && why(r, agentName) ? <p className="break-words text-xs text-ink-2">{why(r, agentName)}</p> : null}
               <ResultDetails r={r} />
             </div>
           </ListRow>
@@ -230,20 +274,24 @@ export function RunDetail({
   compareWith,
   canOwn,
   onBack,
+  onOpenRun,
 }: {
   agentId: string;
   runId: string;
   compareWith?: string;
   canOwn: boolean;
   onBack: () => void;
+  /** Opens the run a Re-run started. */
+  onOpenRun?: (runId: string) => void;
 }) {
   const q = useEvalRun(agentId, runId);
   const cancel = useCancelEvalRun(agentId);
   const del = useDeleteEvalRun(agentId);
+  const start = useStartEvalRun(agentId);
   const [confirm, setConfirm] = useState<"cancel" | "delete" | null>(null);
   const back = (
     <Button size="sm" variant="outline" onClick={onBack}>
-      All runs
+      All test runs
     </Button>
   );
   if (q.isPending) return <Loading />;
@@ -257,17 +305,28 @@ export function RunDetail({
   }
   const run = q.data;
   const c = run.counts;
-  const err = cancel.error ?? del.error;
+  const err = cancel.error ?? del.error ?? start.error;
+  const startedBy = run.trigger === "schedule" ? `the schedule ${run.schedule?.name ?? ""}`.trim() : (run.started_by?.label ?? "someone who has left");
+  const done = c.passed + c.failed + c.errored + c.not_scored;
+  const rerun: Rerun = {
+    blocked: isActive(run) ? "A run is in progress. Wait for it to finish or cancel it." : null,
+    busy: start.isPending,
+    start: (id) => start.mutate([id], { onSuccess: (r) => onOpenRun?.(r.id) }),
+  };
   return (
     <div className="space-y-6">
       <Section
         id="eval-run"
         title={
           <span className="flex flex-wrap items-center gap-2">
-            Run of {fmtDate(run.started_at ?? run.created_at)} <StatusBadge status={run.status} />
+            Test run, {formatExact(run.started_at ?? run.created_at)} <StatusBadge status={run.status} />
           </span>
         }
-        description={`${run.trigger === "schedule" ? `Started by the schedule ${run.schedule?.name ?? ""}` : `Started by ${run.started_by?.label ?? "someone who has left"}`}. ${run.finished_at ? `Finished ${fmtDate(run.finished_at)}.` : ""}`}
+        description={
+          isActive(run)
+            ? `Running · ${done} of ${c.total} done · started by ${startedBy}`
+            : `Started by ${startedBy}. ${run.finished_at ? `Finished ${formatWhen(run.finished_at).toLowerCase()}.` : ""}`
+        }
         actions={
           <>
             {back}
@@ -300,9 +359,7 @@ export function RunDetail({
             ["Pass rate", fmtRate(run.pass_rate)],
             ["Passed", c.passed],
             ["Failed", c.failed],
-            ["Errors", c.errored],
-            ["Not scored", c.not_scored],
-            ["Refused writes", c.refused_writes],
+            ["Couldn't be checked", c.errored + c.not_scored],
           ].map(([k, v]) => (
             <div key={k}>
               <dt className="text-xs text-muted">{k}</dt>
@@ -310,17 +367,36 @@ export function RunDetail({
             </div>
           ))}
         </dl>
-        {run.judge_usage ? (
-          <p className="text-xs text-muted">
-            Grader usage: {run.judge_usage.input_tokens} input tokens, {run.judge_usage.output_tokens} output tokens.
+        <details className="text-sm text-ink-2">
+          <summary className="cursor-pointer font-medium text-ink">Details</summary>
+          <dl className="mt-2 space-y-1">
+            <div className="flex gap-2">
+              <dt className="text-muted">Refused writes</dt>
+              <dd className="tabular-nums">{c.refused_writes}</dd>
+            </div>
+            {run.judge_usage ? (
+              <div className="flex gap-2">
+                <dt className="text-muted">Grader usage</dt>
+                <dd>
+                  {run.judge_usage.input_tokens} input tokens, {run.judge_usage.output_tokens} output tokens
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </details>
+        <TechnicalDetails>
+          <p className="flex flex-wrap items-center gap-x-2">
+            Configuration: <HashValue value={run.fingerprint_hash} label="configuration hash" />
           </p>
-        ) : null}
-        <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
-          Configuration: <HashValue value={run.fingerprint_hash} label="configuration hash" />
-        </p>
+        </TechnicalDetails>
       </Section>
       <Section id="eval-results" title="Results" description="Answers and expected answers are visible to the people who can use this agent.">
-        <Results run={run} />
+        {start.error ? (
+          <Notice tone="danger" role="alert">
+            {evalErrorMessage(start.error)}
+          </Notice>
+        ) : null}
+        <Results run={run} rerun={rerun} />
       </Section>
       <Compare key={run.id} agentId={agentId} run={run} preferred={compareWith} />
       <ConfirmDialog

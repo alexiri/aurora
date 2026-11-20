@@ -275,5 +275,13 @@ async fn a_runner_endpoint_with_userinfo_is_never_dialled() {
         .await
         .unwrap();
     let _ = read_head(&mut c).await;
+    // The spy counts the accepted connection on its own task, which can run after the relay has
+    // answered (CI run 44741868075 read 0): wait for it, bounded.
+    for _ in 0..100 {
+        if hits.load(SeqCst) >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     assert_eq!(hits.load(SeqCst), 1);
 }

@@ -3,8 +3,8 @@
 //! changing the judge key needs `can_own`. Hosted agents only.
 
 use super::dto::{
-    CreateEvalQuestion, EvalFingerprint, EvalJudge, EvalQuestion, EvalSettings, PatchEvalQuestion,
-    PutEvalSettings,
+    CreateEvalQuestion, EvalFingerprint, EvalJudge, EvalJudgeTest, EvalQuestion, EvalSettings,
+    PatchEvalQuestion, PutEvalSettings,
 };
 use super::fingerprint::{self, SkillEntry};
 use crate::app::AppState;
@@ -444,7 +444,34 @@ async fn settings_view(s: &AppState, a: &AgentRow) -> Result<EvalSettings, ApiEr
     Ok(EvalSettings {
         judge,
         regression_notify: row.regression_notify,
+        test: None,
     })
+}
+
+/// One minimal model call with the new judge (C-872): says whether the key and model answer, never
+/// why in the provider's words. Writes no transcript.
+async fn test_judge(s: &AppState, a: &AgentRow, secret: Uuid, model_id: &str) -> EvalJudgeTest {
+    let started = std::time::Instant::now();
+    let req = platform::Request {
+        model: model_id.to_owned(),
+        system: "Reply with the single word: ok",
+        user: "ok?".to_owned(),
+        max_tokens: 8,
+        timeout: limits::EVAL_JUDGE_TIMEOUT,
+    };
+    let res = platform::complete(s, platform::Purpose::EvalJudge, a, secret, req).await;
+    let took_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+    let reason = match res {
+        Ok(_) => None,
+        Err(platform::Failure::Timeout) => Some("timeout"),
+        Err(platform::Failure::Unavailable) => Some("unreachable"),
+        Err(_) => Some("rejected"),
+    };
+    EvalJudgeTest {
+        result: if reason.is_none() { "ok" } else { "failed" }.to_owned(),
+        took_ms,
+        reason: reason.map(str::to_owned),
+    }
 }
 
 pub async fn put_settings(
@@ -489,6 +516,11 @@ pub async fn put_settings(
             }
         }
     }
+    // The judge is tested before it is saved; a failed test is reported, never a refusal.
+    let test = match (judge_changed, &new_judge) {
+        (true, Some((secret, model_id))) => Some(test_judge(s, &a, *secret, model_id).await),
+        _ => None,
+    };
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
     repo::set_settings(
         &mut tx,
@@ -506,6 +538,7 @@ pub async fn put_settings(
         .target("agent", a.id)
         .metadata(json!({
             "judge_changed": judge_changed,
+            "judge_test": test.as_ref().map(|t| t.result.clone()),
             "regression_notify": b.regression_notify,
             "change": {
                 "judge_secret_id": {"from": cur.judge_secret_id, "to": new_judge.as_ref().map(|j| j.0)},
@@ -514,7 +547,9 @@ pub async fn put_settings(
         })),
     )
     .await?;
-    settings_view(s, &a).await
+    let mut view = settings_view(s, &a).await?;
+    view.test = test;
+    Ok(view)
 }
 
 // ---- fingerprint ----

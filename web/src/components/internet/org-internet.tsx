@@ -117,6 +117,7 @@ function OrgInternetBody({ org, slug, eff, revision: initialRevision, initial }:
       scope={{ kind: "organization", id: org.id }}
       orgId={org.id}
       orgSlug={slug}
+      orgName={org.name}
       canEdit
       eff={eff}
       whoCanHere={whoCanFromContacts("org_admin", org.contacts, "change_this")}

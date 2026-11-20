@@ -98,10 +98,22 @@ pub struct EvalJudge {
     pub usable: bool,
 }
 
+/// The one real model call made when the judge is saved (C-872).
+#[derive(Serialize, ToSchema)]
+pub struct EvalJudgeTest {
+    /// `ok` | `failed`.
+    pub result: String,
+    pub took_ms: i64,
+    /// `rejected` | `unreachable` | `timeout` when failed, else null. Never the provider's text.
+    pub reason: Option<String>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct EvalSettings {
     pub judge: Option<EvalJudge>,
     pub regression_notify: bool,
+    /// Set only on the response of a `PUT` that changed the judge; null otherwise.
+    pub test: Option<EvalJudgeTest>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -327,7 +339,12 @@ pub struct EvalRunDetail {
 }
 
 #[derive(Deserialize, ToSchema, Default)]
-pub struct StartEvalRun {}
+#[serde(deny_unknown_fields)]
+pub struct StartEvalRun {
+    /// Run only these questions (1..=20, each a question of the agent); absent = every enabled
+    /// question.
+    pub question_ids: Option<Vec<Uuid>>,
+}
 
 /// An eval schedule (C-870).
 #[derive(Serialize, ToSchema)]

@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
 import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Select } from "@/components/ui/select";
 import { SwitchField } from "@/components/ui/switch";
@@ -154,19 +155,19 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     await save(n);
   }
 
-  const defaultModelLabel = defaultView ? `Workspace default · ${defaultView.model_id}` : "Workspace default";
+  // Display names only (behaviour-5): no provider or endpoint suffix; raw ids stay in Technical details.
+  const defaultModelName =
+    (models.data?.items ?? []).find((m) => m.endpoint_id === defaultView?.endpoint_id && m.model_id === defaultView?.model_id)?.display_name ??
+    defaultView?.model_id;
+  const defaultModelLabel = defaultModelName ? `Workspace default · ${defaultModelName}` : "Workspace default";
 
   return (
     <div className="space-y-6">
       <form onSubmit={(e) => void submit(e)} noValidate className="max-w-180 space-y-5 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
-        <div className="flex items-start gap-4">
-          <AvatarField agent={agent} wsId={wsId} compact />
-          <div className="min-w-0 flex-1">
-            <Field id="a-name" label="Name" error={clientErr || fe.name}>
-              <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
-            </Field>
-          </div>
-        </div>
+        <AvatarField agent={agent} wsId={wsId} />
+        <Field id="a-name" label="Name" error={clientErr || fe.name}>
+          <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+        </Field>
         <Field
           id="a-brief"
           label="Instructions"
@@ -174,7 +175,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
           hint={`What ${agent.name} should do and how. It reads these before every conversation.`}>
           <textarea id="a-brief" className={inputClass} rows={6} value={brief} onChange={(e) => setBrief(e.target.value)} />
         </Field>
-        <Field id="a-model" label="Model" error={roleErrors.model} hint={modelHint(agent.kind, models.data?.items.length, models.isError)}>
+        <Field id="a-model" label="Model" error={roleErrors.model} hint={modelHint(agent.kind, models.data?.items.length, models.isError, agent.name)}>
           <select
             id="a-model"
             className={inputClass}
@@ -190,7 +191,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
             ) : null}
             {(models.data?.items ?? []).map((m) => (
               <option key={`${m.endpoint_id}/${m.model_id}`} value={`${m.endpoint_id}\u0000${m.model_id}`}>
-                {m.display_name ?? m.model_id} ({m.provider})
+                {m.display_name ?? m.model_id}
               </option>
             ))}
           </select>
@@ -224,13 +225,14 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         <Altitude
           id="agent.roles"
           level="expert"
-          label="Model roles, effort and agent program"
+          label="Advanced"
           promote={!!fe.harness || !!fe.effort || hasRoleError(roleErrors)}>
           <div className="space-y-5 rounded-control border border-line px-3 py-3">
-            <p className="text-sm font-medium text-ink">Model roles, effort and agent program</p>
+            <p className="text-sm font-medium text-ink">Advanced</p>
+            <Notice role="status">Advanced is for admins and power users. Most people never need it.</Notice>
             <Field
               id="a-harness"
-              label="Harness"
+              label="Agent program"
               error={fe.harness}
               hint={
                 showPicker ? (
@@ -270,7 +272,6 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
             </Field>
             {agent.kind === "hosted" ? (
               <ModelRolesFields
-                harnessId={chosenHarness || undefined}
                 harnessName={harnessInfo?.display_name ?? "this harness"}
                 roleless={roleless}
                 mapped={harnessInfo?.model_roles ?? null}
@@ -279,7 +280,6 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
                 onRoles={setRoles}
                 subagent={subagent}
                 onSubagent={setSubagent}
-                readiness={defaultView}
                 errors={roleErrors}
                 disabled={!endpointId}
               />
@@ -303,9 +303,9 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
       <ConfirmDialog
         open={confirmSwitch}
         onOpenChange={setConfirmSwitch}
-        title="Change the harness?"
+        title="Change the agent program?"
         description="Starts fresh sessions for every conversation of this agent; the transcript is kept."
-        confirmLabel="Change harness"
+        confirmLabel="Change agent program"
         busy={patch.isPending}
         onConfirm={() => {
           setConfirmSwitch(false);
@@ -316,11 +316,11 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
   );
 }
 
-function modelHint(kind: string, count: number | undefined, isError: boolean): string {
+function modelHint(kind: string, count: number | undefined, isError: boolean, agentName: string): string {
   if (kind !== "hosted") return "Models apply to hosted agents.";
   if (isError) return "Could not load models.";
-  if (count === 0) return "Available when an LLM key is granted.";
-  return "The model the agent starts with. It may use other allowed models on the same endpoint, for example for subagents.";
+  if (count === 0) return "Available when an AI key is given to the agent.";
+  return `The model ${agentName} starts with.`;
 }
 
 const MESSAGE_MISMATCH =

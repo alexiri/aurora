@@ -79,6 +79,20 @@ describe("TopicPage", () => {
     expect(screen.getByText("first content")).toBeInTheDocument();
   });
 
+  it("follows ?tab= when a client navigation changes only the search parameter (org-2: Set up on Google Drive)", () => {
+    window.history.replaceState(null, "", "/?tab=apps");
+    const apps = [
+      { id: "apps", label: "Apps", content: <p>apps content</p> },
+      { id: "oauth-clients", label: "Sign-in apps", content: <p>sign-in apps content</p> },
+    ] as const;
+    const { rerender } = render(<TopicPage idBase="t" title="Topic" tabs={apps} />);
+    expect(screen.getByText("apps content")).toBeInTheDocument();
+    window.history.pushState(null, "", "/?tab=oauth-clients&client_key=google");
+    rerender(<TopicPage idBase="t" title="Topic" tabs={apps} />);
+    expect(screen.getByText("sign-in apps content")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Sign-in apps" })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("drops the dialog parameters of a tab when another tab opens", () => {
     window.history.replaceState(null, "", "/?tab=one&connect=github");
     render(<TopicPage idBase="t" title="Topic" tabs={tabs} />);

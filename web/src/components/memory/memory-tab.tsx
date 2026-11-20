@@ -12,10 +12,12 @@ import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList } from "@/components/ui/section";
 import { When } from "@/components/ui/when";
 import { cn } from "@/lib/utils";
+import { Altitude } from "@/components/ui/altitude";
+import { TechnicalDetails } from "@/components/ui/technical-details";
+import { ApiError } from "@/lib/api/client";
+import { memoryName, memoryPreview, newMemoryKey } from "@/lib/memory-key";
 import {
   MEMORY_CONTENT_MAX,
-  MEMORY_KEY_MAX,
-  MEMORY_KEY_RE,
   canRedact,
   useCreateMemory,
   useDeleteMemory,
@@ -89,7 +91,9 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
                 {search.data.items.map((h) => (
                   <li key={h.key}>
                     <button type="button" className={memItem} onClick={() => { setSelected(h.key); setCreating(false); }}>
-                      <span className="font-mono">{h.key}</span>
+                      <span className="block truncate font-medium text-ink">
+                        {h.title?.trim() || (items.find((m) => m.key === h.key) ? memoryName(items.find((m) => m.key === h.key)!) : "Memory")}
+                      </span>
                       <span className="block text-xs text-muted">{h.snippet}</span>
                     </button>
                   </li>
@@ -110,8 +114,8 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
                       className={cn(memItem, "aria-[current=true]:bg-subtle")}
                       onClick={() => { setSelected(m.key); setCreating(false); }}
                     >
-                      <span className="font-mono font-medium text-ink">{m.key}</span>
-                      <span className="block truncate text-xs text-ink-2">{m.index_line}</span>
+                      <span className="block truncate font-medium text-ink">{memoryName(m)}</span>
+                      <span className="block truncate text-xs text-ink-2">{memoryPreview(m)}</span>
                       <span className="block text-xs text-muted">Updated <When value={m.updated_at} /></span>
                     </button>
                   </li>
@@ -122,9 +126,11 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
           )}
         </div>
         <div>
-          {creating ? <MemoryEditor key="new" agentId={agentId} onDone={(k) => { setCreating(false); setSelected(k); }} /> : null}
+          {creating ? (
+            <MemoryEditor key="new" agentId={agentId} agentName={agentName} taken={items.map((m) => m.key)} onDone={(k) => { setCreating(false); setSelected(k); }} onCancel={() => setCreating(false)} />
+          ) : null}
           {!creating && current ? (
-            <MemoryEditor key={`${current.key}:${current.revision}`} agentId={agentId} memory={current} onDone={(k) => setSelected(k)} />
+            <MemoryEditor key={`${current.key}:${current.revision}`} agentId={agentId} agentName={agentName} taken={[]} memory={current} onDone={(k) => setSelected(k)} onCancel={() => setSelected(null)} />
           ) : null}
           {!creating && !current ? <p className="text-sm text-muted">Select a memory to edit it.</p> : null}
         </div>
@@ -133,36 +139,65 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
   );
 }
 
-export function keyIssue(key: string): string | null {
-  if (!key || key.length > MEMORY_KEY_MAX || !MEMORY_KEY_RE.test(key))
-    return `Use lowercase letters, digits and hyphens, at most ${MEMORY_KEY_MAX} characters.`;
-  return null;
+/** A refusal because the key is taken (409): the key is Aurora's to make, so it tries the next one. */
+function keyTaken(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 409;
 }
 
-function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: Memory; onDone: (key: string | null) => void }) {
+/**
+ * (P5-REFINE-12, behaviour-1) One box: what the agent should remember, an optional title, Save and Cancel. No key, no
+ * description, no Markdown label: the key is made from the title (else the first words) and made unique here.
+ */
+function MemoryEditor({
+  agentId,
+  agentName,
+  memory,
+  taken,
+  onDone,
+  onCancel,
+}: {
+  agentId: string;
+  agentName?: string;
+  memory?: Memory;
+  /** The agent's keys, so a new key is not one of them. */
+  taken: string[];
+  onDone: (key: string | null) => void;
+  onCancel: () => void;
+}) {
   const create = useCreateMemory(agentId);
   const put = usePutMemory(agentId, memory?.key ?? "");
   const del = useDeleteMemory(agentId);
-  const [key, setKey] = useState(memory?.key ?? "");
   const [title, setTitle] = useState(memory?.title ?? "");
-  const [description, setDescription] = useState(memory?.description ?? "");
   const [content, setContent] = useState(memory?.content ?? "");
   const [history, setHistory] = useState(false);
   const [err, setErr] = useState("");
   const over = content.length > MEMORY_CONTENT_MAX;
-  const failed = create.error ?? put.error ?? del.error;
+  const failed = err ? null : (create.error ?? put.error ?? del.error);
+  const who = agentName ?? "your agent";
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const issue = memory ? null : keyIssue(key);
-    if (issue) return setErr(issue);
-    if (over) return setErr("The content is over the limit.");
+    if (!content.trim()) return setErr(`Write what ${who} should remember.`);
+    if (over) return setErr(`That is too long: a memory holds up to ${MEMORY_CONTENT_MAX.toLocaleString("en")} characters.`);
     setErr("");
-    const body = { title: title.trim() || null, description: description.trim() || null, content };
+    const body = { title: title.trim() || null, description: memory?.description ?? null, content };
     try {
-      if (memory) await put.mutateAsync(body);
-      else await create.mutateAsync({ key, ...body });
-      onDone(memory?.key ?? key);
+      if (memory) {
+        await put.mutateAsync(body);
+        onDone(memory.key);
+        return;
+      }
+      // A taken key (a memory this list does not show yet) retries once with the next suffix.
+      for (let attempt = 0; ; attempt++) {
+        const key = newMemoryKey(title, content, taken, attempt);
+        try {
+          await create.mutateAsync({ key, ...body });
+          onDone(key);
+          return;
+        } catch (error) {
+          if (attempt >= 1 || !keyTaken(error)) throw error;
+        }
+      }
     } catch {
       // shown via failed
     }
@@ -171,41 +206,47 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
   return (
     <div className="space-y-4">
       <Card>
-      <form onSubmit={(e) => void submit(e)} noValidate className="space-y-4">
-        <Field id="mem-key" label="Key" hint="Immutable once created." error={err && !memory ? err : undefined}>
-          <input id="mem-key" className={inputClass} value={key} readOnly={!!memory} maxLength={MEMORY_KEY_MAX} onChange={(e) => setKey(e.target.value)} />
-        </Field>
-        <Field id="mem-title" label="Title">
-          <input id="mem-title" className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} />
-        </Field>
-        <Field id="mem-desc" label="Description">
-          <input id="mem-desc" className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
-        </Field>
-        <Field id="mem-content" label="Content (Markdown)">
-          <textarea id="mem-content" className={`${inputClass} font-mono`} rows={12} value={content} onChange={(e) => setContent(e.target.value)} />
-        </Field>
-        <SizeMeter label="Content" used={content.length} max={MEMORY_CONTENT_MAX} />
-        {err && memory ? <Notice tone="danger" role="alert">{err}</Notice> : null}
-        <ErrorNotice error={failed} />
-        <FormActions className="gap-2">
-          <Button type="submit" disabled={over || create.isPending || put.isPending}>Save</Button>
-          {memory ? (
-            <>
-              <Button type="button" variant="outline" onClick={() => setHistory((h) => !h)} aria-expanded={history}>
-                History
-              </Button>
-              <ConfirmAction
-                label="Delete"
-                title={`Delete the memory “${memory.key}”?`}
-                description="The agent forgets it, and its history goes with it. This can't be undone."
-                confirmLabel="Delete memory"
-                onConfirm={() => void del.mutateAsync(memory.key).then(() => onDone(null))}
-              />
-            </>
-          ) : null}
-        </FormActions>
-      </form>
+        <form onSubmit={(e) => void submit(e)} noValidate className="space-y-4">
+          <Field
+            id="mem-content"
+            label={`What should ${who} remember?`}
+            hint={`Plain words are fine. ${who} reads this before it answers.`}
+            error={err || undefined}
+          >
+            <textarea id="mem-content" className={inputClass} rows={6} value={content} onChange={(e) => setContent(e.target.value)} />
+          </Field>
+          <SizeMeter label="Size" used={content.length} max={MEMORY_CONTENT_MAX} />
+          <Field id="mem-title" label="Title (optional)">
+            <input id="mem-title" className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
+          <ErrorNotice error={failed} />
+          <FormActions className="gap-2">
+            <Button type="submit" disabled={over || create.isPending || put.isPending}>Save</Button>
+            <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
+            {memory ? (
+              <>
+                <Button type="button" variant="outline" onClick={() => setHistory((h) => !h)} aria-expanded={history}>
+                  History
+                </Button>
+                <ConfirmAction
+                  label="Delete"
+                  title={`Delete the memory “${memoryName(memory)}”?`}
+                  description="The agent forgets it, and its history goes with it. This can't be undone."
+                  confirmLabel="Delete memory"
+                  onConfirm={() => void del.mutateAsync(memory.key).then(() => onDone(null))}
+                />
+              </>
+            ) : null}
+          </FormActions>
+        </form>
       </Card>
+      {memory ? (
+        <Altitude id="memory.key" level="expert">
+          <TechnicalDetails>
+            <p>Memory key: {memory.key}</p>
+          </TechnicalDetails>
+        </Altitude>
+      ) : null}
       {memory && history ? <RevisionHistory agentId={agentId} memory={memory} /> : null}
     </div>
   );

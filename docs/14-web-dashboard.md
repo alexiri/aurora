@@ -1380,8 +1380,29 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 (Phase 5, P5-IA-1, D-338, C-961: navigation and page names follow §Information architecture › "One
-structure for every level". An org member sees Workspaces and read-only AI models and Internet access;
+structure for every level". An org member sees Overview and read-only AI models and Internet access;
 every other topic is owners/admins and is not listed for a member.)
+- **Manage <org>, an area, not a second rail** (P5-REFINE-17, rec 8). On `/o/<org>/…` (not `/w/…`) the rail stays the
+  **workspace rail** of the workspace the person was in (remembered per browser tab; else their personal workspace; else
+  the first). The page area carries a **← Back to <workspace>** link, the **Manage <org>** header (the only place the
+  organization is named) and a sub-nav: Overview · Agents · People · Apps & accounts · Chat platforms · AI models ·
+  Internet access · Data · Settings (a column on a desktop, a select on a phone; filtered by role with
+  `visibleTopics("org", …)`: a member keeps Overview, AI models and Internet access). The switcher's **Manage <org>** row
+  (was "Organization settings") opens the Overview; its last row **New organization** opens a dialog (shown where sign-up
+  lets the person create one). Every old address keeps working (C-960).
+- **Overview** (`/o/<org>`): **Needs you** (requests for apps, chat platforms and AI keys an admin can resolve, and the
+  invitations waiting), **People** (count, invitations waiting, **Invite**), **Workspaces** (team first, personal
+  below, **New workspace**), **Agents** (the five most recently changed, **All agents**) and the two rules that apply
+  (AI models, Internet access). Members see Workspaces and the two rules only.
+- **Agents** opens on **Agents** (every agent by workspace: team workspaces A–Z, then personal ones by owner), then
+  **Bring your own** (with Previews as a second section) and **Skills**, the last two Expert (behind "Show more
+  controls"). The list reads each workspace's agents until the organization-wide route (C-1090) lands.
+- **People**: a promotion to Admin or Owner asks first ("Make Bob an Admin of Acme?" with what the role can do and
+  "What can each role do?", `ROLE_CAN` in `lib/roles-explain.ts`); lowering and Member changes apply at once. The invite
+  dialog ("Invite someone to Acme") lists team workspaces only; everyone's personal workspace is made on accept.
+  Pending invitations are stacked rows at 390 px.
+- **Internet access › History of changes**: rows read "<Person> published version N" with **Current** on the live one
+  and **Roll back to this version** (asks first) on the others.
 - **Workspaces** (all members: those they can access; owners/admins: all).
 - **Members**: list, roles, suspend/remove, invitations. (phase 2, RFE-021)
   Suspend/remove first opens the **offboarding view** — "Removing Alice disables
@@ -2207,6 +2228,51 @@ A control not in the table is a gap in the classification: add the row (and the 
 **The lint** (`tests/altitude-registry.test.ts`): every `<Altitude id level>` names a registry id at its level;
 every row not marked later or rule-only is used in the code; rendered at Use with the switch off, the Expert
 strings are absent.
+
+## Agent settings pages (phase 5, P5-REFINE-12, D-406, D-407, D-411, D-413, D-414)
+
+**New agent.** The dialog "New agent" starts from a purpose: a row of chips **Start from** (General assistant,
+Research, Ops helper, Calendar secretary, Writer, A blank agent; General assistant by default). A template sets
+the name suggestion (only while Name is empty), the editable Instructions and a suggested first message; it never
+changes access. The templates are data in `web/src/lib/onboarding/templates.ts` (no API, not editable per
+organization; an optional `schedule { cron, prompt }` is data for the schedule form of P5-REFINE-14). Fields: Name,
+Handle (optional; follows the name until edited), **Where it runs** ("Runs on Aurora (recommended)" by default;
+bring-your-own appears only under "More options: bring your own agent…" and is disabled with its reason when the
+posture forbids it; when the instance has no hosted agents the dialog says so and BYO is the only choice) and
+**Instructions (optional)**. After Create: the toast "<Agent> is ready" and the new agent's chat, with the
+template's first message in the composer as a `?draft=` (C-1035), not sent. A BYO agent opens on Connect after its
+token has been copied.
+
+**Instructions.** The picture is a visible **Change picture** button with a real **Remove** and the hint "PNG, JPG
+or WebP, up to 512 KiB. Shown round." (the API's true limit). Models show display names only. **Advanced** (Expert)
+opens with "Advanced is for admins and power users. Most people never need it." and names the roles **Strongest
+model · Everyday model · Fastest model**, each defaulting to "Same as the default"; the harness is "Agent program".
+One save bar; "Saved" for two seconds.
+
+**Memory.** One box: "What should <Agent> remember?", an optional Title, Save, Cancel. The key is made by Aurora
+(`lib/memory-key.ts`): from the title, else the first six words; kebab-case ASCII, at most 64 characters, `note`
+when nothing is left, unique by a numeric suffix, one retry on a 409. Lists show the title (else the first line,
+60 characters) and a preview, never the key; the key is in Technical details at Expert (`memory.key`).
+
+**Skills.** Name, "Use it when…" (the API's one-line `description`), Instructions (the `body`), "On for <Agent>",
+Save and Delete. The folder name is made by Aurora (`lib/skill-name.ts`: kebab-case, at most 64 characters, `aurora-`
+prefixed names become `my-aurora-…`, unique by suffix, one retry on a 409). **Advanced: files and scripts** (Expert,
+`skill.files`) holds the folder name, the files, Executable and the precedence rule. The form is shared with the
+workspace and organization pages.
+
+**Tests.** A run is "Test run, <date>" with "Started by …"; tiles Pass rate · Passed · Failed · Couldn't be
+checked; Refused writes under Details; the configuration hash in Technical details. A result row says `Matches 42`
+or `Answer was "pong", expected 42`; a missing ANSWER line is "<Agent>'s reply had no ANSWER line, so Aurora could
+not compare it. The reply is shown below." (never blaming the agent). An active run reads "Running · 1 of 2 done ·
+started by …" with live counters (C-864 amendment) and each row has **Re-run** (`question_ids`, disabled with its
+reason while a run is active). Saving a judge says "Judge saved and tested: it answered in 3 s." or "Judge saved, but
+the test failed: …" from the settings response's `test` (C-863 amendment).
+
+**The missing AI key.** On Access, a card "<Agent> can't answer yet: it has no AI key." with **Give <Agent> the
+<key name>** (one click, toast "<Agent> can answer now") and **Choose another**, when the organization has a
+starter key the agent was not given. Other agents (Link another agent) and the header action wait for P5-REFINE-10
+and -11.
+
 
 ## Onboarding (phase 4, P4-ONB-2, D-141)
 

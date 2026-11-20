@@ -266,6 +266,17 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     });
   }
 
+  it("(org-8) is two groups, Your rules and Set above you, with the stack of limits behind More settings", async () => {
+    routes();
+    wrap(<OrgInternet org={org} slug="acme" />);
+    expect((await screen.findByTestId("internet-summary")).textContent).toMatch(/^What agents in .* may reach\.$/);
+    expect(screen.getByRole("heading", { name: "Your rules" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Set above you" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Limits and defaults" })).toBeNull();
+    expect((screen.getByTestId("internet-more") as HTMLDetailsElement).open).toBe(false);
+  });
+
   it("lists the workspaces that tightened, with a link to each", async () => {
     routes();
     wrap(<OrgInternet org={org} slug="acme" />);

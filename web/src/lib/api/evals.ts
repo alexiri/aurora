@@ -114,7 +114,9 @@ export function useEvalRun(agent: string, id: string | null) {
 export function useStartEvalRun(agent: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => unwrap(api.POST("/v1/agents/{agent}/eval-runs", { params: { path: { agent } } })),
+    // (P5-REFINE-12, C-864) `questionIds` re-runs just those questions (the row's Re-run); none runs every enabled one.
+    mutationFn: (questionIds?: string[]) =>
+      unwrap(api.POST("/v1/agents/{agent}/eval-runs", { params: { path: { agent } }, body: questionIds ? { question_ids: questionIds } : {} })),
     onSettled: () => qc.invalidateQueries({ queryKey: evalKeys.runs(agent) }),
   });
 }

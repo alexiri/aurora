@@ -33,7 +33,7 @@ export function EvalsTab({
   // (P5-POLISH-6, C6) A fresh agent shows one empty state (the Questions section's); Judge, Runs and Schedules appear after the first question.
   const hasQuestions = (questions.data?.length ?? 0) > 0;
   if (open) {
-    return <RunDetail key={open.id} agentId={agentId} runId={open.id} compareWith={open.compareWith} canOwn={canOwn} onBack={() => setOpen(null)} />;
+    return <RunDetail key={open.id} agentId={agentId} runId={open.id} compareWith={open.compareWith} canOwn={canOwn} onBack={() => setOpen(null)} onOpenRun={(id) => setOpen({ id })} />;
   }
   return (
     <div className="space-y-8">

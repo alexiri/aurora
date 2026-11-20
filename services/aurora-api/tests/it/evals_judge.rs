@@ -115,6 +115,11 @@ impl W {
     /// An org LLM key on `endpoint` (created through the API, so its value is really sealed),
     /// granted to the agent and set as the agent's judge.
     async fn judge_key(&self, endpoint: &str) -> Uuid {
+        self.judge_key_resp(endpoint).await.0
+    }
+
+    /// As `judge_key`, with the settings response (which carries the judge's `test`).
+    async fn judge_key_resp(&self, endpoint: &str) -> (Uuid, Value) {
         let (s, v) = self
             .call(
                 &self.admin,
@@ -145,7 +150,17 @@ impl W {
             )
             .await;
         assert_eq!(s, 200, "{v}");
-        id
+        (id, v)
+    }
+
+    /// The minimal calls made when a judge is saved (the one user message is `ok?`).
+    async fn test_calls(&self, s: &MockServer) -> usize {
+        s.received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.method == http::Method::POST && is_test_call(r))
+            .count()
     }
 
     async fn judged(&self, q: &str, criteria: &str) {
@@ -287,9 +302,14 @@ impl W {
             .await
             .unwrap()
             .into_iter()
-            .filter(|r| r.method == http::Method::POST)
+            .filter(|r| r.method == http::Method::POST && !is_test_call(r))
             .collect()
     }
+}
+
+/// The judge test sent when settings are saved, not a judged answer.
+fn is_test_call(r: &wiremock::Request) -> bool {
+    String::from_utf8_lossy(&r.body).contains("\"ok?\"")
 }
 
 fn is(got: &[(String, Option<String>)], want: &[(&str, Option<&str>)]) {
@@ -697,4 +717,72 @@ async fn a_redirecting_provider_never_gets_the_key_to_another_host() {
             .map(|r| r.url.path().to_owned())
             .collect::<Vec<_>>()
     );
+}
+
+/// (P5-REFINE-12, C-863) A changed judge is tested with one real call and saved either way; an
+/// unchanged one is not called again.
+#[tokio::test]
+async fn a_changed_judge_is_tested_once_and_saved_whether_or_not_it_answers() {
+    let w = world().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(Seq(Mutex::new(VecDeque::from(["ok".to_owned()]))))
+        .mount(&w.judge)
+        .await;
+    let (key, v) = w.judge_key_resp("judge1").await;
+    assert_eq!(v["test"]["result"], "ok", "{v}");
+    assert_eq!(v["test"]["reason"], Value::Null);
+    assert!(v["test"]["took_ms"].as_i64().is_some_and(|n| n >= 0), "{v}");
+    assert_eq!(v["judge"]["secret_id"], json!(key));
+    assert_eq!(w.test_calls(&w.judge).await, 1);
+
+    // GET and an unchanged PUT carry no test and make no call.
+    let uri = format!("/v1/agents/{}/eval-settings", w.agent);
+    let (s, v) = w.call(&w.member, Method::GET, &uri, None).await;
+    assert_eq!((s, &v["test"]), (200, &Value::Null), "{v}");
+    let (s, v) = w
+        .call(&w.owner, Method::PUT, &uri,
+            Some(json!({"judge": {"secret_id": key, "model_id": "judge-1"}, "regression_notify": true})))
+        .await;
+    assert_eq!((s, &v["test"]), (200, &Value::Null), "{v}");
+    assert_eq!(w.test_calls(&w.judge).await, 1, "unchanged: no new call");
+
+    // A judge whose provider fails: reported, never a refusal, and still saved.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("provider says no: sk-leak"))
+        .mount(&w.other)
+        .await;
+    let (key2, v) = w.judge_key_resp("judge2").await;
+    assert_eq!(v["test"]["result"], "failed", "{v}");
+    assert_eq!(v["test"]["reason"], "unreachable", "{v}");
+    assert!(
+        !v.to_string().contains("sk-leak"),
+        "never the provider's text"
+    );
+    let (_, v) = w.call(&w.member, Method::GET, &uri, None).await;
+    assert_eq!(
+        v["judge"]["secret_id"],
+        json!(key2),
+        "saved although the test failed"
+    );
+    // The audit row says how the test went, and clearing the judge makes no call.
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'eval.settings.update'
+           AND metadata->>'judge_test' = 'failed'",
+    )
+    .fetch_one(w.r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+    let (s, v) = w
+        .call(
+            &w.owner,
+            Method::PUT,
+            &uri,
+            Some(json!({"judge": null, "regression_notify": false})),
+        )
+        .await;
+    assert_eq!((s, &v["test"]), (200, &Value::Null), "{v}");
+    assert_eq!(w.test_calls(&w.other).await, 1);
 }

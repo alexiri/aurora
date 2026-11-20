@@ -9144,6 +9144,23 @@
             }
           }
         ],
+        "requestBody": {
+          "description": "Optional; `{}` or no body runs every enabled question",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/StartEvalRun"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "content": {
@@ -47140,6 +47157,31 @@
           }
         }
       },
+      "EvalJudgeTest": {
+        "type": "object",
+        "description": "The one real model call made when the judge is saved (C-872).",
+        "required": [
+          "result",
+          "took_ms"
+        ],
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`rejected` | `unreachable` | `timeout` when failed, else null. Never the provider's text."
+          },
+          "result": {
+            "type": "string",
+            "description": "`ok` | `failed`."
+          },
+          "took_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "EvalJudgeUsage": {
         "type": "object",
         "required": [
@@ -47752,6 +47794,17 @@
           },
           "regression_notify": {
             "type": "boolean"
+          },
+          "test": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalJudgeTest",
+                "description": "Set only on the response of a `PUT` that changed the judge; null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -65255,6 +65308,23 @@
             "type": "string"
           }
         }
+      },
+      "StartEvalRun": {
+        "type": "object",
+        "properties": {
+          "question_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Run only these questions (1..=20, each a question of the agent); absent = every enabled\nquestion."
+          }
+        },
+        "additionalProperties": false
       },
       "StartLogEntry": {
         "type": "object",

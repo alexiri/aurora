@@ -44,8 +44,9 @@ export interface AltitudeView {
 }
 
 const ADMIN_TOPICS: AdminTopic[] = ["overview", "agents", "apps", "ai-models", "internet-access", "people", "chat-platforms", "data", "platform", "settings"];
-const ORG_TOPICS: OrgTopic[] = ["workspaces", "agents", "apps", "ai-models", "internet-access", "people", "chat-platforms", "data", "settings"];
-const ORG_MEMBER_TOPICS: OrgTopic[] = ["workspaces", "ai-models", "internet-access"];
+// (P5-REFINE-17, rec 8) The Manage <org> sub-nav: Overview first (the organization's own address), then the topics.
+const ORG_TOPICS: OrgTopic[] = ["overview", "agents", "people", "apps", "chat-platforms", "ai-models", "internet-access", "data", "settings"];
+const ORG_MEMBER_TOPICS: OrgTopic[] = ["overview", "ai-models", "internet-access"];
 
 export function visibleTopics(level: "admin", roles: ViewerRoles, alt?: AltitudeView): AdminTopic[];
 export function visibleTopics(level: "org", roles: ViewerRoles, alt?: AltitudeView): OrgTopic[];
@@ -58,8 +59,8 @@ export function visibleTopics(level: Level, roles: ViewerRoles, alt?: AltitudeVi
     // An instance admin acting in an organization sees its pages exactly as its owner would.
     const role = roles.org ?? (roles.instanceAdmin ? "owner" : undefined);
     const list = role === "owner" || role === "admin" ? ORG_TOPICS : role === "member" ? ORG_MEMBER_TOPICS : [];
-    // At Use an organization member lists Workspaces only; AI models and Internet access need Set up.
-    return setup ? list : list.filter((t) => t === "workspaces");
+    // At Use an organization member lists Overview only; AI models and Internet access need Set up.
+    return setup ? list : list.filter((t) => t === "overview");
   }
   const role = roles.workspace ?? (roles.instanceAdmin ? "owner" : undefined);
   if (!role) return [];

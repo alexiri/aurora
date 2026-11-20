@@ -427,15 +427,15 @@ rule and a security-adjacent grant button.
 
 ## Completion report
 
-(Fill in when done; P5-REFINE-20 reads this.)
+(Lane p5-lane6, branch alexiri/p5-lane6, merged master 6cbf3a12 first.)
 
-- **Items done** (scope items 1–10, each with commit id; say which were done after which backend merge):
-- **Contract amendments** (C-872, C-864 ×2) as landed, and any difference from scope 9:
-- **Deviations from this brief, and why** (the avatar limit, the template default, anything the mockup showed that the API
-  cannot do):
-- **Templates:** the five templates' final text is in `web/src/lib/onboarding/templates.ts`; list any the owner should
-  review:
-- **Screenshots compared** (path beside its mockup, both themes, 1256 and 390 px): behaviour-1…behaviour-8, channels-1,
-  channels-2, channels-4, access-3:
-- **Gate counts:** typecheck, lint, vitest, Playwright, axe; cargo fmt/clippy/tests; gen:api:
-- **Open questions for the owner:**
+- **Items done** (one commit, see the lane's log): 1 New agent + templates + After Create; 2 Instructions (Change picture, display-name models, Advanced at Expert with role names, one save bar was already P5-REFINE-2's); 3 Memory one box; 4 Skills; 5 and 5b Tests (words, ANSWER sentences, live counts, Re-run, judge tested); 7 the Access card (Give <Agent> the <key>); 8 altitude rows `memory.key`, `skill.files`; 9a–c Rust; 10 vocabulary.
+  **Waiting (not done):** item 6 Other agents / Link another agent (needs P5-REFINE-10: `peers-tab.tsx` untouched); the **header action** half of item 7 (needs P5-REFINE-11's action slot and its "no AI key" state; `agent-page.tsx`/`agent-state.tsx` untouched; `useStarterKeyOffer` in `starter-key-card.tsx` is ready for it, and "Ask an admin" for non-owners belongs there too); the new Playwright specs of the brief's Tests section (new agent with a template, memory, skill, Re-run, avatar, link, starter key: not written here, nothing could be run).
+- **Contract amendments**: as scope 9, landed in `docs/API_CONTRACTS.md` under **C-863** (settings; the brief calls it C-872, which is the limits entry) and **C-864** (counts, `question_ids`), `docs/05`, `docs/10`. Differences: `reason` is `rejected | unreachable | timeout` (no `not_served`: `PlatformLlm` cannot tell it apart); `question_ids` must be 1..=20 distinct questions of the agent (a duplicate is 422 `invalid` too; disabled questions may be re-run); the body is optional (no body, `{}` or `{question_ids}`); live counts count only rows that have ended (`finished_at` set).
+- **Deviations**: avatar hint says 512 KiB (mockup 2 MB, API limit 512 KiB). Template default General assistant; Name is filled by a chip click, not at open. Role names changed only on the agent page (`ROLE_NAME`); admin endpoint pages and readiness still say Large/Medium/Small (P5-REFINE-13/18?). "Harness" is now "Agent program" on the page. Skill list rows show the stored description as typed, not "Use it when …" prefixed. "On for <Agent>" falls back to "On for this agent" (SkillsTab has no agent name and `agent-page.tsx` is not mine). Run title uses `formatExact` ("19 Nov 2026, 23:58"). "Checked by: <key>" line on a run is not shown (the run carries no key); the Grader section keeps P5-REFINE-1's word "Grader".
+- **Templates**: all five in `web/src/lib/onboarding/templates.ts`; the owner should read the Ops helper and Calendar secretary (they carry a `schedule` prompt for P5-REFINE-14).
+- **Screenshots compared**: not done (no browser run in this lane); P5-REFINE-20 compares. `e2e/chat-v2.spec.ts` screenshot test now opens Advanced via its collapsed line's Show (send-back from P5-REFINE-3); the instructions screenshot baseline will change (new picture block, Advanced).
+- **Tests changed**: web/tests: agents, byo (create dialog: hosted default, More options, router mock), avatar, model-roles-instructions, harness-picker (Agent program), workspace-skills, skill-library, memory-skills (Demo), evals-page (ANSWER sentence + new describe); new: agent-templates, memory-one-box, skill-form, starter-key-card. e2e: altitude.spec (Advanced label), chat-v2.spec, agent-evals.spec (ANSWER sentence). Rust: evals_questions (shape has `test`), evals_judge (+ judge test IT, test calls filtered from `posts`), evals_runs (+ live counts and `question_ids` IT). **Removed**: none. **Production specs for the nightly**: none touch these screens (grep of `scripts/e2e` and `*.prod.spec.ts` found no old strings).
+- **Gate counts**: full web vitest 191 files / 2743 tests passed; `pnpm typecheck` clean; eslint on touched dirs clean; `cargo fmt --check` ok; `scripts/guards/run-all.sh` all passed; `extract-schema --check` up to date; `pnpm gen:api` regenerated schema.d.ts + openapi.json (UPDATE_OPENAPI); evals + openapi + permission_matrix ITs 34/34 passed; clippy -D warnings (aurora-api, aurora-db) clean. Playwright not run (not allowed here).
+- **Open questions for the owner**: (1) rename Large/Medium/Small everywhere (admin pages) too? (2) show "Use it when" prefix on skill list rows?
+

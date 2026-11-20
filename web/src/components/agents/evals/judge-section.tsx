@@ -12,7 +12,7 @@ import { Section } from "@/components/ui/section";
 import { useModelReadiness } from "@/lib/api/credential-grants";
 import { useEvalSettings, usePutEvalSettings, type EvalSettings } from "@/lib/api/evals";
 
-import { evalErrorMessage } from "./copy";
+import { evalErrorMessage, judgeTestMessage } from "./copy";
 
 /** The judge control: who may change it, in words. Exported for the unit test of the disabled state. */
 export const JUDGE_OWNER_ONLY = "Only workspace owners can choose the grader key. You can still turn the regression notice on or off.";
@@ -25,6 +25,8 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
   const [modelId, setModelId] = useState(settings.judge?.model_id ?? "");
   const [notify, setNotify] = useState(settings.regression_notify);
   const bar = useSaveBar();
+  const [tested, setTested] = useState<EvalSettings["test"]>(null);
+  const testedText = judgeTestMessage(tested);
   const current = settings.judge;
   const keys = readiness.data?.keys ?? [];
   const known = keys.some((k) => k.secret_id === secretId);
@@ -44,7 +46,16 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
       : current
         ? { secret_id: current.secret_id, model_id: current.model_id }
         : null;
-    put.mutate({ judge, regression_notify: notify }, { onSuccess: () => bar.flash() });
+    setTested(null);
+    put.mutate(
+      { judge, regression_notify: notify },
+      {
+        onSuccess: (saved) => {
+          bar.flash();
+          setTested(saved.test ?? null);
+        },
+      },
+    );
   }
 
   return (
@@ -85,6 +96,11 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
         checked={notify}
         onChange={setNotify}
       />
+      {testedText ? (
+        <Notice tone={tested?.result === "ok" ? "accent" : "pending"} role="status" data-testid="judge-test-result">
+          {testedText}
+        </Notice>
+      ) : null}
       {incomplete ? (
         <Notice tone="pending" role="status">
           Enter the grader model to save this key.

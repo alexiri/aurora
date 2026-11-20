@@ -35,7 +35,7 @@ describe("route helper (C-960)", () => {
   it("links a topic at each level; the organization's Apps link names its tab", () => {
     expect(topicHref("admin", "overview")).toBe("/admin");
     expect(topicHref("admin", "ai-models")).toBe("/admin/ai-models");
-    expect(topicHref("org", "workspaces", "acme")).toBe("/o/acme");
+    expect(topicHref("org", "overview", "acme")).toBe("/o/acme");
     expect(topicHref("org", "apps", "acme")).toBe("/o/acme/apps?tab=accounts");
     expect(topicHref("workspace", "overview", "acme", "main")).toBe("/o/acme/w/main");
     expect(topicHref("workspace", "internet-access", "acme", "main")).toBe("/o/acme/w/main/internet-access");
