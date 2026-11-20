@@ -166,6 +166,26 @@ test.describe("1280×800", () => {
     expect((await sizeOf(line)).height).toBeLessThan(20);
   });
 
+  // FIX-187: the rail's top cell and the thread header end on one line, collapsed or expanded.
+  for (const scheme of ["light", "dark"] as const) {
+    test(`the status rail's top cell lines up with the thread header (${scheme})`, async ({ page }) => {
+      await open(page, scheme);
+      const bottom = async (loc: ReturnType<Page["locator"]>) => {
+        const b = await sizeOf(loc);
+        return b.y + b.height;
+      };
+      const threadHeader = page.getByRole("region", { name: "Chat" }).locator("header").first();
+      const line = await bottom(threadHeader);
+      const expand = rail(page).getByRole("button", { name: "Expand status panel" });
+      const cell = expand.locator("xpath=..");
+      expect(Math.round((await sizeOf(cell)).height), "collapsed top cell height").toBe(64);
+      expect(Math.abs((await bottom(cell)) - line), "collapsed cell bottom vs thread header").toBeLessThanOrEqual(1);
+      await expand.click();
+      const panelHeader = rail(page).getByRole("heading", { name: "Status", level: 2 }).locator("xpath=ancestor::header[1]");
+      expect(Math.abs((await bottom(panelHeader)) - line), "expanded header bottom vs thread header").toBeLessThanOrEqual(1);
+    });
+  }
+
   for (const scheme of ["light", "dark"] as const) {
     test(`header is one ~56 px row, the card fills the height, the expanded rail pushes the thread (${scheme})`, async ({ page }) => {
       await page.addInitScript((k) => window.localStorage.setItem(k, "expanded"), KEY);
