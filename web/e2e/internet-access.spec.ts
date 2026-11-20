@@ -121,6 +121,8 @@ test.describe("Internet access (mocked API)", () => {
     await statefulPolicy(page, `/v1/orgs/${org.id}/policy`, "organization");
     await statefulPolicy(page, `/v1/workspaces/${ws.id}/policy`, "workspace");
     await open(page, "/o/acme/internet-access");
+    // (P5-REFINE-17, org-8) The organization's own limits sit behind "More settings".
+    await page.getByText("More settings").click();
     await page.getByLabel("Which websites agents may reach").selectOption("credentialed_only");
     const bar = page.getByRole("region", { name: "Unsaved changes" });
     await expect(bar).toContainText("1 unsaved change");
@@ -139,6 +141,7 @@ test.describe("Internet access (mocked API)", () => {
     await mockApi(page);
     await statefulPolicy(page, `/v1/orgs/${org.id}/policy`, "organization");
     await open(page, "/o/acme/internet-access");
+    await page.getByText("More settings").click();
     const row = page.getByRole("row").filter({ hasText: "Main workspace" });
     await expect(row).toContainText("Blocked unless listed");
     await expect(row).toContainText("Turned off");

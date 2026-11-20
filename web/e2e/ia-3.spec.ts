@@ -87,6 +87,10 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(above).toContainText("Set for you by an Aurora administrator");
         await expect(page.getByTestId("keys-notice")).toContainText("2 AI keys no longer follow these rules");
         await expect(page.getByRole("link", { name: /Accounts/ }).first()).toHaveAttribute("href", /kind=ai-key/);
+        // (P5-REFINE-17, org-7) Endpoints are collapsed, one disclosure per endpoint.
+        await expect(page.getByTestId("models-summary")).toBeVisible();
+        await page.getByTestId("models-endpoints").locator("summary").first().click();
+        await page.getByTestId("models-endpoints").locator("details > summary").first().click();
         const models = page.getByLabel("Allowed models");
         await models.fill("claude-haiku");
         const put = page.waitForRequest((r) => r.method() === "PUT" && /\/governance$/.test(r.url()));

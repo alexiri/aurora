@@ -1,72 +1,240 @@
 "use client";
 
 import { Errors, Locked, PostureSelect, TextArea } from "@/components/governance/controls";
+import { IdPicker, joinIds, splitIds, type PickOption } from "@/components/governance/id-picker";
 import { Switch } from "@/components/ui/switch";
-import { KEY_SCOPES, issuesUnder, type EndpointForm, type GovForm, type GovIssues } from "@/lib/api/governance";
+import { useAccounts } from "@/lib/api/accounts";
+import { issuesUnder, type EndpointForm, type GovForm, type GovIssues } from "@/lib/api/governance";
+import { useGroups } from "@/lib/api/groups";
+import { useMe, useWorkspaces, type Org } from "@/lib/api/queries";
 
-/** The organization's model rules (C-966): the AI key posture and, for each endpoint, what it permits. */
-export function ModelsTab({ form, patch, issues, readOnly }: { form: GovForm; patch: (p: Partial<GovForm>) => void; issues: GovIssues; readOnly: boolean }) {
+/** The names of the organization's own AI keys, read from a workspace's accounts list (scope "organization"; members may read it). */
+export function useOrgKeyNames(orgId: string): { names: string[]; pending: boolean } {
+  const workspaces = useWorkspaces(orgId);
+  const first = workspaces.data?.items[0]?.id;
+  const accounts = useAccounts({ kind: "workspace", id: first ?? "" }, !!first);
+  const names = (accounts.data?.items ?? []).filter((a) => a.kind === "ai_key" && a.scope === "organization").map((a) => a.name);
+  return { names, pending: workspaces.isPending || (!!first && accounts.isPending) };
+}
+
+const listWords = (xs: string[]) => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
+/** "Agents in Acme use **Company key**. People may add their own." — from the form, so it never disagrees with the switches. */
+export function modelsSummarySentence(orgName: string, keyNames: string[], peopleMayAdd: boolean): string {
+  const use = keyNames.length === 0 ? "keys added in a workspace" : listWords(keyNames);
+  return `Agents in ${orgName} use ${use}. ${peopleMayAdd ? "People may add their own." : "People may not add their own."}`;
+}
+
+/** The key scopes of an endpoint in words, from the same value the switches show. */
+export function keyScopesWords(scopes: string[]): string {
+  if (scopes.length === 0) return "Nobody may add keys";
+  const w = scopes.map((s) => (s === "organization" ? "the organization" : "workspaces"));
+  return `Keys may be added by ${listWords(w)}`;
+}
+
+/**
+ * The organization's model rules (C-966, P5-REFINE-17 org-7): the summary and three plain rows first (which key agents
+ * use, whether people may add their own, who can use it), then the endpoints and the advanced settings collapsed. Origin
+ * settings are pick lists of names, never typed ids.
+ */
+export function ModelsTab({
+  org,
+  form,
+  patch,
+  issues,
+  readOnly,
+}: {
+  org: Org;
+  form: GovForm;
+  patch: (p: Partial<GovForm>) => void;
+  issues: GovIssues;
+  readOnly: boolean;
+}) {
+  const me = useMe();
+  const workspaces = useWorkspaces(org.id);
+  const groups = useGroups(org.id);
+  const keys = useOrgKeyNames(org.id);
   const setEp = (i: number, p: Partial<EndpointForm>) =>
     patch({ endpoints: form.endpoints.map((e, j) => (j === i ? { ...e, ...p } : e)) });
+  const setAll = (fn: (e: EndpointForm) => Partial<EndpointForm>) => patch({ endpoints: form.endpoints.map((e) => ({ ...e, ...fn(e) })) });
+
+  const orgOptions: PickOption[] = (me.data?.memberships ?? []).flatMap((m) => (m.org.id ? [{ id: m.org.id, label: m.org.name ?? m.org.slug }] : []));
+  const wsOptions: PickOption[] = (workspaces.data?.items ?? []).map((w) => ({ id: w.id, label: w.personal_of ? `${w.personal_of.name} (personal)` : w.name }));
+  const teamOptions: PickOption[] = (groups.data?.items ?? []).map((g) => ({ id: g.id, label: g.name }));
+
+  const live = form.endpoints.filter((e) => e.allowed);
+  const peopleMayAdd = live.length > 0 && live.every((e) => e.key_scopes.includes("workspace"));
+  const lead = form.endpoints[0];
+  const chosenTeams = lead ? splitIds(lead.team_ids) : [];
+  const chosenWs = lead ? splitIds(lead.workspace_ids) : [];
+  const everyone = chosenTeams.length === 0 && chosenWs.length === 0;
+  const nameOf = (id: string, opts: PickOption[]) => opts.find((o) => o.id === id)?.label ?? `Unknown (${id.slice(0, 8)})`;
+  const addUse = (kind: "team_ids" | "workspace_ids", id: string) =>
+    setAll((e) => (e.locked.permitted ? {} : { [kind]: joinIds([...splitIds(e[kind]), id]) }));
+  const removeUse = (kind: "team_ids" | "workspace_ids", id: string) =>
+    setAll((e) => ({ [kind]: joinIds(splitIds(e[kind]).filter((x) => x !== id)) }));
+  const addable = [
+    ...teamOptions.filter((o) => !chosenTeams.includes(o.id)).map((o) => ({ ...o, kind: "team_ids" as const, text: `Team: ${o.label}` })),
+    ...wsOptions.filter((o) => !chosenWs.includes(o.id)).map((o) => ({ ...o, kind: "workspace_ids" as const, text: `Workspace: ${o.label}` })),
+  ];
+
   return (
     <>
-      <PostureSelect
-        label="LLM posture"
-        value={form.llmPosture}
-        locked={form.llmPostureLocked}
-        setting="governance.llm.minimum_posture"
-        readOnly={readOnly}
-        onChange={(v) => patch({ llmPosture: v })}
-        options={[
-          { value: "open", label: "Open: agents may also use their own LLM credentials" },
-          { value: "sanctioned_only", label: "Sanctioned only: only Aurora-held keys" },
-        ]}
-      />
-      <Errors messages={issuesUnder(issues, "/llm/posture")} />
-      {form.endpoints.length === 0 ? <p className="text-sm text-ink-2">No LLM endpoints are configured on this instance.</p> : null}
-      {form.endpoints.map((e, i) => {
-        const base = `/llm/endpoints/${e.id}`;
-        const dis = readOnly;
-        return (
-          <fieldset key={e.id} className="min-w-0 space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
-            <legend className="px-1 font-display text-base font-semibold text-ink">
-              {e.display_name} <span className="font-mono text-xs font-normal text-muted">{e.id}</span>
-            </legend>
-            <label className="flex items-center gap-2 text-sm font-medium text-ink">
-              <Switch checked={e.allowed} disabled={dis || e.locked.permitted} onCheckedChange={(v) => setEp(i, { allowed: v })} />
-              Permitted
-              {e.locked.permitted ? <Locked /> : null}
-            </label>
-            <Errors messages={issuesUnder(issues, `${base}/allowed`)} />
-            <div role="group" aria-label={`Key scopes for ${e.display_name}`} className="text-sm text-ink">
-              <span className="font-medium">Key scopes</span>
-              {e.locked.key_scopes ? <Locked setting="governance.llm.allowed_key_scopes" /> : null}
-              <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
-                {KEY_SCOPES.map((s) => (
-                  <label key={s} className="flex items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      className="size-4 accent-accent"
-                      checked={e.key_scopes.includes(s)}
-                      disabled={dis || e.locked.key_scopes}
-                      onChange={(ev) => setEp(i, { key_scopes: ev.target.checked ? [...e.key_scopes, s] : e.key_scopes.filter((x) => x !== s) })}
-                    />
-                    {s}
+      <p className="text-base text-ink" data-testid="models-summary">
+        {modelsSummarySentence(org.name, keys.names, peopleMayAdd)}
+      </p>
+      <dl className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface text-sm shadow-card">
+        <div className="px-4 py-3">
+          <dt className="font-medium text-ink">Key agents use</dt>
+          <dd className="text-ink-2">Used unless someone picks another</dd>
+          <dd className="mt-0.5 text-ink">{keys.names.length === 0 ? "No company key yet" : listWords(keys.names)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <div>
+            <dt className="font-medium text-ink">People may add their own key</dt>
+            <dd className="text-ink-2">{peopleMayAdd ? "Allowed" : "Not allowed"}</dd>
+          </div>
+          <Switch
+            aria-label="People may add their own key"
+            checked={peopleMayAdd}
+            disabled={readOnly || live.length === 0}
+            onCheckedChange={(v) =>
+              setAll((e) =>
+                e.locked.key_scopes || !e.allowed ? {} : { key_scopes: v ? [...new Set([...e.key_scopes, "workspace"])] : e.key_scopes.filter((s) => s !== "workspace") },
+              )
+            }
+          />
+        </div>
+        <div className="space-y-2 px-4 py-3">
+          <dt className="font-medium text-ink">Who can use {keys.names[0] ?? "the company key"}</dt>
+          <dd>
+            <ul aria-label="Who can use the key" className="flex flex-wrap gap-1.5">
+              {everyone ? <li className="text-ink-2">Everyone in {org.name}</li> : null}
+              {chosenTeams.map((id) => (
+                <li key={`t${id}`} className="inline-flex items-center gap-1 rounded-full bg-subtle px-2.5 py-0.5 text-ink">
+                  {nameOf(id, teamOptions)}
+                  {readOnly ? null : (
+                    <button type="button" aria-label={`Remove ${nameOf(id, teamOptions)}`} className="px-1 text-ink-2" onClick={() => removeUse("team_ids", id)}>
+                      ×
+                    </button>
+                  )}
+                </li>
+              ))}
+              {chosenWs.map((id) => (
+                <li key={`w${id}`} className="inline-flex items-center gap-1 rounded-full bg-subtle px-2.5 py-0.5 text-ink">
+                  {nameOf(id, wsOptions)}
+                  {readOnly ? null : (
+                    <button type="button" aria-label={`Remove ${nameOf(id, wsOptions)}`} className="px-1 text-ink-2" onClick={() => removeUse("workspace_ids", id)}>
+                      ×
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </dd>
+          {readOnly || addable.length === 0 ? null : (
+            <select
+              aria-label="Add team or workspace"
+              className="h-9 rounded-control border border-line bg-surface px-2 text-sm text-ink"
+              value=""
+              onChange={(ev) => {
+                const pick = addable.find((o) => `${o.kind}:${o.id}` === ev.target.value);
+                if (pick) addUse(pick.kind, pick.id);
+              }}
+            >
+              <option value="">Add team or workspace</option>
+              {addable.map((o) => (
+                <option key={`${o.kind}:${o.id}`} value={`${o.kind}:${o.id}`}>
+                  {o.text}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      </dl>
+
+      <details className="rounded-card border border-line bg-surface shadow-card" data-testid="models-endpoints">
+        <summary className="cursor-pointer px-4 py-3 font-display text-base font-semibold text-ink">Endpoints ({form.endpoints.length})</summary>
+        <div className="space-y-3 border-t border-line p-4">
+          {form.endpoints.length === 0 ? <p className="text-sm text-ink-2">No LLM endpoints are configured on this instance.</p> : null}
+          {form.endpoints.map((e, i) => {
+            const base = `/llm/endpoints/${e.id}`;
+            const dis = readOnly;
+            return (
+              <details key={e.id} className="min-w-0 rounded-control border border-line px-3 py-2">
+                <summary className="cursor-pointer font-medium text-ink">
+                  {e.display_name}
+                  <span className="ml-2 font-normal text-ink-2">{e.allowed ? "Permitted" : "Not permitted"}</span>
+                </summary>
+                <div className="mt-3 space-y-4">
+                  <label className="flex items-center gap-2 text-sm font-medium text-ink">
+                    <Switch checked={e.allowed} disabled={dis || e.locked.permitted} onCheckedChange={(v) => setEp(i, { allowed: v })} />
+                    Permitted
+                    {e.locked.permitted ? <Locked /> : null}
                   </label>
-                ))}
+                  <Errors messages={issuesUnder(issues, `${base}/allowed`)} />
+                  <div role="group" aria-label={`Key scopes for ${e.display_name}`} className="space-y-1.5 text-sm text-ink">
+                    <span className="font-medium">Key scopes</span>
+                    {e.locked.key_scopes ? <Locked setting="governance.llm.allowed_key_scopes" /> : null}
+                    <p className="text-ink-2">{keyScopesWords(e.key_scopes)}</p>
+                    <label className="flex items-center gap-2">
+                      <Switch
+                        checked={e.key_scopes.includes("organization")}
+                        disabled={dis || e.locked.key_scopes}
+                        onCheckedChange={(v) => setEp(i, { key_scopes: v ? [...e.key_scopes, "organization"] : e.key_scopes.filter((x) => x !== "organization") })}
+                      />
+                      Organization keys
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <Switch
+                        checked={e.key_scopes.includes("workspace")}
+                        disabled={dis || e.locked.key_scopes}
+                        onCheckedChange={(v) => setEp(i, { key_scopes: v ? [...e.key_scopes, "workspace"] : e.key_scopes.filter((x) => x !== "workspace") })}
+                      />
+                      Workspace keys
+                    </label>
+                  </div>
+                  <Errors messages={issuesUnder(issues, `${base}/key_scopes`)} />
+                  <TextArea id={`${e.id}-models`} label="Allowed models" hint="One per line. Empty means the instance list (or any)." value={e.allowed_models} locked={e.locked.allowed_models} readOnly={dis} onChange={(v) => setEp(i, { allowed_models: v })} errors={issuesUnder(issues, `${base}/allowed_models`)} />
+                </div>
+              </details>
+            );
+          })}
+        </div>
+      </details>
+
+      <details className="rounded-card border border-line bg-surface shadow-card" data-testid="models-advanced">
+        <summary className="cursor-pointer px-4 py-3 font-display text-base font-semibold text-ink">Advanced</summary>
+        <div className="space-y-4 border-t border-line p-4">
+          <PostureSelect
+            label="Which AI keys agents may use"
+            value={form.llmPosture}
+            locked={form.llmPostureLocked}
+            setting="governance.llm.minimum_posture"
+            readOnly={readOnly}
+            onChange={(v) => patch({ llmPosture: v })}
+            options={[
+              { value: "open", label: "Open: agents may also use their own LLM credentials" },
+              { value: "sanctioned_only", label: "Sanctioned only: only Aurora-held keys" },
+            ]}
+          />
+          <Errors messages={issuesUnder(issues, "/llm/posture")} />
+          {form.endpoints.map((e, i) => {
+            const base = `/llm/endpoints/${e.id}`;
+            return (
+              <div key={e.id} className="space-y-3">
+                <p className="font-medium text-ink">Who can use {e.display_name}</p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <IdPicker id={`${e.id}-orgs`} label="Organizations" value={e.org_ids} options={orgOptions} readOnly={readOnly} onChange={(v) => setEp(i, { org_ids: v })} />
+                  <IdPicker id={`${e.id}-wss`} label="Workspaces" value={e.workspace_ids} options={wsOptions} readOnly={readOnly} onChange={(v) => setEp(i, { workspace_ids: v })} />
+                  <IdPicker id={`${e.id}-teams`} label="Teams" value={e.team_ids} options={teamOptions} readOnly={readOnly} onChange={(v) => setEp(i, { team_ids: v })} />
+                </div>
+                <Errors messages={issuesUnder(issues, `${base}/origin`)} />
               </div>
-            </div>
-            <Errors messages={issuesUnder(issues, `${base}/key_scopes`)} />
-            <TextArea id={`${e.id}-models`} label="Allowed models" hint="One per line. Empty means the instance list (or any)." value={e.allowed_models} locked={e.locked.allowed_models} readOnly={dis} onChange={(v) => setEp(i, { allowed_models: v })} errors={issuesUnder(issues, `${base}/allowed_models`)} />
-            <div className="grid gap-3 sm:grid-cols-3">
-              <TextArea id={`${e.id}-orgs`} label="Origin: organization ids" value={e.org_ids} readOnly={dis} onChange={(v) => setEp(i, { org_ids: v })} errors={issuesUnder(issues, `${base}/origin/allowed_organization_ids`)} />
-              <TextArea id={`${e.id}-wss`} label="Origin: workspace ids" value={e.workspace_ids} readOnly={dis} onChange={(v) => setEp(i, { workspace_ids: v })} errors={issuesUnder(issues, `${base}/origin/allowed_workspace_ids`)} />
-              <TextArea id={`${e.id}-teams`} label="Origin: team ids" value={e.team_ids} readOnly={dis} onChange={(v) => setEp(i, { team_ids: v })} errors={issuesUnder(issues, `${base}/origin/allowed_team_ids`)} />
-            </div>
-            <Errors messages={issuesUnder(issues, `${base}/origin`).filter((m) => !/^allowed_/.test(m))} />
-          </fieldset>
-        );
-      })}
+            );
+          })}
+        </div>
+      </details>
     </>
   );
 }

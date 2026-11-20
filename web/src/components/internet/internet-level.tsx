@@ -253,6 +253,8 @@ export interface InternetLevelProps {
   scope: PolicyScope;
   orgId: string;
   orgSlug: string;
+  /** The organization's name, for the page's sentence. */
+  orgName?: string;
   wsSlug?: string;
   /** Owners and admins of the level; others see the limits only. */
   canEdit: boolean;
@@ -393,20 +395,25 @@ export function InternetLevel(p: InternetLevelProps) {
   return (
     <div className="max-w-page space-y-8">
       {header(
-        <>
-          <span data-testid="internet-summary" className="block font-display text-xl text-ink">
-            {summary}
-          </span>
-          <span className="mt-2 block">
-            What agents may do in apps is set for each agent, on its{" "}
-            <Link href={workspace ? wsRoutes(p.orgSlug, p.wsSlug ?? "").agents() : orgRoutes(p.orgSlug).agents()} className="font-medium text-link underline">
-              Apps &amp; access tab
-            </Link>
-            .{workspace ? "" : " Workspaces can only restrict further what you set here."}
-          </span>
-        </>,
+        workspace ? (
+          <>
+            <span data-testid="internet-summary" className="block font-display text-xl text-ink">
+              {summary}
+            </span>
+            <span className="mt-2 block">
+              What agents may do in apps is set for each agent, on its{" "}
+              <Link href={wsRoutes(p.orgSlug, p.wsSlug ?? "").agents()} className="font-medium text-link underline">
+                Apps &amp; access tab
+              </Link>
+              .
+            </span>
+          </>
+        ) : (
+          // (P5-REFINE-17, org-8) The organization's page is two groups: Your rules and Set above you.
+          <span data-testid="internet-summary">What agents in {p.orgName ?? "the organization"} may reach.</span>
+        ),
         <Button variant="outline" size="sm" onClick={() => setHistory(true)}>
-          History of changes
+          {workspace ? "History of changes" : "History"}
         </Button>,
       )}
 
@@ -510,21 +517,52 @@ export function InternetLevel(p: InternetLevelProps) {
         </Section>
       ) : null}
 
-      <Section id="internet-limits" title="Limits and defaults">
-        <ScopeLadder
-          above={limits}
-          minimumNote={note}
-          collapsed={workspace}
-          here={
-            <div className="space-y-5">
+      {workspace ? (
+        <Section id="internet-limits" title="Limits and defaults">
+          <ScopeLadder
+            above={limits}
+            minimumNote={note}
+            collapsed
+            here={
+              <div className="space-y-5">
+                {gov?.controls}
+                <PolicyDefaults state={state} edit={ed.edit} workspace orgSlug={p.orgSlug} />
+              </div>
+            }
+            below={p.below}
+          />
+          {p.belowNote}
+        </Section>
+      ) : (
+        <>
+          {/* (org-8) Set above you: one line each, with who set it. The allow-list shows once. */}
+          <Section id="internet-above" title="Set above you">
+            {limits.length === 0 ? (
+              <p className="text-sm text-ink-2">Nothing above {p.orgName ?? "the organization"} limits what agents may reach.</p>
+            ) : (
+              <ul aria-label="Set above you" className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface text-sm shadow-card">
+                {limits.map((l) => (
+                  <li key={l.label} className="px-4 py-3">
+                    <p className="font-medium text-ink">{l.label}</p>
+                    <p className="text-ink-2">{l.value_display}</p>
+                    <p className="text-xs text-muted">Set by {l.source === "instance" ? "the instance admin" : "your organization's admins"}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {note ? <p className="text-sm text-ink-2">{note}</p> : null}
+          </Section>
+          <details className="rounded-card border border-line bg-surface shadow-card" data-testid="internet-more">
+            <summary className="cursor-pointer px-4 py-3 font-display text-base font-semibold text-ink">More settings</summary>
+            <div className="space-y-5 border-t border-line p-4">
               {gov?.controls}
-              <PolicyDefaults state={state} edit={ed.edit} workspace={workspace} orgSlug={p.orgSlug} />
+              <PolicyDefaults state={state} edit={ed.edit} workspace={false} orgSlug={p.orgSlug} />
+              {p.below ? <ScopeLadder above={[]} below={p.below} /> : null}
+              {p.belowNote}
             </div>
-          }
-          below={p.below}
-        />
-        {p.belowNote}
-      </Section>
+          </details>
+        </>
+      )}
 
       {/* (P5-POLISH-7, F1) The simulator is a button that opens it in a dialog, not a form at the bottom of the page. */}
       {workspace ? (
