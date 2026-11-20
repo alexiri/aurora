@@ -157,6 +157,6 @@ describe("Details by role (D-412, SEC-141)", () => {
     await act(async () => {
       qc.setQueryData(["agents", AGENT, "sandbox"], now);
     });
-    expect(screen.getByTestId("computer-started").textContent).toMatch(/running$/);
+    await waitFor(() => expect(screen.getByTestId("computer-started").textContent).toMatch(/running$/));
   });
 });

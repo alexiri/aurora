@@ -37,11 +37,10 @@ function useCountdown(secs: number | null, stamp: number): number | null {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (secs === null) return;
-    setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [secs, stamp]);
-  return secs === null ? null : Math.max(0, secs - Math.floor((now - stamp) / 1000));
+  return secs === null ? null : Math.max(0, secs - Math.max(0, Math.floor((now - stamp) / 1000)));
 }
 
 const TONE: Record<ComputerView["word"], StatusTone> = { on: "ok", off: "idle", starting: "idle", stopping: "idle", failed: "fail" };

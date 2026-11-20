@@ -204,9 +204,11 @@ function EditorPane({
   });
   // Leaving by any in-page way asks first (Back, another file, the breadcrumb, the page's own links): see `leave-gate`.
   const saveRef = useRef(save);
-  saveRef.current = save;
   const textRef = useRef(text);
-  textRef.current = text;
+  useEffect(() => {
+    saveRef.current = save;
+    textRef.current = text;
+  });
   useEffect(() => {
     if (!dirty) return;
     setLeaveGuard({ name, save: () => saveRef.current(), discard: () => setSaved(textRef.current) });

@@ -402,10 +402,35 @@ in tests, and master's CI broke until the CI Watcher fixed it in `ee7bfa0d`.) So
 
 Fill in when done (P5-REFINE-20 reads it).
 
-- Items done, with commit: 1 · 2 · 3 · 4 · 5 · 6 · 7 · 8 · 9.
-- Items that waited for P5-REFINE-4 and what shipped meanwhile:
-- The agent's own files list and where it came from (item 3); how a large text file is read (item 4); the instance-admin field and
-  whether the member API view still carried the image/runner (item 7):
-- Deviations and why:
-- Screenshots compared (Before / After / mine, per finding key, both themes, 1256 and 390 px):
-- Open questions:
+- Items done, with commit: 1 · 2 · 3 · 4 · 5 · 6 · 7 · 8 · 9, all in the lane-A commits after `1e83fd48` (WIP) up to the final commit
+  of this brief. Nothing waited: P5-REFINE-4 (C-1057..C-1060) had merged, so the state line, Sleep now, member-safe details and
+  the restart line use the real fields (`SandboxView.computer`, `boot_id`, `POST …/sandbox/sleep`, `files/text?preview=1`).
+- Items that waited for P5-REFINE-4: none. Partly pending on the backend: the SSH user name and the `aurora ssh` handle in the plain
+  command (C-1060: the terminator still needs the agent id), so the plain command shows `…@host` and **Copy command** puts the id in.
+- Agent's own files: `AGENT_OWN_ENTRIES` = `AGENTS.md`, `CLAUDE.md`, `memory` at the workspace root (supervisor: `docs/12`
+  `instruction_files`, 0444, and the `memory/` sync, `services/aurora-supervisor/tests/it/home.rs`). A large text file is read with
+  `GET …/files/text?preview=1`: the API answers the first **256 KiB** (not 1 MiB), `truncated`, no etag, so the note says
+  "Showing the first 256 KiB of 3.4 MiB." Instance-admin field: `useMe().user.is_instance_admin`; the API view carries `image` and
+  `runner_id` only for admins (C-1059); the page reads nothing from a member's view (asserted with a view that carries them).
+- Deviations and why: (1) the keep-awake sentence has no "(up to 4 hours)": no public instance field carries `terminal.awake_cap_secs`
+  (open question). (2) Dark ANSI colours 0 and 8 were 1.0:1 and 3.9:1 on the pane (the brief said dark passes): changed to #7c8aa5 and
+  #94a3b8; light 10, 11, 14 darkened; the contrast test reads `globals.css` for both themes. (3) Move to… shows a clash as the API's
+  `file_exists` sentence inline, not the upload clash dialog. (4) The phone row of Files keeps the existing stacked rows (size and time on
+  their own lines under the name), not the combined "3.2 KiB · Just now" line. (5) Phone "Dani's own" group starts collapsed (read once
+  on mount). (6) The Terminal's Esc-then-Tab target is a visually hidden button after the pane (the pop-out button is Expert and hidden
+  on phones). (7) No progress bar in the Waking state (the brief says none; the mockup has one). (8) The state line is the line above every
+  sub-page; the header's own state is P5-REFINE-11's.
+- Tests: new `computer-page.test.tsx` (state line per phase, altitude of actions, Sleep now, details by role, poll change),
+  `terminal-refine-15.test.tsx` (restart line, keep-awake sentence, pop-out Expert and phone-hidden, key row, Ctrl latch),
+  `terminal-palette-contrast.test.ts` (both themes, 16 colours), and new cases in `files-page.test.tsx` (groups, failed state, Move to…,
+  drag, hidden, slash), `files-viewer.test.tsx` (preview, CSV, parseCsv, dot, Save and leave), `ssh.test.tsx`, `agent-sections.test.ts`.
+  Changed: `terminal-tab*.test.tsx` (wrap with the altitude client; reconnect end state), `terminal-tab.test.tsx`,
+  `agent-sandbox-failure.test.tsx` (state line and admin fold), `status-rail.test.tsx`. Removed: none. Playwright specs edited by reading
+  (not run here): `files.spec.ts`, `files.prod.spec.ts`, `terminal.spec.ts` (end state, keep-awake sentence, phone keys),
+  `ssh.spec.ts`, `agent-tabs.spec.ts`, `previews.spec.ts`; new spec `computer.spec.ts` NOT written. `terminal.prod.spec.ts` and
+  `files.prod.spec.ts` are for the nightly. Commands: `pnpm typecheck` clean; full `pnpm exec vitest run` 2851/2852 then the one
+  failure (arbitrary Tailwind value in `csv.tsx`) fixed and re-run green; eslint on touched files clean after fixing two
+  react-hooks findings.
+- Screenshots compared (Before / After / mine): none taken: the sandbox refuses Playwright, so no screenshots of my own; CI Watcher / P5-REFINE-20.
+- Open questions: public field for the terminal's awake cap; the terminator mapping handles to user names; whether a Playwright
+  `computer.spec.ts` with axe in both themes should be added by the CI Watcher.

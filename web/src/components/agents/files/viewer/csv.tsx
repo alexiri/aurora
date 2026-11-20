@@ -79,7 +79,7 @@ export function CsvTable({ name, text, downloadHref, onShowText }: { name: strin
           </a>
         </div>
       </div>
-      <div role="region" aria-label={`${name} as a table`} tabIndex={0} className="max-h-[min(65dvh,40rem)] max-w-full overflow-auto rounded-card border border-line bg-surface">
+      <div role="region" aria-label={`${name} as a table`} tabIndex={0} className="max-h-96 max-w-full overflow-auto rounded-card border border-line bg-surface">
         <table className="min-w-max text-left text-sm text-ink">
           <thead>
             <tr>
