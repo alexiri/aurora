@@ -152,6 +152,20 @@ jobs:
       - name: Sandbox base-image override smoke test
         run: SMOKE_FULL=1 bash scripts/images/sandbox-base-smoke.sh
 
+  # FIX-190/191 (docs/12 §Terminal): the web terminal's harness wrappers of the FULL sandbox image start in a
+  # PTY under the sandbox's confinement and show their prompt (no signal exit, no wizard, no blank screen).
+  sandbox-harness-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Free runner disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the full sandbox image
+        run: podman build -f images/sandbox/Containerfile --target sandbox -t localhost/aurora-sandbox:harness-smoke .
+      - name: Terminal harness smoke
+        run: bash scripts/images/sandbox-harness-smoke.sh localhost/aurora-sandbox:harness-smoke pi
+
   # FIX-101: the hosted scenarios the PR job skips because they need the FULL sandbox image (Chromium, the pinned
   # Claude Code CLI; ~10 min cold): SEC-41 (the browser path, hosted.rs s8d and its sibling). With CI=true a
   # SKIPPED: line fails the script, and no exception is declared here.

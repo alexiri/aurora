@@ -89,8 +89,10 @@ export PI_CODING_AGENT_DIR
 model="${AURORA_PI_MODEL:-}"
 models_json="${AURORA_PI_MODELS_JSON:-}"
 key_var="${AURORA_PI_KEY_VAR:-}"
+settings_json="${AURORA_PI_SETTINGS_JSON:-}"
 # Pi uses none of the other harnesses' variables.
 unset HARNESSES_ENABLED AURORA_PI_MODEL AURORA_PI_MODELS_JSON AURORA_PI_KEY_VAR AURORA_PI_UNAVAILABLE \
+    AURORA_PI_SETTINGS_JSON \
     AURORA_CLAUDE_UNAVAILABLE AURORA_CODEX_UNAVAILABLE AURORA_CODEX_MODEL AURORA_CODEX_BASE_URL \
     ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY
 # No update check, no telemetry (docs/12: with these a turn makes only the inference request).
@@ -98,6 +100,34 @@ PI_OFFLINE=1
 PI_TELEMETRY=0
 PI_SKIP_VERSION_CHECK=1
 export PI_OFFLINE PI_TELEMETRY PI_SKIP_VERSION_CHECK
+# (FIX-190, D-404) `settings.json` with a turn's keys (no project-trust question, no install
+# telemetry, a quiet start). Pi writes this file itself on its first start, and the person may edit
+# it, so it is merged, not replaced: Aurora's keys are added where the file lacks them and every value
+# already there is kept. A file that already has them all is not touched; one that is not a JSON
+# object, or a link, is left alone.
+merge_settings() {
+    _w_file=$PI_CODING_AGENT_DIR/settings.json
+    if [ ! -e "$_w_file" ] && [ ! -L "$_w_file" ]; then
+        _w_new=$settings_json
+    elif [ -f "$_w_file" ] && [ ! -L "$_w_file" ]; then
+        _w_new=$(/usr/bin/jq --argjson a "$settings_json" \
+            'if type == "object" and . != ($a * .) then $a * . else empty end' "$_w_file" 2>/dev/null) ||
+            return 0
+    else
+        return 0
+    fi
+    [ -n "$_w_new" ] || return 0
+    _w_tmp=$PI_CODING_AGENT_DIR/.settings.json.aurora.$$
+    /usr/bin/rm -f "$_w_tmp"
+    if (
+        umask 077
+        set -C
+        printf '%s\n' "$_w_new" >"$_w_tmp"
+    ) 2>/dev/null; then
+        /usr/bin/mv -f "$_w_tmp" "$_w_file" 2>/dev/null
+    fi
+    /usr/bin/rm -f "$_w_tmp"
+}
 if [ -n "$model" ] && [ -n "$models_json" ]; then
     # `models.json` names the placeholder through `$NAME`, resolved from this environment.
     case $key_var in
@@ -105,6 +135,15 @@ if [ -n "$model" ] && [ -n "$models_json" ]; then
     *) OPENAI_API_KEY=aurora-placeholder && export OPENAI_API_KEY ;;
     esac
     printf '%s\n' "$models_json" >"$PI_CODING_AGENT_DIR/models.json" 2>/dev/null
+    if [ -n "$settings_json" ]; then
+        merge_settings
+    fi
     exec "$bin" --provider aurora --model "$model" "$@"
+fi
+if [ "$#" -eq 0 ]; then
+    # (FIX-190, D-404) No model for Pi and nothing asked: Pi would open its own provider setup, which
+    # a person in Aurora cannot complete. Arguments (`pi --version`, `pi --help`) still pass.
+    echo "pi: no model is set up for this agent's terminal; check the agent's model on its Behaviour page" >&2
+    exit 1
 fi
 exec "$bin" "$@"

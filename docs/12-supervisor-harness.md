@@ -1037,7 +1037,21 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   of their own: `AURORA_<HARNESS>_MODEL` plus what the CLI needs, rendered by the adapter's own
   config code so a terminal and a turn agree: **Pi** gets `AURORA_PI_MODELS_JSON` (the `models.json`
   that the wrapper writes into `PI_CODING_AGENT_DIR=/workspace/.aurora/terminal/pi`) and
-  `AURORA_PI_KEY_VAR`, with `PI_OFFLINE`, `PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK` set; **goose**
+  `AURORA_PI_KEY_VAR`, with `PI_OFFLINE`, `PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK` set. **(FIX-190,
+  D-404)** Pi also gets `AURORA_PI_SETTINGS_JSON`, a turn's `settings.json` (`adapters/pi/config.rs`
+  `terminal_settings`: the keys and values of `render_settings`, i.e. the retry bound,
+  `defaultProjectTrust: "never"` (no project-trust question), no install telemetry, `quietStartup`,
+  plus `collapseChangelog: true`, which only the interface reads: one line instead of the "What's
+  New" page after an image update bumps Pi). Pi has no other first-run screen when a model is
+  configured: login, provider and model choice open only on `/login` and `/model`, and the update
+  check is off (`PI_SKIP_VERSION_CHECK`, `PI_OFFLINE`). Pi writes that file itself on its first start and
+  the person may edit it, so the wrapper merges rather than replaces: it adds the keys the file lacks
+  (`jq`, Aurora's values under the file's) and keeps every value already there; a file that has them
+  all, is not a JSON object, or is a link is not touched. `models.json` is still written on every
+  start (it holds only the gateway provider). With no model for Pi and no arguments, the wrapper says
+  so ("no model is set up for this agent's terminal; check the agent's model on its Behaviour page",
+  exit 1) instead of opening Pi's provider setup; arguments still pass through. Pi runs on the
+  image's system Node.js, which needs the full ICU data (`docs/11 §Sandbox image`, FIX-190); **goose**
   gets `AURORA_GOOSE_PROVIDER` (`anthropic` or `litellm`) and `AURORA_GOOSE_HOST`, which the wrapper
   turns into goose's own variables, with `GOOSE_PATH_ROOT=/workspace/.aurora/terminal/goose`,
   telemetry, keyring and session naming off. **(FIX-189, D-404)** A bare `goose` opens its setup

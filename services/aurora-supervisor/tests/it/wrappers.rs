@@ -557,6 +557,119 @@ fn the_pi_wrapper_configures_pi_from_the_file_and_keeps_it_off_the_vendor_networ
     }
 }
 
+fn json_file(path: &Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// (FIX-190, D-404) `pi`'s first start writes the turn's `settings.json` (no project-trust question,
+/// no install telemetry, a quiet start) and nothing secret.
+#[test]
+fn the_pi_wrapper_writes_the_turns_settings_on_first_start() {
+    let (rig, _) = Rig::started(
+        "pi",
+        &terminal_file("pi", GOLDEN_MODEL, "anthropic_messages"),
+        &[],
+        &[],
+    );
+    let path = rig.state.join("settings.json");
+    let want: serde_json::Value =
+        serde_json::from_str(&aurora_supervisor::adapters::pi::config::terminal_settings())
+            .unwrap();
+    let v = json_file(&path);
+    assert_eq!(v, want);
+    assert_eq!(v["defaultProjectTrust"], "never");
+    assert_eq!(v["enableInstallTelemetry"], false);
+    assert_eq!(v["quietStartup"], true);
+    assert_eq!(v["collapseChangelog"], true);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !text.contains("aurora-placeholder") && !text.contains("apiKey"),
+        "{text}"
+    );
+    assert!(
+        !rig.seen_env()
+            .unwrap()
+            .contains_key("AURORA_PI_SETTINGS_JSON")
+    );
+    let names: Vec<_> = std::fs::read_dir(&rig.state)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.starts_with('.'))
+        .collect();
+    assert!(names.is_empty(), "temp files left: {names:?}");
+}
+
+/// (FIX-190) An existing `settings.json` (Pi's own, or the person's) is merged, never replaced: Aurora's
+/// keys are added where missing, every value there is kept, and a file that has them all, or is not
+/// a JSON object, stays byte-identical.
+#[test]
+fn the_pi_wrapper_keeps_the_persons_settings() {
+    let file = terminal_file("pi", GOLDEN_MODEL, "openai_chat");
+    let turn: serde_json::Value =
+        serde_json::from_str(&aurora_supervisor::adapters::pi::config::render_settings()).unwrap();
+    let start = |existing: &str| {
+        let rig = Rig::new("pi");
+        rig.write_env(&file);
+        std::fs::create_dir_all(&rig.state).unwrap();
+        let path = rig.state.join("settings.json");
+        std::fs::write(&path, existing).unwrap();
+        let out = rig.run_as(&[], &[]);
+        assert!(out.status.success(), "{out:?}");
+        assert!(rig.seen_args().is_some(), "the binary ran");
+        (rig, path)
+    };
+    // What Pi writes on its first start: its key is kept, Aurora's are added.
+    let (_rig, path) = start("{\n  \"lastChangelogVersion\": \"1.5.2\"\n}\n");
+    let v = json_file(&path);
+    assert_eq!(v["lastChangelogVersion"], "1.5.2");
+    for k in [
+        "retry",
+        "defaultProjectTrust",
+        "enableInstallTelemetry",
+        "quietStartup",
+    ] {
+        assert_eq!(v[k], turn[k], "{k}");
+    }
+    // A choice of the person's wins, also inside a nested object.
+    let (_rig, path) = start(
+        "{\"defaultProjectTrust\":\"ask\",\"quietStartup\":false,\"retry\":{\"maxRetries\":7}}",
+    );
+    let v = json_file(&path);
+    assert_eq!(v["defaultProjectTrust"], "ask");
+    assert_eq!(v["quietStartup"], false);
+    assert_eq!(v["retry"]["maxRetries"], 7);
+    assert_eq!(v["retry"]["enabled"], turn["retry"]["enabled"]);
+    assert_eq!(v["enableInstallTelemetry"], false);
+    // Every key present (with other values and an extra key): untouched, byte for byte.
+    let full = "{ \"retry\": {\"enabled\": false, \"maxRetries\": 0, \"baseDelayMs\": 1},\n\"defaultProjectTrust\": \"always\", \"enableInstallTelemetry\": true, \"quietStartup\": false, \"collapseChangelog\": false, \"theme\": \"light\" }\n";
+    let (_rig, path) = start(full);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), full);
+    // Not JSON, or not an object: the person's to fix, untouched.
+    for bad in ["{ not json", "[1, 2]\n"] {
+        let (_rig, path) = start(bad);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), bad);
+    }
+}
+
+/// (FIX-190, D-404) No model for Pi: a bare `pi` says so instead of opening Pi's provider setup; with
+/// arguments the binary still runs, unchanged.
+#[test]
+fn the_pi_wrapper_without_a_model_explains_instead_of_opening_its_setup() {
+    let rig = Rig::new("pi");
+    rig.write_env("HARNESSES_ENABLED='pi'\n");
+    let out = rig.run_as(&[], &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr).trim_end(),
+        "pi: no model is set up for this agent's terminal; check the agent's model on its Behaviour page"
+    );
+    assert!(rig.seen_env().is_none(), "the binary ran");
+    for args in [vec!["--version"], vec!["--help"]] {
+        let (_, seen) = Rig::started("pi", "HARNESSES_ENABLED='pi'\n", &args, &[]);
+        assert_eq!(seen, args);
+    }
+}
+
 /// `goose`: configured by environment, its own root, the right provider for the dialect.
 #[test]
 fn the_goose_wrapper_sets_the_provider_for_the_dialect_and_its_own_root() {
