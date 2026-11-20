@@ -106,7 +106,7 @@ describe("getting-started guide: every state", () => {
     expect(screen.queryByLabelText("New LLM key")).not.toBeInTheDocument();
     expect(screen.queryByText("Choose a model")).not.toBeInTheDocument();
     const hello = await screen.findByRole("link", { name: "Say hello to Daneel" });
-    expect(hello).toHaveAttribute("href", expect.stringContaining("/o/acme/w/ops/agents/daneel?tab=chat&draft="));
+    expect(hello).toHaveAttribute("href", expect.stringContaining("/o/acme/w/ops/agents/daneel?tab=chat&open=direct&draft="));
     // Two steps (C-927): the key is done, one left.
     expect(screen.getByText("1 of 2 done")).toBeInTheDocument();
     expect(screen.queryByText(/Give Daneel access to/)).not.toBeInTheDocument();

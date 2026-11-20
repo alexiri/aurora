@@ -265,7 +265,7 @@ function StepBody({
             </Button>
           ) : isOwner || step.state === "todo" ? (
             <Link
-              href={`${base}/agents/${agent.handle}?tab=chat&draft=${encodeURIComponent(HELLO_MESSAGE)}`}
+              href={`${base}/agents/${agent.handle}?tab=chat&open=direct&draft=${encodeURIComponent(HELLO_MESSAGE)}`}
               // `text-on-primary!`: the global `a { color: inherit }` would otherwise win over the utility.
               className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}
             >

@@ -136,24 +136,30 @@ export function ChatTab({
   // page during a client-side navigation) and kept here until the person edits the box or sends, so a remount of the
   // composer (the direct chat resolving, the transcript loading) cannot lose it. A draft opens the direct chat.
   // `useSearchParams()` is null outside the app router (tests rendering the tab alone), as approvals-view handles.
-  const routerDraft = useSearchParams()?.get("draft") ?? null;
+  const routerParams = useSearchParams();
+  const routerDraft = routerParams?.get("draft") ?? null;
+  const routerOpensDirect = routerParams?.get("open") === "direct";
   const [draft, setDraft] = useState<string | null>(null);
   const [seenDraft, setSeenDraft] = useState<string | null>(null);
-  // On a phone the conversation and the list are two views: a draft opens the direct chat's thread (the box with the
-  // suggestion) and it stays open when the draft is used up, until the person goes back to the list.
-  const [draftOpensThread, setDraftOpensThread] = useState(false);
+  // On a phone the conversation and the list are two views. A link that means "open the chat with this agent" (the connect
+  // journey's Try it in chat / Open chat, the guide's Say hello) carries `open=direct`: the direct conversation's thread
+  // opens, with its box, and stays open until the person goes back to the list. A plain link to the Chat tab (and a draft
+  // alone) lands on the list, as before.
+  const [directOpen, setDirectOpen] = useState(false);
+  const [seenOpen, setSeenOpen] = useState(false);
+  if (routerOpensDirect !== seenOpen) {
+    setSeenOpen(routerOpensDirect);
+    if (routerOpensDirect) setDirectOpen(true);
+  }
   if (routerDraft !== seenDraft) {
     setSeenDraft(routerDraft);
-    if (routerDraft) {
-      setDraft(routerDraft.slice(0, 500));
-      setDraftOpensThread(true);
-    }
+    if (routerDraft) setDraft(routerDraft.slice(0, 500));
   }
   const picked = draft !== null ? null : pickedRaw;
   const select = useCallback(
     (id: string | null, mode?: "push" | "replace", seq?: number) => {
       setDraft(null);
-      setDraftOpensThread(false);
+      setDirectOpen(false);
       selectRaw(id, mode, seq);
     },
     [selectRaw],
@@ -261,7 +267,7 @@ export function ChatTab({
     setArchived(false);
     select(null, "replace");
   };
-  const threadOpen = picked !== null || (draftOpensThread && !archived);
+  const threadOpen = picked !== null || (directOpen && !archived);
   const titleOf = (c: Conversation) => conversationTitle(c);
   const ctx: RailContext = {
     status,

@@ -307,6 +307,8 @@ describe("the journey for a fixed agent and a given app", () => {
     expect(chat.pathname).toBe("/o/acme/w/main/agents/daneel");
     // The link carries `tab=chat`: without it the agent page keeps the page the person was on (Access).
     expect(chat.searchParams.get("tab")).toBe("chat");
+    // `open=direct`: on a phone the direct conversation's thread opens (a plain Chat link lands on the list).
+    expect(chat.searchParams.get("open")).toBe("direct");
     expect(chat.searchParams.get("draft")).toBe("Which pull requests are waiting for my review?");
     expect(screen.getByRole("button", { name: "Another app" })).toBeInTheDocument();
     // Close at the left edge of the footer (the dialog's own X is the other Close).
@@ -326,7 +328,7 @@ describe("the journey for a fixed agent and a given app", () => {
     fireEvent.change(screen.getByLabelText("Token"), { target: { value: "ghp_x" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await screen.findByText(/Daneel can now read Team repos, and asks you/);
-    expect(screen.getByRole("link", { name: "Open chat" })).toHaveAttribute("href", "/o/acme/w/main/agents/daneel?tab=chat");
+    expect(screen.getByRole("link", { name: "Open chat" })).toHaveAttribute("href", "/o/acme/w/main/agents/daneel?tab=chat&open=direct");
     expect(screen.queryByRole("link", { name: "Try it in chat" })).toBeNull();
   });
 
