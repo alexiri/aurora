@@ -2440,6 +2440,19 @@ Schedules · Webhooks · Chats** with counts, and one list. Empty: "No automatio
   runs more often than every 5 minutes as you type ("Too often: a schedule can run at most every 5 minutes. Try */5 * * * *.");
   the API stays the authority. **Advanced** (Set up, collapsed): "Only wake when a check finds something" with the command, and
   "Keep running without you". A cron the presets do not cover reads "Custom schedule", with the raw cron under Technical details.
+- **Every year and Once** (phase 5, P5-SCHED-ONCE Part C, D-421, D-407, C-1092): the **When** row is **Every 5 minutes · Hourly ·
+  Every day · Weekdays · Weekly · Every year · Once · Custom**. **Every year** is a day of the month, a month and a time (cron
+  `M H D Mo *`; "Every year on 27 November at 10:00 · next: 27 Nov 2027 (Zurich time)"); **Once** is a date (default tomorrow)
+  and a time (default 09:00), sent as `run_at` (a local `YYYY-MM-DDTHH:MM`, no cron): "Once, on Sat 21 Nov at 09:00 (Zurich
+  time)". Both use the same time zone select as the other presets. The Once instant is previewed through the API's `run_at`
+  preview as you type, and a past time reads "Pick a time in the future" and disables the button (the API stays the
+  authority). Edit of a yearly cron opens on Every year, of a `run_at` schedule on Once (`cronToSpec`, `runAtToSpec`).
+  **A one-time schedule's row**: pending "Once · Sat 21 Nov at 09:00 (Zurich time)" with **On** / **Paused**; when its time
+  has come while the agent is paused (`effective_frozen`), the notice "Waiting: <Agent> is paused. It runs when <Agent> is
+  resumed."; **Done** (`completed_at`): the badge **Done**, "Ran on Sat 21 Nov at 09:00 · removed on 21 Dec" (30 days
+  later, `SCHEDULE_DONE_RETENTION`), the actions **Run now**, **Run again** (the form on Once with a new date, tomorrow) and
+  Delete; no Edit, Pause or Resume. A Done schedule is neither On nor Paused. A one-time run in the person's own chat renders
+  with the same schedule message as any run ("Schedule <name> · run"; the long name wraps, no horizontal scroll at 390 px).
 - **Runs** is a table **When · Outcome · Conversation** (Answered, Skipped by the gate, Failed, Running, Skipped; the reason in
   words). **Run now** shows "Started · Open the conversation" under the row, a link to the run's own thread
   (`?tab=chat&c=<id>`, `lib/automation-thread.ts`). Every run and every accepted delivery has its **own conversation** (C-1074).
@@ -3220,6 +3233,10 @@ workspaces' conversations; limits by repository or project inside an account.
     close, accept `data.url` **only** if it is a same-origin path starting with `/o/` (no scheme, no
     `//`, no backslash) else go to `/`, focus an existing Aurora window and navigate it, else open one.
     `pushsubscriptionchange` does nothing (the page re-syncs on its next load).
+    (Phase 5, P5-SCHED-ONCE Part C, C-835, C-1095) `schedule_answer` shows "Aurora — a scheduled task has an answer for
+    you" / "Open the conversation to read it." (with the payload's `title`: "Aurora — <title>"), `tag` `aurora-schedule`;
+    its `url` is accepted by the same `/o/` path rule as the other types, so a click opens exactly the conversation path
+    the push carried; the answer is never in the payload.
     (P4-011B spec batch, D-267(a), C-835, SEC-102) It is registered **only** by the Turn-on
     gesture (never on page load for a person who has not opted in) and unregistered when this
     browser's registration is removed; it also has no `importScripts` and no `clients.claim`, and a

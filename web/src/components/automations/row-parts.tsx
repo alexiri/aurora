@@ -14,8 +14,9 @@ export type AutomationKind = "schedule" | "webhook" | "chat";
 const ICON = { schedule: ClockIcon, webhook: LinkIcon, chat: MessageIcon } as const;
 const KIND_WORD = { schedule: "Schedule", webhook: "Webhook", chat: "Chat" } as const;
 
-/** (P5-REFINE-14, D-407) The state in words: **On** or **Paused**, nothing else. */
-export function StateBadge({ on }: { on: boolean }) {
+/** (P5-REFINE-14, D-407) The state in words: **On** or **Paused**; a one-time schedule that ran is **Done** (P5-SCHED-ONCE, D-407). */
+export function StateBadge({ on, done = false }: { on: boolean; done?: boolean }) {
+  if (done) return <Badge tone="neutral">Done</Badge>;
   return <Badge tone={on ? "accent" : "neutral"}>{on ? "On" : "Paused"}</Badge>;
 }
 
@@ -28,6 +29,7 @@ export function RowShell({
   kind,
   name,
   on,
+  done = false,
   when,
   body,
   meta,
@@ -38,6 +40,8 @@ export function RowShell({
   kind: AutomationKind;
   name: string;
   on: boolean;
+  /** A one-time schedule that ran: the badge says Done and it counts as neither On nor Paused. */
+  done?: boolean;
   when: ReactNode;
   body?: ReactNode;
   meta?: ReactNode;
@@ -58,7 +62,7 @@ export function RowShell({
               <span className="sr-only">{KIND_WORD[kind]}: </span>
               {name}
             </h3>
-            <StateBadge on={on} />
+            <StateBadge on={on} done={done} />
           </div>
           <p className="mt-0.5 text-sm text-ink-2">{when}</p>
         </div>

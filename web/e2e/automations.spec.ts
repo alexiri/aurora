@@ -117,6 +117,54 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
         expect(errors).toEqual([]);
       });
 
+      // (P5-SCHED-ONCE, Part C) Once and Every year in the form; the one-time row's words; Done with Run again.
+      test("Once and Every year: the summaries, a past time is refused as you type, no horizontal scroll", async ({ page }) => {
+        const state: State = { schedules: [], hooks: [], patches: [] };
+        await mockAutomations(page, state);
+        await page.route("**/v1/agents/*/schedules/preview", async (route) => {
+          const body = route.request().postDataJSON() as { run_at?: string };
+          if (body.run_at && body.run_at.startsWith("2020"))
+            return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { code: "invalid_run_at", message: "is in the past", details: { fields: [{ path: "/run_at", message: "is in the past" }] } } }) });
+          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ next: ["2027-11-27T09:00:00Z"], interval_secs: null, too_frequent: false, min_interval_secs: 300 }) });
+        });
+        await openThemed(page, PAGE, scheme);
+        await page.getByRole("button", { name: "New automation" }).first().click();
+        await page.getByRole("button", { name: /On a schedule/ }).click();
+        const form = page.getByRole("form", { name: "New schedule" });
+        await form.getByLabel("Name").fill("Anniversary");
+        await form.getByLabel("Prompt").fill("Remind me.");
+        await form.getByRole("radio", { name: "Every year" }).check();
+        await form.getByRole("combobox", { name: "Day of the month" }).selectOption("27");
+        await form.getByRole("combobox", { name: "Month" }).selectOption("11");
+        await form.getByRole("combobox", { name: "Time of day" }).selectOption("10:00");
+        await expect(form.getByTestId("schedule-summary")).toContainText("Every year on 27 November at 10:00 · next: 27 Nov 2027 (Zurich time)");
+        await check(page);
+        await form.getByRole("radio", { name: "Once" }).check();
+        await expect(form.getByLabel("Date")).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
+        await expect(form.getByTestId("schedule-summary")).toContainText(/^Once, on \w{3} \d{1,2} \w{3} at 09:00 \(Zurich time\)\./);
+        await form.getByLabel("Date").fill("2020-01-01");
+        await expect(form.getByText("Pick a time in the future")).toBeVisible();
+        await expect(form.getByRole("button", { name: "Create schedule" })).toBeDisabled();
+        await check(page);
+        await page.screenshot({ path: `${SHOTS}/once-form-${scheme}-${width}.png` });
+      });
+
+      test("a one-time schedule: pending and Done with Run again", async ({ page }) => {
+        const ONCE = { ...SCHEDULE, id: "00000000-0000-4000-8000-0000000000a2", name: "Water the plants", cron: null, run_at: "2026-11-21T09:00:00", next_fire_at: "2026-11-21T08:00:00Z", next_runs: ["2026-11-21T08:00:00Z"] };
+        const DONE = { ...ONCE, id: "00000000-0000-4000-8000-0000000000a3", name: "Pay the invoice", completed_at: "2026-11-21T08:00:00Z", next_fire_at: null, next_runs: [] };
+        await mockAutomations(page, { schedules: [ONCE, DONE], hooks: [], patches: [] });
+        await openThemed(page, PAGE, scheme);
+        await expect(page.getByText("Once · Sat 21 Nov at 09:00 (Zurich time)")).toBeVisible();
+        await expect(page.getByText("Ran on Sat 21 Nov at 09:00 · removed on 21 Dec")).toBeVisible();
+        await expect(page.getByText("Done", { exact: true })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Run again" })).toBeVisible();
+        await check(page);
+        await page.screenshot({ path: `${SHOTS}/once-rows-${scheme}-${width}.png` });
+        await page.getByRole("button", { name: "Run again" }).click();
+        await expect(page.getByRole("form", { name: "Edit schedule" }).getByRole("radio", { name: "Once" })).toBeChecked();
+        await check(page);
+      });
+
       test("Run now opens the run's own thread; Pause has an Undo", async ({ page }) => {
         const state: State = { schedules: [SCHEDULE], hooks: [], patches: [] };
         await mockAutomations(page, state);

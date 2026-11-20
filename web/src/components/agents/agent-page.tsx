@@ -285,6 +285,7 @@ export function AgentPage() {
               key={requestedTab ?? "automations"}
               agentId={agent.id}
               agentName={agent.name}
+              agentFrozen={agent.effective_frozen}
               agentBase={`${base}/agents/${agent.handle}`}
               orgId={workspace.data.org_id}
               wsId={workspace.data.id}

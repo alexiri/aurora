@@ -8,32 +8,58 @@
 /** The API's shortest interval between two runs (C-1077 `min_interval_secs: 300`). */
 export const MIN_GAP_MINUTES = 5;
 
-export type SchedulePreset = "every5" | "hourly" | "daily" | "weekdays" | "weekly" | "custom";
+export type SchedulePreset = "every5" | "hourly" | "daily" | "weekdays" | "weekly" | "yearly" | "once" | "custom";
 
-/** The presets in the order the form shows them. There is none shorter than five minutes. */
+/**
+ * The presets in the order the form shows them. There is none shorter than five minutes. (P5-SCHED-ONCE, Part C) **Every year**
+ * is a cron (`M H D Mo *`); **Once** is not a cron at all: the form sends `run_at`.
+ */
 export const PRESETS: readonly { value: SchedulePreset; label: string }[] = [
   { value: "every5", label: "Every 5 minutes" },
   { value: "hourly", label: "Hourly" },
   { value: "daily", label: "Every day" },
   { value: "weekdays", label: "Weekdays" },
   { value: "weekly", label: "Weekly" },
+  { value: "yearly", label: "Every year" },
+  { value: "once", label: "Once" },
   { value: "custom", label: "Custom" },
 ];
 
 /** 0 = Sunday … 6 = Saturday, as cron counts them. */
 export const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 
+/** Index 0 = January. */
+export const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
+
 export interface ScheduleSpec {
   preset: SchedulePreset;
   /** 0–59: the minute of "Hourly", the minute of the time of day for the others. */
   minute: number;
-  /** 0–23: the hour of "Every day", "Weekdays" and "Weekly". */
+  /** 0–23: the hour of "Every day", "Weekdays", "Weekly", "Every year" and "Once". */
   hour: number;
   /** 0–6 (Sunday = 0): the day of "Weekly". */
   weekday: number;
+  /** 1–31: the day of the month of "Every year". */
+  day: number;
+  /** 1–12: the month of "Every year". */
+  month: number;
+  /** `YYYY-MM-DD`: the date of "Once" (empty until the form fills in tomorrow). */
+  date: string;
 }
 
-export const DEFAULT_SPEC: ScheduleSpec = { preset: "every5", minute: 0, hour: 9, weekday: 1 };
+export const DEFAULT_SPEC: ScheduleSpec = { preset: "every5", minute: 0, hour: 9, weekday: 1, day: 1, month: 1, date: "" };
+
+/** (C-1092) The local wall time a one-time schedule is sent as: `2026-11-21T09:00`. Empty without a date. */
+export function specToRunAt(spec: ScheduleSpec): string {
+  return spec.date ? `${spec.date}T${clock(spec.hour, spec.minute)}` : "";
+}
+
+/** Reads a one-time schedule's `run_at` (`YYYY-MM-DDTHH:MM[:SS]`) back into a spec on **Once**. */
+export function runAtToSpec(runAt: string): ScheduleSpec {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(runAt);
+  if (!m) return { ...DEFAULT_SPEC, preset: "once" };
+  return { ...DEFAULT_SPEC, preset: "once", date: m[1], hour: Number(m[2]), minute: Number(m[3]) };
+}
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 
@@ -60,6 +86,8 @@ export function specToCron(spec: ScheduleSpec): string | null {
       return `${m} ${spec.hour} * * 1-5`;
     case "weekly":
       return `${m} ${spec.hour} * * ${spec.weekday}`;
+    case "yearly":
+      return `${m} ${spec.hour} ${spec.day} ${spec.month} *`;
     default:
       return null;
   }
@@ -72,7 +100,15 @@ export function cronToSpec(cron: string | null | undefined): ScheduleSpec {
   const f = cron.trim().split(/\s+/);
   if (f.length !== 5) return custom;
   const [mi, ho, dom, mon, dow] = f;
-  if (dom !== "*" || mon !== "*") return custom;
+  if (dom !== "*" || mon !== "*") {
+    // (P5-SCHED-ONCE) One day of one month at a time of day: Every year.
+    const minute = int(mi, 0, 59);
+    const hour = int(ho, 0, 23);
+    const day = int(dom, 1, 31);
+    const month = int(mon, 1, 12);
+    if (dow === "*" && minute !== null && hour !== null && day !== null && month !== null) return { ...DEFAULT_SPEC, preset: "yearly", minute, hour, day, month };
+    return custom;
+  }
   if (mi === "*/5" && ho === "*" && dow === "*") return { ...DEFAULT_SPEC, preset: "every5" };
   const minute = int(mi, 0, 59);
   if (minute === null) return custom;
@@ -169,6 +205,8 @@ export function cadenceWords(cron: string | null | undefined): string | null {
       return `Every weekday at ${clock(s.hour, s.minute)}`;
     case "weekly":
       return `Every ${WEEKDAY_NAMES[s.weekday]} at ${clock(s.hour, s.minute)}`;
+    case "yearly":
+      return `Every year on ${s.day} ${MONTH_NAMES[s.month - 1]} at ${clock(s.hour, s.minute)}`;
     default:
       return null;
   }

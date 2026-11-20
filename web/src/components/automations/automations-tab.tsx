@@ -91,9 +91,12 @@ export function AutomationsTab({
   workspaceName,
   narrationCards,
   initialFilter = "all",
+  agentFrozen = false,
 }: {
   agentId: string;
   agentName: string;
+  /** The agent is paused: a one-time schedule that is due reads "Waiting: <Agent> is paused" (P5-SCHED-ONCE). */
+  agentFrozen?: boolean;
   /** `/o/<org>/w/<ws>/agents/<handle>`: the page a run's thread link starts from. */
   agentBase: string;
   orgId?: string;
@@ -174,7 +177,7 @@ export function AutomationsTab({
             <ItemList aria-label="Automations">
               {show("schedules")
                 ? sch.map((s) => (
-                    <ScheduleRow key={s.id} agentId={agentId} s={s} agentBase={agentBase} defaultTimezone={defaultTimezone} workspaceName={workspaceName} wsId={wsId} canOwn={canOwn} />
+                    <ScheduleRow key={s.id} agentId={agentId} s={s} agentBase={agentBase} agentName={agentName} agentFrozen={agentFrozen} defaultTimezone={defaultTimezone} workspaceName={workspaceName} wsId={wsId} canOwn={canOwn} />
                   ))
                 : null}
               {show("webhooks") ? hooks.map((w) => <WebhookRow key={w.id} agentId={agentId} w={w} agentBase={agentBase} wsId={wsId} canOwn={canOwn} onReveal={setReveal} />) : null}

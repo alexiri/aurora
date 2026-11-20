@@ -1,12 +1,32 @@
 import { describe, expect, it } from "vitest";
 
-import { cadenceWords, cronToSpec, isTooFrequent, minGapMinutes, PRESETS, specToCron, whenWords, zoneCity, type ScheduleSpec } from "@/lib/cron";
+import { cadenceWords, cronToSpec, isTooFrequent, minGapMinutes, PRESETS, runAtToSpec, specToCron, specToRunAt, whenWords, zoneCity, type ScheduleSpec } from "@/lib/cron";
 
-const spec = (p: Partial<ScheduleSpec>): ScheduleSpec => ({ preset: "daily", minute: 0, hour: 9, weekday: 1, ...p });
+const spec = (p: Partial<ScheduleSpec>): ScheduleSpec => ({ preset: "daily", minute: 0, hour: 9, weekday: 1, day: 1, month: 1, date: "", ...p });
 
 describe("presets", () => {
   it("there is no preset shorter than five minutes", () => {
-    expect(PRESETS.map((p) => p.label)).toEqual(["Every 5 minutes", "Hourly", "Every day", "Weekdays", "Weekly", "Custom"]);
+    expect(PRESETS.map((p) => p.label)).toEqual(["Every 5 minutes", "Hourly", "Every day", "Weekdays", "Weekly", "Every year", "Once", "Custom"]);
+  });
+
+  it("Every year is one day of one month: M H D Mo *, and reads back", () => {
+    const s = spec({ preset: "yearly", day: 27, month: 11, hour: 10 });
+    expect(specToCron(s)).toBe("0 10 27 11 *");
+    expect(cronToSpec("0 10 27 11 *")).toMatchObject({ preset: "yearly", minute: 0, hour: 10, day: 27, month: 11 });
+    expect(whenWords("0 10 27 11 *", "Europe/Zurich")).toBe("Every year on 27 November at 10:00 · Zurich");
+    // A day without a month (or the reverse), or a weekday, is still Custom.
+    expect(cronToSpec("0 10 27 * *").preset).toBe("custom");
+    expect(cronToSpec("0 10 * 11 *").preset).toBe("custom");
+    expect(cronToSpec("0 10 27 11 1").preset).toBe("custom");
+    expect(cronToSpec("0 10 32 11 *").preset).toBe("custom");
+    expect(cronToSpec("0 10 27 13 *").preset).toBe("custom");
+  });
+
+  it("Once has no cron; run_at is the local date and time, and reads back", () => {
+    expect(specToCron(spec({ preset: "once" }))).toBeNull();
+    expect(specToRunAt(spec({ preset: "once", date: "2026-11-21", hour: 9, minute: 0 }))).toBe("2026-11-21T09:00");
+    expect(specToRunAt(spec({ preset: "once" }))).toBe("");
+    expect(runAtToSpec("2026-11-21T09:30:00")).toMatchObject({ preset: "once", date: "2026-11-21", hour: 9, minute: 30 });
   });
 
   it.each([

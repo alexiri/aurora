@@ -106,4 +106,12 @@ describe("a webhook delivery's first message", () => {
     expect(screen.getByText("Schedule Morning summary · run")).toBeInTheDocument();
     expect(screen.getByText("Summarise the night")).toBeInTheDocument();
   });
+
+  it("a one-time run in the person's own chat uses the same renderer, and a long name wraps instead of widening the page (P5-SCHED-ONCE)", () => {
+    const name = "Water-the-plants-on-the-balcony-before-the-weekend-" + "x".repeat(60);
+    show({ text: "Remind me to water the plants", display: { kind: "schedule", name, schedule_id: "s", run_id: "r" } });
+    const box = screen.getByTestId("automation-message");
+    expect(box).toHaveTextContent(`Schedule ${name} · run`);
+    expect(box.className).toContain("break-words");
+  });
 });

@@ -51,7 +51,7 @@ export function AutomationMessage({ display, ts, text }: { display: AutomationDi
   const time = formatTime(ts, "");
   if (display.kind === "schedule") {
     return (
-      <div className="space-y-1" data-testid="automation-message">
+      <div className="space-y-1 break-words" data-testid="automation-message">
         <p className="font-semibold">Schedule {display.name} · run</p>
         {time ? <p className="text-xs opacity-80">{time}</p> : null}
         {text?.trim() ? <p className="whitespace-pre-wrap">{text}</p> : null}
