@@ -19,6 +19,8 @@ import { Select } from "@/components/ui/select";
 import { Altitude } from "@/components/ui/altitude";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { fieldErrors } from "@/lib/api/errors";
+import { AutomationsBulkBar } from "@/components/automations/automations-bulk";
+import { BulkCheckbox, BulkSelectAll, useBulkOn, useSelection } from "@/components/ui/bulk-bar";
 import { CopyCurlButton } from "@/components/ui/copy-curl";
 import { FromYourTerminal } from "@/components/ui/from-your-terminal";
 import { webhookCurl } from "@/lib/copy-as-curl";
@@ -168,7 +170,7 @@ export function WebhookForm({
   );
 }
 
-function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w: Webhook; onSecret: (url: string, name: string) => void; wsId?: string; canOwn?: boolean }) {
+function WebhookRow({ agentId, w, onSecret, wsId, canOwn, select }: { agentId: string; w: Webhook; onSecret: (url: string, name: string) => void; wsId?: string; canOwn?: boolean; select?: { checked: boolean; onChange: (on: boolean) => void } }) {
   const [editing, setEditing] = useState(false);
   const [showDeliveries, setShowDeliveries] = useState(false);
   const [reassigning, setReassigning] = useState(false);
@@ -186,6 +188,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
   return (
     <li className="space-y-3 p-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {select ? <BulkCheckbox name={w.name} checked={select.checked} onChange={select.onChange} /> : null}
         <h3 className="font-display text-base font-semibold text-ink">{w.name}</h3>
         <code className="break-all font-mono text-xs text-ink-2">{w.url_prefix}…</code>
         <span className="text-xs text-muted">verification: {w.verification.kind}</span>
@@ -271,6 +274,9 @@ export function WebhooksTab({ agentId, wsId, canOwn }: { agentId: string; wsId?:
   useVerb("new-webhook", () => setCreating(true), canOwn === true);
   // The URL lives only in this component state while the dialog is open.
   const [shown, setShown] = useState<{ url: string; name: string } | null>(null);
+  // (P5-REFINE-19, Expert) Bulk: a checkbox per webhook for an owner, a bar above the list.
+  const bulkOn = useBulkOn();
+  const sel = useSelection(canOwn ? (q.data?.items ?? []).map((w) => w.id) : []);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   return (
@@ -299,10 +305,34 @@ export function WebhooksTab({ agentId, wsId, canOwn }: { agentId: string; wsId?:
           }
         />
       ) : null}
+      {canOwn && q.data.items.length > 0 ? (
+        <>
+          {bulkOn ? (
+            <label className="flex items-center text-sm text-ink-2">
+              <BulkSelectAll label="Select all webhooks" all={sel.all} some={sel.some} onChange={sel.setAll} />
+              Select all
+            </label>
+          ) : null}
+          <AutomationsBulkBar
+            kind="webhook"
+            agentId={agentId}
+            picked={q.data.items.filter((w) => sel.selected.has(w.id)).map((w) => ({ id: w.id, name: w.name, enabled: w.enabled }))}
+            onClear={sel.clear}
+          />
+        </>
+      ) : null}
       {q.data.items.length > 0 ? (
         <ItemList aria-label="Webhook list">
           {q.data.items.map((w) => (
-            <WebhookRow key={w.id} agentId={agentId} w={w} wsId={wsId} canOwn={canOwn} onSecret={(url, name) => setShown({ url, name })} />
+            <WebhookRow
+              key={w.id}
+              agentId={agentId}
+              w={w}
+              wsId={wsId}
+              canOwn={canOwn}
+              onSecret={(url, name) => setShown({ url, name })}
+              select={canOwn ? { checked: sel.selected.has(w.id), onChange: (on) => sel.toggle(w.id, on) } : undefined}
+            />
           ))}
         </ItemList>
       ) : null}

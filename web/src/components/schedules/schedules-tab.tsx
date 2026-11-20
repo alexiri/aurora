@@ -18,6 +18,8 @@ import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automation
 import { fieldErrors } from "@/lib/api/errors";
 import { MainAction } from "@/components/ui/main-action";
 import { useWhoCan } from "@/lib/api/who-can";
+import { AutomationsBulkBar } from "@/components/automations/automations-bulk";
+import { BulkCheckbox, BulkSelectAll, useBulkOn, useSelection } from "@/components/ui/bulk-bar";
 import { useVerb } from "@/lib/palette-verb";
 import {
   cronFieldCount,
@@ -164,7 +166,7 @@ export function ScheduleForm({
   );
 }
 
-function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: string; s: Schedule; defaultTimezone?: string; wsId?: string; canOwn?: boolean }) {
+function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn, select }: { agentId: string; s: Schedule; defaultTimezone?: string; wsId?: string; canOwn?: boolean; select?: { checked: boolean; onChange: (on: boolean) => void } }) {
   const [editing, setEditing] = useState(false);
   const [showRuns, setShowRuns] = useState(false);
   const [confirm, setConfirm] = useState(false);
@@ -182,6 +184,7 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
   return (
     <li className="space-y-3 p-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {select ? <BulkCheckbox name={s.name} checked={select.checked} onChange={select.onChange} /> : null}
         <h3 className="font-display text-base font-semibold text-ink">{s.name}</h3>
         <code className="font-mono text-xs text-ink-2">{s.cron}</code>
         <span className="text-xs text-muted">{s.timezone}</span>
@@ -248,6 +251,9 @@ export function SchedulesTab({ agentId, defaultTimezone, wsId, canOwn }: { agent
   useVerb("new-schedule", () => setCreating(true), canOwn === true);
   // (C-916) Who sets up a schedule, for a viewer who cannot.
   const who = useWhoCan({ workspaceId: wsId }, "workspace_owner", "add_schedule");
+  // (P5-REFINE-19, Expert) Bulk: a checkbox per schedule for an owner, a bar above the list.
+  const bulkOn = useBulkOn();
+  const sel = useSelection(canOwn ? (q.data?.items ?? []).map((s) => s.id) : []);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   return (
@@ -282,10 +288,34 @@ export function SchedulesTab({ agentId, defaultTimezone, wsId, canOwn }: { agent
           A schedule wakes the agent with a prompt at set times, such as every day at 9.
         </EmptyState>
       ) : null}
+      {canOwn && q.data.items.length > 0 ? (
+        <>
+          {bulkOn ? (
+            <label className="flex items-center text-sm text-ink-2">
+              <BulkSelectAll label="Select all schedules" all={sel.all} some={sel.some} onChange={sel.setAll} />
+              Select all
+            </label>
+          ) : null}
+          <AutomationsBulkBar
+            kind="schedule"
+            agentId={agentId}
+            picked={q.data.items.filter((s) => sel.selected.has(s.id)).map((s) => ({ id: s.id, name: s.name, enabled: s.enabled }))}
+            onClear={sel.clear}
+          />
+        </>
+      ) : null}
       {q.data.items.length > 0 ? (
         <ItemList aria-label="Schedule list">
           {q.data.items.map((s) => (
-            <ScheduleRow key={s.id} agentId={agentId} s={s} defaultTimezone={defaultTimezone} wsId={wsId} canOwn={canOwn} />
+            <ScheduleRow
+              key={s.id}
+              agentId={agentId}
+              s={s}
+              defaultTimezone={defaultTimezone}
+              wsId={wsId}
+              canOwn={canOwn}
+              select={canOwn ? { checked: sel.selected.has(s.id), onChange: (on) => sel.toggle(s.id, on) } : undefined}
+            />
           ))}
         </ItemList>
       ) : null}
