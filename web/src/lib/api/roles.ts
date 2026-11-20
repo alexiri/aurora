@@ -43,7 +43,8 @@ export interface AltitudeView {
   more: boolean;
 }
 
-const ADMIN_TOPICS: AdminTopic[] = ["overview", "agents", "apps", "ai-models", "internet-access", "people", "chat-platforms", "data", "platform", "settings"];
+// (P5-REFINE-18 #1) In the rail's order: Overview · policy for everyone · this installation.
+const ADMIN_TOPICS: AdminTopic[] = ["overview", "internet-access", "agents", "apps", "chat-platforms", "people", "data", "platform", "ai-models", "set-in-helm", "settings"];
 // (P5-REFINE-17, rec 8) The Manage <org> sub-nav: Overview first (the organization's own address), then the topics.
 const ORG_TOPICS: OrgTopic[] = ["overview", "agents", "people", "apps", "chat-platforms", "ai-models", "internet-access", "data", "settings"];
 const ORG_MEMBER_TOPICS: OrgTopic[] = ["overview", "ai-models", "internet-access"];

@@ -16,6 +16,7 @@ import { AgentsDefaultsView, ComputersView, SkillsSettingsView } from "@/compone
 import { ProviderRolesView } from "@/components/admin/settings/provider-roles-view";
 import { SettingsIndexView } from "@/components/admin/settings/settings-index-view";
 import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
+import { SetInHelmView } from "@/components/admin/set-in-helm-view";
 import { SetupView } from "@/components/admin/setup-view";
 import { TrustedKeysView } from "@/components/admin/trusted-keys-view";
 import { InstancesView } from "@/components/apps/instances-view";
@@ -48,7 +49,7 @@ export function AdminAgentsPage() {
     <AdminGuard>
       <TopicPage<Tabs<"adminAgents">>
         idBase="admin-agents"
-        title="Agents"
+        title="Agent defaults"
         description="Defaults for every agent, bring-your-own agents, their computers and skills."
         tabs={[
           { id: "defaults", label: "Defaults", content: <AgentsDefaultsView /> },
@@ -66,7 +67,7 @@ export function AdminAppsPage() {
     <AdminGuard>
       <TopicPage<Tabs<"adminApps">>
         idBase="admin-apps"
-        title="Apps & accounts"
+        title="Apps"
         description="The app catalogue, the sign-in apps shared by every organization, and the apps people host themselves."
         tabs={[
           { id: "apps", label: "Apps", content: <PluginsView /> },
@@ -108,7 +109,7 @@ export function AdminAiModelsPage() {
     <AdminGuard>
       <TopicPage<Tabs<"adminAiModels">>
         idBase="admin-ai-models"
-        title="AI models"
+        title="AI endpoints"
         description="The AI providers and endpoints, and the rules for which models agents may use."
         tabs={[
           { id: "endpoints", label: "Endpoints", content: <EmbeddedPage>{section("llm")}</EmbeddedPage> },
@@ -132,7 +133,7 @@ export function AdminPeoplePage() {
     <AdminGuard>
       <TopicPage<Tabs<"adminPeople">>
         idBase="admin-people"
-        title="People"
+        title="People & sign-in"
         description="Who can use this instance, their organizations, and how they sign in."
         tabs={[
           { id: "users", label: "Users", content: <AdminUsersView /> },
@@ -200,7 +201,7 @@ export function AdminPlatformPage() {
     <AdminGuard>
       <TopicPage<Tabs<"adminPlatform">>
         idBase="admin-platform"
-        title="Platform"
+        title="Health & runners"
         description="The machinery of this instance: runners, secret stores, e-mail and rate limits."
         tabs={[
           { id: "runners", label: "Runners", content: <AdminRunnersView /> },
@@ -209,6 +210,14 @@ export function AdminPlatformPage() {
           { id: "limits", label: "Rate limits", content: section("limits") },
         ]}
       />
+    </AdminGuard>
+  );
+}
+
+export function AdminSetInHelmPage() {
+  return (
+    <AdminGuard>
+      <SetInHelmView />
     </AdminGuard>
   );
 }
