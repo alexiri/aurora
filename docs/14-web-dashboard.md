@@ -2138,7 +2138,7 @@ inside a page. Disclosure now has one home.
 and the owner of a **team** workspace start at **Set up**; an instance admin inside Administration starts at
 **Expert**; a workspace member, an approver, an organization member and the owner of the person's own
 **personal** workspace start at **Use** (the walk-through of "the first ten minutes" shows a person who owns
-their personal workspace with Overview, Agents and Approvals only; one line in `viewerFloor` changes this).
+their personal workspace with Overview, Agents and Approvals only; confirmed by the owner, D-423).
 While a role loads the floor is Use, so nothing deeper flashes in.
 
 **One per-person switch**, "Show more controls", stored server-side on `GET`/`PATCH /v1/me/onboarding`
