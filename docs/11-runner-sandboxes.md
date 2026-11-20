@@ -317,7 +317,8 @@ deadline; a failed retry is a start failure like any other (new failure row,
 C-587). The dashboard offers **Retry now** in the chat error block and on the
 Computer tab (`C-615`); after a retry in chat the failed message's text is
 re-posted as a new message. An agent's past start failures are visible to its
-users (`GET /v1/agents/{agent}/start-failures`, C-613) and to admins with the
+users as class and hint (`GET /v1/agents/{agent}/start-failures`, C-613; the runner's wording and pod
+events only for instance admins since FIX-196, D-424) and to admins with the
 runner named (`GET /v1/admin/agents/{agent}/start-failures`, C-614) — both read
 `sandbox_start_failures`, no new table.
 

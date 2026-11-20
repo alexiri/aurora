@@ -232,6 +232,15 @@ impl Rig {
 }
 
 impl Rig {
+    /// Session caller for an instance admin who is also a member of the workspace (sees the engine).
+    async fn admin_headers(&self, n: u32) -> Vec<(&'static str, String)> {
+        let u = self.h.user(&format!("iadmin{n}@x.io"), true).await;
+        self.h.member(self.org, u, "member", "active").await;
+        self.h.bind_ws(self.ws, u, "member").await;
+        let (_, sess) = self.h.good_session(u).await;
+        vec![("cookie", cookie(&sess)), ("origin", ORIGIN.to_owned())]
+    }
+
     /// Session caller for a plain workspace member (can use the agent, cannot own).
     async fn member_headers(&self, n: u32) -> Vec<(&'static str, String)> {
         let u = self.h.user(&format!("member{n}@x.io"), false).await;
@@ -626,7 +635,18 @@ async fn agent_start_failure_history() {
     // Another agent's failure must not leak into the list.
     fail_a_start(&r, rep, agent2).await;
 
-    let hd = r.owner_headers(1).await;
+    // (FIX-196, D-424) The runner's wording is for instance admins; an owner gets the hint.
+    let od = r.owner_headers(1).await;
+    let odr: Vec<(&str, &str)> = od.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let (s, v) =
+        r.h.get(&format!("/v1/agents/{agent}/start-failures"), &odr)
+            .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"].as_array().unwrap().len(), 3);
+    assert_ne!(v["items"][0]["message"], "the pod crashed", "{v}");
+    assert_eq!(v["items"][0]["code"], "pod_failed");
+
+    let hd = r.admin_headers(1).await;
     let hdr: Vec<(&str, &str)> = hd.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let (s, v) =
         r.h.get(&format!("/v1/agents/{agent}/start-failures"), &hdr)
@@ -810,9 +830,8 @@ async fn sandbox_view_carries_retryable_and_start_log() {
 
 /// (FIX-093, D-178 Q-R5-5) A member who can use the agent sees a start failure's class and a
 /// hint — no pod/volume events, image, runner, start-attempt detail or internal address — on the
-/// sandbox view and the history. (P5-REFINE-4, D-412, SEC-141) A workspace owner sees the same
-/// reduced sandbox view; the history (C-613, unchanged) still gives the owner the detail; an
-/// instance admin sees everything.
+/// sandbox view and the history. (P5-REFINE-4, D-412, SEC-141; FIX-196, D-424) A workspace owner
+/// sees the same reduced sandbox view and the same reduced history; an instance admin sees everything.
 #[tokio::test]
 async fn members_see_class_and_hint_owners_and_admins_see_detail() {
     let r = rig().await;
@@ -880,11 +899,28 @@ async fn members_see_class_and_hint_owners_and_admins_see_detail() {
     );
     assert!(v["start_attempt"]["events"].as_array().unwrap().is_empty());
     assert_eq!(v["computer"]["word"], "failed", "{v}");
-    // The history route (C-613) is unchanged: the owner still gets its detail.
-    let (_, v) =
+    // (FIX-196, D-424) The history route (C-613) is the same for the owner: class and hint only.
+    let (s, v) =
         r.h.get(&format!("/v1/agents/{agent}/start-failures"), &odr)
             .await;
-    assert_eq!(v["items"][0]["events"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(s, 200, "{v}");
+    let text = v.to_string();
+    assert!(
+        !text.contains("10.1.2.3") && !text.contains("svc.ns") && !text.contains("FailedBinding"),
+        "owner history leaks detail: {text}"
+    );
+    assert_eq!(v["items"][0]["code"], "home_volume_unbound", "{v}");
+    assert!(
+        v["items"][0]["events"].as_array().unwrap().is_empty(),
+        "{v}"
+    );
+    assert!(
+        v["items"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("home volume"),
+        "{v}"
+    );
 
     // An instance admin who can use the agent sees the engine on the sandbox view.
     let ia = r.h.user("ia1@x.io", true).await;
@@ -906,8 +942,18 @@ async fn members_see_class_and_hint_owners_and_admins_see_detail() {
         1,
         "{v}"
     );
+    // (FIX-196) ... and the history route (C-613): the runner's wording and the events.
+    let (s, v) =
+        r.h.get(
+            &format!("/v1/agents/{agent}/start-failures"),
+            &[("cookie", &cookie(&isess))],
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"][0]["events"].as_array().unwrap().len(), 1, "{v}");
+    assert!(v.to_string().contains("10.1.2.3"), "{v}");
 
-    // So does an instance admin (the agent's workspace is not theirs to own).
+    // So does an instance admin who is not in the workspace (admin route).
     let admin = r.h.user("ia2@x.io", true).await;
     let (_, sess) = r.h.good_session(admin).await;
     let c = cookie(&sess);
