@@ -557,9 +557,7 @@ Fill in when done; P5-REFINE-20 reads it.
   **Removed:** none.
 - **Playwright specs updated by reading (not run here; the nightly or P5-REFINE-20 runs them):** `e2e/first-run.spec.ts` (production: Activity sentence + Details),
   `add-people-journey.spec.ts` (production) and `add-people.spec.ts` (label "Who"), `ia-4.spec.ts` (memory-language label), `onboarding.spec.ts` ("Step 1 of"),
-  `welcome-summary.spec.ts` (Welcome reach sentence), `web-push.spec.ts` (Notifications moved to `/account/notifications`). New mocked specs from the brief's list
-  (Check a request, Activity, Audit, Add people → Owner, rename → switcher, Apps search, Approvals example, phone switcher, tour backdrop, create key, SSH paste,
-  badge drops without reload) were **not written** here: they need a browser to be run and checked; P5-REFINE-20 or a follow-up should add them.
-- **Open questions:** (1) the address of the "API documentation" link; (2) should the shared `AuditPanel` get sentence rows for the organization and Administration
-  pages in briefs 17/18; (3) the phone switcher bug needs a device check.
+  `welcome-summary.spec.ts` (Welcome reach sentence), `web-push.spec.ts` (Notifications moved to `/account/notifications`). New mocked specs: `e2e/refine-16.spec.ts`, written by reading and **not run** (no browser in the lane; the CI Watcher runs them; expect selector fixes). Per theme and width (1280/390): Activity sentences + Details, Audit sentences + Critical, Add people note + Copy link, Settings rename Saved, Apps search, Approvals empty state + Example (no POST), tour backdrop + Esc, Account Create key dialog; plus the phone switcher, the Approvals badge dropping without reload, and Check a request. Not covered by a spec: the Owner confirm dialog, SSH paste in a browser (vitest covers both), and anything of the waiting items.
+- **Open questions:** (1) answered: `/v1/openapi.json` is right; (2) should the shared `AuditPanel` get sentence rows for the organization and Administration
+  pages in briefs 17/18; (3) the phone switcher device check is P5-REFINE-20's.
 
