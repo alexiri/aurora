@@ -88,6 +88,7 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   }).toPass({ timeout: 60_000, intervals: [1_000] });
   await expect(row.getByText("allow", { exact: true })).toBeVisible();
   await nav.getByRole("link", { name: "Overview" }).click();
-  // The guide on Overview is one line once the agent has answered.
-  await expect(page.getByText(/Getting started — 3\/3/)).toBeVisible({ timeout: 30_000 });
+  // (P5-POLISH-7) The Overview's sentence comes from real state: the agent has a key and has answered. (The guide line
+  // shows on Overview only once Welcome has been seen, never on both pages.)
+  await expect(page.getByText("Daneel is ready. Nothing needs you.")).toBeVisible({ timeout: 30_000 });
 });

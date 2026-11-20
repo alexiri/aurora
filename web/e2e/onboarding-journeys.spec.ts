@@ -132,9 +132,10 @@ test("2. new user with a starter grant: Welcome, no LLM step, first reply", asyn
   await guide.getByRole("link", { name: "Say hello to Daneel" }).click();
   await chatGetsAnswer(page);
 
-  // Back on Overview the guide is one line.
+  // Back on Overview: its sentence comes from real state (P5-POLISH-7; the guide line shows there only once Welcome
+  // has been seen, never on both pages; first-run.spec.ts does the same).
   await page.goto(new URL(page.url()).pathname.replace(/\/agents\/.*$/, ""));
-  await expect(page.getByText(/Getting started — 3\/3/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Daneel is ready. Nothing needs you.")).toBeVisible({ timeout: 30_000 });
 });
 
 test("3. new user without a starter grant: the guide waits for access, then the first reply", async ({ page, browser, baseURL }) => {
