@@ -159,7 +159,7 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
       },
     });
     render(wrap("terminal"));
-    await screen.findByRole("button", { name: "Save" });
+    await waitFor(() => expect(document.getElementById("terminal.wake_wait_secs-c")).not.toBeNull());
     fireEvent.change(document.getElementById("terminal.wake_wait_secs-c")!, { target: { value: "90" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(put).not.toBeNull());

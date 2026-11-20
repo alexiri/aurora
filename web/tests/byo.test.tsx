@@ -349,7 +349,7 @@ describe("rules that apply to all agents", () => {
     expect(published).toBe(0);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("alertdialog", { name: "Confirm broad rules" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Apply changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     fireEvent.click(await screen.findByRole("button", { name: "Apply anyway" }));
     await waitFor(() => expect(published).toBe(1));
   });

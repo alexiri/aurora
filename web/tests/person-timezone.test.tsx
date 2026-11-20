@@ -71,7 +71,7 @@ describe("Account › Profile time zone", () => {
     expect(bodies[0]).toMatchObject({ timezone: "America/New_York" });
 
     fireEvent.change(await screen.findByLabelText("Time zone"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
     await waitFor(() => expect(bodies).toHaveLength(2));
     expect(bodies[1]).toMatchObject({ timezone: null });
   });

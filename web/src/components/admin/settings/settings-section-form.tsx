@@ -427,7 +427,8 @@ export function SettingsStackForm({
 
       {/* (P5-REFINE-2, admin-2) The one save bar: fixed at the bottom of the viewport, so it is always in view on a long page. */}
       <SaveBar
-        dirty={dirty}
+        // A save that went through shows "Saved" even while the section has not been refetched (the draft is cleared by the reload).
+        dirty={dirty && !saved}
         saving={busy}
         saved={saved}
         errorCount={fieldErrorCount}

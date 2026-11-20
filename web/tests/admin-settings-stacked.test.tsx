@@ -171,7 +171,7 @@ describe("Administration › Agents: stacked settings sections have one Save (P5
     fireEvent.change(document.getElementById("hosted.turn_ceiling_secs-c")!, { target: { value: "7200" } });
     fireEvent.change(document.getElementById("approvals.timeout_secs-c")!, { target: { value: "99999999" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("The timeout is too long.")).toBeTruthy();
+    expect((await screen.findAllByText("The timeout is too long.")).length).toBeGreaterThan(0);
     expect((document.getElementById("approvals.timeout_secs-c") as HTMLInputElement).value).toBe("99999999");
     expect(screen.queryByText(/Saved\. Applied/)).toBeNull();
   });

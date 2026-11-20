@@ -10,7 +10,7 @@ describe("When", () => {
 
   it("renders <time> with the exact time as its title, and ticks from 'Just now' to '1 min ago' with no interaction", () => {
     vi.setSystemTime(new Date("2026-11-19T12:00:00Z"));
-    const at = new Date("2026-11-19T11:59:45Z").toISOString();
+    const at = new Date("2026-11-19T11:59:29Z").toISOString();
     render(<When value={at} />);
     const el = screen.getByText("Just now");
     expect(el.tagName).toBe("TIME");

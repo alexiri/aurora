@@ -304,7 +304,7 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     expect(govBody!.document.egress.posture).toBe("credentialed_only");
     // The limits are applied, the rule is not: the bar says so and counts only what is left.
     expect(await within(bar).findByText(/The limits were applied\. The rules and defaults were not/)).toBeInTheDocument();
-    await waitFor(() => expect(within(bar).getByText(/^1 change not applied yet/)).toBeInTheDocument());
+    await waitFor(() => expect(within(bar).getByText(/^1 unsaved change/)).toBeInTheDocument());
     // A retry sends only the rules: the document is not sent again.
     fireEvent.click(within(bar).getByRole("button", { name: "Save", exact: true }));
     await waitFor(() => expect(srv.publishes).toHaveLength(2));

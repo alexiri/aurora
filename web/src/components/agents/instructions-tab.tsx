@@ -278,7 +278,8 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         </details>
         {/* (P5-POLISH-6, P5-REFINE-2) The one save bar: only after a change, at the bottom of the viewport; "Saved" for two seconds. */}
         <SaveBar
-          dirty={dirty}
+          // "Saved" shows even while the agent has not been refetched yet.
+          dirty={dirty && !bar.saved}
           saving={patch.isPending}
           saved={bar.saved}
           errorCount={Object.keys(fe).length + (clientErr ? 1 : 0) + (hasRoleError(roleErrors) ? 1 : 0)}
