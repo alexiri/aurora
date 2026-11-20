@@ -7,6 +7,8 @@ import { AuditPanel } from "@/components/audit/audit-panel";
 import { DateField } from "@/components/ui/date-field";
 import { inputClass } from "@/components/ui/field";
 import { Segmented } from "@/components/ui/segmented";
+import { Switch } from "@/components/ui/switch";
+import { isSystemAudit } from "@/lib/labels";
 import { useInstanceAudit, type InstanceAuditFilter } from "@/lib/api/admin-audit";
 import { useAdminOrgs } from "@/lib/api/freeze";
 import { instanceFromParams, useWriteAuditParams } from "@/lib/audit-url";
@@ -24,12 +26,34 @@ export function AdminAuditView() {
   const audit = useInstanceAudit(f);
   const orgs = useAdminOrgs(false);
   const all = f.scope === "all";
+  // (P5-REFINE-18 #11, admin-10) The system's own install and sync events are hidden until asked for, and the count says
+  // so. They are told apart in the rows loaded so far; C-1088's server filter will cover every row.
+  const [showSystem, setShowSystem] = useState(false);
+  const loaded = audit.data?.pages.flatMap((p) => p.items) ?? [];
+  const hidden = loaded.filter(isSystemAudit).length;
+  const feed = {
+    ...audit,
+    data: audit.data
+      ? { pages: audit.data.pages.map((p) => ({ ...p, items: showSystem ? p.items : p.items.filter((e) => !isSystemAudit(e)) })) }
+      : undefined,
+  };
   return (
     <AuditPanel
       title="Audit log"
-      description="What instance administrators did: plugin approvals, host claims, trusted keys, connectors, runners, placement and pauses. Switch to all organizations to search every row."
+      description="What administrators did."
       placeholder="Action prefix, e.g. plugin."
-      feed={audit}
+      targetName={() => null}
+      areas
+      afterList={
+        hidden > 0 || showSystem ? (
+          <div className="flex flex-wrap items-center gap-3 text-sm text-ink-2" data-testid="system-events">
+            <Switch id="audit-system" checked={showSystem} onCheckedChange={setShowSystem} />
+            <label htmlFor="audit-system">Show system events</label>
+            <span>{showSystem ? `Showing ${hidden} system install events.` : `${hidden} system install events are hidden.`}</span>
+          </div>
+        ) : null
+      }
+      feed={feed}
       filters={{ action: f.action, criticalOnly: f.criticalOnly }}
       onFilters={(n) => setF({ ...f, ...n })}
       showOrg={all}

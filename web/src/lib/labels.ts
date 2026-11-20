@@ -470,7 +470,98 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "approval.decide": { sentence: (actor) => `${actor} answered an approval`, weight: "routine" },
   "action_approval.decide": { sentence: (actor) => `${actor} answered an approval`, weight: "routine" },
   "skill.library.add": { sentence: (actor, t) => `${actor} added ${t ? `the skill library ${t}` : "a skill library"}`, weight: "routine" },
+  // (P5-REFINE-18 #11, admin-10) What instance administrators did, for the Administration audit log.
+  "instance_settings.update": {
+    sentence: (actor, _t, m) => `${actor} changed the ${settingsAreaWords(m.section)} settings`,
+    weight: "important",
+  },
+  "instance_settings.reset": {
+    sentence: (actor, _t, m) => `${actor} put the ${settingsAreaWords(m.section)} settings back to their defaults`,
+    weight: "important",
+  },
+  "instance_settings.import": { sentence: (actor) => `${actor} imported settings`, weight: "important" },
+  "instance_settings.helm_sync": { sentence: (actor) => `${actor} synced the settings set in Helm`, weight: "routine" },
+  "placement.update": { sentence: (actor) => `${actor} changed how new people are placed`, weight: "important" },
+  "plugin.activate": named("approved", "the app", "an app", "important"),
+  "plugin.auto_approved": named("approved", "the app", "an app"),
+  "plugin.delete": named("removed", "the app", "an app", "important"),
+  "plugin.hold": named("held back an update of", "the app", "an app"),
+  "plugin.ingest": named("added the package of", "the app", "an app"),
+  "plugin.supersede": named("replaced an older version of", "the app", "an app"),
+  "plugin.host_claim.decide": { sentence: (actor) => `${actor} decided who may use an app's web address`, weight: "important" },
+  "admin.connector_create": named("added", "the chat platform", "a chat platform"),
+  "admin.connector_approve": named("approved an update of", "the chat platform", "a chat platform"),
+  "admin.connector_rotate": named("made a new token for", "the chat platform", "a chat platform", "important"),
+  "admin.connector_delete": named("removed", "the chat platform", "a chat platform", "important"),
+  "admin.connector_host_token_issue": { sentence: (actor) => `${actor} made a token for a connector host`, weight: "important" },
+  "admin.connector_host_token_revoke": { sentence: (actor) => `${actor} revoked a connector host token`, weight: "important" },
+  "connector.created": { sentence: (actor) => `${actor} added a chat platform`, weight: "routine" },
+  "connector.updated": { sentence: (actor) => `${actor} changed a chat platform`, weight: "routine" },
+  "connector.update_pending": { sentence: (actor) => `${actor} found an update of a chat platform waiting for approval`, weight: "routine" },
+  "admin.runner_create": named("added", "the runner", "a runner"),
+  "admin.runner_rotate": named("made a new token for", "the runner", "a runner", "important"),
+  "admin.runner_delete": named("removed", "the runner", "a runner", "important"),
+  "runner.image": { sentence: (actor) => `${actor} changed a runner's image`, weight: "routine" },
+  "trusted_key.create": { sentence: (actor) => `${actor} trusted a new app publisher`, weight: "important" },
+  "trusted_key.revoke": { sentence: (actor) => `${actor} stopped trusting an app publisher`, weight: "important" },
+  "addon_source.add": named("added", "the app source", "an app source"),
+  "addon_source.update": named("changed", "the app source", "an app source"),
+  "addon_source.remove": named("removed", "the app source", "an app source", "important"),
+  "addon_source.check": { sentence: (actor) => `${actor} checked the app sources for updates`, weight: "routine" },
+  "org.create": named("created", "the organization", "an organization"),
+  "org.update": named("changed", "the organization", "an organization"),
+  "org.delete": named("deleted", "the organization", "an organization", "important"),
+  "admin.user_update": named("changed", "the person", "a person", "important"),
+  "admin.org.delete": named("deleted", "the organization", "an organization", "important"),
+  "admin.workspace.delete": named("deleted", "the workspace", "a workspace", "important"),
 };
+
+/** A settings section id in words for a sentence: "terminal" → "web terminal", an unknown one reads as its id with spaces. */
+const SETTINGS_AREA: Record<string, string> = {
+  terminal: "web terminal",
+  governance: "AI and Internet access",
+  llm: "AI endpoints",
+  sign_in: "sign-in",
+  scim: "directory sync",
+  email: "mail server",
+  secrets: "secret stores",
+  agents: "agent defaults",
+  approvals: "approvals",
+  previews: "previews",
+  skills: "skills library",
+  retention: "data retention",
+  limits: "rate limits",
+  outgoing_webhooks: "outgoing webhooks",
+};
+function settingsAreaWords(section: unknown): string {
+  const s = typeof section === "string" ? section.replace(/-/g, "_") : "";
+  return SETTINGS_AREA[s] ?? (s ? s.replace(/_/g, " ") : "instance");
+}
+
+/** Where in Administration an audit action belongs, for the line under a sentence ("Instance settings"). */
+export function auditArea(action: string): string | null {
+  const prefix: [string, string][] = [
+    ["instance_settings.", "Instance settings"],
+    ["placement.", "New users"],
+    ["plugin.", "Apps"],
+    ["admin.connector", "Chat platforms"],
+    ["connector.", "Chat platforms"],
+    ["admin.runner", "Runners"],
+    ["runner.", "Runners"],
+    ["admin.user", "People"],
+    ["admin.org", "People"],
+    ["admin.workspace", "People"],
+  ];
+  return prefix.find(([p]) => action.startsWith(p))?.[1] ?? null;
+}
+
+/** Install and sync events the system itself writes: hidden from the Administration audit log until asked for. */
+export function isSystemAudit(e: { actor_kind: string; action: string }): boolean {
+  return (
+    e.actor_kind === "system" ||
+    ["instance_settings.helm_sync", "plugin.ingest", "plugin.supersede", "plugin.auto_approved", "runner.image"].includes(e.action)
+  );
+}
 
 /** The words of one audit entry: the sentence and how much it matters. An action with no template says so, plainly. */
 export function auditWords(
