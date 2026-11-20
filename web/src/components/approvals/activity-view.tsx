@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Altitude, AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -61,6 +62,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
   const items = q.data?.pages.flatMap((p) => p.items) ?? [];
   const byId = new Map(agents.data?.items.map((a) => [a.id, a]) ?? []);
   return (
+    <AltitudeScope>
     <div className="max-w-page space-y-4">
       <PageHeader
         title="Activity"
@@ -97,7 +99,9 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
       {q.isPending ? <Loading /> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
       {q.data && items.length === 0 ? <EmptyState title="No activity" /> : null}
+      {/* (P5-REFINE-3) Expert: the request log with its decision vocabulary. Below it, one collapsed line. */}
       {items.length > 0 ? (
+        <Altitude id="log.requests" level="expert" label="Request log: every request, with the rule that decided it">
         <DataTable caption="Request activity">
           <thead>
             <tr>
@@ -149,8 +153,11 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
             })}
           </tbody>
         </DataTable>
+        <LoadMore query={q} />
+        </Altitude>
       ) : null}
-      <LoadMore query={q} />
+      <MoreControlsLine />
     </div>
+    </AltitudeScope>
   );
 }

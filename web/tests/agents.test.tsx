@@ -41,7 +41,8 @@ async function createFlow(kind: "byo" | "hosted") {
         container_config: kind === "byo" ? config : null,
       }),
   });
-  wrap(<CreateAgentDialog wsId="w1" />);
+  // The kind select is Expert (D-406): these flows pick a kind, so the switch is on.
+  wrap(<CreateAgentDialog wsId="w1" />, { moreControls: true });
   fireEvent.click(screen.getByRole("button", { name: "New agent" }));
   fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Bot" } });
   if (kind === "hosted") {
@@ -68,10 +69,25 @@ describe("create agent", () => {
   });
   it("hides the hosted option when the feature is off", async () => {
     mockFetch({ "GET /v1/instance": () => json(200, instance(false)) });
-    wrap(<CreateAgentDialog wsId="w1" />);
+    wrap(<CreateAgentDialog wsId="w1" />, { moreControls: true });
     fireEvent.click(screen.getByRole("button", { name: "New agent" }));
     await screen.findByLabelText("Kind");
     expect(screen.queryByRole("option", { name: "Hosted" })).not.toBeInTheDocument();
+  });
+  it("has no Kind select at Use and creates a hosted agent (D-406)", async () => {
+    const fn = mockFetch({
+      "GET /v1/instance": () => json(200, instance(true)),
+      "POST /v1/workspaces/w1/agents": () => json(201, { agent: agent("hosted"), token: null, container_config: null }),
+    });
+    wrap(<CreateAgentDialog wsId="w1" />, { moreControls: false });
+    fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Bot" } });
+    expect(screen.queryByLabelText("Kind")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create agent" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+    await waitFor(() => expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method === "POST")).toBe(true));
+    const post = fn.mock.calls.map(([r]) => r).find((r): r is Request => r instanceof Request && r.method === "POST")!;
+    expect((await post.clone().json()).kind).toBe("hosted");
   });
 });
 
@@ -103,11 +119,12 @@ describe("regenerate token", () => {
 });
 
 describe("workspace nav (C-961)", () => {
+  // The nav lists by role and altitude: "Show more controls" off, as a person starts (D-406).
   function navWith(role: string) {
     mockFetch({
       "GET /v1/workspaces/w1": () => json(200, { id: "w1", org_id: "o1", my_role: role }),
     });
-    wrap(<WorkspaceNav base="/o/acme/w/main" wsId="w1" pathname="/o/acme/w/main" />);
+    wrap(<WorkspaceNav base="/o/acme/w/main" wsId="w1" pathname="/o/acme/w/main" />, { moreControls: false });
   }
   const names = () => screen.getAllByRole("link").map((a) => a.textContent);
   it("lists Approvals, People and Settings for an owner, with the new names and no Members item (FIX-027)", async () => {
@@ -117,10 +134,16 @@ describe("workspace nav (C-961)", () => {
     expect(screen.queryByRole("link", { name: "Members" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Credentials|Policy/ })).not.toBeInTheDocument();
   });
-  it("lists neither Approvals, People nor Settings for a plain member", async () => {
+  it("lists only Overview and Agents for a plain member at Use (D-406)", async () => {
     navWith("member");
     await screen.findByRole("link", { name: "Agents" });
     await new Promise((r) => setTimeout(r, 50));
+    expect(names()).toEqual(["Overview", "Agents"]);
+  });
+  it("lists Skills, Apps, Internet access and Activity for a member with Show more controls on, but never People or Settings", async () => {
+    mockFetch({ "GET /v1/workspaces/w1": () => json(200, { id: "w1", org_id: "o1", my_role: "member" }) });
+    wrap(<WorkspaceNav base="/o/acme/w/main" wsId="w1" pathname="/o/acme/w/main" />, { moreControls: true });
+    await screen.findByRole("link", { name: "Activity" });
     expect(names()).toEqual(["Overview", "Agents", "Skills", "Apps & accounts", "Internet access", "Activity"]);
   });
 });

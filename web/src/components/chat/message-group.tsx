@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { Avatar } from "@/components/agent-avatar";
+import { Altitude } from "@/components/ui/altitude";
 import { Markdown } from "@/components/ui/markdown";
 import { RedactDialog } from "@/components/agents/conversation-actions";
 import { Badge } from "@/components/ui/badge";
@@ -123,7 +124,9 @@ function MessageToolbar({
                 {linked ? "Link copied" : "Copy link"}
               </MenuItem>
             ) : null}
-            <MenuItem onSelect={() => setRedact(true)}>Remove this message&apos;s content…</MenuItem>
+            <Altitude id="chat.redact" level="expert">
+              <MenuItem onSelect={() => setRedact(true)}>Remove this message&apos;s content…</MenuItem>
+            </Altitude>
           </MenuContent>
         </Menu>
       </div>

@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Handler, json, mockFetch } from "./support/api";
+import { seedMoreControls } from "./support/render";
 
 const router = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -41,6 +42,8 @@ function routes(extra: Record<string, Handler> = {}, a: Record<string, unknown> 
 
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // The pages under test (Memory, Skills, Evals, Peers…) are Set up / Expert (D-406): the switch is on.
+  seedMoreControls(qc);
   return render(
     <QueryClientProvider client={qc}>
       <AgentPage />

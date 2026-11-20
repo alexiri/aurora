@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InstructionsTab } from "@/components/agents/instructions-tab";
 import type { Agent } from "@/lib/api/queries";
-import { wrap } from "./support/render";
+import { wrap as wrapWith } from "./support/render";
+
+// The model roles, effort and agent program are Expert (D-406): these tests run with "Show more controls" on.
+const wrap = (ui: React.ReactNode) => wrapWith(ui, { moreControls: true });
 import { json } from "./support/api";
 
 vi.mock("next/link", () => ({ default: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
@@ -191,5 +194,22 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
     await roleSelect("Large (opus)");
     expect(screen.queryAllByTestId("role-warning")).toHaveLength(0);
     expect(screen.queryByText(/is not allowed for your organization/)).toBeNull();
+  });
+});
+
+describe("Instructions at Use (D-406)", () => {
+  it("shows Name, Instructions and Model and one collapsed line in place of the Expert group; Show opens it in place", async () => {
+    mockFetch(base());
+    wrapWith(<InstructionsTab agent={agent()} wsId="w1" />, { moreControls: false });
+    expect(screen.getByLabelText("Name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Instructions")).toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toBeInTheDocument();
+    // Expert strings never render at Use: the harness, the roles, Subagents use and Effort.
+    expect(screen.queryByLabelText("Harness")).toBeNull();
+    expect(screen.queryByLabelText("Effort")).toBeNull();
+    expect(screen.queryByLabelText("Large (opus)")).toBeNull();
+    expect(screen.getByText("Model roles, effort and agent program")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(await screen.findByLabelText("Effort")).toBeInTheDocument();
   });
 });

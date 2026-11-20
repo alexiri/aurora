@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { CopyBlock } from "@/components/account/ssh-copy";
 import { ErrorState, Loading } from "@/components/states";
+import { Altitude } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
@@ -82,14 +83,17 @@ function SshContent({ agentId }: { agentId: string }) {
     <div className="space-y-6">
       <Section id="ssh-connect" title="Connect with SSH" description="A shell, remote commands, sftp and scp, as the agent's own user." card>
         <div className="space-y-6">
-          <div className="space-y-2">
-            <h3 className="text-sm font-medium text-ink">Use the Aurora CLI</h3>
-            <CopyBlock text={`aurora ssh ${agentId}`} label="the aurora ssh command" />
-            <p className="text-xs text-muted">
-              Install the Aurora CLI and sign in once with <code className="font-mono">aurora login</code>. It fetches a certificate,
-              pins the host key and starts ssh for you.
-            </p>
-          </div>
+          {/* (P5-REFINE-3) Expert: the CLI snippet. The plain-ssh steps below stay. */}
+          <Altitude id="fold.cli" level="expert">
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium text-ink">Use the Aurora CLI</h3>
+              <CopyBlock text={`aurora ssh ${agentId}`} label="the aurora ssh command" />
+              <p className="text-xs text-muted">
+                Install the Aurora CLI and sign in once with <code className="font-mono">aurora login</code>. It fetches a certificate,
+                pins the host key and starts ssh for you.
+              </p>
+            </div>
+          </Altitude>
 
           <div className="space-y-3">
             <h3 className="text-sm font-medium text-ink">Or use plain ssh</h3>

@@ -32,6 +32,9 @@ vi.mock("@/lib/api/queries", () => ({
   useInstance: () => ({ data: undefined }),
   useResolve: () => ({ data: undefined }),
   useOrg: () => ({ data: undefined }),
+  useMe: () => ({ data: undefined }),
+  useWorkspace: () => ({ data: undefined }),
+  useWorkspaces: () => ({ data: undefined, isPending: false }),
 }));
 vi.mock("@/components/agents/previews-tab", () => ({ ShareDialog: () => null }));
 

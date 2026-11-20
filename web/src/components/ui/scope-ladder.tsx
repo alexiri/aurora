@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useId, useState, type ReactNode } from "react";
 
+import { Altitude } from "@/components/ui/altitude";
 import { LockPill } from "@/components/ui/lock-pill";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -87,7 +88,8 @@ export function ScopeLadder({
         <section aria-label="This level" className="space-y-2">
           {minimumNote ? <div className="text-sm text-ink-2">{minimumNote}</div> : null}
           {collapsed ? (
-            <>
+            // (P5-REFINE-3) Restricting further is Set up: a plain member reads the "Set for you by …" rows above only.
+            <Altitude id="policy.restrict" level="setup">
               <Button type="button" variant="outline" size="sm" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}>
                 {open ? "Hide" : tightenLabel}
               </Button>
@@ -96,7 +98,7 @@ export function ScopeLadder({
                   {here}
                 </div>
               ) : null}
-            </>
+            </Altitude>
           ) : (
             here
           )}

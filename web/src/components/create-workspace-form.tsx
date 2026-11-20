@@ -7,6 +7,7 @@ import type { CreateWorkspaceRequest } from "@/lib/api/queries";
 import { MEMORY_LANGUAGES, timeZones } from "@/lib/nav/landing";
 import { validateNameSlug } from "@/lib/nav/validation";
 
+import { Altitude } from "./ui/altitude";
 import { Button } from "./ui/button";
 import { Field, inputClass } from "./ui/field";
 import { ErrorNotice } from "./ui/notice";
@@ -89,9 +90,11 @@ export function CreateWorkspaceForm({
       <Field id="ws-tz" label="Time zone" error={errs.timezone}>
         <Select id="ws-tz" value={timezone} onChange={setTimezone} options={ZONES.map((z) => ({ value: z, label: z }))} />
       </Field>
-      <Field id="ws-lang" label="Language agents remember in" error={errs.memory_language}>
-        <Select id="ws-lang" value={memoryLanguage} onChange={setMemoryLanguage} options={MEMORY_LANGUAGES.map((l) => ({ value: l, label: l }))} />
-      </Field>
+      <Altitude id="ws.memlang" level="expert" promote={!!errs.memory_language}>
+        <Field id="ws-lang" label="Language agents remember in" error={errs.memory_language}>
+          <Select id="ws-lang" value={memoryLanguage} onChange={setMemoryLanguage} options={MEMORY_LANGUAGES.map((l) => ({ value: l, label: l }))} />
+        </Field>
+      </Altitude>
       {error && !hasFieldErrors ? (
         <ErrorNotice error={error} />
       ) : null}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { AppLink } from "@/components/apps/app-link";
+import { Altitude } from "@/components/ui/altitude";
 import { AiKeyTile } from "@/components/ui/ai-key-tile";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Badge } from "@/components/ui/badge";
@@ -277,12 +278,14 @@ export function AccountRow({
         })()
       )}
       {account.ref.type === "connection" ? (
-        <details className="text-sm">
-          <summary className="cursor-pointer text-muted">Technical details</summary>
-          <div className="mt-2">
-            <ConnectionDetails scope={own} id={account.ref.id} canManage={account.can.manage} />
-          </div>
-        </details>
+        <Altitude id="tech.details" level="setup">
+          <details className="text-sm">
+            <summary className="cursor-pointer text-muted">Technical details</summary>
+            <div className="mt-2">
+              <ConnectionDetails scope={own} id={account.ref.id} canManage={account.can.manage} />
+            </div>
+          </details>
+        </Altitude>
       ) : null}
     </li>
   );

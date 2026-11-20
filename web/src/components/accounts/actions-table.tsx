@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Altitude } from "@/components/ui/altitude";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -252,13 +253,15 @@ function Editor({
                       <p className="text-sm font-medium text-ink">{t.name}</p>
                       {t.description ? <p className="text-sm text-ink-2">{t.description}</p> : null}
                       <AsksFirst tool={t} canChange />
-                      <details className="mt-1 text-xs text-muted">
-                        <summary className="cursor-pointer">Technical details</summary>
-                        <p className="mt-1 break-all">
-                          {t.methods.join(", ") || "any method"} · {t.host}
-                          {t.path}
-                        </p>
-                      </details>
+                      <Altitude id="tech.details" level="setup">
+                        <details className="mt-1 text-xs text-muted">
+                          <summary className="cursor-pointer">Technical details</summary>
+                          <p className="mt-1 break-all">
+                            {t.methods.join(", ") || "any method"} · {t.host}
+                            {t.path}
+                          </p>
+                        </details>
+                      </Altitude>
                     </div>
                     <div className="space-y-1 sm:text-right">
                       <select
