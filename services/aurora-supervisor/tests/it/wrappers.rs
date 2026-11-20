@@ -786,6 +786,164 @@ fn the_goose_wrapper_defaults_to_auto_mode_and_keeps_the_persons_choice() {
     assert_eq!(mode(&rig), None);
 }
 
+/// The goose config file the wrapper manages (FIX-189).
+fn goose_config(rig: &Rig) -> PathBuf {
+    rig.state.join("config").join("config.yaml")
+}
+
+fn yaml(path: &Path) -> BTreeMap<String, serde_yaml::Value> {
+    serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// (FIX-189, D-404) goose opens its wizard when its config file is missing: the first start writes a
+/// minimal one (non-secret keys only, mode 0600), and nothing else.
+#[test]
+fn the_goose_wrapper_writes_a_minimal_config_on_first_start() {
+    for (dialect, provider, hosts) in [
+        (
+            "anthropic_messages",
+            "anthropic",
+            &[("ANTHROPIC_HOST", "http://llm.example")][..],
+        ),
+        (
+            "openai_chat",
+            "litellm",
+            &[
+                ("LITELLM_HOST", "http://llm.example"),
+                ("LITELLM_BASE_PATH", "v1/chat/completions"),
+            ][..],
+        ),
+    ] {
+        let (rig, args) = Rig::started(
+            "goose",
+            &terminal_file("goose", GOLDEN_MODEL, dialect),
+            &[],
+            &[],
+        );
+        assert!(args.is_empty(), "{args:?}");
+        let path = goose_config(&rig);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{dialect}");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("API_KEY") && !text.contains("aurora-placeholder"),
+            "{text}"
+        );
+        assert!(!text.contains("GOOSE_MODE:"), "{text}");
+        let map = yaml(&path);
+        let mut want: BTreeMap<String, serde_yaml::Value> = BTreeMap::new();
+        want.insert("GOOSE_PROVIDER".into(), provider.into());
+        want.insert("GOOSE_MODEL".into(), GOLDEN_MODEL.into());
+        want.insert("GOOSE_TELEMETRY_ENABLED".into(), false.into());
+        for (k, v) in hosts {
+            want.insert((*k).into(), (*v).into());
+        }
+        assert_eq!(map, want, "{dialect}");
+        // No temp file left beside it.
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["config.yaml"], "{dialect}");
+        // The default mode is still `auto` (FIX-169): the written file has no mode.
+        let (rig2, _) = Rig::started(
+            "goose",
+            &terminal_file("goose", GOLDEN_MODEL, dialect),
+            &[],
+            &[],
+        );
+        assert_eq!(
+            rig2.seen_env()
+                .unwrap()
+                .get("GOOSE_MODE")
+                .map(String::as_str),
+            Some("auto")
+        );
+    }
+}
+
+/// (FIX-189) A file that exists is the person's: a later start leaves it byte-identical.
+#[test]
+fn the_goose_wrapper_leaves_an_existing_config_alone() {
+    let file = terminal_file("goose", GOLDEN_MODEL, "openai_chat");
+    let (rig, _) = Rig::started("goose", &file, &[], &[]);
+    let path = goose_config(&rig);
+    let edited = "GOOSE_PROVIDER: openai\nGOOSE_MODEL: mine\nextensions: {}\n";
+    std::fs::write(&path, edited).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let out = rig.run_as(&[], &[]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+    // The environment still names the agent's provider and model (goose reads it first).
+    let seen = rig.seen_env().unwrap();
+    assert_eq!(
+        seen.get("GOOSE_PROVIDER").map(String::as_str),
+        Some("litellm")
+    );
+    assert_eq!(
+        seen.get("GOOSE_MODEL").map(String::as_str),
+        Some(GOLDEN_MODEL)
+    );
+}
+
+/// (FIX-189) Every value is written as a YAML string: YAML's special characters stay data.
+#[test]
+fn the_goose_config_quotes_yaml_special_characters() {
+    let model = "a: b # c 'd' \"e\" {f} [g] &h *i !j %k @l `m` |n >o ~ null";
+    let host = "http://h.example:8080/#x'y";
+    let rig = Rig::new("goose");
+    let q = |v: &str| v.replace('\'', "'\\''");
+    rig.write_env(&format!(
+        "HARNESSES_ENABLED='goose'\nAURORA_GOOSE_MODEL='{}'\nAURORA_GOOSE_PROVIDER='litellm'\nAURORA_GOOSE_HOST='{}'\n",
+        q(model),
+        q(host)
+    ));
+    let out = rig.run_as(&[], &[]);
+    assert!(out.status.success(), "{out:?}");
+    let map = yaml(&goose_config(&rig));
+    assert_eq!(map["GOOSE_MODEL"], serde_yaml::Value::from(model));
+    assert_eq!(map["LITELLM_HOST"], serde_yaml::Value::from(host));
+    assert_eq!(map.len(), 5, "{map:?}");
+    // A one-word YAML keyword (`null`, `true`) is still a string.
+    for (word, name) in [("null", "n1"), ("true", "n2"), ("1.5", "n3")] {
+        let rig = Rig::new("goose");
+        rig.write_env(&format!(
+            "HARNESSES_ENABLED='goose'\nAURORA_GOOSE_MODEL='{word}'\nAURORA_GOOSE_PROVIDER='anthropic'\nAURORA_GOOSE_HOST='http://h'\n"
+        ));
+        assert!(rig.run_as(&[], &[]).status.success(), "{name}");
+        assert_eq!(
+            yaml(&goose_config(&rig))["GOOSE_MODEL"],
+            serde_yaml::Value::from(word),
+            "{name}"
+        );
+    }
+}
+
+/// (FIX-189, D-404) No model for goose: a bare `goose` says so instead of opening the wizard; with
+/// arguments (`configure`, `--version`) the binary still runs, unchanged.
+#[test]
+fn the_goose_wrapper_without_a_model_explains_instead_of_opening_the_wizard() {
+    let rig = Rig::new("goose");
+    rig.write_env("HARNESSES_ENABLED='goose'\n");
+    let out = rig.run_as(&[], &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr).trim_end(),
+        "goose: no model is set up for this agent's terminal; check the agent's model on its Behaviour page"
+    );
+    assert!(rig.seen_env().is_none(), "the binary ran");
+    assert!(!goose_config(&rig).exists());
+    for args in [vec!["configure"], vec!["--version"]] {
+        let (rig, seen) = Rig::started("goose", "HARNESSES_ENABLED='goose'\n", &args, &[]);
+        assert_eq!(seen, args);
+        assert!(!goose_config(&rig).exists(), "{args:?}");
+    }
+}
+
 /// `opencode` already behaves like a turn: its terminal config allows every tool.
 #[test]
 fn the_opencode_terminal_config_allows_every_tool() {

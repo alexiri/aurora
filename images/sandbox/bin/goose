@@ -127,6 +127,68 @@ if [ -n "${SSL_CERT_FILE:-}" ]; then
     GOOSE_CA_CERT_PATH=$SSL_CERT_FILE
     export GOOSE_CA_CERT_PATH
 fi
+# (FIX-189, D-404) A YAML single-quoted string: every character is data, a quote is doubled. Values
+# come from single lines of harness.env, so they never hold a line break.
+yaml_str() {
+    _w_in=$1
+    _w_out=
+    while :; do
+        case $_w_in in
+        *"$_w_sq"*)
+            _w_out=$_w_out${_w_in%%"$_w_sq"*}$_w_sq$_w_sq
+            _w_in=${_w_in#*"$_w_sq"}
+            ;;
+        *)
+            _w_out=$_w_out$_w_in
+            break
+            ;;
+        esac
+    done
+    printf "'%s'" "$_w_out"
+}
+# (FIX-189, D-404) A bare `goose` opens its setup wizard whenever its config FILE does not exist,
+# whatever the environment says. Create a minimal one (non-secret keys only, never the placeholder
+# key) when there is none; an existing file is the person's and is left alone (the environment set
+# above overrides its provider and model: goose reads the environment first). Written to a temp file
+# and hard-linked into place, so a half-written file is never seen and a file created meanwhile wins.
+write_config() {
+    _w_dir=$GOOSE_PATH_ROOT/config
+    _w_cfg=$_w_dir/config.yaml
+    if [ -e "$_w_cfg" ] || [ -L "$_w_cfg" ]; then
+        return 0
+    fi
+    /usr/bin/mkdir -p "$_w_dir" 2>/dev/null || return 0
+    _w_tmp=$_w_dir/.config.yaml.aurora.$$
+    /usr/bin/rm -f "$_w_tmp"
+    if ! (
+        umask 077
+        set -C
+        {
+            echo "# Written by Aurora's goose wrapper (FIX-189) because goose needs a config file;"
+            echo "# the terminal's environment sets the provider and model. Edit freely: this file is yours."
+            printf 'GOOSE_PROVIDER: %s\n' "$(yaml_str "$GOOSE_PROVIDER")"
+            printf 'GOOSE_MODEL: %s\n' "$(yaml_str "$GOOSE_MODEL")"
+            case $GOOSE_PROVIDER in
+            anthropic)
+                printf 'ANTHROPIC_HOST: %s\n' "$(yaml_str "$ANTHROPIC_HOST")"
+                ;;
+            litellm)
+                printf 'LITELLM_HOST: %s\n' "$(yaml_str "$LITELLM_HOST")"
+                printf 'LITELLM_BASE_PATH: %s\n' "$(yaml_str "$LITELLM_BASE_PATH")"
+                ;;
+            esac
+            echo "GOOSE_TELEMETRY_ENABLED: false"
+        } >"$_w_tmp"
+    ) 2>/dev/null; then
+        /usr/bin/rm -f "$_w_tmp"
+        return 0
+    fi
+    # A file system without hard links: a plain rename, still only when no file has appeared.
+    if ! /usr/bin/ln "$_w_tmp" "$_w_cfg" 2>/dev/null && [ ! -e "$_w_cfg" ] && [ ! -L "$_w_cfg" ]; then
+        /usr/bin/mv -f "$_w_tmp" "$_w_cfg" 2>/dev/null
+    fi
+    /usr/bin/rm -f "$_w_tmp"
+}
 if [ -n "$model" ] && [ -n "$host" ]; then
     GOOSE_MODEL=$model
     export GOOSE_MODEL
@@ -149,5 +211,11 @@ if [ -n "$model" ] && [ -n "$host" ]; then
         exit 1
         ;;
     esac
+    write_config
+elif [ "$#" -eq 0 ]; then
+    # (FIX-189, D-404) No model for goose and nothing asked: goose would open its provider wizard,
+    # which a person in Aurora cannot complete. Arguments (`goose configure`, `--version`) still pass.
+    echo "goose: no model is set up for this agent's terminal; check the agent's model on its Behaviour page" >&2
+    exit 1
 fi
 exec "$bin" "$@"

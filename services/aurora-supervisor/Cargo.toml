@@ -42,6 +42,8 @@ uuid = { workspace = true }
 aurora-testkit = { workspace = true }
 insta = { workspace = true }
 rcgen = { workspace = true }
+# The goose wrapper's config.yaml, parsed back in the wrapper ITs (FIX-189).
+serde_yaml = { workspace = true }
 toml = { workspace = true }
 # `start_paused` / `advance` for the violation-window test (FIX-091).
 tokio = { workspace = true, features = ["test-util"] }

@@ -1040,7 +1040,16 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   `AURORA_PI_KEY_VAR`, with `PI_OFFLINE`, `PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK` set; **goose**
   gets `AURORA_GOOSE_PROVIDER` (`anthropic` or `litellm`) and `AURORA_GOOSE_HOST`, which the wrapper
   turns into goose's own variables, with `GOOSE_PATH_ROOT=/workspace/.aurora/terminal/goose`,
-  telemetry, keyring and session naming off; **OpenCode** gets `AURORA_OPENCODE_CONFIG` (the rendered
+  telemetry, keyring and session naming off. **(FIX-189, D-404)** A bare `goose` opens its setup
+  wizard whenever its config file does not exist, whatever the environment says, so the wrapper
+  creates a minimal `$GOOSE_PATH_ROOT/config/config.yaml` (mode 0600, non-secret keys only:
+  `GOOSE_PROVIDER`, `GOOSE_MODEL`, the provider's host keys and `GOOSE_TELEMETRY_ENABLED: false`, each
+  a YAML string; never the placeholder key) when there is none. An existing file is the person's and
+  is left alone; the environment still sets the provider and model, because goose reads the
+  environment before the file. With no model for goose and no arguments, the wrapper says so ("no
+  model is set up for this agent's terminal; check the agent's model on its Behaviour page", exit 1)
+  instead of opening the wizard; arguments (`goose configure`, `--version`) still pass through.
+  **OpenCode** gets `AURORA_OPENCODE_CONFIG` (the rendered
   `opencode.json` without the platform tools, passed as `OPENCODE_CONFIG_CONTENT`), with its XDG
   directories under `/workspace/.aurora/terminal/opencode` and the vendor switches of `§Adapters`
   set. A model the harness cannot use (an id or role that fails the supervisor's re-check, or a
