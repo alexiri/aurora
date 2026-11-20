@@ -65,6 +65,7 @@ export function Tour({ setNavOpen }: { setNavOpen: (open: boolean) => void }) {
   const [index, setIndex] = useState(0);
   const [narrow, setNarrow] = useState(false);
   const card = useRef<HTMLDivElement>(null);
+  const spot = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const markDone = patch.mutate;
 
@@ -135,7 +136,25 @@ export function Tour({ setNavOpen }: { setNavOpen: (open: boolean) => void }) {
       c.style.setProperty("top", `${Math.round(top)}px`);
     }
     c?.focus();
-    return () => el.removeAttribute("data-tour-active");
+    // (firstday-4) The page is dimmed around the link: a cut-out the size of the link, kept in step while the page moves. Set
+    // through the CSSOM (a style attribute is not allowed by the CSP guard).
+    const place = () => {
+      const sp = spot.current;
+      if (!sp) return;
+      const r = el.getBoundingClientRect();
+      sp.style.setProperty("left", `${Math.round(r.left - 3)}px`);
+      sp.style.setProperty("top", `${Math.round(r.top - 3)}px`);
+      sp.style.setProperty("width", `${Math.round(r.width + 6)}px`);
+      sp.style.setProperty("height", `${Math.round(r.height + 6)}px`);
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      el.removeAttribute("data-tour-active");
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
   }, [stop, narrow]);
 
   // A layout effect, not a passive one: the listener is attached in the same commit that shows the card,
@@ -170,6 +189,14 @@ export function Tour({ setNavOpen }: { setNavOpen: (open: boolean) => void }) {
   if (!stops || !stop) return null;
   const last = index === stops.length - 1;
   return (
+    <>
+    {/* The dimmed page: no overlay catches clicks or keys (nothing is inert), so Esc and the arrows still work. The link stays bright through the cut-out. */}
+    <div
+      ref={spot}
+      aria-hidden="true"
+      data-testid="tour-backdrop"
+      className="pointer-events-none fixed z-[58] rounded-control ring-2 ring-accent shadow-[0_0_0_100vmax_var(--scrim)]"
+    />
     <div
       ref={card}
       role="dialog"
@@ -184,7 +211,7 @@ export function Tour({ setNavOpen }: { setNavOpen: (open: boolean) => void }) {
       )}
     >
       <p className="text-xs font-semibold uppercase tracking-label text-muted">
-        Stop {index + 1} of {stops.length}
+        Step {index + 1} of {stops.length}
       </p>
       <h2 id="tour-title" className="mt-1 font-display text-base font-semibold">
         {stop.title}
@@ -210,5 +237,6 @@ export function Tour({ setNavOpen }: { setNavOpen: (open: boolean) => void }) {
         </Button>
       </div>
     </div>
+    </>
   );
 }

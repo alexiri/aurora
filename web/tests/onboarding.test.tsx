@@ -311,7 +311,11 @@ describe("tour (D-141)", () => {
     act(() => startTour());
     const dialog = await screen.findByRole("dialog", { name: "Overview" });
     await waitFor(() => expect(dialog).toHaveFocus());
-    expect(within(dialog).getByText("Stop 1 of 8")).toBeInTheDocument();
+    expect(within(dialog).getByText("Step 1 of 8")).toBeInTheDocument();
+    // (firstday-4) The page is dimmed around the link, and nothing is made inert, so keys still reach the tour.
+    const backdrop = screen.getByTestId("tour-backdrop");
+    expect(backdrop.className).toMatch(/pointer-events-none/);
+    expect(document.querySelector("[inert]")).toBeNull();
     expect(screen.getByRole("link", { name: "overview" })).toHaveAttribute("data-tour-active", "true");
     expect(setNavOpen).not.toHaveBeenCalledWith(true);
 
@@ -391,12 +395,12 @@ describe("tour (D-141)", () => {
       </>,
     );
     act(() => startTour());
-    expect(await screen.findByText("Stop 1 of 5", undefined)).toBeInTheDocument();
+    expect(await screen.findByText("Step 1 of 5", undefined)).toBeInTheDocument();
     // The Agents stop says an agent gets apps on its Access tab (C-975).
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByText(/Give <Agent> an app/)).toBeInTheDocument();
     for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("Stop 5 of 5")).toBeInTheDocument();
+    expect(await screen.findByText("Step 5 of 5")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(calls.some((c) => c.key === "PATCH /v1/me/onboarding")).toBe(true);
