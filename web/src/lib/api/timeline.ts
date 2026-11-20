@@ -34,25 +34,29 @@ export const timelineKeys = {
   list: (agentId: string, f: TimelineFilters = {}) => ["timeline", agentId, ...key(f)] as const,
 };
 
+/** One page of an agent's timeline (`cursor`: the previous page's `next_cursor`). */
+export function fetchTimelinePage(agentId: string, filters: TimelineFilters, limit: number, cursor?: string): Promise<TimelinePage> {
+  return unwrap(
+    api.GET("/v1/agents/{agent}/timeline", {
+      params: {
+        path: { agent: agentId },
+        query: {
+          limit,
+          cursor,
+          kind: filters.kinds?.length ? filters.kinds.join(",") : undefined,
+          outcome: filters.outcomes?.length ? filters.outcomes.join(",") : undefined,
+        },
+      },
+    }),
+  );
+}
+
 /** One agent's timeline, newest first, paged on `next_cursor`. */
 export function useAgentTimeline(agentId: string, filters: TimelineFilters = {}, limit = 50) {
   return useInfiniteQuery({
     queryKey: timelineKeys.list(agentId, filters),
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) =>
-      unwrap(
-        api.GET("/v1/agents/{agent}/timeline", {
-          params: {
-            path: { agent: agentId },
-            query: {
-              limit,
-              cursor: pageParam,
-              kind: filters.kinds?.length ? filters.kinds.join(",") : undefined,
-              outcome: filters.outcomes?.length ? filters.outcomes.join(",") : undefined,
-            },
-          },
-        }),
-      ),
+    queryFn: ({ pageParam }) => fetchTimelinePage(agentId, filters, limit, pageParam),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: !!agentId,
     retry: false,

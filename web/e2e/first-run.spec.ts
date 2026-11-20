@@ -15,7 +15,6 @@ import { ensurePlacement } from "./support/placement";
 // itself is `litellm.aurora-dev-mock.svc.cluster.local`, reached by the gateway at 10.96.100.40.
 const MOCK_KEY = "sk-aurora-mock-dev"; // dev-only dummy master key (docs/operator/llm-endpoints.md)
 const MOCK_REPLY = "pong";
-const LITELLM_HOST = /litellm\.aurora-dev-mock\.svc\.cluster\.local|10\.96\.100\.40/;
 
 // Phase 1 (RFE-004): all sign-in is OIDC; the dev IdP signs a user in when the authorize request carries
 // `login_hint=<email>`, which the API forwards from `/v1/auth/oidc/dev/start?login_hint=`. The "Development
@@ -88,8 +87,9 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
     await expect(row).toBeVisible({ timeout: 4_000 });
   }).toPass({ timeout: 60_000, intervals: [1_000] });
   await row.getByRole("button", { name: "Details" }).click();
-  await expect(page.getByTestId("activity-raw")).toContainText(LITELLM_HOST);
-  await expect(page.getByTestId("activity-raw")).toContainText("allow");
+  // (D-415) The row is the agent's timeline row: its recorded fields, never the request path (SEC-143).
+  await expect(page.getByTestId("activity-raw")).toContainText("kind answered");
+  await expect(page.getByTestId("activity-raw")).toContainText("outcome answered");
   await nav.getByRole("link", { name: "Overview" }).click();
   // (P5-POLISH-7) The Overview's sentence comes from real state: the agent has a key and has answered. (The guide line
   // shows on Overview only once Welcome has been seen, never on both pages.)

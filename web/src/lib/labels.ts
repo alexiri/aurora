@@ -7,7 +7,7 @@
  *
  * `sentence(ctx)` is the longer form for a place that has room ("Blocked because no rule allows it.").
  */
-import type { TimelineItem } from "@/lib/api/timeline";
+import type { TimelineItem, TimelineKind } from "@/lib/api/timeline";
 
 export interface LabelEntry<Ctx = void> {
   label: string;
@@ -324,17 +324,26 @@ export function simWords(
   }
 }
 
-/** What one request-log row is, for the person's view of Activity (workspace-2). */
-export type ActivityKind = "answer" | "app" | "approval" | "web";
+/** What a person filters Activity by (workspace-2), and the timeline kinds each choice asks the API for. */
+export type ActivityKind = "answer" | "app" | "approval" | "automation";
 export type ActivityOutcome = "answered" | "blocked" | "waited" | "failed";
 
-/** The filter words of Activity: "Everything · Answers · Calls to apps · Approvals". */
+/** The filter words of Activity: "Everything · Answers · Calls to apps · Approvals · Automations". */
 export const ACTIVITY_KIND = {
   "": { label: "Everything" },
   answer: { label: "Answers" },
   app: { label: "Calls to apps" },
   approval: { label: "Approvals" },
+  automation: { label: "Automations" },
 } satisfies LabelTable;
+
+/** The timeline kinds (`kind=` of the feed) behind each choice of the first filter. */
+export const ACTIVITY_KIND_FILTER: Record<ActivityKind, readonly TimelineKind[]> = {
+  answer: ["answered", "computer"],
+  app: ["called"],
+  approval: ["asked_before"],
+  automation: ["ran_schedule", "received_webhook"],
+};
 
 /** "Any outcome · Answered · Blocked · Waited for you · Failed". */
 export const ACTIVITY_OUTCOME = {
@@ -345,76 +354,17 @@ export const ACTIVITY_OUTCOME = {
   failed: { label: "Failed" },
 } satisfies LabelTable;
 
-interface ActivityRow {
-  method: string;
-  host: string;
-  path: string;
-  decision: string;
-  status?: number | null;
-  rule_name?: string | null;
-  app_id?: string | null;
-  llm_model?: string | null;
-  approval_id?: string | null;
-}
-
-const BLOCKED = new Set(["blocked", "blocked_by_policy", "default_denied", "egress_denied", "governance_refused", "rate_limited", "guard_refused"]);
-
-/** A model call goes to the model endpoint (`…/v1/messages`, `…/chat/completions`) or names the model it asked for. */
-export function activityKind(e: ActivityRow): ActivityKind {
-  if (e.approval_id || e.decision.startsWith("approval_")) return "approval";
-  if (e.app_id) return "app";
-  if (e.llm_model || /\/v1\/(messages|chat\/completions|responses)\b/.test(e.path)) return "answer";
-  return "web";
-}
-
-export function activityOutcome(e: ActivityRow): ActivityOutcome {
-  if (e.decision === "error" || e.decision === "approval_expired") return "failed";
-  if (e.approval_id || e.decision === "approval_denied") return "waited";
-  if (BLOCKED.has(e.decision)) return "blocked";
+/**
+ * The "Any outcome" group a timeline row belongs to. The API's outcome words differ per kind, so the filter is the web's:
+ * an approval (or a row waiting for a person) is "Waited for you", then Blocked (a rule, the default, a refusal, a limit),
+ * then Failed, and the rest Answered.
+ */
+export function timelineOutcomeGroup(item: Pick<TimelineItem, "kind" | "state" | "outcome">): ActivityOutcome {
+  const out = item.outcome ?? "";
+  if (item.kind === "asked_before" || item.state === "waiting" || out === "not_approved") return "waited";
+  if (item.state === "blocked" || out.startsWith("blocked") || out.startsWith("refused") || out === "rate_limited") return "blocked";
+  if (item.state === "failed" || out === "failed") return "failed";
   return "answered";
-}
-
-/** The tone of the dot at the start of a row. */
-export function activityTone(e: ActivityRow): "accent" | "danger" | "pending" | "neutral" {
-  const o = activityOutcome(e);
-  return o === "answered" ? "accent" : o === "blocked" ? "danger" : o === "waited" ? "pending" : "neutral";
-}
-
-/** The two lines of a row: the sentence and the meta line ("Blocked by your rule 'X'"). `appName` names the app called. */
-export function activitySentence(e: ActivityRow, agent: string, appName?: string | null): { title: string; meta: string } {
-  const kind = activityKind(e);
-  const outcome = activityOutcome(e);
-  const entry = (GATEWAY_DECISION as Record<string, { sentence?: () => string } | undefined>)[e.decision];
-  const why = e.rule_name ? `Blocked by your rule ‘${e.rule_name}’` : (entry?.sentence?.() ?? "Blocked");
-  if (kind === "answer") {
-    return outcome === "answered"
-      ? { title: `${agent} answered you`, meta: `Used ${e.llm_model ?? "the workspace's model"}` }
-      : { title: `${agent} couldn't get an answer`, meta: outcome === "blocked" ? why : "The model didn't answer" };
-  }
-  if (kind === "approval") {
-    const meta =
-      e.decision === "approved"
-        ? "You approved it"
-        : e.decision === "approval_denied"
-          ? "You said no"
-          : e.decision === "approval_expired"
-            ? "Nobody answered in time"
-            : "Waiting for you in Approvals";
-    return { title: `${agent} asked before changing ${e.host}`, meta };
-  }
-  if (kind === "app") {
-    const app = appName ?? "an app";
-    return outcome === "blocked"
-      ? { title: `${agent} called ${app}`, meta: why }
-      : outcome === "failed"
-        ? { title: `${agent} called ${app}`, meta: "It didn't work" }
-        : { title: `${agent} called ${app}`, meta: "Allowed" };
-  }
-  return outcome === "blocked"
-    ? { title: `${agent} tried to reach ${e.host}`, meta: why }
-    : outcome === "failed"
-      ? { title: `${agent} tried to reach ${e.host}`, meta: "It didn't work" }
-      : { title: `${agent} reached ${e.host}`, meta: "Allowed" };
 }
 
 /** How much an audit entry matters to a workspace owner; `critical` rows are Critical whatever the table says. */
