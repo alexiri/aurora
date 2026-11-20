@@ -71,6 +71,16 @@ pub struct Me {
     /// (phase 4, P4-IDP-1, C-513) "Roles from your sign-in": the role values of the last sign-in
     /// and what each granted; `null` when no sign-in read a role claim.
     pub idp_roles: Option<crate::domains::admin::dto::IdpRoles>,
+    /// (P5-PERSON, C-1054) The person's own IANA time zone; `null` = the workspace's is used.
+    pub timezone: Option<String>,
+}
+
+fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -86,4 +96,9 @@ pub struct PatchMeRequest {
     /// Stored for anyone, used only for an instance admin.
     #[serde(default)]
     pub admin_attention_email: Option<bool>,
+    /// (P5-PERSON, C-1054) An IANA time zone name; `null` clears it; absent leaves it. Not a
+    /// known name → 422 `value_invalid`.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<String>)]
+    pub timezone: Option<Option<String>>,
 }

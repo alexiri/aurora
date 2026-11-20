@@ -547,6 +547,18 @@ pub fn bearer(tok: &str) -> String {
     format!("Bearer {tok}")
 }
 
+/// (P5-PERSON, C-1053) A delivered turn's `input.text` without the turn context block the API
+/// puts in front of it at dispatch (the person's text as stored). Panics when the block is
+/// missing, so a test that uses it also proves the block is there.
+pub fn delivered_text(d: &serde_json::Value) -> &str {
+    let t = d["input"]["text"].as_str().expect("input.text");
+    let rest = t
+        .strip_prefix("<turn_context>\n")
+        .unwrap_or_else(|| panic!("no turn context block: {t}"));
+    let end = rest.find("</turn_context>\n\n").expect("closed block");
+    &rest[end + "</turn_context>\n\n".len()..]
+}
+
 // ---- test routes exercising the extractors ----
 
 #[derive(serde::Deserialize)]

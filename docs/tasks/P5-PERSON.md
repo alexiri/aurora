@@ -147,4 +147,113 @@ migrate` grants nothing new to the gateway role, because the gateway reads neith
 - Size M–L, both. D-402, C-1052..C-1055, SEC-139, migration `000259`.
 
 ## Completion report
-(to be filled by the lane)
+Lane `p5-agent` (branch `alexiri/p5-agent`), 2026-11-20.
+
+**What was built**
+- Contract first (commit `03280e78`): C-1052..C-1055 in `API_CONTRACTS` and the `/v1/me` row of `05`.
+- `domains/people/turn_person.rs` (C-1052): one function for the turn's person, `{user_id,
+  display_name, email, email_verified, timezone}`. Person speaker only on doors `web`/`api`/`thread`
+  (`speaker_kind = person`); on a `schedule` turn with no speaker, the creator of the schedule named
+  by `door.ref` when it belongs to the turn's agent; every other door has none. Then: not disabled,
+  active org member, `authz::can_use` (the `effective_workspace_access` view, so SEC-138 counts).
+- `domains/people/turn_context.rs` (C-1053): the block, called from arm 6 in
+  `domains/hosted/dispatch.rs` after `delivered_text_of` and put in front of it; never stored. Eval
+  turns get none; `TurnMessage` is unchanged.
+- `domains/tools/calendar.rs`: `person_of` now calls the shared function and keeps `no_person` /
+  `no_verified_email`. **Calendar is stricter**: an org member without `can_use` on the agent's
+  workspace (or suspended there) is now `no_person` (intended; the calendar IT world binds its people
+  to the workspace and a new assertion pins the refusal).
+- `send_message` `to: "me"` (C-1055) in `domains/channels/messaging.rs::send_to_me`, before any
+  other resolution; `Fail::Coded` carries `no_person` / `not_linked` to the tool error code. The
+  tool description and the `to` schema text mention `me` (`domains/tools/messaging.rs`; the
+  description lives there, not in `registry.rs`).
+- Handle cache: `lookup_and_pin` (behind `find_recipient` and the exact-handle lookups of
+  `send_message`/`read_conversation`) writes each non-bot `PlatformUser.handle` to its link
+  (`user_links::set_handle`, only on a change).
+- `PATCH`/`GET /v1/me` `timezone` (C-1054): `null` clears, absent leaves, not a `chrono-tz` name →
+  422 `value_invalid` with nothing changed.
+- Migration `20261201000259_person_timezone_link_handle.sql`: `users.timezone`, `user_links.handle`,
+  both nullable, no default, no grant (the gateway reads `gateway_users`, which has neither).
+- Web: Account › Profile time zone `Select` (the workspace settings' zone list, "Not set" → `null`);
+  `useTimezoneAutofill()` in `AppShell` (`web/src/lib/timezone.ts`): one PATCH per browser session
+  when `GET /v1/me` says `timezone: null` and the browser's zone is a valid IANA name.
+- Docs: `03` (both columns), `04 §The turn's person` (SEC-139), `05`, `10 §Turn context` (+ the
+  Schedules pointer), `12` (`to` forms), `13 §5.10` (`me`, handle cache), `14` (Profile time zone),
+  `17` (SEC-139 row), `API_CONTRACTS`.
+
+**Security (for the Orchestrator's review)**
+- *The block can name no one but the turn's person.* The only identity line, `Working for`, is
+  written from the `TurnPerson` that `turn_person::of_turn` returns, which is the turn row's own
+  `speaker_user_id` (person speaker, person doors only) or the creator of the schedule the turn's
+  `door.ref` names, re-checked as belonging to the turn's agent, and only while active, an org
+  member and `can_use`. Nothing comes from the message text or anything the agent wrote; other
+  values (schedule, webhook, space label, platform name) are names of things, not people, except the
+  unlinked thread author's own `speaker_label`, which is shown as `Speaker:` with "(no Aurora
+  account linked)" and is never a person. Every value passes `sanitize::one_line` with `<`/`>`
+  removed and a 60/100-character clamp, so a display name or schedule name cannot close the tag or
+  add a second `Working for` line (IT `values_cannot_forge_lines_and_the_block_is_bounded`).
+- *No e-mail appears in a group space.* The e-mail is added only when `email_verified` **and**
+  `group` is false, where `group` is true if the conversation's `kind` is `group` **or** the door's
+  thread link (else the conversation's latest link) has `kind = group`. A web turn inside a group
+  thread conversation is covered by the conversation kind (IT `thread_group_has_no_email`).
+- *`me` can reach no one else.* `send_to_me` takes no recipient from the model: the target is
+  always the `user_links` row of `(the turn's person, the resolved integration)`, i.e. that
+  person's own platform user, sent as `Target::User` (their DM) or, when the current link is a
+  `direct` link of a conversation whose `direct_user_id` is the person, that thread. The turn is
+  looked up by the tool context's `turn_id` and must belong to the tool context's conversation;
+  with no person → `no_person`, no link → `not_linked`; only `proactive_messaging = off` refuses
+  outside the own thread. Every other `to` keeps the reach check and approval (the code path is
+  unchanged after the `me` branch).
+
+**Finding: where a schedule's final answer goes.** The brief says "posted to … when the origin
+conversation has a thread link". In the code the run turn lives in the schedule's own run
+conversation (`schedules/fire.rs::start_run`), and the doorless-turn mirror posts to the latest
+thread link **of that conversation** (`channels/mirror.rs`), which a run conversation never has; the
+origin gets only the `schedule_run` notice. So the answer is in practice never posted to chat, which
+is the owner's lost wake-up call. The block therefore uses the mirror's own rule (the run
+conversation's link) so it never tells the agent a false destination: today it says "shown only in
+the dashboard", and the `me` sentence tells it how to reach the person (IT
+`schedule_with_and_without_a_thread_link` pins both, including an origin with a link). `10
+§Schedules` "the answer is posted there too" does not match the code; posting run answers to the
+origin's thread would be a separate change (not done here).
+
+**Handle cache, how often it fills.** Only when an agent's `user.lookup` happens to return the
+person: `find_recipient`, or `send_message`/`read_conversation` with a handle or name. An agent
+rarely looks up the person it is working for, so for a linked Mattermost user the cache is usually
+empty until then. Proposal (follow-up): when a link is created (verified-e-mail autolink in
+`inbox/speaker.rs`, sign-in link, admin link), queue one `user.lookup { user_ref }` op (the op
+already supports `user_ref`) and write the handle from its result; that is one cheap op per link
+for its lifetime, no platform call at dispatch.
+
+**Other behaviour changes from the shared rule.** Eval turns have no person (C-1052), so
+`calendar_invite_list` on an eval turn now answers `no_person` instead of listing the run starter's
+invitations (the three write tools were already `eval_read_only`); `calendar_invitations::
+eval_turns_cannot_send_invitations` asserts it. The fake harness echoes the whole delivered text, so
+an echo now includes the block; no IT, script or Playwright spec asserts an echo (checked); the ITs
+that compared `input.text` exactly (`hosted`, `chat_reply`) use the new `common::delivered_text`,
+which also proves the block is there. The real-stack Playwright specs see one extra
+`PATCH /v1/me { timezone }` per fresh session (harmless; nothing asserts on it).
+
+**Verification** (all through `heavy.sh p5-agent`; ITs against a throwaway `postgres:16` container
+on `127.0.0.1:55499` via `AURORA_TEST_DATABASE_URL`, never aurora-dev-pg; the container was removed
+afterwards)
+- `cargo test -p aurora-api --test it -- turn_person:: calendar_invitations:: chat_reply::
+  hosted::end_to_end_turn_with_steer_credential_and_replay
+  hosted::followup_is_promoted_when_the_turn_ends_unjoined`: first run 25 passed, 5 failed (four
+  test-setup errors in the new file: duplicate thread link, one active turn per conversation, an
+  81+-character display name; and the eval `calendar_invite_list` change above). After the fixes:
+  `turn_person:: calendar_invitations::eval_turns_cannot_send_invitations
+  foundation::openapi_matches_checked_in channels_messaging::` (with `UPDATE_OPENAPI=1`) **34
+  passed, 0 failed**. The other calendar, `chat_reply` and `hosted` tests passed in the first run.
+- `cargo test -p aurora-db --test it -- schema_matches_spec gateway_grants membership_queries`: 7
+  passed.
+- `cargo fmt --all --check`: clean (after `cargo fmt -p aurora-api -p aurora-db`).
+- `cargo clippy -p aurora-api -p aurora-db --all-targets -- -D warnings`: clean.
+- `python3 scripts/extract-schema.py --check`: up to date (fixture regenerated);
+  `scripts/guards/run-all.sh`: all guards passed (after rewording one comment the
+  no-integration-names guard caught).
+- Web: `pnpm gen:api` (schema from the updated `openapi.json`), `pnpm typecheck`: pass; `eslint` on
+  the five touched web files: clean; `vitest run tests/person-timezone.test.tsx tests/ssh.test.tsx`:
+  2 files, 20 tests passed (the profile field saves and clears; the fill sends exactly one PATCH
+  per session when null, none when set, none for an invalid browser zone).
+- Not run (CI is the gate): full suites, Playwright.

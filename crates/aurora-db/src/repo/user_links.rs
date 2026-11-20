@@ -121,6 +121,44 @@ pub async fn insert<'e, E: PgExecutor<'e>>(
     Ok(id)
 }
 
+/// (P5-PERSON, C-1055) The handle cache: records the platform handle a `user.lookup` returned for
+/// `(integration, platform_user_ref)` on its link, when one exists. Writes only on a change.
+pub async fn set_handle<'e, E: PgExecutor<'e>>(
+    exec: E,
+    integration: Uuid,
+    platform_user_ref: &str,
+    handle: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE user_links SET handle = $3, updated_at = now()
+          WHERE integration_id = $1 AND platform_user_ref = $2 AND handle IS DISTINCT FROM $3",
+    )
+    .bind(integration)
+    .bind(platform_user_ref)
+    .bind(handle)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
+/// (P5-PERSON, C-1053, C-1055) The person's link on one integration (the oldest, should there be
+/// several) with its cached handle: `(platform_user_ref, handle)`.
+pub async fn link_of_user_on<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    integration: Uuid,
+) -> Result<Option<(String, Option<String>)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT platform_user_ref, handle FROM user_links
+          WHERE user_id = $1 AND integration_id = $2 ORDER BY created_at, id LIMIT 1",
+    )
+    .bind(user)
+    .bind(integration)
+    .fetch_optional(exec)
+    .await?)
+}
+
 pub async fn delete<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
     Ok(sqlx::query("DELETE FROM user_links WHERE id=$1")
         .bind(id)

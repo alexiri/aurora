@@ -35,7 +35,7 @@ async fn world(extra: &str) -> W {
     };
     let org = h.org().await;
     let ws = h.workspace(org).await;
-    let person = verified_member(&h, org, "grace@example.org").await;
+    let person = verified_member(&h, org, ws, "grace@example.org").await;
     let agent = new_agent(&h, org, ws, "ada").await;
     W {
         h,
@@ -46,7 +46,9 @@ async fn world(extra: &str) -> W {
     }
 }
 
-async fn verified_member(h: &Harness, org: Uuid, email: &str) -> Uuid {
+/// A verified, active org member with `can_use` on `ws` (P5-PERSON, C-1052: the turn's person
+/// needs `can_use` of the agent's workspace).
+async fn verified_member(h: &Harness, org: Uuid, ws: Uuid, email: &str) -> Uuid {
     let u = h.user(email, false).await;
     sqlx::query("UPDATE users SET email_verified_at = now() WHERE id = $1")
         .bind(u)
@@ -54,6 +56,7 @@ async fn verified_member(h: &Harness, org: Uuid, email: &str) -> Uuid {
         .await
         .unwrap();
     h.member(org, u, "member", "active").await;
+    h.bind_ws(ws, u, "member").await;
     u
 }
 
@@ -389,7 +392,7 @@ async fn other_agents_and_people_cannot_reach_an_invitation() {
     );
 
     // The same agent talking to another person cannot reach it either.
-    let p2 = verified_member(&w.h, w.org, "linus@example.org").await;
+    let p2 = verified_member(&w.h, w.org, w.ws, "linus@example.org").await;
     let pctx = w
         .turn(w.agent, "api", Some(p2), json!({"kind": "api"}))
         .await;
@@ -449,6 +452,7 @@ async fn refusals() {
     // A person whose e-mail is not verified.
     let u = w.h.user("unverified@example.org", false).await;
     w.h.member(w.org, u, "member", "active").await;
+    w.h.bind_ws(w.ws, u, "member").await;
     let ctx = w
         .turn(w.agent, "api", Some(u), json!({"kind": "api"}))
         .await;
@@ -458,13 +462,30 @@ async fn refusals() {
     );
 
     // A disabled person and one who left the org.
-    let d = verified_member(&w.h, w.org, "gone@example.org").await;
+    let d = verified_member(&w.h, w.org, w.ws, "gone@example.org").await;
     let dctx = w
         .turn(w.agent, "api", Some(d), json!({"kind": "api"}))
         .await;
     w.h.set_member_status(w.org, d, "suspended").await;
     assert_eq!(
         code(&run(&dctx, "calendar_invite", event()).await),
+        "no_person"
+    );
+
+    // (P5-PERSON, C-1052) An active, verified org member without `can_use` on the agent's
+    // workspace is not the turn's person either (stricter than SEC-108 alone).
+    let o = w.h.user("outsider@example.org", false).await;
+    sqlx::query("UPDATE users SET email_verified_at = now() WHERE id = $1")
+        .bind(o)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    w.h.member(w.org, o, "member", "active").await;
+    let octx = w
+        .turn(w.agent, "api", Some(o), json!({"kind": "api"}))
+        .await;
+    assert_eq!(
+        code(&run(&octx, "calendar_invite", event()).await),
         "no_person"
     );
 
@@ -811,7 +832,7 @@ async fn injection_in_the_title_and_description() {
 }
 
 /// An eval turn cannot send an invitation (C-868): the three write tools are refused by the
-/// conversation's kind; `calendar_invite_list` is a read.
+/// conversation's kind; `calendar_invite_list` is a read, but an eval turn has no person.
 #[tokio::test]
 async fn eval_turns_cannot_send_invitations() {
     let w = world(EMAIL).await;
@@ -833,7 +854,12 @@ async fn eval_turns_cannot_send_invitations() {
         );
     }
     assert!(w.h.mail.sent().is_empty());
-    assert!(run(&ctx, "calendar_invite_list", json!({})).await.ok);
+    // (P5-PERSON, C-1052) An eval turn has no person, whoever started the run: the read answers
+    // `no_person` instead of listing the starter's invitations.
+    assert_eq!(
+        code(&run(&ctx, "calendar_invite_list", json!({})).await),
+        "no_person"
+    );
 }
 
 /// A repeating event carries a VTIMEZONE (TZID) in the mailed calendar.

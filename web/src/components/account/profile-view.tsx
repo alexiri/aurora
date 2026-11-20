@@ -18,12 +18,16 @@ import { useUpdateMe } from "@/lib/api/account";
 import { fieldErrors } from "@/lib/api/errors";
 import { usePatchOnboarding } from "@/lib/api/onboarding";
 import { useInstance, useSession, type Me } from "@/lib/api/queries";
+import { timeZones } from "@/lib/nav/landing";
 import { accountRoutes } from "@/lib/routes";
+
+const ZONES = timeZones();
 
 function ProfileForm({ me }: { me: Me }) {
   const update = useUpdateMe();
   const [name, setName] = useState(me.user.display_name);
   const [org, setOrg] = useState(me.default_org_id ?? "");
+  const [tz, setTz] = useState(me.timezone ?? "");
   const [clientErr, setClientErr] = useState("");
   const [saved, setSaved] = useState(false);
   const fe = update.error ? fieldErrors(update.error) : {};
@@ -38,7 +42,7 @@ function ProfileForm({ me }: { me: Me }) {
     }
     setClientErr("");
     update.mutate(
-      { display_name: trimmed, default_org_id: org || null },
+      { display_name: trimmed, default_org_id: org || null, timezone: tz || null },
       { onSuccess: () => setSaved(true) },
     );
   }
@@ -66,6 +70,20 @@ function ProfileForm({ me }: { me: Me }) {
         <Select id="acc-org" value={org} placeholder="No default" onChange={setOrg} options={me.memberships
             .filter((m) => m.status === "active")
             .map((m) => ({ value: m.org.id, label: m.org.name }))} />
+      </Field>
+      <Field
+        id="acc-tz"
+        label="Time zone"
+        hint="Your agents tell the time in it when they work for you. Not set: each workspace's own."
+        error={fe.timezone}
+      >
+        <Select
+          id="acc-tz"
+          value={tz}
+          placeholder="Not set"
+          onChange={setTz}
+          options={(tz === "" || ZONES.includes(tz) ? ZONES : [tz, ...ZONES]).map((z) => ({ value: z, label: z }))}
+        />
       </Field>
       {update.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={update.error} />

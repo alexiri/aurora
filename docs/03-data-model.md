@@ -42,6 +42,7 @@ MUST implement it exactly; any change starts here.
 | approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails (phase 2, RFE-011a; `PATCH /v1/me { approval_email }`) |
 | admin_attention_email_enabled | bool not null default true | (FIX-167 Part B, C-1024) per-user opt-out of the e-mail about new administration decisions; used for instance admins only (`PATCH /v1/me { admin_attention_email }`) |
 | idp_admin_source | text null | (phase 4, P4-IDP-1, D-139) `idp:<provider>:<value>` when the claim sync granted `is_instance_admin`; `null` for a manual, e-mail-list or `bootstrap-admin` flag (those are never revoked by the sync) |
+| timezone | text null | (phase 5, P5-PERSON, D-402(d), C-1054; migration `20261201000259_person_timezone_link_handle.sql`) the person's own IANA time zone, validated with `chrono-tz` by the API (`PATCH /v1/me { timezone }`, `null` clears); `null` = the workspace's. The clock of the turn context block (C-1053). Not readable by the gateway (`gateway_users` has no such column) |
 
 ### `user_idp_roles`
 (phase 4, P4-IDP-1, D-139) The claim debugger: the role values of a user's last sign-in and what each mapped to.
@@ -1528,6 +1529,7 @@ presence-level ownership).
 | platform_user_ref | text not null | unique (integration_id, platform_user_ref) |
 | user_id | uuid FK→users (cascade) | |
 | method | text CHECK in (`verified_email`,`sign_in_link`,`admin`) | |
+| handle | text null | (phase 5, P5-PERSON, D-402, C-1055; migration `20261201000259_person_timezone_link_handle.sql`) the platform handle (without `@`, one line, ≤ 80) the last `user.lookup` result returned for this `(integration_id, platform_user_ref)`; written only when the API reads such a result, no backfill. Shown in the turn context block's `Working for` line (C-1053) |
 
 ### `link_requests`
 | Column | Type | Notes |

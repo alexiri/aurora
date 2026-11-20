@@ -347,7 +347,7 @@ async fn end_to_end_turn_with_steer_credential_and_replay() {
     let lv = r.boot("daneel").await;
     let d = r.deliver().await;
     let turn = d["turn_id"].as_str().unwrap().to_owned();
-    assert_eq!(d["input"]["text"], "hello");
+    assert_eq!(delivered_text(&d), "hello");
     assert_eq!(d["model"]["dialect"], "anthropic_messages");
     assert!(!d["model"]["model"].as_str().unwrap().is_empty());
     let cred = d["context_credential"].as_str().unwrap();
@@ -514,7 +514,7 @@ async fn followup_is_promoted_when_the_turn_ends_unjoined() {
     assert_eq!((st.as_str(), n), ("promoted", 1));
     // The promoted turn is dispatched next.
     let d2 = r.deliver().await;
-    assert_eq!(d2["input"]["text"], "second");
+    assert_eq!(delivered_text(&d2), "second");
 }
 
 #[tokio::test]
