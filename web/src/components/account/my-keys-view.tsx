@@ -4,6 +4,9 @@ import { useState } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Altitude } from "@/components/ui/altitude";
+import { FromYourTerminal } from "@/components/ui/from-your-terminal";
+import { apiKeyCurl } from "@/lib/copy-as-curl";
+import { useOrigin } from "@/lib/use-origin";
 import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
@@ -72,6 +75,7 @@ function CreateKeyDialog({ open, onOpenChange, onCreated }: { open: boolean; onO
 }
 
 export function MyKeysView() {
+  const origin = useOrigin();
   const keys = useMyApiKeys();
   const revoke = useRevokeApiKey(accountKeys.myKeys);
   const [creating, setCreating] = useState(false);
@@ -108,6 +112,12 @@ export function MyKeysView() {
             onRevoke={(id) => revoke.mutateAsync(id)}
             revoking={revoke.isPending}
             error={revoke.error}
+          />
+          <FromYourTerminal
+            commands={[
+              { label: "the aurora login command", text: "aurora login", note: "Sign in from your terminal once; the CLI stores a key of its own." },
+              { label: "the curl command", text: apiKeyCurl(origin), note: "Call the API with a key you saved: it answers with who the key acts as." },
+            ]}
           />
         </>
       )}

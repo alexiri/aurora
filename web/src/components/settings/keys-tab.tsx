@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { Altitude } from "@/components/ui/altitude";
 import { CopyCurlMenu } from "@/components/ui/copy-curl";
+import { FromYourTerminal } from "@/components/ui/from-your-terminal";
 import { apiKeyCurl } from "@/lib/copy-as-curl";
+import { useOrigin } from "@/lib/use-origin";
 import { DateField } from "@/components/ui/date-field";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/notice";
@@ -29,6 +31,7 @@ export function keyCanText(workspaceName: string): string {
  * first. The secret is shown once in `SecretOnce`.
  */
 export function KeysTab({ wsId, workspaceName = "this workspace" }: { wsId: string; workspaceName?: string }) {
+  const origin = useOrigin();
   const keys = useWorkspaceKeys(wsId);
   const create = useCreateWorkspaceKey(wsId);
   const revoke = useRevokeApiKey(accountKeys.wsKeys(wsId));
@@ -117,6 +120,12 @@ export function KeysTab({ wsId, workspaceName = "this workspace" }: { wsId: stri
           ))}
         </ul>
       ) : null}
+      <FromYourTerminal
+        commands={[
+          { label: "the aurora login command", text: "aurora login", note: "Sign in from your terminal once; the CLI stores a key of its own." },
+          { label: "the curl command", text: apiKeyCurl(origin), note: "Call the API with a key you saved: it answers with who the key acts as." },
+        ]}
+      />
 
       <FormDialog
         open={dialog}

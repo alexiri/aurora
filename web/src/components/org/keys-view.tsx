@@ -6,6 +6,9 @@ import { KeyTable } from "@/components/account/key-table";
 import { SecretOnce } from "@/components/ui/secret-once";
 import { ErrorState, Loading } from "@/components/states";
 import { Altitude } from "@/components/ui/altitude";
+import { FromYourTerminal } from "@/components/ui/from-your-terminal";
+import { apiKeyCurl } from "@/lib/copy-as-curl";
+import { useOrigin } from "@/lib/use-origin";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
 import { Field, inputClass } from "@/components/ui/field";
@@ -19,6 +22,7 @@ import { orgKeys, useCreateOrgKey, useOrgKeys } from "@/lib/api/org";
 
 export function OrgKeysView({ orgId }: { orgId: string }) {
   const keys = useOrgKeys(orgId);
+  const origin = useOrigin();
   const create = useCreateOrgKey(orgId);
   const revoke = useRevokeApiKey(orgKeys.keys(orgId));
   const [name, setName] = useState("");
@@ -99,6 +103,7 @@ export function OrgKeysView({ orgId }: { orgId: string }) {
             error={revoke.error}
           />
         ) : null}
+        <FromYourTerminal commands={[{ label: "the curl command", text: apiKeyCurl(origin), note: "Call the API with an organization key you saved: it answers with who the key acts for." }]} />
       </Section>
       <SecretOnce
         secret={created?.secret ?? null}

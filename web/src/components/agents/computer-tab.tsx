@@ -5,6 +5,7 @@ import { useState } from "react";
 import { ErrorState, Loading } from "@/components/states";
 import { Altitude } from "@/components/ui/altitude";
 import { Badge } from "@/components/ui/badge";
+import { FromYourTerminal } from "@/components/ui/from-your-terminal";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Section } from "@/components/ui/section";
@@ -175,12 +176,15 @@ function listWords(items: string[]): string {
 export function ComputerTab({
   agentId,
   agentName,
+  agentHandle,
   terminal = false,
   workspaceId,
 }: {
   agentId: string;
   /** For the sentences ("Daneel's computer"). */
   agentName?: string;
+  /** For the commands of the "From your terminal" fold (Expert). */
+  agentHandle?: string;
   /** The agent's workspace: the Usage card reads its usage (C-1000). */
   workspaceId?: string;
   frozen?: boolean;
@@ -268,6 +272,17 @@ export function ComputerTab({
             </tbody>
           </DataTable>
         </Section>
+      ) : null}
+      {/* (P5-REFINE-19, Expert) The two commands the CLI has for a computer: ssh into it, run a command with its proxy. */}
+      {agentHandle ? (
+        <FromYourTerminal
+          commands={[
+            ...(instance.data?.features.ssh === true
+              ? [{ label: "the aurora ssh command", text: `aurora ssh ${agentHandle}`, note: "Open a shell on this computer: it fetches a short-lived certificate for your SSH key and starts ssh." }]
+              : []),
+            { label: "the aurora run command", text: `aurora run --agent ${agentHandle} -- <command>`, note: "Run a command on your own machine with this agent's proxy and certificate settings in its environment." },
+          ]}
+        />
       ) : null}
       {/* (D-412, SEC-141) The machinery is for instance admins only. The API does not send it to anyone else; this is not the
           only guard: nothing is read from a member's view. */}
