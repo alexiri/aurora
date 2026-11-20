@@ -14,6 +14,15 @@
 {{- with .Values.image.registry }}{{ $sandboxImage = printf "%s/aurora-sandbox:%s" (trimSuffix "/" .) (default $.Chart.AppVersion $.Values.image.tag) }}{{ end -}}
 {{- $sandboxImage := default $sandboxImage .Values.runner.sandboxImage -}}
 {{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "image" (default $sandboxImage ($cfg.runner).image) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
+{{- /* (FIX-188, C-1012) the Kubernetes backend cannot read the image label, so for the standard
+      `aurora-sandbox` image (repository's last path segment exactly `aurora-sandbox`, any registry,
+      tag or digest) the chart reports its harnesses. An operator-set `config.runner.image_harnesses`
+      (hasKey: even `[]`) wins; any other image keeps the runner default (claude-code, fake). */ -}}
+{{- $rn := $cfg.runner -}}
+{{- $repo := regexReplaceAll "[@:][^/@:]*$" (regexReplaceAll "@.*$" (toString $rn.image) "") "" -}}
+{{- if and (not (hasKey $rn "image_harnesses")) (eq (base $repo) "aurora-sandbox") }}
+{{- $_ := set $rn "image_harnesses" (splitList "," (include "aurora.standardSandboxHarnesses" .)) -}}
+{{- end -}}
 {{- /* (P4-TERM, FIX-053; phase 5, SET-5, D-237(d)) the web terminal: `terminal.enabled`
       (top-level) says the deployment PROVIDES the terminal (the runner :4108 stream listener
       below, the NetworkPolicy api→runner:4108 flows), so it renders `terminal.available`
