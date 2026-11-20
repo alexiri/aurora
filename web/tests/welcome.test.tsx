@@ -79,14 +79,16 @@ describe("Welcome (C-927)", () => {
     expect(safe.textContent).toContain("Everything Daneel sends goes through Aurora's gateway. It holds the keys, applies the access you choose, and puts anything that needs your say in Approvals.");
     expect(within(safe).getByRole("link", { name: "Approvals" })).toHaveAttribute("href", "/o/acme/w/ops/approvals");
     const agent = screen.getByRole("region", { name: "Daneel is your agent" });
-    await waitFor(() => expect(agent.textContent).toContain("Daneel can read Linear. It asks you before changing anything in Linear. It can reach any website."));
+    await waitFor(() => expect(agent.textContent).toContain("Daneel can read Linear. It asks you before changing anything in Linear. It can reach websites; you can limit that."));
+    // (firstday-5) The way out is a link to Internet access.
+    expect(within(agent).getByRole("link", { name: "you can limit that" })).toHaveAttribute("href", "/o/acme/w/ops/internet-access");
   });
 
   it("promises nothing the summary does not show: a fresh agent asks nothing, and the page says it can't use any app", async () => {
     world();
     wrap(<WelcomeView />);
     const agent = await screen.findByRole("region", { name: "Daneel is your agent" });
-    await waitFor(() => expect(agent.textContent).toContain("Daneel can't use any app yet. It can reach any website."));
+    await waitFor(() => expect(agent.textContent).toContain("Daneel can't use any app yet. It can reach websites; you can limit that."));
     expect(document.body.textContent).not.toMatch(/asks you before risky actions/);
   });
 
@@ -108,7 +110,9 @@ describe("Welcome (C-927)", () => {
     wrap(<WelcomeView />);
     expect(await screen.findByText(/You are a member here: you can chat with Daneel/)).toBeInTheDocument();
     const agent = screen.getByRole("region", { name: "Daneel is your agent" });
-    await waitFor(() => expect(agent.textContent).toContain("Daneel can read Linear. It can reach any website."));
+    await waitFor(() => expect(agent.textContent).toContain("Daneel can read Linear. It can reach websites."));
+    // Members have no way to change it, so there is no link.
+    expect(within(agent).queryByRole("link", { name: "you can limit that" })).toBeNull();
     expect(policyRead).toBe(false);
   });
 
