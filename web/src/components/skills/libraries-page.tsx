@@ -11,6 +11,7 @@ import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { OrgConnectJourney } from "@/components/apps/connect-journey/org-journey";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusDot } from "@/components/ui/status-dot";
 import { ApiError } from "@/lib/api/client";
@@ -179,6 +180,7 @@ function ConnectDialog({ orgId, open, onOpenChange }: { orgId: string; open: boo
   const [ref, setRef] = useState("");
   const [path, setPath] = useState("");
   const [err, setErr] = useState("");
+  const [connecting, setConnecting] = useState(false);
   const chosen = connection || usable[0]?.id || "";
 
   function submit(e: FormEvent) {
@@ -215,15 +217,31 @@ function ConnectDialog({ orgId, open, onOpenChange }: { orgId: string; open: boo
     >
       <Notice role="status">Use a read-only token (GitHub: Contents read; GitLab: read_repository). A token that can write is more access than Aurora needs.</Notice>
       {conns.isSuccess && usable.length === 0 ? (
+        // (P5-REFINE-17, org-12) No dead end: connect GitHub right here, in the organization's connect journey.
         <Notice tone="pending" role="status">
-          No organization-level connection of an app that can serve a library (GitHub or GitLab) is active. Connect one under Apps & accounts first.
+          <p className="font-medium">Connect a skill library</p>
+          <p>A skill library comes from a GitHub account. This organization has none connected yet.</p>
+          <Button type="button" size="sm" className="mt-2" onClick={() => setConnecting(true)}>
+            Connect GitHub
+          </Button>
         </Notice>
+      ) : null}
+      {connecting ? (
+        <OrgConnectJourney
+          orgId={orgId}
+          appId="github"
+          onClose={() => {
+            setConnecting(false);
+            void conns.refetch();
+          }}
+        />
       ) : null}
       <Field id="lib-label" label="Label">
         <input id="lib-label" className={inputClass} value={label} maxLength={80} onChange={(e) => setLabel(e.target.value)} />
       </Field>
       <Field id="lib-conn" label="Account">
         <select id="lib-conn" className={inputClass} value={chosen} onChange={(e) => setConnection(e.target.value)}>
+          {usable.length === 0 ? <option value="">No account yet</option> : null}
           {usable.map((c) => (
             <option key={c.id} value={c.id}>
               {c.label} ({c.app_id})

@@ -57,7 +57,7 @@ const CASES: [string, string][] = [
   ["/o/acme/policy", "/o/acme/internet-access"],
   ["/o/acme/skills", "/o/acme/agents?tab=skills"],
   ["/o/acme/skills/libraries", "/o/acme/agents/skills/libraries"],
-  ["/o/acme/settings/previews", "/o/acme/agents?tab=previews"],
+  ["/o/acme/settings/previews", "/o/acme/agents?tab=byo"],
   ["/o/acme/channels", "/o/acme/chat-platforms"],
   ["/o/acme/instances", "/o/acme/apps?tab=self-hosted"],
   ["/o/acme/api-keys", "/o/acme/settings?tab=api-keys"],

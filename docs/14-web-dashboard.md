@@ -1380,8 +1380,29 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 (Phase 5, P5-IA-1, D-338, C-961: navigation and page names follow §Information architecture › "One
-structure for every level". An org member sees Workspaces and read-only AI models and Internet access;
+structure for every level". An org member sees Overview and read-only AI models and Internet access;
 every other topic is owners/admins and is not listed for a member.)
+- **Manage <org>, an area, not a second rail** (P5-REFINE-17, rec 8). On `/o/<org>/…` (not `/w/…`) the rail stays the
+  **workspace rail** of the workspace the person was in (remembered per browser tab; else their personal workspace; else
+  the first). The page area carries a **← Back to <workspace>** link, the **Manage <org>** header (the only place the
+  organization is named) and a sub-nav: Overview · Agents · People · Apps & accounts · Chat platforms · AI models ·
+  Internet access · Data · Settings (a column on a desktop, a select on a phone; filtered by role with
+  `visibleTopics("org", …)`: a member keeps Overview, AI models and Internet access). The switcher's **Manage <org>** row
+  (was "Organization settings") opens the Overview; its last row **New organization** opens a dialog (shown where sign-up
+  lets the person create one). Every old address keeps working (C-960).
+- **Overview** (`/o/<org>`): **Needs you** (requests for apps, chat platforms and AI keys an admin can resolve, and the
+  invitations waiting), **People** (count, invitations waiting, **Invite**), **Workspaces** (team first, personal
+  below, **New workspace**), **Agents** (the five most recently changed, **All agents**) and the two rules that apply
+  (AI models, Internet access). Members see Workspaces and the two rules only.
+- **Agents** opens on **Agents** (every agent by workspace: team workspaces A–Z, then personal ones by owner), then
+  **Bring your own** (with Previews as a second section) and **Skills**, the last two Expert (behind "Show more
+  controls"). The list reads each workspace's agents until the organization-wide route (C-1090) lands.
+- **People**: a promotion to Admin or Owner asks first ("Make Bob an Admin of Acme?" with what the role can do and
+  "What can each role do?", `ROLE_CAN` in `lib/roles-explain.ts`); lowering and Member changes apply at once. The invite
+  dialog ("Invite someone to Acme") lists team workspaces only; everyone's personal workspace is made on accept.
+  Pending invitations are stacked rows at 390 px.
+- **Internet access › History of changes**: rows read "<Person> published version N" with **Current** on the live one
+  and **Roll back to this version** (asks first) on the others.
 - **Workspaces** (all members: those they can access; owners/admins: all).
 - **Members**: list, roles, suspend/remove, invitations. (phase 2, RFE-021)
   Suspend/remove first opens the **offboarding view** — "Removing Alice disables

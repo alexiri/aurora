@@ -60,6 +60,8 @@ export const ALTITUDE_REGISTRY = {
   "export.agent": { altitude: "expert", area: "Agent export", later: "P5-REFINE-19" },
   "ws.memlang": { altitude: "expert", area: "New workspace, Settings" },
   "chat.redact": { altitude: "expert", area: "Chat" },
+  "org.byo": { altitude: "expert", area: "Agents (organization)" },
+  "org.skills": { altitude: "expert", area: "Agents (organization)" },
   "org.groups": { altitude: "expert", area: "People" },
   "org.directory": { altitude: "expert", area: "People" },
   "apikeys": { altitude: "setup", area: "Account" },
