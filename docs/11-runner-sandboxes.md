@@ -380,6 +380,10 @@ longest-idle held sandbox is evicted → `evict`.
 - **Restart** (user action): stop immediately, active turns failed
 `agent_restarted`, no session refs persisted from the old boot; the next due
 work starts a fresh boot.
+- **Sleep now** (user action, P5-REFINE-4, C-1060): `POST …/sandbox/sleep` sets
+`stop_requested_at` with `stop_reason = idle` when no `turn`, `process` or `watch`
+holds the computer (409 `sandbox_busy` otherwise); open terminal, SSH, Files and
+preview sessions end. A message that arrives afterwards wakes it through the start arm.
 - **Delete**: agent deleted → reconcile destroys container and home.
 
 Stop: claim → `stopping` → `sandbox.stop` → runner `stop` (supervisor gets
@@ -563,7 +567,12 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
   120 s after the last byte) the sandbox is kept awake with the reason **`terminal`**, capped
   at `TERMINAL_AWAKE_CAP` (4 h per boot, refreshed from the first session byte); past the cap
   it parks like any idle sandbox and the next open wakes it. A terminal is never a turn, a
-  conversation event or a `last_engaged_at` stamp.
+  conversation event or a `last_engaged_at` stamp. (P5-REFINE-4, C-1058, D-416) **An open
+  terminal or SSH session counts, bytes or not:** the runner's stream listener stamps the
+  keep-awake every half grace (60 s) for as long as the leg is open (a heartbeat tied to the leg's
+  route, ended by every close), sharing one rate budget with the byte-triggered stamp; the cap is
+  unchanged. A computer that restarts anyway gets a new `boot_id`, which the dashboard compares to
+  print "The computer restarted; your running commands were stopped".
 - **Supervisor side** (`12 §Terminal`): the runner's `pty.open` (only for an API-redeemed
   grant of the current boot) makes the supervisor spawn the image shell in a PTY as the agent
   user, cwd `/workspace`, container environment minus every `AURORA_*` variable and the boot

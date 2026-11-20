@@ -60,6 +60,7 @@ pub async fn register(
     )
     .await?;
     tx.commit().await.map_err(DbError::from)?;
+    let streams = stream_flags(s, &req.capabilities);
     Ok(RegisterResponse {
         runner_id: runner.id,
         replica_id: replica,
@@ -69,23 +70,58 @@ pub async fn register(
             reconcile_interval_secs: limits::RECONCILE_INTERVAL.as_secs() as u32,
             orphan_grace_secs: limits::ORPHAN_GRACE.as_secs() as u32,
             idle_stop_secs: s.ops().hosted.idle_stop_secs as u32,
-            previews: s.config.previews.enabled,
-            // (P4-TERM, C-623; SET-5, D-237(d)) The runner opens :4108 for terminal grants and
-            // speaks the W19 `pty.*` frames whenever the deployment provides the wiring
-            // (`terminal.available`) or the terminal is on — and only if this runner
-            // advertised the capability (an older runner binary must not be told to open the
-            // port). Whether the terminal is *on* is the live switch, checked at each open and
-            // when a boot document is built.
-            terminal: {
-                let t = &s.ops().terminal;
-                (t.enabled || t.available) && req.capabilities.terminal
-            },
-            // (P4-SSH-2, D-239) `auz_` legs on :4108: instance `ssh.enabled` and a runner that
-            // advertised `ssh`. Decided at registration, like `terminal`; the grant redemption
-            // re-checks `ssh.enabled` live (`409 not_current`).
-            ssh_enabled: s.config.ssh.enabled && req.capabilities.ssh,
+            previews: streams.previews,
+            terminal: streams.terminal,
+            ssh_enabled: streams.ssh_enabled,
         },
     })
+}
+
+/// (P5-REFINE-4, C-1057) The stream listener's flags for a runner that advertised `caps`, from
+/// the configuration in force. Registration (`RunnerConfig`) and every work poll
+/// (`WorkResponse.streams`) call this one function, so they can never disagree.
+pub(crate) fn stream_flags(s: &AppState, caps: &RunnerCapabilities) -> StreamsConfig {
+    let ops = s.ops();
+    stream_flags_from(
+        StreamSwitches {
+            previews: ops.previews.enabled,
+            terminal_enabled: ops.terminal.enabled,
+            terminal_available: ops.terminal.available,
+            ssh: s.config.ssh.enabled,
+        },
+        caps.terminal,
+        caps.ssh,
+    )
+}
+
+/// The instance settings [`stream_flags`] reads.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct StreamSwitches {
+    pub previews: bool,
+    pub terminal_enabled: bool,
+    pub terminal_available: bool,
+    pub ssh: bool,
+}
+
+/// The rules of [`stream_flags`], free of the state (unit-tested).
+pub(crate) fn stream_flags_from(
+    sw: StreamSwitches,
+    caps_terminal: bool,
+    caps_ssh: bool,
+) -> StreamsConfig {
+    StreamsConfig {
+        previews: sw.previews,
+        // (P4-TERM, C-623; SET-5, D-237(d)) The runner opens :4108 for terminal grants and
+        // speaks the W19 `pty.*` frames whenever the deployment provides the wiring
+        // (`terminal.available`) or the terminal is on — and only if this runner advertised the
+        // capability (an older runner binary must not be told to open the port). Whether the
+        // terminal is *on* is the live switch, checked at each open and when a boot document is
+        // built.
+        terminal: (sw.terminal_enabled || sw.terminal_available) && caps_terminal,
+        // (P4-SSH-2, D-239) `auz_` legs on :4108: instance `ssh.enabled` and a runner that
+        // advertised `ssh`; the grant redemption re-checks `ssh.enabled` live (`409 not_current`).
+        ssh_enabled: sw.ssh && caps_ssh,
+    }
 }
 
 pub async fn retire(s: &AppState, runner: &RunnerRow, replica: Uuid) -> Result<(), ApiError> {
@@ -423,4 +459,41 @@ pub(crate) async fn fail_start(
         .await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod stream_flags_tests {
+    use super::*;
+
+    #[test]
+    fn terminal_and_ssh_need_the_runner_capability() {
+        let all_on = StreamSwitches {
+            previews: false,
+            terminal_enabled: true,
+            terminal_available: false,
+            ssh: true,
+        };
+        let f = stream_flags_from(all_on, false, false);
+        assert_eq!(f, StreamsConfig::default());
+        assert!(!f.listener_on());
+        let available = StreamSwitches {
+            terminal_enabled: false,
+            terminal_available: true,
+            ..all_on
+        };
+        let f = stream_flags_from(available, true, true);
+        assert!(f.terminal && f.ssh_enabled && !f.previews && f.listener_on());
+        let previews_only = StreamSwitches {
+            previews: true,
+            ..StreamSwitches::default()
+        };
+        assert_eq!(
+            stream_flags_from(previews_only, true, true),
+            StreamsConfig {
+                previews: true,
+                terminal: false,
+                ssh_enabled: false
+            }
+        );
+    }
 }

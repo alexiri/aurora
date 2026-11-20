@@ -505,6 +505,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   starting or running; errors through the shared notice) and says "Sleeps after
   n minutes of quiet" in words from `SandboxView.idle_stop_after_secs`, nothing
   when it is null.
+  (P5-REFINE-4, D-412, SEC-141) The engine's details (image, runner, pod events,
+  start-attempt and start-log detail) are instance-admin only: the API returns them
+  to nobody else, so the Computer page shows everyone else the computer in words
+  (`SandboxView.computer`); the UI is P5-REFINE-15's.
 - **Agent page (phase 5)** (P5-AGENT-2, D-200, D-201; design: the "Agent page
   redesign" canvas, boards "Chosen · Rail expanded", "Chosen · Rail collapsed"
   and "A · Phone"; its "New conversation" button is not part of the design).
@@ -2159,7 +2163,7 @@ inside a page. Disclosure now has one home.
 and the owner of a **team** workspace start at **Set up**; an instance admin inside Administration starts at
 **Expert**; a workspace member, an approver, an organization member and the owner of the person's own
 **personal** workspace start at **Use** (the walk-through of "the first ten minutes" shows a person who owns
-their personal workspace with Overview, Agents and Approvals only; one line in `viewerFloor` changes this).
+their personal workspace with Overview, Agents and Approvals only; confirmed by the owner, D-423).
 While a role loads the floor is Use, so nothing deeper flashes in.
 
 **One per-person switch**, "Show more controls", stored server-side on `GET`/`PATCH /v1/me/onboarding`
@@ -2415,7 +2419,9 @@ and **the typed values stay, secrets included** (component state only, masked, n
 P5-UX-3's "typed values that are not secret survive"); a choice of ways ("Sign in with:") appears only when
 more than one works, **More options** holds scopes, the OAuth client and the server. Done names the account
 and the access ("Daneel can now read Team calendar", "Read only. You can change this on Daneel's Access tab."),
-shows the package's `first_prompt` and **Try it in chat** opens the agent's chat with `?draft=` (C-1035).
+shows the package's `first_prompt` and **Try it in chat** opens the agent's Chat tab (`?tab=chat&draft=`, C-1035; one click, the dialog closes, the box
+holds the prompt and has focus, nothing is sent) from every place the journey opens: the agent's Access tab, Apps,
+Accounts and an app's page. The agent page follows the router, and the composer reads the draft from it.
 
 **What the buttons say.** One rule, so that one flow has one name:
 

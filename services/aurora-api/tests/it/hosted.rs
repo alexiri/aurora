@@ -719,8 +719,9 @@ async fn sandbox_restart_and_models_routes() {
         )
         .await;
     assert_eq!((s, v["state"].as_str()), (200, Some("running")));
-    // (D-178 Q-R5-5) A plain member does not see the image reference; a workspace owner does:
-    // the runner-advertised image is the single source of truth (`runner.image`).
+    // (D-412, SEC-141; amends D-178 Q-R5-5) A plain member and a workspace owner do not see the
+    // image reference; an instance admin does: the runner-advertised image is the single source of
+    // truth (`runner.image`).
     assert!(v["image"].is_null(), "{v}");
     let owner = r.h.user("ws-owner@x.io", false).await;
     r.h.member(r.org, owner, "member", "active").await;
@@ -733,7 +734,18 @@ async fn sandbox_restart_and_models_routes() {
             &[("cookie", &ocookie)],
         )
         .await;
-    assert_eq!(ov["image"], "registry.example/aurora-sandbox:9.9.9", "{ov}");
+    assert!(ov["image"].is_null(), "{ov}");
+    let ia = r.h.user("ws-ia@x.io", true).await;
+    r.h.member(r.org, ia, "member", "active").await;
+    r.h.bind_ws(r.ws, ia, "member").await;
+    let (_, isess) = r.h.good_session(ia).await;
+    let (_, iv) =
+        r.h.get(
+            &format!("/v1/agents/{}/sandbox", lv.agent),
+            &[("cookie", &cookie(&isess))],
+        )
+        .await;
+    assert_eq!(iv["image"], "registry.example/aurora-sandbox:9.9.9", "{iv}");
     assert_eq!(v["keep_awake_reasons"][0], "turn");
     let d = r.deliver().await;
     let turn = d["turn_id"].as_str().unwrap().to_owned();

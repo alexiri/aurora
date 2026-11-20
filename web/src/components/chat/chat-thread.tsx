@@ -40,7 +40,12 @@ export function ChatThread({
   onBack,
   onTurn,
   agent,
+  initialDraft,
+  onDraftUsed,
 }: {
+  /** (P5-REFINE-13) A link's suggested message for the composer. */
+  initialDraft?: string;
+  onDraftUsed?: () => void;
   agentId: string;
   wsId: string;
   base: string;
@@ -211,6 +216,8 @@ export function ChatThread({
             onClearReply={() => setReply(null)}
             onRestoreReply={setReply}
             attachRef={attachRef}
+            initialDraft={initialDraft}
+            onDraftUsed={onDraftUsed}
           />
           </>
         )}

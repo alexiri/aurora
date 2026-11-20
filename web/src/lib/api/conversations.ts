@@ -31,11 +31,29 @@ export interface SandboxStartAttempt {
   events: string[];
   progress_at: string | null;
 }
+/** (P5-REFINE-4, C-1059, D-408, D-412) The computer in words, for everyone who can use the agent. */
+export interface ComputerView {
+  word: "off" | "starting" | "on" | "stopping" | "failed";
+  /** The computer answers: running, the supervisor connected and the harness reported ready (the header's Ready). */
+  ready: boolean;
+  /** A turn or a busy process holds it awake. */
+  working: boolean;
+  /** Stopped or never started, with no failure (the header's Asleep). */
+  asleep: boolean;
+  /** The raw start phase (fixed vocabulary), shown at Expert as the secondary line. */
+  phase: string | null;
+  /** Seconds until the idle stop while on and idle; null otherwise (a hint). */
+  sleeps_in_secs: number | null;
+  started_at: string | null;
+}
 export interface SandboxView {
   agent_id: string;
   state: "unprovisioned" | "starting" | "running" | "stopping" | "stopped" | "failed";
+  /** Changes when the computer restarts (C-1058: the terminal's restart notice compares it). */
   boot_id: string | null;
+  /** (SEC-141) Instance admins only; null for everyone else. */
   runner_id: string | null;
+  /** (SEC-141) Instance admins only; null for everyone else. */
   image: string | null;
   started_at: string | null;
   keep_awake_reasons: string[];
@@ -55,6 +73,8 @@ export interface SandboxView {
   restart_to_update: boolean;
   /** (P5-APIGAP-1, C-1046) Seconds of quiet after which this computer sleeps; null when idle stop is off. */
   idle_stop_after_secs?: number | null;
+  /** (P5-REFINE-4, C-1059) The computer in words. */
+  computer: ComputerView;
 }
 export interface ModelOption {
   endpoint_id: string;
@@ -114,6 +134,8 @@ export const chatApi = {
   retry: (agent: string) => call<SandboxView>("POST", `/v1/agents/${agent}/sandbox/retry`),
   /** (P5-APIGAP-1, C-1045) Wake a sleeping computer: 202 (start requested) or 200 (already awake) with the view. */
   wake: (agent: string) => call<SandboxView>("POST", `/v1/agents/${agent}/sandbox/wake`),
+  /** (P5-REFINE-4, C-1060) Sleep now: 202 (stop requested) or 200 (already asleep) with the view; 409 `sandbox_busy` while work runs. */
+  sleep: (agent: string) => call<SandboxView>("POST", `/v1/agents/${agent}/sandbox/sleep`),
   /** (FIX-029, C-613) The agent's recent start failures, newest first (≤ 20). */
   startFailures: (agent: string) => unwrap(api.GET("/v1/agents/{agent}/start-failures", { params: { path: { agent } } })),
   models: (agent: string) => call<{ items: ModelOption[] }>("GET", `/v1/agents/${agent}/models`),

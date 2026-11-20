@@ -262,6 +262,36 @@ describe("drafts", () => {
     expect(box.value).toBe("typing anyway");
   });
 
+  it("initialDraft (P5-REFINE-13) fills the box, focuses it, is cut at 500 characters and is never sent", async () => {
+    window.history.replaceState(null, "", "/o/x/w/y/agents/daneel?tab=chat");
+    const { box } = mount({ initialDraft: "x".repeat(600) });
+    expect(box.value).toBe("x".repeat(500));
+    await waitFor(() => expect(box).toHaveFocus());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sent).toEqual([]);
+  });
+
+  it("initialDraft beats a stored draft and is not overridden once the person typed; a remount keeps it until used", async () => {
+    saveDraft("u1", "c1", { text: "stored text", reply: null, attachments: [] });
+    const used = vi.fn();
+    const first = mount({ initialDraft: "Which pull requests are waiting for my review?", onDraftUsed: used });
+    await waitFor(() => expect(first.box.value).toBe("Which pull requests are waiting for my review?"));
+    first.unmount();
+    // A remount (the conversation resolving) with the page still holding the draft: the box has it again.
+    const second = mount({ initialDraft: "Which pull requests are waiting for my review?", onDraftUsed: used });
+    expect(second.box.value).toBe("Which pull requests are waiting for my review?");
+    expect(used).not.toHaveBeenCalled();
+    type(second.box, "my own words");
+    expect(used).toHaveBeenCalled();
+    expect(second.box.value).toBe("my own words");
+  });
+
+  it("initialDraft is read from the prop, not from window.location (a navigation in flight still shows the old URL)", () => {
+    window.history.replaceState(null, "", "/o/x/w/y/agents/daneel?tab=access");
+    const { box } = mount({ initialDraft: "from the router" });
+    expect(box.value).toBe("from the router");
+  });
+
   it("restored attachments the API no longer knows are dropped with a notice, the text kept", async () => {
     saveDraft("u1", "c1", { text: "keep me", reply: null, attachments: [ATT] });
     vi.stubGlobal(

@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 
 import { ChatPanel } from "@/components/chat/chat-panel";
@@ -130,7 +131,29 @@ export function ChatTab({
   // The retention rule is for organization owners and admins (a member gets 403): ask only for them.
   const orgRole = useOrg(orgId).data?.my_role;
   const retention = useRetention(orgId, orgRole === "owner" || orgRole === "admin");
-  const [picked, select] = useSelectedConversation();
+  const [pickedRaw, selectRaw] = useSelectedConversation();
+  // (P5-REFINE-13, C-1035) `?draft=` is read from the router (not `window.location`, which still shows the previous
+  // page during a client-side navigation) and kept here until the person edits the box or sends, so a remount of the
+  // composer (the direct chat resolving, the transcript loading) cannot lose it. A draft opens the direct chat.
+  const routerDraft = useSearchParams().get("draft");
+  const [draft, setDraft] = useState<string | null>(null);
+  const [seenDraft, setSeenDraft] = useState<string | null>(null);
+  if (routerDraft !== seenDraft) {
+    setSeenDraft(routerDraft);
+    if (routerDraft) setDraft(routerDraft.slice(0, 500));
+  }
+  const picked = draft !== null ? null : pickedRaw;
+  const select = useCallback(
+    (id: string | null, mode?: "push" | "replace", seq?: number) => {
+      setDraft(null);
+      selectRaw(id, mode, seq);
+    },
+    [selectRaw],
+  );
+  const onDraftUsed = useCallback(() => setDraft(null), []);
+  useEffect(() => {
+    if (draft !== null && pickedRaw) selectRaw(null, "replace");
+  }, [draft, pickedRaw, selectRaw]);
   const now = useMemo(() => new Date(), []);
   const canApprove = useCanApprove(wsId);
   const [railExpanded, setRailExpanded] = useRailExpanded();
@@ -340,6 +363,8 @@ export function ChatTab({
             onGone={done}
             onBack={() => select(null)}
             onTurn={setOpenTurn}
+            initialDraft={draft ?? undefined}
+            onDraftUsed={onDraftUsed}
           />
         ) : (
           <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-ink-2">

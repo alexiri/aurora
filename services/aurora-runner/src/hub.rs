@@ -44,11 +44,12 @@ pub trait ChannelHub: Send + Sync {
     fn take_events(&self) -> Option<mpsc::Receiver<HubEvent>>;
     /// Called once the runner has registered; hubs that make plane calls use this client.
     fn attach_api(&self, _api: std::sync::Arc<crate::api::ApiClient>) {}
-    /// (P4-PRV-2, W18) Called after registration with `config.previews`: the stream
-    /// listener's :4108 port opens only when the API reports previews enabled.
+    /// (P4-PRV-2, W18) Called after registration and after every work poll that carries
+    /// `streams` (P5-REFINE-4, C-1057): the stream listener's :4108 port opens the first time
+    /// the API reports a stream feature enabled.
     fn set_previews_enabled(&self, _on: bool) {}
-    /// (P4-SSH-2, D-239) Called after registration with `config.ssh_enabled`: the listener
-    /// redeems `auz_` SSH grants only when the API reports SSH enabled.
+    /// (P4-SSH-2, D-239) Called after registration and after every work poll that carries
+    /// `streams`: the listener redeems `auz_` SSH grants only while the API reports SSH enabled.
     fn set_ssh_enabled(&self, _on: bool) {}
 }
 
