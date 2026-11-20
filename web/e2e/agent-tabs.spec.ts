@@ -4,8 +4,8 @@ import { mockWithTerminal } from "./support/terminal";
 import { CANVAS, overflow, type Scheme } from "./support/open";
 
 // FIX-129 + P5-AGENT-2 (D-200, docs/14 §Agent page (phase 5)): the agent page is five sections with a segmented row of
-// pages inside a section that has several; since P5-POLISH-6 (D-380) Chat · Triggers · Computer are tabs and Behaviour
-// and Access open from the Agent actions menu. Every page id of
+// pages inside a section that has several; since P5-REFINE-11 (D-408) Chat · Automations · Computer are tabs and the
+// Settings pages (Instructions, Apps & access, Memory, Skills, Tests, Other agents) open from the Settings button. Every page id of
 // `?tab=` still opens its page, at 390, 768, 1280 and 1920 px, both themes: the page does not scroll
 // horizontally. The API is mocked.
 
@@ -13,17 +13,20 @@ import { CANVAS, overflow, type Scheme } from "./support/open";
 const PAGES: [string, string][] = [
   ["chat", "Chat"],
   ["instructions", "Instructions"],
-  ["memory", "Instructions"],
-  ["skills", "Instructions"],
+  ["memory", "Memory"],
+  ["skills", "Skills"],
   ["schedules", "Automations"],
   ["webhooks", "Automations"],
-  ["peers", "Automations"],
+  ["peers", "Other agents"],
   ["channels", "Automations"],
   ["computer", "Computer"],
   ["previews", "Computer"],
   ["terminal", "Computer"],
   ["access", "Apps & access"],
 ];
+
+/** Pages that are Settings pages (D-408): the Settings button, a sub-nav, no section tab selected. */
+const SETTINGS_PAGES = new Set(["Instructions", "Memory", "Skills", "Tests", "Other agents", "Apps & access"]);
 
 /** The shared mock plus the terminal socket, and the Access tab's grants (empty) the shared mock does not serve. */
 async function mockAgent(page: import("@playwright/test").Page) {
@@ -64,9 +67,9 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
           await page.goto(`/o/acme/w/main/agents/daneel?tab=${tab}`);
           await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
           const sections = page.getByRole("tablist", { name: "Agent sections" });
-          if (section === "Instructions" || section === "Apps & access") {
-            // (P5-POLISH-6, D-380) Behaviour and Access open from the Agent actions menu: no section tab is selected and
-            // the page carries its own heading.
+          if (SETTINGS_PAGES.has(section)) {
+            // (D-408) Settings pages open from the Settings button: no section tab is selected and the page carries its
+            // own heading and a sub-nav tab.
             await expect(page.getByRole("heading", { level: 2, name: section }), `${tab}: its page heading`).toBeVisible();
             await expect(sections.getByRole("tab", { selected: true }), `${tab}: no section tab is selected`).toHaveCount(0);
           } else {
@@ -104,13 +107,15 @@ test.describe("agent page width", () => {
     await mockAgent(page);
     await page.goto("/o/acme/w/main/agents/daneel");
     const sections = page.getByRole("tablist", { name: "Agent sections" });
-    // (P5-POLISH-6, D-380) Three section tabs; Behaviour and Access are in the Agent actions menu.
+    // (D-408) Three section tabs and a labelled Settings button.
     await expect(sections.getByRole("tab")).toHaveText(["Chat", "Automations", "Computer"]);
     await expect(sections.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
     await sections.getByRole("tab", { name: "Automations" }).click();
     await expect(page).toHaveURL(/tab=schedules/);
-    await expect(page.getByRole("tablist", { name: "Automations pages" }).getByRole("tab")).toHaveText(["Schedules", "Webhooks", "Channels", "Other agents"]);
-    await page.getByRole("tablist", { name: "Automations pages" }).getByRole("tab", { name: "Other agents" }).click();
+    await expect(page.getByRole("tablist", { name: "Automations pages" }).getByRole("tab")).toHaveText(["Schedules", "Webhooks", "Channels"]);
+    await page.getByRole("button", { name: "Settings" }).click();
+    await expect(page).toHaveURL(/tab=instructions/);
+    await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Other agents" }).click();
     await expect(page).toHaveURL(/tab=peers/);
   });
 });

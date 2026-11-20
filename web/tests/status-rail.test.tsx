@@ -13,6 +13,7 @@ import {
 import { actionsOnly, decisionBadge, hasProblem, mergeNeeds, sandboxLook, type AgentStatus } from "@/components/agents/status-rail/status-data";
 import type { ActionApproval } from "@/lib/api/action-approvals";
 import type { Approval } from "@/lib/api/approvals";
+import { RAIL_OVERLAY_BELOW } from "@/components/chat/chat-panel";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
 
@@ -50,7 +51,7 @@ const ctxOf = (over: Partial<RailContext> = {}, s: Partial<AgentStatus> = {}): R
   wsId: "w",
   base: "/o/x/w/y",
   agentId: "a1",
-  agent: { kind: "hosted", isDefault: true, brief: "Triage pull requests." },
+  agent: { name: "Scout", kind: "hosted", isDefault: true, brief: "Triage pull requests." },
   terminalAvailable: true,
   openConversation: { id: "c1", title: "Direct chat" },
   titleOf: (c) => c.title ?? "Untitled",
@@ -177,7 +178,7 @@ describe("rail data helpers", () => {
 });
 
 describe("collapsed strip", () => {
-  it("shows the five icons in order, each named with its state in words", () => {
+  it("shows the three icons in order, each named with its state in words and labelled Need · Now · Did", () => {
     mock();
     wrap(
       <Harness
@@ -198,21 +199,22 @@ describe("collapsed strip", () => {
       "Expand status panel",
       "Needs you: 2 approvals waiting",
       "Doing now: working",
-      "Recent actions: some were denied or failed",
-      "Computer: Sandbox running",
-      "About this agent",
+      "What Scout did: some requests were denied or failed",
     ]);
+    // (rec 3) The visible words under the icons.
+    expect(within(strip).getByText("Need")).toBeInTheDocument();
+    expect(within(strip).getByText("Now")).toBeInTheDocument();
+    expect(within(strip).getByText("Did")).toBeInTheDocument();
     // The count on the Needs you icon.
     expect(within(screen.getByRole("button", { name: /Needs you/ })).getByText("2")).toBeInTheDocument();
   });
   it("says idle / nothing waiting / none failed when quiet", () => {
     mock();
     const labels = stripLabels(ctxOf());
-    expect(labels).toMatchObject({
+    expect(labels).toEqual({
       needs: "Needs you: nothing waiting",
       doing: "Doing now: idle",
-      recent: "Recent actions: none denied or failed",
-      computer: "Computer: state unknown",
+      did: "What Scout did: none denied or failed",
     });
     expect(stripLabels(ctxOf({}, { needs: needs(gw("g1", FAR)) })).needs).toBe("Needs you: 1 approval waiting");
     expect(stripLabels(ctxOf({ open: { active: true, line: "Reading the repo" } })).doing).toBe("Doing now: working");
@@ -230,7 +232,7 @@ describe("collapsed strip", () => {
     mock();
     const onChange = vi.fn();
     wrap(<Harness ctx={ctxOf()} onChange={onChange} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Computer:/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^What Scout did:/ }));
     expect(onChange).toHaveBeenCalledWith(true);
     expect(screen.getByRole("button", { name: "Collapse status panel" })).toBeInTheDocument();
   });
@@ -261,7 +263,7 @@ describe("Needs you pop-over", () => {
 });
 
 describe("expanded rail", () => {
-  it("shows the five parts in order with their data", () => {
+  it("shows the three parts in order with their data: Needs you · Doing now (with the computer's line) · What Scout did", () => {
     mock();
     const open = { active: true, line: "Running gh pr list" };
     wrap(
@@ -283,7 +285,7 @@ describe("expanded rail", () => {
       />,
     );
     const heads = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(heads).toEqual(["Needs you1", "Doing now", "Recent actions", "Computer", "About"]);
+    expect(heads).toEqual(["Needs you1", "Doing now", "What Scout did"]);
     // Doing now: the open conversation's running tool from its stream.
     expect(screen.getByText("Direct chat · Running gh pr list")).toBeInTheDocument();
     // Recent tool calls: badge, tool id or method + host, latency, link.
@@ -293,38 +295,30 @@ describe("expanded rail", () => {
     expect(screen.getByText("POST evil.test")).toBeInTheDocument();
     expect(screen.getByText("2.4 s")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "All activity" }).getAttribute("href")).toBe("/o/x/w/y/activity?agent=a1");
-    // Computer and About.
-    expect(screen.getByText("Asleep. It wakes when the agent needs it.")).toBeInTheDocument();
-    expect(screen.getByText("Only actions in apps and websites; thinking isn't listed.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Computer" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Terminal" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
-    // No HOSTED/DEFAULT chips: a default agent says so in plain text.
-    expect(screen.getByText("Came with this workspace")).toBeInTheDocument();
-    expect(screen.queryByText("hosted")).toBeNull();
-    expect(screen.getByText("Triage pull requests.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "All activity" })).toHaveTextContent("All");
+    // The computer is one line under Doing now, the state in words; About is gone (it lives in Settings).
+    expect(screen.getByTestId("rail-computer-state")).toHaveTextContent("Asleep");
+    expect(screen.getByText("On its computer")).toBeInTheDocument();
+    expect(screen.getByText("The latest things it did in apps and on websites.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Scout's computer" })).toHaveTextContent("Open");
+    expect(screen.queryByRole("heading", { name: "About" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit instructions" })).toBeNull();
+    expect(screen.queryByText("Came with this workspace")).toBeNull();
+    expect(screen.queryByText("Recent actions")).toBeNull();
   });
-  it("says Idle when nothing runs and offers no Terminal where the page is unavailable", () => {
+  it("says Idle when nothing runs and the computer's line carries its state in words", () => {
     mock();
-    wrap(<Harness start ctx={ctxOf({ terminalAvailable: false })} />);
+    wrap(<Harness start ctx={ctxOf({}, { sandbox: { state: "running", failure_message: null, failure_code: null } as never })} />);
     expect(screen.getByText("Idle")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Terminal" })).toBeNull();
-    // (P5-FILES-2) Files follows the Terminal's availability.
-    expect(screen.queryByRole("button", { name: "Files" })).toBeNull();
+    expect(screen.getByTestId("rail-computer-state")).toHaveTextContent("Awake");
     expect(screen.getByText("Nothing is waiting for you.")).toBeInTheDocument();
   });
-  it("navigates: Open computer, Terminal and Edit instructions, and selects a working conversation", () => {
+  it("navigates: Open computer, and selects a working conversation", () => {
     mock();
     const ctx = ctxOf({}, { working: [{ id: "c9", title: "Nightly report", kind: "schedule", external_ref: "x", direct_user: null, active_turn: { id: "t" } } as never] });
     wrap(<Harness start ctx={ctx} />);
-    fireEvent.click(screen.getByRole("button", { name: "Open Computer" }));
-    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit instructions" }));
-    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Scout's computer" }));
     expect(ctx.onNavigate).toHaveBeenNthCalledWith(1, "computer");
-    expect(ctx.onNavigate).toHaveBeenNthCalledWith(2, "terminal");
-    expect(ctx.onNavigate).toHaveBeenNthCalledWith(3, "instructions");
-    expect(ctx.onNavigate).toHaveBeenNthCalledWith(4, "files");
     fireEvent.click(screen.getByRole("button", { name: /Nightly report · working/ }));
     expect(ctx.onSelectConversation).toHaveBeenCalledWith("c9");
   });
@@ -384,7 +378,10 @@ describe("approving from the rail", () => {
   });
 });
 
-describe("overlay mode (panel narrower than 1024 px)", () => {
+describe("overlay mode (window narrower than 1400 px, chat-6)", () => {
+  it("overlays the transcript below 1400 px instead of squeezing the chat", () => {
+    expect(RAIL_OVERLAY_BELOW).toBe(1400);
+  });
   it("Esc collapses the expanded rail and returns focus to the expand button", async () => {
     mock();
     const onChange = vi.fn();
@@ -409,11 +406,11 @@ describe("overlay mode (panel narrower than 1024 px)", () => {
 });
 
 describe("phone sheet", () => {
-  it("opens the same five parts in a dialog", () => {
+  it("opens the same three parts in a dialog", () => {
     mock();
     wrap(<StatusSheet ctx={ctxOf({}, { needs: needs(gw("g1", FAR, { conversation_id: "c5" })) })} open onOpenChange={() => undefined} />);
     const sheet = screen.getByRole("dialog", { name: "Status" });
-    expect(within(sheet).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Needs you1", "Doing now", "Recent actions", "Computer", "About"]);
+    expect(within(sheet).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Needs you1", "Doing now", "What Scout did"]);
     expect(within(sheet).getByRole("button", { name: "Allow once" })).toBeInTheDocument();
   });
 });

@@ -133,7 +133,7 @@ test.describe("Internet access (mocked API)", () => {
     const limits = page.getByRole("region", { name: /^Set for you by/ });
     await expect(limits.getByText("Websites agents may reach")).toBeVisible();
     await expect(limits.getByText("Only listed websites")).toBeVisible();
-    await expect(limits.getByText("Set by your organization").first()).toBeVisible();
+    await expect(limits.getByText("Set for you by your organization's admins").first()).toBeVisible();
     await expect(page.getByTestId("internet-summary")).toContainText("can reach only the websites on the allow-list");
   });
 

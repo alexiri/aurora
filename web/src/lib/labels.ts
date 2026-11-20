@@ -235,3 +235,6 @@ export const COVERED: Record<string, Record<string, LabelEntry<never>>> = {
   LinkMethod: LINK_METHOD,
   Decision: APPROVAL_STATE,
 };
+
+/** (P5-REFINE-11, chat-7) The one plain sentence for a chat error with no copy of its own; the technical line goes under Details. */
+export const SOMETHING_WENT_WRONG = "Something went wrong. Try again.";

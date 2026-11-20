@@ -1,4 +1,5 @@
 import type { Conversation, TranscriptEvent } from "@/lib/api/conversations";
+import { displayTimeZone } from "@/lib/format-date";
 
 import { activeTurnId, type TranscriptState } from "./transcript";
 
@@ -46,6 +47,16 @@ export function listTime(iso: string | null | undefined, now: Date): string {
   if (diff <= 0) return CLOCK.format(d);
   if (diff < 7) return WEEKDAY_SHORT.format(d);
   return d.getFullYear() === now.getFullYear() ? DAY_MONTH.format(d) : DAY_MONTH_YEAR.format(d);
+}
+
+/** (chat-9) A search result's time: the date and the clock, "19 Nov 23:50" ("19 Nov 2025 23:50" in another year). */
+export function searchTime(iso: string | null | undefined, now: Date): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const parts = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone: displayTimeZone(), ...o }).format(d);
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return `${parts({ day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) })} ${parts({ hour: "2-digit", minute: "2-digit", hour12: false })}`;
 }
 
 // ---------------------------------------------------------------------------------- conversations
@@ -191,6 +202,18 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
   }
   // A failed turn.finished repeats the `error` event's code: render the error once.
   const errored = new Set(state.events.filter((e) => e.type === "error").map((e) => str(e.payload.turn_id)));
+  // (chat-7) The agent's own bubble that says the same thing as the error ("API Error: 400 No connected db.") is not rendered:
+  // the error block shows it once, under Details.
+  const errorText = new Map<string, string[]>();
+  for (const e of state.events) {
+    if (e.type !== "error") continue;
+    const id = str(e.payload.turn_id);
+    errorText.set(id, [...(errorText.get(id) ?? []), str(e.payload.message).trim()].filter(Boolean));
+  }
+  const repeatsError = (turnId: string, text: string) => {
+    const t = text.trim();
+    return t !== "" && (errorText.get(turnId) ?? []).some((m) => m === t || m.includes(t) || t.includes(m));
+  };
   let lastDay = "";
   // The open group; a holder object because `push` assigns it from a closure.
   const cur: { group: Extract<Row, { kind: "group" }> | null } = { group: null };
@@ -235,6 +258,7 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
         break;
       }
       case "text":
+        if (repeatsError(str(p.turn_id), str(p.text))) break;
         push("agent", "agent", "", "", ev, { kind: "bubble", ev });
         break;
       case "tool.started": {

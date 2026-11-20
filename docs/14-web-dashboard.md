@@ -549,6 +549,40 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     the page; Instructions keeps its Instructions · Memory · Skills · Tests row. `?tab=` ids are
     unchanged. A BYO agent (no Chat) opens on Instructions as before. This replaces the five-section order
     above wherever they disagree.
+  - (phase 5, **P5-REFINE-11, D-408, D-409, D-415, D-407; supersedes the D-382 bullet above and the "Agent actions" menu
+    in the header paragraph**) **The Settings button and page.** The header has the tabs **Chat · Automations · Computer**
+    (BYO: Computer) and a **labelled outline button "Settings" with a gear** (accent outline while a Settings page is open; it
+    keeps its label at 390 px). It opens the **Settings page directly** (on Instructions): the page header (back link, the page's
+    name, a one-line lead: Instructions "Name, instructions, model", Apps & access "Apps, accounts and the AI key it uses",
+    Memory "What it remembers", Skills "What it knows how to do"), a **left sub-nav** (Instructions · Apps & access · Memory ·
+    Skills · Tests* · Other agents*, * Expert altitude) that is the segmented `Tabs` under 768 px, the page, and at the bottom a **danger
+    zone** with **Pause <Agent>** ("Stops it until you resume it"; **Resume <Agent>** when paused) and **Delete <Agent>…**, for
+    workspace owners only (members see the pages read-only and no zone). `?tab=` ids are unchanged. Section ids are now `chat`,
+    `triggers`, `computer`, `settings`. The computer's secondary tabs (Terminal, Files, …) collapse into a **More** menu rather
+    than scrolling sideways.
+  - **The header state** (D-408) is one `StatusLine`: **Can't answer: <reason>** (`no AI key`, `the key stopped working`,
+    `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; an action slot
+    beside it is P5-REFINE-12's) → **Needs you** → **Working** → **Starting its computer…** (spinner, `aria-live` polite) →
+    **Asleep** → **Ready**; **Ready only when the computer answers** (`SandboxView.computer.ready`, C-1059). Without computer
+    data (not loaded, BYO) the older words apply.
+  - **The rail** (D-201, D-415, P5-REFINE-11) has three headings: **Needs you · Doing now · What <Agent> did**. The Computer is
+    one line under Doing now ("On its computer · Awake / Asleep / Starting its computer… · Open"); About moved into Settings;
+    "What <Agent> did" is today's list of recent requests with an "All" link to Activity until the agent timeline
+    (P5-REFINE-9, C-1083) feeds it live. Collapsed, each icon has a visible three-letter word (Need · Now · Did). The expanded
+    panel **overlays the transcript below 1400 px** (it no longer squeezes the chat), pushes from 1400 px up.
+  - **Chat** (P5-REFINE-11): the composer is **one row until Aa** opens the formatting toolbar (the choice is kept) and Preview grows
+    with its content; after sending, the transcript **always scrolls to the bottom** (and again when an image finishes loading),
+    with no "Jump to latest"; an image attachment is an inline thumbnail with "name · size · Image" (the type also comes from
+    the content route and the file name, not only the message); a search result shows its conversation's title, the sentence
+    with the match in bold, who spoke ("Daneel: …") and the full date and time ("19 Nov 23:50"); **an error shows once**, as one
+    red box with a plain sentence, a **Details** fold with the technical line and no repeating agent bubble; **archiving**
+    leaves the Active list at once and after a reload, shows an Undo toast, and the thread reads "Archived 19 Nov 2026 · read only"
+    with **Restore** and no composer; the empty Active list says "No active conversations" with **New chat**; **on a phone the Chat tab opens
+    the person's conversation** with the composer ready, "Conversations" one tap back. **First successes** (first answer, first
+    app, first approval, first schedule run) are `Notice` cards with **Got it**, shown once per person (server-side
+    `notices_seen` keys `first-answer`, `first-app`, `first-approval`, `first-run`).
+  - *Waiting for other briefs:* several chats, Rename, auto-titles, run threads and the stopped-answer marker (P5-REFINE-7),
+    "can't answer" fix button (P5-REFINE-12), the timeline feed (P5-REFINE-9), the Needs-you badge on the Agents list (C-1082, P5-REFINE-8).
   - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
     page (Triggers section), bound to `narration_cards` (off by default). Help text: "Posts one message
     per reply that lists the steps the agent takes, updated as they run and shrunk to one line when the answer

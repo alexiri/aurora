@@ -60,6 +60,8 @@ for (const scheme of ["light", "dark"] as const) {
 
     test("format, Preview, send: the request carries the Markdown; the row is a roving toolbar", async ({ page }) => {
       const box = await openComposer(page, scheme);
+      // (openComposer stored the Aa choice, so the toolbar is open here; chat-8's default is in refine-11-chat.spec.ts.)
+      await expect(page.getByTestId("formatting-row")).toBeVisible();
       await box.fill("hello world");
       await box.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(0, 5));
       await page.getByRole("button", { name: "Bold (Ctrl+B)" }).click();

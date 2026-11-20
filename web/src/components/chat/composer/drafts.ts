@@ -55,7 +55,7 @@ export function clearDrafts(): void {
   }
 }
 
-/** The `Aa` toggle: `null` = never chosen (the row shows from 768 px and not below). */
+/** The `Aa` toggle: `null` = never chosen (the row is closed: one row until Aa is pressed, chat-8). */
 export function loadFormattingPref(): boolean | null {
   try {
     const v = window.localStorage.getItem(PREF_FORMATTING);
