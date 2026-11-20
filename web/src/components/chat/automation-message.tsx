@@ -6,7 +6,7 @@ import { formatTime } from "@/lib/format-date";
 
 /** What the API puts in the `display` of a schedule or webhook turn's `turn.queued` event (C-1079). */
 export type AutomationDisplay =
-  | { kind: "webhook"; name: string; deliveryId: string; contentType: string; size: number | null; truncated: boolean; body: string }
+  | { kind: "webhook"; name: string; deliveryId: string; contentType: string; size: number | null; truncated: boolean; body: string; verification: "signed" | "token" | "none" | null }
   | { kind: "schedule"; name: string; scheduleId: string; runId: string };
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -25,10 +25,20 @@ export function automationDisplay(payload: Record<string, unknown>): AutomationD
       size: typeof o.size === "number" ? o.size : null,
       truncated: o.truncated === true,
       body: str(o.body),
+      // (C-1097) How the sender was checked; old events have none.
+      verification: o.verification === "signed" || o.verification === "token" || o.verification === "none" ? o.verification : null,
     };
   }
   if (o.kind === "schedule") return { kind: "schedule", name: str(o.name), scheduleId: str(o.schedule_id), runId: str(o.run_id) };
   return null;
+}
+
+/** (webhooks-4, C-1097) "signed and accepted"; a token: "accepted with its token"; nothing checked: "accepted, not signed". */
+export function acceptedWords(v: Extract<AutomationDisplay, { kind: "webhook" }>["verification"]): string {
+  if (v === "signed") return "signed and accepted";
+  if (v === "token") return "accepted with its token";
+  if (v === "none") return "accepted, not signed";
+  return "accepted";
 }
 
 /**
@@ -52,7 +62,7 @@ export function AutomationMessage({ display, ts, text }: { display: AutomationDi
     <div className="space-y-2" data-testid="automation-message">
       <div>
         <p className="font-semibold">Webhook {display.name} · delivery</p>
-        <p className="text-xs opacity-80">{time ? `${time} · accepted` : "accepted"}</p>
+        <p className="text-xs opacity-80">{time ? `${time} · ${acceptedWords(display.verification)}` : acceptedWords(display.verification)}</p>
       </div>
       {display.body ? (
         <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded-control bg-subtle p-2.5 font-mono text-xs text-ink">{display.body}</pre>

@@ -73,6 +73,16 @@ export const KIND_LABEL: Record<string, string> = {
 export const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? kind;
 
 /**
+ * (schedules-7, C-1098, C-1074) What a run thread's header says about its automation after the kind: the first rename note
+ * `was "Every minute ping", renamed with it`, then "Schedule deleted" / "Webhook deleted" once it is gone.
+ */
+export function automationNotes(c: Partial<Pick<Conversation, "automation">>): string[] {
+  const a = c.automation;
+  if (!a) return [];
+  return [...(a.previous_name ? [`was "${a.previous_name}", renamed with it`] : []), ...(a.deleted ? [a.kind === "webhook" ? "Webhook deleted" : "Schedule deleted"] : [])];
+}
+
+/**
  * The row title: a run thread of an automation is "Morning summary · 19 Nov 09:00" (D-409, C-1074); otherwise `title`,
  * else "Direct chat" for a direct conversation, else the external reference.
  */

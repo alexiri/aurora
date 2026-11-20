@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Conversation, TranscriptEvent } from "@/lib/api/conversations";
 import {
+  automationNotes,
   buildRows,
   conversationTitle,
   dayLabel,
@@ -144,7 +145,7 @@ describe("conversation list", () => {
     const run = conv("r1", {
       kind: "schedule",
       title: "Morning summary",
-      automation: { kind: "schedule", id: "s1", name: "Morning summary", deleted: false },
+      automation: { kind: "schedule", id: "s1", name: "Morning summary", deleted: false, previous_name: null },
       run_at: at(2026, 11, 7, 9, 0),
     });
     expect(conversationTitle(run, NOW)).toBe("Morning summary · 7 Nov 09:00");
@@ -153,6 +154,15 @@ describe("conversation list", () => {
     expect(conversationTitle(conv("c", { kind: "direct", title: "Lighthouse story" }), NOW)).toBe("Lighthouse story");
     expect(folderRunsLabel("Morning summary", 3)).toBe("Morning summary · 3 runs");
     expect(folderRunsLabel("Morning summary", 1)).toBe("Morning summary · 1 run");
+  });
+
+  it("a run thread's header notes the first rename, then a deleted automation (schedules-7, C-1098)", () => {
+    const a = { kind: "schedule", id: "s1", name: "Every 5 minutes ping", deleted: false, previous_name: null };
+    expect(automationNotes({ automation: a })).toEqual([]);
+    expect(automationNotes({ automation: { ...a, previous_name: "Every minute ping" } })).toEqual(['was "Every minute ping", renamed with it']);
+    expect(automationNotes({ automation: { ...a, previous_name: "Every minute ping", deleted: true } })).toEqual(['was "Every minute ping", renamed with it', "Schedule deleted"]);
+    expect(automationNotes({ automation: { ...a, kind: "webhook", deleted: true } })).toEqual(["Webhook deleted"]);
+    expect(automationNotes({})).toEqual([]);
   });
 
   it("filters by title on the client, case-insensitively", () => {

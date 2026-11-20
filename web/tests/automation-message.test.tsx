@@ -69,6 +69,24 @@ describe("a webhook delivery's first message", () => {
     expect(text).not.toContain(DELIVERY_ID);
   });
 
+  it("the first line says how the sender was checked: signed and accepted, accepted with its token, accepted, not signed (C-1097)", () => {
+    const withV = (v: unknown) => ({ ...webhookPayload, display: { ...webhookPayload.display, verification: v } });
+    show(withV("signed"));
+    expect(screen.getByText(/ · signed and accepted$/)).toBeInTheDocument();
+    cleanup();
+    show(withV("token"));
+    expect(screen.getByText(/ · accepted with its token$/)).toBeInTheDocument();
+    cleanup();
+    show(withV("none"));
+    expect(screen.getByText(/ · accepted, not signed$/)).toBeInTheDocument();
+    cleanup();
+    // An old event has no verification: only "accepted".
+    show(webhookPayload);
+    expect(screen.getByText(/ · accepted$/)).toBeInTheDocument();
+    expect(automationDisplay(withV("signed"))).toMatchObject({ verification: "signed" });
+    expect(automationDisplay(withV("bogus"))).toMatchObject({ verification: null });
+  });
+
   it("the ids are in a collapsed Technical details for Expert only", () => {
     show(webhookPayload, true);
     expect(screen.getByText("Technical details")).toBeInTheDocument();

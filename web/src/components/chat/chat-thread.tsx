@@ -10,7 +10,7 @@ import { DropZone } from "@/components/ui/drop-zone";
 import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import { chatApi, type Conversation } from "@/lib/api/conversations";
-import { conversationTitle, kindLabel } from "@/lib/chat/layout";
+import { automationNotes, conversationTitle, kindLabel } from "@/lib/chat/layout";
 import { buildPermalink, permalinkSeq, withoutMessageParam } from "@/lib/chat/permalink";
 import { markStopped } from "@/lib/chat/stopped";
 import { activeTurnId } from "@/lib/chat/transcript";
@@ -132,8 +132,8 @@ export function ChatThread({
     : undefined;
   const segments = [
     ...(isDirect || !conversation ? [] : [kindLabel(conversation.kind)]),
-    // (P5-REFINE-14, schedules-7, C-1074) The automation that started this thread is gone: "Schedule deleted" / "Webhook deleted".
-    ...(conversation?.automation?.deleted ? [conversation.automation.kind === "webhook" ? "Webhook deleted" : "Schedule deleted"] : []),
+    // (schedules-7) "Schedule · was "Every minute ping", renamed with it", then "Schedule deleted" / "Webhook deleted".
+    ...(conversation ? automationNotes(conversation) : []),
     // (chat-1) "Archived 19 Nov 2026 · read only"
     ...(conversation?.archived_at ? [`Archived ${DATE.format(new Date(conversation.archived_at))}`, "read only"] : archived ? ["Archived", "read only"] : []),
     ...(retentionDays ? [`Deleted after ${retentionDays} days without activity`] : []),
