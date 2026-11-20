@@ -23,7 +23,7 @@ for (const scheme of ["light", "dark"] as const) {
         // The newest run dropped 12.5 points: a notice with counts only.
         await expect(page.getByTestId("regression-notice")).toContainText("fell by 12.5 points");
         // On a phone the tables are stacked lists with the same content; the table that is hidden is not announced twice.
-        const questions = width === 1280 ? page.getByRole("region", { name: "Eval questions" }) : page.getByRole("list", { name: "Eval questions" });
+        const questions = width === 1280 ? page.getByRole("region", { name: "Test questions" }) : page.getByRole("list", { name: "Test questions" });
         await expect(questions).toBeVisible();
         await expect(questions.getByText("What is the name of the team's release branch?")).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
