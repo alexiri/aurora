@@ -74,18 +74,19 @@ export function useRunScheduleNow(agent: string) {
  * (P5-REFINE-7, C-1077) Preview a cadence as you type (rate class `check`: debounce the input). Saves nothing;
  * a bad cron or time zone answers 422 `invalid_cron` / `invalid_timezone`. Disabled until `cron` has five fields.
  */
-export function useSchedulePreview(agent: string, cron: string, timezone?: string) {
+export function useSchedulePreview(agent: string, cron: string, timezone?: string, runAt = "") {
   const trimmed = cron.trim();
   return useQuery({
-    queryKey: ["agents", agent, "schedules", "preview", trimmed, timezone ?? ""] as const,
+    queryKey: ["agents", agent, "schedules", "preview", trimmed, runAt, timezone ?? ""] as const,
     queryFn: () =>
       unwrap(
         api.POST("/v1/agents/{agent}/schedules/preview", {
           params: { path: { agent } },
-          body: { cron: trimmed, ...(timezone ? { timezone } : {}) },
+          // (P5-SCHED-ONCE, C-1092) A one-time schedule previews its `run_at` instead of a cron.
+          body: { ...(runAt ? { run_at: runAt } : { cron: trimmed }), ...(timezone ? { timezone } : {}) },
         }),
       ),
-    enabled: cronFieldCount(trimmed) === 5,
+    enabled: runAt ? true : cronFieldCount(trimmed) === 5,
     retry: false,
     staleTime: 60_000,
   });

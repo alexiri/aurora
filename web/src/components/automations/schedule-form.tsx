@@ -15,20 +15,25 @@ import { fieldErrors } from "@/lib/api/errors";
 import { cronFieldCount, useCreateSchedule, useSchedulePreview, useUpdateSchedule, type Schedule } from "@/lib/api/schedules";
 import { useMoreControls } from "@/lib/api/use-more-controls";
 import {
+  cadenceWords,
   clock,
   cronToSpec,
   DEFAULT_SPEC,
   isTooFrequent,
   MIN_GAP_MINUTES,
+  MONTH_NAMES,
   PRESETS,
+  runAtToSpec,
   specToCron,
+  specToRunAt,
   WEEKDAY_NAMES,
   whenWords,
+  zoneCity,
   type SchedulePreset,
   type ScheduleSpec,
 } from "@/lib/cron";
 import { browserTimeZone } from "@/lib/timezone";
-import { nextWords } from "@/lib/schedule-words";
+import { nextWords, onceLocalWords, tomorrowIn } from "@/lib/schedule-words";
 
 /** The wait before a changed cadence is previewed by the API (rate class `check`, 10 a minute); the answer is cached 60 s. */
 export const PREVIEW_DEBOUNCE_MS = 1000;
@@ -97,10 +102,13 @@ export function ScheduleForm({
   workspaceName,
   canOwn,
   embedded = false,
+  runAgain = false,
   onDone,
 }: {
   agentId: string;
   initial?: Schedule;
+  /** (P5-SCHED-ONCE) **Run again** on a Done schedule: the form opens on Once with a new date (tomorrow). */
+  runAgain?: boolean;
   /** Inside a row (Edit in place): no card of its own. */
   embedded?: boolean;
   /** The workspace's time zone: the form's default. */
@@ -116,9 +124,17 @@ export function ScheduleForm({
   const { setMore, pending: morePending } = useMoreControls();
   const [name, setName] = useState(initial?.name ?? "");
   const [prompt, setPrompt] = useState(initial?.prompt ?? "");
-  const [spec, setSpec] = useState<ScheduleSpec>(() => (initial ? cronToSpec(initial.cron) : { ...DEFAULT_SPEC, preset: "daily" }));
-  const [customCron, setCustomCron] = useState(initial?.cron ?? "");
   const [timezone, setTimezone] = useState(initial?.timezone ?? defaultTimezone ?? "UTC");
+  const [spec, setSpec] = useState<ScheduleSpec>(() => {
+    if (!initial) return { ...DEFAULT_SPEC, preset: "daily" };
+    // A one-time schedule opens on Once (Run again: on a new date); anything else is read back from its cron.
+    if (!initial.cron && initial.run_at) {
+      const once = runAtToSpec(initial.run_at);
+      return runAgain || initial.completed_at ? { ...once, date: tomorrowIn(initial.timezone) } : once;
+    }
+    return cronToSpec(initial.cron);
+  });
+  const [customCron, setCustomCron] = useState(initial?.cron ?? "");
   const [gateCommand, setGateCommand] = useState(initial?.gate_command ?? "");
   const [gateDescription, setGateDescription] = useState(initial?.gate_description ?? "");
   const [anchored, setAnchored] = useState(false);
@@ -126,45 +142,57 @@ export function ScheduleForm({
   const fe = fieldErrors(mut.error);
 
   const customAllowed = alt.allows("expert");
-  const cron = spec.preset === "custom" ? customCron.trim() : (specToCron(spec) ?? "");
+  const once = spec.preset === "once";
+  const cron = once ? "" : spec.preset === "custom" ? customCron.trim() : (specToCron(spec) ?? "");
+  const runAt = once ? specToRunAt(spec) : "";
   const tooOften = spec.preset === "custom" && isTooFrequent(customCron);
   const customIncomplete = spec.preset === "custom" && cronFieldCount(customCron) !== 5;
 
   // The API previews the next three run times; typing waits 1 s and the same cadence is answered from the cache for 60 s.
+  // A one-time schedule previews its instant the same way (C-1092): a past time is answered while you type.
   const settled = useDebounced(cron, PREVIEW_DEBOUNCE_MS);
+  const settledRunAt = useDebounced(runAt, PREVIEW_DEBOUNCE_MS);
   const previewable = cronFieldCount(settled) === 5 && !(spec.preset === "custom" && isTooFrequent(settled));
-  const preview = useSchedulePreview(agentId, previewable ? settled : "", timezone);
+  const preview = useSchedulePreview(agentId, previewable ? settled : "", timezone, once ? settledRunAt : "");
   const previewError = spec.preset === "custom" && preview.isError ? fieldErrors(preview.error).cron : undefined;
-  const next = preview.data && settled === cron ? nextWords(spec.preset, preview.data.next, timezone) : "";
+  const next = !once && preview.data && settled === cron ? nextWords(spec.preset, preview.data.next, timezone) : "";
+  // "is in the past" is the API's word; the form says what to do about it.
+  const onceMessage = once && preview.isError && settledRunAt === runAt ? fieldErrors(preview.error).run_at : undefined;
+  const onceError = onceMessage ? (/past/.test(onceMessage) ? "Pick a time in the future" : onceMessage) : undefined;
+  const onceMissing = once && !runAt;
 
-  const words = spec.preset === "custom" ? "Custom schedule" : whenWords(cron, timezone);
-  const summary = [
-    spec.preset === "custom" ? null : words,
-    next || null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  // Every year names its zone once, in "(Zurich time)" after the next run, as the brief words it.
+  const words = spec.preset === "custom" ? "Custom schedule" : once ? "" : spec.preset === "yearly" ? (cadenceWords(cron) ?? "") : whenWords(cron, timezone);
+  const city = zoneCity(timezone);
+  const summary = once
+    ? runAt
+      ? `Once, on ${onceLocalWords(runAt)}${city ? ` (${city} time)` : ""}.`
+      : ""
+    : [spec.preset === "custom" ? null : words, next || null].filter(Boolean).join(" · ");
 
   const hasGate = !!initial?.gate_command || !!fe.gate_command || !!fe.gate_description;
   const zones = useMemo(() => zoneOptions(defaultTimezone, workspaceName, timezone), [defaultTimezone, workspaceName, timezone]);
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!cron || tooOften || customIncomplete) return;
+    if ((!cron && !runAt) || tooOften || customIncomplete || onceError) return;
     const gate = { gate_command: gateCommand.trim() || null, gate_description: gateDescription.trim() || null };
+    // Exactly one of cron / run_at (C-1092): Once sends the local wall time, the others the cron.
+    const when = once ? { run_at: runAt } : { cron };
     if (initial) {
-      update.mutate({ id: initial.id, body: { name, prompt, cron, timezone, ...gate } }, { onSuccess: onDone });
+      update.mutate({ id: initial.id, body: { name, prompt, ...when, timezone, ...gate } }, { onSuccess: onDone });
     } else {
-      create.mutate({ name, prompt, cron, timezone, ...gate, ...(anchored ? { anchor: "workspace" } : {}) }, { onSuccess: onDone });
+      create.mutate({ name, prompt, ...when, timezone, ...gate, ...(anchored ? { anchor: "workspace" } : {}) }, { onSuccess: onDone });
     }
   }
 
   const setPreset = (preset: SchedulePreset) => {
     // Leaving Custom for a preset, or entering it, keeps what the person typed.
     if (preset === "custom" && !customCron) setCustomCron(specToCron(spec) ?? "");
-    setSpec((s) => ({ ...s, preset }));
+    // Once starts tomorrow, in the chosen zone.
+    setSpec((s) => ({ ...s, preset, date: preset === "once" && !s.date ? tomorrowIn(timezone) : s.date }));
   };
-  const showTime = spec.preset === "daily" || spec.preset === "weekdays" || spec.preset === "weekly";
+  const showTime = spec.preset === "daily" || spec.preset === "weekdays" || spec.preset === "weekly" || spec.preset === "yearly" || once;
   const cronError = fe.cron ?? previewError;
 
   return (
@@ -211,6 +239,35 @@ export function ScheduleForm({
               onChange={(v) => setSpec((s) => ({ ...s, weekday: Number(v) }))}
               options={[1, 2, 3, 4, 5, 6, 0].map((d) => ({ value: String(d), label: `on ${WEEKDAY_NAMES[d]}` }))}
             />
+          ) : null}
+          {once ? (
+            <input
+              type="date"
+              aria-label="Date"
+              className={`${inputClass} w-auto`}
+              value={spec.date}
+              required
+              aria-invalid={!!(onceError ?? fe.run_at) || undefined}
+              onChange={(e) => setSpec((s) => ({ ...s, date: e.target.value }))}
+            />
+          ) : null}
+          {spec.preset === "yearly" ? (
+            <>
+              <Select
+                aria-label="Day of the month"
+                className="w-auto"
+                value={String(spec.day)}
+                onChange={(v) => setSpec((s) => ({ ...s, day: Number(v) }))}
+                options={Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `on ${i + 1}` }))}
+              />
+              <Select
+                aria-label="Month"
+                className="w-auto"
+                value={String(spec.month)}
+                onChange={(v) => setSpec((s) => ({ ...s, month: Number(v) }))}
+                options={MONTH_NAMES.map((m, i) => ({ value: String(i + 1), label: m }))}
+              />
+            </>
           ) : null}
           {showTime ? (
             <Select
@@ -266,9 +323,15 @@ export function ScheduleForm({
           )
         ) : null}
 
+        {once && (onceError ?? fe.run_at) ? (
+          <p role="alert" className="text-xs text-danger-ink" data-testid="once-error">
+            {onceError ?? fe.run_at}
+          </p>
+        ) : null}
+
         <p aria-live="polite" className="text-sm text-ink-2" data-testid="schedule-summary">
           {summary ? `${summary} ` : ""}
-          Schedules run at most every {MIN_GAP_MINUTES} minutes.
+          {once ? "" : `Schedules run at most every ${MIN_GAP_MINUTES} minutes.`}
         </p>
       </div>
 
@@ -305,7 +368,7 @@ export function ScheduleForm({
 
       {mut.error && Object.keys(fe).length === 0 ? <ErrorNotice error={mut.error} /> : null}
       <FormActions className="gap-2">
-        <Button type="submit" disabled={mut.isPending || tooOften || customIncomplete}>
+        <Button type="submit" disabled={mut.isPending || tooOften || customIncomplete || onceMissing || !!onceError}>
           {initial ? "Save" : "Create schedule"}
         </Button>
         <Button type="button" variant="outline" onClick={onDone}>

@@ -321,7 +321,7 @@ describe("the schedule form", () => {
     const calls = mockApi({ "GET /v1/agents/a1/schedules": page([]), "GET /v1/agents/a1/webhooks": page([]), "POST /v1/agents/a1/schedules": () => json(201, sched()) });
     mount();
     const form = await openForm();
-    expect(within(form).getAllByRole("radio").map((r) => (r as HTMLInputElement).parentElement?.textContent)).toEqual(["Every 5 minutes", "Hourly", "Every day", "Weekdays", "Weekly", "Custom"]);
+    expect(within(form).getAllByRole("radio").map((r) => (r as HTMLInputElement).parentElement?.textContent)).toEqual(["Every 5 minutes", "Hourly", "Every day", "Weekdays", "Weekly", "Every year", "Once", "Custom"]);
     expect(within(form).queryByRole("radio", { name: /minute$/ })).toBeNull();
     expect(within(form).getByRole("radio", { name: "Every day" })).toBeChecked();
     // (send-back) The time zone is a searchable select: the workspace's zone first, then type to narrow.
@@ -598,5 +598,137 @@ describe("Chats", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send request" }));
     await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ subject: "chat_platform", reason: "So Daneel can answer in #ops" }));
     expect(await screen.findByText("Asked an admin")).toBeInTheDocument();
+  });
+});
+
+// (P5-SCHED-ONCE, Part C, D-407, D-421) Every year and Once in the schedule form; a one-time schedule's row: pending, Waiting, Done.
+describe("one-time and yearly schedules", () => {
+  const form422 = (message: string) => json(422, { error: { code: "invalid_run_at", message, details: { fields: [{ path: "/run_at", message }] } } });
+  async function openForm() {
+    fireEvent.click((await screen.findAllByRole("button", { name: "New automation" }))[0]!);
+    fireEvent.click(await screen.findByRole("button", { name: /On a schedule/ }));
+    return screen.findByRole("form", { name: "New schedule" });
+  }
+  const once = (over: Record<string, unknown> = {}) => sched({ cron: null, run_at: "2026-11-21T09:00:00", next_fire_at: "2026-11-21T08:00:00Z", next_runs: ["2026-11-21T08:00:00Z"], name: "Water the plants", ...over });
+
+  it("Every year: day, month and time make the cron; the summary names the next run with its year", async () => {
+    const calls = mockApi({
+      "GET /v1/agents/a1/schedules": page([]),
+      "GET /v1/agents/a1/webhooks": page([]),
+      "POST /v1/agents/a1/schedules/preview": () => json(200, { next: ["2027-11-27T09:00:00Z"], interval_secs: null, too_frequent: false, min_interval_secs: 300 }),
+      "POST /v1/agents/a1/schedules": () => json(201, sched()),
+    });
+    mount();
+    const form = await openForm();
+    fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Anniversary" } });
+    fireEvent.change(within(form).getByLabelText("Prompt"), { target: { value: "remind me" } });
+    fireEvent.click(within(form).getByRole("radio", { name: "Every year" }));
+    fireEvent.change(within(form).getByRole("combobox", { name: "Day of the month" }), { target: { value: "27" } });
+    fireEvent.change(within(form).getByRole("combobox", { name: "Month" }), { target: { value: "11" } });
+    fireEvent.change(within(form).getByRole("combobox", { name: "Time of day" }), { target: { value: "10:00" } });
+    await waitFor(() => expect(within(form).getByTestId("schedule-summary")).toHaveTextContent("Every year on 27 November at 10:00 · next: 27 Nov 2027 (Zurich time)"), { timeout: 3000 });
+    fireEvent.click(within(form).getByRole("button", { name: "Create schedule" }));
+    await waitFor(() => expect(created(calls)?.body).toMatchObject({ name: "Anniversary", cron: "0 10 27 11 *", timezone: "Europe/Zurich" }));
+    expect(created(calls)?.body).not.toHaveProperty("run_at");
+  });
+
+  it("Once: a date (tomorrow) and a time (09:00) in the zone make run_at and no cron", async () => {
+    const calls = mockApi({
+      "GET /v1/agents/a1/schedules": page([]),
+      "GET /v1/agents/a1/webhooks": page([]),
+      "POST /v1/agents/a1/schedules/preview": () => json(200, { next: ["2026-11-21T08:00:00Z"], interval_secs: null, too_frequent: false, min_interval_secs: 300 }),
+      "POST /v1/agents/a1/schedules": () => json(201, once()),
+    });
+    mount();
+    const form = await openForm();
+    fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Water the plants" } });
+    fireEvent.change(within(form).getByLabelText("Prompt"), { target: { value: "remind me" } });
+    fireEvent.click(within(form).getByRole("radio", { name: "Once" }));
+    const date = within(form).getByLabelText("Date") as HTMLInputElement;
+    expect(date.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(within(form).getByRole("combobox", { name: "Time of day" })).toHaveValue("09:00");
+    expect(within(form).getByRole("combobox", { name: "Time zone" })).toHaveValue("Europe/Zurich · Acme workspace");
+    fireEvent.change(date, { target: { value: "2026-11-21" } });
+    expect(within(form).getByTestId("schedule-summary")).toHaveTextContent("Once, on Sat 21 Nov at 09:00 (Zurich time).");
+    expect(within(form).getByTestId("schedule-summary")).not.toHaveTextContent("at most every 5 minutes");
+    fireEvent.click(within(form).getByRole("button", { name: "Create schedule" }));
+    await waitFor(() => expect(created(calls)?.body).toMatchObject({ name: "Water the plants", run_at: "2026-11-21T09:00", timezone: "Europe/Zurich" }));
+    expect(created(calls)?.body).not.toHaveProperty("cron");
+  });
+
+  it("Once: a time in the past says 'Pick a time in the future' as you type and is not sent", async () => {
+    const calls = mockApi({
+      "GET /v1/agents/a1/schedules": page([]),
+      "GET /v1/agents/a1/webhooks": page([]),
+      "POST /v1/agents/a1/schedules/preview": (req) => req.clone().text().then((t) => (JSON.parse(t).run_at ? form422("is in the past") : json(200, { next: [], interval_secs: null, too_frequent: false, min_interval_secs: 300 }))),
+      "POST /v1/agents/a1/schedules": () => json(201, once()),
+    });
+    mount();
+    const form = await openForm();
+    fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Late" } });
+    fireEvent.change(within(form).getByLabelText("Prompt"), { target: { value: "go" } });
+    fireEvent.click(within(form).getByRole("radio", { name: "Once" }));
+    fireEvent.change(within(form).getByLabelText("Date"), { target: { value: "2020-01-01" } });
+    expect(await within(form).findByText("Pick a time in the future", undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(within(form).getByRole("button", { name: "Create schedule" })).toBeDisabled();
+    fireEvent.submit(form);
+    expect(created(calls)).toBeUndefined();
+  });
+
+  it("a pending one-time schedule reads 'Once · Sat 21 Nov at 09:00 (Zurich time)' with On / Paused; Edit opens on Once", async () => {
+    mockApi({ "GET /v1/agents/a1/schedules": page([once(), once({ id: "s2", name: "Paused one", enabled: false, disabled_reason: "user" })]), "GET /v1/agents/a1/webhooks": page([]) });
+    mount();
+    await screen.findByText("Water the plants");
+    expect(screen.getAllByText("Once · Sat 21 Nov at 09:00 (Zurich time)")).toHaveLength(2);
+    expect(screen.getByText("On")).toBeInTheDocument();
+    expect(screen.getByText("Paused")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    const form = await screen.findByRole("form", { name: "Edit schedule" });
+    expect(within(form).getByRole("radio", { name: "Once" })).toBeChecked();
+    expect(within(form).getByLabelText("Date")).toHaveValue("2026-11-21");
+  });
+
+  it("Waiting: a due one-time schedule of a paused agent says it runs when the agent is resumed", async () => {
+    mockApi({ "GET /v1/agents/a1/schedules": page([once({ next_fire_at: "2020-01-01T08:00:00Z" })]), "GET /v1/agents/a1/webhooks": page([]) });
+    mount({ agentFrozen: true });
+    expect(await screen.findByText("Waiting: Daneel is paused. It runs when Daneel is resumed.")).toBeInTheDocument();
+  });
+
+  it("no Waiting while the agent runs, or before the time has come", async () => {
+    mockApi({ "GET /v1/agents/a1/schedules": page([once({ next_fire_at: "2020-01-01T08:00:00Z" }), once({ id: "s2", name: "Later", next_fire_at: "2999-01-01T08:00:00Z" })]), "GET /v1/agents/a1/webhooks": page([]) });
+    mount();
+    await screen.findByText("Later");
+    expect(screen.queryByText(/Waiting:/)).toBeNull();
+  });
+
+  it("Done: badge Done, 'Ran on … · removed on …', Run again and Delete, no Pause or Edit; Run again opens Once on a new date", async () => {
+    const calls = mockApi({
+      "GET /v1/agents/a1/schedules": page([once({ completed_at: "2026-11-21T08:00:00Z", next_fire_at: null, next_runs: [] }), sched({ id: "s3", name: "Recurring" })]),
+      "GET /v1/agents/a1/webhooks": page([]),
+      "PATCH /v1/schedules/s1": () => json(200, once()),
+    });
+    mount();
+    await screen.findByText("Water the plants");
+    expect(screen.getByText("Done")).toBeInTheDocument();
+    expect(screen.getByText("Ran on Sat 21 Nov at 09:00 · removed on 21 Dec")).toBeInTheDocument();
+    // Done counts as neither On nor Paused: the recurring one is the only On.
+    expect(screen.getAllByText("On")).toHaveLength(1);
+    expect(screen.queryByText("Paused")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(1);
+    for (const b of screen.getAllByRole("button", { name: "Run now" })) expect(b).toBeEnabled();
+    await openMenu("Water the plants", "Delete…");
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "More for Water the plants" }), { key: "Enter" });
+    expect(screen.queryByRole("menuitem", { name: "Pause" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Resume" })).toBeNull();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    const form = await screen.findByRole("form", { name: "Edit schedule" });
+    expect(within(form).getByRole("radio", { name: "Once" })).toBeChecked();
+    expect(within(form).getByLabelText("Date")).not.toHaveValue("2026-11-21");
+    fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toMatchObject({ run_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T09:00$/), timezone: "Europe/Zurich" }));
+    expect(calls.find((c) => c.method === "PATCH")?.body).not.toHaveProperty("cron");
   });
 });
