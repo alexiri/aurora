@@ -24,6 +24,7 @@ fn view(r: Option<repo::OnboardingRow>) -> MeOnboarding {
             guide_dismissed: r.guide_dismissed,
             tour_completed_at: r.tour_completed_at,
             notices_seen: r.notices_seen,
+            more_controls: r.more_controls,
         },
         // No row: created after the 2026-11 release (the migration gave everyone older a row).
         None => MeOnboarding {
@@ -31,6 +32,7 @@ fn view(r: Option<repo::OnboardingRow>) -> MeOnboarding {
             guide_dismissed: vec![],
             tour_completed_at: None,
             notices_seen: vec!["renames-2026-11".to_owned()],
+            more_controls: false,
         },
     }
 }
@@ -82,6 +84,7 @@ pub async fn patch_me(
     }
     let patch = repo::Patch {
         notice_seen: req.notice_seen,
+        more_controls: req.more_controls,
         welcome_seen: req.welcome_seen,
         guide_dismissed,
         tour_completed_at: req.tour_completed.map(|done| done.then(Utc::now)),
