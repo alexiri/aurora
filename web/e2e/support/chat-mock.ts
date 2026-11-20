@@ -76,6 +76,10 @@ export interface Fixture {
   active: ReturnType<typeof conv>[];
   archived: ReturnType<typeof conv>[];
   events: Record<string, Ev[]>;
+  /** (P5-REFINE-11, C-1074) The run threads of the folders, by `automation.id`. */
+  runs?: (ReturnType<typeof conv> & { automation?: { id: string } | null })[];
+  /** (P5-REFINE-11, C-1074) The agent's automation folders (default none). */
+  folders?: { kind: string; id: string; name: string; deleted: boolean; thread_count: number; last_activity_at: string; last_result: string | null }[];
   /** (P5-CHAT-4) The answer to `GET /v1/workspaces/{ws}/messages/search` for these query parameters. */
   search?: (url: URL) => unknown;
 }
@@ -149,7 +153,25 @@ export async function mockChat(page: Page, fx: Fixture = DEFAULT) {
     const json = (b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(b) });
     if (method === "POST" && p === `/v1/agents/${agent.id}/conversations/direct`) return json(fx.direct);
     if (method === "GET" && p === `/v1/agents/${agent.id}/conversations`) {
+      // (C-1074) `automation=only` is one folder's run threads.
+      if (url.searchParams.get("automation") === "only") {
+        return json({ items: (fx.runs ?? []).filter((c) => c.automation?.id === url.searchParams.get("automation_id")), next_cursor: null });
+      }
       return json({ items: url.searchParams.get("archived") === "true" ? fx.archived : fx.active, next_cursor: null });
+    }
+    // (P5-REFINE-11, C-1074) The automation folders: the spec's own, or none.
+    if (method === "GET" && p === `/v1/agents/${agent.id}/conversation-folders`) return json({ items: fx.folders ?? [], next_cursor: null });
+    // (D-409, C-1073) New chat: a fresh empty conversation, added to the list; Rename answers the renamed conversation.
+    if (method === "POST" && p === `/v1/agents/${agent.id}/conversations/direct/new`) {
+      const fresh = conv(90 + fx.active.length, "direct", { direct_user_id: user.id, last_activity_at: new Date().toISOString() });
+      fx.active.unshift(fresh);
+      return json(fresh, 201);
+    }
+    const one = p.match(/^\/v1\/conversations\/([^/]+)$/);
+    if (one && method === "PATCH") {
+      const target = [...fx.active, ...fx.archived].find((c) => c.id === one[1]);
+      if (target) Object.assign(target, { title: (route.request().postDataJSON() as { title: string | null }).title, title_source: "person" });
+      return json(target ?? {});
     }
     const events = p.match(/^\/v1\/conversations\/([^/]+)\/events$/);
     if (events && method === "GET") {

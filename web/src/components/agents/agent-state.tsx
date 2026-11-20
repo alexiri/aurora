@@ -7,6 +7,7 @@ import { useAgentPendingActionApprovals, useAgentPendingApprovals } from "@/lib/
 import { useAnswerReadiness } from "@/lib/api/answer-readiness";
 import { useConversations, useSandbox } from "@/lib/api/conversations";
 import type { components } from "@/lib/api/schema";
+import { useStoppedTurns } from "@/lib/chat/stopped";
 
 export type AgentStateWord = "Ready" | "Working" | "Needs you" | "Can't answer" | "Starting its computer…" | "Asleep";
 
@@ -76,8 +77,15 @@ export function AgentState({
   const answer = readiness.data;
   const cantAnswer = answer?.can_answer === false;
   const needs = (gateway.data?.items?.length ?? 0) + (actions.data?.items?.length ?? 0);
-  const working = (conversations.data?.items ?? []).some((c) => !!c.active_turn);
-  const computer = sandbox.data?.computer ?? null;
+  // (chat-4, C-1075) A turn the person stopped (or that has `abort_requested`) is not "Working": the header is Ready at once,
+  // and the row's `active_turn` follows with the next event.
+  const stoppedTurns = useStoppedTurns();
+  const running = (conversations.data?.items ?? []).filter((c) => !!c.active_turn && !c.active_turn.abort_requested && !stoppedTurns.has(c.active_turn.id));
+  const stopping = (conversations.data?.items ?? []).some((c) => !!c.active_turn && (c.active_turn.abort_requested || stoppedTurns.has(c.active_turn.id)));
+  const working = running.length > 0;
+  const sandboxComputer = sandbox.data?.computer ?? null;
+  // The computer's "working" includes the turn that is being stopped: do not let it keep the header on Working.
+  const computer = sandboxComputer && stopping && !working ? { ...sandboxComputer, working: false } : sandboxComputer;
   const { word, tone } = agentStateOf({ cantAnswer, needs, working, computer });
   const starting = word === "Starting its computer…";
   const reason = cantAnswer

@@ -34,6 +34,7 @@ import { uploadAttachment, uploadErrorMessage, type Attachment } from "@/lib/api
 import { chatApi, type Followup } from "@/lib/api/conversations";
 import { useMe } from "@/lib/api/queries";
 import { newIdempotencyKey } from "@/lib/chat/idempotency";
+import { markStopped, useStoppedTurns } from "@/lib/chat/stopped";
 import { classifySend, pendingFollowups, type TranscriptState } from "@/lib/chat/transcript";
 
 import { ComposerChip, UploadChip } from "./attachments";
@@ -118,6 +119,10 @@ export function Composer({
 }) {
   const qc = useQueryClient();
   const userId = useMe().data?.user.id ?? null;
+  // (chat-4) Stop is disabled and says "Stopping…" while the call is in flight and until the turn finishes.
+  const [stopBusy, setStopBusy] = useState(false);
+  const stoppedTurns = useStoppedTurns();
+  const stopping = stopBusy || (!!activeTurn && stoppedTurns.has(activeTurn));
   // `?draft=` fills the box (the getting-started guide suggests a first message); it is never sent for the person.
   // Read at mount regardless of `autoFocus`: on a slow load the composer mounts while the transcript is still
   // loading (`autoFocus` false), and the initializer would never run again — the guide's suggested message was
@@ -621,11 +626,15 @@ export function Composer({
               type="button"
               variant="outline"
               size="sm"
-              aria-label="Stop"
+              aria-label={stopping ? "Stopping…" : "Stop"}
+              disabled={stopping}
               className="size-11 min-h-11 shrink-0 px-0 md:w-auto md:min-h-9 md:px-3"
-              onClick={() => void act(() => chatApi.abort(activeTurn))}>
+              onClick={() => {
+                setStopBusy(true);
+                void act(() => chatApi.abort(activeTurn).then(() => markStopped(activeTurn))).finally(() => setStopBusy(false));
+              }}>
               <StopIcon width={16} height={16} />
-              <span className="hidden md:inline">Stop</span>
+              <span className="hidden md:inline">{stopping ? "Stopping…" : "Stop"}</span>
             </Button>
           ) : null}
           <Button type="submit" size="lg" className="size-11 min-h-11 shrink-0 px-0" aria-label={activeTurn ? "Follow up" : "Send"} disabled={!canSend}>

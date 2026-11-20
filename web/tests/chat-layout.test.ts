@@ -6,6 +6,7 @@ import {
   conversationTitle,
   dayLabel,
   filterConversations,
+  folderRunsLabel,
   groupConversations,
   isWorking,
   listTime,
@@ -117,27 +118,41 @@ const conv = (id: string, over: Partial<Conversation> = {}): Conversation =>
   }) as Conversation;
 
 describe("conversation list", () => {
-  it("puts the own direct chat first, then the rest by last_activity_at desc", () => {
-    const g = groupConversations(
-      [
-        conv("old", { last_activity_at: at(2026, 11, 1) }),
-        conv("mine", { kind: "direct", last_activity_at: at(2026, 10, 1) }),
-        conv("new", { last_activity_at: at(2026, 11, 7) }),
-        conv("none"),
-      ],
-      "mine",
-    );
-    expect(g.mine?.id).toBe("mine");
+  it("puts the person's own direct chats first (newest first: there can be several), then the rest by last_activity_at desc", () => {
+    const g = groupConversations([
+      conv("old", { last_activity_at: at(2026, 11, 1) }),
+      conv("mine-old", { kind: "direct", last_activity_at: at(2026, 10, 1) }),
+      conv("new", { last_activity_at: at(2026, 11, 7) }),
+      conv("mine-new", { kind: "direct", last_activity_at: at(2026, 11, 2) }),
+      conv("none"),
+    ]);
+    expect(g.mine.map((c) => c.id)).toEqual(["mine-new", "mine-old"]);
     expect(g.others.map((c) => c.id)).toEqual(["new", "old", "none"]);
   });
 
   it("keeps other members' direct chats in their own group", () => {
-    const g = groupConversations(
-      [conv("mine", { kind: "direct" }), conv("ann", { kind: "direct", direct_user: { id: "u", display_name: "Ann" } as never })],
-      "mine",
-    );
+    const g = groupConversations([
+      conv("mine", { kind: "direct" }),
+      conv("ann", { kind: "direct", direct_user: { id: "u", display_name: "Ann" } as never }),
+    ]);
+    expect(g.mine.map((c) => c.id)).toEqual(["mine"]);
     expect(g.memberDirects.map((c) => c.id)).toEqual(["ann"]);
     expect(g.others).toEqual([]);
+  });
+
+  it("titles a run thread with its automation and its time, and folds the runs line", () => {
+    const run = conv("r1", {
+      kind: "schedule",
+      title: "Morning summary",
+      automation: { kind: "schedule", id: "s1", name: "Morning summary", deleted: false },
+      run_at: at(2026, 11, 7, 9, 0),
+    });
+    expect(conversationTitle(run, NOW)).toBe("Morning summary · 7 Nov 09:00");
+    // A rename of the automation shows at once (the name is read now); a person's title wins for a plain chat.
+    expect(conversationTitle({ ...run, automation: { ...run.automation!, name: "Daily digest" } }, NOW)).toBe("Daily digest · 7 Nov 09:00");
+    expect(conversationTitle(conv("c", { kind: "direct", title: "Lighthouse story" }), NOW)).toBe("Lighthouse story");
+    expect(folderRunsLabel("Morning summary", 3)).toBe("Morning summary · 3 runs");
+    expect(folderRunsLabel("Morning summary", 1)).toBe("Morning summary · 1 run");
   });
 
   it("filters by title on the client, case-insensitively", () => {

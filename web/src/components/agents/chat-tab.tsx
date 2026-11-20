@@ -18,10 +18,10 @@ import type { AgentIdent } from "@/components/chat/types";
 import { ErrorState, Loading } from "@/components/states";
 import { ChevronRightIcon } from "@/components/ui/icons";
 import { useApprovalsStream, useCanApprove } from "@/lib/api/approvals";
-import { chatApi, useConversationById, useConversations, useDirectConversation, type Conversation } from "@/lib/api/conversations";
-import { refreshConversations } from "./conversation-actions";
+import { chatApi, useConversationById, useConversationFolders, useConversations, useDirectConversation, type Conversation } from "@/lib/api/conversations";
+import { lifecycleError, refreshConversations } from "./conversation-actions";
 import { useRetention } from "@/lib/api/org";
-import { conversationTitle, filterConversations, groupConversations, sortByActivity, type ListGroups } from "@/lib/chat/layout";
+import { conversationTitle, filterConversations, groupConversations, isOwnDirect, sortByActivity, type ListGroups } from "@/lib/chat/layout";
 
 import type { AgentPageId } from "./sections";
 import { useRailExpanded } from "./status-rail/rail-state";
@@ -128,8 +128,10 @@ export function ChatTab({
   const search = useMessageSearch(wsId, params);
   // Other agents' results link to their own page: their handles come from the workspace's agent list.
   const agents = useAgents(submitted && scope === "all" ? wsId : undefined);
-  const list = useConversations(agentId, archived);
-  // The rail's "Doing now" reads the active conversations even while the Archived list is shown (same query when not).
+  // (D-409, C-1074) The Active list leaves the run threads out: they sit in their automation's folder below it.
+  const list = useConversations(agentId, archived, archived ? {} : { automation: "none" });
+  const folderList = useConversationFolders(agentId, !archived);
+  // The rail's "Doing now" and the header's state read every active conversation, run threads included, even while the Archived list is shown.
   const activeList = useConversations(agentId, false);
   // The retention rule is for organization owners and admins (a member gets 403): ask only for them.
   const orgRole = useOrg(orgId).data?.my_role;
@@ -164,13 +166,15 @@ export function ChatTab({
   const [openTurn, setOpenTurn] = useState<OpenTurn>({ active: false, line: null });
 
   // (a response without an id is not a conversation: render the list alone rather than a row with no identity)
+  // The person's latest active chat (C-1073): what the Chat tab opens when no `?c=` is given. It is never injected into the lists.
   const directConv = direct.data && typeof direct.data.id === "string" ? direct.data : null;
   const convs = useMemo(() => list.data?.items ?? [], [list.data]);
-  const activeConvs = useMemo(() => {
-    const items = activeList.data?.items ?? [];
-    // (chat-1) The person's own chat is listed first even before the list has it, but never while it is archived.
-    return directConv && !directConv.archived_at && !items.some((c) => c.id === directConv.id) ? [directConv, ...items] : items;
-  }, [activeList.data, directConv]);
+  const activeConvs = useMemo(() => activeList.data?.items ?? [], [activeList.data]);
+  const folders = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const all = folderList.data?.items ?? [];
+    return q ? all.filter((f) => f.name.toLowerCase().includes(q)) : all;
+  }, [folderList.data, query]);
   // The conversation list carries `active_turn` but is not streamed: look again while the page is visible.
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -179,10 +183,9 @@ export function ChatTab({
     return () => window.clearInterval(id);
   }, [qc, agentId]);
   const groups: ListGroups = useMemo(() => {
-    if (archived) return { mine: null, others: sortByActivity(filterConversations(convs, query)), memberDirects: [] };
-    const all = directConv && !directConv.archived_at && !convs.some((c) => c.id === directConv.id) ? [directConv, ...convs] : convs;
-    return groupConversations(filterConversations(all, query), directConv?.id ?? null);
-  }, [archived, convs, directConv, query]);
+    if (archived) return { mine: [], others: sortByActivity(filterConversations(convs, query)), memberDirects: [] };
+    return groupConversations(filterConversations(convs, query));
+  }, [archived, convs, query]);
 
   const searchError = (() => {
     const e = search.error;
@@ -238,8 +241,20 @@ export function ChatTab({
   const ownId = directConv?.id ?? null;
   const convId = picked ?? (archived ? null : ownId);
   const inList = convId ? convs.some((c) => c.id === convId) : false;
-  // A deep link to a conversation past the loaded pages: fetched by id so its title and kind still show (FIX-117).
+  // A deep link to a conversation past the loaded pages (or a run thread, which the list leaves out) is fetched by id so its
+  // title and kind still show (FIX-117).
   const fetched = useConversationById(convId, !!convId && convId !== ownId && list.isSuccess && !inList);
+  // The chat the API just created (the first one) may be missing from a list that was fetched at the same time: look again once.
+  const refetchedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!directConv || directConv.archived_at || !list.isSuccess || refetchedFor.current === directConv.id) return;
+    if (convs.some((c) => c.id === directConv.id)) return;
+    refetchedFor.current = directConv.id;
+    refreshConversations(qc, agentId);
+  }, [directConv, list.isSuccess, convs, qc, agentId]);
+  // (D-409) New chat: a fresh conversation, opened at once with the composer focused (an empty thread focuses it).
+  const [newChatBusy, setNewChatBusy] = useState(false);
+  const [newChatError, setNewChatError] = useState<string | null>(null);
   const status = useAgentStatus({ wsId, agentId, canApprove, conversations: activeConvs, open: openTurn });
   const waitingIds = useMemo(
     () => (canApprove ? new Set(status.needs.flatMap((n) => (n.conversationId ? [n.conversationId] : []))) : undefined),
@@ -250,10 +265,12 @@ export function ChatTab({
   if (direct.isError) return <ErrorState error={direct.error} onRetry={() => void direct.refetch()} />;
 
   const conv = convId
-    ? (convs.find((c) => c.id === convId) ?? (convId === ownId ? directConv : null) ?? fetched.data ?? null)
+    ? (convs.find((c) => c.id === convId) ?? activeConvs.find((c) => c.id === convId) ?? (convId === ownId ? directConv : null) ?? fetched.data ?? null)
     : null;
   // RFE-009: another member's direct conversation (owners only; the API returns it with `direct_user`) is read-only.
-  const memberDirect = conv && conv.id !== ownId && conv.kind === "direct" && conv.direct_user ? conv : null;
+  const memberDirect = conv && conv.kind === "direct" && conv.direct_user ? conv : null;
+  // One of the person's own chats (there can be several, C-1073): the thread's composer is theirs.
+  const ownDirect = conv ? isOwnDirect(conv) : false;
   const done = () => {
     setArchived(false);
     select(null, "replace");
@@ -261,15 +278,20 @@ export function ChatTab({
   // (chat-11) On a phone the Chat tab opens the person's conversation (the composer ready); the list is one tap back.
   // Picking, deep links and the Archived view keep working; the desktop shows both panes whatever this says.
   const threadOpen = picked !== null || (!listShown && !archived && convId !== null);
-  // (chat-1) Until several chats exist (P5-REFINE-7) "New chat" opens the person's chat, restoring it when it was archived.
+  // (D-409, C-1073) New chat: 201 a fresh conversation, 200 the latest one while it is still empty (no pile of empty chats).
   const newChat = () => {
     setArchived(false);
-    if (directConv?.archived_at) {
-      void chatApi.unarchive(directConv.id).then(() => {
-        refreshConversations(qc, agentId, directConv.id);
-        select(directConv.id);
-      });
-    } else select(directConv?.id ?? null);
+    setNewChatBusy(true);
+    setNewChatError(null);
+    chatApi
+      .newDirect(agentId)
+      .then((c) => {
+        refreshConversations(qc, agentId);
+        setListShown(false);
+        select(c.id);
+      })
+      .catch((e: unknown) => setNewChatError(lifecycleError(e)))
+      .finally(() => setNewChatBusy(false));
   };
   const titleOf = (c: Conversation) => conversationTitle(c);
   const ctx: RailContext = {
@@ -315,9 +337,17 @@ export function ChatTab({
           className="flex-1"
           waitingIds={waitingIds}
           groups={groups}
+          folders={folders}
           selectedId={convId}
+          selectedAutomationId={conv?.automation?.id ?? null}
+          agentId={agentId}
           agentName={agent?.name}
           onNewChat={newChat}
+          newChatBusy={newChatBusy}
+          newChatError={newChatError}
+          onGone={(id) => {
+            if (id === convId) done();
+          }}
           archived={archived}
           onArchivedChange={(a) => {
             setListShown(true);
@@ -374,10 +404,10 @@ export function ChatTab({
             wsId={wsId}
             base={base}
             convId={convId}
-            direct={convId === ownId ? directConv : null}
+            direct={ownDirect ? conv : null}
             conversation={conv}
             ownerView={memberDirect ? (memberDirect.direct_user?.display_name ?? "") : null}
-            ownDirect={convId === ownId}
+            ownDirect={ownDirect}
             archived={archived || !!conv?.archived_at}
             retentionDays={retention.data?.conversations_days ?? null}
             onGone={done}
