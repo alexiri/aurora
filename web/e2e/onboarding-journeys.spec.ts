@@ -93,7 +93,8 @@ test("1. fresh instance: the admin walks the five-step checklist to a working ch
   await form.getByLabel("Provider").selectOption(ENDPOINT_ID);
   await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
   await dialog.getByRole("button", { name: "Add key" }).click();
-  await expect(page.getByTestId("setup-toast")).toContainText("AI key added", { timeout: 60_000 });
+  // (P5-REFINE-18 #14) The toast names the key: "Mock LLM added. …".
+  await expect(page.getByTestId("setup-toast")).toContainText("Mock LLM added", { timeout: 60_000 });
   await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();
   await expect(steps.locator("#setup-key")).toHaveAttribute("data-done", "true");
 
@@ -102,20 +103,11 @@ test("1. fresh instance: the admin walks the five-step checklist to a working ch
   await expect(page.locator('[data-health="Runners"]')).toBeVisible();
   await page.getByRole("tab", { name: "Checklist" }).click();
 
-  // 5. Try it: open the workspace and chat. The admin's own agent predates the placement (starter
-  // grants apply to new users), so the guide finishes the job: the key step is done — the org key from
-  // the checklist provides it — and access is one click away.
+  // 5. Try it (D-414, P5-REFINE-5/18 #14): the checklist's key is a starter key, so it reaches every hosted agent, the
+  // admin's own Daneel included (it predates the key); there is no access step. Open chat goes straight to Daneel's chat
+  // with the hello typed and not sent (C-1035's `?draft=`), and the first reply comes back.
   await steps.locator("#setup-try").getByRole("link", { name: "Open chat" }).click();
-  await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible({ timeout: 30_000 });
-  const base = /^\/o\/[^/]+\/w\/[^/]+/.exec(new URL(page.url()).pathname)![0];
-  await page.goto(`${base}/welcome`);
-  const guide = page.getByRole("region", { name: "Get Daneel talking" });
-  await expect(guide.getByText("Give Daneel access to Mock LLM")).toBeVisible({ timeout: 30_000 }); // (C-927) only a key the agent cannot use
-  // Access: Daneel is preselected, one click — done from the server's state.
-  await expect(guide.getByRole("checkbox", { name: /Daneel/ })).toBeChecked();
-  await guide.getByRole("button", { name: "Give Daneel access" }).click(); // (C-925) the button names who
-  await expect(guide.getByText("1 of 2 done")).toBeVisible({ timeout: 30_000 });
-  await guide.getByRole("link", { name: "Say hello to Daneel" }).click();
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue(/Hello/, { timeout: 30_000 });
   await chatGetsAnswer(page);
 });
 

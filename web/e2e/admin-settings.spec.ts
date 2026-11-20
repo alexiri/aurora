@@ -25,7 +25,9 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByRole("searchbox", { name: "Search settings" }).fill("no such setting");
         await expect(page.getByRole("link", { name: "Instance rules", exact: true })).toHaveCount(0);
         await page.getByRole("searchbox", { name: "Search settings" }).fill("");
-        await expect(page.getByText(/1 setting is configured in Helm and cannot be changed here/)).toBeVisible();
+        // (P5-REFINE-18) The line names the count and links to Set in Helm.
+        await expect(page.getByText(/1 setting is set in Helm\./)).toBeVisible();
+        await expect(page.getByRole("link", { name: "See them on Set in Helm" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
       });

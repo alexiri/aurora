@@ -171,7 +171,8 @@ test.describe("certificate download", () => {
     await mockSsh(page);
     await open(page, "/o/acme/w/main/agents/daneel?tab=ssh", "light");
     await expect(page.getByText("With the Aurora command line:")).toBeVisible();
-    await expect(page.getByLabel("the aurora ssh command")).toHaveText("aurora ssh daneel");
+    // The block itself (its Copy button is "Copy the aurora ssh command").
+    await expect(page.getByLabel("the aurora ssh command", { exact: true })).toHaveText("aurora ssh daneel");
     await page.getByRole("button", { name: "Get a certificate" }).click();
     const link = page.getByRole("link", { name: "Download", exact: true });
     await expect(link).toBeVisible();

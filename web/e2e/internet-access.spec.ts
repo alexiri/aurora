@@ -44,7 +44,9 @@ async function open(page: Page, path: string, scheme: "light" | "dark" = "light"
   page.on("pageerror", (e) => errors.push(e.message));
   await page.emulateMedia({ colorScheme: scheme });
   await page.goto(path);
-  await page.getByRole("heading", { level: 1, name: "What agents may do" }).waitFor();
+  // (P5-REFINE-18 item 1) Administration's page is "What agents may do"; the organization's and workspace's stay "Internet access".
+  const title = path.startsWith("/admin/") ? "What agents may do" : "Internet access";
+  await page.getByRole("heading", { level: 1, name: title }).waitFor();
   expect(errors, `${path} threw`).toEqual([]);
 }
 

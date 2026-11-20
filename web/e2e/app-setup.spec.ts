@@ -87,6 +87,8 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("Administration's catalogue entry links to the OAuth clients of the app, with its form open", async ({ page }) => {
         await openRoute(page, "/admin/apps/packages/github", scheme);
+        // (P5-REFINE-18 #8, admin-7) The link sits in the closed Technical details fold, under What this app does.
+        await page.getByText("Technical details", { exact: true }).click();
         await page.getByRole("link", { name: "Sign-in apps for this app" }).click();
         await expect(page).toHaveURL(/\/admin\/apps\?tab=oauth-clients&package=github/);
         await expect(page.locator("#oc-app")).toHaveValue("github|github");

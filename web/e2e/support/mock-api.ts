@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 
@@ -250,8 +250,10 @@ export async function mockApi(
     }
     const icon = p.match(/^\/v1\/apps\/([^/]+)\/icon$/);
     if (icon) {
-      const file = url.searchParams.get("variant") === "dark" ? "icon-dark.png" : "icon.png";
-      return route.fulfill({ status: 200, contentType: "image/png", body: readFileSync(join(BUILTIN, icon[1], "assets", file)) });
+      const file = join(BUILTIN, icon[1], "assets", url.searchParams.get("variant") === "dark" ? "icon-dark.png" : "icon.png");
+      // An uploaded app (no built-in folder) has no icon file here: the API's 404, which the page draws as initials.
+      if (!existsSync(file)) return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+      return route.fulfill({ status: 200, contentType: "image/png", body: readFileSync(file) });
     }
     if (p === "/v1/me") {
       return json({ user, memberships: [{ org, status: "active", workspaces: [{ ...ws, personal: false }] }], default_org_id: id(1), client_address: "203.0.113.7" });
@@ -558,7 +560,7 @@ export async function mockApi(
       const pkg = PACKAGES.find((x) => x.id === p.split("/")[4]) ?? PACKAGES[3];
       return json({
         id: id(70), package_id: pkg.id, version: "1.0.0", contract: 1, digest: "sha256:0000", publisher: "aurora", source: "builtin", status: "approved",
-        created_at: now, signer: { kind: "builtin", name: "Aurora" },
+        origin: "aurora", summary: null, reaches: ["api.github.com"], reaches_more: 0, created_at: now, signer: { kind: "builtin", name: "Aurora" },
         apps: [{ app_id: pkg.id, name: pkg.name, ...(pkg.id === "github" ? { library_host: "api.github.com" } : {}) }], host_claims: [], violations: [], widenings: [], impact: null,
         permissions: { hooks: [], context: [], egress: { "api.github.com": ["GET"] } },
       });
