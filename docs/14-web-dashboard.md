@@ -453,7 +453,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     agent the sandbox state as a `StatusDot` (labels and failure tooltip as in
     the FIX-025 rule above); on the right the **section switcher** (segmented
     `Tabs`, label "Agent sections") and the **Agent actions** menu (`MoreIcon`,
-    accessible name "Agent actions"): Freeze / Unfreeze (same confirm dialog and
+    accessible name "Agent actions"; (phase 5, FIX-186, D-403) the switcher is as
+    wide as its tabs, with no empty track after the last one, and on a phone its
+    tabs share the row equally): Freeze / Unfreeze (same confirm dialog and
     permission as before) and "Delete agent…" (the existing delete flow and
     typed confirmation, `can_own`). The kind and Default badges move to the
     rail's About part; a BYO agent (no rail) keeps them in the header. A frozen
@@ -516,7 +518,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       instructions" (Behaviour › Instructions).
   - **Rail states.** Expanded: 288 px, heading "Status" and a collapse button
     ("Collapse status panel"). Collapsed: a 56 px strip with an expand button
-    ("Expand status panel") and the five icons; state on the icons: Needs you a
+    ("Expand status panel") and the five icons (phase 5, FIX-187, D-403: the
+    expand button sits in a 64 px top cell whose bottom border runs the strip's
+    width and continues the thread header's bottom border, as the expanded
+    panel's header does); state on the icons: Needs you a
     `pending-ink` count, Doing now an `accent` dot while any turn runs, Recent
     tool calls a `danger-ink` dot when one of the five was denied or failed,
     Computer a dot in the sandbox state's tone; every icon's accessible name says

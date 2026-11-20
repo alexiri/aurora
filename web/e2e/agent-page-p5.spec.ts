@@ -166,6 +166,26 @@ test.describe("1280×800", () => {
     expect((await sizeOf(line)).height).toBeLessThan(20);
   });
 
+  // FIX-187: the rail's top cell and the thread header end on one line, collapsed or expanded.
+  for (const scheme of ["light", "dark"] as const) {
+    test(`the status rail's top cell lines up with the thread header (${scheme})`, async ({ page }) => {
+      await open(page, scheme);
+      const bottom = async (loc: ReturnType<Page["locator"]>) => {
+        const b = await sizeOf(loc);
+        return b.y + b.height;
+      };
+      const threadHeader = page.getByRole("region", { name: "Chat" }).locator("header").first();
+      const line = await bottom(threadHeader);
+      const expand = rail(page).getByRole("button", { name: "Expand status panel" });
+      const cell = expand.locator("xpath=..");
+      expect(Math.round((await sizeOf(cell)).height), "collapsed top cell height").toBe(64);
+      expect(Math.abs((await bottom(cell)) - line), "collapsed cell bottom vs thread header").toBeLessThanOrEqual(1);
+      await expand.click();
+      const panelHeader = rail(page).getByRole("heading", { name: "Status", level: 2 }).locator("xpath=ancestor::header[1]");
+      expect(Math.abs((await bottom(panelHeader)) - line), "expanded header bottom vs thread header").toBeLessThanOrEqual(1);
+    });
+  }
+
   for (const scheme of ["light", "dark"] as const) {
     test(`header is one ~56 px row, the card fills the height, the expanded rail pushes the thread (${scheme})`, async ({ page }) => {
       await page.addInitScript((k) => window.localStorage.setItem(k, "expanded"), KEY);
@@ -182,6 +202,9 @@ test.describe("1280×800", () => {
       const a = await sizeOf(actions);
       expect(Math.round(a.width)).toBe(36);
       expect(Math.round(a.height)).toBe(36);
+      // FIX-186: the track ends where the last tab ends.
+      const lastTab = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab").last());
+      expect(Math.abs(switcher.x + switcher.width - (lastTab.x + lastTab.width)), "no empty track after the last tab").toBeLessThanOrEqual(4);
       expect(a.x, "actions at the right of the switcher").toBeGreaterThan(switcher.x + switcher.width);
       const rowMid = (b: { y: number; height: number }) => b.y + b.height / 2;
       expect(Math.abs(rowMid(a) - rowMid(switcher)), "switcher and actions share a row").toBeLessThanOrEqual(4);
@@ -270,6 +293,10 @@ test.describe("phone, 390 px", () => {
       expect(name.y).toBeLessThan(back.y + back.height);
       const tabs = page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab");
       for (let i = 0; i < (await tabs.count()); i += 1) expect((await sizeOf(tabs.nth(i))).height, `section tab ${i}`).toBeGreaterThanOrEqual(44);
+      // FIX-186: the tabs share the row, no empty track after the last one.
+      const strip = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }));
+      const last = await sizeOf(tabs.last());
+      expect(Math.abs(strip.x + strip.width - (last.x + last.width)), "no empty track after the last tab").toBeLessThanOrEqual(4);
       expect(await fits(page), "the page scrolls").toBeLessThanOrEqual(0);
       expect(await overflow(page)).toBeLessThanOrEqual(0);
       await page.screenshot({ path: `${SHOTS}/phone-header-${scheme}.png` });

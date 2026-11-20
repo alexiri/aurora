@@ -217,15 +217,15 @@ export function AgentPage() {
             </Menu>
           )}
         </div>
-        <div className="order-3 w-full min-w-0 md:order-2 md:w-108 md:shrink">
+        <div className="order-3 w-full min-w-0 md:order-2 md:w-auto md:shrink-0">
           <Tabs
             items={barSections.map((s) => ({ value: s.id, label: s.label }))}
             value={isConfig ? "" : sectionId}
             onValueChange={goSection}
             label="Agent sections"
             idBase="agent-section"
-            className="flex"
-            tabClassName="max-md:min-h-11 max-md:px-1.5"
+            className="flex w-fit max-md:w-full"
+            tabClassName="max-md:min-h-11 max-md:flex-1 max-md:justify-center max-md:px-1.5"
           />
         </div>
       </header>

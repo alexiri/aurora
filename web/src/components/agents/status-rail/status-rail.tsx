@@ -186,13 +186,14 @@ export function StatusRail({
       aria-label="Status"
       // Behind the overlay the strip is out of reach.
       {...(overlay && expanded ? ({ inert: true } as object) : {})}
-      className="flex w-14 shrink-0 flex-col items-center gap-1 border-l border-line py-2"
+      className="flex w-14 shrink-0 flex-col items-center gap-1 border-l border-line pb-2"
     >
-      <button ref={expandRef} type="button" aria-label="Expand status panel" onClick={() => expandAt(null)} className={iconButton}>
-        <ChevronLeftIcon width={20} height={20} />
-      </button>
-      {/* The board's divider between the expand control and the five part icons. */}
-      <hr aria-hidden="true" className="my-1 w-8 border-0 border-t border-line" />
+      {/* FIX-187: a 64 px top cell like the expanded panel's header; its bottom border is the divider and continues the thread header's. */}
+      <div className="mb-1 flex h-16 w-full shrink-0 items-center justify-center border-b border-line">
+        <button ref={expandRef} type="button" aria-label="Expand status panel" onClick={() => expandAt(null)} className={iconButton}>
+          <ChevronLeftIcon width={20} height={20} />
+        </button>
+      </div>
       {status.canApprove ? (
         <Popover open={needsOpen} onOpenChange={setNeedsOpen}>
           <PopoverTrigger asChild>
