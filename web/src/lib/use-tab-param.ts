@@ -30,7 +30,8 @@ export function useTabParam<T extends string>(
   const searchParams = useSearchParams();
   const [tab, setTabState] = useState<T>(() => {
     const params = new URLSearchParams(currentSearch());
-    const raw = params.get("tab");
+    // The router's value first: during a client navigation `window.location` can still show the previous page.
+    const raw = searchParams.get("tab") ?? params.get("tab");
     if (raw) return resolveTab(raw, valid, fallback);
     return opts.initial?.(params) || fallback;
   });
