@@ -265,7 +265,12 @@ to reach them, use send_message with to "me". Your final answer is shown only in
   people read your answers)"; `schedule` its name and creator, that nobody reads the run, that `to:
   "me"` reaches the creator, and where the final answer goes: "posted to <Platform> <direct
   message|space label>" exactly when the doorless-turn mirror posts it (the run conversation has a
-  thread link, `13 §5.2`), else "shown only in the dashboard"; `webhook` its name, that the payload is
+  thread link, `13 §5.2`), else "shown only in the dashboard"; (phase 5, P5-SCHED-ONCE, C-1093) for a
+  one-time schedule also "a one-time schedule due at <local time> (<zone>); it will not run again",
+  "; running late: <agent> was paused at the time" when it fired more than 5 minutes after
+  `run_at`, and, for a run in its creator's own chat, "<creator> set this one-time schedule in this
+  conversation and reads it; your answer is shown here" instead of "nobody reads" and the
+  destination; `webhook` its name, that the payload is
   untrusted external data and that no person is behind it; `watch`, `peer`, `system` one plain
   sentence with no person.
 - Values are server data only (account, schedule, link, binding), one line each, `<`/`>` removed,
@@ -976,6 +981,39 @@ thread link, the answer is posted there too (`13 §Mirror`).
   schedule it is, that nobody reads the run conversation, that `send_message` `to: "me"` reaches
   the creator (no approval; refused only when proactive messaging is `off`), and where the final
   answer goes.
+- (phase 5, P5-SCHED-ONCE, D-421, C-1092) **One-time schedules.** A schedule has either a `cron`
+  or a `run_at`: a local date-time `YYYY-MM-DDTHH:MM[:SS]` without an offset, read in `timezone`
+  (an offset or `Z` is refused; an ambiguous local time is the earlier instant; a time in a
+  daylight-saving gap is refused), not before the start of the current minute and at most
+  `SCHEDULE_ONCE_MAX_AHEAD` (5 years) ahead, with no minimum interval. `Schedule.run_at` is
+  returned as that local wall time; a `timezone`-only change keeps the wall time.
+  - **Fire.** A due one-time schedule fires once and, in the same transaction, becomes **Done**
+    (`completed_at`, `next_fire_at` null, `last_outcome = ok`). It is never `skipped_busy` (a
+    single run has no busy conflict) and never coalesced; a quiet or failed gate still leaves it
+    Done; failures post their notice but are neither counted nor disable it. Fire-time authority
+    is as for recurring schedules (disabled `authorization`, not Done).
+  - **Paused** (the agent is effectively frozen): no turn; one `waiting_paused` run (not again
+    while `last_outcome = waiting_paused`), `next_fire_at = now + SCHEDULE_ONCE_RECHECK` (60 s), so
+    it fires within a minute of Resume, late rather than lost (its result reads `skipped`, reason
+    `paused`).
+  - **Done.** `enabled` on a Done schedule → 409 `schedule_completed`; a new `run_at` re-arms it
+    (and a `cron` makes it recurring). Resuming a pending one whose time has passed (also the
+    reassignment `re_enable`) arms it for now. Done schedules count toward no limit and are not in
+    the agent home's summary; the daily retention pass deletes them `SCHEDULE_DONE_RETENTION`
+    (30 days) after they ran, through the ordinary delete (threads marked). Run now on a one-time
+    schedule is a manual run in its own thread and changes neither `run_at` nor `completed_at`.
+- (phase 5, P5-SCHED-ONCE, D-422, C-1093, SEC-144) **Where a one-time run happens.** At fire time,
+  a one-time run is created in the schedule's **origin conversation** when that conversation
+  exists, belongs to the schedule's agent, is a direct conversation that is not archived, and its
+  `direct_user_id` is the schedule's **current** `creator_user_id`. There the turn has the schedule
+  door, the "Schedule" speaker and the `display` payload; when a turn is active it waits as a
+  follow-up that is never steered into that turn and becomes its own turn when that one ends (the
+  run follows the new turn); no "finished" notice is appended (the answer is already there),
+  failure notices stay. Every other one-time run, and every recurring run, gets its own run
+  thread; FIX-192's mirror is unchanged. When a run in the origin ends `done`, the creator's
+  opted-in devices get one Web Push (`schedule_answer`, `07 §Web Push`). Origin notices (finished,
+  failed, disabled) of any schedule are written into a direct conversation only while its person
+  is the schedule's current creator (a creator-less schedule names nobody else and keeps them).
 
 ## Webhooks
 

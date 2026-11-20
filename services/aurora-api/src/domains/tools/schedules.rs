@@ -1,10 +1,11 @@
 //! Schedule tools (docs/12 Phase 0 catalogue): `schedule_create/list/update/delete`. An agent
 //! manages only its own schedules; the person speaking in the current turn becomes the creator.
 use super::registry::{PlatformTool, ToolCallContext, ToolContext, ToolError};
+use crate::domains::schedules::once;
 use crate::domains::schedules::service::{self, Create, Patch};
 use aurora_core::ApiError;
 use aurora_db::repo::schedules::ScheduleRow;
-use aurora_db::repo::{agents, turns};
+use aurora_db::repo::{agents, turns, users, workspaces};
 use aurora_protocol::tools::{JsonContent, ToolContent};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -29,7 +30,18 @@ fn parse<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, ToolError> {
 
 fn fail(e: ApiError) -> ToolError {
     if e.status().is_client_error() {
-        ToolError::Failed(e.message().to_owned())
+        // (C-1094) A field error says which field and why (the API's messages).
+        let field = e.details().and_then(|d| d["fields"].get(0)).and_then(|f| {
+            Some(format!(
+                "{} {}",
+                f["path"].as_str()?.trim_start_matches('/'),
+                f["message"].as_str()?
+            ))
+        });
+        ToolError::Failed(match field {
+            Some(f) => format!("{} {f}", e.message()),
+            None => e.message().to_owned(),
+        })
     } else {
         tracing::error!(error = %e.message(), "schedule tool error");
         ToolError::Failed("internal error".into())
@@ -38,10 +50,41 @@ fn fail(e: ApiError) -> ToolError {
 
 fn view(r: &ScheduleRow) -> Value {
     json!({"id": r.id, "name": r.name, "prompt": r.prompt, "cron": r.cron,
+        "run_at": r.run_at.map(|at| once::local_of(at, &r.timezone)),
+        "completed_at": r.completed_at,
         "timezone": r.timezone, "gate_command": r.gate_command,
         "gate_description": r.gate_description, "enabled": r.enabled,
         "disabled_reason": r.disabled_reason, "next_fire_at": r.next_fire_at,
         "last_fired_at": r.last_fire_at, "consecutive_failures": r.consecutive_failures})
+}
+
+/// The person speaking in this turn (`None` for a schedule, webhook or other turn without one).
+async fn speaker(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
+    Ok(match ctx.turn_id {
+        Some(t) => turns::get(&ctx.agent.pool, t)
+            .await?
+            .and_then(|t| t.speaker_user_id),
+        None => None,
+    })
+}
+
+/// (P5-SCHED-ONCE, C-1094) The tools' default time zone: the speaker's own (`users.timezone`,
+/// C-1054), else the workspace's: the zone of "Now" in the turn context, so "tomorrow at 9" is
+/// the person's 9:00.
+async fn default_tz(
+    ctx: &ToolCallContext,
+    agent: &agents::AgentRow,
+    user: Uuid,
+) -> Result<String, ToolError> {
+    if let Some(tz) = users::timezone(&ctx.agent.pool, user)
+        .await?
+        .filter(|t| t.parse::<chrono_tz::Tz>().is_ok())
+    {
+        return Ok(tz);
+    }
+    Ok(workspaces::get(&ctx.agent.pool, agent.workspace_id)
+        .await?
+        .map_or_else(|| "UTC".to_owned(), |w| w.timezone))
 }
 
 async fn own(ctx: &ToolCallContext, id: Uuid) -> Result<ScheduleRow, ToolError> {
@@ -99,7 +142,8 @@ struct CreateT;
 struct CreateArgs {
     name: String,
     prompt: String,
-    cron: String,
+    cron: Option<String>,
+    run_at: Option<String>,
     timezone: Option<String>,
     gate_command: Option<String>,
     gate_description: Option<String>,
@@ -109,13 +153,18 @@ struct CreateArgs {
 impl PlatformTool for CreateT {
     common!(
         "schedule_create",
-        "Create a recurring task: a 5-field cron expression (minimum interval 5 minutes) in an \
-         IANA timezone (default: the workspace's). Optional gate_command runs before waking you; \
-         empty output or {\"wake_agent\": false} skips the run.",
+        "Wake yourself later with `prompt`. For a reminder or anything that happens once, set \
+         `run_at` to a local date-time such as 2026-11-21T09:00 (in `timezone`, default: the \
+         person's, the zone of Now above); it runs once. For repeating work set `cron` (5 fields, \
+         e.g. `0 10 27 11 *` = every year on 27 November at 10:00; at most every 5 minutes). A \
+         one-time schedule made in a person's own chat runs in that chat, so your answer reaches \
+         them there. Optional gate_command runs first; empty output or {\"wake_agent\": false} \
+         skips the run.",
         json!({"type": "object", "additionalProperties": false,
-            "required": ["name", "prompt", "cron"],
+            "required": ["name", "prompt"],
             "properties": {"name": {"type": "string"}, "prompt": {"type": "string"},
-                "cron": {"type": "string"}, "timezone": {"type": "string"},
+                "cron": {"type": "string"}, "run_at": {"type": "string"},
+                "timezone": {"type": "string"},
                 "gate_command": {"type": "string"}, "gate_description": {"type": "string"}}})
     );
     async fn call(
@@ -127,16 +176,15 @@ impl PlatformTool for CreateT {
         let agent = agents::get(&ctx.agent.pool, ctx.agent.agent_id)
             .await?
             .ok_or_else(|| ToolError::Failed("Unknown agent.".into()))?;
-        let creator = match ctx.turn_id {
-            Some(t) => turns::get(&ctx.agent.pool, t)
-                .await?
-                .and_then(|t| t.speaker_user_id),
-            None => None,
-        };
-        let Some(creator) = creator else {
+        // A schedule turn has no speaker, so a run can never schedule itself again (SEC-144).
+        let Some(creator) = speaker(ctx).await? else {
             return Err(ToolError::Failed(
                 "Schedules can only be created while a person is talking to you.".into(),
             ));
+        };
+        let timezone = match a.timezone {
+            Some(t) => t,
+            None => default_tz(ctx, &agent, creator).await?,
         };
         let row = service::create(
             &ctx.agent.pool,
@@ -145,7 +193,8 @@ impl PlatformTool for CreateT {
                 name: a.name,
                 prompt: a.prompt,
                 cron: a.cron,
-                timezone: a.timezone,
+                run_at: a.run_at,
+                timezone: Some(timezone),
                 gate_command: a.gate_command,
                 gate_description: a.gate_description,
                 // RFE-021: an agent can never mint a workspace-anchored automation.
@@ -169,6 +218,7 @@ struct UpdateArgs {
     name: Option<String>,
     prompt: Option<String>,
     cron: Option<String>,
+    run_at: Option<String>,
     timezone: Option<String>,
     gate_command: Option<String>,
     gate_description: Option<String>,
@@ -179,10 +229,13 @@ struct UpdateArgs {
 impl PlatformTool for UpdateT {
     common!(
         "schedule_update",
-        "Change one of your schedules (fields omitted are kept); enabled=false pauses it.",
+        "Change one of your schedules (fields omitted are kept); enabled=false pauses it. A new \
+         `run_at` makes it run once (and runs a finished one again); a `cron` makes it repeat. \
+         Without `timezone` they are read in the person's zone.",
         json!({"type": "object", "additionalProperties": false, "required": ["id"],
             "properties": {"id": {"type": "string"}, "name": {"type": "string"},
                 "prompt": {"type": "string"}, "cron": {"type": "string"},
+                "run_at": {"type": "string"},
                 "timezone": {"type": "string"}, "gate_command": {"type": "string"},
                 "gate_description": {"type": "string"}, "enabled": {"type": "boolean"}}})
     );
@@ -193,6 +246,20 @@ impl PlatformTool for UpdateT {
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: UpdateArgs = parse(args)?;
         let cur = own(ctx, a.id).await?;
+        // (C-1094) A new time without a zone is read in the speaker's zone, as on create; with
+        // nobody speaking the schedule keeps its zone.
+        let timezone = match (&a.timezone, a.cron.is_some() || a.run_at.is_some()) {
+            (None, true) => match speaker(ctx).await? {
+                Some(user) => {
+                    let agent = agents::get(&ctx.agent.pool, ctx.agent.agent_id)
+                        .await?
+                        .ok_or_else(|| ToolError::Failed("Unknown agent.".into()))?;
+                    Some(default_tz(ctx, &agent, user).await?)
+                }
+                None => None,
+            },
+            _ => a.timezone,
+        };
         let row = service::patch(
             &ctx.agent.pool,
             cur,
@@ -200,7 +267,8 @@ impl PlatformTool for UpdateT {
                 name: a.name,
                 prompt: a.prompt,
                 cron: a.cron,
-                timezone: a.timezone,
+                run_at: a.run_at,
+                timezone,
                 gate_command: a.gate_command.map(Some),
                 gate_description: a.gate_description.map(Some),
                 enabled: a.enabled,

@@ -32,6 +32,8 @@ pub fn run_result(
         "skipped_unauthorized" => skipped("unauthorized"),
         "skipped_frozen" => skipped("frozen"),
         "coalesced" => skipped("missed"),
+        // (P5-SCHED-ONCE, C-1092) A one-time schedule waits for the paused agent.
+        "waiting_paused" => skipped("paused"),
         other => skipped(other),
     }
 }
@@ -96,6 +98,10 @@ mod tests {
         assert_eq!(
             r("coalesced", None, None),
             ("skipped", Some("missed".into()))
+        );
+        assert_eq!(
+            r("waiting_paused", None, None),
+            ("skipped", Some("paused".into()))
         );
         assert_eq!(
             r("something_new", None, None),

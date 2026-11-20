@@ -281,7 +281,7 @@ async fn patch_racing_a_fire_keeps_next_fire_at_and_the_lease() {
     )
     .await
     .unwrap();
-    assert_eq!(row.cron, "30 * * * *");
+    assert_eq!(row.cron.as_deref(), Some("30 * * * *"));
     let (soon, leased): (bool, bool) = sqlx::query_as(
         "SELECT next_fire_at < now() + interval '70 minutes',
                 coalesce(fire_lease_until > now(), false) FROM schedules WHERE id = $1",

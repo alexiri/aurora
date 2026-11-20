@@ -1100,6 +1100,7 @@
       "terminal_wake_at"
     ],
     "schedule_runs": [
+      "answer_pushed_at",
       "fired_at",
       "id",
       "outcome",
@@ -1109,6 +1110,7 @@
     "schedules": [
       "agent_id",
       "anchor",
+      "completed_at",
       "consecutive_failures",
       "creator_user_id",
       "cron",
@@ -1124,6 +1126,7 @@
       "next_fire_at",
       "origin_conversation_id",
       "prompt",
+      "run_at",
       "run_conversation_id",
       "timezone"
     ],
@@ -2694,6 +2697,7 @@
       "terminal_wake_at": "timestamptz null"
     },
     "schedule_runs": {
+      "answer_pushed_at": "timestamptz null",
       "fired_at": "timestamptz not null",
       "id": "uuid not null",
       "outcome": "text not null",
@@ -2703,9 +2707,10 @@
     "schedules": {
       "agent_id": "uuid",
       "anchor": "text not null",
+      "completed_at": "timestamptz null",
       "consecutive_failures": "int not null",
       "creator_user_id": "uuid null",
-      "cron": "text not null",
+      "cron": "text null",
       "disabled_reason": "text null",
       "enabled": "bool not null",
       "fire_lease_until": "timestamptz null",
@@ -2718,6 +2723,7 @@
       "next_fire_at": "timestamptz null",
       "origin_conversation_id": "uuid null",
       "prompt": "text not null",
+      "run_at": "timestamptz null",
       "run_conversation_id": "uuid null",
       "timezone": "text not null"
     },

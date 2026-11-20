@@ -8717,12 +8717,17 @@ export interface components {
         CreateScheduleRequest: {
             /** @description `creator` (default) or `workspace`; `workspace` needs `can_own` (RFE-021). */
             anchor?: string | null;
-            /** @description 5-field cron expression (minimum interval 5 minutes). */
-            cron: string;
+            /** @description 5-field cron expression (minimum interval 5 minutes); exactly one of `cron` / `run_at`. */
+            cron?: string | null;
             gate_command?: string | null;
             gate_description?: string | null;
             name: string;
             prompt: string;
+            /**
+             * @description (P5-SCHED-ONCE, C-1092) Run once at this local date-time, `YYYY-MM-DDTHH:MM[:SS]` without
+             *     an offset, read in `timezone`: not in the past, at most 5 years ahead.
+             */
+            run_at?: string | null;
             /** @description IANA timezone; defaults to the workspace timezone. */
             timezone?: string | null;
         };
@@ -12197,6 +12202,12 @@ export interface components {
                 agent_id: string;
                 /** @description `creator` | `workspace` (RFE-021): whose access authorizes each fire. */
                 anchor: string;
+                /**
+                 * Format: date-time
+                 * @description (C-1092) When a one-time schedule ran (Done, RFC 3339 UTC); it is deleted
+                 *     `SCHEDULE_DONE_RETENTION` later. Null otherwise.
+                 */
+                completed_at?: string | null;
                 /** Format: int32 */
                 consecutive_failures: number;
                 /** @description True when `origin_conversation_id` was redacted (phase 1, RFE-009). */
@@ -12204,8 +12215,8 @@ export interface components {
                 /** Format: date-time */
                 created_at: string;
                 created_by?: components["schemas"]["ScheduleCreator"] | null;
-                /** @description 5-field cron expression. */
-                cron: string;
+                /** @description 5-field cron expression; null for a one-time schedule (P5-SCHED-ONCE, C-1092). */
+                cron?: string | null;
                 /** @description `user` | `authorization` | `failures` when disabled. */
                 disabled_reason?: string | null;
                 enabled: boolean;
@@ -12220,7 +12231,10 @@ export interface components {
                 name: string;
                 /** Format: date-time */
                 next_fire_at?: string | null;
-                /** @description (P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused. */
+                /**
+                 * @description (P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused.
+                 *     (C-1092) One instant for a pending enabled one-time schedule; empty when Done.
+                 */
                 next_runs: string[];
                 /**
                  * Format: uuid
@@ -12228,6 +12242,11 @@ export interface components {
                  */
                 origin_conversation_id?: string | null;
                 prompt: string;
+                /**
+                 * @description (C-1092) A one-time schedule's local wall time in `timezone`, `YYYY-MM-DDTHH:MM[:SS]`
+                 *     (the request's format); null for a recurring schedule.
+                 */
+                run_at?: string | null;
                 /** @description IANA timezone name. */
                 timezone: string;
                 /** Format: date-time */
@@ -12250,12 +12269,13 @@ export interface components {
                 id: string;
                 /**
                  * @description `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |
-                 *     `skipped_frozen` (stored; unchanged for compatibility).
+                 *     `skipped_frozen` | `waiting_paused` (P5-SCHED-ONCE) (stored; unchanged for compatibility).
                  */
                 outcome: string;
                 /**
                  * @description (C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,
-                 *     `unauthorized`, `frozen`, `missed`; null otherwise.
+                 *     `unauthorized`, `frozen`, `missed`, `paused` (a one-time schedule waiting for the paused
+                 *     agent, C-1092); null otherwise.
                  */
                 reason?: string | null;
                 /** @description (C-1077) `running` | `answered` | `skipped_by_gate` | `failed` | `skipped`. */
@@ -14033,6 +14053,12 @@ export interface components {
             agent_id: string;
             /** @description `creator` | `workspace` (RFE-021): whose access authorizes each fire. */
             anchor: string;
+            /**
+             * Format: date-time
+             * @description (C-1092) When a one-time schedule ran (Done, RFC 3339 UTC); it is deleted
+             *     `SCHEDULE_DONE_RETENTION` later. Null otherwise.
+             */
+            completed_at?: string | null;
             /** Format: int32 */
             consecutive_failures: number;
             /** @description True when `origin_conversation_id` was redacted (phase 1, RFE-009). */
@@ -14040,8 +14066,8 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             created_by?: components["schemas"]["ScheduleCreator"] | null;
-            /** @description 5-field cron expression. */
-            cron: string;
+            /** @description 5-field cron expression; null for a one-time schedule (P5-SCHED-ONCE, C-1092). */
+            cron?: string | null;
             /** @description `user` | `authorization` | `failures` when disabled. */
             disabled_reason?: string | null;
             enabled: boolean;
@@ -14056,7 +14082,10 @@ export interface components {
             name: string;
             /** Format: date-time */
             next_fire_at?: string | null;
-            /** @description (P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused. */
+            /**
+             * @description (P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused.
+             *     (C-1092) One instant for a pending enabled one-time schedule; empty when Done.
+             */
             next_runs: string[];
             /**
              * Format: uuid
@@ -14064,6 +14093,11 @@ export interface components {
              */
             origin_conversation_id?: string | null;
             prompt: string;
+            /**
+             * @description (C-1092) A one-time schedule's local wall time in `timezone`, `YYYY-MM-DDTHH:MM[:SS]`
+             *     (the request's format); null for a recurring schedule.
+             */
+            run_at?: string | null;
             /** @description IANA timezone name. */
             timezone: string;
             /** Format: date-time */
@@ -14090,8 +14124,13 @@ export interface components {
         };
         /** @description (P5-REFINE-7, C-1077) `POST /agents/{agent}/schedules/preview` body. */
         SchedulePreviewRequest: {
-            /** @description 5-field cron expression. */
-            cron: string;
+            /** @description 5-field cron expression; exactly one of `cron` / `run_at`. */
+            cron?: string | null;
+            /**
+             * @description (P5-SCHED-ONCE, C-1092) A local date-time `YYYY-MM-DDTHH:MM[:SS]` without an offset, read
+             *     in `timezone`.
+             */
+            run_at?: string | null;
             /** @description IANA timezone; defaults to the workspace timezone. */
             timezone?: string | null;
         };
@@ -14109,12 +14148,13 @@ export interface components {
             id: string;
             /**
              * @description `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |
-             *     `skipped_frozen` (stored; unchanged for compatibility).
+             *     `skipped_frozen` | `waiting_paused` (P5-SCHED-ONCE) (stored; unchanged for compatibility).
              */
             outcome: string;
             /**
              * @description (C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,
-             *     `unauthorized`, `frozen`, `missed`; null otherwise.
+             *     `unauthorized`, `frozen`, `missed`, `paused` (a one-time schedule waiting for the paused
+             *     agent, C-1092); null otherwise.
              */
             reason?: string | null;
             /** @description (C-1077) `running` | `answered` | `skipped_by_gate` | `failed` | `skipped`. */
@@ -15419,6 +15459,7 @@ export interface components {
         UpdateScheduleRequest: {
             /** @description `creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021). */
             anchor?: string | null;
+            /** @description Makes the schedule recurring (`run_at` becomes null). */
             cron?: string | null;
             enabled?: boolean | null;
             /** @description `null` removes the gate. */
@@ -15426,6 +15467,12 @@ export interface components {
             gate_description?: string | null;
             name?: string | null;
             prompt?: string | null;
+            /**
+             * @description (P5-SCHED-ONCE, C-1092) Makes the schedule one-time and re-arms a Done one; at most one
+             *     of `cron` / `run_at`.
+             */
+            run_at?: string | null;
+            /** @description A one-time schedule keeps its local wall time in the new zone. */
             timezone?: string | null;
         };
         UpdateSkillRequest: {
@@ -25945,7 +25992,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description invalid_cron | invalid_timezone */
+            /** @description invalid_cron | invalid_timezone | invalid_run_at */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -38494,6 +38541,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description schedule_completed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -74,6 +74,8 @@ pub enum Kind {
     AppSetupResolved,
     /// (P5-POLISH-4) The asker: an owner or admin is not setting the app up now.
     AppSetupDeclined,
+    /// (P5-SCHED-ONCE, C-1095) A one-time schedule's answer is ready in its creator's chat.
+    ScheduleAnswer,
 }
 
 impl Kind {
@@ -87,6 +89,7 @@ impl Kind {
             Self::Digest => "approval.digest",
             Self::Test => "test",
             Self::AdminAttention => "admin_attention",
+            Self::ScheduleAnswer => "schedule_answer",
         }
     }
 }
@@ -188,6 +191,32 @@ pub fn app_setup_message(
         v["title"] = json!(sanitize::one_line(title, 2 * NAME_MAX));
     }
     finish_message(v, PUSH_TTL_MAX.as_secs(), "normal", topic(sub.id, subject))
+}
+
+/// (P5-SCHED-ONCE, C-1095, SEC-144) The push of a one-time schedule's answer: its type, the
+/// conversation's dashboard path and, only on a device that turned names on, the schedule's name.
+/// Never the answer or the prompt: a lock screen shows the fixed text of the service worker.
+pub fn schedule_answer_message(
+    sub: &SubRow,
+    href: &str,
+    name: &str,
+    run: Uuid,
+) -> Result<Message, String> {
+    let mut v = json!({ "v": 1, "type": Kind::ScheduleAnswer.type_str(), "url": href });
+    if sub.show_details {
+        v["title"] = json!(sanitize::one_line(name, 2 * NAME_MAX));
+    }
+    finish_message(
+        v,
+        PUSH_TTL_MAX.as_secs(),
+        "normal",
+        topic(sub.id, format!("schedule_answer\n{run}").as_bytes()),
+    )
+}
+
+/// The dashboard path of a conversation: the agent page with `?c=` (D-102).
+pub fn conversation_path(org: &str, workspace: &str, agent: &str, conversation: Uuid) -> String {
+    format!("/o/{org}/w/{workspace}/agents/{agent}?c={conversation}")
 }
 
 /// The "test" push: nothing but its type.
@@ -700,6 +729,48 @@ pub async fn sweep_app_setup(state: &AppState) -> Result<usize, ApiError> {
     Ok(sent)
 }
 
+/// (P5-SCHED-ONCE, D-422, C-1095) Runs older than this are never pushed.
+pub const SCHEDULE_ANSWER_MAX_AGE: Duration = Duration::from_secs(3600);
+
+/// (P5-SCHED-ONCE, C-1095, SEC-144) One push per opted-in device of a schedule's creator for
+/// every one-time run that happened in their own chat and ended `done`: claim the run
+/// (`answer_pushed_at`), then send. The claim requires the conversation to still be the
+/// creator's direct chat, so no other person's devices are ever reached. Does nothing with push
+/// off. Returns the pushes attempted.
+pub async fn sweep_schedule_answers(state: &AppState) -> Result<usize, ApiError> {
+    if !state.push.enabled {
+        return Ok(0);
+    }
+    let claimed = {
+        let mut conn = state
+            .pool
+            .acquire()
+            .await
+            .map_err(aurora_db::DbError::from)?;
+        aurora_db::repo::schedules::claim_answer_push(
+            &mut conn,
+            SCHEDULE_ANSWER_MAX_AGE.as_secs_f64(),
+            SWEEP_LIMIT,
+        )
+        .await?
+    };
+    let mut sent = 0;
+    for n in claimed {
+        let devices = deliverable(state, n.user_id).await?;
+        let href = conversation_path(
+            &n.org_slug,
+            &n.workspace_slug,
+            &n.agent_handle,
+            n.conversation_id,
+        );
+        sent += send_all(state, &devices, |s| {
+            schedule_answer_message(s, &href, &n.schedule_name, n.run_id)
+        })
+        .await;
+    }
+    Ok(sent)
+}
+
 async fn refresh_gauges(state: &AppState) {
     match repo::counts_by_state(&state.pool).await {
         Ok(rows) => {
@@ -769,6 +840,9 @@ pub fn spawn(state: AppState) {
             }
             if let Err(e) = sweep_app_setup(&state).await {
                 tracing::warn!(error = %e.message(), "Web Push app setup sweep failed");
+            }
+            if let Err(e) = sweep_schedule_answers(&state).await {
+                tracing::warn!(error = %e.message(), "Web Push schedule answer sweep failed");
             }
             if gauges.is_none_or(|t| t.elapsed() >= GAUGE_EVERY) {
                 refresh_gauges(&state).await;
@@ -984,5 +1058,31 @@ mod tests {
         let kept = public_only(vec![sa("10.0.0.1"), sa("8.8.8.8")]).unwrap();
         assert_eq!(kept, vec![sa("8.8.8.8")]);
         assert!(public_only(vec![]).is_err());
+    }
+
+    /// (P5-SCHED-ONCE, C-1095, SEC-144) The reminder push: type and path only, the schedule's
+    /// name only on a device that asked for names, one line and capped; a topic per device.
+    #[test]
+    fn schedule_answer_payload_is_fixed_and_names_only_on_request() {
+        let conv = Uuid::now_v7();
+        let href = conversation_path("org", "ws", "bot", conv);
+        assert_eq!(href, format!("/o/org/w/ws/agents/bot?c={conv}"));
+        let run = Uuid::now_v7();
+        let plain = schedule_answer_message(&sub(false), &href, "Call Ada", run).unwrap();
+        let mut f = fields(&plain);
+        f.sort();
+        assert_eq!(f, ["type", "url", "v"]);
+        assert_eq!(
+            (plain.urgency, plain.ttl_secs),
+            ("normal", PUSH_TTL_MAX.as_secs())
+        );
+        let named = schedule_answer_message(&sub(true), &href, "Call\nAda", run).unwrap();
+        let v: Value = serde_json::from_slice(&named.plaintext).unwrap();
+        assert_eq!(v["type"], "schedule_answer");
+        assert_eq!(v["title"], "Call Ada");
+        let long = schedule_answer_message(&sub(true), &href, &"x".repeat(500), run).unwrap();
+        let v: Value = serde_json::from_slice(&long.plaintext).unwrap();
+        assert!(v["title"].as_str().unwrap().chars().count() <= 2 * NAME_MAX);
+        assert_ne!(plain.topic, named.topic, "a topic per device");
     }
 }

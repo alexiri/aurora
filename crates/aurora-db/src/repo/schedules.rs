@@ -11,7 +11,13 @@ pub struct ScheduleRow {
     pub agent_id: Uuid,
     pub name: String,
     pub prompt: String,
-    pub cron: String,
+    /// 5-field cron; `None` for a one-time schedule (P5-SCHED-ONCE, C-1092: exactly one of
+    /// `cron` / `run_at`).
+    pub cron: Option<String>,
+    /// (P5-SCHED-ONCE) The instant of a one-time schedule.
+    pub run_at: Option<DateTime<Utc>>,
+    /// (P5-SCHED-ONCE) Set when a one-time schedule fired (Done).
+    pub completed_at: Option<DateTime<Utc>>,
     pub timezone: String,
     pub gate_command: Option<String>,
     pub gate_description: Option<String>,
@@ -26,14 +32,16 @@ pub struct ScheduleRow {
     pub run_conversation_id: Option<Uuid>,
     pub next_fire_at: Option<DateTime<Utc>>,
     pub last_fire_at: Option<DateTime<Utc>>,
+    pub last_outcome: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-const COLS: &str = "s.id, s.agent_id, s.name, s.prompt, s.cron, s.timezone, s.gate_command, \
+const COLS: &str = "s.id, s.agent_id, s.name, s.prompt, s.cron, s.run_at, s.completed_at, \
+    s.timezone, s.gate_command, \
     s.gate_description, s.enabled, s.disabled_reason, s.consecutive_failures, s.creator_user_id, \
     u.display_name AS creator_name, s.anchor, s.origin_conversation_id, s.run_conversation_id, \
-    s.next_fire_at, s.last_fire_at, s.created_at, s.updated_at";
+    s.next_fire_at, s.last_fire_at, s.last_outcome, s.created_at, s.updated_at";
 const FROM: &str = "FROM schedules s LEFT JOIN users u ON u.id = s.creator_user_id";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -52,7 +60,8 @@ pub struct NewSchedule<'a> {
     pub agent_id: Uuid,
     pub name: &'a str,
     pub prompt: &'a str,
-    pub cron: &'a str,
+    pub cron: Option<&'a str>,
+    pub run_at: Option<DateTime<Utc>>,
     pub timezone: &'a str,
     pub gate_command: Option<&'a str>,
     pub gate_description: Option<&'a str>,
@@ -97,21 +106,22 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// The schedules counting toward the per-agent limit: (P5-SCHED-ONCE, D-421) Done ones don't.
 pub async fn count_for_agent<'e, E: PgExecutor<'e>>(exec: E, agent: Uuid) -> Result<i64, DbError> {
-    Ok(
-        sqlx::query_scalar("SELECT count(*) FROM schedules WHERE agent_id = $1")
-            .bind(agent)
-            .fetch_one(exec)
-            .await?,
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM schedules WHERE agent_id = $1 AND completed_at IS NULL",
     )
+    .bind(agent)
+    .fetch_one(exec)
+    .await?)
 }
 
 pub async fn insert(conn: &mut PgConnection, n: &NewSchedule<'_>) -> Result<ScheduleRow, DbError> {
     let id = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, gate_command,
-            gate_description, creator_user_id, anchor, origin_conversation_id, next_fire_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+            gate_description, creator_user_id, anchor, origin_conversation_id, next_fire_at, run_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
     )
     .bind(id)
     .bind(n.agent_id)
@@ -125,6 +135,7 @@ pub async fn insert(conn: &mut PgConnection, n: &NewSchedule<'_>) -> Result<Sche
     .bind(n.anchor)
     .bind(n.origin_conversation_id)
     .bind(n.next_fire_at)
+    .bind(n.run_at)
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, id).await?.ok_or(DbError::NotFound)
@@ -147,7 +158,9 @@ pub async fn update(
             disabled_reason = CASE WHEN $12 THEN $9 ELSE disabled_reason END,
             consecutive_failures = CASE WHEN $12 THEN $10 ELSE consecutive_failures END,
             next_fire_at = CASE WHEN $12 THEN $11 ELSE next_fire_at END,
-            fire_lease_until = CASE WHEN $12 THEN NULL ELSE fire_lease_until END
+            fire_lease_until = CASE WHEN $12 THEN NULL ELSE fire_lease_until END,
+            run_at = $13,
+            completed_at = CASE WHEN $12 THEN $14 ELSE completed_at END
          WHERE id=$1",
     )
     .bind(r.id)
@@ -162,6 +175,8 @@ pub async fn update(
     .bind(r.consecutive_failures)
     .bind(r.next_fire_at)
     .bind(reschedule)
+    .bind(r.run_at)
+    .bind(r.completed_at)
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, r.id).await?.ok_or(DbError::NotFound)
@@ -302,6 +317,137 @@ pub async fn record_manual(
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// (P5-SCHED-ONCE, C-1092) A one-time schedule fired: Done in the fire's transaction. It is
+/// never armed again (`next_fire_at` null) until a new `run_at` re-arms it.
+pub async fn complete_once(
+    conn: &mut PgConnection,
+    id: Uuid,
+    run_conversation: Option<Uuid>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE schedules SET next_fire_at = NULL, fire_lease_until = NULL, completed_at = now(),
+            last_fire_at = now(), last_outcome = 'ok',
+            run_conversation_id = COALESCE($2, run_conversation_id), updated_at = now()
+         WHERE id = $1 AND run_at IS NOT NULL",
+    )
+    .bind(id)
+    .bind(run_conversation)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// (P5-SCHED-ONCE, C-1092) A due one-time schedule of a paused agent waits: checked again at
+/// `next`; `last_outcome = 'waiting_paused'`. Returns whether it was already waiting (the
+/// `waiting_paused` run is written once).
+pub async fn wait_paused(
+    conn: &mut PgConnection,
+    id: Uuid,
+    next: DateTime<Utc>,
+) -> Result<bool, DbError> {
+    let before: Option<Option<String>> = sqlx::query_scalar(
+        "UPDATE schedules s SET next_fire_at = $2, fire_lease_until = NULL,
+            last_outcome = 'waiting_paused', updated_at = now()
+         FROM (SELECT last_outcome FROM schedules WHERE id = $1) old
+         WHERE s.id = $1 RETURNING old.last_outcome",
+    )
+    .bind(id)
+    .bind(next)
+    .fetch_optional(conn)
+    .await?;
+    Ok(before.flatten().as_deref() == Some("waiting_paused"))
+}
+
+/// (P5-SCHED-ONCE, C-1092) Ids of Done schedules whose `completed_at` is older than
+/// `age_secs`, oldest first. Not locked: each is deleted through the ordinary delete path (which
+/// takes its locks in the conversation-then-schedule order).
+pub async fn done_before<'e, E: PgExecutor<'e>>(
+    exec: E,
+    age_secs: f64,
+    limit: i64,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM schedules
+         WHERE completed_at IS NOT NULL AND completed_at < now() - make_interval(secs => $1)
+         ORDER BY completed_at, id LIMIT $2",
+    )
+    .bind(age_secs)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (P5-SCHED-ONCE, C-1093) The schedule's origin conversation when a one-time run may happen
+/// there (SEC-144): it exists, belongs to the schedule's agent, is a direct conversation that is
+/// not archived, and its person is the schedule's **current** creator. Turn creation locks the
+/// conversation.
+pub async fn origin_for_run(
+    conn: &mut PgConnection,
+    s: &ScheduleRow,
+) -> Result<Option<Uuid>, DbError> {
+    let (Some(origin), Some(creator)) = (s.origin_conversation_id, s.creator_user_id) else {
+        return Ok(None);
+    };
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM conversations
+         WHERE id = $1 AND agent_id = $2 AND kind = 'direct' AND direct_user_id = $3
+           AND archived_at IS NULL",
+    )
+    .bind(origin)
+    .bind(s.agent_id)
+    .bind(creator)
+    .fetch_optional(conn)
+    .await?)
+}
+
+/// (P5-SCHED-ONCE, C-1095) A run of a one-time schedule whose answer is to be pushed.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AnswerPush {
+    pub run_id: Uuid,
+    pub schedule_name: String,
+    pub user_id: Uuid,
+    pub conversation_id: Uuid,
+    pub agent_handle: String,
+    pub workspace_slug: String,
+    pub org_slug: String,
+}
+
+/// (P5-SCHED-ONCE, C-1095, SEC-144) Claim the `schedule_answer` push of every run that happened
+/// in its creator's own chat (the turn's conversation is the schedule's origin, a direct
+/// conversation of the schedule's current creator), ended `done`, and is younger than
+/// `max_age_secs`. Claimed once (`answer_pushed_at`); recurring runs never run in the origin.
+/// Driven by `schedules_completed_idx`: only schedules Done within the window are read.
+pub async fn claim_answer_push(
+    conn: &mut PgConnection,
+    max_age_secs: f64,
+    limit: i64,
+) -> Result<Vec<AnswerPush>, DbError> {
+    Ok(sqlx::query_as(
+        "WITH picked AS (
+            SELECT r.id FROM schedules s
+              JOIN schedule_runs r ON r.schedule_id = s.id
+              JOIN turns t ON t.id = r.turn_id
+              JOIN conversations c ON c.id = t.conversation_id
+            WHERE s.completed_at > now() - make_interval(secs => $1)
+              AND r.created_at > now() - make_interval(secs => $1)
+              AND r.answer_pushed_at IS NULL AND t.status = 'done'
+              AND c.id = s.origin_conversation_id AND c.kind = 'direct'
+              AND c.direct_user_id = s.creator_user_id
+            ORDER BY r.created_at LIMIT $2 FOR UPDATE OF r SKIP LOCKED)
+         UPDATE schedule_runs r SET answer_pushed_at = now()
+         FROM picked p, schedules s, conversations c, agents a, workspaces w, organizations o
+         WHERE r.id = p.id AND s.id = r.schedule_id AND c.id = s.origin_conversation_id
+           AND a.id = s.agent_id AND w.id = a.workspace_id AND o.id = w.org_id
+         RETURNING r.id AS run_id, s.name AS schedule_name, c.direct_user_id AS user_id,
+            c.id AS conversation_id, a.handle AS agent_handle, w.slug AS workspace_slug,
+            o.slug AS org_slug",
+    )
+    .bind(max_age_secs)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?)
 }
 
 /// Disable with a reason; `next_fire_at` is cleared and the lease released.

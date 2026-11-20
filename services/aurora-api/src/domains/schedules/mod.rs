@@ -2,6 +2,7 @@
 pub mod cron;
 pub mod dto;
 pub mod fire;
+pub mod once;
 pub mod results;
 mod routes;
 pub mod service;
