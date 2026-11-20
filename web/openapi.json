@@ -50723,6 +50723,13 @@
               "$ref": "#/components/schemas/MeMembership"
             }
           },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-PERSON, C-1054) The person's own IANA time zone; `null` = the workspace's is used."
+          },
           "user": {
             "$ref": "#/components/schemas/User"
           }
@@ -57400,6 +57407,13 @@
               "null"
             ],
             "description": "1 to 80 characters."
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-PERSON, C-1054) An IANA time zone name; `null` clears it; absent leaves it. Not a\nknown name → 422 `value_invalid`."
           }
         }
       },

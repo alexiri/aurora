@@ -369,6 +369,18 @@ async fn arm6_dispatch(
             attachments.len(),
         )
         .await?;
+        // (P5-PERSON, C-1053) The turn context block goes in front, built here, never stored.
+        let delivered_text = match crate::domains::people::turn_context::build(
+            tx,
+            &turn,
+            &agent,
+            chrono::Utc::now(),
+        )
+        .await?
+        {
+            Some(block) => format!("{block}\n\n{delivered_text}"),
+            None => delivered_text,
+        };
         items.push(item(
             cand.sandbox_id,
             cand.boot_id,

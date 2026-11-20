@@ -11,11 +11,12 @@ use super::calendar_ics::{self as ics, Calendar, Freq, Method, Repeat, When};
 use super::registry::{PlatformTool, ToolCallContext, ToolContext, ToolError};
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::auth::mail::{CalendarPart, Mail};
+use crate::domains::people::turn_person::{self, Scope};
 use crate::domains::tenancy::dto::OrgSettings;
 use aurora_core::limits::{CALENDAR_SENDS_PER_AGENT_HOUR, CALENDAR_SENDS_PER_PERSON_DAY};
 use aurora_core::sanitize;
+use aurora_db::repo::agents;
 use aurora_db::repo::calendar_invitations::{self as repo, Event, InvitationRow, Owner};
-use aurora_db::repo::{agents, members, schedules, turns, users};
 use aurora_protocol::tools::{JsonContent, ToolContent};
 use chrono::{
     DateTime, Duration, Months, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc, Weekday,
@@ -532,9 +533,10 @@ struct Person {
     email: String,
 }
 
-/// The person the turn runs for (SEC-108): the speaker of the triggering message, or a schedule's
-/// creator. A webhook, peer-agent or creator-less schedule turn has none → `no_person`. The
-/// address is the verified account e-mail, never anything the agent wrote.
+/// The person the turn runs for (SEC-108, now the shared C-1052 rule): the speaker of the
+/// triggering message, or a schedule's creator, while active, a member and holding `can_use`. A
+/// webhook, peer-agent or creator-less schedule turn has none → `no_person`. The address is the
+/// verified account e-mail, never anything the agent wrote.
 async fn person_of(ctx: &ToolCallContext) -> Result<Person, ToolError> {
     let no_person = || {
         ToolError::Coded(
@@ -542,35 +544,25 @@ async fn person_of(ctx: &ToolCallContext) -> Result<Person, ToolError> {
             "There is no person behind this turn to invite: calendar invitations go only to the person you are working for (a conversation with them, or their schedule).".into(),
         )
     };
-    let pool = &ctx.agent.pool;
-    let turn = match ctx.turn_id {
-        Some(t) => turns::get(pool, t).await?,
-        None => None,
-    }
+    let mut conn = ctx
+        .agent
+        .pool
+        .acquire()
+        .await
+        .map_err(aurora_db::DbError::from)?;
+    let p = turn_person::of_turn_id(
+        &mut conn,
+        ctx.turn_id,
+        ctx.conversation_id,
+        Scope {
+            agent_id: ctx.agent.agent_id,
+            org_id: ctx.agent.org_id,
+            workspace_id: ctx.agent.workspace_id,
+        },
+    )
+    .await?
     .ok_or_else(no_person)?;
-    let mut who = turn.speaker_user_id;
-    if who.is_none() && turn.door.get("kind").and_then(Value::as_str) == Some("schedule") {
-        let sched = turn
-            .door
-            .get("ref")
-            .and_then(Value::as_str)
-            .and_then(|s| Uuid::parse_str(s).ok());
-        if let Some(s) = sched
-            && let Some(row) = schedules::get(pool, s).await?
-            && row.agent_id == ctx.agent.agent_id
-        {
-            who = row.creator_user_id;
-        }
-    }
-    let who = who.ok_or_else(no_person)?;
-    let user = users::find_by_id(pool, who).await?.ok_or_else(no_person)?;
-    let active = members::get(pool, ctx.agent.org_id, who)
-        .await?
-        .is_some_and(|m| m.status == "active");
-    if user.disabled_at.is_some() || !active {
-        return Err(no_person());
-    }
-    if user.email_verified_at.is_none() || user.email.trim().is_empty() {
+    if !p.email_verified {
         return Err(ToolError::Coded(
             "no_verified_email",
             "The person's account has no verified e-mail address, so no invitation can be sent."
@@ -578,8 +570,8 @@ async fn person_of(ctx: &ToolCallContext) -> Result<Person, ToolError> {
         ));
     }
     Ok(Person {
-        id: who,
-        email: user.email,
+        id: p.user_id,
+        email: p.email,
     })
 }
 

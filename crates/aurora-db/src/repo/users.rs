@@ -58,6 +58,32 @@ pub async fn set_default_org<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// (P5-PERSON, C-1054) The person's own IANA time zone; `None` when unset or the user is gone.
+pub async fn timezone<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<String>, DbError> {
+    Ok(
+        sqlx::query_scalar::<_, Option<String>>("SELECT timezone FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(exec)
+            .await?
+            .flatten(),
+    )
+}
+
+/// (P5-PERSON, C-1054) Sets (`Some`, already validated by the caller) or clears (`None`) the
+/// person's time zone.
+pub async fn set_timezone<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    tz: Option<&str>,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE users SET timezone = $2, updated_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(tz)
+        .execute(exec)
+        .await?;
+    Ok(())
+}
+
 /// Case-insensitive lookup that row-locks the user (`FOR NO KEY UPDATE`) for the rest of the
 /// caller's transaction — the OIDC sign-in's bind-by-verified-e-mail (FIX-070). A concurrent
 /// writer that changes the e-mail (SCIM's in-place placeholder rename, D-167(b), an `UPDATE`

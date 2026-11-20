@@ -29,6 +29,7 @@ impl From<Fail> for ToolError {
         match f {
             Fail::Invalid(m) => ToolError::InvalidArguments(m),
             Fail::Denied(m) => ToolError::Failed(m),
+            Fail::Coded(code, m) => ToolError::Coded(code, m),
             Fail::Internal => ToolError::Failed("internal error".into()),
         }
     }
@@ -144,16 +145,18 @@ impl PlatformTool for SendMessage {
         "messaging"
     }
     fn description(&self, _: &ToolContext) -> String {
-        "Send a chat message. Messages outside this thread may need a person's approval (you get \
-         status `pending_approval`) or be refused, depending on your settings. An unknown or \
-         ambiguous `to` returns the matching aliases to retry with."
+        "Send a chat message. `to: \"me\"` reaches the person you are working for (see Working \
+         for in the turn context) in a direct message, with no approval. Other messages outside \
+         this thread may need a person's approval (you get status `pending_approval`) or be \
+         refused, depending on your settings. An unknown or ambiguous `to` returns the matching \
+         aliases to retry with."
             .into()
     }
     fn input_schema(&self) -> Value {
         json!({"type": "object", "additionalProperties": false, "required": ["to", "text"],
                "properties": {
                  "to": {"type": "string",
-                        "description": "Who to send to: `here` (this conversation's own thread), an alias from find_recipient (e.g. `jdoe`), a recipient id, or a person's exact @handle / a channel's exact name — those are looked up for you."},
+                        "description": "Who to send to: `me` (the person you are working for, in a direct message), `here` (this conversation's own thread), an alias from find_recipient (e.g. `jdoe`), a recipient id, or a person's exact @handle / a channel's exact name — those are looked up for you."},
                  "text": {"type": "string", "description": "Message body (Markdown)."},
                  "files": {"type": "array", "items": {"type": "string"},
                            "description": "Attachment ids of files you produced in this conversation."},

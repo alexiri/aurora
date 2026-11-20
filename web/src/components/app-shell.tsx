@@ -13,6 +13,7 @@ import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-r
 import { showWhatMoved } from "@/lib/moved";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
+import { useTimezoneAutofill } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
 import { AttentionBadge } from "./admin/attention-badge";
@@ -426,6 +427,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   useUnauthorizedRedirect();
   // (P4-011B-4, C-836) With the local Web Push opt-in marker: re-sync the browser's subscription once per load.
   usePushResync(true);
+  // (P5-PERSON, C-1054) An unset personal time zone is filled from the browser once per session.
+  useTimezoneAutofill();
   const params = useParams<{ org?: string; ws?: string }>();
   const pathname = usePathname();
   const [navOpen, setNavOpen] = useState(false);
