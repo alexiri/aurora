@@ -26,7 +26,10 @@ import {
   useConnectors,
   type ConnectorInfo,
 } from "@/lib/api/connectors";
-import { useSession } from "@/lib/api/queries";
+import { askersPhrase } from "@/components/overview/setup-request-row";
+import { StatusLine } from "@/components/ui/status-line";
+import { useOrgSetupRequests, type AppSetupRequest } from "@/lib/api/app-setup-requests";
+import { useOrg, useSession } from "@/lib/api/queries";
 
 import { ConnectorBlocked, NoConnectorsYet } from "./connector-blocked";
 import { IntegrationDialog } from "./integration-dialog";
@@ -194,7 +197,23 @@ function IntegrationRow({
   );
 }
 
+/** "Carol Member", "Bob Builder and Carol Member", "Bob Builder, Carol Member and 2 others" (SEC-135: display names only). */
+function askerNames(r: AppSetupRequest): string {
+  const { who } = askersPhrase(r.askers.map((a) => a.display_name));
+  return who;
+}
+
+/** "Carol gets" for one asker (by first name), "they get" for several. */
+function gets(r: AppSetupRequest): string {
+  return r.askers.length === 1 ? `${r.askers[0]!.display_name.split(/\s+/)[0]} gets` : "they get";
+}
+
 export function ChannelsView({ orgId }: { orgId: string }) {
+  const org = useOrg(orgId);
+  // (P5-REFINE-17 org-1, C-1047) The chat platform asks people made (owners and admins read them; the route 404s for others).
+  const isOrgAdmin = org.data?.my_role === "owner" || org.data?.my_role === "admin";
+  const requests = useOrgSetupRequests(orgId, isOrgAdmin);
+  const asks = (requests.data ?? []).filter((r) => r.subject === "chat_platform");
   const integrations = useIntegrations(orgId);
   const connectors = useConnectors();
   const availability = useConnectorAvailability();
@@ -218,24 +237,51 @@ export function ChannelsView({ orgId }: { orgId: string }) {
     <div className="max-w-page space-y-8">
       <PageHeader
         title="Chat platforms"
-        description="Connect chat platforms so people can talk to agents where they already work."
+        description={`Let people talk to agents from the chat tools ${org.data?.name ?? "your organization"} already uses.`}
         className="mb-6"
       />
 
       <Section id="connectors" title="Add a chat platform">
         {connectors.data.items.length > 0 ? (
-          <ul className="flex flex-wrap gap-2">
+          <ul className="space-y-3" aria-label="Chat platforms you can connect">
             {connectors.data.items.map((c) => (
-              <li key={c.id}>
-                <Button variant="outline" onClick={() => setAdding(c)}>
+              <li key={c.id} data-testid={`platform-${c.id}`} className="space-y-2">
+                {/* (P5-REFINE-17 org-1) The same readiness as Administration: a running connector means Connect. */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-card border border-line bg-surface p-3 sm:px-4">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={c.icon_url} alt="" width={16} height={16} />
-                  Connect {c.display_name}
-                </Button>
+                  <img src={c.icon_url} alt="" width={36} height={36} className="size-9 shrink-0 rounded-control bg-subtle p-1.5" />
+                  <span className="min-w-0 flex-1 basis-40">
+                    <span className="block font-semibold text-ink">{c.display_name}</span>
+                    <span className="block text-sm text-ink-2">Ready · connector running</span>
+                  </span>
+                  <StatusLine tone="ok">Ready</StatusLine>
+                  <Button aria-label={`Connect ${c.display_name}`} onClick={() => setAdding(c)}>
+                    Connect
+                  </Button>
+                </div>
+                {asks
+                  .filter((r) => r.connector_type === c.id)
+                  .map((r) => (
+                    <Notice key={r.id} tone="accent" role="status" data-testid="platform-ask" className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <span className="min-w-0 flex-1 basis-60">
+                        {askerNames(r)} asked for {c.display_name}. Connect it and {gets(r)} a notice.
+                      </span>
+                      <Button size="sm" variant="outline" onClick={() => setAdding(c)}>
+                        Connect {c.display_name}
+                      </Button>
+                    </Notice>
+                  ))}
               </li>
             ))}
           </ul>
         ) : null}
+        {asks
+          .filter((r) => !r.connector_type)
+          .map((r) => (
+            <Notice key={r.id} tone="accent" role="status" data-testid="platform-ask">
+              {askerNames(r)} asked for a chat platform. Connect one and {gets(r)} a notice.
+            </Notice>
+          ))}
         {blocked.length > 0 ? (
           <ul className="space-y-2" aria-label="Chat platforms that are not ready">
             {blocked.map((b) => (

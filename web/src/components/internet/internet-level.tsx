@@ -12,6 +12,7 @@ import { SimulatePanel } from "@/components/policy/simulate-panel";
 import { ErrorState, Loading } from "@/components/states";
 import { Altitude } from "@/components/ui/altitude";
 import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
+import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -105,12 +106,15 @@ function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }
             .filter((g) => g.status !== "draft")
             .map((g) => (
               <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line p-2.5 text-sm text-ink">
-                <span className="min-w-0">
-                  {/* (org-14) Who changed what: "<Person> published version 4"; the exact change list comes with C-1087. */}
-                  <span className="block">{historySentence(g)}</span>
+                <span className="flex min-w-0 items-center gap-3">
+                  <Avatar name={g.actor?.display_name ?? g.published_by?.display_name ?? "?"} tintKey={g.actor?.display_name ?? g.id} size={32} />
+                  <span className="min-w-0">
+                  {/* (org-14, C-1087) Who changed what, in a sentence from the generation's change list. */}
+                  <span className="block font-medium">{historySentence(g)}</span>
                   <span className="block text-xs text-ink-2">
                     {g.published_at ? formatWhen(g.published_at) : formatWhen(g.created_at)}
                     {g.status === "published" ? " · current" : ""}
+                  </span>
                   </span>
                 </span>
                 {g.status === "published" ? (
@@ -123,7 +127,7 @@ function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }
                     aria-label={`Roll back to version ${g.number}`}
                     onClick={() => setTarget(g.number)}
                   >
-                    Roll back to this version
+                    Roll back to this
                   </Button>
                 )}
               </li>
@@ -148,9 +152,28 @@ function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }
   );
 }
 
-/** "Alice published version 4": the person who changed the rules, and which version it made. */
-export function historySentence(g: { number: number; published_by?: { display_name: string } | null }): string {
-  return `${g.published_by?.display_name ?? "Someone"} published version ${g.number}`;
+const CHANGE_VERB = { added: "added", removed: "removed", edited: "edited" } as const;
+
+/**
+ * (org-14, C-1087) Who changed what: "Alice added ‘Block tracker’", "Alice added ‘A’ and removed ‘B’", "Alice changed 3
+ * rules". A version with no change list (the first, or one that changed only the defaults) reads "Alice published version 4".
+ */
+export function historySentence(g: {
+  number: number;
+  published_by?: { display_name: string } | null;
+  actor?: { display_name: string } | null;
+  changes?: { kind: "added" | "removed" | "edited"; rule_name: string }[];
+  more?: number;
+}): string {
+  const who = g.actor?.display_name ?? g.published_by?.display_name ?? "Someone";
+  const changes = g.changes ?? [];
+  const total = changes.length + (g.more ?? 0);
+  if (total === 0) return `${who} published version ${g.number}`;
+  if (total > 2) return `${who} changed ${total} rules`;
+  const [a, b] = changes;
+  const first = `${CHANGE_VERB[a!.kind]} ‘${a!.rule_name}’`;
+  if (!b) return `${who} ${first}`;
+  return b.kind === a!.kind ? `${who} ${first} and ‘${b.rule_name}’` : `${who} ${first} and ${CHANGE_VERB[b.kind]} ‘${b.rule_name}’`;
 }
 
 const LANE_OPTIONS: { value: DraftState["open_lane_posture"]; label: string }[] = [

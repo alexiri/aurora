@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { CountBadge } from "@/components/attention/count-badge";
 import { ArrowLeftIcon } from "@/components/ui/icons";
+import { useOrgBadge } from "@/lib/api/attention";
 import { useAltitude } from "@/lib/altitude";
 import { visibleTopics } from "@/lib/api/roles";
 import { useMe, useOrg, useResolve } from "@/lib/api/queries";
@@ -33,6 +35,8 @@ export function ManageFrame({ children }: { children: ReactNode }) {
   const org = useOrg(resolved.data?.org.id);
   const altitude = useAltitude({ orgId: resolved.data?.org.id });
   const stored = useRailWorkspace();
+  // (P5-REFINE-17 #17, C-1082) What waits in this organization: owners and admins only (null for everyone else).
+  const badge = useOrgBadge(resolved.data?.org.id);
 
   if (!slug || /^\/o\/[^/]+\/w\//.test(pathname)) return <>{children}</>;
 
@@ -66,11 +70,12 @@ export function ManageFrame({ children }: { children: ReactNode }) {
                   href={i.href}
                   aria-current={current?.topic === i.topic ? "page" : undefined}
                   className={cn(
-                    "flex min-h-9 items-center rounded-control px-2.5 py-1.5 text-sm hover:bg-subtle",
+                    "flex min-h-9 items-center gap-2 rounded-control px-2.5 py-1.5 text-sm hover:bg-subtle",
                     current?.topic === i.topic ? "bg-subtle font-semibold text-ink" : "text-ink-2",
                   )}
                 >
-                  {i.label}
+                  <span className="min-w-0 flex-1 truncate">{i.label}</span>
+                  <CountBadge n={i.topic === "overview" ? badge?.count : badge?.topics[i.topic]} actionId="manage-nav-entry" testId={`manage-attention-badge-${i.topic}`} />
                 </Link>
               </li>
             ))}
@@ -85,11 +90,14 @@ export function ManageFrame({ children }: { children: ReactNode }) {
             onChange={(e) => router.push(e.target.value)}
           >
             {current ? null : <option value="">Choose a section</option>}
-            {items.map((i) => (
-              <option key={i.topic} value={i.href}>
-                {i.label}
-              </option>
-            ))}
+            {items.map((i) => {
+              const n = i.topic === "overview" ? badge?.count : badge?.topics[i.topic];
+              return (
+                <option key={i.topic} value={i.href}>
+                  {n ? `${i.label} (${n})` : i.label}
+                </option>
+              );
+            })}
           </select>
         </label>
         <div className="min-w-0 flex-1 pt-4 md:pt-0">{children}</div>

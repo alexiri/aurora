@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { DeclineRequestDialog } from "@/components/attention/decline-dialog";
 import { Avatar } from "@/components/ui/avatar";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { type AppSetupRequest, useDeclineSetup } from "@/lib/api/app-setup-requests";
 import { cn } from "@/lib/utils";
 
@@ -27,9 +27,32 @@ export function needSentence(r: Pick<AppSetupRequest, "app_name" | "needs" | "un
   return `${r.app_name} needs set-up only an owner or admin can do.`;
 }
 
+/** **Decline** for one setup request wherever it shows (org Apps row, Needs you): the shared dialog with an optional message. */
+export function SetupDeclineButton({ request, orgId, noun }: { request: AppSetupRequest; orgId: string; noun: string }) {
+  const decline = useDeclineSetup(orgId);
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+        Decline
+      </Button>
+      <DeclineRequestDialog
+        open={open}
+        onOpenChange={setOpen}
+        names={request.askers.map((a) => a.display_name)}
+        noun={noun}
+        busy={decline.isPending}
+        error={decline.error}
+        onDecline={(message) => decline.mutate({ id: request.id, message }, { onSuccess: () => setOpen(false) })}
+      />
+    </>
+  );
+}
+
 /**
  * (P5-POLISH-4, D-386, C-1030) A request for an app, in the Overview's Needs you: who asked, what is missing,
- * **Set up** (to the organization's Apps tab, at the app or at the sign-in app form) and **Not now**.
+ * **Set up** (to the organization's Apps tab, at the app or at the sign-in app form) and **Decline** (a dialog with an
+ * optional message the askers read, C-1081).
  */
 export function SetupRequestItem({ request, orgBase, orgId }: { request: AppSetupRequest; orgBase: string; orgId: string }) {
   const decline = useDeclineSetup(orgId);
@@ -62,17 +85,17 @@ export function SetupRequestItem({ request, orgBase, orgId }: { request: AppSetu
           {action}
         </Link>
         <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
-          Not now
+          Decline
         </Button>
       </span>
-      <ConfirmDialog
+      <DeclineRequestDialog
         open={open}
         onOpenChange={setOpen}
-        title={`Not setting up ${noun} now?`}
-        description={`${names.length === 1 ? names[0] : `${names.length} people`} will be told you aren't setting up ${noun} now.`}
-        confirmLabel="Not now"
+        names={names}
+        noun={noun}
         busy={decline.isPending}
-        onConfirm={() => decline.mutate(request.id, { onSuccess: () => setOpen(false) })}
+        error={decline.error}
+        onDecline={(message) => decline.mutate({ id: request.id, message }, { onSuccess: () => setOpen(false) })}
       />
     </li>
   );

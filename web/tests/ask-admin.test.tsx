@@ -129,7 +129,7 @@ describe("Needs you rows for the new kinds", () => {
     row({ subject: "chat_platform" });
     expect(screen.getByText("Bob Builder and Carol want a chat platform")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Connect a chat platform" }).getAttribute("href")).toBe("/o/acme/chat-platforms");
-    expect(screen.getByRole("button", { name: "Not now" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Decline" })).toBeTruthy();
   });
 
   it("a named chat platform reads as its name", () => {

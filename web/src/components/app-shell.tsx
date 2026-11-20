@@ -328,7 +328,7 @@ function AdminNavList({ pathname }: { pathname: string }) {
                     label={ADMIN_RAIL_LABEL[t]}
                     icon={TOPIC_ICON[t]!}
                     active={topicActive(pathname, href, t)}
-                    badge={t === "overview" ? <AttentionBadge /> : undefined}
+                    badge={t === "overview" ? <AttentionBadge /> : <AttentionBadge topic={t} />}
                   />
                 );
               })}
