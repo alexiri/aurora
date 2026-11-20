@@ -10,7 +10,8 @@ const METHOD_LABEL: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = {
   mismatch: "The key belongs to a different account",
   unverifiable: "The account could not be verified",
-  pending: "Verification pending",
+  // (P5-REFINE-13, access-8) The same words as the key's row: Checking…, then Works.
+  pending: "Checking…",
 };
 
 /** `origin.detail` (C-502) in words. Unknown values are shown as sent (they are server-written, never key material). */
@@ -53,7 +54,7 @@ export function OriginView({ origin }: { origin: Origin | null | undefined }) {
       ) : (
         <div className="flex gap-1">
           <dt>Account:</dt>
-          <dd className="font-medium text-danger-ink">{STATUS_LABEL[origin.status] ?? origin.status}</dd>
+          <dd className={origin.status === "pending" ? "font-medium text-ink-2" : "font-medium text-danger-ink"}>{STATUS_LABEL[origin.status] ?? origin.status}</dd>
         </div>
       )}
       {detail ? (

@@ -12,8 +12,8 @@ import { ROLE_CAN } from "@/lib/roles-explain";
 
 const ws = (id: string, name: string, personal_of: { id: string; name: string } | null = null) =>
   ({ id, slug: id, name, personal_of }) as OrgAgentRow["ws"];
-const row = (id: string, w: OrgAgentRow["ws"], effective_frozen = false) =>
-  ({ agent: { id, name: id, handle: id, effective_frozen } as OrgAgentRow["agent"], ws: w });
+const row = (id: string, w: OrgAgentRow["ws"], state = "ready") =>
+  ({ agent: { id, name: id, handle: id, state } as OrgAgentRow["agent"], ws: w });
 
 describe("org agents list (org-6)", () => {
   it("groups team workspaces first A to Z, then personal ones by owner name, with the mockup's headers", () => {
@@ -26,9 +26,11 @@ describe("org agents list (org-6)", () => {
     expect(groupTitle(bob)).toBe("Bob Builder (personal)");
   });
 
-  it("says Paused for a paused agent and Ready otherwise", () => {
-    expect(agentRowState({ effective_frozen: true }).word).toBe("Paused");
-    expect(agentRowState({ effective_frozen: false }).word).toBe("Ready");
+  it("words the header's states (D-425, C-1090)", () => {
+    const word = (state: string) => agentRowState({ state } as never).word;
+    expect(["paused", "needs_key", "failed", "working", "starting", "asleep", "ready"].map(word)).toEqual([
+      "Paused", "Needs a key", "Can't start", "Working", "Starting its computer…", "Asleep", "Ready",
+    ]);
   });
 });
 
@@ -81,5 +83,59 @@ describe("history sentence (org-14)", () => {
   it("names who published which version", () => {
     expect(historySentence({ number: 4, published_by: { display_name: "Alice Admin" } })).toBe("Alice Admin published version 4");
     expect(historySentence({ number: 2 })).toBe("Someone published version 2");
+  });
+});
+
+import { fireEvent, waitFor } from "@testing-library/react";
+import { vi } from "vitest";
+import { MembersView } from "@/components/org/members-view";
+import { OrgAgentsList } from "@/components/org/org-agents-list";
+import { json } from "./support/api";
+import { wrap } from "./support/render";
+
+function stub(routes: Record<string, (req: Request) => Response>) {
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: Request | string | URL) => {
+    const req = input instanceof Request ? input : new Request(new URL(String(input), "http://localhost"));
+    const key = `${req.method} ${new URL(req.url, "http://localhost").pathname}`;
+    calls.push(key);
+    const h = routes[key];
+    return h ? h(req) : json(200, { items: [], next_cursor: null });
+  }));
+  return calls;
+}
+
+describe("organization agents from the one route (C-1090, D-425)", () => {
+  it("shows the header's state and last use", async () => {
+    stub({
+      "GET /v1/orgs/o1/agents": () =>
+        json(200, { items: [
+          { id: "a1", name: "Daneel", handle: "daneel", kind: "hosted", state: "needs_key", last_active_at: null, workspace: { id: "w1", slug: "acme", name: "Acme Team", personal_of: null } },
+          { id: "a2", name: "Eli", handle: "eli", kind: "hosted", state: "working", last_active_at: new Date().toISOString(), workspace: { id: "w1", slug: "acme", name: "Acme Team", personal_of: null } },
+        ], next_cursor: null }),
+    });
+    wrap(<OrgAgentsList orgId="o1" orgSlug="acme" />);
+    expect(await screen.findByText("Needs a key")).toBeInTheDocument();
+    expect(screen.getByText("Working")).toBeInTheDocument();
+    expect(screen.getByText("never used")).toBeInTheDocument();
+  });
+});
+
+describe("invitation links (org-4, C-1069)", () => {
+  it("Copy re-issues the link and says so; Resend only when mail works", async () => {
+    const written: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async (t: string) => void written.push(t) }, configurable: true });
+    const inv = { id: "i1", email: "dana@example.test", role: "member", workspace_ids: [], approver_workspace_ids: [], expires_at: new Date(Date.now() + 6 * 86400000).toISOString(), invited_by: { display_name: "Alice Admin" } };
+    stub({
+      "GET /v1/orgs/o1/invitations": () => json(200, { items: [inv], next_cursor: null }),
+      "POST /v1/invitations/i1/link": () => json(200, { link: "https://a.test/join?token=t", expires_at: inv.expires_at }),
+      "GET /v1/instance": () => json(200, { email_delivery: "log", features: {} }),
+    });
+    wrap(<MembersView orgId="o1" viewer={{ role: "owner" } as never} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy invitation link for dana@example.test" }));
+    await waitFor(() => expect(written).toEqual(["https://a.test/join?token=t"]));
+    expect(await screen.findByTestId("invite-copied")).toHaveTextContent("Invitation link copied. Send it to dana yourself.");
+    expect(screen.queryByRole("button", { name: /^Resend/ })).toBeNull();
+    expect(screen.getByText("E-mail isn't set up, so copy each invitation link and send it yourself.")).toBeInTheDocument();
   });
 });

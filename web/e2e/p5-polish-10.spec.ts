@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { id, mockApi, setupStatus } from "./support/mock-api";
 import { overflow, type Scheme } from "./support/open";
 import { serious } from "./support/axe";
+import { chooseService } from "./support/llm";
 
 // P5-POLISH-10 (D-391, E4/E5, D-381, C-1032), API mocked: a fresh install walks the five-step checklist; adding the AI
 // key stays on it with a toast; the apps list is Waiting + From Aurora and its rows lead to a review; Approve works
@@ -153,8 +154,8 @@ for (const scheme of ["light", "dark"] as const) {
         await steps.locator("#setup-key").getByRole("button", { name: "Add key" }).click();
         const dialog = page.getByRole("dialog", { name: "Add an organization AI key" });
         const form = dialog.getByRole("form", { name: "New LLM key" });
+        await chooseService(dialog, "AIGW");
         await form.getByLabel("Name").fill("AIGW key");
-        await form.getByLabel("Provider").selectOption("litellm");
         await form.getByLabel("API key", { exact: true }).fill("sk-test-key");
         await dialog.getByRole("button", { name: "Add key" }).click();
         // The checklist stays, with its toast; the health view is not shown (the try-it step is still open).

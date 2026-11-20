@@ -130,6 +130,9 @@ for (const scheme of ["light", "dark"] as const) {
         }
         // Another website or API is the last tile of the Ready group.
         await expect(ready.getByRole("button").last()).toHaveText(/Another website or API/);
+        // (P5-REFINE-13, access-7) Two tabs with counts; the apps that wait are on the second.
+        await expect(dialog.getByRole("tab", { name: /^Ready · \d+$/, selected: true })).toBeVisible();
+        await dialog.getByRole("tab", { name: "Needs an admin · 5" }).click();
         const group = dialog.getByRole("region", { name: "Needs an admin first · 5" });
         await expect(group.getByText("An admin needs to set up Sentry sign-in")).toBeVisible();
         await expect(group.getByRole("button", { name: /^Ask an admin$/ })).toHaveCount(5);
@@ -146,6 +149,10 @@ for (const scheme of ["light", "dark"] as const) {
         await openJourney(page, `${ACCOUNTS}&connect=`, scheme);
         const dialog = page.getByRole("dialog");
         await dialog.getByRole("searchbox", { name: "Search apps" }).fill("sentry");
+        // A search narrows both tabs: the counts follow it.
+        await expect(dialog.getByRole("tab", { name: "Needs an admin · 1" })).toBeVisible();
+        await expect(dialog.getByRole("tab", { name: "Ready · 0" })).toBeVisible();
+        await dialog.getByRole("tab", { name: "Needs an admin · 1" }).click();
         await expect(dialog.getByRole("region", { name: "Needs an admin first · 1" })).toBeVisible();
         await expect(dialog.getByRole("button", { name: "GitHub", exact: true })).toHaveCount(0);
       });

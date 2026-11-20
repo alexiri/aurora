@@ -214,7 +214,7 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
     render(wrap("limits"));
     expect(await screen.findByRole("heading", { name: "Limits", level: 1 })).toBeTruthy();
     // The danger notice names what the allowed-private list does.
-    expect(screen.getByText(/Private destinations\./)).toBeTruthy();
+    expect(screen.getByText(/Entries in the allowed-private list open an address range/)).toBeTruthy();
     const list = screen.getByRole("list", { name: "Rate class overrides" });
     expect(within(list).getByText("write")).toBeTruthy();
     expect(within(list).getByText("Set by the installation")).toBeTruthy();

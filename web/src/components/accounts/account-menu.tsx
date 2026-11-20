@@ -9,7 +9,9 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { accountKeys, useRemoveAccess, type Account } from "@/lib/api/accounts";
-import { useDeleteConnection, usePatchConnection } from "@/lib/api/apps";
+import { useApp, useDeleteConnection, usePatchConnection } from "@/lib/api/apps";
+import { accountActions } from "@/lib/accounts";
+import { SendTestDialog } from "@/components/webhook/send-test-dialog";
 import { ValueInput } from "@/components/credentials/value-input";
 
 import { useOrg } from "@/lib/api/queries";
@@ -72,13 +74,18 @@ export function AccountMenu({
   const off = account.health.state === "disabled";
   const error = patchConn.error ?? delConn.error ?? patchSecret.error ?? delSecret.error;
   // A turned-off account runs nothing and an expired sign-in is fixed by Reconnect: there is nothing to test.
-  const testable = !isConn || (account.health.state !== "disabled" && account.health.state !== "sign_in_expired");
+  const healthTestable = !isConn || (account.health.state !== "disabled" && account.health.state !== "sign_in_expired");
+  // (P5-REFINE-13, access-11) An app account offers only what its app can do (`accountActions`); websites and AI keys keep their own.
+  const appDetail = useApp(isConn ? account.app?.app_id : undefined, scope.kind === "workspace" ? scope.id : undefined);
+  const can = accountActions(account.app?.app_id, appDetail.data?.connect);
+  const testable = healthTestable && (!isConn || can.test);
+  const [sendingTest, setSendingTest] = useState(false);
 
   return (
     <>
       <Menu>
         <MenuTrigger asChild>
-          <Button variant="outline" size="sm" aria-label={`More for ${account.name}`}>
+          <Button variant="outline" size="sm" className="pointer-coarse:min-h-11" aria-label={`More for ${account.name}`}>
             <span aria-hidden="true">…</span>
           </Button>
         </MenuTrigger>
@@ -87,7 +94,8 @@ export function AccountMenu({
               "Remove from <Agent>" covers turning it off for that agent. */}
           {!agent && account.can.give_access ? <MenuItem onSelect={() => setGiving(true)}>Give access</MenuItem> : null}
           {onTest && testable ? <MenuItem onSelect={onTest}>Test the connection</MenuItem> : null}
-          {isConn && onReconnect ? <MenuItem onSelect={onReconnect}>Sign in again</MenuItem> : null}
+          {isConn && can.sendTest ? <MenuItem onSelect={() => setSendingTest(true)}>Send a test</MenuItem> : null}
+          {isConn && onReconnect && can.signInAgain ? <MenuItem onSelect={onReconnect}>Sign in again</MenuItem> : null}
           {account.kind === "website" ? <MenuItem onSelect={() => setEditingSite(true)}>Change website</MenuItem> : null}
           {!isConn ? <MenuItem onSelect={() => setReplacing(true)}>Replace</MenuItem> : null}
           <MenuItem onSelect={() => setRenaming(true)}>Rename</MenuItem>
@@ -115,6 +123,7 @@ export function AccountMenu({
         </MenuContent>
       </Menu>
       {error ? <ErrorState error={error} /> : null}
+      {isConn && can.sendTest ? <SendTestDialog connectionId={account.ref.id} name={account.name} open={sendingTest} onOpenChange={setSendingTest} /> : null}
       {giving ? (
         <OrgGiveAccessDialog
           account={account}

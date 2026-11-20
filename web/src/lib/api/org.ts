@@ -142,6 +142,7 @@ export function useResendInvitation(orgId: string) {
 }
 
 export type OrgAgent = components["schemas"]["OrgAgent"];
+export type OrgAgentWorkspace = components["schemas"]["OrgAgentWorkspace"];
 
 export type OrgAgentState = components["schemas"]["OrgAgentState"];
 

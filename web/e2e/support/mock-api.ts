@@ -215,6 +215,9 @@ export const probed = new Set<string>();
 /** (P5-UX-9) OAuth clients a spec registered in the workspace; the setup status counts them and the list shows them. Emptied by every `mockApi` call. */
 export const extraClients: Record<string, unknown>[] = [];
 
+/** (P5-REFINE-13) An app's detail carries no `first_prompt` while `on` (the Done step then offers Open chat). The spec that sets it resets it. */
+export const noFirstPrompt = { on: false };
+
 export async function mockApi(
   page: Page,
   /** (FIX-029) Extra canned responses: a regex or exact path → JSON body, or `{status, body}`. */
@@ -625,7 +628,7 @@ export async function mockApi(
       const full = connect.map((m) => ({ probe_scopes: [], audience: "person", scope_presets: { read: [], write: [] }, show_context: [], permission_hints: [], has_probe: probed.has(m.id), ...m }));
       return json({
         ...apps.find((x) => x.app_id === a.id), connect: full, credentials: [], hosts: [], metadata: [],
-        first_prompt: "Which pull requests are waiting for my review?",
+        first_prompt: noFirstPrompt.on ? null : "Which pull requests are waiting for my review?",
         // (P5-UX-9, C-946) The OAuth client definitions say which connect methods use them.
         oauth_clients: ["github", "linear", "gitlab"].includes(a.id)
           ? [{

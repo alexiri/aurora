@@ -7,6 +7,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
+import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { productKey, productName } from "@/lib/api/app-name";
 import { useAskSetup, useWithdrawSetup } from "@/lib/api/app-setup-requests";
 import { useAppInstances, useApps, type AppSummary } from "@/lib/api/apps";
@@ -91,6 +92,7 @@ export function AppStep({
   const withdraw = useWithdrawSetup(workspaceId);
   const [where, setWhere] = useState<AppSummary[] | null>(null);
   const [query, setQuery] = useState("");
+  const [tab, setTab] = useState<"ready" | "needs">("ready");
   // What the person did here, until the list is read again (an ask or an Undo changes `requested.by_me`).
   const [asked, setAsked] = useState<Record<string, "now" | "no">>({});
 
@@ -142,10 +144,25 @@ export function AppStep({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
+      {/* (P5-REFINE-13, access-7) Two tabs with counts from the catalogue (a search narrows both); the tabs never scroll away. */}
+      <div className="sticky top-0 z-10 -mx-1 bg-surface px-1 pb-1">
+        <Tabs
+          label="Apps"
+          idBase="app-step"
+          value={tab}
+          onValueChange={(v) => setTab(v as "ready" | "needs")}
+          items={[
+            { value: "ready", label: `Ready · ${ready.length}` },
+            { value: "needs", label: `Needs an admin · ${blocked.length}` },
+          ]}
+        />
+      </div>
       {/* (P5-POLISH-5, B1) While searching, a group with no match is hidden; "No app matches" only when every group is empty. */}
       {q && ready.length === 0 && !showWebsite && connected.length === 0 && blocked.length === 0 ? (
         <p className="text-sm text-ink-2">No app matches “{query.trim()}”.</p>
       ) : null}
+      {tab === "ready" ? (
+        <div role="tabpanel" id={tabPanelId("app-step", "ready")} aria-labelledby={tabId("app-step", "ready")} className="space-y-4">
       {!q || ready.length > 0 || showWebsite ? (
       <Group title="Ready to connect" count={ready.length}>
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -188,6 +205,19 @@ export function AppStep({
           </ul>
         </Group>
       ) : null}
+      {blocked.length > 0 ? (
+        <p className="text-sm text-ink-2">
+          {blocked.length} more need an admin to set them up first: {blocked.slice(0, 5).map((p) => productName(hostedOf(p))).join(", ")}
+          {blocked.length > 5 ? "…" : ""}{" "}
+          <button type="button" className="font-medium text-link underline" onClick={() => setTab("needs")}>
+            See them
+          </button>
+        </p>
+      ) : null}
+        </div>
+      ) : (
+        <div role="tabpanel" id={tabPanelId("app-step", "needs")} aria-labelledby={tabId("app-step", "needs")} className="space-y-4">
+      {blocked.length === 0 ? <p className="text-sm text-ink-2">{q ? "No app that needs an admin matches." : "Nothing here needs an admin."}</p> : null}
       {blocked.length > 0 ? (
         <Group title="Needs an admin first" count={blocked.length}>
           <ul className="space-y-2">
@@ -247,6 +277,8 @@ export function AppStep({
           </ul>
         </Group>
       ) : null}
+        </div>
+      )}
     </div>
   );
 }

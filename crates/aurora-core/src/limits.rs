@@ -303,6 +303,11 @@ pub const EXPORT_MAX_EVENTS: i64 = 200_000;
 pub const SCHEDULE_FIRE_LEASE: Duration = Duration::from_secs(300);
 /// consecutive failures.
 pub const SCHEDULE_FAILURE_DISABLE: u32 = 5;
+/// (P5-REFINE-7, C-1073) Direct conversations (active and archived) per person and agent.
+pub const DIRECT_CONVERSATIONS_PER_PERSON_AGENT: i64 = 500;
+/// (P5-REFINE-7, C-1074) Run threads kept per schedule or webhook; older ones are deleted by
+/// the nightly conversation sweep.
+pub const AUTOMATION_THREADS_KEPT: i64 = 200;
 pub const GATE_TIMEOUT: Duration = Duration::from_secs(30);
 pub const WEBHOOK_PAYLOAD_MAX: usize = MIB;
 pub const PROCESS_TAIL: usize = 4 * KIB;

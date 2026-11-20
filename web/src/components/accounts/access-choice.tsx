@@ -3,7 +3,7 @@
 import { WhoCan } from "@/components/ui/who-can";
 import { ChoiceCards } from "@/components/ui/choice-cards";
 import type { Account, Level } from "@/lib/api/accounts";
-import { isLimited, LEVEL_LABEL, LEVEL_ORDER, levelSentence } from "@/lib/accounts";
+import { isLimited, levelLabel, LEVEL_ORDER, levelSentence } from "@/lib/accounts";
 
 /**
  * The three choices as cards (`14 §2`), cut to the account's `levels`. Presentational: the row, the picker and the
@@ -18,8 +18,11 @@ export function AccessChoice({
   disabled = false,
   legend = "Access",
   orgName,
+  sendOnly = false,
 }: {
   account: Pick<Account, "levels" | "limit" | "app" | "managed_by">;
+  /** A send-only app (D-419): "Ask before each send" (recommended) and "Send without asking". Read only is never shown. */
+  sendOnly?: boolean;
   agentName: string;
   /** `null` when the saved choice is not one of the three (custom): no card is chosen. */
   value: Level | null;
@@ -29,7 +32,8 @@ export function AccessChoice({
   /** The organization that sets the limit: "Limited by <org>". */
   orgName?: string;
 }) {
-  const levels = LEVEL_ORDER.filter((l) => account.levels.includes(l));
+  sendOnly = sendOnly || account.app?.send_only === true;
+  const levels = LEVEL_ORDER.filter((l) => account.levels.includes(l) && !(sendOnly && l === "read"));
   if (levels.length === 0) return null;
   return (
     <div className="space-y-2">
@@ -43,9 +47,9 @@ export function AccessChoice({
         }}
         options={levels.map((l) => ({
           value: l,
-          label: LEVEL_LABEL[l],
-          description: levelSentence(l, agentName),
-          badge: l === "read" ? "Recommended" : undefined,
+          label: levelLabel(l, sendOnly),
+          description: levelSentence(l, agentName, sendOnly),
+          badge: l === (sendOnly ? "ask" : "read") ? "Recommended" : undefined,
         }))}
       />
       {isLimited(account) ? (

@@ -101,6 +101,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
         ["accounts", _, _, "test"] if post => return Some(Class::Check),
         // (P5-REFINE-6, C-1070) Testing a sign-in app contacts its provider: the same bucket.
         ["oauth-clients", _, "test"] if post => return Some(Class::Check),
+        // (P5-REFINE-7, C-1077) The schedule preview computes a cadence as you type.
+        ["agents", _, "schedules", "preview"] if post => return Some(Class::Check),
         // (P5-UX-5, C-919) Adding a person by e-mail: its own small bucket (the route adds a per-workspace cap).
         ["workspaces", _, "access", "by-email"] if post => return Some(Class::Invite),
         // (P5-POLISH-4, C-1030) Asking an admin to set an app up: 20 per person per hour.
@@ -884,6 +886,11 @@ mod tests {
         // (P5-REFINE-6) Testing a sign-in app too.
         assert_eq!(
             c(Method::POST, "/v1/oauth-clients/1/test"),
+            Some(Class::Check)
+        );
+        // (P5-REFINE-7, C-1077) The schedule preview is class `check`.
+        assert_eq!(
+            c(Method::POST, "/v1/agents/1/schedules/preview"),
             Some(Class::Check)
         );
         // (P5-UX-5) Adding a person by e-mail is class `invite`, not `write`.

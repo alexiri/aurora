@@ -13,21 +13,76 @@ use uuid::Uuid;
 /// Bound of one durable `text` event written from the answer buffer.
 const TEXT_MAX_BYTES: usize = 48 * 1024;
 
+/// Bound of the `detail` of an `error` event (C-1076), in characters.
+const ERROR_DETAIL_MAX: usize = 2000;
+/// How the Claude Code adapter prints a failed model call as an assistant message (C-1076).
+const HARNESS_ERROR_PREFIX: &str = "API Error";
+
+/// How the turn whose answer is drained ends (P5-REFINE-7).
+#[derive(Clone, Copy)]
+pub enum Ending<'a> {
+    /// `done`, or an ending that keeps the text as it is.
+    Done,
+    /// (C-1075) Stopped: the text written so far is kept and marked `partial: true`.
+    Aborted,
+    /// (C-1076) Failed with this message: the harness's own error line is not the agent's answer.
+    Failed(&'a str),
+}
+
+impl<'a> Ending<'a> {
+    /// The ending a harness status reports.
+    pub fn of(status: &str, message: Option<&'a str>) -> Ending<'a> {
+        match status {
+            "aborted" => Ending::Aborted,
+            "failed" => Ending::Failed(message.unwrap_or("")),
+            _ => Ending::Done,
+        }
+    }
+}
+
+/// (C-1076) Whether buffered text is the harness's error line rather than the agent's words: it
+/// equals, contains or starts with the failure message, or starts with `API Error`.
+pub fn is_harness_error_text(text: &str, message: &str) -> bool {
+    let t = text.trim();
+    let m = message.trim();
+    t.starts_with(HARNESS_ERROR_PREFIX) || (!m.is_empty() && t.contains(m))
+}
+
+/// (C-1076) The `detail` of an `error` event: multi-line allowed, control characters removed,
+/// at most 2,000 characters.
+pub fn error_detail(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .take(ERROR_DETAIL_MAX)
+        .collect()
+}
+
 /// (FIX-115, `10` §The answer rule) Write the text buffered since the turn's last tool call as
 /// durable `text` events and delete the buffer row, under the conversation lock — for every way
-/// a turn can end, not only a harness result. Nothing is discarded silently.
+/// a turn can end, not only a harness result. Nothing is discarded silently: (P5-REFINE-7) a
+/// stopped turn's text is marked `partial: true` (C-1075); a failed turn's harness error line is
+/// not written as a `text` event but returned, for the `error` event's `detail` (C-1076).
 pub async fn drain_answer(
     conn: &mut PgConnection,
     conversation: Uuid,
     turn: Uuid,
-) -> Result<(), ApiError> {
+    ending: Ending<'_>,
+) -> Result<Option<String>, ApiError> {
     aurora_db::repo::conversations::lock(&mut *conn, conversation).await?;
     let Some(Value::Array(msgs)) = hosted::answer_buffer_take(conn, turn).await? else {
-        return Ok(());
+        return Ok(None);
     };
+    let mut dropped: Vec<&str> = Vec::new();
     for m in &msgs {
         let text = m.get("text").and_then(Value::as_str).unwrap_or("");
         if text.trim().is_empty() {
+            continue;
+        }
+        if let Ending::Failed(message) = ending
+            && is_harness_error_text(text, message)
+        {
+            dropped.push(text.trim());
             continue;
         }
         let mut end = text.len().min(TEXT_MAX_BYTES);
@@ -39,9 +94,23 @@ pub async fn drain_answer(
         if let Some(rt) = m.get("reply_to").filter(|v| !v.is_null()) {
             p["reply_to"] = rt.clone();
         }
+        if matches!(ending, Ending::Aborted) {
+            p["partial"] = json!(true);
+        }
         conv::append_event(conn, conversation, Some(turn), "text", &p).await?;
     }
-    Ok(())
+    Ok((!dropped.is_empty()).then(|| dropped.join("\n")))
+}
+
+/// (C-1076) The `error` event payload: `{ turn_id, code, message, detail? }`; `detail` is the
+/// harness's dropped line, else the message.
+pub fn error_payload(turn: Uuid, code: &str, message: &str, dropped: Option<&str>) -> Value {
+    let mut p = json!({"turn_id": turn, "code": code, "message": message});
+    let detail = error_detail(dropped.unwrap_or(message));
+    if !detail.is_empty() {
+        p["detail"] = json!(detail);
+    }
+    p
 }
 
 /// End a turn (fenced): `turn.finished` + follow-up promotion (BE-051), then the turn's context
@@ -120,14 +189,15 @@ async fn fail_in(
         return Ok(None);
     }
     aurora_db::repo::conversations::lock(&mut *conn, conversation).await?;
-    // (FIX-115) The answer text the agent had already written is kept, before the error.
-    drain_answer(conn, conversation, turn).await?;
+    // (FIX-115) The answer text the agent had already written is kept, before the error;
+    // (C-1076) the harness's own error line is the error's `detail`, not an answer.
+    let dropped = drain_answer(conn, conversation, turn, Ending::Failed(message)).await?;
     conv::append_event(
         conn,
         conversation,
         Some(turn),
         "error",
-        &json!({"turn_id": turn, "code": code, "message": message}),
+        &error_payload(turn, code, message, dropped.as_deref()),
     )
     .await?;
     finish(conn, turn, "failed", Some(code), Some(message), None).await
@@ -139,4 +209,59 @@ pub async fn flush_deltas(state: &AppState, conversation: Uuid, turn: Uuid) {
         .conversation_bus
         .flush_turn(&state.pool, conversation, turn)
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_harness_error_line_is_recognised_and_the_agents_words_are_not() {
+        let m = "No connected db.";
+        assert!(is_harness_error_text("API Error: 400 No connected db.", m));
+        assert!(is_harness_error_text("API Error: 529 overloaded", ""));
+        assert!(is_harness_error_text("  No connected db.  ", m));
+        assert!(is_harness_error_text("No connected db. (request 42)", m));
+        assert!(is_harness_error_text("Upstream said: No connected db.", m));
+        assert!(!is_harness_error_text(
+            "Here is the summary you asked for.",
+            m
+        ));
+        // An empty message never matches everything.
+        assert!(!is_harness_error_text("I looked at the logs.", ""));
+        // The prefix is the adapter's, case-sensitive.
+        assert!(!is_harness_error_text(
+            "api error handling is described below",
+            ""
+        ));
+    }
+
+    #[test]
+    fn the_detail_keeps_lines_drops_control_characters_and_is_bounded() {
+        assert_eq!(error_detail(" a\nb\tc\u{7}\u{1b}d "), "a\nb\tcd");
+        assert_eq!(error_detail(&"é".repeat(3000)).chars().count(), 2000);
+        let p = error_payload(
+            Uuid::nil(),
+            "harness_failed",
+            "boom",
+            Some("API Error: 400 x"),
+        );
+        assert_eq!(p["message"], "boom");
+        assert_eq!(p["detail"], "API Error: 400 x");
+        let p = error_payload(Uuid::nil(), "harness_failed", "boom", None);
+        assert_eq!(p["detail"], "boom");
+        let p = error_payload(Uuid::nil(), "harness_failed", "", None);
+        assert!(p.get("detail").is_none());
+    }
+
+    #[test]
+    fn the_ending_follows_the_reported_status() {
+        assert!(matches!(Ending::of("aborted", None), Ending::Aborted));
+        assert!(matches!(
+            Ending::of("failed", Some("x")),
+            Ending::Failed("x")
+        ));
+        assert!(matches!(Ending::of("failed", None), Ending::Failed("")));
+        assert!(matches!(Ending::of("done", None), Ending::Done));
+    }
 }

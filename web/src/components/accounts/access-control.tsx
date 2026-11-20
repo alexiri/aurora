@@ -9,9 +9,50 @@ import { WhoCan } from "@/components/ui/who-can";
 import { type Account, type AgentAccess, type Level, usePutAccess } from "@/lib/api/accounts";
 import { useGrants } from "@/lib/api/policy";
 import { cn } from "@/lib/utils";
-import { isLimited, LEVEL_LABEL, LEVEL_ORDER } from "@/lib/accounts";
+import { isLimited, LEVEL_LABEL, levelLabel, LEVEL_ORDER } from "@/lib/accounts";
 
 import { ActionsTable } from "./actions-table";
+
+/**
+ * (P5-REFINE-13, access-12) The level of one agent's access, the same control on every app row: a pill that opens a select.
+ * With one level the select holds only it, checked. Someone who cannot change it sees the pill without the chevron.
+ */
+function LevelPill({
+  label,
+  options,
+  value,
+  canChange,
+  inRow,
+}: {
+  label: string;
+  options: { value: string; text: string }[];
+  value: string;
+  canChange: boolean;
+  inRow?: boolean;
+}) {
+  const pill = "h-9 rounded-control border border-line-strong bg-surface px-3 text-sm text-ink pointer-coarse:h-11";
+  if (!canChange)
+    return (
+      <span aria-label={label} role="group" className={cn(pill, "inline-flex items-center whitespace-nowrap")} data-testid="level-pill">
+        {options.find((o) => o.value === value)?.text}
+      </span>
+    );
+  return (
+    <select
+      aria-label={label}
+      data-testid="level-pill"
+      className={cn(pill, "w-auto", inRow && "max-sm:w-full")}
+      value={value}
+      onChange={() => undefined}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.text}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 /**
  * One agent's access to one app account (C-938, `14 §2`): the three choices from the account's `levels`, the changes
@@ -45,8 +86,19 @@ export function AccessControl({
   const grants = useGrants(entry.agent.id);
   const [table, setTable] = useState(startOpen);
   if (account.ref.type !== "connection") return null;
-  // (P5-POLISH-11) An app with no write tools has no choice, but the row still says what the agent may do.
-  if (account.levels.length === 0) return <p className={cn("text-sm text-ink", inRow && "whitespace-nowrap")}>Read only</p>;
+  const sendOnly = account.app?.send_only === true;
+  // (P5-POLISH-11, P5-REFINE-13 access-12) An app with no write tools has no choice, but the row still carries the same
+  // control as every other app row: the pill, with its one entry checked (no chevron when the person cannot change it).
+  if (account.levels.length === 0)
+    return (
+      <LevelPill
+        label={`${entry.agent.name}'s access to ${account.name}`}
+        options={[{ value: "read", text: "Read only" }]}
+        value="read"
+        canChange={canChange}
+        inRow={inRow}
+      />
+    );
   const level = entry.level === "read" || entry.level === "ask" || entry.level === "act" ? entry.level : null;
   const always = entry.always_allowed ?? [];
 
@@ -119,7 +171,9 @@ export function AccessControl({
     if (inRow)
       return (
         <>
-          {level ? <p className="whitespace-nowrap text-sm text-ink">{LEVEL_LABEL[level]}</p> : null}
+          {level ? (
+            <LevelPill label={`${entry.agent.name}'s access to ${account.name}`} options={[{ value: level, text: levelLabel(level, sendOnly) }]} value={level} canChange={false} inRow />
+          ) : null}
           <div className="order-last w-full basis-full space-y-2 text-sm text-ink-2">
             {alwaysList}
             {customNote}
@@ -130,7 +184,7 @@ export function AccessControl({
       );
     return (
       <div className="space-y-2 text-sm text-ink-2">
-        {level ? <p>{LEVEL_LABEL[level]}</p> : null}
+        {level ? <p>{levelLabel(level, sendOnly)}</p> : null}
         {alwaysList}
         {customNote}
         {exactly}
@@ -145,12 +199,16 @@ export function AccessControl({
   const EXACTLY = "__exactly";
   const picker =
       levels.length === 1 ? (
-        <p className={cn("text-sm text-ink", inRow && "whitespace-nowrap")}>{LEVEL_LABEL[levels[0]!]}</p>
+        // One level: the same pill, its one entry checked and no other entry (access-12).
+        <LevelPill label={`${entry.agent.name}'s access to ${account.name}`} options={[{ value: levels[0]!, text: levelLabel(levels[0]!, sendOnly) }]} value={levels[0]!} canChange inRow={inRow} />
       ) : (
-        <span className="inline-flex items-center gap-2">
+        <span className={cn("inline-flex items-center gap-2", inRow && "max-sm:min-w-0 max-sm:flex-1")}>
         <select
           aria-label={`${entry.agent.name}'s access to ${account.name}`}
-          className={cn("h-9 rounded-control border border-line-strong bg-surface px-2 text-sm text-ink", inRow ? "w-auto max-w-56" : "w-full max-w-xs")}
+          className={cn(
+            "h-9 rounded-control border border-line-strong bg-surface px-2 text-sm text-ink pointer-coarse:h-11",
+            inRow ? "w-auto max-w-56 max-sm:w-full max-sm:max-w-none" : "w-full max-w-xs",
+          )}
           disabled={put.isPending}
           value={entry.level === "custom" ? CUSTOM : (level ?? "")}
           onChange={(e) => {
@@ -161,7 +219,7 @@ export function AccessControl({
           {level === null && entry.level !== "custom" ? <option value="">Choose…</option> : null}
           {levels.map((l) => (
             <option key={l} value={l}>
-              {LEVEL_LABEL[l]}
+              {levelLabel(l, sendOnly)}
             </option>
           ))}
           <option value={CUSTOM}>Custom…</option>

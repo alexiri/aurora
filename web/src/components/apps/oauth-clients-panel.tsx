@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { formatWhen } from "@/lib/format-date";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -24,6 +25,7 @@ import {
   useDeleteOAuthClient,
   useOAuthClients,
   usePatchOAuthClient,
+  useTestOauthClient,
   type AppDetail,
   type AppInstance,
   type CredScope,
@@ -237,6 +239,30 @@ function CreateForm({
   );
 }
 
+const STATE_WORDS: Record<string, string> = {
+  ready: "Ready",
+  ready_not_tested: "Ready (not tested)",
+  test_failed: "Test failed",
+  disabled: "Disabled",
+};
+
+/** (C-1070) The last Test in words; the provider must be reachable from Aurora, so an unreachable one says so. */
+function testLine(result: string, at?: string): string {
+  const when = at ? ` ${formatWhen(at)}` : "";
+  switch (result) {
+    case "ok":
+      return `Test passed${when}: the provider answered and the client ID was accepted.`;
+    case "rejected":
+      return `Test failed${when}: the provider didn't accept this client ID or secret.`;
+    case "unreachable":
+      return `Test failed${when}: Aurora couldn't reach the provider. The provider must be reachable from Aurora.`;
+    case "not_testable":
+      return "This sign-in app can't be tested from here.";
+    default:
+      return `Test failed${when}: the provider answered in a way Aurora didn't expect.`;
+  }
+}
+
 export function ClientRow({
   scope,
   c,
@@ -262,6 +288,7 @@ export function ClientRow({
   const title = clientLabel(appName ?? c.package_id, def?.used_by_methods);
   const patch = usePatchOAuthClient(scope);
   const del = useDeleteOAuthClient(scope);
+  const test = useTestOauthClient(scope);
   const [mode, setMode] = useState<"none" | "edit" | "delete">("none");
   const [edits, setEdits] = useState<Record<string, string>>({});
   // A client only owns rows at its own scope (inherited ones are read-only here).
@@ -296,15 +323,28 @@ export function ClientRow({
           <span className="text-xs text-muted">{c.scope} · {c.connection_count} connection{c.connection_count === 1 ? "" : "s"}</span>
           {c.instance_id ? <Badge className="font-mono normal-case tracking-normal">{instanceHost ?? "self-hosted app"}</Badge> : null}
           {!c.enabled ? <Badge>Disabled</Badge> : null}
+          {/* (org-10, C-1070) Where the sign-in app stands: ready, ready (not tested) or the failed Test, in words. */}
+          <Badge tone={c.state === "test_failed" ? "danger" : c.state === "ready" ? "accent" : "neutral"} data-testid="oauth-state">
+            {STATE_WORDS[c.state] ?? c.state}
+          </Badge>
         </div>
         {canOwn && mine ? (
           <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" disabled={test.isPending || !c.enabled} onClick={() => test.mutate(c.id)}>
+              {test.isPending ? "Testing…" : c.test ? "Test again" : "Test"}
+            </Button>
             <Button size="sm" variant="outline" disabled={patch.isPending} onClick={() => patch.mutate({ id: c.id, enabled: !c.enabled })}>{c.enabled ? "Turn off" : "Turn on"}</Button>
             <Button size="sm" variant="outline" onClick={startEdit}>Edit</Button>
             <Button size="sm" variant="danger" onClick={() => setMode("delete")} aria-label={`Delete ${title}`}>Delete</Button>
           </div>
         ) : null}
       </div>
+      {c.test || test.data ? (
+        <p className="text-sm text-ink-2" role="status" data-testid="oauth-test-line">
+          {testLine(String(test.data?.result ?? (c.test?.result as unknown) ?? "unexpected"), test.data?.checked_at ?? c.test?.at)}
+        </p>
+      ) : null}
+      <ErrorNotice error={test.error} />
       <dl className="break-all text-xs text-ink-2">
         {Object.entries(c.fields).map(([k, v]) => (
           <div key={k}><dt className="inline font-medium">{k}: </dt><dd className="inline">{v}</dd></div>

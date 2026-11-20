@@ -14,6 +14,7 @@ import {
 import { ApiError } from "@/lib/api/client";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
+import { chooseService } from "./support/llm";
 
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
@@ -110,10 +111,10 @@ function open(extra: Record<string, Handler> = {}) {
   return fn;
 }
 
+const SERVICE: Record<string, string> = { bed: "Bedrock EU", az: "Azure", vx: "Vertex" };
 async function pick(endpoint: string) {
-  await screen.findByText(/Bedrock EU/);
-  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "k" } });
-  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: endpoint } });
+  await chooseService(SERVICE[endpoint]!);
+  fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "k" } });
 }
 
 describe("LLM key form per auth mode (C-811)", () => {
@@ -170,8 +171,20 @@ describe("LLM key form per auth mode (C-811)", () => {
     });
     // C-801 details.reason in plain language, never the raw code.
     expect(await screen.findByText(/trust policy: it must allow the source user and require this organization's external id/)).toBeTruthy();
-    expect((screen.getByLabelText("Source secret access key") as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("Source access key id") as HTMLInputElement).value).toBe("");
+    // (P5-REFINE-13, access-8) The refused values stay in their fields (masked): a typo is fixed, not retyped.
+    expect((screen.getByLabelText("Source secret access key") as HTMLInputElement).value).toBe("s3cr3t");
+    expect((screen.getByLabelText("Source access key id") as HTMLInputElement).value).toBe("AKIAEXAMPLE");
+    expect((screen.getByLabelText("Source secret access key") as HTMLInputElement).type).toBe("password");
+  });
+
+  it("keeps the typed API key after the provider rejects it and says so under the field", async () => {
+    open({ "POST /v1/orgs/o1/secrets": () => json(422, { error: { code: "llm_key_invalid", message: "m", details: { reason: "rejected" } } }) });
+    await pick("bed");
+    fireEvent.click(screen.getByLabelText(/Bedrock API key/));
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-typed-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    expect(await screen.findByText("The provider rejected this key. Check it and try again; what you typed is still here.")).toBeTruthy();
+    expect(screen.getByLabelText("API key")).toHaveValue("sk-typed-key");
   });
 
   it("shows the Entra fields for Azure, the harness hint and the no-harness notice", async () => {
@@ -189,8 +202,6 @@ describe("LLM key form per auth mode (C-811)", () => {
     // The other mode is the plain resource key.
     fireEvent.click(within(group).getByLabelText(/Resource key/));
     expect(screen.getByLabelText("API key")).toBeTruthy();
-    // An endpoint that serves a harness says so in the picker.
-    expect(screen.getByRole("option", { name: /Bedrock EU — Works with Claude Code/ })).toBeTruthy();
   });
 
   it("takes a GCP service account key file or pasted JSON, and sends it as the value", async () => {
@@ -283,12 +294,19 @@ describe("LLM key modes (pure helpers)", () => {
 
 // P5-REFINE-18 #16 (setup-7): provider names only, and no "Allowed key scopes" line.
 describe("LLM key form: words (setup-7)", () => {
-  it("lists endpoints by display name with no provider id, and says nothing about key scopes", async () => {
+  it("asks which service the key is for with one card per service: the name and one plain line, no provider id, nothing about key scopes (access-9)", async () => {
     open();
-    await pick("bed");
-    const option = screen.getByRole("option", { name: /Bedrock EU/ });
-    expect(option.textContent).toBe("Bedrock EU — Works with Claude Code");
-    expect(option.textContent).not.toContain("(bedrock)");
+    expect(await screen.findByRole("radiogroup", { name: "Which service is this key for?" })).toBeTruthy();
+    const card = screen.getByRole("radio", { name: /^Bedrock EU/ });
+    const text = card.closest("label")!.textContent!;
+    expect(text).toBe("BEBedrock EUClaude models on AWS. Works with Claude Code.");
+    expect(text).not.toContain("(bedrock)");
     expect(document.body.textContent).not.toContain("Allowed key scopes");
+    // Next waits for a choice; the key comes after it.
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.queryByLabelText("Name")).toBeNull();
+    fireEvent.click(card);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByLabelText("Name")).toBeTruthy();
   });
 });

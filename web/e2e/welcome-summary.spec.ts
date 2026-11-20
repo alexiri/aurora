@@ -4,6 +4,7 @@ import { openJourney } from "./support/journey";
 import { id, mockApi, readinessEmpty, readinessReady, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
 import { serious } from "./support/axe";
+import { chooseService } from "./support/llm";
 
 // P5-UX-7 (C-927, C-986; docs/14 §Agents, accounts and access §8 and §9): Welcome's two-step guide and the agent's one
 // summary. A person in an organization that provides an AI key has one step left and a summary that says the agent can't
@@ -68,10 +69,10 @@ for (const scheme of ["light", "dark"] as const) {
         await openWelcome(page, scheme, { noAccounts: true, noKey: true });
         await expect(page.getByText("0 of 2 done")).toBeVisible();
         const form = page.getByRole("form", { name: "New LLM key" });
+        await chooseService(form, "AIGW");
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
         await check(page);
         await form.getByLabel("Name").fill("Mock LLM");
-        await form.getByLabel("Provider").selectOption({ index: 1 });
         await form.getByLabel("API key", { exact: true }).fill("not-a-real-key");
         await form.getByRole("button", { name: "Add LLM key" }).click();
         await expect(page.getByText("1 of 2 done")).toBeVisible();

@@ -41,6 +41,14 @@ fn refuse(msg: impl Into<String>) -> SendOutcome {
     SendOutcome::Refused(msg.into())
 }
 
+/// (P5-REFINE-10, C-1085) The refusal for opening a task against a one-way link.
+pub fn one_way_refusal(sender: &AgentRow, target: &AgentRow) -> String {
+    let (s, t) = (agent_label(sender), agent_label(target));
+    format!(
+        "This link is one-way: {s} only works on tasks that {t} sends it, so you cannot hand {t} a task."
+    )
+}
+
 /// `Name (@handle)` as a sanitized one-line label.
 pub fn agent_label(a: &AgentRow) -> String {
     sanitize::label(&format!("{} (@{})", a.name, a.handle))
@@ -156,6 +164,11 @@ pub async fn send_message(
         }
         return message_in_task(conn, r, &target, text).await;
     };
+    // (P5-REFINE-10, C-1085) A one-way link refuses to open a task against its direction,
+    // before any approval is created (no approval for a task that could never run).
+    if !link.allows(r.sender.id) {
+        return Ok(refuse(one_way_refusal(r.sender, &target)));
+    }
     if !requester_can_use(conn, Some(requester), r.sender.workspace_id).await? {
         return Ok(refuse(
             "The person you are working for no longer has access to your workspace.",

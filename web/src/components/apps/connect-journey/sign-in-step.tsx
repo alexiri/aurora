@@ -15,7 +15,8 @@ import { LinkIcon } from "@/components/ui/icons";
 import { safeHref } from "@/components/ui/markdown";
 import { Notice } from "@/components/ui/notice";
 import { WhoCan } from "@/components/ui/who-can";
-import { LEVEL_LABEL } from "@/lib/accounts";
+import { Altitude } from "@/components/ui/altitude";
+import { levelLabel } from "@/lib/accounts";
 import { accountKeys, type Level } from "@/lib/api/accounts";
 import { useAskSetup, useWithdrawSetup } from "@/lib/api/app-setup-requests";
 import {
@@ -109,9 +110,12 @@ function GenericSignInStep({
   fixedInstanceId,
   hasWriteTools,
   orgMode,
+  agentName,
   onBack,
   onResult,
 }: {
+  /** The agent the account is for, named in "…; Dani acts as you". */
+  agentName?: string;
   app: AppDetail;
   plan: ConnectPlan;
   workspaceId: string;
@@ -271,6 +275,21 @@ function GenericSignInStep({
   const family = app.family;
   // More than one way that works for people: the choice sits at the top of the step.
   const usable = plan.methods.filter((m) => m.ready && m.audience !== "admin");
+  // (P5-REFINE-13, access-6) The ways in, plain: the one that works now first. A ready OAuth way is "OAuth app: Sign in with one
+  // click" with Works now and leads; a personal access token says "Works now" too; the rest (a GitHub App, classic tokens) are
+  // an Expert item. An OAuth way that is not ready shows "After an admin sets it up" and who can (the plan decides, not the page).
+  const readyApps = app.connect.filter((m) => usable.some((u) => u.id === m.id));
+  const oauthReady = readyApps.find((m) => m.kind === "oauth2");
+  const tokenMethod = readyApps.find((m) => m.kind === "fields" && tokenPage(app, m));
+  const agentLabel = agentName || "the agent";
+  const mainOptions = [
+    ...(oauthReady ? [{ value: oauthReady.id, label: "OAuth app", description: "Sign in with one click.", badge: "Works now" }] : []),
+    ...(tokenMethod
+      ? [{ value: tokenMethod.id, label: "A personal access token", description: `Paste a token from ${hostOf(tokenPage(app, tokenMethod) ?? "") || app.name}; ${agentLabel} acts as you.`, badge: "Works now" }]
+      : []),
+  ];
+  const otherMethods = readyApps.filter((m) => m.id !== oauthReady?.id && m.id !== tokenMethod?.id);
+  const waitingOauth = oauthReady ? null : (plan.methods.find((m) => m.kind === "oauth2" && !m.ready && m.audience !== "admin") ?? null);
   const secretField = method?.fields.find((f) => f.type === "secret")?.name;
   // A failed connect is said under the field it concerns, with the value kept (B4); other kinds below the form.
   const failure = error ? connectFailure(error, app.name) : null;
@@ -291,22 +310,41 @@ function GenericSignInStep({
   return (
     <Form id="journey-signin" onSubmit={(e) => void submit(e)} aria-label={`Sign in to ${app.name}`} noValidate>
       {family && (family.instance_bound || app.instances) ? <p className="text-xs text-muted">{family.name} · {family.variant_label}</p> : null}
-      {usable.length > 1 ? (
-        <ChoiceCards
-          legend="Sign in with:"
-          value={method.id}
-          onChange={pick}
-          options={app.connect
-            .filter((m) => usable.some((u) => u.id === m.id))
-            .map((m) => ({
-              value: m.id,
-              label: m.label ?? m.id,
-              description: m.description ?? undefined,
-              badge: m.id === plan.suggested_method ? "Suggested" : undefined,
-            }))}
-        />
+      {mainOptions.length + (waitingOauth ? 1 : 0) > 1 || (mainOptions.length > 0 && otherMethods.length > 0) ? (
+        <div className="space-y-2">
+          {mainOptions.length > 0 ? (
+            <ChoiceCards
+              legend="Sign in with"
+              value={mainOptions.some((o) => o.value === method.id) ? method.id : ""}
+              onChange={pick}
+              options={mainOptions}
+            />
+          ) : null}
+          {/* The OAuth way is not ready for this person yet: say so, and who can set it up (a plan-driven line, never a fixed one). */}
+          {waitingOauth ? (
+            <div className="rounded-control border border-line p-3 text-sm text-ink-2">
+              <p>
+                <span className="font-medium text-ink">OAuth app.</span> After an admin sets it up. Sign in with one click.
+              </p>
+              {waitingOauth.who_can ? <WhoCan value={waitingOauth.who_can} /> : null}
+            </div>
+          ) : null}
+          {otherMethods.length > 0 ? (
+            <Altitude id="connect.othermethods" level="expert" label="Other ways to sign in">
+              <ChoiceCards
+                legend="Other ways to sign in"
+                value={otherMethods.some((m) => m.id === method.id) ? method.id : ""}
+                onChange={pick}
+                options={otherMethods.map((m) => ({ value: m.id, label: m.label ?? m.id, description: m.description ?? undefined }))}
+              />
+            </Altitude>
+          ) : null}
+        </div>
       ) : null}
       {app.connect_note && !help ? <Notice>{app.connect_note.text}</Notice> : null}
+      {method.kind === "fields" && help ? (
+        <p className="text-sm font-semibold text-ink">Get a token in {hints.length > 0 ? 3 : 2} steps</p>
+      ) : null}
       {method.kind === "fields" && help ? (
         <ol className="space-y-4 text-sm text-ink">
           <li>
@@ -323,7 +361,7 @@ function GenericSignInStep({
           {hints.length > 0 ? (
             <li className="space-y-2">
               <p>
-                <b>2.</b> Give it these permissions, for <b>{level ? LEVEL_LABEL[level] : "Read only"}</b>:
+                <b>2.</b> Give it these permissions, for <b>{level ? levelLabel(level, app.send_only === true) : "Read only"}</b>:
               </p>
               <pre aria-label="Permissions to give the token" className="whitespace-pre-wrap rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink">
                 {hints.join("\n")}
@@ -391,7 +429,15 @@ function GenericSignInStep({
           </Link>
         </p>
       ) : null}
-      <BackNext form="journey-signin" onBack={onBack} nextLabel={signIn.blocked ? "Try again" : verb} busy={busy} busyLabel="Connecting…" />
+      {/* (P5-REFINE-13, access-10) While the link or token is checked, a line says what is checked; the button says Checking…. */}
+      <p role="status" aria-live="polite" className="text-sm text-ink-2">
+        {busy && method.kind === "fields"
+          ? /calendar|ics/i.test(app.app_id)
+            ? "Fetching the calendar link."
+            : `Checking the token with ${app.name}. This takes a few seconds.`
+          : null}
+      </p>
+      <BackNext form="journey-signin" onBack={onBack} nextLabel={signIn.blocked ? "Try again" : verb} busy={busy} busyLabel="Checking…" />
     </Form>
   );
 }
@@ -509,7 +555,7 @@ export function WebsiteStep({
           {clientErr || errorMessage(create.error)}
         </Notice>
       ) : null}
-      <BackNext form="journey-signin" onBack={onBack} nextLabel="Connect" busy={create.isPending} busyLabel="Connecting…" />
+      <BackNext form="journey-signin" onBack={onBack} nextLabel="Connect" busy={create.isPending} busyLabel="Checking…" />
     </Form>
   );
 }

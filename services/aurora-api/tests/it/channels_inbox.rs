@@ -2840,3 +2840,123 @@ async fn schedule_run_answer_is_posted_to_the_origin_thread() {
     w.finish("done", Some("Cloudy"), None).await;
     assert_eq!(w.ops("message.post").await.len(), before);
 }
+
+/// (P5-REFINE-7, C-1074, FIX-192) Two runs of one schedule run in two threads, each carrying the
+/// schedule's origin, and each answer is mirrored once to the origin's thread.
+#[tokio::test]
+async fn two_runs_of_one_schedule_each_post_once_to_the_origin_thread() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "every morning, the weather", "BD1"))
+        .await;
+    w.finish("done", Some("ok, scheduled"), None).await;
+    let origin: Uuid = sqlx::query_scalar("SELECT conversation_id FROM thread_links LIMIT 1")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let sched = Uuid::now_v7();
+    sqlx::query("INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, origin_conversation_id) VALUES ($1,$2,'Weather','p','0 8 * * *','UTC',$3)")
+        .bind(sched).bind(a).bind(origin).execute(w.h.pool()).await.unwrap();
+    let row = aurora_db::repo::schedules::get(w.h.pool(), sched)
+        .await
+        .unwrap()
+        .unwrap();
+    let before = w.ops("message.post").await.len();
+    let mut threads = Vec::new();
+    let mut turns = Vec::new();
+    for answer in ["Sunny, 21 degrees", "Rain, 12 degrees"] {
+        let mut tx = w.h.pool().begin().await.unwrap();
+        let (_, thread) = aurora_api::domains::schedules::fire::run_now(&mut tx, &row)
+            .await
+            .unwrap()
+            .expect("not busy: the previous run is done");
+        tx.commit().await.unwrap();
+        threads.push(thread);
+        turns.push(w.finish("done", Some(answer), None).await);
+    }
+    assert_ne!(threads[0], threads[1]);
+    let origins: Vec<Option<Uuid>> = sqlx::query_scalar(
+        "SELECT origin_conversation_id FROM conversations WHERE id = ANY($1) ORDER BY created_at",
+    )
+    .bind(&threads)
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(origins, vec![Some(origin), Some(origin)]);
+    let posts = w.ops("message.post").await;
+    assert_eq!(posts.len(), before + 2, "{posts:?}");
+    for (p, text) in posts[before..].iter().zip(["Sunny", "Rain"]) {
+        assert_eq!(p["target"]["space_ref"], "D1");
+        assert!(p["content"]["text"].as_str().unwrap().contains(text), "{p}");
+    }
+    let keys: Vec<String> = sqlx::query_scalar(
+        "SELECT dedupe_key FROM channel_ops WHERE kind='message.post' ORDER BY created_at DESC, id DESC LIMIT 2",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert!(keys.contains(&format!("answer:{}", turns[0])));
+    assert!(keys.contains(&format!("answer:{}", turns[1])));
+    assert_eq!(
+        w.count(&format!(
+            "SELECT count(*) FROM transcript_events WHERE conversation_id='{origin}' AND type='notice' AND payload->>'code'='schedule_run'"
+        ))
+        .await,
+        2
+    );
+}
+
+/// (P5-REFINE-7, C-1073, `13 §5.2`) A chat-platform DM continues the person's first dashboard
+/// chat (`user:<uid>`), not a newer one they started with New chat.
+#[tokio::test]
+async fn a_dm_continues_the_first_dashboard_chat() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    // The first dashboard chat, then a newer one with more recent activity.
+    let mut tx = w.h.pool().begin().await.unwrap();
+    let mut made = Vec::new();
+    for ext in [
+        format!("user:{}", w.member),
+        format!("user:{}:{}", w.member, Uuid::now_v7()),
+    ] {
+        let (c, _) = aurora_db::repo::conversations::get_or_create(
+            &mut tx,
+            &aurora_db::repo::conversations::NewConversation {
+                agent_id: a,
+                workspace_id: w.ws,
+                kind: "direct",
+                external_ref: &ext,
+                direct_user_id: Some(w.member),
+                title: None,
+                origin_conversation_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        made.push(c);
+    }
+    tx.commit().await.unwrap();
+    let (first, newer) = (&made[0], &made[1]);
+    sqlx::query(
+        "UPDATE conversations SET last_activity_at = now() - interval '1 day' WHERE id = $1",
+    )
+    .bind(first.id)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    w.post(w.integ, "e1", dm("U1", "hello from chat", "BD1"))
+        .await;
+    let (conv, text): (Uuid, String) = sqlx::query_as(
+        "SELECT conversation_id, text FROM turns WHERE role='turn' ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(text, "hello from chat");
+    assert_eq!(conv, first.id, "the DM lands in user:<uid>");
+    assert_ne!(conv, newer.id);
+}

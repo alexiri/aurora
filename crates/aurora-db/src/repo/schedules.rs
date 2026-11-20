@@ -356,11 +356,23 @@ pub async fn insert_run(
     turn: Option<Uuid>,
     outcome: &str,
 ) -> Result<RunRow, DbError> {
+    insert_run_with_id(conn, Uuid::now_v7(), schedule, turn, outcome).await
+}
+
+/// [`insert_run`] with an id chosen by the caller (P5-REFINE-7, C-1074: the run's thread is
+/// `schedule:<schedule>:<run>`, created before the run row).
+pub async fn insert_run_with_id(
+    conn: &mut PgConnection,
+    id: Uuid,
+    schedule: Uuid,
+    turn: Option<Uuid>,
+    outcome: &str,
+) -> Result<RunRow, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO schedule_runs (id, schedule_id, turn_id, outcome, fired_at)
          VALUES ($1,$2,$3,$4, now()) RETURNING {RUN_COLS}"
     )))
-    .bind(Uuid::now_v7())
+    .bind(id)
     .bind(schedule)
     .bind(turn)
     .bind(outcome)
@@ -387,6 +399,107 @@ pub async fn list_runs<'e, E: PgExecutor<'e>>(
     .bind(limit)
     .fetch_all(exec)
     .await?)
+}
+
+/// (P5-REFINE-7, C-1077) A run with what its turn and thread say.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RunResultRow {
+    pub id: Uuid,
+    pub schedule_id: Uuid,
+    pub turn_id: Option<Uuid>,
+    pub outcome: String,
+    pub fired_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    /// The run's thread: its turn's conversation, else the thread named after the run.
+    pub conversation_id: Option<Uuid>,
+    pub turn_status: Option<String>,
+    pub turn_error_code: Option<String>,
+}
+
+/// The columns of [`RunResultRow`] over `schedule_runs r`.
+const RUN_RESULT_SELECT: &str = "SELECT r.id, r.schedule_id, r.turn_id, r.outcome, r.fired_at,
+        r.created_at,
+        COALESCE(t.conversation_id, (SELECT c.id FROM conversations c
+            WHERE c.automation_kind = 'schedule' AND c.automation_id = r.schedule_id
+              AND c.external_ref = 'schedule:' || r.schedule_id::text || ':' || r.id::text)) AS conversation_id,
+        t.status AS turn_status, t.error_code AS turn_error_code
+     FROM schedule_runs r LEFT JOIN turns t ON t.id = r.turn_id";
+
+/// (C-1077) Keyset page of a schedule's runs with their results, newest first.
+pub async fn runs_with_results<'e, E: PgExecutor<'e>>(
+    exec: E,
+    schedule: Uuid,
+    after: Option<(DateTime<Utc>, Uuid)>,
+    limit: i64,
+) -> Result<Vec<RunResultRow>, DbError> {
+    let (t, id) = after.unzip();
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{RUN_RESULT_SELECT} WHERE r.schedule_id = $1
+           AND ($2::timestamptz IS NULL OR (r.created_at, r.id) < ($2, $3))
+         ORDER BY r.created_at DESC, r.id DESC LIMIT $4"
+    )))
+    .bind(schedule)
+    .bind(t)
+    .bind(id)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (C-1077) One run with its result.
+pub async fn run_with_result<'e, E: PgExecutor<'e>>(
+    exec: E,
+    run: Uuid,
+) -> Result<Option<RunResultRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{RUN_RESULT_SELECT} WHERE r.id = $1"
+    )))
+    .bind(run)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// (C-1077) The newest run of each of `schedules`, with its result (one query per page).
+pub async fn latest_runs<'e, E: PgExecutor<'e>>(
+    exec: E,
+    schedules: &[Uuid],
+) -> Result<Vec<RunResultRow>, DbError> {
+    if schedules.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{RUN_RESULT_SELECT} WHERE r.id IN (
+            SELECT DISTINCT ON (schedule_id) id FROM schedule_runs WHERE schedule_id = ANY($1)
+            ORDER BY schedule_id, created_at DESC, id DESC)"
+    )))
+    .bind(schedules)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (C-1074) The busy rule: the schedule's latest run that started a turn still has it active
+/// (`queued`, `dispatched`, `running`).
+pub async fn latest_run_active(conn: &mut PgConnection, schedule: Uuid) -> Result<bool, DbError> {
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT t.status FROM schedule_runs r JOIN turns t ON t.id = r.turn_id
+         WHERE r.schedule_id = $1 ORDER BY r.created_at DESC, r.id DESC LIMIT 1",
+    )
+    .bind(schedule)
+    .fetch_optional(conn)
+    .await?;
+    Ok(status.is_some_and(|s| matches!(s.as_str(), "queued" | "dispatched" | "running")))
+}
+
+/// Lock the schedule row for the rest of the transaction (P5-REFINE-7: run-now and a fire
+/// decide the busy rule one at a time). Returns false when it is gone.
+pub async fn lock(conn: &mut PgConnection, id: Uuid) -> Result<bool, DbError> {
+    Ok(
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM schedules WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(conn)
+            .await?
+            .is_some(),
+    )
 }
 
 /// The run row that carries `turn` (fenced writers lock it).

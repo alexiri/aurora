@@ -11,6 +11,10 @@ export type Webhook = S["Webhook"];
 export type WebhookDelivery = S["WebhookDelivery"];
 export type CreateWebhookRequest = S["CreateWebhookRequest"];
 export type UpdateWebhookRequest = S["UpdateWebhookRequest"];
+/** (P5-REFINE-7, C-1078) `rotate-secret`: the webhook and its new secret (shown once). */
+export type WebhookSecret = S["WebhookSecret"];
+/** (P5-REFINE-7, C-1079) What a delivery came to, in words. */
+export type DeliveryResult = WebhookDelivery["result"];
 
 export const webhookKeys = {
   list: (agent: string) => ["agents", agent, "webhooks"] as const,
@@ -59,6 +63,19 @@ export function useRotateWebhook(agent: string) {
   return useMutation({
     gcTime: 0,
     mutationFn: (id: string) => unwrap(api.POST("/v1/webhooks/{id}/rotate", { params: { path: { id } } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: webhookKeys.list(agent) }),
+  });
+}
+
+/**
+ * (P5-REFINE-7, C-1078) A new generated secret for a signed webhook; the old one stops working at once. The secret
+ * is returned to the caller only (shown once), like the create/rotate URL: `gcTime: 0`, never cached.
+ */
+export function useRotateWebhookSecret(agent: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    gcTime: 0,
+    mutationFn: (id: string) => unwrap(api.POST("/v1/webhooks/{id}/rotate-secret", { params: { path: { id } } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: webhookKeys.list(agent) }),
   });
 }

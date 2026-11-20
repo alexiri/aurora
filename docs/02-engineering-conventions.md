@@ -293,6 +293,8 @@ overridden by the named configuration key (`15`).
 | `EXPORT_MAX` | (phase 2, RFE-010) 256 MiB and 200 000 events per export | — | 10 |
 | `SCHEDULE_FIRE_LEASE` | 5 min | — | 10 |
 | `SCHEDULE_FAILURE_DISABLE` | 5 consecutive | — | 10 |
+| `DIRECT_CONVERSATIONS_PER_PERSON_AGENT` | 500 direct conversations (active and archived) per person and agent; the next New chat is 422 `conversation_limit` (phase 5, P5-REFINE-7, C-1073) | — | 10, 05 |
+| `AUTOMATION_THREADS_KEPT` | 200 newest run threads per schedule or webhook; the nightly conversation sweep deletes older ones (phase 5, P5-REFINE-7, C-1074) | — | 10 |
 | `GATE_TIMEOUT` | 30 s | — | 12 |
 | `WEBHOOK_PAYLOAD_MAX` | 1 MiB | — | 10 |
 | `PROCESS_TAIL` | 4 KiB | — | 12 |

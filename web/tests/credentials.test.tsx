@@ -5,6 +5,7 @@ import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { ERROR_MESSAGES } from "@/lib/api/errors";
 import { buildGenericCreate, buildRecipe, EMPTY_RECIPE_FIELDS, type GenericFormState } from "@/lib/api/secrets";
 import { wrap } from "./support/render";
+import { chooseService } from "./support/llm";
 import { json } from "./support/api";
 
 function mockFetch(routes: Record<string, (req: Request) => Response | Promise<Response>>) {
@@ -64,12 +65,15 @@ describe("llm form", () => {
     });
     wrap(<LlmKeyForm scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
     await screen.findByText(/OpenAI API/);
+    // Only permitted services get a card.
     expect(screen.queryByText(/Forbidden/)).toBeNull();
+    await chooseService("OpenAI API");
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "k" } });
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "ok" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     expect(await screen.findByText(ERROR_MESSAGES.llm_key_wrong_organization!)).toBeTruthy();
-    expect((screen.getByLabelText("API key") as HTMLInputElement).value).toBe("");
+    // (P5-REFINE-13, access-8) A refused key stays in the field (masked) so a typo is fixed, not retyped; it was not saved.
+    expect((screen.getByLabelText("API key") as HTMLInputElement).value).toBe("sk-1");
+    expect((screen.getByLabelText("API key") as HTMLInputElement).type).toBe("password");
   });
 });

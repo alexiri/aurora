@@ -53,6 +53,7 @@ export const ALTITUDE_REGISTRY = {
   "auto.curl": { altitude: "expert", area: "Webhooks", later: "P5-REFINE-14" },
   "auto.signature": { altitude: "expert", area: "Webhooks", later: "P5-REFINE-19" },
   "auto.deliveryids": { altitude: "expert", area: "Webhooks" },
+  "connect.othermethods": { altitude: "expert", area: "Connect journey" },
   "auto.verification": { altitude: "setup", area: "Webhooks", later: "P5-REFINE-14" },
   "log.requests": { altitude: "expert", area: "Activity" },
   "tech.details": { altitude: "setup", area: "Technical details folds" },

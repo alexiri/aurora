@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { chooseService } from "./support/llm";
 import { ensurePlacement } from "./support/placement";
 
 // P2-E2E-1 (decision D-78): the owner's phase-2 exit bar, driven through the dashboard only.
@@ -46,10 +47,9 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
 
   // 2. Step 1 opens the LLM key form in place: add the key for the LiteLLM endpoint.
   const form = guide.getByRole("form", { name: "New LLM key" });
+  // The card of the endpoint (display_name in deploy/kind/values-llm-mock.yaml): its name starts the card's label.
+  await chooseService(form, "LiteLLM (VidaiMock, dev only)");
   await form.getByLabel("Name").fill("Mock LLM");
-  // By the endpoint's id (deploy/kind/values-llm-mock.yaml): the label carries hints that change ("— Works with
-  // Claude Code" since P4-LLM-6), and a label that no longer matches waits out the whole test timeout.
-  await form.getByLabel("Provider").selectOption("litellm-mock");
   await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
   // (P5-UX-4, C-988) The form's "Who can use this key" has Daneel ticked (the workspace's only agent), so the key is saved
   // with its access in one request. Key and access are done from the server's state (the mock endpoint has a default

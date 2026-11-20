@@ -818,6 +818,9 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | policy_a | text CHECK in (`ask`,`allow`,`blocked`) | decided by a person with access to a's workspace |
 | policy_b | text CHECK in (`ask`,`allow`,`blocked`) | |
 | revision | bigint not null default 0 | |
+| direction | text not null default `both` CHECK in (`both`,`a_to_b`,`b_to_a`) | who may hand tasks to whom (P5-REFINE-10, C-1085; a = the lower id); existing links `both` |
+| created_by_kind | text not null default `agent` CHECK in (`person`,`agent`) | `agent`: an agent's first `message_agent` created it (every row before migration `20261201000264`); `person`: `POST /v1/agents/{agent}/links` |
+| created_by_user_id | uuid null FK→users (set null) | the person who linked; null for `agent` or once the user is deleted |
 | unique | (agent_a_id, agent_b_id) | |
 
 ### `peer_tasks`
@@ -910,8 +913,12 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | workspace_id | uuid FK→workspaces (cascade) | |
 | kind | text CHECK in (`direct`,`group`,`schedule`,`webhook`,`watch`,`peer`,`api`, and (phase 5, P4-EVAL-2, C-860) `eval`) | |
 | external_ref | text not null | source-specific stable key; unique (agent_id, kind, external_ref) |
-| direct_user_id | uuid null FK→users (cascade) | kind=direct; partial unique (agent_id, direct_user_id) WHERE kind=`direct` |
+| direct_user_id | uuid null FK→users (cascade) | kind=direct; (phase 5, P5-REFINE-7, C-1073, D-409) several per (agent, person): the partial unique index `conversations_direct_user_uq` is dropped (`20261201000262`), replaced by the plain index `conversations_direct_person_idx` (agent_id, direct_user_id, last_activity_at desc) WHERE kind=`direct`; the first one's `external_ref` is `user:<uid>`, later ones `user:<uid>:<uuid>` |
 | title | text null | |
+| title_source | text not null default 'auto' CHECK in (`auto`,`person`,`automation`) | (phase 5, P5-REFINE-7, C-1073) who set `title`: `auto` (the first person message's first line, or none yet), `person` (a rename), `automation` (the schedule's or webhook's name, kept in sync) |
+| automation_kind | text null CHECK in (`schedule`,`webhook`) | (phase 5, P5-REFINE-7, C-1074) the automation a run thread belongs to; set together with `automation_id` (both null or both set) |
+| automation_id | uuid null | (phase 5, P5-REFINE-7, C-1074) the schedule or webhook id; no FK (the thread outlives it); index `conversations_automation_idx` (automation_kind, automation_id, last_activity_at desc) WHERE automation_id IS NOT NULL |
+| automation_deleted_at | timestamptz null | (phase 5, P5-REFINE-7, C-1074) set when the schedule or webhook is deleted; the transcript stays |
 | origin_conversation_id | uuid null FK→conversations (set null) | where reports go (schedule/webhook/peer) |
 | harness_session_ref | text null | opaque, adapter-owned |
 | harness_session_epoch | bigint not null default 0 | bumped to force a fresh session (phase 4, P4-HAR: on every conversation of an agent when its harness changes; `harness_session_ref` is also cleared and a `session_purges` row is queued per old session, `12`) |
@@ -1240,9 +1247,9 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | id | uuid pk | |
 | webhook_id | uuid FK→webhooks (cascade) | |
 | turn_id | uuid null | |
-| status | text CHECK in (`accepted`,`rejected`,`paused`) | |
+| status | text CHECK in (`accepted`,`rejected`,`paused`, and (phase 5, P5-REFINE-7, C-1079) `duplicate`) | a `duplicate` row records a repeated delivery (same idempotency key inside the window) with the original's `turn_id` |
 | size_bytes | int not null | |
-| reason | text null | |
+| reason | text null | `accepted`: the idempotency key (`key:<hex>` / `body:<hex>`); `rejected`/`paused`: why; `duplicate`: the original delivery's id |
 
 ### `processes`
 | Column | Type | Notes |

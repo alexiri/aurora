@@ -86,9 +86,76 @@ pub fn validate_min(
     Ok(first)
 }
 
+/// The next `n` instants after `after` (fewer when the expression stops firing).
+pub fn next_n(
+    expr: &str,
+    tz: &str,
+    after: DateTime<Utc>,
+    n: usize,
+) -> Result<Vec<DateTime<Utc>>, ApiError> {
+    let mut out = Vec::with_capacity(n);
+    let mut prev = next_after(expr, tz, after)?;
+    out.push(prev);
+    while out.len() < n {
+        let Ok(next) = next_after(expr, tz, prev) else {
+            break;
+        };
+        out.push(next);
+        prev = next;
+    }
+    Ok(out)
+}
+
+/// How many instants the preview reads to find the smallest gap (C-1077).
+const PREVIEW_SCAN: usize = 12;
+
+/// (P5-REFINE-7, C-1077) What a cadence would do, as you type: the next three instants, the
+/// smallest gap among the next 12 (seconds) and whether it is below [`MIN_INTERVAL`]. Create and
+/// update still refuse a too-frequent cadence over a full cycle ([`validate`]).
+pub struct Preview {
+    pub next: Vec<DateTime<Utc>>,
+    pub interval_secs: Option<i64>,
+    pub too_frequent: bool,
+}
+
+pub fn preview(expr: &str, tz: &str, now: DateTime<Utc>) -> Result<Preview, ApiError> {
+    let all = next_n(expr.trim(), tz, now, PREVIEW_SCAN)?;
+    let interval_secs = all.windows(2).map(|w| (w[1] - w[0]).num_seconds()).min();
+    Ok(Preview {
+        next: all.iter().take(3).copied().collect(),
+        interval_secs,
+        too_frequent: interval_secs.is_some_and(|s| s < MIN_INTERVAL.num_seconds()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_lists_three_and_flags_the_five_minute_minimum() {
+        let now = at("2026-03-02T12:00:30Z");
+        let every_minute = preview("* * * * *", "UTC", now).unwrap();
+        assert_eq!(every_minute.next.len(), 3);
+        assert_eq!(every_minute.next[0], at("2026-03-02T12:01:00Z"));
+        assert_eq!(every_minute.interval_secs, Some(60));
+        assert!(every_minute.too_frequent);
+        let four = preview("*/4 * * * *", "UTC", now).unwrap();
+        assert!(four.too_frequent);
+        let five = preview("*/5 * * * *", "UTC", now).unwrap();
+        assert_eq!(five.interval_secs, Some(300));
+        assert!(!five.too_frequent);
+        assert_eq!(
+            five.next,
+            vec![
+                at("2026-03-02T12:05:00Z"),
+                at("2026-03-02T12:10:00Z"),
+                at("2026-03-02T12:15:00Z")
+            ]
+        );
+        assert!(preview("0 9 * *", "UTC", now).is_err());
+        assert!(preview("0 9 * * *", "Mars/Base", now).is_err());
+    }
 
     fn at(s: &str) -> DateTime<Utc> {
         s.parse().unwrap()

@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { agent, id, mockApi, now, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
 import { serious } from "./support/axe";
+import { chooseService } from "./support/llm";
 
 // P5-UX-4 (C-917, C-925, C-938, C-980; docs/14 §Agents, accounts and access): the one list of accounts on the
 // workspace's Accounts tab (ws-accounts) and on the agent's Access tab (agent-access): rows, the access choice as one
@@ -150,8 +151,8 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByRole("menuitem", { name: "Add an AI key" }).click();
         await expect(page.getByRole("dialog", { name: "Add an AI key" })).toBeVisible();
         const form = page.getByRole("form", { name: "New LLM key" });
+        await chooseService(page.getByRole("dialog", { name: "Add an AI key" }), "AI gateway");
         await form.getByLabel("Name").fill("Team key");
-        await form.getByLabel("Provider").selectOption("aigw");
         await form.getByLabel("API key", { exact: true }).fill("sk-not-a-real-key");
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
         // (P5-POLISH-11, A1) The buttons are the dialog's footer row, not inside the form.

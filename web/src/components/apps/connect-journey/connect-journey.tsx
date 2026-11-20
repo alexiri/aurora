@@ -12,7 +12,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
 import { ArrowLeftIcon, CheckIcon } from "@/components/ui/icons";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
-import { LEVEL_LABEL, LEVEL_ORDER, preselectAgents } from "@/lib/accounts";
+import { levelLabel, LEVEL_ORDER, preselectAgents } from "@/lib/accounts";
 import { savedButText } from "@/lib/account-health";
 import { accountKeys, useAccounts, usePutAccess, useTestAccount, type Account, type Level } from "@/lib/api/accounts";
 import { appDisplayName, productName } from "@/lib/api/app-name";
@@ -37,6 +37,9 @@ import {
   type StepId,
 } from "./logic";
 import { SignInStep, WebsiteStep, type SignInResult } from "./sign-in-step";
+import { useDeleteConnection } from "@/lib/api/apps";
+import { WebhookAddressStep, WebhookMessageStep, useWebhookDraft } from "@/components/webhook/webhook-connect-step";
+import { WebhookDoneTest } from "@/components/webhook/webhook-done-test";
 
 type AgentRef = { id: string; name: string; handle?: string };
 
@@ -49,6 +52,8 @@ interface DoneState {
   grantFailed: string | null;
   missing: string[];
   level: Level | null;
+  /** A send-only app: Done says "can now send to <account>, and asks you first". */
+  sendOnly?: boolean;
   appId?: string;
   customOnly?: boolean;
   scopes?: string[];
@@ -129,7 +134,15 @@ export function ConnectJourney({
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [giving, setGiving] = useState(false);
+  // A link out of the journey (Try it in chat, the Access tab) closes the dialog at once, without `onClose`: the host's
+  // close rewrites the URL (a History write on the page being left) and would undo the link's navigation.
+  const [leaving, setLeaving] = useState(false);
   const put = usePutAccess();
+  // (P5-REFINE-13, access-4) The Outgoing webhook's Address and Message steps: their state lives here, the footer is the journey's.
+  const webhookDraft = useWebhookDraft();
+  // "Edit address" after a failed test: the account made a moment ago has the wrong address and goes when the new one is saved.
+  const [replacing, setReplacing] = useState<string | null>(null);
+  const deleteConnection = useDeleteConnection({ kind: "workspace", id: workspaceId });
 
   const realApp = choice?.kind === "app" ? choice.appId : undefined;
   const detail = useApp(realApp, workspaceId);
@@ -160,6 +173,8 @@ export function ConnectJourney({
   const app: AppDetail | undefined = detail.data;
   const levels: Level[] = target ? LEVEL_ORDER.filter((l) => target.levels.includes(l)) : app ? levelsForApp(app) : [];
   const effective: Level = levels.includes(level) ? level : (levels[0] ?? "read");
+  // (D-419) The Outgoing webhook only sends: its levels are "ask" and "act", worded for sends.
+  const sendOnly = (target ? target.app?.send_only : app?.send_only) === true;
 
   const shape: JourneyShape = {
     appGiven: !!appId,
@@ -170,6 +185,7 @@ export function ConnectJourney({
     useExisting,
     hasChoice: levels.length > 0,
     noAgentChosen: agentIds.length === 0,
+    webhook: choice?.kind === "app" && choice.appId === "webhook",
   };
   const steps = stepsOf(shape);
 
@@ -235,6 +251,7 @@ export function ConnectJourney({
         grantFailed: null,
         missing: [],
         level: levels.length > 0 ? effective : "read",
+        sendOnly,
         appId: target.app?.app_id,
         accountName: target.name,
         firstPrompt: app?.first_prompt ?? null,
@@ -251,6 +268,8 @@ export function ConnectJourney({
   const hasLevels = levels.length > 0;
   const customOnly = app?.app_restrictions?.custom_only === true;
   const finishSignIn = (r: SignInResult) => {
+    if (replacing && replacing !== r.accountId) deleteConnection.mutate(replacing);
+    setReplacing(null);
     refresh();
     setDone({
       accountId: r.accountId,
@@ -261,6 +280,7 @@ export function ConnectJourney({
       missing: r.missing,
       // A one-level app (no write tools) is read only; the Done line says so (B5). Custom-only apps have no single level.
       level: hasLevels ? effective : customOnly ? null : "read",
+      sendOnly,
       appId: realApp,
       customOnly,
       scopes: r.scopes,
@@ -374,14 +394,15 @@ export function ConnectJourney({
     const who = chosenAgents.length === 1 ? chosenAgents[0]!.name : "These agents";
     body = (
       <div className="space-y-3">
-        <p className="text-sm font-medium text-ink">What may {agentWord || "the agent"} do in {appName}?</p>
+        <p className="text-sm font-medium text-ink">What may {agentWord || "the agent"} do {sendOnly ? "with" : "in"} {appName}?</p>
         <AccessChoice
           account={{ levels, limit: target?.limit, app: target?.app, managed_by: target?.managed_by }}
           agentName={who}
           orgName={orgRecord.data?.name}
+          sendOnly={sendOnly}
           value={effective}
           onChange={setLevel}
-          legend={`What may ${who} do in ${appName}?`}
+          legend={`What may ${who} do ${sendOnly ? "with" : "in"} ${appName}?`}
         />
         <p className="text-xs text-muted">You can change this at any time on {chosenAgents.length === 1 ? `${who}'s` : "each agent's"} Apps &amp; access tab.</p>
         <ErrorNotice error={error} />
@@ -406,6 +427,23 @@ export function ConnectJourney({
         }}
       />
     );
+  } else if ((step === "address" || step === "message") && app) {
+    const ctx = {
+      app,
+      workspaceId,
+      orgId,
+      level: levels.length > 0 ? effective : null,
+      agentIds,
+      hasWriteTools: app.tools.some((t) => t.group === "write"),
+      goTo: (s: "address" | "message") => setStep(s),
+      onResult: finishSignIn,
+    };
+    body =
+      step === "address" ? (
+        <WebhookAddressStep draft={webhookDraft} agentName={agent?.name ?? agentWord} onBack={prevStep(shape, "address") ? back : undefined} onNext={() => setStep("message")} />
+      ) : (
+        <WebhookMessageStep draft={webhookDraft} ctx={ctx} onBack={back} />
+      );
   } else if (step === "signin" && app) {
     body = plan.isPending ? (
       <Loading />
@@ -420,6 +458,7 @@ export function ConnectJourney({
         orgId={orgId}
         level={levels.length > 0 ? effective : null}
         agentIds={agentIds}
+        agentName={agent?.name ?? chosenAgents[0]?.name}
         fixedInstanceId={choice.kind === "app" ? choice.instanceId : undefined}
         hasWriteTools={app.tools.some((t) => t.group === "write")}
         onBack={prevStep(shape, "signin") ? back : undefined}
@@ -456,13 +495,13 @@ export function ConnectJourney({
               <CheckIcon className="size-6" />
             </span>
             <p className="text-base font-semibold text-ink">
-              {doneSentence({ agent: who, app: granted.length > 0 ? accountName : done.name, level: done.level, agentChosen: granted.length > 0 })}
+              {doneSentence({ agent: who, app: granted.length > 0 ? accountName : done.name, level: done.level, agentChosen: granted.length > 0, sendOnly: done.sendOnly })}
             </p>
             {granted.length > 0 ? (
               <p className="text-ink-2">
-                {done.level ? `${LEVEL_LABEL[done.level]}. ` : ""}You can change this on{" "}
+                {done.level ? `${levelLabel(done.level, done.sendOnly)}. ` : ""}You can change this on{" "}
                 {accessTab ? (
-                  <Link href={accessTab} onClick={onClose} className="font-medium text-link underline">
+                  <Link href={accessTab} onClick={() => setLeaving(true)} className="font-medium text-link underline">
                     {who}&apos;s Apps &amp; access tab
                   </Link>
                 ) : (
@@ -475,6 +514,16 @@ export function ConnectJourney({
         )}
         {warning ? <Notice tone="pending" role="alert">{warning}</Notice> : null}
         {done.missing.length > 0 ? <Notice tone="pending">Some requested permissions were not granted: {done.missing.join(", ")}.</Notice> : null}
+        {!done.grantFailed && done.appId === "webhook" ? (
+          <WebhookDoneTest
+            connectionId={done.accountId}
+            onEditAddress={() => {
+              setReplacing(done.accountId);
+              setDone(null);
+              setStep("address");
+            }}
+          />
+        ) : null}
         {!done.grantFailed && prompt && first ? (
           <div className="rounded-control bg-subtle p-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-muted">Try it</p>
@@ -508,7 +557,7 @@ export function ConnectJourney({
                 </Button>
               )}
               {chat ? (
-                <Link className={cn(buttonVariants({ size: "lg" }), "max-sm:order-first max-sm:w-full")} href={chat} onClick={onClose}>
+                <Link className={cn(buttonVariants({ size: "lg" }), "max-sm:order-first max-sm:w-full")} href={chat} onClick={() => setLeaving(true)}>
                   {prompt ? "Try it in chat" : "Open chat"}
                 </Link>
               ) : null}
@@ -538,6 +587,7 @@ export function ConnectJourney({
     body = <Loading />;
   }
 
+  if (leaving) return null;
   const shown = steps.filter((s) => s !== "agent" || !agent);
   const previous = prevStep(shape, step);
   return (

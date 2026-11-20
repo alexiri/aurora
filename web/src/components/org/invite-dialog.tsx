@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { copyToClipboard } from "@/components/agents/terminal-clipboard";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
@@ -19,7 +20,7 @@ function nameFromEmail(email: string): string {
   return email.includes("@") && local ? `${local.charAt(0).toUpperCase()}${local.slice(1)}` : "They";
 }
 
-export function InviteForm({ orgId, onDone, onCancel }: { orgId: string; onDone: () => void; onCancel?: () => void }) {
+export function InviteForm({ orgId, onDone, onCancel }: { orgId: string; onDone: (created: { email: string; link?: string | null }) => void; onCancel?: () => void }) {
   const create = useCreateInvitation(orgId);
   const workspaces = useWorkspaces(orgId);
   const [email, setEmail] = useState("");
@@ -38,7 +39,7 @@ export function InviteForm({ orgId, onDone, onCancel }: { orgId: string; onDone:
     setClientErr("");
     create.mutate(
       { email: email.trim(), role, workspace_ids: wsIds, approver_workspace_ids: approverIds },
-      { onSuccess: onDone },
+      { onSuccess: (inv) => onDone({ email: inv.email, link: inv.link }) },
     );
   }
 
@@ -100,14 +101,34 @@ export function InviteForm({ orgId, onDone, onCancel }: { orgId: string; onDone:
 
 export function InviteDialog({ orgId }: { orgId: string }) {
   const [open, setOpen] = useState(false);
+  const [created, setCreated] = useState<{ email: string; link?: string | null } | null>(null);
+  const [copied, setCopied] = useState(false);
   const orgName = useOrg(orgId).data?.name;
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setCreated(null); setCopied(false); } }}>
       <DialogTrigger asChild>
         <Button>Invite member</Button>
       </DialogTrigger>
       <DialogContent title={`Invite someone to ${orgName ?? "the organization"}`} description="They get a link to join this organization.">
-        <InviteForm orgId={orgId} onDone={() => setOpen(false)} onCancel={() => setOpen(false)} />
+        {created ? (
+          <div className="space-y-4" data-testid="invite-created">
+            <p className="text-sm text-ink">Invitation created for {created.email}.</p>
+            {created.link ? (
+              <Button
+                variant="outline"
+                onClick={async () => setCopied(await copyToClipboard(created.link!))}
+              >
+                Copy invitation link
+              </Button>
+            ) : null}
+            {copied ? <p role="status" className="text-sm text-ink-2">Invitation link copied. Send it to {nameFromEmail(created.email)} yourself.</p> : null}
+            <div className="flex justify-end">
+              <Button onClick={() => setOpen(false)}>Done</Button>
+            </div>
+          </div>
+        ) : (
+          <InviteForm orgId={orgId} onDone={(c) => setCreated(c)} onCancel={() => setOpen(false)} />
+        )}
       </DialogContent>
     </Dialog>
   );

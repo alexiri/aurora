@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { id, mockApi, org } from "./support/mock-api";
 import { overflow } from "./support/open";
 import { serious } from "./support/axe";
+import { chooseService } from "./support/llm";
 
 // P4-LLM-6 (C-811, docs/14 §Credentials › LLM keys, §Settings › LLM endpoints): the key form per auth mode
 // (Bedrock assume-role with the organization's external id and the trust policy, Azure Entra, GCP key file) and the
@@ -88,8 +89,8 @@ for (const scheme of ["light", "dark"] as const) {
       test("Bedrock: assume a role first, with the external id and the trust policy", async ({ page }) => {
         await open(page, "/o/acme/w/main/apps?tab=accounts&kind=ai-key", scheme);
         await openKeyForm(page);
+        await chooseService(page, "Bedrock EU");
         await page.getByLabel("Name").fill("Bedrock key");
-        await page.getByLabel("Provider", { exact: true }).selectOption("bed");
         const group = page.getByRole("radiogroup", { name: "How Aurora signs in to the provider" });
         await expect(group.getByRole("radio").first()).toBeChecked();
         await expect(group.getByText("Recommended")).toBeVisible();
@@ -108,12 +109,14 @@ for (const scheme of ["light", "dark"] as const) {
       test("Azure: Entra fields and the no-harness notice; Vertex: the key file", async ({ page }) => {
         await open(page, "/o/acme/w/main/apps?tab=accounts&kind=ai-key", scheme);
         await openKeyForm(page);
-        await page.getByLabel("Provider", { exact: true }).selectOption("az");
+        await chooseService(page, "Azure");
         await expect(page.getByText("No enabled harness speaks this endpoint's API", { exact: false })).toBeVisible();
         await expect(page.getByLabel("Tenant id")).toBeVisible();
         await expect(page.getByLabel("Client secret", { exact: true })).toBeVisible();
         await clean(page);
-        await page.getByLabel("Provider", { exact: true }).selectOption("vx");
+        // Another service: back to the cards, then the key file.
+        await page.getByRole("button", { name: "Change service" }).click();
+        await chooseService(page, "Vertex");
         await expect(page.getByLabel("Service account key (JSON)")).toBeVisible();
         await expect(page.getByText("Models are configured by your administrator.")).toBeVisible();
         await clean(page);

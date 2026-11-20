@@ -9,8 +9,21 @@ export const LEVEL_LABEL: Record<Level, string> = {
 
 export const LEVEL_ORDER: readonly Level[] = ["read", "ask", "act"];
 
+/** (P5-REFINE-13, D-419, C-1067) A send-only app (the Outgoing webhook) has two levels of its own; Read only is never offered. */
+export const SEND_LEVEL_LABEL: Partial<Record<Level, string>> = {
+  ask: "Ask before each send",
+  act: "Send without asking",
+};
+
+/** The label of a level, in the words of a send-only app when `sendOnly`. */
+export function levelLabel(level: Level, sendOnly = false): string {
+  return (sendOnly ? SEND_LEVEL_LABEL[level] : undefined) ?? LEVEL_LABEL[level];
+}
+
 /** The sentence of each choice (`14 §2`), for an agent named `agent`. */
-export function levelSentence(level: Level, agent: string): string {
+export function levelSentence(level: Level, agent: string, sendOnly = false): string {
+  if (sendOnly && level === "ask") return `${agent} asks you before it sends anything. You answer in Approvals.`;
+  if (sendOnly && level === "act") return `${agent} may send on its own.`;
   switch (level) {
     case "read":
       return `${agent} can look things up but never change anything.`;
@@ -22,18 +35,33 @@ export function levelSentence(level: Level, agent: string): string {
 }
 
 /** What one agent's entry says in the row: "Daneel · Read only". */
-export function entryText(entry: AgentAccess, account?: Pick<Account, "ref" | "levels">): string {
+export function entryText(entry: AgentAccess, account?: Pick<Account, "ref" | "levels"> & Partial<Pick<Account, "app">>): string {
   switch (entry.level) {
     case "read":
     case "ask":
     case "act":
-      return `${entry.agent.name} · ${LEVEL_LABEL[entry.level]}`;
+      return `${entry.agent.name} · ${levelLabel(entry.level, account?.app?.send_only === true)}`;
     case "custom":
       return `${entry.agent.name} · Custom`;
     case "use":
       // A read-only app has no levels and the grant level `use`: the pill still says "Read only".
       return account?.ref.type === "connection" && account.levels.length === 0 ? `${entry.agent.name} · Read only` : entry.agent.name;
   }
+}
+
+/**
+ * (P5-REFINE-13, access-11) What an app account's menu offers. The API does not say which apps can be tested or signed
+ * in again, so the rule is derived from the app's connect methods: **Test the connection** where a method has a probe
+ * (`has_probe`); **Sign in again** where a method is OAuth (`kind: "oauth2"`); the Outgoing webhook (`app_id: "webhook"`)
+ * has **Send a test** instead of a probe. With the app unknown (not loaded, not installed) none is offered.
+ */
+export function accountActions(
+  appId: string | undefined,
+  methods: ReadonlyArray<{ kind: string; has_probe?: boolean }> | undefined,
+): { test: boolean; signInAgain: boolean; sendTest: boolean } {
+  if (appId === "webhook") return { test: false, signInAgain: false, sendTest: true };
+  const list = methods ?? [];
+  return { test: list.some((m) => m.has_probe === true), signInAgain: list.some((m) => m.kind === "oauth2"), sendTest: false };
 }
 
 /** The label of an agent in a picker: "<workspace> · <agent>" when agents of more than one workspace are listed (C-948). */

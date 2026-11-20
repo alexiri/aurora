@@ -7,6 +7,7 @@ mod admin;
 mod admin_attention;
 mod admin_delete;
 mod admin_overview_previews;
+mod agent_links_people;
 mod agent_token_age;
 mod agents;
 mod answer_readiness;

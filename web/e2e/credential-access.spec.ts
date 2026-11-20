@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { agent, id, mockApi, now } from "./support/mock-api";
 import { overflow } from "./support/open";
 import { serious } from "./support/axe";
+import { chooseService } from "./support/llm";
 
 // FIX-021 (D-136, D-137; docs/14 §Credentials, §Agent page › Access): the "Give agents access" step after creating
 // an LLM key, the row Access dialog, and the Model readiness section. Both themes at 1280 px and 390 px, no
@@ -90,8 +91,8 @@ for (const scheme of ["light", "dark"] as const) {
         // (P5-POLISH-7) The form is in the Add an AI key dialog.
         await expect(page.getByRole("dialog", { name: "Add an AI key" })).toBeVisible();
         const form = page.getByRole("form", { name: "New LLM key" });
+        await chooseService(page.getByRole("dialog", { name: "Add an AI key" }), "AI gateway");
         await form.getByLabel("Name").fill("Team key");
-        await form.getByLabel("Provider").selectOption("aigw");
         await form.getByLabel("API key", { exact: true }).fill("sk-not-a-real-key");
         // (C-925) Two agents may be chosen and none is the context: nothing is ticked.
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();

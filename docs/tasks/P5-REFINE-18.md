@@ -496,6 +496,10 @@ risk: review them closely.
 
 Fill in when done; P5-REFINE-20 reads it.
 
+## Third pass (after P5-REFINE-6 merged, master `2a0278a8`)
+
+Done (the items that waited on brief 6): **admin-5** (a connector whose host runs reads "Connector host running · 1 replica · Ready", never "waiting for the host"; the "Next: an organization owner connects <name> in their Chat platforms page." line with "Open <Org>'s Chat platforms" links, from `next_step = owner_connects`, C-1068), **admin-12** (the upload dialog is "Upload an app", shows the chosen file with **Choose another**, one sentence per problem from `violations[].sentence` and the codes under Technical details, C-1071), **admin-14** (Storage by category — Conversations, Files, Activity — with the tables under Technical details, C-1072; the Rate limits "Private destinations" red banner is neutral text; the green "Limits are healthy" line is **not** built: no API says whether a limit is being hit), **C-1088** (the audit asks `include_system=false` and shows the server's `hidden_system` count; the client-side classifier is gone). Still waiting on brief 8: item 13 and the per-entry counts. Org Storage keeps its own page (the API counts only files per organization). Tests: `admin-audit-view`, `plugins-admin`, `storage`, `connectors-admin` (updated or added); specs: `admin-settings.spec` (rate limits text).
+
 ## Second pass (worker session on `alexiri/p5-apps`, after master `2243097b`)
 
 **Done in this pass, one commit per item** (items 1, 4+5, 7, 8, 9 each have their own commit; 10, 11, 14, 15, 17 admin-13, the org presets, the checklist line and the Provider rename are in the commits that follow them in `git log`; ids are in the worker_done message).

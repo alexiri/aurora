@@ -12,6 +12,8 @@ export type Schedule = S["Schedule"];
 export type ScheduleRun = S["ScheduleRun"];
 export type CreateScheduleRequest = S["CreateScheduleRequest"];
 export type UpdateScheduleRequest = S["UpdateScheduleRequest"];
+/** (P5-REFINE-7, C-1077) What a cadence would do: three instants, the smallest gap, too frequent. */
+export type SchedulePreview = S["SchedulePreview"];
 
 export const scheduleKeys = {
   list: (agent: string) => ["agents", agent, "schedules"] as const,
@@ -64,6 +66,27 @@ export function useRunScheduleNow(agent: string) {
       void qc.invalidateQueries({ queryKey: scheduleKeys.runs(agent, id) });
       void qc.invalidateQueries({ queryKey: scheduleKeys.list(agent) });
     },
+  });
+}
+
+/**
+ * (P5-REFINE-7, C-1077) Preview a cadence as you type (rate class `check`: debounce the input). Saves nothing;
+ * a bad cron or time zone answers 422 `invalid_cron` / `invalid_timezone`. Disabled until `cron` has five fields.
+ */
+export function useSchedulePreview(agent: string, cron: string, timezone?: string) {
+  const trimmed = cron.trim();
+  return useQuery({
+    queryKey: ["agents", agent, "schedules", "preview", trimmed, timezone ?? ""] as const,
+    queryFn: () =>
+      unwrap(
+        api.POST("/v1/agents/{agent}/schedules/preview", {
+          params: { path: { agent } },
+          body: { cron: trimmed, ...(timezone ? { timezone } : {}) },
+        }),
+      ),
+    enabled: cronFieldCount(trimmed) === 5,
+    retry: false,
+    staleTime: 60_000,
   });
 }
 
