@@ -398,7 +398,15 @@ following commit.
   - `UPDATE_OPENAPI=1 … openapi_matches_checked_in` then `pnpm gen:api` (`web/openapi.json`, `schema.d.ts` regenerated; re-run after the merge: no diff); `pnpm typecheck` ok; `eslint src/lib/api/conversations.ts` ok.
   - vitest (every file referencing `lib/api/conversations`, `SandboxView`, `FileText`/Files text, the computer tab, the status rail or `useSandbox`): 18 files / 219 tests passed, and 9 files / 95 tests where `ssh-sessions.test.tsx` failed on master's own Pause wording before master's fix `602dd7d5`; after merging it, 12/12 passed. The whole vitest suite was not run (no shared UI changed).
   - `python3 scripts/extract-schema.py --check` ok; `scripts/guards/run-all.sh` all passed.
-  - Upgrade scenario on a throwaway kind cluster: see below.
+  - **Upgrade scenario on a throwaway kind cluster** (`AURORA_DEV_CLUSTER=p5e AURORA_DEV_PORT=4630`, `kind-dev.sh up --ssh --no-sandbox`
+    through `heavy.sh`, deleted afterwards with `kind-dev.sh down`, volumes kept). `helm --wait` timed out only on the sandbox seccomp
+    DaemonSet (it needs the sandbox image `--no-sandbox` skips); API, runner, terminator and the rest ran this branch. The bug made
+    deterministic: the API was pointed at a copy of the config with `terminal.available = false` and `ssh.enabled = false` (the runner
+    kept the real config) and the runner restarted, so it registered with an "off" API: no "stream listener open" line, a request to
+    :4108 through a port-forward timed out (curl exit 28). Then the API alone went back to the real config (API-only rollout, 13:11:47):
+    **the same runner pod, 0 restarts, logged "previews enabled: stream listener open on 4108" at 13:12:27** and :4108 answered 401 (the
+    unauthenticated dial). Not exercised: a real Terminal/Files/SSH session (no sandbox image in this run); the session paths themselves
+    are unchanged and covered by the ITs above.
 - **Open questions** (for the owner or the Orchestrator):
   - Orchestrator: record in `docs/90-decisions.md` that D-178 Q-R5-5 is amended by D-412 (owners no longer see the engine on `GET …/sandbox`).
   - Owner: `GET …/start-failures` still gives workspace owners the runner's wording and pod events (C-1059 says unchanged). Should it follow
