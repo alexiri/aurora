@@ -46,6 +46,7 @@ export function RedactedRow({ by, reason, date }: { by?: string; reason?: string
 export function ErrorBlock({
   code,
   message,
+  detail,
   base,
   agentId,
   canOwn = false,
@@ -53,6 +54,8 @@ export function ErrorBlock({
 }: {
   code?: string | null;
   message?: string;
+  /** (P5-REFINE-7, C-1076) The harness's technical line from the `error` event: always under Details, never in the sentence. */
+  detail?: string;
   base: string;
   /** The failing agent (id or handle): "Choose a model" and "Agent access" open **its** page, whatever page the chat is on (FIX-170). */
   agentId?: string;
@@ -63,6 +66,8 @@ export function ErrorBlock({
 }) {
   const copy = errorCopy(code, message);
   const [details, setDetails] = useState(false);
+  // `detail` (C-1076) is the technical line; an older event has only `message`, shown when the code has no copy of its own.
+  const technical = detail || (copy.showServerMessage ? message : "");
   // The chat lives on the agent page, so its tabs are addressed relative to the current path (`?tab=`, C-506).
   const pathname = usePathname() ?? "";
   // `base` is the workspace's own `/o/<org>/w/<ws>`: the route helper builds the agent's page from its parts.
@@ -107,7 +112,7 @@ export function ErrorBlock({
         {copy.link && copy.link.path === "computer" ? <span> (see the Computer tab)</span> : null}
       </p>
       {/* (chat-7) One red box; the technical line is under Details, never in the sentence. */}
-      {copy.showServerMessage && message ? (
+      {technical ? (
         <div className="mt-1">
           <button
             type="button"
@@ -116,7 +121,7 @@ export function ErrorBlock({
             className="inline-flex min-h-11 items-center text-sm underline md:min-h-0">
             {details ? "Hide details" : "Details"}
           </button>
-          {details ? <p className="mt-1 break-words rounded-control bg-canvas px-3 py-2 font-mono text-xs text-ink">{message}</p> : null}
+          {details ? <p className="mt-1 break-words rounded-control bg-canvas px-3 py-2 font-mono text-xs text-ink">{technical}</p> : null}
         </div>
       ) : null}
       {children}
