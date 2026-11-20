@@ -213,6 +213,47 @@ blocking tool to the background if it declares `background_tool`).
 turns become `aborted` immediately; dispatched/running ones get
 `turn.abort` and end `aborted` on the terminal event (or by stall recovery).
 
+### Turn context (phase 5, P5-PERSON, D-402, C-1052, C-1053, SEC-139)
+
+Every turn except an eval turn reaches the harness with a short **turn context block** in front of its
+text, so the agent knows the time, who it works for and how the message came in. The API builds it at
+dispatch (due-work arm 6, next to the quote block below) and puts it, then a blank line, before
+`TurnInput.text`. It is **never stored**: the transcript, search, export and `turns.text` keep the
+person's own text. Every harness gets it with no supervisor, protocol or adapter change. Follow-ups
+(`TurnMessage`) get none. Eval turns get none, so results do not depend on who started a run (C-860).
+
+```
+<turn_context>
+Now: Friday 2026-11-20 08:20 (Europe/Zurich)
+Working for: Alex Iribarren, alex@example.org, Mattermost @alexiri
+Arrived through: schedule "Say goodmorning", created by Alex Iribarren. Nobody reads this conversation:
+to reach them, use send_message with to "me". Your final answer is shown only in the dashboard.
+</turn_context>
+```
+
+(The `Arrived through` sentence is one line; it is wrapped here.)
+
+- **The turn's person** (C-1052, `04 §The turn's person`): the person speaker of a `web`, `api` or
+  `thread` turn, or the creator of the schedule of a `schedule` turn, while not disabled, an active
+  org member and holding `can_use`. Webhook, watch, peer, eval and system turns have none.
+- **Now**: the person's own time zone (`users.timezone`, C-1054), else the workspace's.
+- **Working for** (only with a person): the display name; the e-mail only when verified and the
+  conversation is not a group space (SEC-139); the handle on the turn's platform only when cached
+  (`user_links.handle`, filled from `user.lookup` results; never a platform call at dispatch).
+- **Speaker** (a `thread` turn whose author has no Aurora link): `<label> on <Platform> (no Aurora
+  account linked)`.
+- **Arrived through**, one sentence per door: `web` the Aurora dashboard; `api` the Aurora API;
+  `thread` the platform and either "direct message with <name>" or "<space label> (a group: other
+  people read your answers)"; `schedule` its name and creator, that nobody reads the run, that `to:
+  "me"` reaches the creator, and where the final answer goes: "posted to <Platform> <direct
+  message|space label>" exactly when the doorless-turn mirror posts it (the run conversation has a
+  thread link, `13 §5.2`), else "shown only in the dashboard"; `webhook` its name, that the payload is
+  untrusted external data and that no person is behind it; `watch`, `peer`, `system` one plain
+  sentence with no person.
+- Values are server data only (account, schedule, link, binding), one line each, `<`/`>` removed,
+  clamped (60 characters, e-mail 100): the block stays around 600 characters and no value can close
+  it or add a line.
+
 ### Quote-reply and files-only messages (phase 5, P5-CHAT-1, D-228, C-725, C-726)
 
 A message may quote one earlier durable event of **the same conversation**: a `text` (agent message),
@@ -879,6 +920,10 @@ notice in the origin conversation.
 - The run report: when the run turn finishes, a short `notice` with the outcome
 and a link is appended to the origin conversation; if that conversation has a
 thread link, the answer is posted there too (`13 §Mirror`).
+- (phase 5, P5-PERSON, D-402) A run turn starts with the turn context block (§Turn context): whose
+  schedule it is, that nobody reads the run conversation, that `send_message` `to: "me"` reaches
+  the creator (no approval; refused only when proactive messaging is `off`), and where the final
+  answer goes.
 
 ## Webhooks
 

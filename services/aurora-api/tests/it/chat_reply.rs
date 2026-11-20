@@ -107,7 +107,7 @@ async fn reply_targets_payload_steer_delivery_and_redaction_cascade() {
     // text does not.
     let d = r.deliver().await;
     let turn = d["turn_id"].as_str().unwrap().to_owned();
-    assert_eq!(d["input"]["text"], "hello");
+    assert_eq!(delivered_text(&d), "hello");
     r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
         .await;
     let items = r.work().await;
@@ -220,7 +220,7 @@ async fn reply_targets_payload_steer_delivery_and_redaction_cascade() {
 
     let d2 = r.deliver().await;
     assert_eq!(
-        d2["input"]["text"],
+        delivered_text(&d2),
         "> In reply to a message that was redacted.\n\nthanks"
     );
 }
@@ -246,7 +246,7 @@ async fn promoted_followup_and_files_only_messages() {
     finish(&r, &lv, &turn).await;
     let d2 = r.deliver().await;
     let t2 = d2["turn_id"].as_str().unwrap().to_owned();
-    let text = d2["input"]["text"].as_str().unwrap();
+    let text = delivered_text(&d2);
     assert!(
         text.starts_with("> In reply to ") && text.ends_with("\n> hello\n\nsecond"),
         "{text}"
@@ -295,6 +295,6 @@ async fn promoted_followup_and_files_only_messages() {
         .unwrap();
     assert_eq!(stored, "");
     let d3 = r.deliver().await;
-    assert_eq!(d3["input"]["text"], "(sent 2 files)");
+    assert_eq!(delivered_text(&d3), "(sent 2 files)");
     assert_eq!(d3["attachments"].as_array().unwrap().len(), 2);
 }

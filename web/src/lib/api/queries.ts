@@ -115,6 +115,8 @@ export interface MeInfo {
     role?: string;
     workspaces: { id?: string; slug: string; name?: string; my_role?: string; personal?: boolean }[];
   }[];
+  /** (P5-PERSON, C-1054) The person's own IANA time zone; `null` when unset (absent on an older API). */
+  timezone?: string | null;
 }
 
 /**

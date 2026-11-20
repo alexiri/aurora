@@ -9879,6 +9879,8 @@ export interface components {
             groups: components["schemas"]["MeGroup"][];
             idp_roles?: components["schemas"]["IdpRoles"] | null;
             memberships: components["schemas"]["MeMembership"][];
+            /** @description (P5-PERSON, C-1054) The person's own IANA time zone; `null` = the workspace's is used. */
+            timezone?: string | null;
             user: components["schemas"]["User"];
         };
         /** @description A group the caller belongs to (phase 4, P4-GRP-1). */
@@ -11902,6 +11904,11 @@ export interface components {
             default_org_id?: string | null;
             /** @description 1 to 80 characters. */
             display_name?: string | null;
+            /**
+             * @description (P5-PERSON, C-1054) An IANA time zone name; `null` clears it; absent leaves it. Not a
+             *     known name → 422 `value_invalid`.
+             */
+            timezone?: string | null;
         };
         PatchMemberRequest: {
             /**

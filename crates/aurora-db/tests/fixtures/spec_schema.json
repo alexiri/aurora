@@ -1459,6 +1459,7 @@
       "user_id"
     ],
     "user_links": [
+      "handle",
       "id",
       "integration_id",
       "method",
@@ -1500,7 +1501,8 @@
       "id",
       "idp_admin_source",
       "is_instance_admin",
-      "last_login_at"
+      "last_login_at",
+      "timezone"
     ],
     "watches": [
       "agent_id",
@@ -3040,6 +3042,7 @@
       "user_id": "uuid not null"
     },
     "user_links": {
+      "handle": "text null",
       "id": "uuid not null",
       "integration_id": "uuid",
       "method": "text",
@@ -3081,7 +3084,8 @@
       "id": "uuid not null",
       "idp_admin_source": "text null",
       "is_instance_admin": "bool not null",
-      "last_login_at": "timestamptz null"
+      "last_login_at": "timestamptz null",
+      "timezone": "text null"
     },
     "watches": {
       "agent_id": "uuid",

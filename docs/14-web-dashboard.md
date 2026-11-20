@@ -1229,6 +1229,12 @@ and the Web Push device list (*Key flows*) — (P4-011B spec batch, C-836) one s
 page, where the in-tab and e-mail switches already live; no new route. (phase 4, P4-IDP-1) **Roles from your
 sign-in**: each IdP role value and what it granted. (phase 4, P4-ONB-2) "Show the tour
 again" and "Show the getting-started guide again".
+(phase 5, P5-PERSON, D-402(d), C-1054) **Time zone**: a `Select` in the Profile form (the
+workspace settings' zone list, plus "Not set"; saved with the form as `PATCH /v1/me { timezone }`,
+"Not set" sends `null`), with the hint "Your agents tell the time in it when they work for you.
+Not set: each workspace's own." The app shell, once per browser session, fills an unset zone from
+the browser (`Intl.DateTimeFormat().resolvedOptions().timeZone`, only when it is a valid IANA
+name); it never overwrites a set one.
 
 (phase 5, P4-UTOK, D-281..D-284, C-853..C-855) **Send as me** (under the chat platform links): one
 `ResourceTable` row per token: integration, platform user label, a status pill (`active`, `invalid`,

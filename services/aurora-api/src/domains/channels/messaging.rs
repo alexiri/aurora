@@ -59,6 +59,8 @@ const LIST_MAX: i64 = 25;
 pub enum Fail {
     Invalid(String),
     Denied(String),
+    /// (P5-PERSON, C-1055) A refusal with a code of its own (`no_person`, `not_linked`).
+    Coded(&'static str, String),
     Internal,
 }
 
@@ -644,6 +646,12 @@ async fn lookup_and_pin(
         if u.is_bot {
             continue;
         }
+        // (P5-PERSON, C-1055) The handle cache: a linked platform user's handle, as seen now,
+        // whether or not they are reachable (only the turn context block reads it back).
+        let handle = sanitize::one_line(u.handle.trim_start_matches('@'), 80);
+        if !handle.is_empty() {
+            user_links::set_handle(&mut *tx, integ, &u.reference, &handle).await?;
+        }
         candidates.push((
             Recipient {
                 integration_id: integ,
@@ -841,6 +849,9 @@ pub async fn send_message(
     let agent = agents::get(&s.pool, agent_id)
         .await?
         .ok_or(Fail::Internal)?;
+    if a.to.trim().eq_ignore_ascii_case("me") {
+        return send_to_me(s, &agent, w, a).await;
+    }
     // Before any transaction: an exact handle is looked up on the platform (correlated wait).
     let to = resolve_recipient(s, &agent, w, a.to, a.platform, For::Send).await?;
     let mut tx = s.pool.begin().await?;
@@ -949,6 +960,89 @@ pub async fn send_message(
             }))
         }
     }
+}
+
+/// (P5-PERSON, C-1055, SEC-139) `send_message` to `"me"`: the turn's person (C-1052) in a
+/// direct message on the turn's platform, through their own link. The person is the one the
+/// turn runs for and holds `can_use`, so there is no reach check and no approval; only
+/// `proactive_messaging = off` refuses. Nobody else can be addressed this way.
+async fn send_to_me(
+    s: &AppState,
+    agent: &AgentRow,
+    w: &Where,
+    a: SendArgs<'_>,
+) -> Result<Value, Fail> {
+    use crate::domains::people::{turn_context, turn_person};
+    let mut conn = s.pool.acquire().await?;
+    let Some(person) = turn_person::of_turn_id(
+        &mut conn,
+        w.turn_id,
+        w.conversation_id,
+        turn_person::Scope::from(agent),
+    )
+    .await?
+    else {
+        return Err(Fail::Coded(
+            "no_person",
+            "There is no person behind this turn: \"me\" is the person you are working for (the speaker of a conversation, or the creator of a schedule).".into(),
+        ));
+    };
+    drop(conn);
+    let mut tx = s.pool.begin().await?;
+    let platform = resolve_platform(&mut tx, agent.id, w, a.platform).await?;
+    let integration = platform.ctx.id();
+    let name = sanitize::label(&person.display_name);
+    let Some((user_ref, _)) =
+        user_links::link_of_user_on(&mut *tx, person.user_id, integration).await?
+    else {
+        let pname = turn_context::platform_name(&mut tx, integration)
+            .await?
+            .unwrap_or_else(|| platform.connector().to_owned());
+        return Err(Fail::Coded(
+            "not_linked",
+            format!("{name} has no linked {pname} account; they can link it under Account."),
+        ));
+    };
+    if let Some(m) = bad_text(a.text, &platform) {
+        return invalid(m);
+    }
+    let files = out_files(&mut tx, s, w.conversation_id, a.files).await?;
+    let r = Recipient {
+        integration_id: integration,
+        kind: RKind::User,
+        reference: user_ref,
+        label: name.clone(),
+    };
+    let recipient = json!({"kind": "user", "label": name});
+    // The person's DM is this conversation's own thread: post in it (always allowed).
+    let own = match current_link(&mut tx, w).await? {
+        Some(l) if l.kind == "direct" && l.integration_id == integration => {
+            aurora_db::repo::conversations::get(&mut *tx, w.conversation_id)
+                .await?
+                .is_some_and(|c| c.direct_user_id == Some(person.user_id))
+                .then_some(l)
+        }
+        _ => None,
+    };
+    if own.is_none() && agent.proactive_messaging == "off" {
+        return denied(
+            "Proactive messaging is turned off for you; you may only reply in this thread.",
+        );
+    }
+    let op = post_message(
+        &mut tx,
+        agent,
+        &platform,
+        own.as_ref(),
+        &r,
+        a.text,
+        &files,
+        w.conversation_id,
+        a.call_id,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(json!({"status": "sent", "message_id": op, "recipient": recipient}))
 }
 
 /// Outbound attachments of this conversation, as the connector sees them.
@@ -1265,7 +1359,7 @@ struct Frozen {
 
 fn action_error(f: Fail) -> ActionError {
     ActionError(match f {
-        Fail::Invalid(m) | Fail::Denied(m) => m,
+        Fail::Invalid(m) | Fail::Denied(m) | Fail::Coded(_, m) => m,
         Fail::Internal => "Internal error.".to_owned(),
     })
 }

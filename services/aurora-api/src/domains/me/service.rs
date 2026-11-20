@@ -74,9 +74,11 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
     let idp_roles = aurora_db::repo::idp_roles::get_state(&state.pool, user_id)
         .await?
         .map(Into::into);
+    let timezone = users::timezone(&state.pool, user_id).await?;
     Ok(Me {
         groups,
         idp_roles,
+        timezone,
         default_org_id: user.default_org_id,
         approval_email,
         admin_attention_email,
@@ -106,6 +108,21 @@ pub async fn patch_me(
     {
         return Err(ApiError::not_found("Organization not found."));
     }
+    // (P5-PERSON, C-1054) `null` clears; a string must be an IANA name chrono-tz knows.
+    let timezone: Option<Option<String>> = match req.timezone {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(tz)) => match tz.trim().parse::<chrono_tz::Tz>() {
+            Ok(z) => Some(Some(z.name().to_owned())),
+            Err(_) => {
+                return Err(ApiError::unprocessable(
+                    "value_invalid",
+                    "Unknown time zone: use an IANA name such as Europe/Zurich.",
+                )
+                .with_details(serde_json::json!({"field": "/timezone"})));
+            }
+        },
+    };
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     if let Some(n) = name {
         account::update_display_name(&mut *tx, user_id, n).await?;
@@ -115,6 +132,9 @@ pub async fn patch_me(
     }
     if let Some(on) = req.approval_email {
         account::set_approval_email(&mut *tx, user_id, on).await?;
+    }
+    if let Some(tz) = &timezone {
+        users::set_timezone(&mut *tx, user_id, tz.as_deref()).await?;
     }
     if let Some(on) = req.admin_attention_email {
         aurora_db::repo::admin_attention::set_email_enabled(&mut *tx, user_id, on).await?;

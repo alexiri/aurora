@@ -42,6 +42,7 @@ pub mod oidc;
 pub mod onboarding;
 pub mod outgoing_webhooks;
 pub mod peer_tasks;
+pub mod people;
 pub mod placement;
 pub mod plugins;
 pub mod policy;
