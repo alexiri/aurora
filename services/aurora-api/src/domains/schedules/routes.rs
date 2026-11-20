@@ -69,7 +69,13 @@ fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, r: &ScheduleRow, actio
 async fn redact_all(c: &Caller, s: &AppState, items: &mut [Schedule]) -> Result<(), ApiError> {
     let now = chrono::Utc::now();
     for i in items.iter_mut().filter(|i| i.enabled) {
-        i.next_runs = super::cron::next_n(&i.cron, &i.timezone, now, 3).unwrap_or_default();
+        i.next_runs = match &i.cron {
+            Some(c) => super::cron::next_n(c, &i.timezone, now, 3).unwrap_or_default(),
+            // (P5-SCHED-ONCE, C-1092) A pending one-time schedule: its one instant (a waiting
+            // one's recheck); none once Done.
+            None if i.completed_at.is_none() => i.next_fire_at.into_iter().collect(),
+            None => Vec::new(),
+        };
     }
     let ids: Vec<Uuid> = items.iter().map(|i| i.id).collect();
     let latest = aurora_db::repo::schedules::latest_runs(&s.pool, &ids).await?;
@@ -144,6 +150,7 @@ async fn create_schedule(
         name: req.name,
         prompt: req.prompt,
         cron: req.cron,
+        run_at: req.run_at,
         timezone: req.timezone,
         gate_command: req.gate_command,
         gate_description: req.gate_description,
@@ -177,7 +184,8 @@ async fn get_schedule(
     tag = "schedules", params(("id" = Uuid, Path, description = "Schedule id")),
     request_body = UpdateScheduleRequest,
     responses((status = 200, body = Schedule), (status = 400, body = ErrorEnvelope),
-        (status = 404, body = ErrorEnvelope)),
+        (status = 404, body = ErrorEnvelope),
+        (status = 409, description = "schedule_completed", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn update_schedule(
     c: Caller,
@@ -206,6 +214,7 @@ async fn update_schedule(
         name: req.name,
         prompt: req.prompt,
         cron: req.cron,
+        run_at: req.run_at,
         timezone: req.timezone,
         gate_command: req.gate_command,
         gate_description: req.gate_description,
@@ -279,7 +288,7 @@ async fn list_runs(
     tag = "schedules", params(("agent" = Uuid, Path, description = "Agent id")),
     request_body = SchedulePreviewRequest,
     responses((status = 200, body = SchedulePreview), (status = 404, body = ErrorEnvelope),
-        (status = 422, description = "invalid_cron | invalid_timezone", body = ErrorEnvelope)),
+        (status = 422, description = "invalid_cron | invalid_timezone | invalid_run_at", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn preview_schedule(
     c: Caller,
@@ -299,14 +308,59 @@ async fn preview_schedule(
             .with_details(json!({"fields": [{"path": path, "message": e.message()}]}))
     };
     super::cron::parse_tz(&tz).map_err(|e| field("invalid_timezone", "/timezone", e))?;
-    let p = super::cron::preview(&req.cron, &tz, chrono::Utc::now())
-        .map_err(|e| field("invalid_cron", "/cron", e))?;
-    Ok(Json(SchedulePreview {
-        next: p.next,
-        interval_secs: p.interval_secs,
-        too_frequent: p.too_frequent,
-        min_interval_secs: super::cron::MIN_INTERVAL.num_seconds(),
-    }))
+    let min_interval_secs = super::cron::MIN_INTERVAL.num_seconds();
+    let now = chrono::Utc::now();
+    match (req.cron, req.run_at) {
+        (Some(c), None) => {
+            let p = super::cron::preview(&c, &tz, now)
+                .map_err(|e| field("invalid_cron", "/cron", e))?;
+            Ok(Json(SchedulePreview {
+                next: p.next,
+                interval_secs: p.interval_secs,
+                too_frequent: p.too_frequent,
+                min_interval_secs,
+            }))
+        }
+        // (P5-SCHED-ONCE, C-1092) A one-time schedule: its one instant, or the create messages.
+        (None, Some(at)) => {
+            let at = super::once::validate(&at, &tz, now)
+                .map_err(|e| once_field(e, "invalid_run_at"))?;
+            Ok(Json(SchedulePreview {
+                next: vec![at],
+                interval_secs: None,
+                too_frequent: false,
+                min_interval_secs,
+            }))
+        }
+        (Some(_), Some(_)) => Err(once_field(
+            ApiError::invalid_field(
+                "Invalid schedule.",
+                "/run_at",
+                "set either cron or run_at, not both",
+            ),
+            "invalid_run_at",
+        )),
+        (None, None) => Err(once_field(
+            ApiError::invalid_field("Invalid schedule.", "/cron", "set either cron or run_at"),
+            "invalid_cron",
+        )),
+    }
+}
+
+/// A `once` field error as the preview's 422 with `code`; its field message is the message.
+fn once_field(e: ApiError, code: &str) -> ApiError {
+    let msg = e
+        .details()
+        .and_then(|d| d["fields"][0]["message"].as_str())
+        .unwrap_or(e.message())
+        .to_owned();
+    let path = e
+        .details()
+        .and_then(|d| d["fields"][0]["path"].as_str())
+        .unwrap_or("/run_at")
+        .to_owned();
+    ApiError::unprocessable(code, msg.clone())
+        .with_details(json!({"fields": [{"path": path, "message": msg}]}))
 }
 
 /// Fire the schedule now, outside its cadence; 409 `schedule_busy` while a run is active.

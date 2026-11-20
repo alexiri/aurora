@@ -152,6 +152,8 @@ pub struct PruneReport {
     pub webhook_deliveries: u64,
     /// (P5-CALINV) Calendar invitation rows past retention, and rate-limit ledger rows past two days.
     pub calendar_invitations: u64,
+    /// (P5-SCHED-ONCE, C-1092) Done one-time schedules past `SCHEDULE_DONE_RETENTION`.
+    pub schedules_done: u64,
 }
 
 /// Run one batched delete until a batch comes back short (each statement removes at most
@@ -206,6 +208,7 @@ pub async fn run_retention_prune(pool: &PgPool) -> Result<PruneReport, aurora_db
         })
         .await?
             + drain(|| aurora_db::repo::calendar_invitations::prune_sends(pool, b)).await?,
+        schedules_done: drain(|| crate::domains::schedules::service::prune_done(pool, b)).await?,
     })
 }
 

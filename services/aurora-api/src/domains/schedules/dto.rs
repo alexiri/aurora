@@ -16,8 +16,14 @@ pub struct Schedule {
     pub agent_id: Uuid,
     pub name: String,
     pub prompt: String,
-    /// 5-field cron expression.
-    pub cron: String,
+    /// 5-field cron expression; null for a one-time schedule (P5-SCHED-ONCE, C-1092).
+    pub cron: Option<String>,
+    /// (C-1092) A one-time schedule's local wall time in `timezone`, `YYYY-MM-DDTHH:MM[:SS]`
+    /// (the request's format); null for a recurring schedule.
+    pub run_at: Option<String>,
+    /// (C-1092) When a one-time schedule ran (Done, RFC 3339 UTC); it is deleted
+    /// `SCHEDULE_DONE_RETENTION` later. Null otherwise.
+    pub completed_at: Option<DateTime<Utc>>,
     /// IANA timezone name.
     pub timezone: String,
     pub gate_command: Option<String>,
@@ -39,6 +45,7 @@ pub struct Schedule {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// (P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused.
+    /// (C-1092) One instant for a pending enabled one-time schedule; empty when Done.
     pub next_runs: Vec<DateTime<Utc>>,
     /// (P5-REFINE-7, C-1077) The newest run's result (`RunResult`); null before the first run.
     pub last_result: Option<String>,
@@ -52,6 +59,8 @@ impl From<ScheduleRow> for Schedule {
             name: r.name,
             prompt: r.prompt,
             cron: r.cron,
+            run_at: r.run_at.map(|at| super::once::local_of(at, &r.timezone)),
+            completed_at: r.completed_at,
             timezone: r.timezone,
             gate_command: r.gate_command,
             gate_description: r.gate_description,
@@ -84,7 +93,7 @@ pub struct ScheduleRun {
     pub fired_at: DateTime<Utc>,
     pub turn_id: Option<Uuid>,
     /// `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |
-    /// `skipped_frozen` (stored; unchanged for compatibility).
+    /// `skipped_frozen` | `waiting_paused` (P5-SCHED-ONCE) (stored; unchanged for compatibility).
     pub outcome: String,
     pub created_at: DateTime<Utc>,
     /// (P5-REFINE-7, C-1077) The run's thread; null when it never had one or it was deleted.
@@ -92,7 +101,8 @@ pub struct ScheduleRun {
     /// (C-1077) `running` | `answered` | `skipped_by_gate` | `failed` | `skipped`.
     pub result: String,
     /// (C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,
-    /// `unauthorized`, `frozen`, `missed`; null otherwise.
+    /// `unauthorized`, `frozen`, `missed`, `paused` (a one-time schedule waiting for the paused
+    /// agent, C-1092); null otherwise.
     pub reason: Option<String>,
 }
 
@@ -140,8 +150,11 @@ impl ScheduleRun {
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SchedulePreviewRequest {
-    /// 5-field cron expression.
-    pub cron: String,
+    /// 5-field cron expression; exactly one of `cron` / `run_at`.
+    pub cron: Option<String>,
+    /// (P5-SCHED-ONCE, C-1092) A local date-time `YYYY-MM-DDTHH:MM[:SS]` without an offset, read
+    /// in `timezone`.
+    pub run_at: Option<String>,
     /// IANA timezone; defaults to the workspace timezone.
     pub timezone: Option<String>,
 }
@@ -163,8 +176,11 @@ pub struct SchedulePreview {
 pub struct CreateScheduleRequest {
     pub name: String,
     pub prompt: String,
-    /// 5-field cron expression (minimum interval 5 minutes).
-    pub cron: String,
+    /// 5-field cron expression (minimum interval 5 minutes); exactly one of `cron` / `run_at`.
+    pub cron: Option<String>,
+    /// (P5-SCHED-ONCE, C-1092) Run once at this local date-time, `YYYY-MM-DDTHH:MM[:SS]` without
+    /// an offset, read in `timezone`: not in the past, at most 5 years ahead.
+    pub run_at: Option<String>,
     /// IANA timezone; defaults to the workspace timezone.
     pub timezone: Option<String>,
     pub gate_command: Option<String>,
@@ -186,7 +202,12 @@ where
 pub struct UpdateScheduleRequest {
     pub name: Option<String>,
     pub prompt: Option<String>,
+    /// Makes the schedule recurring (`run_at` becomes null).
     pub cron: Option<String>,
+    /// (P5-SCHED-ONCE, C-1092) Makes the schedule one-time and re-arms a Done one; at most one
+    /// of `cron` / `run_at`.
+    pub run_at: Option<String>,
+    /// A one-time schedule keeps its local wall time in the new zone.
     pub timezone: Option<String>,
     /// `null` removes the gate.
     #[serde(default, deserialize_with = "double_option")]

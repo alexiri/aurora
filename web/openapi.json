@@ -13992,7 +13992,7 @@
             }
           },
           "422": {
-            "description": "invalid_cron | invalid_timezone",
+            "description": "invalid_cron | invalid_timezone | invalid_run_at",
             "content": {
               "application/json": {
                 "schema": {
@@ -31769,6 +31769,16 @@
               }
             }
           },
+          "409": {
+            "description": "schedule_completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
             "content": {
@@ -48056,8 +48066,7 @@
         "type": "object",
         "required": [
           "name",
-          "prompt",
-          "cron"
+          "prompt"
         ],
         "properties": {
           "anchor": {
@@ -48068,8 +48077,11 @@
             "description": "`creator` (default) or `workspace`; `workspace` needs `can_own` (RFE-021)."
           },
           "cron": {
-            "type": "string",
-            "description": "5-field cron expression (minimum interval 5 minutes)."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "5-field cron expression (minimum interval 5 minutes); exactly one of `cron` / `run_at`."
           },
           "gate_command": {
             "type": [
@@ -48088,6 +48100,13 @@
           },
           "prompt": {
             "type": "string"
+          },
+          "run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-SCHED-ONCE, C-1092) Run once at this local date-time, `YYYY-MM-DDTHH:MM[:SS]` without\nan offset, read in `timezone`: not in the past, at most 5 years ahead."
           },
           "timezone": {
             "type": [
@@ -59259,7 +59278,6 @@
                 "agent_id",
                 "name",
                 "prompt",
-                "cron",
                 "timezone",
                 "enabled",
                 "consecutive_failures",
@@ -59277,6 +59295,14 @@
                 "anchor": {
                   "type": "string",
                   "description": "`creator` | `workspace` (RFE-021): whose access authorizes each fire."
+                },
+                "completed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time",
+                  "description": "(C-1092) When a one-time schedule ran (Done, RFC 3339 UTC); it is deleted\n`SCHEDULE_DONE_RETENTION` later. Null otherwise."
                 },
                 "consecutive_failures": {
                   "type": "integer",
@@ -59302,8 +59328,11 @@
                   ]
                 },
                 "cron": {
-                  "type": "string",
-                  "description": "5-field cron expression."
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "5-field cron expression; null for a one-time schedule (P5-SCHED-ONCE, C-1092)."
                 },
                 "disabled_reason": {
                   "type": [
@@ -59361,7 +59390,7 @@
                     "type": "string",
                     "format": "date-time"
                   },
-                  "description": "(P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused."
+                  "description": "(P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused.\n(C-1092) One instant for a pending enabled one-time schedule; empty when Done."
                 },
                 "origin_conversation_id": {
                   "type": [
@@ -59373,6 +59402,13 @@
                 },
                 "prompt": {
                   "type": "string"
+                },
+                "run_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(C-1092) A one-time schedule's local wall time in `timezone`, `YYYY-MM-DDTHH:MM[:SS]`\n(the request's format); null for a recurring schedule."
                 },
                 "timezone": {
                   "type": "string",
@@ -59435,14 +59471,14 @@
                 },
                 "outcome": {
                   "type": "string",
-                  "description": "`fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |\n`skipped_frozen` (stored; unchanged for compatibility)."
+                  "description": "`fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |\n`skipped_frozen` | `waiting_paused` (P5-SCHED-ONCE) (stored; unchanged for compatibility)."
                 },
                 "reason": {
                   "type": [
                     "string",
                     "null"
                   ],
-                  "description": "(C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,\n`unauthorized`, `frozen`, `missed`; null otherwise."
+                  "description": "(C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,\n`unauthorized`, `frozen`, `missed`, `paused` (a one-time schedule waiting for the paused\nagent, C-1092); null otherwise."
                 },
                 "result": {
                   "type": "string",
@@ -65056,7 +65092,6 @@
           "agent_id",
           "name",
           "prompt",
-          "cron",
           "timezone",
           "enabled",
           "consecutive_failures",
@@ -65074,6 +65109,14 @@
           "anchor": {
             "type": "string",
             "description": "`creator` | `workspace` (RFE-021): whose access authorizes each fire."
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(C-1092) When a one-time schedule ran (Done, RFC 3339 UTC); it is deleted\n`SCHEDULE_DONE_RETENTION` later. Null otherwise."
           },
           "consecutive_failures": {
             "type": "integer",
@@ -65099,8 +65142,11 @@
             ]
           },
           "cron": {
-            "type": "string",
-            "description": "5-field cron expression."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "5-field cron expression; null for a one-time schedule (P5-SCHED-ONCE, C-1092)."
           },
           "disabled_reason": {
             "type": [
@@ -65158,7 +65204,7 @@
               "type": "string",
               "format": "date-time"
             },
-            "description": "(P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused."
+            "description": "(P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused.\n(C-1092) One instant for a pending enabled one-time schedule; empty when Done."
           },
           "origin_conversation_id": {
             "type": [
@@ -65170,6 +65216,13 @@
           },
           "prompt": {
             "type": "string"
+          },
+          "run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1092) A one-time schedule's local wall time in `timezone`, `YYYY-MM-DDTHH:MM[:SS]`\n(the request's format); null for a recurring schedule."
           },
           "timezone": {
             "type": "string",
@@ -65235,13 +65288,20 @@
       "SchedulePreviewRequest": {
         "type": "object",
         "description": "(P5-REFINE-7, C-1077) `POST /agents/{agent}/schedules/preview` body.",
-        "required": [
-          "cron"
-        ],
         "properties": {
           "cron": {
-            "type": "string",
-            "description": "5-field cron expression."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "5-field cron expression; exactly one of `cron` / `run_at`."
+          },
+          "run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-SCHED-ONCE, C-1092) A local date-time `YYYY-MM-DDTHH:MM[:SS]` without an offset, read\nin `timezone`."
           },
           "timezone": {
             "type": [
@@ -65287,14 +65347,14 @@
           },
           "outcome": {
             "type": "string",
-            "description": "`fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |\n`skipped_frozen` (stored; unchanged for compatibility)."
+            "description": "`fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |\n`skipped_frozen` | `waiting_paused` (P5-SCHED-ONCE) (stored; unchanged for compatibility)."
           },
           "reason": {
             "type": [
               "string",
               "null"
             ],
-            "description": "(C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,\n`unauthorized`, `frozen`, `missed`; null otherwise."
+            "description": "(C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,\n`unauthorized`, `frozen`, `missed`, `paused` (a one-time schedule waiting for the paused\nagent, C-1092); null otherwise."
           },
           "result": {
             "type": "string",
@@ -69675,7 +69735,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Makes the schedule recurring (`run_at` becomes null)."
           },
           "enabled": {
             "type": [
@@ -69708,11 +69769,19 @@
               "null"
             ]
           },
+          "run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-SCHED-ONCE, C-1092) Makes the schedule one-time and re-arms a Done one; at most one\nof `cron` / `run_at`."
+          },
           "timezone": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "A one-time schedule keeps its local wall time in the new zone."
           }
         },
         "additionalProperties": false

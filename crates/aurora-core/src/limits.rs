@@ -303,6 +303,13 @@ pub const EXPORT_MAX_EVENTS: i64 = 200_000;
 pub const SCHEDULE_FIRE_LEASE: Duration = Duration::from_secs(300);
 /// consecutive failures.
 pub const SCHEDULE_FAILURE_DISABLE: u32 = 5;
+/// (P5-SCHED-ONCE, D-421, C-1092) How far ahead a one-time schedule's `run_at` may be: 5 years
+/// (1 827 days, two of them leap days).
+pub const SCHEDULE_ONCE_MAX_AHEAD: Duration = Duration::from_secs(1827 * 24 * 3600);
+/// (P5-SCHED-ONCE) A due one-time schedule of a paused agent is checked again this often.
+pub const SCHEDULE_ONCE_RECHECK: Duration = Duration::from_secs(60);
+/// (P5-SCHED-ONCE) A Done one-time schedule is deleted this long after it ran.
+pub const SCHEDULE_DONE_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
 /// (P5-REFINE-7, C-1073) Direct conversations (active and archived) per person and agent.
 pub const DIRECT_CONVERSATIONS_PER_PERSON_AGENT: i64 = 500;
 /// (P5-REFINE-7, C-1074) Run threads kept per schedule or webhook; older ones are deleted by

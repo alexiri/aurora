@@ -882,6 +882,15 @@ pub async fn promote_one(
                 .await?
                 .payload();
     }
+    // (P5-SCHED-ONCE, C-1093) A one-time schedule run that queued behind a turn in the person's
+    // chat: its run follows the new turn, and the event keeps the schedule's `display`.
+    if t.door.get("kind").and_then(Value::as_str) == Some("schedule")
+        && let Some(d) =
+            crate::domains::schedules::fire::on_followup_promoted(&mut *conn, f.id, t.id).await?
+    {
+        payload["display"] = d;
+        fit_display(&mut payload);
+    }
     transcript::append_durable_event(
         &mut *conn,
         t.conversation_id,

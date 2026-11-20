@@ -2279,8 +2279,8 @@ Data (add to `docs/03-data-model.md` `user_onboarding`): row `| more_controls | 
     - `last_outcome` also allows `waiting_paused`.
     - New column `schedule_runs.answer_pushed_at timestamptz NULL` (C-1095).
   - **Requests.** `CreateScheduleRequest` and `UpdateScheduleRequest` gain `run_at?: string`: a local date-time `YYYY-MM-DDTHH:MM[:SS]` without an offset, read in `timezone` (default: the workspace's).
-    - Exactly one of `cron` / `run_at` on create; at most one on a patch. Otherwise 422 `invalid_field` at `/run_at` "set either cron or run_at, not both", or at `/cron` when neither is set.
-    - Each refusal is a 422 at `/run_at`:
+    - Exactly one of `cron` / `run_at` on create; at most one on a patch. Otherwise 400 `invalid_request` (`details.fields`) at `/run_at` "set either cron or run_at, not both", or at `/cron` "set either cron or run_at" when neither is set. (As built: 400 like every other schedule field error, `cron` and `timezone` included; the brief said 422. The preview keeps its 422 codes.)
+    - Each refusal is a 400 `invalid_request` at `/run_at`:
       - an offset or `Z`;
       - a daylight-saving gap ("does not exist in that time zone (a daylight-saving gap)");
       - before the start of the current minute ("is in the past");
