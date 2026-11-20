@@ -99,7 +99,9 @@ reconnect.
 3. In Aurora choose *Connect*, *Access keys*, paste the **Access key ID** and **Secret access
    key**, and enter the **Region** the agents should work in, for example `eu-west-1`. For
    temporary credentials also paste the **Session token**; they expire and must be reconnected
-   when they do.
+   when they do. The optional **Name** (for example "Production account") is what agents call this
+   connection; give each AWS account its own name when you connect several. Left empty, the
+   connection is called "AWS".
 
 The keys are not validated when you connect; a wrong key shows up as an `InvalidClientTokenId`
 or `SignatureDoesNotMatch` error on the first request. Rotate the access key regularly; Aurora

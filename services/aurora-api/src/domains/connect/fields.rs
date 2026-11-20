@@ -6,12 +6,16 @@ use std::collections::BTreeMap;
 
 const VALUE_MAX: usize = 8 * 1024;
 const FILE_MAX: usize = 256 * 1024;
+/// The rename's limit (`connections/service.rs` `LABEL_MAX`, C-1041).
+const LABEL_MAX: usize = 120;
 
 #[derive(Default)]
 pub struct Parsed {
     pub credentials: Map<String, Value>,
     pub metadata: Map<String, Value>,
     pub tenant_host: Option<String>,
+    /// The `store: label` field's cleaned value (FIX-194): the connection's label.
+    pub label: Option<String>,
     /// Submitted values by field name (for `{fields.*}` in probe URLs).
     pub raw: Map<String, Value>,
 }
@@ -37,7 +41,11 @@ pub fn parse(fields: &[FormField], input: &BTreeMap<String, String>) -> Result<P
         if !shown {
             continue;
         }
-        let Some(v) = input.get(&f.name).filter(|v| !v.is_empty()) else {
+        // A blank label field counts as empty: the connection keeps its default or current name.
+        let Some(v) = input
+            .get(&f.name)
+            .filter(|v| !v.is_empty() && (f.store != Store::Label || !v.trim().is_empty()))
+        else {
             if f.required {
                 errs.push(FieldError::new(path, "required"));
             }
@@ -82,6 +90,11 @@ pub fn parse(fields: &[FormField], input: &BTreeMap<String, String>) -> Result<P
         out.raw.insert(f.name.clone(), Value::String(v.clone()));
         let val = Value::String(v.clone());
         match f.store {
+            // (FIX-194, C-1091) Checked like a rename; stored only as the connection's label.
+            Store::Label => match aurora_core::names::clean(v, LABEL_MAX) {
+                Ok(l) => out.label = Some(l),
+                Err(e) => errs.push(FieldError::new(path, e.to_string())),
+            },
             Store::Credentials => {
                 out.credentials.insert(f.name.clone(), val);
             }

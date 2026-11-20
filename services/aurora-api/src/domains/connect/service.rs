@@ -389,6 +389,8 @@ struct Gathered {
     granted: Option<Vec<String>>,
     requested: Vec<String>,
     label: Option<String>,
+    /// (FIX-194) The form's `store: label` field: wins over the probe's and the hook's label.
+    form_label: Option<String>,
     expires_at: Option<i64>,
     fields: Map<String, Value>,
     client: Option<Uuid>,
@@ -582,7 +584,10 @@ impl Ctx<'_> {
             metadata.extend(out.metadata);
             label = out.label.or(label);
         }
-        let label = label
+        let label = g
+            .form_label
+            .clone()
+            .or(label)
             .or_else(|| self.reconnect.as_ref().map(|r| r.label.clone()))
             .unwrap_or_else(|| self.app.about.name.clone());
         let granted = g.granted.clone().unwrap_or_else(|| g.requested.clone());
@@ -657,6 +662,7 @@ impl Ctx<'_> {
             access: self.access.as_deref(),
             limit_level: self.limit.as_deref(),
             config: g.webhook.as_ref().and_then(|w| w.config_json.as_ref()),
+            replace_label: g.form_label.is_some(),
         };
         let (old, applied) = match self.write(caller, &n).await {
             Ok(o) => o,
@@ -901,6 +907,7 @@ fn gathered_from_hook(c: Connected, client: Option<Uuid>) -> Gathered {
         granted: (!c.scopes.is_empty()).then_some(c.scopes),
         requested: Vec::new(),
         label: Some(c.label),
+        form_label: None,
         expires_at: c.expires_at,
         fields: Map::new(),
         client,
@@ -1295,6 +1302,7 @@ pub async fn ensure_credential_free_in_tx(
         access: None,
         limit_level: None,
         config: None,
+        replace_label: false,
     };
     let extra = json!({"via": "agent_grant", "agent_id": agent_id});
     let ev = match ctx.write_in_tx(tx, caller, &n, Some(extra)).await {
@@ -1320,6 +1328,7 @@ fn from_fields(p: Parsed) -> Gathered {
         credentials: p.credentials,
         metadata: p.metadata,
         tenant_host: p.tenant_host,
+        form_label: p.label,
         fields: p.raw,
         ..Gathered::default()
     }

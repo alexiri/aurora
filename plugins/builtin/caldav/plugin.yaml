@@ -1,6 +1,6 @@
 package:
   id: caldav
-  version: 1.2.0
+  version: 1.3.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -26,7 +26,6 @@ apps:
       # The calendar home Aurora discovered, and the exact host:port origins discovery used (D-275).
       - { name: url }
       - { name: hosts }
-      - { name: name }
     connect:
       - id: app_password
         kind: fields
@@ -36,7 +35,7 @@ apps:
           - name: name
             label: Name
             type: text
-            store: metadata
+            store: label
             required: false
             placeholder: "Fastmail calendar"
           - name: url

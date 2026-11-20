@@ -1,6 +1,6 @@
 package:
   id: aws-keys
-  version: 2.2.0
+  version: 2.3.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -90,6 +90,12 @@ apps:
         label: Access keys
         description: "An IAM key pair used directly on every request. The simplest way to start, but the keys are long-lived: rotate them and give them the narrowest policy you can."
         fields:
+          - name: name
+            label: Name
+            type: text
+            store: label
+            required: false
+            placeholder: "Production account"
           - name: access_key_id
             label: Access key ID
             type: secret

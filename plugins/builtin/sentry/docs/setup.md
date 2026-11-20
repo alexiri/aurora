@@ -39,7 +39,9 @@ exists answer `404` or `403`, connect again and choose the other region.
 1. Choose where your organization lives (above) and enter the **token** and your **organization
    slug**. The slug is the part of your Sentry URL after `/organizations/` (or the subdomain of
    `<slug>.sentry.io`). The optional **default project slug** is recorded with the connection for
-   your reference.
+   your reference. The optional **Name** (for example "Sentry EU, team X") is what agents call the
+   connection; give each connection its own name when you have several. Left empty, the connection
+   is called "Sentry".
 2. Aurora checks the token by listing the organization's projects on the chosen host
    (`GET /api/0/organizations/<slug>/projects/`); a wrong slug, a wrong region or a token without
    `project:read` fails the connection.

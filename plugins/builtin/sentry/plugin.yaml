@@ -1,6 +1,6 @@
 package:
   id: sentry
-  version: 2.2.0
+  version: 2.3.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -43,6 +43,12 @@ apps:
           - { id: read, label: Read only, permission_hints: ["Organization · Read", "Project · Read", "Issue & Event · Read", "Release · Read"] }
           - { id: write, label: Read and write, permission_hints: ["Organization · Read", "Project · Read", "Issue & Event · Read & Write", "Release · Read"] }
         fields:
+          - name: name
+            label: Name
+            type: text
+            store: label
+            required: false
+            placeholder: "Sentry EU, team X"
           - name: access_token
             label: Auth token
             type: secret

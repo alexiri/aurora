@@ -47918,7 +47918,7 @@
           },
           "store": {
             "type": "string",
-            "description": "`credentials` | `metadata` | `tenant_host`."
+            "description": "`credentials` | `metadata` | `tenant_host` | `label`. A `label` field's value is the\nconnection's name (FIX-194, C-1091): the dashboard prefills it with the current name when\nthe person signs in again."
           },
           "type": {
             "type": "string",

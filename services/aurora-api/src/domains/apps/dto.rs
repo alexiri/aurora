@@ -113,7 +113,9 @@ pub struct FormField {
     /// `text` | `secret` | `select` | `file` | `json_file`.
     #[serde(rename = "type")]
     pub kind: String,
-    /// `credentials` | `metadata` | `tenant_host`.
+    /// `credentials` | `metadata` | `tenant_host` | `label`. A `label` field's value is the
+    /// connection's name (FIX-194, C-1091): the dashboard prefills it with the current name when
+    /// the person signs in again.
     pub store: String,
     pub required: bool,
     pub placeholder: Option<String>,

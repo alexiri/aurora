@@ -115,6 +115,10 @@ mod link_connect;
 #[path = "outgoing_webhooks.rs"]
 mod outgoing_webhooks;
 
+// (FIX-194, D-420) `store: label`: a form field names the connection.
+#[path = "label_field.rs"]
+mod label_field;
+
 // (P5-CALDAV, D-275) The own-server app's connect (discovery).
 #[path = "caldav_connect.rs"]
 mod caldav_connect;

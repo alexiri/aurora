@@ -258,7 +258,7 @@ is rejected (`oauth_field_store`): credentials come from the token response only
     - name: api_token
       label: API token
       type: secret              # text | secret | select | file | json_file
-      store: credentials        # credentials | metadata | tenant_host
+      store: credentials        # credentials | metadata | tenant_host | label
       required: true
       placeholder: "…"
       help_url: https://todoist.com/prefs/integrations
@@ -267,6 +267,26 @@ is rejected (`oauth_field_store`): credentials come from the token response only
       # json_file: json_map: { client_email: /client_email, private_key: /private_key }
   probe: { … }
 ```
+
+**`store: label`** (phase 5, FIX-194, D-420, C-1091). The agent tells an app's accounts apart only by
+the connection's **label** (the name in the guide's Accounts section, `tools.md`, `api.json` and the
+`multiple_connections` choices), so a form can have one field that names the connection:
+`{ name: name, label: Name, type: text, store: label, placeholder: "Production account" }`.
+- The value is the connection's label and is stored nowhere else (not in `metadata`, not in the sealed
+  credentials). The field's name needs no `metadata` declaration. It is checked like a rename
+  (`PATCH /v1/connections/{id}`): trimmed, 1 to 120 characters, no control or invisible formatting
+  characters; a failure is the usual field error on `/fields/<name>` and nothing is stored. A blank
+  value counts as empty.
+- **Precedence** for a new connection: the field when it is not empty, else the probe's `label`, else
+  the hook's label, else the app's name. On a **reconnect** a non-empty field replaces the label; an
+  empty one keeps the connection's current label. The dashboard prefills the field with the current
+  label on a reconnect, so a `required` field needs no retyping (`14`).
+- Only in a `kind: fields` method (not `oauth2`, not `hook`), at most one per method, `type: text`
+  only. Presentation only: adding or removing it **widens nothing**. A core that does not know the
+  value rejects the package (unknown variant), as for earlier additions.
+- Builtin `ics-calendar`, `webhook` and `caldav` use it for their `name` field (their former
+  hard-coded rule is gone; CalDAV without a name is still `<username> at <host>`); `aws-keys`,
+  `sentry` and `postgresql` offer an optional Name.
 
 **`probe`** (inside `oauth2` or `fields`, executed by the core, not by plugin code)
 ```yaml
@@ -962,6 +982,9 @@ if any of:
   `description` (C-939); third-party packages get the warning `tool_description_missing`.)
   (P5-UX-13, C-942) a `connect[].show_context` entry other than `org_external_id`, or one the
   package does not list in `permissions.context`;
+- (phase 5, FIX-194, C-1091) a `store: label` field outside a `kind: fields` method
+  (`label_field_method`), a second one in the same method (`label_field_duplicate`), or one that is
+  not `type: text` (`label_field_type`);
 - unknown keys, unknown contract, `min_core` above the running version;
 - duplicate ids (apps across *all* active packages; tools within an app);
 - host pattern with more than one `*`; a tool host not covered by the app's

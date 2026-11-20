@@ -2440,7 +2440,11 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
     cannot fix it see who can.
   - On the workspace Overview.
 - **Reconnect and Replace** open the existing C-842 dialog. Its behaviour does not change; its texts
-  follow the vocabulary (account, access).
+  follow the vocabulary (account, access). (FIX-194, D-420, C-1091) When the method has a field with
+  `store: "label"` (the one that names the account), the dialog prefills it with the account's current
+  name, so a required name needs no retyping and the person sees the name that stays; an empty field
+  keeps the name. The dialog always waits for the account's list entry before it shows the form, for
+  every app (it used to wait only for apps with several methods).
 - A test never returns anything the app sent back, and is audited (SEC-129).
 
 ### 8. What an agent can do, in one place (P5-IA-2, P5-UX-7, P5-UX-10, FIX-159, D-346, D-350, C-986, C-934, C-930)

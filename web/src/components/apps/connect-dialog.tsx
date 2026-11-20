@@ -123,6 +123,7 @@ function ConnectForm({
   workspaceId,
   orgId,
   keepMethod,
+  keepLabel,
   reconnect,
   orgScope,
   onClose,
@@ -134,6 +135,8 @@ function ConnectForm({
   orgScope?: boolean;
   /** A reconnect keeps the connection's method unless the person picks another (D-214). */
   keepMethod?: string | null;
+  /** (FIX-194, C-1091) The connection's current name: it prefills the field that names the connection. */
+  keepLabel?: string | null;
   /** The id of the connection being reconnected; it keeps its instance, so no instance is asked for. */
   reconnect: string;
   onClose: () => void;
@@ -142,7 +145,7 @@ function ConnectForm({
   const first = initialMethod(app, keepMethod);
   const [methodId, setMethodId] = useState(first?.id ?? "");
   const method: ConnectMethod | undefined = app.connect.find((m) => m.id === methodId);
-  const [values, setValues] = useState<FieldValues>(() => defaultValues(first?.fields ?? []));
+  const [values, setValues] = useState<FieldValues>(() => defaultValues(first?.fields ?? [], keepLabel));
   const [scopes, setScopes] = useState<string[]>(first?.default_scopes ?? []);
   const [access, setAccess] = useState(first?.access_levels[0]?.id ?? "");
   // (FIX-136) A pasted token's scopes: detected by the method's read probes, or ticked by the person.
@@ -179,7 +182,7 @@ function ConnectForm({
   function pick(id: string) {
     const m = app.connect.find((x) => x.id === id);
     setMethodId(id);
-    setValues(defaultValues(m?.fields ?? []));
+    setValues(defaultValues(m?.fields ?? [], keepLabel));
     setScopes(m?.default_scopes ?? []);
     setAccess(m?.access_levels[0]?.id ?? "");
     setErrors({});
@@ -410,8 +413,8 @@ function ConnectedStep({
 function ReconnectForm({ app, workspaceId, orgId, orgScope, reconnect, onClose }: { app: AppDetail; workspaceId: string; orgId: string; orgScope?: boolean; reconnect: string; onClose: () => void }) {
   const conns = useConnections(orgScope ? { kind: "organization", id: orgId } : { kind: "workspace", id: workspaceId });
   if (conns.isPending) return <Loading />;
-  const keep = conns.data?.items.find((c) => c.id === reconnect)?.connect_method ?? null;
-  return <ConnectForm app={app} workspaceId={workspaceId} orgId={orgId} orgScope={orgScope} keepMethod={keep} reconnect={reconnect} onClose={onClose} />;
+  const conn = conns.data?.items.find((c) => c.id === reconnect);
+  return <ConnectForm app={app} workspaceId={workspaceId} orgId={orgId} orgScope={orgScope} keepMethod={conn?.connect_method ?? null} keepLabel={conn?.label ?? null} reconnect={reconnect} onClose={onClose} />;
 }
 
 /**
@@ -447,9 +450,8 @@ export function ConnectDialog({
   else if (detail.isError) body = <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />;
   else if (!d) body = <Loading />;
   else if (!d.available) body = <ErrorState error={{ code: "app_unavailable" }} />;
-  else if (d.connect.length > 1)
-    body = <ReconnectForm app={d} workspaceId={workspaceId} orgId={orgId} orgScope={orgScope} reconnect={reconnect} onClose={onClose} />;
-  else body = <ConnectForm app={d} workspaceId={workspaceId} orgId={orgId} orgScope={orgScope} reconnect={reconnect} onClose={onClose} />;
+  // Always waits for the connection: its method (several methods) and its name (the field that names it, FIX-194).
+  else body = <ReconnectForm app={d} workspaceId={workspaceId} orgId={orgId} orgScope={orgScope} reconnect={reconnect} onClose={onClose} />;
   return (
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
       <DialogContent size="lg" title={title} description={d ? `${d.package_id} ${d.package_version}` : undefined}>

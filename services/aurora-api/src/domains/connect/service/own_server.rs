@@ -392,14 +392,7 @@ pub(super) async fn check(ctx: &Ctx<'_>, g: &mut Gathered) -> Result<(), Connect
         os.hosts_field.clone(),
         Value::Array(hosts.into_iter().map(Value::String).collect()),
     );
-    // The label: the person's name for the account, else `<username> at <host>`.
-    let name = g
-        .fields
-        .get("name")
-        .and_then(Value::as_str)
-        .map(|n| n.trim().to_owned())
-        .filter(|n| !n.is_empty());
-    g.label =
-        Some(name.unwrap_or_else(|| format!("{user} at {}", home.host_str().unwrap_or_default())));
+    // The label: the form's `store: label` field wins (FIX-194), else `<username> at <host>`.
+    g.label = Some(format!("{user} at {}", home.host_str().unwrap_or_default()));
     Ok(())
 }

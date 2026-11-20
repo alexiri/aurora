@@ -1,6 +1,6 @@
 package:
   id: webhook
-  version: 1.0.0
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -22,7 +22,6 @@ apps:
     metadata:
       # The URL's host, shown on the connection card (not secret); the path and query never are.
       - { name: host }
-      - { name: name }
     connect:
       - id: link
         kind: fields
@@ -32,7 +31,7 @@ apps:
           - name: name
             label: Name
             type: text
-            store: metadata
+            store: label
             required: true
             placeholder: "Ops alerts"
           - name: url

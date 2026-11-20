@@ -81,7 +81,7 @@ fn sentry_2_0_0_replaces_1_0_2_without_widening_and_takes_over_the_old_apps() {
     let old = read("tests/fixtures/previous/sentry-1.0.2.yaml");
     let new = read("../../plugins/builtin/sentry/plugin.yaml");
     assert_eq!(old.package.version, "1.0.2");
-    assert_eq!(new.package.version, "2.2.0");
+    assert_eq!(new.package.version, "2.3.0");
     assert!(is_major_upgrade(&old.package.version, &new.package.version));
     let w = widens(&old, &new);
     assert!(w.is_empty(), "sentry 1.0.2 -> 2.0.0 widens: {w:?}");

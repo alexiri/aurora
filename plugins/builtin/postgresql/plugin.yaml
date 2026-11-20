@@ -1,6 +1,6 @@
 package:
   id: postgresql
-  version: 1.3.0
+  version: 1.4.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -38,6 +38,12 @@ apps:
         label: Database login
         description: "The server, database, user and password of a PostgreSQL account. Use an account that has only the rights agents need."
         fields:
+          - name: name
+            label: Name
+            type: text
+            store: label
+            required: false
+            placeholder: "Prod DB (eu)"
           - name: host
             label: Server host
             type: text

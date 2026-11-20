@@ -251,6 +251,9 @@ pub struct NewConnection<'a> {
     /// (P5-WEBHOOK-2, C-909) The configuration of a send-mode connection; a reconnect with `None`
     /// keeps what the connection has.
     pub config: Option<&'a serde_json::Value>,
+    /// (FIX-194, C-1091) A reconnect replaces the label with `label` only when the person typed
+    /// one into the form's `store: label` field; otherwise it keeps the connection's current label.
+    pub replace_label: bool,
 }
 
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Result<(), DbError> {
@@ -431,7 +434,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
          package_id = $9, app_version = $10, connected_by = $11, requested_scopes = $12, \
          credential_keys = $14, connect_method = $15, access = COALESCE($16, access), \
          limit_level = CASE WHEN workspace_id IS NULL THEN COALESCE($17, limit_level) END, \
-         config = COALESCE($18, config), \
+         config = COALESCE($18, config), label = CASE WHEN $19 THEN $20 ELSE label END, \
          status_reason = CASE WHEN status IN ('reauth_required','orphaned') THEN NULL ELSE status_reason END, \
          status = CASE WHEN status IN ('reauth_required','orphaned') THEN 'active' ELSE status END, \
          reauth_required_at = NULL, last_check_at = NULL, last_check_result = NULL, last_ok_at = NULL, \
@@ -456,6 +459,8 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
     .bind(n.access)
     .bind(n.limit_level)
     .bind(n.config)
+    .bind(n.replace_label)
+    .bind(n.label)
     .execute(exec)
     .await?
     .rows_affected()

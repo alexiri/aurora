@@ -475,9 +475,13 @@ export function parseJsonFile(text: string): { ok: true; value: Record<string, u
   return { ok: false };
 }
 
-export function defaultValues(fields: FormField[]): FieldValues {
+export function defaultValues(fields: FormField[], currentLabel?: string | null): FieldValues {
   const out: FieldValues = {};
-  for (const f of fields) if (f.type === "select" && f.options?.length && f.required) out[f.name] = f.options[0].value;
+  for (const f of fields) {
+    if (f.type === "select" && f.options?.length && f.required) out[f.name] = f.options[0].value;
+    // (FIX-194, C-1091) A reconnect shows the name the connection keeps in the field that names it.
+    else if (f.store === "label" && currentLabel) out[f.name] = currentLabel;
+  }
   return out;
 }
 
