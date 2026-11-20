@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { tintFor } from "@/components/agent-avatar";
+import { CountBadge } from "@/components/attention/count-badge";
 import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
+import { useOrgBadge } from "@/lib/api/attention";
 import { ArrowLeftIcon, ArrowRightIcon, CheckIcon, ChevronsUpDownIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CreateOrgDialog } from "@/components/create-org-dialog";
@@ -34,7 +36,13 @@ interface OrgItem {
   workspaces: WsItem[];
 }
 
-const roleLabel = (r: string) => (r ? r.charAt(0).toUpperCase() + r.slice(1) : "");
+/** (P5-REFINE-17 #17, C-1082) What waits in the organization, on its **Manage** row: owners and admins only, none at zero. */
+function ManageBadge({ orgId, testId = "manage-switcher-badge" }: { orgId?: string; testId?: string }) {
+  const b = useOrgBadge(orgId);
+  return <CountBadge n={b?.count} actionId="manage-switcher-entry" testId={testId} />;
+}
+
+const roleLabel =(r: string) => (r ? r.charAt(0).toUpperCase() + r.slice(1) : "");
 
 /* Last-used order, per person, in this browser only (the API has no "recently used"): `lib/nav/recent-scopes`. */
 
@@ -230,7 +238,8 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
         ) : null}
         {canSeeSettings(o) ? (
           <Link href={topicHref("org", "overview", o.slug)} data-scope-row onClick={close} className={cn(rowClass, "pl-11 text-ink-2")}>
-            Manage {o.name}
+            <span className="min-w-0 flex-1 truncate">Manage {o.name}</span>
+            <ManageBadge orgId={o.id} />
           </Link>
         ) : null}
       </>
@@ -369,6 +378,8 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
         <PopoverTrigger asChild>
           <button type="button" className={cn(frame, "hover:bg-subtle")}>
             {face}
+            {/* The closed switcher says there is something to do under Manage (owners and admins of the current organization). */}
+            {current && canSeeSettings(current) ? <ManageBadge orgId={current.id} testId="switcher-attention-badge" /> : null}
             <ChevronsUpDownIcon className="size-4 shrink-0 text-muted" />
           </button>
         </PopoverTrigger>

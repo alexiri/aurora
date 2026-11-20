@@ -5,7 +5,7 @@ import { overflow } from "./support/open";
 import { serious } from "./support/axe";
 
 // P5-POLISH-4 (D-386, C-1030, SEC-135; docs/14 §Agents, accounts and access §4): an owner's Overview shows a person's
-// request for an app in Needs you, with Set up (the organization's Apps tab at the app) and Not now. Both themes at
+// request for an app in Needs you, with Set up (the organization's Apps tab at the app) and Decline (with an optional message). Both themes at
 // 1280 px and 390 px, no horizontal scroll, axe (serious and critical) clean.
 
 const request = {
@@ -64,12 +64,13 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByRole("link", { name: "Set up" })).toHaveAttribute("href", "/o/acme/apps?tab=oauth-clients&app=google-calendar");
       });
 
-      test("Not now confirms, then declines and the row goes", async ({ page }) => {
+      test("Decline asks for an optional message, then declines and the row goes", async ({ page }) => {
         const state = await mockRequests(page);
         await open(page, scheme);
-        await page.getByRole("button", { name: "Not now" }).click();
-        await expect(page.getByText("Bob Builder will be told you aren't setting up Google Calendar now.")).toBeVisible();
-        await page.getByRole("dialog").getByRole("button", { name: "Not now" }).click();
+        await page.getByRole("button", { name: "Decline" }).click();
+        await expect(page.getByText("Bob Builder asked for Google Calendar. They will be told you declined.")).toBeVisible();
+        await page.getByLabel("Message for Bob (optional)").fill("Next month.");
+        await page.getByRole("dialog").getByRole("button", { name: "Decline" }).click();
         await expect.poll(() => state.declined).toBe(1);
         await expect(page.getByText("Bob Builder wants Google Calendar")).toBeHidden();
       });

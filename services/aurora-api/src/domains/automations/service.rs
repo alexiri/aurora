@@ -3,7 +3,6 @@
 
 use super::dto::{Offboarding, OffboardingItem};
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use crate::domains::schedules::cron;
 use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::authz;
@@ -116,9 +115,11 @@ pub async fn reassign_schedule(
 ) -> Result<(), ApiError> {
     ensure_target(conn, to, a.workspace).await?;
     let (creator, anchor) = resolve(to, row.creator_user_id);
+    // (P5-SCHED-ONCE, C-1092) A pending one-time schedule whose time passed is armed for now; a
+    // Done one stays Done.
     let next =
         if re_enable && !row.enabled && row.disabled_reason.as_deref() == Some("authorization") {
-            Some(cron::validate(&row.cron, &row.timezone, Utc::now())?)
+            crate::domains::schedules::service::arm_at(row, Utc::now())?
         } else {
             None
         };

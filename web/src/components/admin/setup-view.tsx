@@ -17,7 +17,8 @@ import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusLine, type StatusTone } from "@/components/ui/status-line";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
-import { onboardingKeys, useAdminSetup, type SetupCheck, type SetupStatus, type SetupStep } from "@/lib/api/onboarding";
+import { useAttentionFeed } from "@/lib/api/attention";
+import { onboardingKeys,useAdminSetup, type SetupCheck, type SetupStatus, type SetupStep } from "@/lib/api/onboarding";
 import { formatBytes } from "@/lib/api/attachments";
 import { useAdminStorage } from "@/lib/api/org";
 import { usePlugins } from "@/lib/api/plugins";
@@ -517,12 +518,16 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
   const gateway = checkOf(setup, "runners", "gateway");
   const runner = checkOf(setup, "runners", "runners");
   const needs = blocked.length + (noMail ? 1 : 0);
+  // (P5-REFINE-18 #13, setup-5) The requests only an instance admin can resolve, in the headline: "2 requests are waiting for you."
+  const feed = useAttentionFeed("administration", undefined);
+  const requests = (feed.data?.items ?? []).filter((i) => !i.own && i.kind.endsWith("_request")).length;
+  const requestsLine = requests > 0 ? ` ${requests === 1 ? "1 request is" : `${requests} requests are`} waiting for you.` : "";
   const withStarter = (placement.data?.starter_grants.length ?? 0) > 0;
   return (
     <div className="space-y-6" data-testid="admin-health">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <p className="max-w-3xl font-display text-xl font-medium text-ink">
-          Aurora is running.
+          Aurora is running.{requestsLine}
           {needs > 0
             ? ` ${[
                 blocked.length > 0 ? `People can't sign in to ${blocked.length === 1 ? "1 app" : `${blocked.length} apps`} yet` : "",
@@ -531,7 +536,9 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
                 .filter(Boolean)
                 .join(", and ")
                 .replace(/^e-mail/, "E-mail")}.`
-            : " Nothing needs you."}
+            : requests > 0
+              ? ""
+              : " Nothing needs you."}
         </p>
         <Button variant="outline" onClick={onRunSetup}>
           Run setup again

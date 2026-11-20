@@ -45,6 +45,16 @@ async fn notify_origin(
     if !convs::lock(&mut *conn, origin).await? {
         return Ok(());
     }
+    // (P5-SCHED-ONCE, SEC-144) A schedule writes into a person's own chat only while it is that
+    // person's schedule: after a reassignment the old owner's direct chat gets nothing. (A
+    // creator-less schedule names nobody else: a deleted creator's direct chats are gone too.)
+    if let Some(c) = convs::get(&mut *conn, origin).await?
+        && c.kind == "direct"
+        && s.creator_user_id.is_some()
+        && c.direct_user_id != s.creator_user_id
+    {
+        return Ok(());
+    }
     conv::append_event(
         conn,
         origin,
@@ -62,16 +72,45 @@ struct Started {
     run: RunRow,
 }
 
+/// The schedule door's message: the prompt behind the header for the agent, and (C-1079) the
+/// `display` people read (the schedule's name, not the prompt header).
+fn schedule_message<'a>(
+    s: &ScheduleRow,
+    run_id: Uuid,
+    text: &'a str,
+) -> (NewMessage<'a>, serde_json::Value) {
+    let door = json!({"kind": "schedule", "ref": s.id.to_string()});
+    let display =
+        json!({"kind": "schedule", "name": s.name, "schedule_id": s.id, "run_id": run_id});
+    (
+        NewMessage {
+            door,
+            speaker_kind: "system",
+            speaker_user_id: None,
+            speaker_label: "Schedule",
+            text,
+            source_event_id: None,
+            attachment_ids: &[],
+            reply_to_seq: None,
+        },
+        display,
+    )
+}
+
 /// Start a run in its own thread (P5-REFINE-7, C-1074): `schedule:<schedule>:<run>`, with the
 /// schedule's origin so the FIX-192 mirror still finds the origin's thread link. `None` when the
 /// schedule is busy: its latest run's turn is still active (the busy rule, decided under the
-/// schedule row lock so a fire and Run now decide one at a time).
+/// schedule row lock so a fire and Run now decide one at a time). (P5-SCHED-ONCE) A one-time
+/// schedule's fire passes `busy_rule = false`: a single run is never skipped as busy.
 async fn start_run(
     conn: &mut PgConnection,
     s: &ScheduleRow,
     agent: &agents::AgentRow,
+    busy_rule: bool,
 ) -> Result<Option<Started>, ApiError> {
-    if !repo::lock(&mut *conn, s.id).await? || repo::latest_run_active(&mut *conn, s.id).await? {
+    if !repo::lock(&mut *conn, s.id).await?
+        || (busy_rule && repo::latest_run_active(&mut *conn, s.id).await?)
+    {
         return Ok(None);
     }
     let run_id = Uuid::now_v7();
@@ -94,26 +133,8 @@ async fn start_run(
     )
     .await?;
     let text = turn_text(s);
-    let door = json!({"kind": "schedule", "ref": s.id.to_string()});
-    // (C-1079) What people read: the schedule's name, not the prompt header.
-    let display =
-        json!({"kind": "schedule", "name": s.name, "schedule_id": s.id, "run_id": run_id});
-    let created = conv::create_turn_tx_with(
-        conn,
-        &c,
-        &NewMessage {
-            door,
-            speaker_kind: "system",
-            speaker_user_id: None,
-            speaker_label: "Schedule",
-            text: &text,
-            source_event_id: None,
-            attachment_ids: &[],
-            reply_to_seq: None,
-        },
-        Some(&display),
-    )
-    .await?;
+    let (msg, display) = schedule_message(s, run_id, &text);
+    let created = conv::create_turn_tx_with(conn, &c, &msg, Some(&display)).await?;
     let turn = match created {
         Created::Turn(t) | Created::Followup(t) => t,
     };
@@ -121,6 +142,55 @@ async fn start_run(
     Ok(Some(Started {
         conversation: c.id,
         run,
+    }))
+}
+
+/// (P5-SCHED-ONCE, D-422, C-1093, SEC-144) Start a one-time run in its origin conversation, the
+/// direct chat of the schedule's current creator ([`repo::origin_for_run`] checked it). It queues
+/// behind an active turn there as a follow-up (never steered into it, never skipped); when the
+/// follow-up is promoted the run follows its turn ([`on_followup_promoted`]).
+async fn start_in_origin(
+    conn: &mut PgConnection,
+    s: &ScheduleRow,
+    origin: Uuid,
+) -> Result<Option<Started>, ApiError> {
+    let Some(c) = convs::get(&mut *conn, origin).await? else {
+        return Ok(None);
+    };
+    let run_id = Uuid::now_v7();
+    let text = turn_text(s);
+    let (msg, display) = schedule_message(s, run_id, &text);
+    let created = conv::create_turn_tx_with(conn, &c, &msg, Some(&display)).await?;
+    let turn = match created {
+        Created::Turn(t) | Created::Followup(t) => t,
+    };
+    let run = repo::insert_run_with_id(conn, run_id, s.id, Some(turn.id), "fired").await?;
+    Ok(Some(Started {
+        conversation: c.id,
+        run,
+    }))
+}
+
+/// (P5-SCHED-ONCE) A schedule run that waited as a follow-up became its own turn: the run now
+/// points at that turn (its result, gate and push follow it). Returns the `display` of the new
+/// `turn.queued` event (C-1079), so the promoted run still reads as the schedule's name.
+pub async fn on_followup_promoted(
+    conn: &mut PgConnection,
+    from: Uuid,
+    to: Uuid,
+) -> Result<Option<serde_json::Value>, ApiError> {
+    let row: Option<(Uuid, Uuid, String)> = sqlx::query_as(
+        "UPDATE schedule_runs r SET turn_id = $2 FROM schedules s
+         WHERE r.turn_id = $1 AND s.id = r.schedule_id
+         RETURNING r.id, s.id, s.name",
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_optional(conn)
+    .await
+    .map_err(aurora_db::DbError::from)?;
+    Ok(row.map(|(run_id, schedule_id, name)| {
+        json!({"kind": "schedule", "name": name, "schedule_id": schedule_id, "run_id": run_id})
     }))
 }
 
@@ -156,7 +226,17 @@ async fn fire_due(
     // (missed fires coalesce, no catch-up burst) and a `skipped_frozen` run is written. Checked
     // before the fire-time authority so a freeze never disables a schedule for authorization.
     if aurora_db::repo::freeze::is_agent_frozen(&mut *conn, agent.id).await? {
-        let next = cron::next_after(&row.cron, &row.timezone, now).ok();
+        let Some(expr) = row.cron.as_deref() else {
+            // (P5-SCHED-ONCE, C-1092) A one-time schedule waits for the paused agent, late rather
+            // than lost: one `waiting_paused` run, checked again every `SCHEDULE_ONCE_RECHECK`.
+            let recheck = chrono::Duration::from_std(limits::SCHEDULE_ONCE_RECHECK)
+                .unwrap_or(chrono::Duration::seconds(60));
+            if !repo::wait_paused(conn, row.id, now + recheck).await? {
+                repo::insert_run(conn, row.id, None, "waiting_paused").await?;
+            }
+            return Ok(());
+        };
+        let next = cron::next_after(expr, &row.timezone, now).ok();
         repo::insert_run(conn, row.id, None, "skipped_frozen").await?;
         repo::record_fire(conn, row.id, next, false, "skipped_frozen", None).await?;
         return Ok(());
@@ -191,14 +271,17 @@ async fn fire_due(
         .await?;
         return Ok(());
     }
+    let Some(expr) = row.cron.as_deref() else {
+        return fire_once(conn, row, &agent).await;
+    };
     // Next real occurrence after now; missed windows coalesce into this one late fire.
-    let next = cron::next_after(&row.cron, &row.timezone, now).ok();
+    let next = cron::next_after(expr, &row.timezone, now).ok();
     if let Some(due) = row.next_fire_at
-        && cron::next_after(&row.cron, &row.timezone, due).is_ok_and(|n| n <= now)
+        && cron::next_after(expr, &row.timezone, due).is_ok_and(|n| n <= now)
     {
         repo::insert_run(conn, row.id, None, "coalesced").await?;
     }
-    match start_run(conn, row, &agent).await? {
+    match start_run(conn, row, &agent, true).await? {
         None => {
             repo::record_fire(conn, row.id, next, false, "skipped_busy", None).await?;
         }
@@ -206,6 +289,26 @@ async fn fire_due(
             repo::record_fire(conn, row.id, next, true, "ok", Some(st.conversation)).await?;
         }
     }
+    Ok(())
+}
+
+/// (P5-SCHED-ONCE, D-421, D-422, C-1092, C-1093) Fire a due one-time schedule: in the creator's
+/// own chat when [`repo::origin_for_run`] allows it (SEC-144), else in its own run thread; never
+/// skipped as busy, never coalesced. Done in the same transaction.
+async fn fire_once(
+    conn: &mut PgConnection,
+    row: &ScheduleRow,
+    agent: &agents::AgentRow,
+) -> Result<(), ApiError> {
+    let started = match repo::origin_for_run(&mut *conn, row).await? {
+        Some(origin) => start_in_origin(conn, row, origin).await?,
+        None => None,
+    };
+    let started = match started {
+        Some(st) => Some(st),
+        None => start_run(conn, row, agent, false).await?,
+    };
+    repo::complete_once(conn, row.id, started.map(|st| st.conversation)).await?;
     Ok(())
 }
 
@@ -220,7 +323,9 @@ pub async fn run_now(
         .ok_or_else(super::service::not_found)?;
     // (phase 2, RFE-006) run-now starts agent work: 423 `frozen` for a frozen agent.
     crate::domains::freeze::service::ensure_agent_active(&mut *conn, agent.id).await?;
-    let Some(st) = start_run(conn, row, &agent).await? else {
+    // (P5-SCHED-ONCE) Run now of a one-time schedule is a manual run in its own thread too; it
+    // changes neither `run_at` nor `completed_at`.
+    let Some(st) = start_run(conn, row, &agent, true).await? else {
         return Ok(None);
     };
     repo::record_manual(conn, row.id, st.conversation).await?;
@@ -287,7 +392,11 @@ pub async fn gate_result(
             if !repo::set_run_outcome(conn, run.id, "fired", "gated_quiet", true).await? {
                 return Ok(GateApplied::Duplicate);
             }
-            repo::reset_failures(conn, sched.id, "gated_quiet").await?;
+            // (P5-SCHED-ONCE) A one-time schedule is already Done: its row is not written from
+            // a finishing run (see `on_turn_finished`).
+            if sched.cron.is_some() {
+                repo::reset_failures(conn, sched.id, "gated_quiet").await?;
+            }
             lifecycle::finish(conn, turn_id, "done", None, None, None).await?;
         }
         GateOutcome::Wake => {
@@ -329,12 +438,24 @@ pub async fn gate_result(
 }
 
 /// Count a failure; at `SCHEDULE_FAILURE_DISABLE` disable with `failures` and tell the origin.
+/// (P5-SCHED-ONCE, D-421) A one-time schedule is never counted or disabled; the notice is still
+/// posted.
 async fn record_failure(
     conn: &mut PgConnection,
     sched: &ScheduleRow,
     turn: Uuid,
     what: &str,
 ) -> Result<(), ApiError> {
+    if sched.cron.is_none() {
+        return notify_origin(
+            conn,
+            sched,
+            "schedule_run",
+            &format!("Scheduled task \"{}\" failed ({what}).", sched.name),
+            Some(turn),
+        )
+        .await;
+    }
     let n = repo::add_failure(conn, sched.id).await?;
     let limit = i32::try_from(limits::SCHEDULE_FAILURE_DISABLE).unwrap_or(i32::MAX);
     if n >= limit {
@@ -379,6 +500,22 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
         return Ok(());
     };
     match t.status.as_str() {
+        // (P5-SCHED-ONCE, C-1093) A one-time run is Done since it fired: its row is not written
+        // here (a run in the origin holds that conversation's lock, and the fire path takes the
+        // schedule row before the conversation). A run that happened in the origin gets no
+        // "finished" notice: the answer is already there.
+        "done" if sched.cron.is_none() => {
+            if Some(t.conversation_id) != sched.origin_conversation_id {
+                notify_origin(
+                    conn,
+                    &sched,
+                    "schedule_run",
+                    &format!("Scheduled task \"{}\" finished.", sched.name),
+                    Some(t.id),
+                )
+                .await?;
+            }
+        }
         "done" => {
             repo::reset_failures(conn, sched.id, "ok").await?;
             notify_origin(

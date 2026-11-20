@@ -554,7 +554,9 @@ export async function mockApi(
       });
     }
     // (FIX-167 Part B, C-1022) Nothing needs the admin by default: the badge stays hidden. `admin-attention.spec.ts` overrides it.
-    if (p === "/v1/admin/attention") return json({ items: [] });
+    if (p === "/v1/admin/attention") return json({ items: [], count: 0 });
+    // (P5-REFINE-17/18, C-1082) The rails' numbers: nothing waits at any level by default (a spec overrides this route).
+    if (p === "/v1/attention/counts") return json({ administration: null, organization: null, workspace: null });
     if (p === "/v1/admin/connectors") return json({ items: [mattermostConnector] });
     if (p === "/v1/admin/connector-types") return json({ host_running: true, items: [mattermostType] });
     // FIX-025 (C-586) + FIX-029 (C-614): the runners admin view and its per-runner failures.

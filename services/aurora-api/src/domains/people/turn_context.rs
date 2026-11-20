@@ -257,16 +257,50 @@ async fn schedule_sentence(
     person: Option<&TurnPerson>,
     link: Option<&ThreadLinkRow>,
 ) -> Result<String, DbError> {
-    let name = match turn_person::schedule_ref(turn) {
+    let sched = match turn_person::schedule_ref(turn) {
         Some(id) => schedules::get(&mut *conn, id)
             .await?
-            .filter(|s| s.agent_id == agent.id)
-            .map(|s| v(&s.name, VALUE_MAX)),
+            .filter(|s| s.agent_id == agent.id),
         None => None,
-    }
-    .unwrap_or_else(|| "unknown".to_owned());
+    };
+    let name = sched
+        .as_ref()
+        .map_or_else(|| "unknown".to_owned(), |s| v(&s.name, VALUE_MAX));
     let mut s = format!("schedule \"{name}\"");
+    // (P5-SCHED-ONCE, C-1093) A one-time schedule says when it was due, that it will not run
+    // again, and whether it is late; one that runs in its creator's own chat says that they
+    // read it there (the fire checked SEC-144's rule).
+    let once = sched.as_ref().and_then(|sc| sc.run_at.map(|at| (sc, at)));
+    if let Some((sc, at)) = once {
+        let zone = v(&sc.timezone, VALUE_MAX);
+        let due = crate::domains::schedules::once::local_of(at, &sc.timezone).replace('T', " ");
+        match sc.completed_at {
+            Some(fired) => {
+                s.push_str(&format!(
+                    ", a one-time schedule due at {due} ({zone}); it will not run again"
+                ));
+                if fired - at > chrono::Duration::minutes(5) {
+                    s.push_str(&format!(
+                        "; running late: {} was paused at the time",
+                        v(&agent.name, VALUE_MAX)
+                    ));
+                }
+            }
+            None => s.push_str(&format!(
+                ", a one-time schedule due at {due} ({zone}), run now by hand ahead of that time"
+            )),
+        }
+    }
+    let in_origin =
+        once.is_some_and(|(sc, _)| sc.origin_conversation_id == Some(turn.conversation_id));
     match person {
+        Some(p) if in_origin => {
+            s.push_str(&format!(
+                ". {} set this one-time schedule in this conversation and reads it; your answer is shown here.",
+                v(&p.display_name, VALUE_MAX)
+            ));
+            return Ok(s);
+        }
         Some(p) => s.push_str(&format!(
             ", created by {}. Nobody reads this conversation: to reach them, use send_message with to \"me\".",
             v(&p.display_name, VALUE_MAX)

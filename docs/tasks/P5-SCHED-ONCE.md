@@ -309,3 +309,109 @@ Files changed, test commands and results, and anything left undecided. Always na
 - whether the push loop shares C-1023's sweeper or runs its own;
 - the conversation path format used in `url`;
 - any P5-REFINE-7 / -11 / -14 code this brief had to bend.
+
+### Parts A and B (lane E, `p5-platform`, 2026-11-20)
+
+**Done:** Parts A and B. **Waiting:** Part C (web: presets, row states, transcript check, service
+worker `schedule_answer`), lane B after P5-REFINE-11 and -14. The service worker does not handle
+`schedule_answer` yet; until Part C ships, such a push shows the worker's generic fallback, if it
+has one.
+
+**SEC-144: who can schedule what, for whom.**
+- *Who creates a reminder for whom.* `schedule_create` needs a person speaking in the current turn
+  (`turns.speaker_user_id`); that person becomes `creator_user_id` and the turn's conversation
+  becomes `origin_conversation_id`. An agent cannot name another creator or another conversation
+  (no such arguments; `deny_unknown_fields`), and `anchor` is always `creator`. Through the API the
+  caller is the creator and there is no origin.
+- *Why a run cannot reach another person.* At fire time (`repo::schedules::origin_for_run`) a
+  one-time run goes into the origin only when it is a `direct` conversation of the same agent, not
+  archived, whose `direct_user_id` equals the schedule's **current** `creator_user_id`. Anything else
+  (reassigned, group or space conversation, archived, deleted, API-created) gets its own run thread.
+  The fire-time authority check (`automation_authorized`) still runs first. A schedule turn has no
+  speaker, so it can neither create a schedule nor make a run schedule itself again (tested). Origin
+  notices of every schedule (finished, failed, disabled) now skip a direct chat whose person is not
+  the current creator, so after a reassignment nothing is written into the old owner's chat (a
+  creator-less schedule keeps its notices; a deleted creator's chats are deleted with them).
+- *Push audience.* The claim query (`claim_answer_push`) re-checks that the run's turn is in the
+  schedule's origin, a `direct` conversation whose `direct_user_id` is the schedule's current
+  creator, and pushes only to that person's deliverable devices (live session, servable key).
+- *Bounds of `run_at`.* Refused before the start of the current minute and more than
+  `SCHEDULE_ONCE_MAX_AHEAD` (1 827 days) ahead; an offset or `Z` is refused; a daylight-saving gap is
+  refused; an ambiguous time is the earlier instant. A Done schedule never fires again
+  (`next_fire_at` null) until a new future `run_at`; a paused agent's run waits with a 60 s recheck
+  and writes one `waiting_paused` row, not one per tick.
+- *Lock screen.* The payload is `{v, type: "schedule_answer", url}` plus `title` (the schedule name,
+  one line, capped at 80 characters) only on a device with `show_details`. Never the prompt or the
+  answer (the IT puts a canary in the prompt and checks both payloads).
+
+**Brief questions.**
+- *Time-zone default of the tools:* changed for **both** kinds. `schedule_create` without `timezone`
+  now uses the speaker's `users.timezone` (if a valid IANA name), else the workspace's; before, a
+  cron made by the agent used the workspace's. `schedule_update` reads a new `cron` / `run_at` without
+  `timezone` in the speaker's zone too (with no speaker the schedule keeps its zone).
+- *Push loop:* it shares the Web Push loop (`push::deliver::spawn`, every 10 s and on approval
+  events), as its own sweep `sweep_schedule_answers` next to `sweep_attention` (C-1023) and
+  `sweep_app_setup`; claim column `schedule_runs.answer_pushed_at`, driven by the new
+  `schedules_completed_idx` (only schedules Done within the last hour are read).
+- *`url`:* `/o/<org slug>/w/<workspace slug>/agents/<agent handle>?c=<conversation id>` (the agent
+  page's deep link, D-102).
+- *P5-REFINE-7 code bent:*
+  - `fire::start_run` takes `busy_rule`; a one-time fire passes `false` (never `skipped_busy`); Run
+    now and recurring fires keep the busy rule.
+  - A follow-up's waiting: a schedule run queued behind a person's active turn is a `joining`
+    follow-up. Arm 7 (`repo::hosted::steer_candidates`) now skips follow-ups with a `schedule` door,
+    so it is never steered into the person's turn. When that turn ends, `promote_one` re-points
+    `schedule_runs.turn_id` at the promoted turn (`fire::on_followup_promoted`) and gives its
+    `turn.queued` event the schedule's `display`.
+  - `on_turn_finished` and `gate_result` no longer write a one-time schedule's row (failure count,
+    `last_outcome`): it is already Done, and a run in the origin holds that conversation's lock while
+    a fire takes the schedule row first, so writing it would invert the lock order. Failure notices
+    are still posted.
+  - Origin notices skip a direct chat that is not the current creator's (above): this also applies
+    to recurring schedules.
+
+**Decisions taken here (please confirm in review).**
+- Field errors of create/update are **400 `invalid_request`** at `/run_at` (or `/cron`), like every
+  other schedule field error (`cron`, `timezone`); the brief said 422. The preview keeps its 422
+  codes (`invalid_run_at`, `invalid_cron` when neither is given). Recorded in `05` and C-1092.
+- Done schedules keep `enabled = true`; Done is `completed_at`. `enabled` (true or false) on a Done
+  one is 409 `schedule_completed`. Offboarding lists and the group impact count leave Done ones out.
+- A `timezone`-only patch on a **Done** schedule moves the stored instant to the same wall time
+  without the past check and without re-arming it.
+- `run_conversation_id` of an origin run is the origin conversation.
+
+**Files.** Migration `crates/aurora-db/migrations/20261201000266_schedule_run_at.sql`;
+`crates/aurora-core/src/limits.rs` (`SCHEDULE_ONCE_MAX_AHEAD`, `SCHEDULE_ONCE_RECHECK`,
+`SCHEDULE_DONE_RETENTION`); `crates/aurora-db/src/repo/{schedules,hosted,automations,groups}.rs`;
+`services/aurora-api/src/domains/schedules/{once (new),service,fire,dto,routes,results,mod}.rs`,
+`automations/service.rs`, `conversations/service.rs`, `hosted/home.rs`,
+`people/turn_context.rs`, `push/deliver.rs`, `tools/schedules.rs`, `jobs.rs`; docs `02`, `03`,
+`05`, `07`, `10`, `12`, `API_CONTRACTS` (C-1092 error status), `tests/security-coverage.md`
+(SEC-144 row), `FEATURES`, `PROGRESS`; regenerated `web/openapi.json`, `web/src/lib/api/schema.d.ts`,
+`crates/aurora-db/tests/fixtures/spec_schema.json`. `14` (presets, states) is Part C's.
+
+**Tests.** New `services/aurora-api/tests/it/schedules_once.rs` (6 ITs:
+`one_time_create_validate_patch_and_preview`,
+`a_one_time_schedule_fires_once_waits_while_paused_and_resumes_late`,
+`a_quiet_gate_completes_and_a_failure_never_disables`,
+`a_reminder_runs_in_the_creators_chat_queued_and_pushed`,
+`after_reassignment_or_archive_the_run_gets_its_own_thread`,
+`retention_removes_done_schedules_after_thirty_days`); unit tests `schedules::once` (4), `results`
+(the `waiting_paused` row), `push::deliver::schedule_answer_payload_is_fixed_and_names_only_on_request`,
+`hosted::home::a_one_time_schedule_reads_once_at_its_local_time`. Changed: `tests/it/schedules.rs`
+(`row.cron` is an `Option`), `tests/it/main.rs`. No test removed or loosened; no web test touched (no
+web source changed besides the generated client; the existing schedule mocks still type-check).
+
+**Commands (all through `heavy.sh p5-platform`).**
+- `cargo test -p aurora-api --lib -- schedules:: push::deliver hosted::home`: 26 passed.
+- `cargo test -p aurora-api --test it -- schedules_once:: schedules:: turn_person:: automation_continuity:: channels_inbox::schedule_run_answer_is_posted_to_the_origin_thread web_push:: admin_attention:: freeze:: tools:: permission_matrix::`:
+  83 passed, 1 failed (the FIX-192 test, whose fixture schedule has no creator: the first notice
+  guard skipped it; narrowed to "a creator is set and differs"), then
+  `-- schedules_once:: channels_inbox::schedule_run`: 7 passed.
+- `UPDATE_OPENAPI=1 cargo test -p aurora-api --test it -- openapi_matches_checked_in`: passed;
+  `pnpm gen:api`; `pnpm typecheck`: clean.
+- `cargo fmt --all --check`: clean. `cargo clippy -p aurora-api -p aurora-db -p aurora-core
+  --all-targets -- -D warnings`: clean (after naming one tuple type).
+- `python3 scripts/extract-schema.py --check`: up to date; `bash scripts/guards/run-all.sh`: all
+  guards passed.
+- Playwright production specs: none affected (no UI change).

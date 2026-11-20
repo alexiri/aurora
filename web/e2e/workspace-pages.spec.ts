@@ -47,9 +47,9 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await serious(page)).toEqual([]);
       });
 
-      test("Internet access: History of changes and the simulator behind a button", async ({ page }) => {
+      test("Internet access: History of internet rules as a section and the simulator behind a button", async ({ page }) => {
         await openRoute(page, `${BASE}/internet-access`, scheme);
-        await expect(page.getByRole("button", { name: "History of changes" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "History of internet rules" })).toBeVisible();
         await page.getByRole("button", { name: "Try a request" }).click();
         await expect(page.getByRole("dialog", { name: "Try a request" })).toBeVisible();
         expect(await serious(page)).toEqual([]);

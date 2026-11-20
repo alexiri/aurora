@@ -1,12 +1,12 @@
 //! Schedule CRUD shared by the routes and the agent tools. Authorization is the caller's job.
 
-use super::cron;
+use super::{cron, once};
 use aurora_core::ApiError;
 use aurora_db::repo::conversations as convs;
 use aurora_db::repo::schedules::{self as repo, NewSchedule, ScheduleRow};
 use aurora_db::repo::{agents::AgentRow, workspaces};
-use chrono::Utc;
-use sqlx::PgPool;
+use chrono::{DateTime, Utc};
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 const NAME_MAX: usize = 120;
@@ -27,7 +27,9 @@ pub fn not_found() -> ApiError {
 pub struct Create {
     pub name: String,
     pub prompt: String,
-    pub cron: String,
+    /// Exactly one of `cron` / `run_at` (P5-SCHED-ONCE, C-1092).
+    pub cron: Option<String>,
+    pub run_at: Option<String>,
     pub timezone: Option<String>,
     pub gate_command: Option<String>,
     pub gate_description: Option<String>,
@@ -40,10 +42,61 @@ pub struct Patch {
     pub name: Option<String>,
     pub prompt: Option<String>,
     pub cron: Option<String>,
+    /// (P5-SCHED-ONCE) Makes the schedule one-time; at most one of `cron` / `run_at`.
+    pub run_at: Option<String>,
     pub timezone: Option<String>,
     pub gate_command: Option<Option<String>>,
     pub gate_description: Option<Option<String>>,
     pub enabled: Option<bool>,
+}
+
+fn both_kinds() -> ApiError {
+    bad("/run_at", "set either cron or run_at, not both")
+}
+
+/// (C-1092) This schedule has already run (Done): `enabled` cannot change it.
+pub fn completed() -> ApiError {
+    ApiError::conflict(
+        "schedule_completed",
+        "This schedule has already run. Set a new time to run it again.",
+    )
+}
+
+/// The instant to arm a schedule at when it is (re-)enabled: a cron's next occurrence; a pending
+/// one-time schedule's `run_at`, or now when that has passed (late rather than lost, D-421);
+/// `None` for a Done one (it stays Done).
+pub fn arm_at(r: &ScheduleRow, now: DateTime<Utc>) -> Result<Option<DateTime<Utc>>, ApiError> {
+    match (&r.cron, r.run_at) {
+        (Some(c), _) => cron::validate(c, &r.timezone, now).map(Some),
+        (None, Some(_)) if r.completed_at.is_some() => Ok(None),
+        (None, Some(at)) => Ok(Some(at.max(now))),
+        (None, None) => Ok(None),
+    }
+}
+
+/// A new schedule's timing: `(cron, run_at, first fire)`.
+type Timing = (Option<String>, Option<DateTime<Utc>>, DateTime<Utc>);
+
+/// The timing of a new schedule: the cron and its first occurrence, or the one-time instant.
+fn timing(
+    cron_expr: Option<&str>,
+    run_at: Option<&str>,
+    tz: &str,
+    now: DateTime<Utc>,
+) -> Result<Timing, ApiError> {
+    match (cron_expr, run_at) {
+        (Some(_), Some(_)) => Err(both_kinds()),
+        (None, None) => Err(bad("/cron", "set either cron or run_at")),
+        (Some(c), None) => {
+            let c = c.trim().to_owned();
+            let next = cron::validate(&c, tz, now)?;
+            Ok((Some(c), None, next))
+        }
+        (None, Some(at)) => {
+            let at = once::validate(at, tz, now)?;
+            Ok((None, Some(at), at))
+        }
+    }
 }
 
 fn check_name(v: &str) -> Result<(), ApiError> {
@@ -97,7 +150,8 @@ pub async fn create(
             .await?
             .map_or_else(|| "UTC".to_owned(), |w| w.timezone),
     };
-    let next = cron::validate(&c.cron, &tz, Utc::now())?;
+    let (cron_expr, run_at, next) =
+        timing(c.cron.as_deref(), c.run_at.as_deref(), &tz, Utc::now())?;
     let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
     // Serialize the per-agent cap.
     sqlx::query("SELECT 1 FROM agents WHERE id = $1 FOR UPDATE")
@@ -117,7 +171,8 @@ pub async fn create(
             agent_id: agent.id,
             name: &c.name,
             prompt: &c.prompt,
-            cron: c.cron.trim(),
+            cron: cron_expr.as_deref(),
+            run_at,
             timezone: &tz,
             gate_command: c.gate_command.as_deref(),
             gate_description: c.gate_description.as_deref(),
@@ -173,19 +228,55 @@ pub async fn patch_with(
         r.gate_description = v;
     }
     check_gate(&r.gate_command, &r.gate_description)?;
-    let timing = p.cron.is_some() || p.timezone.is_some();
-    if let Some(v) = p.cron {
-        r.cron = v.trim().to_owned();
+    let now = Utc::now();
+    if p.cron.is_some() && p.run_at.is_some() {
+        return Err(both_kinds());
     }
-    if let Some(v) = p.timezone {
-        r.timezone = v;
+    // The timing after this patch; `Some(next)` when it changed (re-armed if enabled).
+    let mut retimed: Option<Option<DateTime<Utc>>> = None;
+    let old_tz = std::mem::take(&mut r.timezone);
+    r.timezone = p.timezone.clone().unwrap_or_else(|| old_tz.clone());
+    if let Some(v) = p.cron {
+        // (C-1092) A cron makes the schedule recurring.
+        let c = v.trim().to_owned();
+        retimed = Some(Some(cron::validate(&c, &r.timezone, now)?));
+        r.cron = Some(c);
+        r.run_at = None;
+        r.completed_at = None;
+    } else if let Some(v) = p.run_at {
+        // (C-1092) A run_at makes it one-time and re-arms a Done one.
+        let at = once::validate(&v, &r.timezone, now)?;
+        retimed = Some(Some(at));
+        r.cron = None;
+        r.run_at = Some(at);
+        r.completed_at = None;
+    } else if p.timezone.is_some() {
+        match (&r.cron, r.run_at) {
+            (Some(c), _) => retimed = Some(Some(cron::validate(c, &r.timezone, now)?)),
+            (None, Some(at)) => {
+                // A one-time schedule keeps its local wall time in the new zone.
+                let moved = once::rebase(at, &old_tz, &r.timezone)?;
+                r.run_at = Some(moved);
+                if r.completed_at.is_none() {
+                    once::check_bounds(moved, now)?;
+                    retimed = Some(Some(moved));
+                }
+            }
+            (None, None) => {}
+        }
+    }
+    if p.enabled.is_some() && r.completed_at.is_some() {
+        return Err(completed());
     }
     match p.enabled {
         Some(true) if !r.enabled => {
             r.enabled = true;
             r.disabled_reason = None;
             r.consecutive_failures = 0;
-            r.next_fire_at = Some(cron::validate(&r.cron, &r.timezone, Utc::now())?);
+            r.next_fire_at = match retimed {
+                Some(next) => next,
+                None => arm_at(&r, now)?,
+            };
             reschedule = true;
         }
         Some(false) if r.enabled => {
@@ -196,10 +287,9 @@ pub async fn patch_with(
         }
         _ => {}
     }
-    if timing {
-        let next = cron::validate(&r.cron, &r.timezone, Utc::now())?;
+    if let Some(next) = retimed {
         if r.enabled {
-            r.next_fire_at = Some(next);
+            r.next_fire_at = next;
         }
         reschedule = true;
     }
@@ -212,10 +302,31 @@ pub async fn patch_with(
 /// deleted in the same transaction.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
-    convs::mark_automation_deleted(&mut tx, "schedule", id).await?;
-    if !repo::delete(&mut tx, id).await? {
+    if !delete_tx(&mut tx, id).await? {
         return Err(not_found());
     }
     tx.commit().await.map_err(aurora_db::DbError::from)?;
     Ok(())
+}
+
+/// The delete's statements in the caller's transaction (threads marked first: the lock order is
+/// conversation, then schedule). False when the schedule is gone.
+async fn delete_tx(conn: &mut PgConnection, id: Uuid) -> Result<bool, aurora_db::DbError> {
+    convs::mark_automation_deleted(&mut *conn, "schedule", id).await?;
+    repo::delete(conn, id).await
+}
+
+/// (P5-SCHED-ONCE, C-1092) One batch of the daily retention pass: Done one-time schedules older
+/// than `SCHEDULE_DONE_RETENTION`, each deleted through [`delete`]'s path (its run threads are
+/// marked as from a deleted automation). Returns how many were deleted.
+pub async fn prune_done(pool: &PgPool, batch: i64) -> Result<u64, aurora_db::DbError> {
+    let age = aurora_core::limits::SCHEDULE_DONE_RETENTION.as_secs_f64();
+    let mut n = 0;
+    for id in repo::done_before(pool, age, batch).await? {
+        let mut tx = pool.begin().await?;
+        let gone = delete_tx(&mut tx, id).await?;
+        tx.commit().await?;
+        n += u64::from(gone);
+    }
+    Ok(n)
 }

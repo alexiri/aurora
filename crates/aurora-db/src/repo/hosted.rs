@@ -550,6 +550,9 @@ pub async fn steer_candidates(
          FROM turns f JOIN turns t ON t.id = f.parent_turn_id
            JOIN sandboxes s ON s.agent_id = t.agent_id
          WHERE f.role = 'followup' AND f.status = 'joining' AND f.steer_delivered_at IS NULL
+           -- (P5-SCHED-ONCE, C-1093) A schedule run queued behind a turn is its own turn later,
+           -- never steered into the person's turn.
+           AND f.door->>'kind' IS DISTINCT FROM 'schedule'
            AND t.role = 'turn' AND t.status = 'running' AND t.boot_id = s.boot_id
            AND s.runner_id = $1 AND s.channel_replica_id = $2 AND s.state = 'running'
            AND coalesce(s.resource_profile->'harness'->'capabilities' ? 'steer', false)
@@ -1433,7 +1436,10 @@ pub async fn home_peers(conn: &mut PgConnection, agent: Uuid) -> Result<Vec<Home
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct HomeSchedule {
     pub name: String,
-    pub cron: String,
+    /// `None` for a one-time schedule (P5-SCHED-ONCE).
+    pub cron: Option<String>,
+    /// (P5-SCHED-ONCE) A pending one-time schedule's instant.
+    pub run_at: Option<chrono::DateTime<chrono::Utc>>,
     pub timezone: String,
     pub enabled: bool,
 }
@@ -1443,7 +1449,8 @@ pub async fn home_schedules(
     agent: Uuid,
 ) -> Result<Vec<HomeSchedule>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT name, cron, timezone, enabled FROM schedules WHERE agent_id = $1
+        "SELECT name, cron, run_at, timezone, enabled FROM schedules
+         WHERE agent_id = $1 AND completed_at IS NULL
          ORDER BY name, id",
     )
     .bind(agent)
