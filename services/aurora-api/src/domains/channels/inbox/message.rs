@@ -227,6 +227,8 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
     };
     let mut conn = pool.acquire().await.retry()?;
     let ext = match (kind, user_id) {
+        // (P5-REFINE-7, D-409, C-1073) A DM continues the person's *first* dashboard chat
+        // (`user:<uid>`), never a newer one started with New chat (`13 §5.2`).
         ("direct", Some(u)) => format!("user:{u}"),
         _ => format!("thread:{iid}:{}:{thread_key}", m.space.reference),
     };

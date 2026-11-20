@@ -1984,7 +1984,9 @@ async fn s10_freeze_aborts_the_turn_drops_the_held_request_parks_the_sandbox_and
     let (s, hook) = api
         .post(
             &format!("/v1/agents/{}/webhooks", api.daneel),
-            json!({"name": "hook", "instructions": "i"}),
+            // Unsigned (P5-REFINE-7, C-1078: a create without `verification` is signed), so the
+            // unsigned delivery below reaches the freeze check.
+            json!({"name": "hook", "instructions": "i", "verification": {"kind": "none"}}),
         )
         .await;
     assert_eq!(s, 201, "{hook}");

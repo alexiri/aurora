@@ -163,7 +163,8 @@ describe("WebhooksTab", () => {
 const link = {
   id: "l1", revision: 3, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
   self: { agent_id: "a1", policy: "ask" },
-  peer: { agent_id: "a2", handle: "bob", name: "Bob", workspace_id: "w2", policy: "allow" },
+  peer: { agent_id: "a2", handle: "bob", name: "Bob", workspace_id: "w2", workspace_name: "Research", policy: "allow" },
+  direction: "both", created_by: { kind: "agent", display_name: null },
 };
 
 describe("PeersTab", () => {

@@ -1,4 +1,4 @@
-use aurora_db::repo::schedules::{RunRow, ScheduleRow};
+use aurora_db::repo::schedules::{RunResultRow, RunRow, ScheduleRow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -38,6 +38,10 @@ pub struct Schedule {
     pub conversation_hidden: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// (P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused.
+    pub next_runs: Vec<DateTime<Utc>>,
+    /// (P5-REFINE-7, C-1077) The newest run's result (`RunResult`); null before the first run.
+    pub last_result: Option<String>,
 }
 
 impl From<ScheduleRow> for Schedule {
@@ -65,6 +69,8 @@ impl From<ScheduleRow> for Schedule {
             conversation_hidden: false,
             created_at: r.created_at,
             updated_at: r.updated_at,
+            next_runs: Vec::new(),
+            last_result: None,
         }
     }
 }
@@ -77,13 +83,26 @@ pub struct ScheduleRun {
     pub scheduled_for: DateTime<Utc>,
     pub fired_at: DateTime<Utc>,
     pub turn_id: Option<Uuid>,
-    /// `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced`.
+    /// `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |
+    /// `skipped_frozen` (stored; unchanged for compatibility).
     pub outcome: String,
     pub created_at: DateTime<Utc>,
+    /// (P5-REFINE-7, C-1077) The run's thread; null when it never had one or it was deleted.
+    pub conversation_id: Option<Uuid>,
+    /// (C-1077) `running` | `answered` | `skipped_by_gate` | `failed` | `skipped`.
+    pub result: String,
+    /// (C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,
+    /// `unauthorized`, `frozen`, `missed`; null otherwise.
+    pub reason: Option<String>,
 }
 
-impl From<RunRow> for ScheduleRun {
-    fn from(r: RunRow) -> Self {
+impl From<RunResultRow> for ScheduleRun {
+    fn from(r: RunResultRow) -> Self {
+        let (result, reason) = super::results::run_result(
+            &r.outcome,
+            r.turn_status.as_deref(),
+            r.turn_error_code.as_deref(),
+        );
         Self {
             id: r.id,
             schedule_id: r.schedule_id,
@@ -92,8 +111,51 @@ impl From<RunRow> for ScheduleRun {
             turn_id: r.turn_id,
             outcome: r.outcome,
             created_at: r.created_at,
+            conversation_id: r.conversation_id,
+            result: result.to_owned(),
+            reason,
         }
     }
+}
+
+impl ScheduleRun {
+    /// A run that has just started in `conversation` (Run now: C-1077).
+    pub fn started(r: RunRow, conversation: Uuid) -> Self {
+        Self {
+            id: r.id,
+            schedule_id: r.schedule_id,
+            scheduled_for: r.fired_at,
+            fired_at: r.fired_at,
+            turn_id: r.turn_id,
+            outcome: r.outcome,
+            created_at: r.created_at,
+            conversation_id: Some(conversation),
+            result: "running".to_owned(),
+            reason: None,
+        }
+    }
+}
+
+/// (P5-REFINE-7, C-1077) `POST /agents/{agent}/schedules/preview` body.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SchedulePreviewRequest {
+    /// 5-field cron expression.
+    pub cron: String,
+    /// IANA timezone; defaults to the workspace timezone.
+    pub timezone: Option<String>,
+}
+
+/// (C-1077) What a cadence would do, saved nowhere.
+#[derive(Serialize, ToSchema)]
+pub struct SchedulePreview {
+    /// The next three instants after now (RFC 3339 UTC).
+    pub next: Vec<DateTime<Utc>>,
+    /// The smallest gap among the next 12 instants, in seconds; null when fewer than two.
+    pub interval_secs: Option<i64>,
+    /// The smallest gap is below `min_interval_secs` (create and update refuse it).
+    pub too_frequent: bool,
+    pub min_interval_secs: i64,
 }
 
 #[derive(Deserialize, ToSchema)]

@@ -1373,6 +1373,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agent-links/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a link (C-1085): cancels the pair's open and queued tasks and expires its pending
+         *     approvals.
+         */
+        delete: operations["deleteAgentLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agent-links/{id}/direction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Change who may hand tasks to whom (C-1085): widening needs an approver of both sides. */
+        put: operations["setAgentLinkDirection"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agent-links/{id}/policy": {
         parameters: {
             query?: never;
@@ -1537,6 +1574,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/conversation-folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The agent's automation folders: one per schedule or webhook that has run threads (C-1074). */
+        get: operations["listConversationFolders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/conversations": {
         parameters: {
             query?: never;
@@ -1564,8 +1618,31 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Get-or-create the caller's direct conversation with the agent. */
+        /**
+         * The caller's most recently active non-archived direct conversation with the agent, created
+         *     when there is none (C-1073).
+         */
         post: operations["getOrCreateDirectConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/conversations/direct/new": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A fresh direct conversation with empty history (C-1073): 200 with the latest one while it is
+         *     still empty, 201 with a new one otherwise.
+         */
+        post: operations["createDirectConversation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1846,6 +1923,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/linkable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agents a person may link this agent to (C-1085): same organization, workspaces the caller
+         *     can use; name, handle and workspace only.
+         */
+        get: operations["listLinkableAgents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/links": {
         parameters: {
             query?: never;
@@ -1856,7 +1953,11 @@ export interface paths {
         /** Links of an agent, each seen from this agent's side. */
         get: operations["listAgentLinks"];
         put?: never;
-        post?: never;
+        /**
+         * Link this agent to another (C-1085, SEC-142). 201 when created; 200 with the existing link
+         *     when the pair is linked already with the same direction.
+         */
+        post: operations["createAgentLink"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2209,6 +2310,26 @@ export interface paths {
         put?: never;
         /** Create a schedule; the caller becomes its creator (fire-time authority). */
         post: operations["createSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/schedules/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What a cadence would do: the next three instants and whether it fires more often than every
+         *     five minutes (C-1077). Saves nothing.
+         */
+        post: operations["previewSchedule"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3099,7 +3220,8 @@ export interface paths {
         delete: operations["deleteConversation"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename a conversation, or (`title: null`) go back to the automatic title (C-1073). */
+        patch: operations["updateConversation"];
         trace?: never;
     };
     "/v1/conversations/{id}/archive": {
@@ -5666,6 +5788,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/webhooks/{id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A new secret for a signed webhook (C-1078); the old one stops working at once. Shown once. */
+        post: operations["rotateWebhookSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}": {
         parameters: {
             query?: never;
@@ -6889,6 +7028,9 @@ export interface components {
         AgentLink: {
             /** Format: date-time */
             created_at: string;
+            created_by: components["schemas"]["LinkCreator"];
+            /** @description (C-1085) Who may hand tasks to whom, from this agent's side. */
+            direction: components["schemas"]["LinkDirection"];
             /** Format: uuid */
             id: string;
             peer: components["schemas"]["LinkPeer"];
@@ -8308,6 +8450,7 @@ export interface components {
              * @description (phase 2, RFE-010) set while the conversation is archived (hidden from default lists).
              */
             archived_at?: string | null;
+            automation?: components["schemas"]["ConversationAutomation"] | null;
             /** Format: date-time */
             created_at: string;
             direct_user?: components["schemas"]["DirectUser"] | null;
@@ -8324,7 +8467,44 @@ export interface components {
             last_seq: number;
             /** Format: uuid */
             origin_conversation_id?: string | null;
+            /**
+             * Format: date-time
+             * @description (P5-REFINE-7, C-1074) When the run or delivery started (the thread's `created_at`) for
+             *     automation threads; null otherwise.
+             */
+            run_at?: string | null;
             title?: string | null;
+            /** @description (P5-REFINE-7, C-1073) Who set `title`: `auto` | `person` | `automation`. */
+            title_source: string;
+        };
+        /** @description (P5-REFINE-7, C-1074) The automation of a run thread. */
+        ConversationAutomation: {
+            /** @description The schedule or webhook was deleted; the thread and its transcript stay. */
+            deleted: boolean;
+            /** Format: uuid */
+            id: string;
+            /** @description `schedule` | `webhook` */
+            kind: string;
+            /** @description The automation's current name (the stored title when it is gone). */
+            name: string;
+        };
+        /** @description (P5-REFINE-7, C-1074) One automation folder of the conversation list. */
+        ConversationFolder: {
+            deleted: boolean;
+            /** Format: uuid */
+            id: string;
+            /** @description `schedule` | `webhook` */
+            kind: string;
+            /** Format: date-time */
+            last_activity_at: string;
+            /**
+             * @description The newest run's (or delivery's) result: `running` | `answered` | `skipped_by_gate` |
+             *     `failed` | `skipped` for a schedule, the delivery `result` words for a webhook.
+             */
+            last_result?: string | null;
+            name: string;
+            /** Format: int64 */
+            thread_count: number;
         };
         /** @description `counters` of `GET /v1/admin/overview` (C-402). */
         CountersInfo: {
@@ -8462,6 +8642,13 @@ export interface components {
             expires_at?: string | null;
             /** @description 1-80 characters. */
             name: string;
+        };
+        /** @description `POST /v1/agents/{agent}/links` (C-1085). */
+        CreateLinkBody: {
+            /** @description Read from `{agent}`'s side. */
+            direction: components["schemas"]["LinkDirectionRequest"];
+            /** Format: uuid */
+            peer_agent_id: string;
         };
         CreateMemoryRequest: {
             content: string;
@@ -10065,6 +10252,24 @@ export interface components {
         LimitPreview: {
             lowered: components["schemas"]["LoweredAgentView"][];
         };
+        /** @description (C-1085) Who created the link. */
+        LinkCreator: {
+            /** @description The person's display name; null for an agent, or once the person is deleted. */
+            display_name?: string | null;
+            kind: components["schemas"]["LinkCreatorKind"];
+        };
+        /** @enum {string} */
+        LinkCreatorKind: "person" | "agent";
+        /**
+         * @description (C-1085) Who may hand tasks to whom, read from the asked agent's side.
+         * @enum {string}
+         */
+        LinkDirection: "both" | "outgoing" | "incoming";
+        /**
+         * @description (C-1085) The direction a person asks for, read from the agent named by the route or body.
+         * @enum {string}
+         */
+        LinkDirectionRequest: "both" | "to_peer" | "from_peer";
         /** @enum {string} */
         LinkMethod: "verified_email" | "sign_in_link" | "admin";
         LinkPeer: {
@@ -10075,6 +10280,8 @@ export interface components {
             policy: components["schemas"]["LinkPolicy"];
             /** Format: uuid */
             workspace_id: string;
+            /** @description (C-1085) The peer's workspace name. */
+            workspace_name: string;
         };
         /** @enum {string} */
         LinkPolicy: "ask" | "allow" | "blocked";
@@ -10097,6 +10304,25 @@ export interface components {
             /** Format: uuid */
             agent_id: string;
             policy: components["schemas"]["LinkPolicy"];
+        };
+        /** @description A candidate of `GET /v1/agents/{agent}/linkable` (C-1085): nothing else about the agent. */
+        LinkableAgent: {
+            /** Format: uuid */
+            agent_id: string;
+            /** @description The agent is paused by an administrator (not linkable). */
+            frozen: boolean;
+            handle: string;
+            /** @description False for a BYO agent (not linkable). */
+            hosted: boolean;
+            /** @description A link with this agent exists already. */
+            linked: boolean;
+            name: string;
+            /** Format: uuid */
+            workspace_id: string;
+            workspace_name: string;
+        };
+        LinkableAgentList: {
+            items: components["schemas"]["LinkableAgent"][];
         };
         /** @enum {string} */
         Listen: "mentions" | "all";
@@ -11419,6 +11645,7 @@ export interface components {
                  * @description (phase 2, RFE-010) set while the conversation is archived (hidden from default lists).
                  */
                 archived_at?: string | null;
+                automation?: components["schemas"]["ConversationAutomation"] | null;
                 /** Format: date-time */
                 created_at: string;
                 direct_user?: components["schemas"]["DirectUser"] | null;
@@ -11435,7 +11662,35 @@ export interface components {
                 last_seq: number;
                 /** Format: uuid */
                 origin_conversation_id?: string | null;
+                /**
+                 * Format: date-time
+                 * @description (P5-REFINE-7, C-1074) When the run or delivery started (the thread's `created_at`) for
+                 *     automation threads; null otherwise.
+                 */
+                run_at?: string | null;
                 title?: string | null;
+                /** @description (P5-REFINE-7, C-1073) Who set `title`: `auto` | `person` | `automation`. */
+                title_source: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_ConversationFolder: {
+            items: {
+                deleted: boolean;
+                /** Format: uuid */
+                id: string;
+                /** @description `schedule` | `webhook` */
+                kind: string;
+                /** Format: date-time */
+                last_activity_at: string;
+                /**
+                 * @description The newest run's (or delivery's) result: `running` | `answered` | `skipped_by_gate` |
+                 *     `failed` | `skipped` for a schedule, the delivery `result` words for a webhook.
+                 */
+                last_result?: string | null;
+                name: string;
+                /** Format: int64 */
+                thread_count: number;
             }[];
             next_cursor?: string | null;
         };
@@ -11960,9 +12215,13 @@ export interface components {
                 id: string;
                 /** Format: date-time */
                 last_fired_at?: string | null;
+                /** @description (P5-REFINE-7, C-1077) The newest run's result (`RunResult`); null before the first run. */
+                last_result?: string | null;
                 name: string;
                 /** Format: date-time */
                 next_fire_at?: string | null;
+                /** @description (P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused. */
+                next_runs: string[];
                 /**
                  * Format: uuid
                  * @description Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
@@ -11978,14 +12237,29 @@ export interface components {
         };
         Page_ScheduleRun: {
             items: {
+                /**
+                 * Format: uuid
+                 * @description (P5-REFINE-7, C-1077) The run's thread; null when it never had one or it was deleted.
+                 */
+                conversation_id?: string | null;
                 /** Format: date-time */
                 created_at: string;
                 /** Format: date-time */
                 fired_at: string;
                 /** Format: uuid */
                 id: string;
-                /** @description `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced`. */
+                /**
+                 * @description `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |
+                 *     `skipped_frozen` (stored; unchanged for compatibility).
+                 */
                 outcome: string;
+                /**
+                 * @description (C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,
+                 *     `unauthorized`, `frozen`, `missed`; null otherwise.
+                 */
+                reason?: string | null;
+                /** @description (C-1077) `running` | `answered` | `skipped_by_gate` | `failed` | `skipped`. */
+                result: string;
                 /** Format: uuid */
                 schedule_id: string;
                 /**
@@ -12155,16 +12429,31 @@ export interface components {
             items: {
                 /**
                  * Format: uuid
+                 * @description (C-1079) The delivery's own thread (a duplicate: the original's); null when none.
+                 */
+                conversation_id?: string | null;
+                /**
+                 * Format: uuid
+                 * @description (C-1079) For a `duplicate`: the delivery it repeated.
+                 */
+                duplicate_of?: string | null;
+                /**
+                 * Format: uuid
                  * @description Also the `delivery_id` returned to the sender.
                  */
                 id: string;
                 /** Format: date-time */
                 received_at: string;
+                /**
+                 * @description (C-1079) `answered` | `running` | `failed` | `refused_signature` | `refused_too_large` |
+                 *     `refused_paused` | `refused_frozen` | `refused_unauthorized` | `duplicate`.
+                 */
+                result: string;
                 /** Format: int32 */
                 size: number;
                 /**
-                 * @description `accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized`
-                 *     (`duplicate` deliveries are answered with the original id and not logged).
+                 * @description `accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized` |
+                 *     (P5-REFINE-7, C-1079) `duplicate`.
                  */
                 status: string;
                 /** Format: uuid */
@@ -13762,9 +14051,13 @@ export interface components {
             id: string;
             /** Format: date-time */
             last_fired_at?: string | null;
+            /** @description (P5-REFINE-7, C-1077) The newest run's result (`RunResult`); null before the first run. */
+            last_result?: string | null;
             name: string;
             /** Format: date-time */
             next_fire_at?: string | null;
+            /** @description (P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused. */
+            next_runs: string[];
             /**
              * Format: uuid
              * @description Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
@@ -13781,15 +14074,51 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        /** @description (C-1077) What a cadence would do, saved nowhere. */
+        SchedulePreview: {
+            /**
+             * Format: int64
+             * @description The smallest gap among the next 12 instants, in seconds; null when fewer than two.
+             */
+            interval_secs?: number | null;
+            /** Format: int64 */
+            min_interval_secs: number;
+            /** @description The next three instants after now (RFC 3339 UTC). */
+            next: string[];
+            /** @description The smallest gap is below `min_interval_secs` (create and update refuse it). */
+            too_frequent: boolean;
+        };
+        /** @description (P5-REFINE-7, C-1077) `POST /agents/{agent}/schedules/preview` body. */
+        SchedulePreviewRequest: {
+            /** @description 5-field cron expression. */
+            cron: string;
+            /** @description IANA timezone; defaults to the workspace timezone. */
+            timezone?: string | null;
+        };
         ScheduleRun: {
+            /**
+             * Format: uuid
+             * @description (P5-REFINE-7, C-1077) The run's thread; null when it never had one or it was deleted.
+             */
+            conversation_id?: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             fired_at: string;
             /** Format: uuid */
             id: string;
-            /** @description `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced`. */
+            /**
+             * @description `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |
+             *     `skipped_frozen` (stored; unchanged for compatibility).
+             */
             outcome: string;
+            /**
+             * @description (C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,
+             *     `unauthorized`, `frozen`, `missed`; null otherwise.
+             */
+            reason?: string | null;
+            /** @description (C-1077) `running` | `answered` | `skipped_by_gate` | `failed` | `skipped`. */
+            result: string;
             /** Format: uuid */
             schedule_id: string;
             /**
@@ -14046,6 +14375,20 @@ export interface components {
         SentenceApp: {
             app_id: string;
             name: string;
+        };
+        /** @description `PUT /v1/agent-links/{id}/direction` (C-1085). */
+        SetDirectionBody: {
+            /**
+             * Format: uuid
+             * @description The agent whose side `direction` is read from (one of the link's two agents).
+             */
+            agent_id: string;
+            direction: components["schemas"]["LinkDirectionRequest"];
+            /**
+             * Format: int64
+             * @description The `revision` the caller last saw (409 `stale_revision` on mismatch).
+             */
+            revision: number;
         };
         SetDmDefaultRequest: {
             /** Format: uuid */
@@ -15063,6 +15406,11 @@ export interface components {
             /** @description `6h|12h|1d|1w|2w|1mo|never`. */
             update_interval: string;
         };
+        /** @description (P5-REFINE-7, C-1073) `PATCH /conversations/{id}` body. */
+        UpdateConversation: {
+            /** @description 1–200 characters after trimming; `null` goes back to the automatic title. */
+            title?: string | null;
+        };
         UpdatePushSubscription: {
             label?: string | null;
             paused?: boolean | null;
@@ -15296,11 +15644,19 @@ export interface components {
         };
         /** @description Write-only verification settings. */
         VerificationInput: {
+            /**
+             * @description (P5-REFINE-7, C-1078) Create only: Aurora makes the secret (32 random bytes, 64 hex
+             *     characters) and returns it once. Not with `secret`; on update use `rotate-secret`.
+             */
+            generate_secret?: boolean;
             /** @description Header carrying the signature/token (defaults: `X-Signature`, `Authorization`). */
             header?: string | null;
             /** @description `none` | `hmac_sha256` (hex digest of the raw body) | `bearer`. */
             kind: string;
-            /** @description Shared secret; required when choosing a kind (or switching to one). Never returned. */
+            /**
+             * @description Shared secret; required when choosing a kind (or switching to one) unless
+             *     `generate_secret`. Never returned.
+             */
             secret?: string | null;
         };
         /**
@@ -15310,6 +15666,15 @@ export interface components {
         VerificationState: "checking" | "works" | "rejected" | "unreachable" | "not_checked";
         /** @description Verification as exposed: never contains the secret. */
         VerificationView: {
+            /**
+             * @description (C-1078) How the sender fills the header: `sha256=<hex of the HMAC-SHA256 of the raw body,
+             *     keyed with the secret>` or `Bearer <secret>`; null for `none`.
+             */
+            format?: string | null;
+            /**
+             * @description (P5-REFINE-7, C-1078) The effective header (`X-Signature` / `Authorization` by default);
+             *     null for `none`.
+             */
             header?: string | null;
             /** @description `none` | `hmac_sha256` | `bearer`. */
             kind: string;
@@ -15372,16 +15737,31 @@ export interface components {
         WebhookDelivery: {
             /**
              * Format: uuid
+             * @description (C-1079) The delivery's own thread (a duplicate: the original's); null when none.
+             */
+            conversation_id?: string | null;
+            /**
+             * Format: uuid
+             * @description (C-1079) For a `duplicate`: the delivery it repeated.
+             */
+            duplicate_of?: string | null;
+            /**
+             * Format: uuid
              * @description Also the `delivery_id` returned to the sender.
              */
             id: string;
             /** Format: date-time */
             received_at: string;
+            /**
+             * @description (C-1079) `answered` | `running` | `failed` | `refused_signature` | `refused_too_large` |
+             *     `refused_paused` | `refused_frozen` | `refused_unauthorized` | `duplicate`.
+             */
+            result: string;
             /** Format: int32 */
             size: number;
             /**
-             * @description `accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized`
-             *     (`duplicate` deliveries are answered with the original id and not logged).
+             * @description `accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized` |
+             *     (P5-REFINE-7, C-1079) `duplicate`.
              */
             status: string;
             /** Format: uuid */
@@ -15398,6 +15778,11 @@ export interface components {
             secret_value_names?: string[];
             suggest_for_hosts?: string[];
         };
+        /** @description (C-1078) `POST /webhooks/{id}/rotate-secret`: the new secret, shown once. */
+        WebhookSecret: {
+            secret: string;
+            webhook: components["schemas"]["Webhook"];
+        };
         /** @description `GET /v1/connections/{id}/webhook`: never a URL, a secret value or the signing secret. */
         WebhookView: components["schemas"]["WebhookConfig"] & {
             effective_rate: components["schemas"]["EffectiveRateDto"];
@@ -15406,6 +15791,11 @@ export interface components {
         };
         /** @description Returned by create and rotate: the URL embeds the token and is shown once. */
         WebhookWithUrl: {
+            /**
+             * @description (P5-REFINE-7, C-1078) The secret Aurora generated on this call (`generate_secret`, or a
+             *     create without `verification`); shown once, never again.
+             */
+            secret?: string | null;
             url: string;
             webhook: components["schemas"]["Webhook"];
         };
@@ -21051,6 +21441,131 @@ export interface operations {
             };
         };
     };
+    deleteAgentLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Link id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    setAgentLinkDirection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Link id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetDirectionBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLink"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description approver_required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description stale_revision */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     setAgentLinkPolicy: {
         parameters: {
             query?: never;
@@ -21814,12 +22329,67 @@ export interface operations {
             };
         };
     };
+    listConversationFolders: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ConversationFolder"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listConversations: {
         parameters: {
             query?: {
                 kind?: string;
                 /** @description (phase 2, RFE-010) `true` lists archived conversations; default `false` hides them. */
                 archived?: boolean;
+                /** @description (P5-REFINE-7, C-1074) `all` (default) | `none` (no run threads) | `only` (run threads). */
+                automation?: string;
+                /** @description (P5-REFINE-7, C-1074) With `automation=only`: the threads of this schedule or webhook. */
+                automation_id?: string;
                 limit?: number;
                 cursor?: string;
             };
@@ -21976,6 +22546,82 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description conversation_limit */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createDirectConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The latest, still empty */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description conversation_limit */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23619,6 +24265,54 @@ export interface operations {
             };
         };
     };
+    listLinkableAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkableAgentList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listAgentLinks: {
         parameters: {
             query?: never;
@@ -23649,6 +24343,93 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createAgentLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateLinkBody"];
+            };
+        };
+        responses: {
+            /** @description Already linked */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLink"];
+                };
+            };
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLink"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description link_self | not_hosted | link_exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description frozen */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25105,6 +25886,67 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    previewSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SchedulePreviewRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePreview"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description invalid_cron | invalid_timezone */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -28623,6 +29465,84 @@ export interface operations {
             };
             /** @description conversation_active */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateConversation"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description title_managed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description invalid_title */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -40345,6 +41265,63 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    rotateWebhookSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Webhook id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookSecret"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description verification_not_signed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

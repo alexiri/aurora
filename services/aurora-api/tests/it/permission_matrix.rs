@@ -950,6 +950,27 @@ const ROWS: &[Row] = &[
         G::WsUse,
         true,
     ),
+    // (P5-REFINE-7, C-1073) a fresh direct chat: session only, like `direct`.
+    r(
+        "POST",
+        "/v1/agents/{agent}/conversations/direct/new",
+        G::WsUse,
+        true,
+    ),
+    // (P5-REFINE-7, C-1074) the automation folders of the conversation list.
+    r(
+        "GET",
+        "/v1/agents/{agent}/conversation-folders",
+        G::WsUse,
+        false,
+    ),
+    // (P5-REFINE-7, C-1077) the schedule preview saves nothing.
+    r(
+        "POST",
+        "/v1/agents/{agent}/schedules/preview",
+        G::WsUse,
+        false,
+    ),
     r("GET", "/v1/agents/{agent}/effective", G::WsUse, false),
     // (P5-UX-10, C-934) what exactly an agent can do in an app
     r(
@@ -974,6 +995,8 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/webhooks/{id}/deliveries", G::WsUse, false),
     r("PUT", "/v1/webhooks/{id}/creator", G::WsOwn, false),
     r("POST", "/v1/webhooks/{id}/rotate", G::WsUse, false),
+    // (P5-REFINE-7, C-1078) same callers as `rotate`.
+    r("POST", "/v1/webhooks/{id}/rotate-secret", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/memories", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/memories", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/memories/search", G::WsUse, false),
@@ -1117,6 +1140,10 @@ const ROWS: &[Row] = &[
     ),
     // ---- resources addressed by their own id (not seeded: denial side only) ----
     r("GET", "/v1/conversations/{id}", G::WsUse, false),
+    // (P5-REFINE-7, C-1073) rename: the per-conversation decision (the direct user, `can_own`
+    // for other kinds, 409 for run threads) is it/conversations.rs; the matrix asserts the
+    // visibility floor.
+    r("PATCH", "/v1/conversations/{id}", G::WsUse, false),
     r("GET", "/v1/conversations/{id}/events", G::WsUse, false),
     r("GET", "/v1/conversations/{id}/stream", G::WsUse, false),
     r("POST", "/v1/conversations/{id}/messages", G::WsUse, false),
@@ -1189,6 +1216,13 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/access-requests/{id}/dismiss", G::WsOwn, false),
     r("GET", "/v1/agents/{agent}/links", G::WsUse, false),
     r("PUT", "/v1/agent-links/{id}/policy", G::WsUse, false),
+    // P5-REFINE-10 (C-1085, SEC-142): people link agents. `{agent}` needs `can_use` (the body
+    // links it to itself: 409 `link_self` for everyone allowed); the other side's rules are in
+    // `agent_links_people.rs`.
+    r("GET", "/v1/agents/{agent}/linkable", G::WsUse, false),
+    r("POST", "/v1/agents/{agent}/links", G::WsUse, false),
+    r("PUT", "/v1/agent-links/{id}/direction", G::WsUse, false),
+    r("DELETE", "/v1/agent-links/{id}", G::WsUse, false),
     // P4-EVAL-1 (C-861, C-863, C-866): `can_use` everywhere (a judge change needs `can_own`
     // inside the service; the matrix body leaves the judge alone); no one else learns the agent exists.
     r("GET", "/v1/agents/{agent}/eval-questions", G::WsUse, false),
@@ -1711,6 +1745,7 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"content_sha256": "0".repeat(64)})
         }
         ("POST", "/v1/agents/{agent}/webhooks") => json!({"name": "w", "instructions": "i"}),
+        ("POST", "/v1/agents/{agent}/schedules/preview") => json!({"cron": "*/5 * * * *"}),
         ("PUT", "/v1/agents/{agent}/byo") => {
             json!({"source_cidrs": null, "require_context": false})
         }
@@ -1774,6 +1809,12 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/action-approvals/{id}/decision") => json!({"decision": "deny"}),
         ("PUT", "/v1/agent-links/{id}/policy") => {
             json!({"agent_id": fx.agent, "policy": "ask", "revision": 0})
+        }
+        ("POST", "/v1/agents/{agent}/links") => {
+            json!({"peer_agent_id": fx.agent, "direction": "both"})
+        }
+        ("PUT", "/v1/agent-links/{id}/direction") => {
+            json!({"agent_id": fx.agent, "direction": "both", "revision": 0})
         }
         ("POST", "/v1/agents/{agent}/eval-questions") => {
             json!({"question": "q", "expected_kind": "judged", "criteria": "c"})

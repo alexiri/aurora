@@ -546,6 +546,147 @@ async fn abort_running_turn_is_delivered_and_ends_aborted() {
     assert_eq!(r.turn_status(&turn).await.0, "aborted");
 }
 
+/// The durable events of one turn, in order: `(type, payload)`.
+async fn turn_events(r: &Rig, turn: &str) -> Vec<(String, Value)> {
+    sqlx::query_as(
+        "SELECT type, payload FROM transcript_events WHERE turn_id = $1::uuid ORDER BY seq",
+    )
+    .bind(turn)
+    .fetch_all(r.h.pool())
+    .await
+    .unwrap()
+}
+
+/// (P5-REFINE-7, C-1075) Stop keeps what was written (`partial: true`) and leaves the
+/// `turn_stopped` mark before `turn.finished`; a queued turn stopped before it ran gets the
+/// mark alone.
+#[tokio::test]
+async fn stop_keeps_the_partial_answer_and_leaves_a_mark() {
+    let r = rig().await;
+    let lv = r.boot("stopper").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [
+            ev(1, "text.delta", json!({"message_id": "m1", "delta": "The first half of "})),
+            ev(2, "text.delta", json!({"message_id": "m1", "delta": "an answer"}))]}),
+    )
+    .await;
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
+    assert_eq!(
+        v["abort_requested"], true,
+        "the header can clear Working at once"
+    );
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "aborted"}),
+    )
+    .await;
+    let evs = turn_events(&r, &turn).await;
+    let tail: Vec<&str> = evs.iter().map(|e| e.0.as_str()).rev().take(3).collect();
+    assert_eq!(tail, ["turn.finished", "notice", "text"]);
+    let text = &evs[evs.len() - 3].1;
+    assert_eq!(text["text"], "The first half of an answer");
+    assert_eq!(text["partial"], true);
+    let mark = &evs[evs.len() - 2].1;
+    assert_eq!(
+        (
+            mark["code"].as_str(),
+            mark["text"].as_str(),
+            mark["turn_id"].as_str()
+        ),
+        (
+            Some("turn_stopped"),
+            Some("You stopped this answer."),
+            Some(turn.as_str())
+        )
+    );
+
+    // A queued turn stopped before it ran: aborted at once, the mark, no text.
+    let v = r.say(lv.conv, "another question").await;
+    let queued = v["turn"]["id"].as_str().unwrap().to_owned();
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{queued}/abort"), None)
+        .await;
+    assert!(s == 200 || s == 202, "{s} {v}");
+    assert_eq!(r.turn_status(&queued).await.0, "aborted");
+    let kinds: Vec<String> = turn_events(&r, &queued)
+        .await
+        .into_iter()
+        .map(|e| e.0)
+        .collect();
+    assert_eq!(kinds, ["turn.queued", "notice", "turn.finished"]);
+}
+
+/// (P5-REFINE-7, C-1076) A failed turn shows its error once: the harness's "API Error" line is
+/// the `error` event's `detail`, not an answer; text the agent wrote itself is kept.
+#[tokio::test]
+async fn a_failed_turn_shows_its_error_once() {
+    let r = rig().await;
+    let lv = r.boot("erring").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [
+            ev(1, "text.delta", json!({"message_id": "m1", "delta": "API Error: 400 No connected db."}))]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "failed",
+               "error_code": "harness_failed", "error_message": "No connected db."}),
+    )
+    .await;
+    let evs = turn_events(&r, &turn).await;
+    assert!(evs.iter().all(|e| e.0 != "text"), "{evs:?}");
+    let errors: Vec<&Value> = evs
+        .iter()
+        .filter(|e| e.0 == "error")
+        .map(|e| &e.1)
+        .collect();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["code"], "harness_failed");
+    assert_eq!(errors[0]["message"], "No connected db.");
+    assert_eq!(errors[0]["detail"], "API Error: 400 No connected db.");
+
+    // The agent's own paragraph before a failure is kept.
+    let v = r.say(lv.conv, "try again").await;
+    let _ = v;
+    let d = r.deliver().await;
+    let t2 = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": t2}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": t2, "events": [
+            ev(1, "text.delta", json!({"message_id": "m1", "delta": "I checked the deploy log first."}))]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": t2, "status": "failed",
+               "error_code": "provider_overloaded", "error_message": "overloaded"}),
+    )
+    .await;
+    let evs = turn_events(&r, &t2).await;
+    let kinds: Vec<&str> = evs.iter().map(|e| e.0.as_str()).collect();
+    let ti = kinds.iter().position(|k| *k == "text").expect("text kept");
+    let ei = kinds.iter().position(|k| *k == "error").unwrap();
+    assert!(ti < ei);
+    assert_eq!(evs[ti].1["text"], "I checked the deploy log first.");
+    assert!(evs[ti].1.get("partial").is_none());
+    assert_eq!(evs[ei].1["detail"], "overloaded");
+}
+
 #[tokio::test]
 async fn never_started_is_revived_once_then_failed() {
     let r = rig().await;

@@ -85,6 +85,10 @@ impl ActionHandler for MessageAgent {
             .await
             .map_err(internal)?
             .ok_or_else(|| ActionError("The sending agent no longer exists.".into()))?;
+        // (P5-REFINE-10, C-1085) The direction may have narrowed while the approval waited.
+        if !link.allows(from.id) {
+            return Err(ActionError(peers::one_way_refusal(&from, &to)));
+        }
         let origin = convs::get(&mut *tx, p.origin_conversation_id)
             .await
             .map_err(internal)?

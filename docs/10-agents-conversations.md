@@ -106,10 +106,10 @@ session (`harness_session_ref`) inside the shared sandbox.
 
 | Kind       | `external_ref`            | Created by                                                                                                                                                                                                               |
 | ---------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `direct`   | `user:<user_id>`          | get-or-create door (dashboard chat, a DM on any platform). **Exactly one per (agent, user)**, whatever the surface — dashboard chat and every platform DM are the same conversation ("one conversation, several doors"). |
+| `direct`   | `user:<user_id>` (the first), `user:<user_id>:<uuid>` (every later one) | get-or-create door (dashboard chat, a DM on any platform). (phase 5, P5-REFINE-7, D-409, C-1073; amends D-27/D-230's "exactly one") **Several per (agent, user)**: the dashboard's New chat starts one with fresh history (`POST …/conversations/direct/new`); `POST …/conversations/direct` returns the person's most recently active non-archived one. A platform DM continues the person's **first** dashboard chat (`user:<user_id>`, `13 §5.2`). Each is private exactly as the single one was. |
 | `group`    | `thread:<thread_link_id>` | a platform channel thread mapped by the channel core                                                                                                                                                                     |
-| `schedule` | `schedule:<schedule_id>`  | first fire of a schedule                                                                                                                                                                                                 |
-| `webhook`  | `webhook:<webhook_id>`    | first delivery                                                                                                                                                                                                           |
+| `schedule` | `schedule:<schedule_id>:<run_id>` (before phase 5: `schedule:<schedule_id>`) | (phase 5, P5-REFINE-7, D-409, C-1074) **every run** (a fire or Run now) gets its own thread, folded under its schedule (`automation_kind`/`automation_id`) |
+| `webhook`  | `webhook:<webhook_id>:<delivery_id>` (before phase 5: `webhook:<webhook_id>`) | (phase 5, P5-REFINE-7, D-409, C-1074) **every accepted delivery** gets its own thread, folded under its webhook |
 | `watch`    | `watch:<agent_id>`        | first watch fire (one shared conversation for background work)                                                                                                                                                           |
 | `peer`     | `peer:<peer_task_id>`     | a peer task on the receiving agent                                                                                                                                                                                       |
 | `eval` (phase 5, P4-EVAL, C-860) | `eval:<run_id>:<position>` | one question of an eval run (§Evals); created per question, never mirrored to a channel, hidden from the default chat list |
@@ -118,6 +118,22 @@ session (`harness_session_ref`) inside the shared sandbox.
 
 Direct conversations die with their user. `origin_conversation_id` points at the
 conversation where results of schedules, webhooks and peer tasks are reported.
+
+(phase 5, P5-REFINE-7, D-409, C-1073, C-1074) **Titles and folders.**
+- `title_source` says who named a conversation: `auto` (none yet, or the first line of the
+  first person message: whitespace collapsed, markup and `@` removed, cut at 60 characters
+  with "…"; never from an attachment-only message; no model call), `person` (renamed with
+  `PATCH /v1/conversations/{id}`; `title: null` goes back to the auto title) or `automation`
+  (a run thread: the schedule's or webhook's name, renamed with it).
+- Run threads carry `automation_kind`/`automation_id`; the conversation list hides them with
+  `automation=none` and lists one automation's with `automation=only&automation_id=`;
+  `GET …/conversation-folders` gives one folder per automation (name, thread count, last
+  activity, last result). Deleting a schedule or webhook marks its threads
+  (`automation_deleted_at`, "Schedule deleted"); their transcripts stay. An automation keeps its
+  newest `AUTOMATION_THREADS_KEPT` (200) threads; the nightly conversation sweep deletes older
+  ones through the ordinary delete path (and retention applies as to any conversation).
+- An archived conversation is never "the person's chat": `…/conversations/direct` skips it
+  (a person message still unarchives, RFE-010).
 
 ### Visibility of direct conversations (phase 1, RFE-009)
 
@@ -136,7 +152,8 @@ specified once here and enforced by the same predicate everywhere:
   schedule/webhook/peer-task conversation references (redacted), the SSE streams,
   and search.
 - **Chat doors**: platform DMs and the dashboard chat are the *same* private
-  conversation ("one conversation, several doors", D-27); the thread-link card
+  conversation ("one conversation, several doors", D-27; (phase 5, P5-REFINE-7, D-409) the
+  person's **first** dashboard chat when they have several, `13 §5.2`); the thread-link card
   and approval card of a DM go to that DM only.
 - **Agent preamble** (platform voice): *"Direct conversations are private to the
   person you are talking with and the workspace owners. Do not quote or describe
@@ -314,7 +331,9 @@ People and agents search what was said. One index (`03 §transcript_search`), on
   from the call's stamped agent and turn, never from arguments. The agent's conversations that are
   the current one, or direct and owned by the turn's speaker, or non-direct while the speaker still
   has access to the workspace; a speakerless turn (schedule, webhook) gets the current conversation and
-  the non-direct ones. **Never another person's direct conversation, even when the speaker is an
+  the non-direct ones. (phase 5, P5-REFINE-7, D-409) "Owned by the turn's speaker" covers **all** of the
+  speaker's own direct conversations with the agent (several since C-1073); automation run threads are
+  non-direct conversations like before. **Never another person's direct conversation, even when the speaker is an
   owner**: owners' wider dashboard view does not extend to the agent, because what the agent reads
   it may repeat to the person it is talking with (the preamble rule above). An out-of-scope
   conversation and an unknown one answer identically (`not_found`). Results are wrapped as untrusted
@@ -366,7 +385,7 @@ generically.
 | `action_approval.pending` / `.decided`                       | yes     | `{ id, summary, decision? }`                                                        |
 | `attachment`                                                 | yes     | `{ turn_id, attachment_id, filename, size, caption? }` (agent `send_file`)          |
 | `notice`                                                     | yes     | `{ code, text }` — platform-authored only                                           |
-| `error`                                                      | yes     | `{ turn_id, code, message }`                                                        |
+| `error`                                                      | yes     | `{ turn_id, code, message, detail? }` ((phase 5, P5-REFINE-7, C-1076) `detail`: the technical line, ≤ 2 000 characters) |
 | `turn.finished`                                              | yes     | `{ turn_id, status, error_code?, usage? }`                                          |
 
 
@@ -378,7 +397,23 @@ call is a structural break; thinking is not. Within a tool-free stretch the
 harness's message framing decides message boundaries. (FIX-115) When a turn ends
 without a result (failed, stalled, cancelled, restarted), the text buffered since
 its last tool call is written as durable `text` events before the `error` event and
-`turn.finished`; nothing is discarded silently.
+`turn.finished`; nothing is discarded silently. (phase 5, P5-REFINE-7)
+- **Stop (C-1075).** A turn a person stopped (`abort_requested_at` set, ended `aborted` with no
+  other code) keeps what it had written: those `text` events carry `partial: true`, followed by the
+  durable `notice` `{ code: "turn_stopped", text: "You stopped this answer.", turn_id }` and
+  `turn.finished`, in one transaction. A queued turn stopped before it started gets the notice only.
+  Freeze and deprovision endings keep their own notices.
+- **An error shows once (C-1076).** When a turn fails and a buffered message is the harness's own
+  error line (it equals, contains or starts with the failure message, or starts with `API Error`, as
+  the Claude Code adapter prints a failed model call), it is not written as the agent's `text`: the
+  one `error` event carries it as `detail` (else `detail` is the message), sanitised (control
+  characters removed) and at most 2 000 characters. Text the agent wrote on its own is kept.
+- **Automation turns (C-1079).** The `turn.queued` event of a schedule or webhook turn carries
+  `display` — `{ kind: "schedule", name, schedule_id, run_id }` or `{ kind: "webhook", name,
+  delivery_id, content_type, size, truncated, body }` — which is what people read; `body` is the
+  same cleaned, clamped payload the turn carries **without** the untrusted-data wrapper or the
+  owner's instructions (halved and marked `truncated` when the event would exceed its 64 KiB
+  bound). The turn's `text` (what the agent receives, SEC-31) is unchanged.
 
 ### Live narration cards (phase 5, P4-NARR, D-279, D-280, C-846..C-851, SEC-111)
 
@@ -908,9 +943,25 @@ re-check the creator's authority (`04 §Fire-time authority`); (phase 2, RFE-006
 an effectively frozen agent is not fired — advance `next_fire_at`, write a
 `schedule_runs` row `skipped_frozen`, create no turn; compute the
 next real occurrence after `now()` (missed windows coalesce into one late
-fire); if the run conversation has an active turn → `skipped_busy`; else
-create the turn (prompt behind a "Scheduled task: <name>" header) and a
-`schedule_runs` row; clear the lease.
+fire); (phase 5, P5-REFINE-7, C-1074) if the schedule's **latest run's turn** is
+still active → `skipped_busy` (Run now answers 409 `schedule_busy` on the same
+test, decided under the schedule row lock); else create the run's **own thread**
+`schedule:<id>:<run_id>` (title = the schedule's name, `origin_conversation_id` =
+the schedule's origin, so the FIX-192 mirror still finds the origin's thread link),
+the turn (prompt behind a "Scheduled task: <name>" header) and a `schedule_runs`
+row with that run id; `run_conversation_id` points at the latest thread; clear the
+lease.
+- (phase 5, P5-REFINE-7, C-1077) **Results in words.** A run's `result` is derived,
+  never stored: `fired` + an active turn → `running`, `done` → `answered`,
+  `failed`/`aborted` → `failed` (reason: the turn's error code); `gated_quiet` →
+  `skipped_by_gate`; `gate_failed` → `failed`; `skipped_unauthorized`,
+  `skipped_frozen`, `coalesced` → `skipped` (`unauthorized`, `frozen`, `missed`). A
+  `fired` run whose thread was deleted reads `answered` with reason
+  `thread_deleted`. `Schedule.next_runs` lists the next three instants (none while
+  paused); `POST …/schedules/preview` computes them, and whether the cadence is
+  under 5 minutes, as the person types.
+- (phase 5, P5-REFINE-7, C-1074) Renaming a schedule renames its threads; deleting it
+  marks them deleted (`§Conversations`).
 - (phase 2, RFE-021) **Authority and anchor**: an item's fire-time authority is its
   creator (`anchor = creator`, default) or "an active owner exists" (`anchor =
   workspace`), `04 §Fire-time authority`; reassignment, bulk reassignment and the
@@ -932,7 +983,14 @@ thread link, the answer is posted there too (`13 §Mirror`).
 content type; stored only inside the created turn's text as a fenced,
 clamped block labelled as untrusted external data.
 - Optional verification (`hmac_sha256` over the raw body with a stored
-secret, constant-time compare) → 401 on mismatch.
+secret, constant-time compare) → 401 on mismatch. (phase 5, P5-REFINE-7, C-1078)
+**Signed by default**: a webhook created without `verification` is `hmac_sha256`
+with a secret Aurora generates (32 random bytes from the system RNG, 64 hex
+characters), sealed like any secret and returned once; `{ kind: "none" }` stays
+possible ("Anyone with the address"). `POST /v1/webhooks/{id}/rotate-secret` makes
+a new one and the old stops working at once. `Webhook.verification` shows the
+effective header and the `format` of its value, so the dashboard can say how to
+call it.
 - Disabled or creator lost access (phase 2, RFE-021: for `anchor = workspace`, no
   active owner) → 410 / 403 and a `webhook_deliveries` row.
   (phase 2, RFE-006) Effectively frozen agent → 410 `frozen` and a delivery row
@@ -942,8 +1000,14 @@ secret, constant-time compare) → 401 on mismatch.
   (10 000) per webhook; the daily retention pass removes the rest. `GET
   /v1/webhooks/{id}/deliveries` and `GET /v1/schedules/{id}/runs` page by cursor
   (`05` list convention).
-- Accepted → turn in the webhook's run conversation with the stored
-instructions + payload; responds `202 { "delivery_id" }` immediately.
+- Accepted → (phase 5, P5-REFINE-7, C-1074) a turn in the delivery's **own thread**
+`webhook:<id>:<delivery_id>` with the stored instructions + payload; responds
+`202 { "delivery_id" }` immediately. Deliveries are never skipped as busy.
+- (phase 5, P5-REFINE-7, C-1079) A repeated delivery (same idempotency key inside
+the window) is answered as before (202 with the original id, no turn) and now
+**recorded** as a `duplicate` row (`reason` = the original delivery's id, its
+`turn_id`); it counts in the rate limit. Deliveries carry `result` in words
+(`answered`, `running`, `failed`, `refused_*`, `duplicate`) and their thread.
 - Rate limit: 60 deliveries/min per webhook (429).
 - (FIX-110) The sender's `Content-Type` is part of the untrusted data: it appears
   inside the fenced block, never in the preamble.
