@@ -19,6 +19,8 @@ import { Select } from "@/components/ui/select";
 import { Altitude } from "@/components/ui/altitude";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { fieldErrors } from "@/lib/api/errors";
+import { CopyCurlButton } from "@/components/ui/copy-curl";
+import { webhookCurl } from "@/lib/copy-as-curl";
 import { useVerb } from "@/lib/palette-verb";
 import {
   useCreateWebhook,
@@ -216,6 +218,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
         <Button size="sm" variant="outline" disabled={upd.isPending} onClick={() => upd.mutate({ id: w.id, body: { enabled: !w.enabled } })}>
           {w.enabled ? "Turn off" : "Turn on"}
         </Button>
+        <CopyCurlButton command={webhookCurl({ url: w.url_prefix, prefixOnly: true, kind: w.verification.kind, header: w.verification.header })} />
         <Button size="sm" variant="outline" onClick={() => setConfirm("rotate")}>
           Rotate URL
         </Button>
