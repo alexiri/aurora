@@ -382,7 +382,7 @@ in tests, and master's CI broke until the CI Watcher fixed it in `ee7bfa0d`.) So
    **and** every vitest file that renders a component you changed; every Playwright spec (mocked project) that visits a
    page you changed. **Exception to the targeted-tests rule for this set (owner, 2026-11-20):** a commit that renames
    or restructures shared UI (a primitive, the app shell, the rail, the agent page, a label used on several pages) runs
-   the **whole** web vitest suite once (`pnpm --dir web vitest run`, through `heavy.sh`) before handing over. Production
+   the **whole** web vitest suite once (`cd web && /home/alex/orca/workspaces/aurora/heavy.sh <lane> pnpm exec vitest run` (not `pnpm --dir web …`, which fails here)) before handing over. Production
    specs (`--project production`) can't run in a lane without a real stack: update them by reading, and list them in
    the completion report so the nightly / P5-REFINE-20 runs them.
 4. **New behaviour gets new tests** (the brief's Tests section); old tests are **kept and updated**, not replaced.
