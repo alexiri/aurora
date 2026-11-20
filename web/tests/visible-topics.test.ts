@@ -10,12 +10,12 @@ describe("visibleTopics (C-961)", () => {
     expect(visibleTopics("admin", { instanceAdmin: false })).toEqual([]);
   });
 
-  it("gives an organization member Workspaces, AI models and Internet access", () => {
-    expect(visibleTopics("org", { instanceAdmin: false, org: "member" })).toEqual(["workspaces", "ai-models", "internet-access"]);
+  it("gives an organization member Overview, AI models and Internet access (the Manage area's sub-nav)", () => {
+    expect(visibleTopics("org", { instanceAdmin: false, org: "member" })).toEqual(["overview", "ai-models", "internet-access"]);
   });
 
-  it("gives organization owners and admins every organization topic", () => {
-    const all = ["workspaces", "agents", "apps", "ai-models", "internet-access", "people", "chat-platforms", "data", "settings"];
+  it("gives organization owners and admins every organization topic, in the Manage area's order", () => {
+    const all = ["overview", "agents", "people", "apps", "chat-platforms", "ai-models", "internet-access", "data", "settings"];
     expect(visibleTopics("org", { instanceAdmin: false, org: "owner" })).toEqual(all);
     expect(visibleTopics("org", { instanceAdmin: false, org: "admin" })).toEqual(all);
   });

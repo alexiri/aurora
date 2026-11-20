@@ -27,7 +27,8 @@ export const TABS = {
   adminPeople: ["users", "organizations", "sign-in", "new-users"],
   adminData: ["retention", "storage", "audit", "usage"],
   adminPlatform: ["runners", "secret-stores", "email", "limits"],
-  orgAgents: ["byo", "skills", "previews"],
+  // (P5-REFINE-17, org-6) Agents · Bring your own · Skills; Previews is a second section of Bring your own.
+  orgAgents: ["agents", "byo", "skills"],
   orgApps: ["accounts", "apps", "oauth-clients", "self-hosted"],
   orgPeople: ["members", "groups", "directory-sync"],
   orgData: ["retention", "storage", "audit", "usage"],
@@ -176,13 +177,12 @@ export const accountRoutes = {
 
 /** Topic ids per level, in the order of `14 §Topics per level`. */
 export type AdminTopic = "overview" | "agents" | "apps" | "ai-models" | "internet-access" | "people" | "chat-platforms" | "data" | "platform" | "settings";
-export type OrgTopic = "workspaces" | "agents" | "apps" | "ai-models" | "internet-access" | "people" | "chat-platforms" | "data" | "settings";
+export type OrgTopic = "overview" | "agents" | "apps" | "ai-models" | "internet-access" | "people" | "chat-platforms" | "data" | "settings";
 export type WorkspaceTopic = "overview" | "agents" | "skills" | "apps" | "internet-access" | "approvals" | "activity" | "people" | "settings";
 
 /** The name of each topic in the interface (the vocabulary of `14`). */
 export const TOPIC_LABEL: Record<AdminTopic | OrgTopic | WorkspaceTopic, string> = {
   overview: "Overview",
-  workspaces: "Workspaces",
   agents: "Agents",
   skills: "Skills",
   apps: "Apps & accounts",

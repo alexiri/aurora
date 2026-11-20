@@ -108,7 +108,7 @@ test.describe("org settings Previews switch", () => {
     await mockApi(page);
     // The switch moved with the organization's Agents settings (C-960): the old settings address redirects.
     await page.goto("/o/acme/settings/previews");
-    await expect(page).toHaveURL(/\/o\/acme\/agents\?tab=previews$/);
+    await expect(page).toHaveURL(/\/o\/acme\/agents\?tab=byo$/);
     const card = page.getByRole("region", { name: "Port previews" });
     await expect(card).toBeVisible();
     // The domain is read-only.

@@ -14,6 +14,7 @@ import { Altitude } from "@/components/ui/altitude";
 import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { inputClass } from "@/components/ui/field";
 import { MainAction } from "@/components/ui/main-action";
@@ -92,6 +93,7 @@ function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }
   const rollback = useRollback(scope);
   // Rollback replaces the draft: it carries the draft revision this list showed (409 otherwise).
   const draftRevision = gens.data?.items.find((g) => g.status === "draft")?.draft_revision ?? undefined;
+  const [target, setTarget] = useState<number | null>(null);
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent title="History of changes" className="max-h-[90vh] overflow-y-auto">
@@ -99,30 +101,56 @@ function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }
         {gens.isError ? <ErrorState error={gens.error} /> : null}
         {rollback.isError ? <ErrorState error={rollback.error} /> : null}
         <ul className="space-y-2">
-          {gens.data?.items.map((g) => (
-            <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line p-2.5 text-sm text-ink">
-              <span>
-                #{g.number} · {g.status} · {g.rule_count} rules
-                {g.published_at ? <span className="text-ink-2"> · {formatWhen(g.published_at)}</span> : null}
-                {g.published_by ? <span className="text-ink-2"> · {g.published_by.display_name}</span> : null}
-              </span>
-              {g.status !== "draft" ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={rollback.isPending || draftRevision === undefined}
-                  aria-label={`Roll back to generation ${g.number}`}
-                  onClick={() => draftRevision !== undefined && rollback.mutate({ generation: g.number, expectRevision: draftRevision }, { onSuccess: onClose })}
-                >
-                  Roll back
-                </Button>
-              ) : null}
-            </li>
-          ))}
+          {gens.data?.items
+            .filter((g) => g.status !== "draft")
+            .map((g) => (
+              <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line p-2.5 text-sm text-ink">
+                <span className="min-w-0">
+                  {/* (org-14) Who changed what: "<Person> published version 4"; the exact change list comes with C-1087. */}
+                  <span className="block">{historySentence(g)}</span>
+                  <span className="block text-xs text-ink-2">
+                    {g.published_at ? formatWhen(g.published_at) : formatWhen(g.created_at)}
+                    {g.status === "published" ? " · current" : ""}
+                  </span>
+                </span>
+                {g.status === "published" ? (
+                  <Badge tone="accent">Current</Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={rollback.isPending || draftRevision === undefined}
+                    aria-label={`Roll back to version ${g.number}`}
+                    onClick={() => setTarget(g.number)}
+                  >
+                    Roll back to this version
+                  </Button>
+                )}
+              </li>
+            ))}
         </ul>
+        <ConfirmDialog
+          open={target !== null}
+          onOpenChange={(o) => {
+            if (!o) setTarget(null);
+          }}
+          title="Roll back to this version?"
+          description="Rules added since stop applying now."
+          confirmLabel="Roll back"
+          busy={rollback.isPending}
+          onConfirm={() => {
+            if (target === null || draftRevision === undefined) return;
+            rollback.mutate({ generation: target, expectRevision: draftRevision }, { onSuccess: onClose });
+          }}
+        />
       </DialogContent>
     </Dialog>
   );
+}
+
+/** "Alice published version 4": the person who changed the rules, and which version it made. */
+export function historySentence(g: { number: number; published_by?: { display_name: string } | null }): string {
+  return `${g.published_by?.display_name ?? "Someone"} published version ${g.number}`;
 }
 
 const LANE_OPTIONS: { value: DraftState["open_lane_posture"]; label: string }[] = [
@@ -225,6 +253,8 @@ export interface InternetLevelProps {
   scope: PolicyScope;
   orgId: string;
   orgSlug: string;
+  /** The organization's name, for the page's sentence. */
+  orgName?: string;
   wsSlug?: string;
   /** Owners and admins of the level; others see the limits only. */
   canEdit: boolean;
@@ -365,20 +395,25 @@ export function InternetLevel(p: InternetLevelProps) {
   return (
     <div className="max-w-page space-y-8">
       {header(
-        <>
-          <span data-testid="internet-summary" className="block font-display text-xl text-ink">
-            {summary}
-          </span>
-          <span className="mt-2 block">
-            What agents may do in apps is set for each agent, on its{" "}
-            <Link href={workspace ? wsRoutes(p.orgSlug, p.wsSlug ?? "").agents() : orgRoutes(p.orgSlug).agents()} className="font-medium text-link underline">
-              Apps &amp; access tab
-            </Link>
-            .{workspace ? "" : " Workspaces can only restrict further what you set here."}
-          </span>
-        </>,
+        workspace ? (
+          <>
+            <span data-testid="internet-summary" className="block font-display text-xl text-ink">
+              {summary}
+            </span>
+            <span className="mt-2 block">
+              What agents may do in apps is set for each agent, on its{" "}
+              <Link href={wsRoutes(p.orgSlug, p.wsSlug ?? "").agents()} className="font-medium text-link underline">
+                Apps &amp; access tab
+              </Link>
+              .
+            </span>
+          </>
+        ) : (
+          // (P5-REFINE-17, org-8) The organization's page is two groups: Your rules and Set above you.
+          <span data-testid="internet-summary">What agents in {p.orgName ?? "the organization"} may reach.</span>
+        ),
         <Button variant="outline" size="sm" onClick={() => setHistory(true)}>
-          History of changes
+          {workspace ? "History of changes" : "History"}
         </Button>,
       )}
 
@@ -482,21 +517,52 @@ export function InternetLevel(p: InternetLevelProps) {
         </Section>
       ) : null}
 
-      <Section id="internet-limits" title="Limits and defaults">
-        <ScopeLadder
-          above={limits}
-          minimumNote={note}
-          collapsed={workspace}
-          here={
-            <div className="space-y-5">
+      {workspace ? (
+        <Section id="internet-limits" title="Limits and defaults">
+          <ScopeLadder
+            above={limits}
+            minimumNote={note}
+            collapsed
+            here={
+              <div className="space-y-5">
+                {gov?.controls}
+                <PolicyDefaults state={state} edit={ed.edit} workspace orgSlug={p.orgSlug} />
+              </div>
+            }
+            below={p.below}
+          />
+          {p.belowNote}
+        </Section>
+      ) : (
+        <>
+          {/* (org-8) Set above you: one line each, with who set it. The allow-list shows once. */}
+          <Section id="internet-above" title="Set above you">
+            {limits.length === 0 ? (
+              <p className="text-sm text-ink-2">Nothing above {p.orgName ?? "the organization"} limits what agents may reach.</p>
+            ) : (
+              <ul aria-label="Set above you" className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface text-sm shadow-card">
+                {limits.map((l) => (
+                  <li key={l.label} className="px-4 py-3">
+                    <p className="font-medium text-ink">{l.label}</p>
+                    <p className="text-ink-2">{l.value_display}</p>
+                    <p className="text-xs text-muted">Set by {l.source === "instance" ? "the instance admin" : "your organization's admins"}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {note ? <p className="text-sm text-ink-2">{note}</p> : null}
+          </Section>
+          <details className="rounded-card border border-line bg-surface shadow-card" data-testid="internet-more">
+            <summary className="cursor-pointer px-4 py-3 font-display text-base font-semibold text-ink">More settings</summary>
+            <div className="space-y-5 border-t border-line p-4">
               {gov?.controls}
-              <PolicyDefaults state={state} edit={ed.edit} workspace={workspace} orgSlug={p.orgSlug} />
+              <PolicyDefaults state={state} edit={ed.edit} workspace={false} orgSlug={p.orgSlug} />
+              {p.below ? <ScopeLadder above={[]} below={p.below} /> : null}
+              {p.belowNote}
             </div>
-          }
-          below={p.below}
-        />
-        {p.belowNote}
-      </Section>
+          </details>
+        </>
+      )}
 
       {/* (P5-POLISH-7, F1) The simulator is a button that opens it in a dialog, not a form at the bottom of the page. */}
       {workspace ? (

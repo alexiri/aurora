@@ -895,7 +895,7 @@ const TOPIC_ROUTES: RouteEntry[] = [
   { name: "admin-chat-platforms", path: "/admin/chat-platforms" },
   ...tab("/admin/data", ["retention", "storage", "audit", "usage"], "admin-data"),
   ...tab("/admin/platform", ["runners", "secret-stores", "email", "limits"], "admin-platform"),
-  ...tab("/o/acme/agents", ["byo", "skills", "previews"], "org-agents"),
+  ...tab("/o/acme/agents", ["agents", "byo", "skills"], "org-agents"),
   { name: "org-skill-libraries", path: "/o/acme/agents/skills/libraries" },
   ...tab("/o/acme/apps", ["accounts", "apps", "oauth-clients", "self-hosted"], "org-apps"),
   { name: "org-ai-models", path: "/o/acme/ai-models" },

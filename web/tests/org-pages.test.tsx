@@ -115,8 +115,8 @@ describe("invite form", () => {
   it("blocks invalid email without calling the API", () => {
     const fetchFn = mockFetch({});
     wrap(<InviteForm orgId="o1" onDone={() => {}} />);
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "bad" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "bad" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
     expect(screen.getByRole("alert")).toHaveTextContent(/valid email/);
     expect(fetchFn.mock.calls.some(([r]) => (r as Request).method === "POST")).toBe(false);
   });
@@ -129,12 +129,34 @@ describe("invite form", () => {
     });
     const onDone = vi.fn();
     wrap(<InviteForm orgId="o1" onDone={onDone} />);
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@b.co" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "a@b.co" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(/member limit/i),
     );
     expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("(org-11) lists team workspaces only, names the person's own workspace line, and offers Cancel", async () => {
+    mockFetch({
+      "GET /v1/orgs/o1/workspaces": () =>
+        json(200, {
+          items: [
+            { id: "w1", slug: "research", name: "Research", personal_of: null },
+            { id: "w2", slug: "bob", name: "Your workspace", personal_of: { id: "u2", name: "Bob Builder" } },
+          ],
+          next_cursor: null,
+        }),
+    });
+    const onCancel = vi.fn();
+    wrap(<InviteForm orgId="o1" onDone={() => {}} onCancel={onCancel} />);
+    expect(await screen.findByLabelText("Research")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Your workspace")).toBeNull();
+    expect(screen.getByText("Also add to team workspaces")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "dana@example.test" } });
+    expect(screen.getByText("Dana gets their own personal workspace automatically.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCancel).toHaveBeenCalled();
   });
 });
 

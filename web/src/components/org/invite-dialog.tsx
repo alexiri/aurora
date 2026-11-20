@@ -9,9 +9,17 @@ import { ErrorNotice } from "@/components/ui/notice";
 import { Select } from "@/components/ui/select";
 import { fieldErrors } from "@/lib/api/errors";
 import { useCreateInvitation, validateInvite } from "@/lib/api/org";
-import { useWorkspaces } from "@/lib/api/queries";
+import { useOrg, useWorkspaces } from "@/lib/api/queries";
 
-export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => void }) {
+import { OrgRoleHelp } from "./role-help";
+
+/** "dana@example.test" → "Dana"; nothing typed yet → "They". */
+function nameFromEmail(email: string): string {
+  const local = email.split("@")[0]?.trim() ?? "";
+  return email.includes("@") && local ? `${local.charAt(0).toUpperCase()}${local.slice(1)}` : "They";
+}
+
+export function InviteForm({ orgId, onDone, onCancel }: { orgId: string; onDone: () => void; onCancel?: () => void }) {
   const create = useCreateInvitation(orgId);
   const workspaces = useWorkspaces(orgId);
   const [email, setEmail] = useState("");
@@ -20,6 +28,8 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
   const [approverIds, setApproverIds] = useState<string[]>([]);
   const [clientErr, setClientErr] = useState("");
   const fe = create.error ? fieldErrors(create.error) : {};
+  // (org-11) Only team workspaces: everybody's personal workspace is made for them on accept.
+  const teamWorkspaces = (workspaces.data?.items ?? []).filter((w) => !w.personal_of);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -34,7 +44,7 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
 
   return (
     <form onSubmit={submit} noValidate className="space-y-4">
-      <Field id="inv-email" label="Email" error={clientErr || fe.email}>
+      <Field id="inv-email" label="E-mail" error={clientErr || fe.email}>
         <input
           id="inv-email"
           type="email"
@@ -45,15 +55,16 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
         />
       </Field>
       <Field id="inv-role" label="Role" error={fe.role}>
-        <Select id="inv-role" value={role} onChange={(v) => setRole(v as "admin" | "member")} options={[{ value: "member", label: "member" }, { value: "admin", label: "admin" }]} />
+        <Select id="inv-role" value={role} onChange={(v) => setRole(v as "admin" | "member")} options={[{ value: "member", label: "Member" }, { value: "admin", label: "Admin" }]} />
       </Field>
-      {workspaces.data && workspaces.data.items.length > 0 ? (
+      <OrgRoleHelp />
+      {teamWorkspaces.length > 0 ? (
         <fieldset className="space-y-2">
-          <legend className="text-sm font-medium text-ink">Workspace access (optional)</legend>
+          <legend className="text-sm font-medium text-ink">Also add to team workspaces</legend>
           <p className="text-xs text-muted">
             Member chats with agents. Approver also decides approvals.
           </p>
-          {workspaces.data.items.map((w) => {
+          {teamWorkspaces.map((w) => {
             const level = approverIds.includes(w.id) ? "approver" : wsIds.includes(w.id) ? "member" : "none";
             return (
               <div key={w.id} className="flex items-center justify-between gap-3 text-sm">
@@ -69,12 +80,18 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
           })}
         </fieldset>
       ) : null}
+      <p className="text-sm text-muted">{nameFromEmail(email)} gets their own personal workspace automatically.</p>
       {create.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={create.error} />
       ) : null}
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        {onCancel ? (
+          <Button type="button" variant="outline" size="lg" onClick={onCancel}>
+            Cancel
+          </Button>
+        ) : null}
         <Button type="submit" size="lg" disabled={create.isPending}>
-          {create.isPending ? "Inviting…" : "Send invitation"}
+          {create.isPending ? "Creating…" : "Create invitation"}
         </Button>
       </div>
     </form>
@@ -83,13 +100,14 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
 
 export function InviteDialog({ orgId }: { orgId: string }) {
   const [open, setOpen] = useState(false);
+  const orgName = useOrg(orgId).data?.name;
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button>Invite member</Button>
       </DialogTrigger>
-      <DialogContent title="Invite a member" description="They will receive a link to join this organization.">
-        <InviteForm orgId={orgId} onDone={() => setOpen(false)} />
+      <DialogContent title={`Invite someone to ${orgName ?? "the organization"}`} description="They get a link to join this organization.">
+        <InviteForm orgId={orgId} onDone={() => setOpen(false)} onCancel={() => setOpen(false)} />
       </DialogContent>
     </Dialog>
   );
