@@ -13,6 +13,7 @@ import { AddConnectorFlow } from "./add-connector";
 import { ConnectorCard } from "./connector-card";
 import { ConnectorDetail } from "./connector-detail";
 import { HostTokens } from "./host-tokens";
+import { PlatformsList } from "./platforms-list";
 import { SelfHostedProvision } from "./self-hosted-provision";
 
 export { ManifestDiff, ManifestSummary, diffManifest, type Change } from "./manifest-views";
@@ -46,38 +47,46 @@ export function ConnectorsAdminView() {
   } else if (view.kind === "self-hosted") {
     body = <SelfHostedProvision onToken={(id, token) => { setSecret({ id, token }); list(); }} onCancel={list} />;
   } else {
+    // (P5-REFINE-18 #7, admin-6) Platforms first; the connector machinery sits in one closed fold on the same page.
     body = (
-      <Section id="conn-list" title="Chat platforms">
-        {q.data.items.length === 0 ? (
-          <EmptyState title="No chat platforms">Add one to let organizations connect to it.</EmptyState>
-        ) : (
-          <ul className="space-y-4">
-            {q.data.items.map((c) => (
-              <ConnectorCard key={c.id} c={c} onManage={(id) => setView({ kind: "detail", id })} onToken={(id, token) => setSecret({ id, token })} />
-            ))}
-          </ul>
-        )}
-      </Section>
+      <>
+        <PlatformsList onAdd={() => setView({ kind: "add" })} onManage={(id) => setView({ kind: "detail", id })} />
+        <details className="group rounded-card border border-line bg-surface shadow-card" data-testid="chat-platforms-advanced">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-ink">
+            Advanced · connector hosts, tokens and replicas
+            <span aria-hidden="true" className="text-ink-2 transition-transform group-open:rotate-90">
+              →
+            </span>
+          </summary>
+          <div className="space-y-6 border-t border-line p-4">
+            <Section id="conn-list" title="Connectors">
+              {q.data.items.length === 0 ? (
+                <EmptyState title="No chat platforms">Add one to let organizations connect to it.</EmptyState>
+              ) : (
+                <ul className="space-y-4">
+                  {q.data.items.map((c) => (
+                    <ConnectorCard key={c.id} c={c} onManage={(id) => setView({ kind: "detail", id })} onToken={(id, token) => setSecret({ id, token })} />
+                  ))}
+                </ul>
+              )}
+            </Section>
+            <HostTokens />
+          </div>
+        </details>
+      </>
     );
   }
-  const tokens = view.kind === "list" ? <HostTokens /> : null;
 
   return (
     <div className="max-w-page space-y-8">
       {view.kind === "detail" && detail ? null : (
         <PageHeader
           title="Chat platforms"
-          description="The chat platforms that organizations can connect to, and the hosts that run them."
+          description="Where people can talk to agents."
           className="mb-6"
-          actions={
-            view.kind === "list" || view.kind === "detail" ? (
-              <Button onClick={() => setView({ kind: "add" })}>Add chat platform</Button>
-            ) : undefined
-          }
         />
       )}
       {body}
-      {tokens}
       <SecretOnce
         secret={secret?.token ?? null}
         title="Copy the chat platform token"

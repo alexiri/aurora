@@ -17,7 +17,8 @@ export async function openConnectorScreen(page: Page, screen: ConnectorScreen, s
     await page.getByLabel("Callback URL").waitFor();
     return;
   }
-  await page.getByRole("button", { name: "Add chat platform" }).click();
+  // (P5-REFINE-18 #7) The platforms list leads; its Add button opens the choose step.
+  await page.getByRole("button", { name: "Add Mattermost" }).click();
   if (screen === "self-hosted") {
     await page.getByRole("button", { name: "Self-hosted chat platform host (advanced)" }).click();
     await page.getByLabel("Connector id").waitFor();
