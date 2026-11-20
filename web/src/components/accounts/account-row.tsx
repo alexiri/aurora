@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { AppLink } from "@/components/apps/app-link";
 import { Altitude } from "@/components/ui/altitude";
+import { BulkCheckbox, useBulkOn } from "@/components/ui/bulk-bar";
 import { AiKeyTile } from "@/components/ui/ai-key-tile";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Badge } from "@/components/ui/badge";
@@ -111,7 +112,10 @@ export function AccountRow({
   agent,
   reconnectHref,
   onReconnect,
+  select,
 }: {
+  /** (P5-REFINE-19, Expert) The row's bulk checkbox. */
+  select?: { checked: boolean; onChange: (on: boolean) => void; disabled: boolean; title?: string };
   account: Account;
   /** The scope this account lives in. */
   scope: SecretScope;
@@ -122,6 +126,7 @@ export function AccountRow({
   reconnectHref?: string;
   onReconnect?: () => void;
 }) {
+  const bulkOn = useBulkOn();
   const shared = account.scope === "organization" && scope.kind === "workspace";
   const org = useOrg(account.scope === "organization" ? orgId : undefined);
   const me = useMe();
@@ -156,6 +161,11 @@ export function AccountRow({
     // On an agent's page the rows share one Card with dividers (the list owns the frame); elsewhere each is a card.
     <li className={agent ? "space-y-3 p-4" : "space-y-3 rounded-card border border-line bg-surface p-4"} aria-label={account.name}>
       <div className="flex flex-wrap items-start gap-3">
+        {select && bulkOn ? (
+          <span className="mt-1.5 inline-flex">
+            <BulkCheckbox name={account.name} checked={select.checked} disabled={select.disabled} title={select.title} onChange={select.onChange} />
+          </span>
+        ) : null}
         {account.app ? (
           <AppIcon appId={account.app.app_id} name={account.app.name} size={32} />
         ) : account.kind === "ai_key" ? (

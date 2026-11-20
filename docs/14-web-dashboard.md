@@ -2355,7 +2355,7 @@ which wraps it with the id given.
 | `org.groups`, `org.directory` | Groups, Directory sync tabs | Expert unless a directory provider is configured (then Set up) | Now |
 | `apikeys` | Account › API keys explained | Set up | Now |
 | `palette.verbs`, `kbd` | palette verbs, keyboard shortcuts (and their sheet) | Expert | Now (P5-REFINE-19; `palette.verbs` is a list the registry builds, not a wrapper) |
-| `bulk` | bulk actions on lists | Expert | Later: P5-REFINE-19 |
+| `bulk` | bulk actions on lists (People, Accounts, Schedules, Webhooks) | Expert | Now (P5-REFINE-19) |
 | `fold.cli` | "From your terminal" CLI/API snippets | Expert | Now (SSH, Computer, Webhooks, API keys) |
 
 A control not in the table is a gap in the classification: add the row (and the registry row) first.
@@ -2404,6 +2404,20 @@ account menu entry **Keyboard shortcuts**, shown only with the switch on) lists 
 **Never fires** when focus is in an `input`, `textarea`, `select`, a `contenteditable` or any `[data-no-shortcuts]` (the
 terminal, the file editor, the code field); with a modifier other than the chord's; while a dialog other than the sheet and
 the palette is open; on a touch-only device (no `hover: hover`). With the switch off only `⌘K` and `/` work.
+
+**Bulk actions (`bulk`, Expert).** A checkbox per row (a select-all in the header or above the cards) and a bar **<n>
+selected** with the list's actions; none of it exists with the switch off, and the lists look as before. There is no bulk
+route: each action calls the per-item route in turn with a progress line (*2 of 3*, then *3 of 3 done*); a failure is
+listed by name with **Retry** (only the failed ones go again); what succeeded is not rolled back.
+- **People** (organization Members, workspace People): **Change role…** and **Remove…**, each one confirm dialog with the
+  count and the consequence (*Remove 3 people from Acme? They lose access now.*; a promotion says what that role can do).
+  You cannot tick yourself, the last owner, someone whose role your identity provider gives, or (as an admin) an owner; the
+  checkbox says why in its tooltip.
+- **Accounts** (the main list of a workspace or organization): **Give to an agent…** (a picker: the workspace's agents; for an
+  organization's accounts those of the workspaces you own; apps at the lowest level that exists, websites and AI keys as they
+  are) and **Turn off…** (only an app account has a switch; the dialog names those that have none).
+- **Automations** (an agent's Schedules and Webhooks lists): **Pause** and **Resume** (undoable: they act at once and a toast
+  offers **Undo**) and **Delete…** (permanent: type the number).
 
 **Export and import an agent (`export.agent`, Expert; D-413).** On the agent's Settings page, for workspace owners of a
 hosted agent: a section **Export and import** with **Export <Agent>…** and **Import into <Agent>…** (also palette verbs).

@@ -22,7 +22,9 @@ import { useOrg } from "@/lib/api/queries";
 import { splitGiven } from "@/lib/accounts";
 import { needsAttention } from "@/lib/account-health";
 
+import { BulkSelectAll, useBulkOn, useSelection } from "@/components/ui/bulk-bar";
 import { AccountRow } from "./account-row";
+import { AccountsBulkBar } from "./accounts-bulk";
 import { FreeApps } from "./free-apps";
 
 /** "3 accounts." / "1 account needs you." / "2 accounts need you." */
@@ -107,6 +109,14 @@ export function AccountsList({
   );
 
   const org = useOrg(scope.kind === "organization" ? orgId : undefined);
+  // (P5-REFINE-19, Expert) Bulk on the main list: a checkbox per account the viewer manages or may give, a bar above the list.
+  const bulkOn = useBulkOn();
+  const bulkable = !agent && !appId;
+  const sel = useSelection(
+    bulkable
+      ? (accounts.data?.items ?? []).filter((a) => (!kind || a.kind === kind) && (a.can.manage || a.can.give_access)).map((a) => a.ref.id)
+      : [],
+  );
   if (accounts.isPending) return <Loading variant="rows" label="Loading your accounts…" />;
   if (accounts.isError) return <ErrorState error={accounts.error} onRetry={() => accounts.refetch()} />;
   const items = accounts.data.items.filter((a) => (!kind || a.kind === kind) && (!appId || a.app?.app_id === appId));
@@ -122,8 +132,10 @@ export function AccountsList({
       workspaceId={scope.kind === "workspace" ? scope.id : undefined}
       agent={agent}
       onReconnect={canReconnect(a) ? () => setReconnecting(a.ref.id) : undefined}
+      select={bulkable && (a.can.manage || a.can.give_access) ? { checked: sel.selected.has(a.ref.id), onChange: (on) => sel.toggle(a.ref.id, on), disabled: false } : undefined}
     />
   );
+  const picked = items.filter((a) => sel.selected.has(a.ref.id));
   const target = reconnecting ? items.find((a) => a.ref.id === reconnecting && a.ref.type === "connection") : undefined;
   const reconnectOk = target ? canReconnect(target) : false;
 
@@ -184,6 +196,13 @@ export function AccountsList({
       ) : addEntries ? (
         <div className="flex flex-wrap items-center justify-end gap-2">{addEntries}</div>
       ) : null}
+      {bulkable && bulkOn && items.some((a) => a.can.manage || a.can.give_access) ? (
+        <label className="flex items-center text-sm text-ink-2">
+          <BulkSelectAll label="Select all accounts" all={sel.all} some={sel.some} onChange={sel.setAll} />
+          Select all
+        </label>
+      ) : null}
+      {bulkable ? <AccountsBulkBar picked={picked} scope={scope} orgId={orgId} onClear={sel.clear} /> : null}
       {/* (P5-POLISH-7, D1) Add an AI key is a dialog like every other add, not a card inside the page. */}
       {addingKey ? <AddKeyDialog scope={scope} orgId={orgId} agentId={agent?.id} onClose={() => setAddingKey(false)} /> : null}
       {items.length === 0 && appId ? (

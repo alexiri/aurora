@@ -77,7 +77,7 @@ export const ALTITUDE_REGISTRY = {
   // The palette's verbs are a list the registry builds, not a wrapped control: `paletteVerbs` is listed when the altitude allows Expert.
   "palette.verbs": { altitude: "expert", area: "Command palette", mark: true },
   "kbd": { altitude: "expert", area: "Keyboard shortcuts" },
-  "bulk": { altitude: "expert", area: "Lists", later: "P5-REFINE-19" },
+  "bulk": { altitude: "expert", area: "Lists" },
   "fold.cli": { altitude: "expert", area: "CLI and API snippets" },
 } as const satisfies Record<string, AltitudeEntry>;
 
