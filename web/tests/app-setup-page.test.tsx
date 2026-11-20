@@ -123,17 +123,17 @@ describe("workspace view (C-932)", () => {
     const ways = screen.getByTestId("setup-ways");
     expect(within(ways).getByText("Ready")).toBeInTheDocument();
     expect(within(ways).getByText("Needs setup")).toBeInTheDocument();
-    expect(within(ways).getByText(/needs an OAuth client: none is set up for this workspace, Users or Aurora\./)).toBeInTheDocument();
-    // what the viewer cannot do says who can, by name; what they can do is a button
-    expect(within(ways).getByText(/Ask Ada Lovelace or Alan Turing/)).toBeInTheDocument();
+    expect(within(ways).getByText(/needs a sign-in app: none is set up for this workspace, Users or Aurora\./)).toBeInTheDocument();
+    // what the viewer cannot do says who can, by role (D-407); what they can do is a button
+    expect(within(ways).getByText(/Ask an organization admin/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect Linear" })).toBeInTheDocument();
     // the callback URL is shown with Copy; the tool descriptions and the guide are on the page
     expect(within(screen.getByTestId("setup-values")).getByRole("button", { name: /Copy/ })).toBeInTheDocument();
     expect(screen.getByText(/Find issues by text\./)).toBeInTheDocument();
     expect(await screen.findByText("In Linear, create an OAuth application.")).toBeInTheDocument();
 
-    fireEvent.click(within(ways).getByRole("button", { name: "Register an OAuth client for this workspace" }));
-    const dlg = await screen.findByRole("dialog", { name: "Register an OAuth client" });
+    fireEvent.click(within(ways).getByRole("button", { name: "Register a sign-in app for this workspace" }));
+    const dlg = await screen.findByRole("dialog", { name: "Register a sign-in app" });
     // the app and its client are chosen, named by the way it is used, and the callback URL is shown
     expect(within(dlg).getByLabelText("App")).toHaveValue("linear|linear");
     expect(within(dlg).getByRole("option", { name: "Linear — for Sign in with Linear" })).toBeInTheDocument();

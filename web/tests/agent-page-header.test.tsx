@@ -58,11 +58,11 @@ const openMenu = async () => {
 };
 
 describe("agent page frame (D-200)", () => {
-  it("opens a hosted agent on Chat with three tabs in one header line; Behaviour and Access are in the menu", async () => {
+  it("opens a hosted agent on Chat with three tabs in one header line; Instructions and Apps & access are in the menu", async () => {
     mockFetch(routes());
     renderPage();
     expect(await screen.findByTestId("chat-tab")).toBeInTheDocument();
-    expect(sectionTabs()).toEqual(["Chat", "Triggers", "Computer"]);
+    expect(sectionTabs()).toEqual(["Chat", "Automations", "Computer"]);
     expect(screen.getByRole("tab", { name: "Chat", selected: true })).toBeInTheDocument();
     const h1 = screen.getByRole("heading", { level: 1 });
     expect(h1.className).toContain("text-xl");
@@ -72,30 +72,30 @@ describe("agent page frame (D-200)", () => {
     expect(screen.queryByRole("tablist", { name: /pages/ })).toBeNull();
   });
 
-  it("opens Behaviour and Access from the … menu: no tab selected, a back link, the page name and its sentence; the URL keeps the page id", async () => {
+  it("opens Instructions and Apps & access from the … menu: no tab selected, a back link, the page name and its sentence; the URL keeps the page id", async () => {
     mockFetch(routes());
     renderPage();
     await screen.findByTestId("chat-tab");
     await openMenu();
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Behaviour/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Instructions/ }));
     expect(await screen.findByTestId("instructions-tab")).toBeInTheDocument();
     expect(window.location.search).toBe("?tab=instructions");
     expect(within(screen.getByRole("tablist", { name: "Agent sections" })).queryByRole("tab", { selected: true })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Behaviour", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Instructions", level: 2 })).toBeInTheDocument();
     expect(screen.getByText("How Scout works: its name, instructions, model, memory and skills.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
-    const pages = screen.getByRole("tablist", { name: "Behaviour pages" });
-    expect(within(pages).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Instructions", "Memory", "Skills", "Evals"]);
+    const pages = screen.getByRole("tablist", { name: "Instructions pages" });
+    expect(within(pages).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Instructions", "Memory", "Skills", "Tests"]);
     fireEvent.click(within(pages).getByRole("tab", { name: "Memory" }));
     expect(await screen.findByTestId("memory-tab")).toBeInTheDocument();
     expect(window.location.search).toBe("?tab=memory");
-    // Access from the same menu; leaving and coming back returns to the page last open in Behaviour.
+    // Apps & access from the same menu; leaving and coming back returns to the page last open in Instructions.
     await openMenu();
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Access/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Apps & access/ }));
     expect(await screen.findByTestId("access-tab")).toBeInTheDocument();
     expect(screen.getByText("What Scout can use: apps, accounts and its AI key.")).toBeInTheDocument();
     await openMenu();
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Behaviour/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Instructions/ }));
     expect(await screen.findByTestId("memory-tab")).toBeInTheDocument();
     // The back link returns to Chat.
     fireEvent.click(screen.getByRole("button", { name: "Chat" }));
@@ -104,9 +104,9 @@ describe("agent page frame (D-200)", () => {
 
   it("opens legacy deep links on the page they always opened: ?tab=memory, ?tab=access, ?tab=instructions", async () => {
     for (const [tab, testId, title] of [
-      ["memory", "memory-tab", "Behaviour"],
-      ["access", "access-tab", "Access"],
-      ["instructions", "instructions-tab", "Behaviour"],
+      ["memory", "memory-tab", "Instructions"],
+      ["access", "access-tab", "Apps & access"],
+      ["instructions", "instructions-tab", "Instructions"],
     ] as const) {
       window.history.replaceState(null, "", `/?tab=${tab}`);
       mockFetch(routes());
@@ -119,7 +119,7 @@ describe("agent page frame (D-200)", () => {
     }
   });
 
-  it("opens Chat for a ?c= link, and a BYO agent on Instructions with Behaviour · Computer · Access", async () => {
+  it("opens Chat for a ?c= link, and a BYO agent on Instructions with Instructions · Computer · Apps & access", async () => {
     window.history.replaceState(null, "", "/?c=conv-1");
     mockFetch(routes());
     renderPage();
@@ -146,29 +146,29 @@ describe("agent page frame (D-200)", () => {
 });
 
 describe("Agent actions menu", () => {
-  it("offers Freeze and Delete agent… to owners, on every section, and no Delete zone under Instructions", async () => {
+  it("offers Pause and Delete agent… to owners, on every section, and no Delete zone under Instructions", async () => {
     mockFetch(routes());
     renderPage();
     await openMenu();
-    expect(await screen.findByRole("menuitem", { name: /Behaviour/ })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /Access/ })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /Freeze Scout/ })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: /Instructions/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Apps & access/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Pause Scout/ })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /Delete agent/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("menuitem", { name: /Behaviour/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Instructions/ }));
     await screen.findByTestId("instructions-tab");
     expect(screen.queryByText("Delete this agent")).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete agent" })).toBeNull();
     expect(screen.getByRole("button", { name: "Agent actions" })).toBeInTheDocument();
   });
 
-  it("keeps Freeze behind its confirm dialog", async () => {
+  it("keeps Pause behind its confirm dialog", async () => {
     const fn = mockFetch(routes({ "POST /v1/agents/a1/freeze": () => json(200, { frozen: null, effective_frozen: true }) }));
     renderPage();
     await openMenu();
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Freeze Scout/ }));
-    expect(await screen.findByRole("dialog", { name: /Freeze agent Scout\?/ })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Pause Scout/ }));
+    expect(await screen.findByRole("dialog", { name: /Pause Scout\?/ })).toBeInTheDocument();
     expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method === "POST")).toBe(false);
-    const submit = screen.getByRole("button", { name: "Freeze agent" });
+    const submit = screen.getByRole("button", { name: "Pause agent" });
     expect(submit).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "Runaway loop" } });
     fireEvent.click(submit);
@@ -194,26 +194,26 @@ describe("Agent actions menu", () => {
     expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method === "DELETE" && r.url.endsWith("/v1/agents/a1"))).toBe(true);
   });
 
-  it("a frozen agent keeps its banner (with Unfreeze) and the menu offers Delete only", async () => {
+  it("a paused agent keeps its banner (with Resume) and the menu offers Delete only", async () => {
     const frozen = { at: "2026-01-02T00:00:00Z", authority: "workspace_owner", by_label: "Ada", level: "agent", reason: "Runaway loop" };
     mockFetch(routes({}, { ...agent, frozen }));
     renderPage();
-    expect(await screen.findByRole("button", { name: "Unfreeze agent" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Resume agent" })).toBeInTheDocument();
     await openMenu();
     expect(await screen.findByRole("menuitem", { name: /Delete agent/ })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /Freeze Scout/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /Pause Scout/ })).toBeNull();
   });
 
-  it("members without can_own see Behaviour and Access (read-only pages) and no Freeze or Delete", async () => {
+  it("members without can_own see Instructions and Apps & access (read-only pages) and no Pause or Delete", async () => {
     mockFetch(
       routes({ "GET /v1/workspaces/w1": () => json(200, { id: "w1", org_id: "o1", my_role: "member", timezone: "Europe/Zurich" }) }),
     );
     renderPage();
     await screen.findByTestId("chat-tab");
     await openMenu();
-    expect(await screen.findByRole("menuitem", { name: /Behaviour/ })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /Access/ })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /Freeze/ })).toBeNull();
+    expect(await screen.findByRole("menuitem", { name: /Instructions/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Apps & access/ })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Pause/ })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: /Delete/ })).toBeNull();
   });
 });

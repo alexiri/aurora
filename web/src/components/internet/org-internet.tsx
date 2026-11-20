@@ -42,7 +42,7 @@ function useBelow(org: Org, slug: string, all: boolean) {
     query: q,
     below: {
       columns: ["Requests without an account", "Browser connections", "Default rule", "Rules"],
-      empty: all ? "This organization has no workspaces." : "No workspace has tightened this.",
+      empty: all ? "This organization has no workspaces." : "No workspace restricts this further.",
       rows: items.flatMap((o) => {
         const s = slugOf.get(o.workspace.id);
         if (!s) return [];

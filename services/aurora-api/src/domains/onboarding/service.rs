@@ -26,12 +26,12 @@ fn view(r: Option<repo::OnboardingRow>) -> MeOnboarding {
             notices_seen: r.notices_seen,
             more_controls: r.more_controls,
         },
-        // No row: created after the 2026-11 release (the migration gave everyone older a row).
+        // No row: nothing seen yet (D-407: no notice is seeded any more).
         None => MeOnboarding {
             welcome_seen: false,
             guide_dismissed: vec![],
             tour_completed_at: None,
-            notices_seen: vec!["renames-2026-11".to_owned()],
+            notices_seen: vec![],
             more_controls: false,
         },
     }

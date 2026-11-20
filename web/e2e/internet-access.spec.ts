@@ -51,7 +51,7 @@ async function open(page: Page, path: string, scheme: "light" | "dark" = "light"
 test.describe("Internet access (mocked API)", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
 
-  test("a workspace owner sees the summary, two Common changes and no default controls until Tighten… is opened", async ({ page }) => {
+  test("a workspace owner sees the summary, two Common changes and no default controls until Restrict further… is opened", async ({ page }) => {
     await mockApi(page);
     await statefulPolicy(page, `/v1/workspaces/${ws.id}/policy`, "workspace");
     await open(page, "/o/acme/w/main/internet-access");
@@ -62,7 +62,7 @@ test.describe("Internet access (mocked API)", () => {
     await expect(page.getByLabel("Requests without an account")).toHaveCount(0);
     await expect(page.getByLabel("Browser connections (not inspected)")).toHaveCount(0);
     await expect(page.getByLabel("Default rule")).toHaveCount(0);
-    await page.getByRole("button", { name: "Tighten…" }).click();
+    await page.getByRole("button", { name: "Restrict further…" }).click();
     await expect(page.getByLabel("Requests without an account")).toBeVisible();
     await expect(page.getByLabel("Browser connections (not inspected)")).toBeVisible();
     await expect(page.getByLabel("Default rule")).toBeVisible();
@@ -128,7 +128,7 @@ test.describe("Internet access (mocked API)", () => {
     await expect(bar).toHaveCount(0);
     await expect.poll(() => posture).toBe("credentialed_only");
     await open(page, "/o/acme/w/main/internet-access");
-    const limits = page.getByRole("region", { name: "Limits from above" });
+    const limits = page.getByRole("region", { name: /^Set for you by/ });
     await expect(limits.getByText("Websites agents may reach")).toBeVisible();
     await expect(limits.getByText("Only listed websites")).toBeVisible();
     await expect(limits.getByText("Set by your organization").first()).toBeVisible();
@@ -166,11 +166,11 @@ test.describe("Internet access (mocked API)", () => {
         });
         await open(page, "/o/acme/w/main/internet-access", scheme);
         await expect(page.getByTestId("internet-summary")).toHaveText("Agents here can reach any website, except where a rule blocks it. Nothing asks you first.");
-        const rules = page.getByRole("list", { name: "Rules people wrote" });
+        const rules = page.getByRole("list", { name: "Your rules" });
         await expect(rules).toContainText("No evil");
         await expect(rules).toContainText("evil.example.com");
-        await expect(page.getByText("Only workspace owners can change this. Ask Bob Builder.")).toBeVisible();
-        for (const name of [/Block a website/, /Ask before changes on a website/, /Add rule/, /Tighten/]) {
+        await expect(page.getByText("Only workspace owners can change this. Ask a workspace owner.")).toBeVisible();
+        for (const name of [/Block a website/, /Ask before changes on a website/, /Add rule/, /Restrict further/]) {
           await expect(page.getByRole("button", { name })).toHaveCount(0);
         }
         expect(requested.filter((p) => p.endsWith("/policy") || p.endsWith("/policy/warnings") || p.endsWith("/policy/generations"))).toEqual([]);

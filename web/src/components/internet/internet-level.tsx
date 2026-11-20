@@ -65,7 +65,7 @@ function ReadOnlyRules({ rules }: { rules: PublishedInternetAccess["rules"] }) {
     );
   }
   return (
-    <ol className="space-y-3" aria-label="Rules people wrote">
+    <ol className="space-y-3" aria-label="Your rules">
       {rules.map((r) => (
         <li key={r.logical_id} className="rounded-card border border-line bg-surface p-4 text-sm text-ink shadow-card">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -162,12 +162,12 @@ function PolicyDefaults({ state, edit, workspace, orgSlug }: { state: DraftState
           <label className="block max-w-md text-sm">
             <span className="mb-1.5 block font-medium text-ink">Requests without an account</span>
             <Select aria-label="Requests without an account" value={state.uncredentialed_default} onChange={(v) => edit({ ...state, uncredentialed_default: v as DraftState["uncredentialed_default"] })} options={[{ value: "none", label: "Let the organization decide" }, { value: "block", label: "Block" }]} />
-            <span className="mt-1 block text-xs text-muted">Websites on the allow-list stay reachable. A workspace can only tighten what the organization sets.</span>
+            <span className="mt-1 block text-xs text-muted">Websites on the allow-list stay reachable. A workspace can only restrict further what the organization sets.</span>
           </label>
           <label className="block max-w-md text-sm">
             <span className="mb-1.5 block font-medium text-ink">Browser connections (not inspected)</span>
             <Select aria-label="Browser connections (not inspected)" value={state.open_lane_posture} onChange={(v) => edit({ ...state, open_lane_posture: v as DraftState["open_lane_posture"] })} options={LANE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))} />
-            <span className="mt-1 block text-xs text-muted">Aurora can&apos;t see inside these. A workspace can only tighten what the organization and Administration set.</span>
+            <span className="mt-1 block text-xs text-muted">Aurora can&apos;t see inside these. A workspace can only restrict further what the organization and an Aurora administrator set.</span>
           </label>
           <section aria-label="Allow-list" className="space-y-2">
             <h3 className="text-sm font-medium text-ink">Allow-list</h3>
@@ -285,7 +285,7 @@ export function InternetLevel(p: InternetLevelProps) {
               <span className="mt-2 block">
                 What agents may do in apps is set for each agent, on its{" "}
                 <Link href={wsRoutes(p.orgSlug, p.wsSlug ?? "").agents()} className="font-medium text-link underline">
-                  Access tab
+                  Apps &amp; access tab
                 </Link>
                 .
               </span>
@@ -298,7 +298,7 @@ export function InternetLevel(p: InternetLevelProps) {
           <WhoCan value={{ ...p.whoCanHere, action: "change_this" }} lead className="text-inherit" />
         </Notice>
         {workspace ? (
-          <Section id="policy-rules" title="Rules people wrote">
+          <Section id="policy-rules" title="Your rules">
             {memberRead.isPending ? <Loading /> : null}
             {memberRead.isError ? <ErrorState error={memberRead.error} onRetry={() => void memberRead.refetch()} /> : null}
             {memberRead.data ? <ReadOnlyRules rules={memberRead.data.rules} /> : null}
@@ -370,9 +370,9 @@ export function InternetLevel(p: InternetLevelProps) {
           <span className="mt-2 block">
             What agents may do in apps is set for each agent, on its{" "}
             <Link href={workspace ? wsRoutes(p.orgSlug, p.wsSlug ?? "").agents() : orgRoutes(p.orgSlug).agents()} className="font-medium text-link underline">
-              Access tab
+              Apps &amp; access tab
             </Link>
-            .{workspace ? "" : " Workspaces can only tighten what you set here."}
+            .{workspace ? "" : " Workspaces can only restrict further what you set here."}
           </span>
         </>,
         <Button variant="outline" size="sm" onClick={() => setHistory(true)}>
@@ -405,7 +405,7 @@ export function InternetLevel(p: InternetLevelProps) {
 
       <Section
         id="policy-rules"
-        title="Rules people wrote"
+        title="Your rules"
         actions={
           <MainAction canAct whoCan={addRule}>
             <Button size="sm" variant="outline" onClick={() => setEditing({ index: null, rule: newRule() })}>
@@ -502,15 +502,15 @@ export function InternetLevel(p: InternetLevelProps) {
         <Altitude id="policy.try" level="setup">
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="outline" onClick={() => setSimulating(true)}>
-              Check what would happen
+              Try a request
             </Button>
-            <span className="text-sm text-ink-2">Try a request and see which rule decides it.</span>
+            <span className="text-sm text-ink-2">Check what would happen: see which rule decides a request.</span>
           </div>
         </Altitude>
       ) : null}
       {workspace && simulating ? (
         <Dialog open onOpenChange={(o) => (o ? null : setSimulating(false))}>
-          <DialogContent size="lg" title="Check what would happen">
+          <DialogContent size="lg" title="Try a request">
             <SimulatePanel wsId={p.scope.id} agents={p.agents ?? []} users={p.users ?? []} currentUserId={p.currentUserId} />
           </DialogContent>
         </Dialog>

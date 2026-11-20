@@ -219,7 +219,7 @@ test.describe("layout, 1280 px", () => {
       expect(await serious(page)).toEqual([]);
       // (D-200) Every section has the same one-line header; Freeze and Delete are in Agent actions.
       await page.getByRole("button", { name: "Agent actions" }).click();
-      await page.getByRole("menuitem", { name: /Behaviour/ }).click();
+      await page.getByRole("menuitem", { name: /Instructions/ }).click();
       await expect(page.getByRole("button", { name: "Agent actions" })).toBeVisible();
       // (P5-POLISH-6) The model field is "Model"; the roles and the subagent default sit under Advanced.
       await expect(page.getByLabel("Model", { exact: true })).toBeVisible();
@@ -248,11 +248,11 @@ test.describe("layout, 1280 px", () => {
     await more.focus();
     await expect(toolbar).toHaveCSS("opacity", "1");
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("menuitem", { name: "Redact…" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Remove this message's content…" })).toBeVisible();
     await page.keyboard.press("Escape");
     // Radix hands focus back to the trigger on a later task after the menu closes; focusing the next control
     // before that lands lets the hand-back steal focus again (and Enter would reopen this menu instead).
-    await expect(page.getByRole("menuitem", { name: "Redact…" })).toBeHidden();
+    await expect(page.getByRole("menuitem", { name: "Remove this message's content…" })).toBeHidden();
     await expect(more).toBeFocused();
 
     const actions = page.getByRole("button", { name: "Conversation actions" });

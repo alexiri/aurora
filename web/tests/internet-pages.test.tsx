@@ -136,16 +136,16 @@ describe("a workspace's Internet access page", () => {
     routes();
     page();
     expect((await screen.findByTestId("internet-summary")).textContent).toBe("Agents here can reach any website. Nothing asks you first.");
-    expect(screen.getByRole("link", { name: "Access tab" })).toHaveAttribute("href", "/o/acme/w/main/agents");
+    expect(screen.getByRole("link", { name: "Apps & access tab" })).toHaveAttribute("href", "/o/acme/w/main/agents");
     expect(screen.getByRole("button", { name: /Ask before changes on a website/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Block a website/ })).toBeInTheDocument();
     expect(screen.getByText("No rules yet. Until you add one, requests follow the limits and defaults below.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Requests without an account")).toBeNull();
-    expect(screen.getByRole("button", { name: "Tighten…" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Restrict further…" })).toHaveAttribute("aria-expanded", "false");
     // (P5-POLISH-7) The simulator is a button that opens it in a dialog.
-    expect(screen.queryByRole("heading", { name: "Check what would happen", level: 2 })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Check what would happen" }));
-    expect(await screen.findByRole("dialog", { name: "Check what would happen" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Try a request", level: 2 })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try a request" }));
+    expect(await screen.findByRole("dialog", { name: "Try a request" })).toBeInTheDocument();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     // Nothing is pending: no bar.
     expect(screen.queryByRole("region", { name: "Changes not applied" })).toBeNull();
@@ -164,14 +164,14 @@ describe("a workspace's Internet access page", () => {
     });
     wrap(<InternetLevel level="workspace" scope={scope} orgId="o1" orgSlug="acme" wsSlug="main" canEdit={false} eff={EFF as never} whoCanHere={WHO} whoCanOrg={WHO} />);
     expect((await screen.findByTestId("internet-summary")).textContent).toBe("Agents here can reach any website, except where a rule blocks it. A rule asks you first on 1 website.");
-    const rules = await screen.findByRole("list", { name: "Rules people wrote" });
+    const rules = await screen.findByRole("list", { name: "Your rules" });
     expect(within(rules).getByText("No evil")).toBeInTheDocument();
     expect(within(rules).getByText("Blocks")).toBeInTheDocument();
     expect(within(rules).getByText("Asks")).toBeInTheDocument();
     expect(within(rules).getByText("evil.example.com")).toBeInTheDocument();
     expect(screen.getByText("Only workspace owners can change this.")).toBeInTheDocument();
-    // Read-only: no Common changes, Add rule, Tighten…, Edit/Delete.
-    for (const name of [/Block a website/, /Ask before changes on a website/, /Add rule/, /Tighten/, /^Edit /, /^Delete /]) {
+    // Read-only: no Common changes, Add rule, Restrict further…, Edit/Delete.
+    for (const name of [/Block a website/, /Ask before changes on a website/, /Add rule/, /Restrict further/, /^Edit /, /^Delete /]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
     // Only the member route was read: never the owner's policy document, its warnings or history.

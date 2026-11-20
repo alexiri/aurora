@@ -298,6 +298,14 @@ Every item: build what the After PNG shows, both themes, 1256 and 390 px, with t
   - **AI models** one line (scope 7 sentence) and **Internet access** one line (reach sentence), each linking to its page.
 - Members see Workspaces and the two lines only.
 
+### 17. A count badge on the organization area (owner, 2026-11-20; P5-REFINE-20 row G3)
+
+The owner reported the navigation's count badges don't work. The **Manage <org>** entry (in the switcher and wherever
+the organization area is entered) and the organization's Needs you show the organization's attention count from C-1082
+(P5-REFINE-8): requests to set up an app, chat-platform asks, invitations waiting and anything else C-1080 puts at the
+organization level, for owners and admins only. Same rules as P5-REFINE-16 item 19 (no badge at zero, live without a
+reload, screen-reader text, amber only for those who can act, fits at 390 px), with the same kind of tests.
+
 ## Out of scope
 
 - Policy presets card and confirm sentences (brief 18); Administration pages (18).

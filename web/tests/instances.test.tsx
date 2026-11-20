@@ -288,7 +288,7 @@ describe("instance on OAuth clients", () => {
     });
     wrap(<OAuthClientsPanel scope={{ kind: "organization", id: "o1" }} canOwn />);
     expect(await screen.findByText("https://desk.acme.example")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Add an OAuth client"));
+    fireEvent.click(screen.getByText("Add a sign-in app"));
     const app = await screen.findByLabelText("App");
     await within(app).findByRole("option", { name: "Desk — for Sign in with Desk" });
     fireEvent.change(app, { target: { value: "selfhost|oa" } });

@@ -72,7 +72,8 @@ is also `agents.default_name` (`13`).
 
 `POST /v1/agents/{agent}/freeze` pauses the agent without deleting anything:
 no turns, no gateway access, sandbox parked, schedules/webhooks/presences paused,
-state kept; reversible with `unfreeze`. Full rules: `04 §Freeze`.
+state kept; reversible with `unfreeze`. Full rules: `04 §Freeze`. Shown as Pause/Resume in the
+dashboard (D-407); the semantics and codes are unchanged.
 
 ### Port previews of an agent (phase 4, P4-PRV-1, D-144)
 

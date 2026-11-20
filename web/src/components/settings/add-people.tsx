@@ -183,7 +183,7 @@ export function AddPeople({
   );
 }
 
-/** "They also need to be invited to <org>. Ask Ada Lovelace or Alan Turing (organization owners and admins)." */
+/** "They also need to be invited to <org>. Ask an organization admin." */
 function InvitationNeeded({ orgId, orgName }: { orgId: string; orgName: string }) {
   const org = useOrg(orgId);
   const who = whoCanFromContacts("org_admin", org.data?.contacts, "invite_people");

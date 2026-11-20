@@ -19,15 +19,16 @@ export interface LadderAbove {
   who_can: WhoCanValue;
 }
 
-/** What the levels below tightened (C-963, C-964): a table of rows, each with a link to the level's own page. */
+/** What the levels below restricted further (C-963, C-964): a table of rows, each with a link to the level's own page. */
 export interface LadderBelow {
   columns: string[];
   rows: { label: string; values: string[]; link: { href: string; label: string } }[];
-  /** Shown when there is no row ("No workspace has tightened this."). */
+  /** Shown when there is no row ("No workspace restricts this further."). */
   empty?: string;
 }
 
-const SOURCE_WORDS: Record<LadderAbove["source"], string> = { instance: "Set by Administration", org: "Set by your organization" };
+/** (D-407) Who set it, as the role names it (`WhoCan` words): never a login, never "Administration". */
+const SOURCE_WORDS: Record<LadderAbove["source"], string> = { instance: "an Aurora administrator", org: "your organization's admins" };
 
 /**
  * (P5-IA-2, C-963) The scope ladder, for any setting that levels tighten from above (`14 §Information architecture`):
@@ -45,7 +46,7 @@ export function ScopeLadder({
   here,
   minimumNote,
   collapsed = false,
-  tightenLabel = "Tighten…",
+  tightenLabel = "Restrict further…",
   below,
   className,
 }: {
@@ -60,18 +61,20 @@ export function ScopeLadder({
 }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
+  // "Set for you by <who>": the actors of the rows, named as WhoCan names them.
+  const aboveHeading = `Set for you by ${[...new Set(above.map((a) => SOURCE_WORDS[a.source]))].join(" and ")}`;
   return (
     <div className={className ? `space-y-4 ${className}` : "space-y-4"}>
       {above.length > 0 ? (
-        <section aria-label="Limits from above" className="space-y-2">
-          <h3 className="text-sm font-semibold text-ink">Limits from above</h3>
+        <section aria-label={aboveHeading} className="space-y-2">
+          <h3 className="text-sm font-semibold text-ink">{aboveHeading}</h3>
           <ItemList aria-label="Limits set above this level">
             {above.map((a) => (
               <ListRow key={a.label}>
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-ink">{a.label}</span>
-                    <LockPill owner={SOURCE_WORDS[a.source]} whoCan={a.who_can} />
+                    <LockPill owner={`Set for you by ${SOURCE_WORDS[a.source]}`} whoCan={a.who_can} />
                   </div>
                   <p className="text-sm text-ink-2">{a.value_display}</p>
                 </div>
@@ -103,14 +106,14 @@ export function ScopeLadder({
       ) : null}
 
       {below ? (
-        <section aria-label="Tightened below" className="space-y-2">
-          <h3 className="text-sm font-semibold text-ink">Tightened below</h3>
+        <section aria-label="Restricted further below" className="space-y-2">
+          <h3 className="text-sm font-semibold text-ink">Restricted further below</h3>
           {below.rows.length === 0 ? (
-            <p className="text-sm text-ink-2">{below.empty ?? "Nothing below has tightened this."}</p>
+            <p className="text-sm text-ink-2">{below.empty ?? "Nothing below restricts this further."}</p>
           ) : (
             <>
               <div className="hidden md:block">
-                <DataTable caption="What the levels below tightened">
+                <DataTable caption="What the levels below restrict further">
                   <thead>
                     <tr>
                       <Th />
@@ -138,7 +141,7 @@ export function ScopeLadder({
                 </DataTable>
               </div>
               <div className="md:hidden">
-                <ItemList aria-label="What the levels below tightened">
+                <ItemList aria-label="What the levels below restrict further">
                   {below.rows.map((r) => (
                     <ListRow key={r.label}>
                       <div className="min-w-0 space-y-1">

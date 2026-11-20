@@ -48,12 +48,12 @@ export function AnchorSwitch({
           <input
             type="checkbox"
             className="size-4 shrink-0 accent-accent"
-            aria-label={`Anchor ${name} to workspace`}
+            aria-label={`Keep ${name} running if its owner leaves`}
             checked={anchor === "workspace"}
             disabled={busy}
             onChange={(e) => onChange(e.target.checked ? "workspace" : "creator")}
           />
-          Anchor to workspace
+          Keep running if I leave
         </label>
         {anchor !== "workspace" ? (
           <p className="ml-label-offset text-xs text-muted">

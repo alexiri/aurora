@@ -41,7 +41,7 @@ for (const scheme of ["light", "dark"] as const) {
         await open(page, "/o/acme/people", scheme, "member");
         const alert = page.getByRole("alert").filter({ hasText: "Only organization owners and admins can open this page." });
         await expect(alert).toBeVisible();
-        await expect(alert.getByText("Ask Ada Lovelace or Alan Turing (organization owners and admins).")).toBeVisible();
+        await expect(alert.getByText("Ask an organization admin.")).toBeVisible();
         await expect(page.getByText("Could not reach the server")).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
@@ -61,7 +61,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("a workspace member's Accounts says who can add one, and has no button", async ({ page }) => {
         await open(page, "/o/acme/w/main/apps?tab=accounts", scheme, "member");
-        await expect(page.getByText("Only workspace owners can add an account. Ask Bob Builder or Ada Diaz.")).toBeVisible();
+        await expect(page.getByText("Only workspace owners can add an account. Ask a workspace owner.")).toBeVisible();
         await expect(page.getByRole("button", { name: /^Add$/ })).toHaveCount(0);
         await expect(page.getByRole("button", { name: "Connect an app or website" })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);

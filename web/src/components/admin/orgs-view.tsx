@@ -51,9 +51,9 @@ function FreezeDialog({ org, open, onOpenChange }: { org: AdminOrg; open: boolea
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`Freeze ${org.name}?`}
+      title={`Pause ${org.name}?`}
       description="Stops every agent of every workspace until an instance administrator or the organization's owner lifts it. Nothing is deleted, and you gain no access to the organization's data."
-      submitLabel={m.freeze.isPending ? "Freezing…" : "Freeze organization"}
+      submitLabel={m.freeze.isPending ? "Pausing…" : "Pause organization"}
       danger
       busy={m.freeze.isPending}
       submitDisabled={reason.trim() === ""}
@@ -83,9 +83,9 @@ function OrgRowActions({ org, onDeleted, onError }: { org: AdminOrg; onDeleted: 
         </MenuTrigger>
         <MenuContent align="end">
           {org.frozen ? (
-            <MenuItem onSelect={() => void freeze.unfreeze.mutateAsync().catch((e) => onError(errorMessage(e)))}>Unfreeze</MenuItem>
+            <MenuItem onSelect={() => void freeze.unfreeze.mutateAsync().catch((e) => onError(errorMessage(e)))}>Resume</MenuItem>
           ) : (
-            <MenuItem onSelect={() => setFreezing(true)}>Freeze…</MenuItem>
+            <MenuItem onSelect={() => setFreezing(true)}>Pause…</MenuItem>
           )}
           <MenuItem asChild>
             <Link href={adminRoutes.organization(org.id)}>Workspaces</Link>
@@ -123,7 +123,7 @@ export function AdminOrgsView() {
     <div className="max-w-page space-y-6">
       <PageHeader
         title="Organizations"
-        description="Freeze or delete an organization as the operator, for an incident such as a compromised account. You see counts and names, never the organization's data."
+        description="Pause or delete an organization as the operator, for an incident such as a compromised account. You see counts and names, never the organization's data."
       />
       {done ? (
         <Notice tone="accent" role="status" data-testid="admin-orgs-done">
@@ -135,10 +135,10 @@ export function AdminOrgsView() {
           {failed}
         </Notice>
       ) : null}
-      <CheckboxField id="orgs-frozen-only" label="Frozen organizations only" checked={frozenOnly} onChange={setFrozenOnly} />
-      {q.data.truncated ? <MoreNotShown what="organizations" narrow="Show frozen organizations only to narrow the list." /> : null}
+      <CheckboxField id="orgs-frozen-only" label="Paused organizations only" checked={frozenOnly} onChange={setFrozenOnly} />
+      {q.data.truncated ? <MoreNotShown what="organizations" narrow="Show paused organizations only to narrow the list." /> : null}
       {q.data.items.length === 0 ? (
-        <p className="text-sm text-ink-2">{frozenOnly ? "No organization is frozen." : "No organizations."}</p>
+        <p className="text-sm text-ink-2">{frozenOnly ? "No organization is paused." : "No organizations."}</p>
       ) : (
         <DataTable caption="Organizations">
           <thead>
@@ -170,7 +170,7 @@ export function AdminOrgsView() {
                 <Td className="whitespace-nowrap text-ink-2">{fmtDate(o.created_at)}</Td>
                 <Td>
                   <div className="flex flex-wrap gap-1">
-                    {o.frozen ? <Badge tone="danger">Frozen</Badge> : null}
+                    {o.frozen ? <Badge tone="danger">Paused</Badge> : null}
                     {o.ownerless ? <Badge>No owner</Badge> : null}
                   </div>
                 </Td>

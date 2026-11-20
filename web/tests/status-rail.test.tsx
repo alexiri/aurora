@@ -300,7 +300,7 @@ describe("expanded rail", () => {
     expect(screen.getByRole("button", { name: "Terminal" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
     // No HOSTED/DEFAULT chips: a default agent says so in plain text.
-    expect(screen.getByText("Default agent")).toBeInTheDocument();
+    expect(screen.getByText("Came with this workspace")).toBeInTheDocument();
     expect(screen.queryByText("hosted")).toBeNull();
     expect(screen.getByText("Triage pull requests.")).toBeInTheDocument();
   });

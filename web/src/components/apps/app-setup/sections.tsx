@@ -93,7 +93,7 @@ export function WaysToConnect({
                 </p>
                 {needsClient && actions.registerClient ? (
                   <Button size="sm" onClick={onRegisterClient}>
-                    Register an OAuth client for {view === "workspace" ? "this workspace" : orgName}
+                    Register a sign-in app for {view === "workspace" ? "this workspace" : orgName}
                   </Button>
                 ) : null}
                 {needsInstance && actions.registerInstance ? (
@@ -163,9 +163,9 @@ export function WhatIsSetUp({
       </h2>
       {usesClients ? (
         <>
-          {view === "workspace" ? <SetUpRow label="OAuth client · this workspace">{names(setup.clients.workspace)}</SetUpRow> : null}
-          <SetUpRow label={`OAuth client · ${orgName}`}>{names(setup.clients.organization)}</SetUpRow>
-          <SetUpRow label="OAuth client · Aurora">{setup.clients.instance.set_up ? "Set up" : "Not set up"}</SetUpRow>
+          {view === "workspace" ? <SetUpRow label="Sign-in app · this workspace">{names(setup.clients.workspace)}</SetUpRow> : null}
+          <SetUpRow label={`Sign-in app · ${orgName}`}>{names(setup.clients.organization)}</SetUpRow>
+          <SetUpRow label="Sign-in app · Aurora">{setup.clients.instance.set_up ? "Set up" : "Not set up"}</SetUpRow>
         </>
       ) : null}
       {showInstances ? (
@@ -240,9 +240,9 @@ function OwnClients({
   const mine = list.data.items.filter((c) => c.package_id === detail.package_id && c.scope === scope.kind);
   return (
     <div className="mt-2 space-y-3 border-t border-line pt-3">
-      <p className="text-sm font-medium text-ink">{view === "workspace" ? "This workspace's OAuth clients" : `${orgName}'s OAuth clients`}</p>
+      <p className="text-sm font-medium text-ink">{view === "workspace" ? "This workspace's sign-in apps" : `${orgName}'s sign-in apps`}</p>
       {mine.length > 0 ? (
-        <ul className="space-y-3" aria-label="OAuth clients of this app">
+        <ul className="space-y-3" aria-label="Sign-in apps of this app">
           {mine.map((c) => (
             <ClientRow
               key={c.id}
@@ -261,7 +261,7 @@ function OwnClients({
       )}
       {canRegister && mine.length === 0 ? (
         <Button size="sm" variant="outline" onClick={onRegister}>
-          Register an OAuth client for {view === "workspace" ? "this workspace" : orgName}
+          Register a sign-in app for {view === "workspace" ? "this workspace" : orgName}
         </Button>
       ) : null}
     </div>

@@ -41,7 +41,7 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
 function why(r: EvalResult): string {
   const parts: string[] = [];
   if (r.reason_code) parts.push(reasonText(r.reason_code));
-  if (r.judge?.rationale) parts.push(`Judge: ${r.judge.rationale}`);
+  if (r.judge?.rationale) parts.push(`Grader: ${r.judge.rationale}`);
   return parts.join(" ");
 }
 
@@ -312,7 +312,7 @@ export function RunDetail({
         </dl>
         {run.judge_usage ? (
           <p className="text-xs text-muted">
-            Judge usage: {run.judge_usage.input_tokens} input tokens, {run.judge_usage.output_tokens} output tokens.
+            Grader usage: {run.judge_usage.input_tokens} input tokens, {run.judge_usage.output_tokens} output tokens.
           </p>
         ) : null}
         <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">

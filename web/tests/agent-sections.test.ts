@@ -42,8 +42,8 @@ describe("agent sections", () => {
   it("lists a hosted agent's five sections in order, with Terminal and Previews only where enabled", () => {
     const s = availableSections(hosted);
     expect(s.map((x) => x.id)).toEqual(["chat", "behaviour", "triggers", "computer", "access"]);
-    expect(s.find((x) => x.id === "behaviour")!.pages.map((p) => p.label)).toEqual(["Instructions", "Memory", "Skills", "Evals"]);
-    expect(s.find((x) => x.id === "triggers")!.pages.map((p) => p.label)).toEqual(["Schedules", "Webhooks", "Channels", "Peers"]);
+    expect(s.find((x) => x.id === "behaviour")!.pages.map((p) => p.label)).toEqual(["Instructions", "Memory", "Skills", "Tests"]);
+    expect(s.find((x) => x.id === "triggers")!.pages.map((p) => p.label)).toEqual(["Schedules", "Webhooks", "Channels", "Other agents"]);
     expect(s.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Computer"]);
     const all = availableSections({ byo: false, previews: true, terminal: true });
     expect(all.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Computer", "Terminal", "Files", "Previews"]);
@@ -97,13 +97,13 @@ describe("agent sections by altitude (D-406)", () => {
   it("at Set up adds Memory and Skills; at Expert everything", () => {
     expect(labels(availableSections(all, at("setup")), "behaviour")).toEqual(["Instructions", "Memory", "Skills"]);
     const s = availableSections(all, at("expert"));
-    expect(labels(s, "behaviour")).toEqual(["Instructions", "Memory", "Skills", "Evals"]);
-    expect(labels(s, "triggers")).toContain("Peers");
+    expect(labels(s, "behaviour")).toEqual(["Instructions", "Memory", "Skills", "Tests"]);
+    expect(labels(s, "triggers")).toContain("Other agents");
     expect(labels(s, "computer")).toEqual(["Computer", "Terminal", "Files", "Previews", "SSH"]);
   });
   it("keeps the open page listed, and a direct ?tab= still resolves to it", () => {
     expect(resolvePage("evals", hosted)).toBe("evals");
-    expect(labels(availableSections(hosted, at("use"), "evals"), "behaviour")).toEqual(["Instructions", "Evals"]);
+    expect(labels(availableSections(hosted, at("use"), "evals"), "behaviour")).toEqual(["Instructions", "Tests"]);
   });
   it("counts the pages the altitude leaves out", () => {
     expect(hiddenPageCount(all, at("use"))).toBe(7);

@@ -80,7 +80,7 @@ export function AccountChannelsView() {
                   </div>
                   <div className="max-w-md space-y-1.5">
                     <label htmlFor={selectId} className="block text-sm font-medium text-ink">
-                      Default agent for direct messages
+                      Agent that answers direct messages
                     </label>
                     <select
                       id={selectId}

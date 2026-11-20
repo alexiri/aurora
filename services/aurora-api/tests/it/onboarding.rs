@@ -103,11 +103,11 @@ async fn onboarding_rejects_unknown_fields_and_too_many_guides() {
 #[tokio::test]
 async fn notices_default_for_new_accounts_append_once_and_are_limited() {
     let h = Harness::new().await;
-    // A new account (no row, or a row from a first PATCH) has the 2026-11 renames seen already.
+    // A new account (no row, or a row from a first PATCH) has seen no notice (D-407).
     let new = h.user("n@x.io", false).await;
     let (_, tok) = h.good_session(new).await;
     let (_, v) = call(&h, &tok, Method::GET, "/v1/me/onboarding", None).await;
-    assert_eq!(v["notices_seen"], json!(["renames-2026-11"]), "{v}");
+    assert_eq!(v["notices_seen"], json!([]), "{v}");
     let (s, v) = call(
         &h,
         &tok,
@@ -116,11 +116,7 @@ async fn notices_default_for_new_accounts_append_once_and_are_limited() {
         Some(json!({"welcome_seen": true})),
     )
     .await;
-    assert_eq!(
-        (s, &v["notices_seen"]),
-        (200, &json!(["renames-2026-11"])),
-        "{v}"
-    );
+    assert_eq!((s, &v["notices_seen"]), (200, &json!([])), "{v}");
 
     // An account that existed before the release has an empty list (the migration's row).
     let old = h.user("o@x.io", false).await;

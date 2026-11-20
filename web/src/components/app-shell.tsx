@@ -12,7 +12,6 @@ import { useAltitude } from "@/lib/altitude";
 import { useMoreControls } from "@/lib/api/use-more-controls";
 import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
-import { showWhatMoved } from "@/lib/moved";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
 import { useTimezoneAutofill } from "@/lib/timezone";
@@ -22,7 +21,6 @@ import { AttentionBadge } from "./admin/attention-badge";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
 import { ScopeSwitcher } from "./nav/scope-switcher";
-import { RenamesNotice } from "./onboarding/renames-notice";
 import { Tour } from "./onboarding/tour";
 import { startTour } from "./onboarding/tour-events";
 import { ThemeSwitch } from "./theme/theme-switch";
@@ -166,10 +164,6 @@ function UserMenu() {
         <MenuItem onSelect={onTour} className={itemClass}>
           <HomeIcon className="size-4 shrink-0 text-muted" />
           Show me around
-        </MenuItem>
-        <MenuItem onSelect={showWhatMoved} className={itemClass}>
-          <ScrollIcon className="size-4 shrink-0 text-muted" />
-          What moved
         </MenuItem>
         <MenuSeparator />
         <MenuItem onSelect={() => void onLogout()} className={itemClass}>
@@ -518,7 +512,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="w-full min-w-0 space-y-4 px-4 py-6 md:px-8 md:py-8">
           <ApprovalNotifier />
           <FrozenEntityBanner />
-          <RenamesNotice />
           {children}
         </main>
         <Tour setNavOpen={tourNavOpen} />

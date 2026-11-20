@@ -57,7 +57,7 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
         <Altitude id="ws.memlang" level="expert" promote={!!fe.memory_language}>
           <Field
             id="set-lang"
-            label="Memory language"
+            label="Language agents remember in"
             hint="Language used for memory search indexing."
             error={fe.memory_language}
           >

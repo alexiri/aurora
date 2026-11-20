@@ -264,7 +264,7 @@ export function ComputerTab({
         </div>
         {missing.length > 0 ? (
           <p className="text-sm text-ink-2" data-testid="missing-pages">
-            {listWords(missing)} {missing.length === 1 ? "isn't" : "aren't"} set up on this Aurora. {askSentence({ role: "instance_admin", people: [] })}
+            {listWords(missing)} {missing.length === 1 ? "isn't" : "aren't"} set up on this Aurora. {askSentence({ role: "instance_admin" })}
           </p>
         ) : null}
       </section>

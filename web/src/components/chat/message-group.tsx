@@ -125,7 +125,7 @@ function MessageToolbar({
               </MenuItem>
             ) : null}
             <Altitude id="chat.redact" level="expert">
-              <MenuItem onSelect={() => setRedact(true)}>Redact…</MenuItem>
+              <MenuItem onSelect={() => setRedact(true)}>Remove this message&apos;s content…</MenuItem>
             </Altitude>
           </MenuContent>
         </Menu>

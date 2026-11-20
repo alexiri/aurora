@@ -23,10 +23,10 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("an organization changes the file retention on Data › Retention, under Administration's maximums", async ({ page }) => {
         await openRoute(page, "/o/acme/data", scheme);
-        const above = page.getByRole("region", { name: "Limits from above" });
+        const above = page.getByRole("region", { name: "Set for you by an Aurora administrator" });
         await expect(above).toContainText("At most 365 days without activity");
         await expect(above).toContainText("At most 90 days");
-        await expect(above).toContainText("Set by Administration");
+        await expect(above).toContainText("Set for you by an Aurora administrator");
         const files = page.getByLabel(/Delete files after/);
         await files.fill("120");
         await page.getByRole("button", { name: "Save retention" }).click();
@@ -78,14 +78,14 @@ for (const scheme of ["light", "dark"] as const) {
       test("the workspace's agents list shows the organization's BYO value, and its Settings no longer has the setting", async ({ page }) => {
         await openRoute(page, "/o/acme/w/main/agents", scheme);
         const byo = page.getByTestId("workspace-byo");
-        await expect(byo.getByRole("region", { name: "Limits from above" })).toContainText("Members can create BYO agents");
-        await byo.getByRole("button", { name: "Tighten…" }).click();
+        await expect(byo.getByRole("region", { name: /^Set for you by/ })).toContainText("Members can create BYO agents");
+        await byo.getByRole("button", { name: "Restrict further…" }).click();
         await expect(byo.getByLabel("In this workspace")).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
         await openRoute(page, "/o/acme/w/main/settings", scheme);
         await expect(page.getByLabel("Time zone")).toBeVisible();
-        await expect(page.getByLabel("Memory language")).toBeVisible();
+        await expect(page.getByLabel("Language agents remember in")).toBeVisible();
         await expect(page.getByLabel("BYO agent posture")).toHaveCount(0);
       });
     });

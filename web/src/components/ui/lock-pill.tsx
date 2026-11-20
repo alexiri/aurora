@@ -7,7 +7,7 @@ import { LockIcon } from "./icons";
 
 /**
  * (P5-POLISH-2, D-384) Who owns a value that the viewer cannot change here: a neutral pill with a lock, in sentence
- * case ("Set by Users", "Set in Helm", "Set by Administration"). It is never amber: amber means "needs you".
+ * case ("Set for you by an Aurora administrator", "Set by the installation", "Set for you by your organization's admins"). It is never amber: amber means "needs you".
  * `whoCan` is the tooltip and the accessible description (who can change it); `href` opens where it is changed, when
  * the viewer may go there.
  */
@@ -22,7 +22,7 @@ export function LockPill({
   href?: string;
   className?: string;
 }) {
-  const who = whoCan ? `${onlySentence(whoCan)} ${askSentence(whoCan, false)}`.trim() : undefined;
+  const who = whoCan ? `${onlySentence(whoCan)} ${askSentence(whoCan)}`.trim() : undefined;
   const cls = cn(
     "inline-flex items-center gap-1 rounded-full bg-subtle px-2 py-0.5 text-label font-medium leading-4 text-ink-2",
     href && "hover:text-ink hover:underline",

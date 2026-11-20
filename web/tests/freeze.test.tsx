@@ -26,7 +26,7 @@ describe("authorityRank", () => {
 });
 
 describe("FreezeControl", () => {
-  it("requires a reason, lists the effects and sends the freeze", async () => {
+  it("requires a reason, lists the effects and sends the pause", async () => {
     const freeze = vi.fn(async () => undefined);
     wrap(
       <FreezeControl
@@ -38,9 +38,10 @@ describe("FreezeControl", () => {
         unfreeze={{ mutateAsync: async () => undefined, isPending: false, error: null }}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Freeze agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pause agent" }));
     expect(await screen.findByText(/Running and queued turns are stopped/)).toBeInTheDocument();
-    const confirm = screen.getByRole("button", { name: "Freeze agent", hidden: false, description: "" });
+    expect(screen.getByText(/they resume when you resume it/)).toBeInTheDocument();
+    const confirm = screen.getByRole("button", { name: "Pause agent", hidden: false, description: "" });
     expect(confirm).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "  stolen token  " } });
     expect(confirm).toBeEnabled();
@@ -48,14 +49,14 @@ describe("FreezeControl", () => {
     await waitFor(() => expect(freeze).toHaveBeenCalledWith("stolen token"));
   });
 
-  it("shows the banner and an enabled Unfreeze when the caller's authority suffices", () => {
+  it("shows the banner and an enabled Resume when the caller's authority suffices", () => {
     wrap(<FreezeControl subject="agent" name="Bot" frozen={frozen()} callerRank={1} freeze={noop} unfreeze={noop} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Frozen by boss@example.com on");
+    expect(screen.getByRole("status")).toHaveTextContent("Paused by boss@example.com on");
     expect(screen.getByRole("status")).toHaveTextContent("compromised token");
-    expect(screen.getByRole("button", { name: "Unfreeze agent" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Resume agent" })).toBeEnabled();
   });
 
-  it("disables Unfreeze with the explanation when a higher authority froze it", () => {
+  it("disables Resume with the explanation when a higher authority paused it", () => {
     wrap(
       <FreezeControl
         subject="agent"
@@ -66,27 +67,27 @@ describe("FreezeControl", () => {
         unfreeze={noop}
       />,
     );
-    const b = screen.getByRole("button", { name: "Unfreeze agent" });
+    const b = screen.getByRole("button", { name: "Resume agent" });
     expect(b).toBeDisabled();
-    expect(screen.getByText(/A higher authority froze this/)).toBeInTheDocument();
+    expect(screen.getByText(/A higher authority paused this/)).toBeInTheDocument();
   });
 
-  it("offers no Unfreeze for a freeze inherited from the organization", () => {
+  it("offers no Resume for a pause inherited from the organization", () => {
     wrap(<FreezeControl subject="agent" name="Bot" frozen={frozen({ level: "org" })} callerRank={3} freeze={noop} unfreeze={noop} />);
-    expect(screen.queryByRole("button", { name: /Unfreeze/ })).toBeNull();
-    expect(screen.getByRole("status")).toHaveTextContent("because its organization is frozen");
+    expect(screen.queryByRole("button", { name: /Resume/ })).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("because its organization is paused");
   });
 });
 
 describe("AgentFreeze", () => {
-  it("posts the unfreeze for the agent", async () => {
+  it("posts the resume for the agent", async () => {
     const fn = mockFetch({
       "GET /v1/orgs/o1": () => json(200, { id: "o1", my_role: "owner", settings: {} }),
       "POST /v1/agents/a1/unfreeze": () => json(200, { frozen: null, effective_frozen: false }),
     });
     wrap(<AgentFreeze agentId="a1" name="Bot" orgId="o1" frozen={frozen()} canOwn />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Unfreeze agent" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Unfreeze agent" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Resume agent" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Resume agent" }));
     await waitFor(() =>
       expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method === "POST" && r.url.endsWith("/v1/agents/a1/unfreeze"))).toBe(true),
     );

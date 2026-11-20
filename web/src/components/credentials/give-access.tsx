@@ -347,7 +347,7 @@ export function GiveAccessPanel({
         )
       ) : customOnly ? (
         <Notice tone="pending" role="status">
-          This app only allows custom access. Choose the allowed tools on each agent&apos;s Access tab.
+          This app only allows custom access. Choose the allowed tools on each agent&apos;s Apps &amp; access tab.
         </Notice>
       ) : null}
       {errorText ? (

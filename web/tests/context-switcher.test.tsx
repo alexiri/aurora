@@ -305,7 +305,7 @@ describe("account menu", () => {
     await openMenu();
     expect(await screen.findByText("bob@example.org")).toBeInTheDocument();
     const items = (await screen.findAllByRole("menuitem")).map((i) => i.textContent);
-    expect(items).toEqual(["Your account", "Show me around", "What moved", "Sign out"]);
+    expect(items).toEqual(["Your account", "Show me around", "Sign out"]);
     expect(screen.getAllByRole("separator")).toHaveLength(2);
   });
 
@@ -313,7 +313,7 @@ describe("account menu", () => {
     onWorkspace({ admin: true });
     await openMenu();
     const items = (await screen.findAllByRole("menuitem")).map((i) => i.textContent);
-    expect(items).toEqual(["Your account", "Administration", "Show me around", "What moved", "Sign out"]);
+    expect(items).toEqual(["Your account", "Administration", "Show me around", "Sign out"]);
   });
 });
 

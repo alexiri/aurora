@@ -23,8 +23,8 @@ export function SelfHostedProvision({
   return (
     <Section
       id="conn-provision"
-      title="Self-hosted connector (advanced)"
-      description="You run the connector yourself and get a registration token to give to it."
+      title="Self-hosted chat platform host (advanced)"
+      description="You run the chat platform host yourself and get a registration token to give to it."
       card
     >
       <form

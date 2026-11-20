@@ -284,7 +284,7 @@ describe("SshPage", () => {
   it("shows only a notice for a frozen agent and asks the API nothing", async () => {
     const fn = base();
     wrap(<SshPage agentId={AGENT} frozen={true} />);
-    await screen.findByText(/frozen/);
+    await screen.findByText(/paused/);
     expect(screen.queryByRole("button", { name: "Get a certificate" })).not.toBeInTheDocument();
     expect(fn).not.toHaveBeenCalled();
   });

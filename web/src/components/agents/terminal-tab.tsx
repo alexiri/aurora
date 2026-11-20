@@ -407,7 +407,7 @@ export function TerminalPane({
   if (paused) {
     return (
       <Notice tone="neutral" role="status">
-        This agent is frozen. The terminal is unavailable while it is frozen.
+        This agent is paused. The terminal is unavailable while it is paused.
       </Notice>
     );
   }

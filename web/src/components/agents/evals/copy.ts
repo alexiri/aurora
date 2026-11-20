@@ -28,7 +28,7 @@ export const REASON: Record<string, string> = {
   timeout: "The agent did not finish in time, so the turn was stopped.",
   cancelled: "The run was cancelled before this question.",
   access_lost: "The person who started the run lost access.",
-  frozen: "The agent was frozen.",
+  frozen: "The agent was paused.",
   judge_not_configured: "No judge key is set. Choose one in the judge settings.",
   judge_not_granted: "The judge key is no longer granted to this agent.",
   judge_not_permitted: "Your organization does not permit the judge key's scope.",
@@ -46,22 +46,22 @@ export const reasonText = (code: string | null | undefined): string => {
 /** Run-level `error_code` (a cancelled or failed run) in words. */
 export const RUN_REASON: Record<string, string> = {
   access_lost: "Cancelled: the person who started the run lost access to the agent.",
-  frozen: "Cancelled: the agent was frozen.",
+  frozen: "Cancelled: the agent was paused.",
   cancelled: "Cancelled by a person.",
 };
 
 const EVAL_MESSAGES: Record<string, string> = {
-  eval_not_supported: "Evals are available for hosted agents only.",
-  eval_question_limit: "This agent has the most eval questions it can have (100). Delete one to add another.",
+  eval_not_supported: "Tests are available for hosted agents only.",
+  eval_question_limit: "This agent has the most test questions it can have (100). Delete one to add another.",
   eval_no_questions: "Add at least one enabled question before starting a run.",
   eval_run_active: "A run is already in progress for this agent. Wait for it to finish or cancel it.",
   eval_run_finished: "This run has already finished.",
-  eval_runs_limited: "This agent has reached its eval run limit for today (20 runs a day, including scheduled ones). Try again tomorrow, UTC.",
-  eval_schedule_limit: "This agent has the most eval schedules it can have (5).",
+  eval_runs_limited: "This agent has reached its test run limit for today (20 runs a day, including scheduled ones). Try again tomorrow, UTC.",
+  eval_schedule_limit: "This agent has the most test schedules it can have (5).",
   eval_judge_not_granted: "The judge key must be an AI key that is granted to this agent. Grant it first, then choose it here.",
   eval_judge_not_usable: "That key cannot be used right now. Check its status under the agent's model settings.",
   eval_judge_not_permitted: "Your organization's governance does not permit this key or its scope for this use.",
-  frozen: "This agent is frozen, so no run can start.",
+  frozen: "This agent is paused, so no run can start.",
 };
 
 /** A message for an eval refusal (C-872), otherwise the app-wide wording. */
