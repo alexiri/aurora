@@ -65,14 +65,29 @@ function renderPage(routes: Record<string, Handler>) {
 // FIX-025 (D-158): the header never shows an endless "Sandbox starting": a failed start names the
 // reason in the pill's tooltip, and the Computer tab shows the last start attempt.
 describe("agent header sandbox pill (FIX-025)", () => {
-  it("never puts the computer's state in the header (P5-POLISH-6): one agent state, even while starting or failed", async () => {
-    renderPage(routes({ state: "starting" }));
-    expect((await screen.findByTestId("agent-state")).textContent).toBe("Ready");
+  it("the header's one state follows the computer's readiness (D-408): Starting its computer…, never Ready until it answers, Can't answer when it failed", async () => {
+    const computer = (over: Record<string, unknown>) => ({ word: "on", ready: true, working: false, asleep: false, phase: null, sleeps_in_secs: null, started_at: null, ...over });
+    renderPage(routes({ state: "starting", computer: computer({ word: "starting", ready: false }) }));
+    await waitFor(() => expect(screen.getByTestId("agent-state").textContent).toBe("Starting its computer…"));
     expect(screen.queryByText(/Computer: /)).toBeNull();
     cleanup();
-    renderPage(routes({ state: "failed", failure_code: "supervisor_unreachable", failure_message: "The agent's computer started, but its supervisor could not reach the runner." }));
-    expect((await screen.findByTestId("agent-state")).textContent).toBe("Ready");
-    expect(screen.queryByText(/Computer: /)).toBeNull();
+    // Running, but the harness has not reported ready yet: the API says `starting`, so the header does too.
+    renderPage(routes({ state: "running", computer: computer({ word: "starting", ready: false }) }));
+    await waitFor(() => expect(screen.getByTestId("agent-state").textContent).toBe("Starting its computer…"));
+    cleanup();
+    renderPage(routes({ state: "running", computer: computer({}) }));
+    await waitFor(() => expect(screen.getByTestId("agent-state").textContent).toBe("Ready"));
+    cleanup();
+    renderPage(routes({ state: "stopped", computer: computer({ word: "off", ready: false, asleep: true }) }));
+    await waitFor(() => expect(screen.getByTestId("agent-state").textContent).toBe("Asleep"));
+    cleanup();
+    renderPage(
+      routes({
+        state: "failed", failure_code: "supervisor_unreachable", failure_message: "The agent's computer started, but its supervisor could not reach the runner.",
+        computer: computer({ word: "failed", ready: false }),
+      }),
+    );
+    await waitFor(() => expect(screen.getByTestId("agent-state").textContent).toBe("Can't answer: its computer couldn't start"));
   });
 
   it("the Computer tab shows the last start attempt: phase, detail, elapsed and events", async () => {
