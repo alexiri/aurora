@@ -171,7 +171,10 @@ async fn the_backfill_folds_existing_threads_and_the_one_chat_rule_goes(pool: Pg
             Some("Deploy".into())
         )
     );
-    assert!(folded(c_gone_w).await.2, "a gone webhook's thread is marked");
+    assert!(
+        folded(c_gone_w).await.2,
+        "a gone webhook's thread is marked"
+    );
     assert_eq!(
         folded(direct).await,
         (None, None, false, "auto".into(), None)
