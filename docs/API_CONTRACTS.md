@@ -2256,6 +2256,60 @@ Data (add to `docs/03-data-model.md` `user_onboarding`): row `| more_controls | 
   - The builtin `ics-calendar` 1.2.0, `webhook` 1.1.0 and `caldav` 1.3.0 declare their `name` field this way, replacing the API's hard-coded rule; CalDAV's `<username> at <host>` fallback stays.
   - Additive: no response shape changes, and an existing package behaves as before.
 
+### Phase 5 — P5-SCHED-ONCE (one-time schedules and reminders; D-421, D-422, SEC-144)
+
+- C-1092 **One-time schedules** (P5-SCHED-ONCE Part A, D-421; migration `20261201000266_schedule_run_at.sql`; amends the `05` schedule rows and C-1077).
+  - **Data (`03`).**
+    - `schedules.cron` becomes nullable.
+    - New columns `schedules.run_at timestamptz NULL` (the instant) and `schedules.completed_at timestamptz NULL`, with `CHECK ((cron IS NULL) <> (run_at IS NULL))` and `CHECK (completed_at IS NULL OR run_at IS NOT NULL)`.
+    - `last_outcome` also allows `waiting_paused`.
+    - New column `schedule_runs.answer_pushed_at timestamptz NULL` (C-1095).
+  - **Requests.** `CreateScheduleRequest` and `UpdateScheduleRequest` gain `run_at?: string`: a local date-time `YYYY-MM-DDTHH:MM[:SS]` without an offset, read in `timezone` (default: the workspace's).
+    - Exactly one of `cron` / `run_at` on create; at most one on a patch. Otherwise 422 `invalid_field` at `/run_at` "set either cron or run_at, not both", or at `/cron` when neither is set.
+    - Each refusal is a 422 at `/run_at`:
+      - an offset or `Z`;
+      - a daylight-saving gap ("does not exist in that time zone (a daylight-saving gap)");
+      - before the start of the current minute ("is in the past");
+      - more than `SCHEDULE_ONCE_MAX_AHEAD` (5 years) ahead.
+    - An ambiguous local time is the earlier instant. No minimum interval applies.
+  - **Switching kinds.** A patch with `run_at` makes the schedule one-time (`cron` null, `completed_at` null, re-armed if enabled); a patch with `cron` makes it recurring (`run_at` null, `completed_at` null). A `timezone`-only patch on a one-time schedule keeps the local wall time and recomputes the instant.
+  - **Done.**
+    - `enabled` on a schedule with `completed_at` set → 409 `schedule_completed` ("This schedule has already run. Set a new time to run it again.").
+    - Resuming a pending one-time schedule whose time has passed arms it for now. The reassignment `re_enable` path follows the same rule.
+    - The 50-per-agent limit (`schedule_limit_reached`) counts only rows with `completed_at` null.
+  - **`Schedule`.**
+    - `cron: string | null`;
+    - `run_at: string | null` (the local wall time in `timezone`, the request's format);
+    - `completed_at: string | null`;
+    - `next_runs` is `[instant]` for a pending enabled one-time schedule and `[]` when Done or paused.
+  - **`ScheduleRun.outcome`** may be `waiting_paused` (C-1077 `result: "skipped"`, `reason: "paused"`).
+  - **Preview.** `POST /v1/agents/{agent}/schedules/preview` also takes `{ run_at, timezone? }` (exactly one of `cron` / `run_at`). It returns `{ next: [instant], interval_secs: null, too_frequent: false, min_interval_secs: 300 }`, or 422 `invalid_run_at` with the messages above.
+  - **Firing.**
+    - A due one-time schedule fires once and in the same transaction sets `next_fire_at = null`, `completed_at = now`, `last_fire_at`, `last_outcome = ok`. It is never `skipped_busy`, never coalesced and never disabled for failures; a quiet or failed gate still completes it.
+    - When the agent is effectively paused it writes one `waiting_paused` run (not again while `last_outcome = waiting_paused`) and sets `next_fire_at = now + SCHEDULE_ONCE_RECHECK` (60 s).
+    - Fire-time authority failure is as for recurring schedules.
+    - Run now is a manual run that changes neither `run_at` nor `completed_at`.
+  - **Retention.** The daily pass deletes Done schedules with `completed_at` older than `SCHEDULE_DONE_RETENTION` (30 days) through the ordinary delete path (C-1074's deleted-automation marking).
+- C-1093 **Where a one-time run happens, and its turn context** (P5-SCHED-ONCE Part B, D-422, SEC-144; amends `10 §Schedules`, `10 §Turn context`, C-1074).
+  - **Where it runs.**
+    - A one-time run is created in `origin_conversation_id` when, at fire time, that conversation exists, belongs to the schedule's agent, is not archived and has `direct_user_id = creator_user_id`. Otherwise it gets its own run thread (C-1074), and FIX-192 is unchanged.
+    - In the origin, the turn has the schedule door and `display` (C-1074), queues behind an active turn as a follow-up, and `ScheduleRun.conversation_id` is the origin. No `schedule_run` "finished" notice is appended for it; failure notices stay.
+  - **Turn context.** The `schedule` sentence for a one-time run states:
+    - that it is a one-time schedule due at `<local time> (<zone>)` and will not run again;
+    - "running late: <agent> was paused at the time" when it fires more than 5 minutes after `run_at`;
+    - for an origin run, "<creator> set this one-time schedule in this conversation and reads it; your answer is shown here" (instead of "nobody reads the run").
+- C-1094 **Schedule tools take `run_at`** (P5-SCHED-ONCE Part A, D-421; amends the `12` schedule tools row).
+  - `schedule_create {name, prompt, cron?, run_at?, timezone?, gate_command?, gate_description?}` and `schedule_update {id, …, run_at?}` follow C-1092 (exactly one of `cron` / `run_at`, the same messages). The tool result and `schedule_list` items gain `run_at` (local) and `completed_at`; `cron` may be null.
+  - The default `timezone` for both kinds is the speaker's `users.timezone` (C-1054), else the workspace's. Creating still needs a person speaking.
+  - The description tells the agent to use `run_at` for reminders and states that a one-time schedule made in a person's own chat runs in that chat.
+  - The agent home's schedules summary lists a pending one-time schedule as ``once at `YYYY-MM-DD HH:MM` (<zone>)`` and leaves Done ones out.
+- C-1095 **Reminder push** (P5-SCHED-ONCE Part B, D-422; extends C-832, C-835 and the `05` push delivery row).
+  - When a one-time run that happened in its origin conversation (C-1093) ends `done`, the push loop claims `schedule_runs.answer_pushed_at` and sends one push to each opted-in device of the schedule's creator.
+  - Payload `{ "v": 1, "type": "schedule_answer", "url": "<the conversation's dashboard path>" }`, plus `title` (the schedule name, `NAME`-capped) only on a device with `show_details`; never answer text. `Urgency: normal`, `TTL` = `PUSH_TTL_MAX`, `Topic` as C-1023.
+  - Runs older than 1 h are never pushed.
+  - The service worker shows "Aurora — a scheduled task has an answer for you" / "Open the conversation to read it." (with `title`: "Aurora — <title>"), tag `aurora-schedule`, and opens exactly the given conversation path.
+  - Recurring runs and run-thread runs are never pushed.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._
