@@ -74,7 +74,9 @@ describe("Needs you: app setup requests (P5-POLISH-4)", () => {
     expect(screen.getByText("A sign-in app for Google Calendar needs to be registered once.")).toBeTruthy();
     // The sign-in app is what is missing, so Set up opens the OAuth clients tab at the app.
     expect(screen.getByRole("link", { name: "Set up" }).getAttribute("href")).toBe("/o/acme/apps?tab=oauth-clients&app=google-calendar");
-    expect(screen.getByLabelText("1 waiting")).toBeTruthy();
+    // The organization's requests sit under their own heading; the heading's number is the workspace's (none waits there).
+    expect(screen.getByRole("heading", { name: "For your organization" })).toBeTruthy();
+    expect(screen.queryByLabelText(/waiting$/)).toBeNull();
   });
 
   it("names two askers", async () => {

@@ -161,8 +161,9 @@ export function AccountRow({
         ) : account.kind === "ai_key" ? (
           <AiKeyTile />
         ) : null}
-        {/* (P5-REFINE-13, access-2) On a phone (below sm) the title takes three quarters of the line, so the level and the menu wrap to their own line. */}
-        <div className="min-w-0 flex-1 space-y-1 max-sm:basis-3/4">
+        {/* (P5-REFINE-13, access-2) On a phone (below sm) the title keeps the line beside the icon; a full-width, zero-height
+            break after it puts the level and the menu on a line of their own below. */}
+        <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="min-w-0 break-words font-display text-base font-semibold text-ink">
               {account.app ? (
@@ -232,6 +233,7 @@ export function AccountRow({
           {scope.kind === "organization" && account.scope === "organization" && account.can.manage ? <LimitControl account={account} orgId={orgId} /> : null}
         </div>
         {/* (C1) The agent's level sits in the right cluster just before the … button; its details wrap below. */}
+        {(agent && mine) || account.can.manage ? <div aria-hidden="true" className="hidden max-sm:block max-sm:h-0 max-sm:basis-full" /> : null}
         {agent && mine ? (
           <AccessControl account={account} entry={mine} workspaceId={ws} canChange={account.can.change_access} startOpen={false} orgName={org.data?.name} inRow />
         ) : null}

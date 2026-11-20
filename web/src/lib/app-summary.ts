@@ -5,8 +5,9 @@ export const SUMMARY_FALLBACK = "Review the details below.";
 
 /** "api.github.com, a.test and 2 more" (the package's `reaches`), or `null` when it reaches no host. */
 function reachesWords(p: Pick<PluginPackage, "reaches" | "reaches_more">): string | null {
-  if (p.reaches.length === 0) return null;
-  const more = p.reaches_more > 0 ? ` and ${p.reaches_more} more` : "";
+  // An older API (or a partial cache entry) can leave `reaches` out: the page must still render, with no hosts said.
+  if (!p.reaches || p.reaches.length === 0) return null;
+  const more = (p.reaches_more ?? 0) > 0 ? ` and ${p.reaches_more} more` : "";
   return `${p.reaches.join(", ")}${more}`;
 }
 
