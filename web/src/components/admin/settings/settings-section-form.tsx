@@ -175,6 +175,14 @@ export function SettingsSectionForm(props: {
   );
 }
 
+/** (P5-REFINE-18 #10, admin-9) A switch whose Off says what people see: the help line and the neutral note beside it. */
+const SWITCH_WORDS: Record<string, { help?: string; off?: string }> = {
+  "terminal.enabled": {
+    help: "Lets people open a terminal on their agent's computer.",
+    off: "Off: people see that the terminal isn't available",
+  },
+};
+
 /** (P5-REFINE-18 #5, admin-2) What a save says changed, for the sections that have a sentence of their own. */
 const SAVED_WORDS: Record<string, string> = {
   agents: "Saved. New agents use these defaults.",
@@ -653,7 +661,7 @@ function SettingRow({
 }) {
   // The registry completeness test keeps every movable key in `fields`; the key is only a last resort for a bare fixture.
   const label = field?.label ?? s.key;
-  const hint = field?.help;
+  const hint = SWITCH_WORDS[s.key]?.help ?? field?.help;
   const docTitle = field?.doc?.title;
   const cid = settingControlId(s.key);
 
@@ -748,7 +756,15 @@ function SettingRow({
     );
   } else if (kind === "bool" || (!field && s.schema.kind === "bool")) {
     control = (
-      <Switch id={cid} aria-label={label} checked={current === true} onCheckedChange={(v) => setValue(s.key, v)} />
+      <div className="space-y-1.5">
+        <Switch id={cid} aria-label={label} checked={current === true} onCheckedChange={(v) => setValue(s.key, v)} />
+        {current !== true && SWITCH_WORDS[s.key]?.off ? (
+          // (P5-REFINE-18 #10, admin-9) Off is a state, not a problem: neutral, said where the switch is.
+          <p data-testid={`${s.key}-off`} className="text-sm text-ink-2">
+            {SWITCH_WORDS[s.key]!.off}
+          </p>
+        ) : null}
+      </div>
     );
   } else if (s.schema.kind === "enum") {
     control = (
