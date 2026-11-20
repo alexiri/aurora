@@ -27,9 +27,8 @@ import { useUrlDialog } from "./use-url-dialog";
 export type AppStatus =
   | { kind: "connected"; line: string; ready: boolean }
   | { kind: "ready"; line: string }
-  | { kind: "needs_admin"; line: string; admin: string | null; firstName: string | null; askedByMe: boolean };
+  | { kind: "needs_admin"; line: string; askedByMe: boolean };
 
-const firstNameOf = (full: string | null | undefined) => (full ? full.trim().split(/\s+/)[0]! : null);
 
 export function appStatus(members: AppSummary[]): AppStatus {
   const accounts = members.flatMap((m) => m.accounts ?? []);
@@ -41,8 +40,8 @@ export function appStatus(members: AppSummary[]): AppStatus {
   }
   if (!ready) {
     const r = members.find((m) => m.readiness?.state === "needs_admin")?.readiness;
-    const admin = r?.who_can?.people[0]?.name ?? null;
-    return { kind: "needs_admin", line: `Needs ${admin ?? "an admin"} first`, admin, firstName: firstNameOf(admin), askedByMe: r?.requested?.by_me === true };
+    // (D-407) The role, never a login: several people can be admins.
+    return { kind: "needs_admin", line: "Needs an admin first", askedByMe: r?.requested?.by_me === true };
   }
   return { kind: "ready", line: members.some((m) => m.credential_free) ? "Ready · no sign-in needed" : "Ready to connect" };
 }
@@ -104,14 +103,14 @@ function AppCard({
         {status.kind === "needs_admin" ? (
           status.askedByMe ? (
             <>
-              <span className="text-sm text-ink-2">Asked {status.firstName ?? "an admin"}</span>
+              <span className="text-sm text-ink-2">Asked the admins</span>
               <Button size="sm" variant="ghost" disabled={withdraw.isPending} onClick={() => withdraw.mutate(app.app_id)}>
                 Undo
               </Button>
             </>
           ) : (
-            <Button size="sm" variant="outline" disabled={ask.isPending} onClick={() => ask.mutate(app.app_id)} aria-label={`Ask ${status.firstName ?? "an admin"} to set up ${name}`}>
-              Ask {status.firstName ?? "an admin"}
+            <Button size="sm" variant="outline" disabled={ask.isPending} onClick={() => ask.mutate(app.app_id)} aria-label={`Ask an admin to set up ${name}`}>
+              Ask an admin
             </Button>
           )
         ) : null}

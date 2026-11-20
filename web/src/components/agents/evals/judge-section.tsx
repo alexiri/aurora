@@ -15,7 +15,7 @@ import { useEvalSettings, usePutEvalSettings, type EvalSettings } from "@/lib/ap
 import { evalErrorMessage } from "./copy";
 
 /** The judge control: who may change it, in words. Exported for the unit test of the disabled state. */
-export const JUDGE_OWNER_ONLY = "Only workspace owners can choose the judge key. You can still turn the regression notice on or off.";
+export const JUDGE_OWNER_ONLY = "Only workspace owners can choose the grader key. You can still turn the regression notice on or off.";
 
 function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: EvalSettings; canOwn: boolean }) {
   const put = usePutEvalSettings(agentId);
@@ -48,19 +48,19 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
   }
 
   return (
-    <form onSubmit={submit} aria-label="Judge settings" className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+    <form onSubmit={submit} aria-label="Grader settings" className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
       {current ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-2">
           Current judge: <span className="font-medium text-ink">{current.secret_label}</span> with <code className="font-mono text-xs">{current.model_id}</code>
           <Badge tone={current.usable ? "accent" : "danger"}>{current.usable ? "Ready" : "Not usable"}</Badge>
         </p>
       ) : (
-        <p className="text-sm text-ink-2">No judge key is set. Number and text questions do not need one; a judged question cannot be scored without it.</p>
+        <p className="text-sm text-ink-2">No grader key is set. Number and text questions do not need one; a graded question cannot be scored without it.</p>
       )}
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field id="evj-key" label="Judge key" hint={canOwn ? "An AI key granted to this agent." : undefined}>
+        <Field id="evj-key" label="Grader key" hint={canOwn ? "An AI key granted to this agent." : undefined}>
           <select id="evj-key" className={inputClass} value={secretId} disabled={!canOwn || put.isPending} onChange={(e) => setSecretId(e.target.value)}>
-            <option value="">No judge key</option>
+            <option value="">No grader key</option>
             {!known && current ? <option value={current.secret_id}>{current.secret_label}</option> : null}
             {keys.map((k) => (
               <option key={k.secret_id} value={k.secret_id}>
@@ -69,7 +69,7 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
             ))}
           </select>
         </Field>
-        <Field id="evj-model" label="Judge model" hint="The model the key calls to judge answers.">
+        <Field id="evj-model" label="Grader model" hint="The model the key calls to grade answers.">
           <input id="evj-model" className={`${inputClass} font-mono`} value={modelId} disabled={!canOwn || put.isPending || secretId === ""} onChange={(e) => setModelId(e.target.value)} />
         </Field>
       </div>
@@ -87,7 +87,7 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
       />
       {incomplete ? (
         <Notice tone="pending" role="status">
-          Enter the judge model to save this key.
+          Enter the grader model to save this key.
         </Notice>
       ) : null}
       <SaveBar
@@ -109,7 +109,7 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
 export function JudgeSection({ agentId, canOwn }: { agentId: string; canOwn: boolean }) {
   const q = useEvalSettings(agentId);
   return (
-    <Section id="eval-judge" title="Judge" description="Judged questions are read by a model you choose. It sees the question, your criteria and the agent's answer, never the agent's instructions.">
+    <Section id="eval-judge" title="Grader" description="Graded questions are read by a model you choose. It sees the question, your criteria and the agent's answer, never the agent's instructions.">
       {q.isPending ? <Loading /> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => void q.refetch()} /> : null}
       {q.data ? <JudgeForm agentId={agentId} settings={q.data} canOwn={canOwn} /> : null}

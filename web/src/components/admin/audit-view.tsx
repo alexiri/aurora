@@ -27,7 +27,7 @@ export function AdminAuditView() {
   return (
     <AuditPanel
       title="Audit log"
-      description="What instance administrators did: plugin approvals, host claims, trusted keys, connectors, runners, placement and freezes. Switch to all organizations to search every row."
+      description="What instance administrators did: plugin approvals, host claims, trusted keys, connectors, runners, placement and pauses. Switch to all organizations to search every row."
       placeholder="Action prefix, e.g. plugin."
       feed={audit}
       filters={{ action: f.action, criticalOnly: f.criticalOnly }}

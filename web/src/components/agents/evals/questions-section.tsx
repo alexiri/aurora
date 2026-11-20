@@ -78,12 +78,12 @@ export function QuestionsSection({ agentId }: { agentId: string }) {
       ) : (
         <>
           <div className="hidden md:block">
-            <DataTable caption="Eval questions" className="min-w-0">
+            <DataTable caption="Test questions" className="min-w-0">
               <thead>
                 <tr>
                   <Th>#</Th>
                   <Th>Question</Th>
-                  <Th>Checked as</Th>
+                  <Th>Checked by</Th>
                   <Th>Expected</Th>
                   <Th>
                     <span className="sr-only">Actions</span>
@@ -108,7 +108,7 @@ export function QuestionsSection({ agentId }: { agentId: string }) {
               </tbody>
             </DataTable>
           </div>
-          <ItemList aria-label="Eval questions" className="md:hidden">
+          <ItemList aria-label="Test questions" className="md:hidden">
             {items.map((x) => (
               <ListRow key={x.id} actions={actions(x)}>
                 <div className="min-w-0 space-y-1 text-sm">

@@ -220,7 +220,7 @@ export function CurrentValues({ title, current, fields }: { title: string; curre
             <div key={c.key} id={c.key} className="min-w-0 scroll-mt-24 space-y-1 border-b border-line pb-3 last:border-b-0 last:pb-0">
               <dt className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-ink">
                 {f?.label ?? c.label}
-                {c.source === "helm" ? <LockPill owner="Set in Helm" /> : <Badge>Default</Badge>}
+                {c.source === "helm" ? <LockPill owner="Set by the installation" /> : <Badge>Default</Badge>}
               </dt>
               <dd className="break-words text-sm text-ink" data-testid={`${c.key}-current`}>
                 {c.value_display}

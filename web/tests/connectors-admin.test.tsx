@@ -105,7 +105,7 @@ const add = (calls: Rec[]) => calls.filter((c) => c.key === "POST /v1/admin/conn
 async function openAdd(routes: Record<string, Handler>) {
   const calls = mockFetch({ "GET /v1/admin/connectors": () => json(200, { items: [] }), ...routes });
   wrap(<ConnectorsAdminView />);
-  fireEvent.click(await screen.findByRole("button", { name: "Add connector" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add chat platform" }));
   return calls;
 }
 
@@ -133,7 +133,7 @@ describe("Connector host tokens (FIX-120)", () => {
     expect(screen.getByText("mattermost")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "mm2" } });
-    fireEvent.change(screen.getByLabelText("Connector types"), { target: { value: "mattermost, fake" } });
+    fireEvent.change(screen.getByLabelText("Chat platform types"), { target: { value: "mattermost, fake" } });
     fireEvent.click(screen.getByRole("button", { name: "Issue token" }));
     expect(await screen.findByText("auh_once")).toBeInTheDocument();
     expect(calls.find((c) => c.key === "POST /v1/admin/connector-host-tokens")?.body).toEqual({
@@ -150,23 +150,23 @@ describe("Connector host tokens (FIX-120)", () => {
 });
 
 describe("Add connector flow", () => {
-  it("says the connector host is not running and keeps the self-hosted path", async () => {
+  it("says the chat platform host is not running and keeps the self-hosted path", async () => {
     await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([], false)) });
-    expect(await screen.findByText("The connector host is not running")).toBeInTheDocument();
+    expect(await screen.findByText("The chat platform host is not running")).toBeInTheDocument();
     expect(screen.getByText(/“Plugins and connectors” in the operator guide/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Self-hosted connector (advanced)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Self-hosted chat platform host (advanced)" })).toBeInTheDocument();
   });
 
   it("lists types with publisher, version and description, and marks added ones", async () => {
     await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([mattermost])) });
-    const list = within(await screen.findByRole("list", { name: "Connector types" }));
+    const list = within(await screen.findByRole("list", { name: "Chat platform types" }));
     expect(list.getByText("Mattermost")).toBeInTheDocument();
     expect(list.getByText(/v1\.2\.0 · Aurora/)).toBeInTheDocument();
     expect(list.getByText("Connect a Mattermost team with a bot account.")).toBeInTheDocument();
     expect(list.getByRole("button", { name: "Add Mattermost" })).toBeInTheDocument();
     cleanup();
     await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, added: true }])) });
-    const added = within(await screen.findByRole("list", { name: "Connector types" }));
+    const added = within(await screen.findByRole("list", { name: "Chat platform types" }));
     expect(added.getByText("Added")).toBeInTheDocument();
     expect(added.queryByRole("button", { name: "Add Mattermost" })).toBeNull();
   });
@@ -245,19 +245,19 @@ describe("Add connector flow", () => {
     expect(screen.getByTestId("generated-signing_key").textContent).toBe("Generated automatically");
     expect(screen.queryByLabelText("Signing key")).toBeNull();
     // Required fields are checked before any request.
-    fireEvent.click(screen.getByRole("button", { name: "Add connector" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add chat platform" }));
     expect(await screen.findByText("Base URL is required.")).toBeInTheDocument();
     expect(screen.getByText("Shared secret is required.")).toBeInTheDocument();
     expect(add(calls)).toHaveLength(0);
     fireEvent.change(url, { target: { value: "http://fake" } });
     fireEvent.change(secret, { target: { value: "tok-secret" } });
     fireEvent.change(screen.getByLabelText("Retry limit (optional)"), { target: { value: "5" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add connector" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add chat platform" }));
     // API field error lands on its field
     expect(await screen.findByText("Must be an https URL.")).toBeInTheDocument();
     expect(url).toHaveAttribute("aria-invalid", "true");
     fireEvent.change(url, { target: { value: "https://fake.example.org" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add connector" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add chat platform" }));
     await waitFor(() => expect(add(calls)).toHaveLength(2));
     expect(add(calls)[1].body).toEqual({
       id: "fake",
@@ -290,14 +290,14 @@ describe("Add connector flow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     fireEvent.change(await screen.findByLabelText("Base URL"), { target: { value: "https://fake.example.org" } });
     fireEvent.change(screen.getByLabelText("Shared secret"), { target: { value: "tok" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add connector" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add chat platform" }));
     expect(await screen.findByText(/changed while you were adding it/)).toBeInTheDocument();
     expect(screen.getByTestId("manifest-summary")).toBeInTheDocument();
     await waitFor(() => expect(calls.filter((c) => c.key === "GET /v1/admin/connector-types").length).toBe(2));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     // The form keeps what was typed.
     expect(await screen.findByLabelText("Base URL")).toHaveValue("https://fake.example.org");
-    fireEvent.click(screen.getByRole("button", { name: "Add connector" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add chat platform" }));
     await waitFor(() => expect(add(calls)).toHaveLength(2));
     expect((add(calls)[1].body as { approve_manifest_digest: string }).approve_manifest_digest).toBe("sha256:two");
   });
@@ -316,13 +316,13 @@ describe("Connector list", () => {
         }),
     });
     wrap(<ConnectorsAdminView />);
-    expect(await screen.findByText("Waiting for the connector host")).toBeInTheDocument();
+    expect(await screen.findByText("Waiting for the chat platform host")).toBeInTheDocument();
     expect(screen.getByText("Self-hosted")).toBeInTheDocument();
     expect(screen.getAllByText("Managed").length).toBe(2);
     expect(screen.getByText("Error: bad token")).toBeInTheDocument();
-    expect(screen.getByText(/^1 integration · 0 replicas$/)).toBeInTheDocument();
-    expect(screen.getByText(/^2 integrations · 0 hosts reporting$/)).toBeInTheDocument();
-    expect(screen.getByText(/^0 integrations · 1 host reporting$/)).toBeInTheDocument();
+    expect(screen.getByText(/^1 connection · 0 replicas$/)).toBeInTheDocument();
+    expect(screen.getByText(/^2 connections · 0 hosts reporting$/)).toBeInTheDocument();
+    expect(screen.getByText(/^0 connections · 1 host reporting$/)).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("(s)");
     // Managed connectors are managed in the detail view: no token or delete on the card.
     expect(screen.getAllByRole("button", { name: /^Manage / }).length).toBe(2);
@@ -367,7 +367,7 @@ describe("Managed connector detail", () => {
     expect(screen.queryByLabelText("Shared secret", { selector: "input" })).toBeNull();
     expect(screen.getByLabelText("Base URL")).toHaveValue("https://fake.example.org");
     expect(screen.getByLabelText("Retry limit (optional)")).toHaveValue(3);
-    const hosts = within(screen.getByRole("list", { name: "Connector hosts" }));
+    const hosts = within(screen.getByRole("list", { name: "Chat platform hosts" }));
     expect(hosts.getByText("Running")).toBeInTheDocument();
     // A required secret cannot be cleared.
     expect(screen.queryByRole("button", { name: "Clear Shared secret" })).toBeNull();
@@ -449,12 +449,12 @@ describe("Managed connector detail", () => {
   it("blocks delete while integrations use the connector, with correct singular/plural", async () => {
     const calls = await openDetail({ ...fakeConnector(), integration_count: 3 }, fakeType());
     expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
-    expect(screen.getByText("3 integrations still use this connector. Remove them first.")).toBeInTheDocument();
-    expect(screen.getByText(/^3 integrations · v0\.1\.0$/)).toBeInTheDocument();
+    expect(screen.getByText("3 connections still use this chat platform. Remove them first.")).toBeInTheDocument();
+    expect(screen.getByText(/^3 connections · v0\.1\.0$/)).toBeInTheDocument();
     expect(calls.some((c) => c.key.startsWith("DELETE"))).toBe(false);
     cleanup();
     await openDetail({ ...fakeConnector(), integration_count: 1 }, fakeType());
-    expect(screen.getByText("1 integration still uses this connector. Remove it first.")).toBeInTheDocument();
+    expect(screen.getByText("1 connection still uses this chat platform. Remove it first.")).toBeInTheDocument();
   });
 
   it("deletes an unused connector after confirmation and returns to the list", async () => {
@@ -467,9 +467,9 @@ describe("Managed connector detail", () => {
       },
     });
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete connector" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete chat platform" }));
     await waitFor(() => expect(calls.some((c) => c.key === "DELETE /v1/admin/connectors/fake")).toBe(true));
-    expect(await screen.findByText("No connectors")).toBeInTheDocument();
+    expect(await screen.findByText("No chat platforms")).toBeInTheDocument();
   });
 
   it("shows the manifest diff and approves a pending manifest", async () => {
@@ -540,7 +540,7 @@ describe("Unsigned (development) badge", () => {
     await openAdd({
       "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, signed: false }, fakeType({ signed: true })])),
     });
-    const list = within(await screen.findByRole("list", { name: "Connector types" }));
+    const list = within(await screen.findByRole("list", { name: "Chat platform types" }));
     expect(list.getAllByText("Unsigned (development)")).toHaveLength(1);
     fireEvent.click(list.getByRole("button", { name: "Add Mattermost" }));
     expect(await screen.findByText("Unsigned (development)")).toBeInTheDocument();
@@ -566,8 +566,8 @@ describe("Self-hosted path", () => {
       "POST /v1/admin/connectors": () => json(201, { connector: { ...selfHosted, status: "awaiting_registration" }, token: "aun_once" }),
     });
     wrap(<ConnectorsAdminView />);
-    fireEvent.click(await screen.findByRole("button", { name: "Add connector" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Self-hosted connector (advanced)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add chat platform" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Self-hosted chat platform host (advanced)" }));
     fireEvent.change(await screen.findByLabelText("Connector id"), { target: { value: "custom" } });
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Custom bridge" } });
     fireEvent.click(screen.getByRole("button", { name: "Provision" }));

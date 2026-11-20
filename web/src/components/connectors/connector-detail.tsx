@@ -29,11 +29,11 @@ type Staged = "replace" | "clear";
 
 function HostStatus({ c }: { c: ConnectorAdmin }) {
   return (
-    <Section id="detail-hosts" title="Connector hosts" description="Hosts that reported this connector recently.">
+    <Section id="detail-hosts" title="Chat platform hosts" description="Hosts that reported this chat platform recently.">
       {c.host_status.length === 0 ? (
-        <p className="text-sm text-ink-2">No connector host has reported this connector yet.</p>
+        <p className="text-sm text-ink-2">No chat platform host has reported this chat platform yet.</p>
       ) : (
-        <ItemList aria-label="Connector hosts">
+        <ItemList aria-label="Chat platform hosts">
           {c.host_status.map((h) => (
             <ListRow key={h.host_instance} actions={<span className="text-xs text-muted">{fmtDate(h.at)}</span>}>
               <Badge tone={h.state === "running" ? "accent" : "danger"}>{h.state === "running" ? "Running" : "Error"}</Badge>
@@ -217,7 +217,7 @@ function SettingsForm({ c, fields }: { c: ConnectorAdmin; fields: SetupField[] }
             onChange={(e) => setName(e.target.value)}
           />
         </Field>
-        {fields.length === 0 ? <p className="text-sm text-ink-2">This connector has no instance settings.</p> : null}
+        {fields.length === 0 ? <p className="text-sm text-ink-2">This chat platform has no instance settings.</p> : null}
         <DynamicForm
           fields={fields}
           values={values}
@@ -239,7 +239,7 @@ function SettingsForm({ c, fields }: { c: ConnectorAdmin; fields: SetupField[] }
         open={regen !== null}
         onOpenChange={(o) => !o && setRegen(null)}
         title={`Regenerate ${regen?.label ?? ""}?`}
-        description="A new value is generated and the connector restarts with it. Anything still using the old value stops working."
+        description="A new value is generated and the chat platform host restarts with it. Anything still using the old value stops working."
         confirmLabel="Regenerate"
         busy={patch.isPending}
         onConfirm={() => {
@@ -275,7 +275,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
             <ManagedBadge managed />
             <ConnectorStatusChip c={c} />
             <span>
-              {plural(c.integration_count, "integration")}{c.version ? ` · v${c.version}` : ""}
+              {plural(c.integration_count, "connection")}{c.version ? ` · v${c.version}` : ""}
             </span>
           </span>
         }
@@ -301,11 +301,11 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
       <HostStatus c={c} />
       <DangerZone
         id="detail-delete"
-        title="Delete connector"
+        title="Delete chat platform"
         description={
           inUse
-            ? `${plural(c.integration_count, "integration")} still ${c.integration_count === 1 ? "uses" : "use"} this connector. Remove ${c.integration_count === 1 ? "it" : "them"} first.`
-            : "Removes the connector and its stored settings and secrets."
+            ? `${plural(c.integration_count, "connection")} still ${c.integration_count === 1 ? "uses" : "use"} this chat platform. Remove ${c.integration_count === 1 ? "it" : "them"} first.`
+            : "Removes the chat platform and its stored settings and secrets."
         }
       >
         <Button variant="danger" disabled={inUse} onClick={() => setConfirmDel(true)}>
@@ -318,7 +318,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
         onOpenChange={setConfirmDel}
         title={`Delete ${c.display_name}?`}
         description="Its settings and secrets are discarded. You can add it again later."
-        confirmLabel="Delete connector"
+        confirmLabel="Delete chat platform"
         danger
         busy={del.isPending}
         onConfirm={() => del.mutate(c.id, { onSuccess: onBack, onSettled: () => setConfirmDel(false) })}

@@ -66,7 +66,7 @@ describe("schedules tab", () => {
     wrap(<SchedulesTab agentId="a1" wsId="w1" canOwn={false} />);
     await screen.findByText("Daily digest");
     expect(screen.queryByRole("button", { name: /Reassign/ })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/Anchor .* to workspace/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Keep .* running if its owner leaves/)).not.toBeInTheDocument();
   });
 
   it("owners reassign with re-enable and can anchor", async () => {
@@ -85,8 +85,8 @@ describe("schedules tab", () => {
     });
     wrap(<SchedulesTab agentId="a1" wsId="w1" canOwn />);
     await screen.findByText("Daily digest");
-    expect(screen.getByText(/Disabled because its owner lost access/)).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Anchor Daily digest to workspace"));
+    expect(screen.getByText(/Paused because its owner lost access/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Keep Daily digest running if its owner leaves"));
     await waitFor(() =>
       expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ anchor: "workspace" }),
     );

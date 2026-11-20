@@ -84,27 +84,27 @@ describe("Admin › Organizations (P5-ADMDEL)", () => {
     expect(rows).toHaveLength(3);
     expect(within(rows[1]!).getByText("30")).toBeInTheDocument();
     expect(within(rows[1]!).getByText("12")).toBeInTheDocument();
-    expect(within(rows[1]!).queryByText("Frozen")).toBeNull();
-    expect(within(rows[2]!).getByText("Frozen")).toBeInTheDocument();
+    expect(within(rows[1]!).queryByText("Paused")).toBeNull();
+    expect(within(rows[2]!).getByText("Paused")).toBeInTheDocument();
     expect(within(rows[2]!).getByText("No owner")).toBeInTheDocument();
     // The row is the target of the ownerless banner's link.
     expect(rows[1]!.id).toBe("org-acme");
   });
 
-  it("offers Freeze…, Workspaces and Delete organization… in the row menu; Unfreeze when frozen", async () => {
+  it("offers Pause…, Workspaces and Delete organization… in the row menu; Resume when paused", async () => {
     mockFetch({
       "GET /v1/admin/orgs": () => json(200, { items: [org(), org({ id: ORG2, slug: "globex", name: "Globex", frozen })], next_cursor: null }),
     });
     wrap(<AdminOrgsView />);
     await openMenu("Actions for Acme");
-    expect(await screen.findByRole("menuitem", { name: "Freeze…" })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Pause…" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Workspaces" })).toHaveAttribute("href", `/admin/people/organizations/${ORG}`);
     expect(screen.getByRole("menuitem", { name: "Delete organization…" })).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     await openMenu("Actions for Globex");
-    expect(await screen.findByRole("menuitem", { name: "Unfreeze" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Freeze…" })).toBeNull();
+    expect(await screen.findByRole("menuitem", { name: "Resume" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Pause…" })).toBeNull();
   });
 
   async function openDelete() {
@@ -164,7 +164,7 @@ describe("Admin › Organizations (P5-ADMDEL)", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("freezes with a reason", async () => {
+  it("pauses with a reason", async () => {
     const bodies: unknown[] = [];
     mockFetch({
       "GET /v1/admin/orgs": () => json(200, { items: [org()], next_cursor: null }),
@@ -175,9 +175,9 @@ describe("Admin › Organizations (P5-ADMDEL)", () => {
     });
     wrap(<AdminOrgsView />);
     await openMenu("Actions for Acme");
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Freeze…" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Pause…" }));
     const dialog = await screen.findByRole("dialog");
-    const submit = within(dialog).getByRole("button", { name: "Freeze organization" });
+    const submit = within(dialog).getByRole("button", { name: "Pause organization" });
     expect(submit).toBeDisabled();
     type("Reason", "incident 42");
     fireEvent.click(submit);

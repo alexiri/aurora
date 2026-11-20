@@ -38,7 +38,7 @@ export function ConnectorCard({
           <span className="text-xs text-muted">{c.managed ? "Managed" : "Self-hosted"}</span>
           {c.version ? <span className="text-xs text-muted">v{c.version}</span> : null}
           <span className="text-xs text-muted sm:ml-auto">
-            {plural(c.integration_count, "integration")} ·{" "}
+            {plural(c.integration_count, "connection")} ·{" "}
             {c.managed ? `${plural(hosts, "host")} reporting` : plural(c.replicas.length, "replica")}
           </span>
         </div>
@@ -69,8 +69,8 @@ export function ConnectorCard({
                 label="Delete"
                 size="sm"
                 title={`Remove ${c.display_name}?`}
-                description="Its integrations stop working and its token stops being accepted. You can add the connector again later."
-                confirmLabel="Remove connector"
+                description="Its connections stop working and its token stops being accepted. You can add the chat platform again later."
+                confirmLabel="Remove chat platform"
                 pending={del.isPending}
                 onConfirm={() => del.mutate(c.id)}
               />

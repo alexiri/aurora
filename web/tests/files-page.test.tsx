@@ -232,7 +232,8 @@ describe("states", () => {
   it("a frozen agent shows the notice and makes no request", () => {
     const seen = mockApi(() => undefined);
     renderTab(true);
-    expect(screen.getByText(/This agent is frozen/)).toBeInTheDocument();
+    // (P5-REFINE-1) "frozen" is "paused" in the product's words.
+    expect(screen.getByText(/This agent is paused/)).toBeInTheDocument();
     expect(seen).toHaveLength(0);
     expect(screen.queryByRole("button", { name: "Upload" })).toBeNull();
   });

@@ -37,7 +37,7 @@ export function AgentsList({
             )}
             <span className="font-mono text-sm text-muted">@{a.handle}</span>
             <Badge>{a.kind}</Badge>
-            {a.is_default ? <Badge tone="accent">Default</Badge> : null}
+            {a.is_default ? <Badge tone="accent">Came with this workspace</Badge> : null}
             {a.byo?.posture === "disabled" ? (
               <Badge tone="danger" title="Its tokens are refused until the setting is loosened; nothing was deleted.">
                 BYO disabled by {a.byo.posture_level}

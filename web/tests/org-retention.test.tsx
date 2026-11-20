@@ -50,11 +50,11 @@ describe("organization retention form (P5-IA-4, C-969)", () => {
   it("shows Administration's maximums above one form", async () => {
     mock({ "GET /v1/orgs/o1/retention": () => json(200, RETENTION) });
     wrap();
-    const above = await screen.findByRole("region", { name: "Limits from above" });
+    const above = await screen.findByRole("region", { name: "Set for you by an Aurora administrator" });
     expect(above).toHaveTextContent("At most 365 days without activity");
     expect(above).toHaveTextContent("At most 90 days");
     expect(above).toHaveTextContent("At most 102400 MiB");
-    expect(above).toHaveTextContent("Set by Administration");
+    expect(above).toHaveTextContent("Set for you by an Aurora administrator");
     const form = screen.getByRole("form", { name: "Retention" });
     expect(form).toContainElement(screen.getByLabelText(/Delete conversations after/));
     expect(form).toContainElement(screen.getByLabelText(/Delete files after/));
@@ -102,7 +102,7 @@ describe("organization retention form (P5-IA-4, C-969)", () => {
     wrap();
     const conv = (await screen.findByLabelText(/Delete conversations after/)) as HTMLInputElement;
     await waitFor(() => expect(conv.value).toBe("180"));
-    expect(screen.queryByRole("region", { name: "Limits from above" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Set for you by an Aurora administrator" })).toBeNull();
     fireEvent.change(conv, { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(conv.value).toBe("180");

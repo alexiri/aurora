@@ -71,7 +71,7 @@ test.describe("agent Terminal tab", () => {
     const pty: MockPty = { output: new Uint8Array(), resizes: [] };
     await mockWithTerminal(page, pty, { frozen: true });
     await openTab(page);
-    await expect(page.getByText(/This agent is frozen/i)).toBeVisible();
+    await expect(page.getByText(/This agent is paused/i)).toBeVisible();
     await expect(page.getByRole("group", { name: "Agent terminal" })).toHaveCount(0);
   });
 

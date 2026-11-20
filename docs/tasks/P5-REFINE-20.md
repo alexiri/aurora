@@ -247,6 +247,45 @@ Also check the two other owner comments carried into the briefs: workspace Apps 
 with search and the two groups (workspace-9); schedule presets start at **Every 5 minutes** with the hint
 "Schedules run at most every 5 minutes" and a custom cron that flags too-frequent as you type (schedules-2).
 
+### G. Count badges in the navigation (owner, 2026-11-20)
+
+The owner: "make sure the numerical badges of pending tasks in the menu … actually work, I think some were supposed
+to be implemented already and I don't see them working." Check **every** count badge end to end, on a real stack, as
+a person would meet them. A badge that is missing, wrong, stale or shown to someone who cannot act is **Needs changes**
+and goes back to its owner brief like any other row.
+
+**The badges, what each counts, and who owns it:**
+
+| # | Where | Counts | Shown to | Today | Owner brief |
+|---|---|---|---|---|---|
+| G1 | Workspace rail › **Approvals** | pending approvals in this workspace the viewer can decide | owners, approvers | `PendingPill` (`components/app-shell.tsx` ~:219) reads `usePendingApprovals` (`lib/api/approvals.ts:80`): **no refetch interval and no stream outside the Approvals page**, so it is likely stale; RFE-012 | 16 |
+| G2 | Workspace rail › **Overview** (and the Overview's Needs you heading) | the workspace's attention items (C-1080/C-1082: approvals, requests, broken accounts, agents that can't answer…) | whoever can act on at least one | none | 16 (data: 8) |
+| G3 | Organization area (Manage <org>) entry and its Needs you | the organization's attention items, incl. requests to set up an app (P5-POLISH-4, D-386) | org owners and admins | none in the rail (requests show only on workspace Overviews) | 17 (data: 8) |
+| G4 | **Administration**: the sidebar-foot entry, the account-menu entry, Administration › Overview in its rail | instance attention (FIX-167, D-370, C-1022) plus requests only an instance admin can resolve (chat platforms; D-417) | instance admins | `AttentionBadge` (`components/admin/attention-badge.tsx`) is mounted **only in the account menu** (`app-shell.tsx` ~:155), not on the sidebar-foot Administration entry FIX-167 described; people's requests are not counted | 18 (data: 8) |
+| G5 | Agent page: the status rail's **Needs you** (collapsed: a count on its icon) and the agent's row in the Agents list | this agent's approvals and access requests waiting for the viewer | those who can decide | a dot, no count | 11 |
+| G6 | Phone: the navigation drawer shows the same counts; the hamburger button shows a dot when anything waits | as G1–G4 | as above | not checked in review 5 | 16 (17, 18 for their entries) |
+
+**How to check each badge (every row, both themes, 1256 and 390 px):**
+1. **Zero:** with nothing waiting, no badge (never "0").
+2. **Appears:** create the item it counts — an approval (use the LLM mock's tool-calling scenario so an agent asks
+   before a change, e.g. an "Ask before changes" app on the agent; if the mock cannot produce one, create a pending
+   approval through the API/fixture and say how in the report), an ask to an admin (Bob asks for Jira; Carol asks for a
+   chat platform), a broken account, an agent with no AI key. The badge appears **without a reload** within the
+   feed's live or polling interval (state the measured delay), with the right number.
+3. **Matches its list:** the number equals the items the badge's page lists for that viewer.
+4. **Goes down:** decide the approval / resolve or decline the request in another tab or as another person; the
+   badge decreases and disappears at zero **without a reload**.
+5. **Right people only:** a member who cannot act sees no badge (G1: a plain member; G3: a member; G4: a non-admin);
+   a workspace the viewer can't open never contributes.
+6. **Accessible:** the badge has screen-reader text ("2 need your attention"), sits inside the link (one tab stop), uses
+   the amber attention style only because the viewer can act (D-384), and fits at 390 px without wrapping the label.
+7. **Promised earlier:** for G1 (RFE-012) and G4 (FIX-167 Part B: "the Administration count"), record whether they
+   worked at all before the P5-REFINE changes (check `git log` for their merges and the old specs); if a promised badge
+   never worked, say so in the report so the owner knows it was a regression or a gap.
+
+Record each badge as a row of the registry (`G1`…`G6`) with screenshots before and after each step. **Send back** to
+the owner brief; when the owner brief has already merged and its lane closed, the Orchestrator opens a FIX for it.
+
 ## Out of scope
 
 - New proposals. Ideas beyond the mockups go in a short "Further ideas" list in the report, for the owner.

@@ -54,16 +54,16 @@ export function HostTokens() {
   };
 
   return (
-    <Section id="host-tokens" title="Connector hosts">
+    <Section id="host-tokens" title="Chat platform hosts">
       <p className="mb-3 text-sm text-ink-2">
         Each connector host authenticates with its own token, bound to the connector types it runs: a token can only register,
         receive credentials for and report on those types.
       </p>
-      <DataTable caption="Connector host tokens">
+      <DataTable caption="Chat platform host tokens">
         <thead>
           <tr>
             <Th>Name</Th>
-            <Th>Connector types</Th>
+            <Th>Chat platform types</Th>
             <Th>Status</Th>
             <Th>Last used</Th>
             <Th>
@@ -107,7 +107,7 @@ export function HostTokens() {
         <Field id="host-token-name" label="Name" hint="For example the Deployment's name.">
           <input id="host-token-name" className={inputClass} value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} />
         </Field>
-        <Field id="host-token-types" label="Connector types" hint="Comma-separated type ids, for example mattermost.">
+        <Field id="host-token-types" label="Chat platform types" hint="Comma-separated type ids, for example mattermost.">
           <input id="host-token-types" className={inputClass} value={types} onChange={(e) => setTypes(e.target.value)} required />
         </Field>
         {issue.isError ? (
@@ -121,7 +121,7 @@ export function HostTokens() {
       </form>
       <SecretOnce
         secret={secret?.token ?? null}
-        title="Copy the connector host token"
+        title="Copy the chat platform host token"
         description={`Token "${secret?.name ?? ""}". You won't see it again: set it as the host's AURORA_CONNECTOR_HOST_TOKEN now.`}
         onClose={() => setSecret(null)}
       />

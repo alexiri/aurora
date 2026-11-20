@@ -63,8 +63,8 @@ export function WorkspaceFreeze({
   return (
     <DangerZone
       id="freeze-workspace"
-      title="Freeze this workspace"
-      description="Stops every agent in the workspace until you unfreeze it. Nothing is deleted."
+      title="Pause this workspace"
+      description="Stops every agent in the workspace until you resume it. Nothing is deleted."
     >
       <FreezeControl subject="workspace" name={name} frozen={frozen} callerRank={rank} freeze={m.freeze} unfreeze={m.unfreeze} />
     </DangerZone>
@@ -78,8 +78,8 @@ export function OrgFreeze({ orgId, name, frozen }: { orgId: string; name: string
   return (
     <DangerZone
       id="freeze-org"
-      title="Freeze this organization"
-      description="Stops every agent of every workspace until an owner unfreezes it. Nothing is deleted."
+      title="Pause this organization"
+      description="Stops every agent of every workspace until an owner resumes it. Nothing is deleted."
     >
       <FreezeControl subject="org" name={name} frozen={frozen} callerRank={rank} freeze={m.freeze} unfreeze={m.unfreeze} />
     </DangerZone>

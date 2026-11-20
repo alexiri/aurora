@@ -390,6 +390,16 @@ Administration
     the allowed-private list open an address range to agents, apps and sign-in. Add only ranges you trust."); red appears only when
     a limit is actually being hit.
 
+### 18. The Administration count badge, everywhere it is entered (owner, 2026-11-20; P5-REFINE-20 row G4)
+
+The owner reported the navigation's count badges don't work. FIX-167 Part B (D-370, C-1022) promised "the
+Administration count", but `AttentionBadge` (`components/admin/attention-badge.tsx`) is mounted **only in the account
+menu** (`components/app-shell.tsx` ~:155). Show it on **every** Administration entry: the sidebar-foot Administration
+link, the account-menu entry, and Overview in the Administration rail. It counts the instance attention items plus the
+requests only an instance admin can resolve (C-1080/C-1082, P5-REFINE-8, D-417), for instance admins only, live (the
+existing refetch interval is fine; also on window focus). Same rules as P5-REFINE-16 item 19, with vitest for each
+mount point and a mocked Playwright spec where the count drops after an item is resolved, without a reload.
+
 ## Out of scope
 
 - Policy preset UI on pages outside Administration and the two organization pages; workspace Internet access.

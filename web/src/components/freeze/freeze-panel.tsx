@@ -34,11 +34,11 @@ export function FrozenBanner({ frozen, subject, children }: { frozen: Frozen; su
     <Notice tone="danger" role="status" className="space-y-2 rounded-card border-danger-ink p-4">
       {inherited ? (
         <p className="font-semibold">
-          This {SUBJECT_LABEL[subject]} is paused because its {SUBJECT_LABEL[frozen.level as FreezeSubject] ?? frozen.level} is frozen.
+          This {SUBJECT_LABEL[subject]} is paused because its {SUBJECT_LABEL[frozen.level as FreezeSubject] ?? frozen.level} is paused.
         </p>
       ) : null}
       <p>
-        Frozen by {frozen.by_label} on {date(frozen.at)}: {frozen.reason}
+        Paused by {frozen.by_label} on {date(frozen.at)}: {frozen.reason}
       </p>
       {children}
     </Notice>
@@ -59,9 +59,9 @@ interface UnfreezeMutation {
 const EFFECTS = [
   "Every credential of the affected agents is refused and live connections are closed.",
   "Running and queued turns are stopped, and no new turn starts, from any door.",
-  "Schedules, webhooks and chat presences pause; they resume when you unfreeze.",
+  "Schedules, webhooks and chat presences pause; they resume when you resume it.",
   "The agent's computer is parked; its files and history are kept.",
-  "Owners can still read transcripts and activity, change settings, and unfreeze.",
+  "Owners can still read transcripts and activity, change settings, and resume.",
 ];
 
 /**
@@ -126,16 +126,16 @@ export function FreezeControl({
               aria-describedby={tooLow ? `unfreeze-${subject}-why` : undefined}
               onClick={() => void unfreeze.mutateAsync().catch(() => undefined)}
             >
-              {unfreeze.isPending ? "Unfreezing…" : `Unfreeze ${label}`}
+              {unfreeze.isPending ? "Resuming…" : `Resume ${label}`}
             </Button>
             {tooLow ? (
               <p id={`unfreeze-${subject}-why`} className="text-xs">
-                A higher authority froze this ({frozen.authority.replace("_", " ")}); only that authority or a higher one can unfreeze it.
+                A higher authority paused this ({frozen.authority.replace("_", " ")}); only that authority or a higher one can resume it.
               </p>
             ) : null}
           </div>
         ) : (
-          <p className="text-xs">Unfreeze it at the {SUBJECT_LABEL[frozen.level as FreezeSubject] ?? frozen.level} level.</p>
+          <p className="text-xs">Resume it at the {SUBJECT_LABEL[frozen.level as FreezeSubject] ?? frozen.level} level.</p>
         )}
         {unfreeze.error ? (
           <p role="alert" className="text-xs">
@@ -165,8 +165,8 @@ export function FreezeControl({
             ) : null}
             <MenuItem className="data-[highlighted]:bg-subtle" onSelect={() => setOpen(true)}>
               <span>
-                Freeze {menuLead ? name : label}
-                {menuLead ? <span className="block text-xs text-muted">Pauses it until you unfreeze it</span> : "…"}
+                Pause {menuLead ? name : label}
+                {menuLead ? <span className="block text-xs text-muted">Pauses it until you resume it</span> : "…"}
               </span>
             </MenuItem>
             {menuExtra}
@@ -174,15 +174,15 @@ export function FreezeControl({
         </Menu>
       ) : (
         <Button type="button" variant="danger" size="sm" onClick={() => setOpen(true)}>
-          Freeze {label}
+          Pause {label}
         </Button>
       )}
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title={`Freeze ${label} ${name}?`}
-        description="An emergency stop. Nothing is deleted and you can unfreeze at any time."
-        submitLabel={freeze.isPending ? "Freezing…" : `Freeze ${label}`}
+        title={`Pause ${name}?`}
+        description="An emergency stop. Nothing is deleted and you can resume at any time."
+        submitLabel={freeze.isPending ? "Pausing…" : `Pause ${label}`}
         danger
         busy={freeze.isPending}
         submitDisabled={reason.trim() === ""}

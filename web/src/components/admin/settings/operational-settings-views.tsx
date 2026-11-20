@@ -504,7 +504,7 @@ export function RateClassesControl({ ctx }: { ctx: SettingControlCtx }) {
             <li key={`h-${e.id}`} className="flex flex-wrap items-center gap-2 rounded-control border border-line p-2 text-sm">
               <span className="font-medium text-ink">{e.id}</span>
               <code className="font-mono text-xs text-ink-2">{JSON.stringify(e.value)}</code>
-              <LockPill owner="Set in Helm" />
+              <LockPill owner="Set by the installation" />
             </li>
           ))}
           {own.map((e, i) => {

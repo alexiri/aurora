@@ -98,7 +98,7 @@ describe("question validation", () => {
     wrap(<QuestionsSection agentId={A} />);
     fireEvent.click((await screen.findAllByRole("button", { name: "Add a question" }))[0]!);
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByLabelText("Judged"));
+    fireEvent.click(within(dialog).getByLabelText("Graded"));
     fireEvent.change(within(dialog).getByLabelText("Question"), { target: { value: "Explain it." } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Add question" }));
     expect(await within(dialog).findByText(/Describe what a good answer contains/)).toBeInTheDocument();
@@ -119,7 +119,7 @@ describe("caps", () => {
     const today = (i: number) => run(`r${i}`, { created_at: "2026-11-17T01:00:00Z" });
     expect(startBlockedReason([], { enabledQuestions: 2, frozen: false, now })).toBeNull();
     expect(startBlockedReason([], { enabledQuestions: 0, frozen: false, now })).toMatch(/at least one question/);
-    expect(startBlockedReason([], { enabledQuestions: 2, frozen: true, now })).toMatch(/frozen/);
+    expect(startBlockedReason([], { enabledQuestions: 2, frozen: true, now })).toMatch(/paused/);
     expect(startBlockedReason([run("r", { status: "running" })], { enabledQuestions: 2, frozen: false, now })).toMatch(/in progress/);
     const twenty = Array.from({ length: 20 }, (_, i) => today(i));
     expect(startBlockedReason(twenty, { enabledQuestions: 2, frozen: false, now })).toMatch(/20 runs for today/);
@@ -136,8 +136,8 @@ describe("judge control", () => {
     mockFetch({ "GET /v1/agents/a1/eval-settings": () => json(200, settings) });
     wrap(<JudgeSection agentId={A} canOwn={false} />);
     expect(await screen.findByText(JUDGE_OWNER_ONLY)).toBeInTheDocument();
-    expect(screen.getByLabelText("Judge key")).toBeDisabled();
-    expect(screen.getByLabelText("Judge model")).toBeDisabled();
+    expect(screen.getByLabelText("Grader key")).toBeDisabled();
+    expect(screen.getByLabelText("Grader model")).toBeDisabled();
     // The regression notice stays theirs to set.
     expect(screen.getByLabelText(/Show a notice when a run scores lower/)).not.toBeDisabled();
   });
@@ -150,10 +150,10 @@ describe("judge control", () => {
       "PUT /v1/agents/a1/eval-settings": () => json(422, { error: { code: "eval_judge_not_granted", message: "x" } }),
     });
     wrap(<JudgeSection agentId={A} canOwn />);
-    const select = await screen.findByLabelText("Judge key");
+    const select = await screen.findByLabelText("Grader key");
     await screen.findByRole("option", { name: /Org key/ });
     fireEvent.change(select, { target: { value: "s9" } });
-    fireEvent.change(screen.getByLabelText("Judge model"), { target: { value: "m-1" } });
+    fireEvent.change(screen.getByLabelText("Grader model"), { target: { value: "m-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText(/must be an AI key that is granted to this agent/)).toBeInTheDocument();
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ judge: { secret_id: "s9", model_id: "m-1" }, regression_notify: true });

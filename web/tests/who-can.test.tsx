@@ -46,24 +46,28 @@ describe("WhoCan (C-981)", () => {
     });
   });
 
+  // (D-407) An admin is a role, never a login: several people can hold it, so no name is printed anywhere.
   it.each([
-    ["workspace_owner", "Ask Ada Lovelace or Alan Turing (workspace owners)."],
-    ["workspace_approver", "Ask Ada Lovelace or Alan Turing (workspace owners and approvers)."],
-    ["org_admin", "Ask Ada Lovelace or Alan Turing (organization owners and admins)."],
-    ["org_owner", "Ask Ada Lovelace or Alan Turing (organization owners)."],
-  ] as const)("names the people of %s with the role in brackets", (role, sentence) => {
+    ["workspace_owner", "Ask a workspace owner."],
+    ["workspace_approver", "Ask a workspace owner or approver."],
+    ["org_admin", "Ask an organization admin."],
+    ["org_owner", "Ask an organization owner."],
+  ] as const)("asks the role of %s and never prints a name", (role, sentence) => {
     render(<WhoCan value={who(role, ["Ada Lovelace", "Alan Turing"])} />);
     expect(screen.getByText(sentence)).toBeInTheDocument();
+    expect(screen.queryByText(/Ada Lovelace|Alan Turing/)).toBeNull();
   });
 
-  it("joins one, two and three names", () => {
-    expect(askSentence(who("org_admin", ["Ada"]))).toBe("Ask Ada (organization owners and admins).");
-    expect(askSentence(who("org_admin", ["Ada", "Alan", "Grace"]))).toBe("Ask Ada, Alan or Grace (organization owners and admins).");
+  it("askSentence prints the role whatever people it is given, never a name", () => {
+    expect(askSentence(who("org_admin", ["Ada"]))).toBe("Ask an organization admin.");
+    expect(askSentence(who("org_admin", ["Ada", "Alan", "Grace"]))).toBe("Ask an organization admin.");
+    expect(askSentence(who("org_admin", ["Ada", "Alan", "Grace"]))).not.toMatch(/Ada|Alan|Grace/);
+    expect(askSentence(who("instance_admin", ["Root Admin"]))).toBe("An Aurora administrator can set this up.");
   });
 
   it("asks the role itself when no one is named, and never names an instance administrator", () => {
     render(<WhoCan value={who("workspace_owner", [])} />);
-    expect(screen.getByText("Ask workspace owners.")).toBeInTheDocument();
+    expect(screen.getByText("Ask a workspace owner.")).toBeInTheDocument();
     cleanup();
     render(<WhoCan value={who("instance_admin", ["Root Admin"])} />);
     expect(screen.getByText("An Aurora administrator can set this up.")).toBeInTheDocument();
@@ -72,7 +76,7 @@ describe("WhoCan (C-981)", () => {
 
   it("leads with the role and the action when asked (empty states, page headers)", () => {
     render(<WhoCan lead value={who("workspace_owner", ["Bob Builder"])} />);
-    expect(screen.getByText("Only workspace owners can add an account. Ask Bob Builder.")).toBeInTheDocument();
+    expect(screen.getByText("Only workspace owners can add an account. Ask a workspace owner.")).toBeInTheDocument();
     cleanup();
     render(<WhoCan lead value={who("instance_admin", [], { action: "set_up" })} />);
     expect(screen.getByText("Only an Aurora administrator can set this up.")).toBeInTheDocument();
@@ -82,7 +86,7 @@ describe("WhoCan (C-981)", () => {
     render(<WhoCan lead value={who("workspace_owner", ["Bob Builder"], { you_can: true, path: "/o/acme/w/main/apps?tab=accounts" })} />);
     const link = screen.getByRole("link", { name: "Add an account" });
     expect(link.getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts");
-    expect(screen.queryByText(/Ask Bob Builder/)).toBeNull();
+    expect(screen.queryByText(/Ask a workspace owner/)).toBeNull();
     expect(screen.queryByText(/Only workspace owners/)).toBeNull();
   });
 
@@ -117,7 +121,7 @@ describe("WhoCan (C-981)", () => {
       </MainAction>,
     );
     expect(screen.queryByRole("button")).toBeNull();
-    expect(screen.getByText("Only workspace owners can add an account. Ask Bob Builder.")).toBeInTheDocument();
+    expect(screen.getByText("Only workspace owners can add an account. Ask a workspace owner.")).toBeInTheDocument();
   });
 });
 
@@ -127,7 +131,7 @@ describe("refusals in words (C-915)", () => {
   it("a refused page names who can open it and never says the network is down", () => {
     render(<ErrorState error={refusal} />);
     expect(screen.getByText("Only organization owners and admins can open this page.")).toBeInTheDocument();
-    expect(screen.getByText("Ask Ada Lovelace or Alan Turing (organization owners and admins).")).toBeInTheDocument();
+    expect(screen.getByText("Ask an organization admin.")).toBeInTheDocument();
     expect(screen.queryByText(/Could not reach the server/)).toBeNull();
   });
 
@@ -135,7 +139,7 @@ describe("refusals in words (C-915)", () => {
     const fromServer = new ApiError("forbidden", "m", { who_can: { action: "view_this", role: "workspace_owner", people: [{ name: "Bob Builder" }], you_can: false } }, 403);
     render(<ErrorState error={fromServer} />);
     expect(screen.getByText("Only workspace owners can open this page.")).toBeInTheDocument();
-    expect(screen.getByText("Ask Bob Builder (workspace owners).")).toBeInTheDocument();
+    expect(screen.getByText("Ask a workspace owner.")).toBeInTheDocument();
   });
 
   it("a 403 without who_can still reads as a refusal", () => {
@@ -186,7 +190,7 @@ describe("empty states (C-916)", () => {
       </EmptyState>,
     );
     expect(screen.getByRole("button", { name: "New schedule" })).toBeInTheDocument();
-    expect(screen.queryByText(/Ask Bob Builder/)).toBeNull();
+    expect(screen.queryByText(/Ask a workspace owner/)).toBeNull();
     cleanup();
     render(
       <EmptyState title="No schedules" action={<button type="button">New schedule</button>} ask={{ whoCan: owners, canAct: false }}>
@@ -195,7 +199,7 @@ describe("empty states (C-916)", () => {
     );
     // Never both: a viewer who cannot act gets the sentence and no dead button.
     expect(screen.queryByRole("button")).toBeNull();
-    expect(screen.getByText("Only workspace owners can set up a schedule. Ask Bob Builder.")).toBeInTheDocument();
+    expect(screen.getByText("Only workspace owners can set up a schedule. Ask a workspace owner.")).toBeInTheDocument();
   });
 
   it("cannot be given an ask without canAct (enforced by the type)", () => {

@@ -489,7 +489,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   buttons.
 - **Agent page** (phases 2–4): header with a 44 px avatar, then name, `@handle`,
   kind/default badges and a sandbox-state pill on one wrapping line, with the
-  header actions (Freeze) on the right; an underline tab strip below it (FIX-129:
+  header actions (Pause) on the right; an underline tab strip below it (FIX-129:
   the page uses the full content width, not a 896 px column — long-form panels
   such as Instructions keep a readable width inside themselves; the tab strip
   collapses what does not fit into **More**, so neither the page nor the strip
@@ -519,15 +519,15 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     `Tabs`, label "Agent sections") and the **Agent actions** menu (`MoreIcon`,
     accessible name "Agent actions"; (phase 5, FIX-186, D-403) the switcher is as
     wide as its tabs, with no empty track after the last one, and on a phone its
-    tabs share the row equally): Freeze / Unfreeze (same confirm dialog and
+    tabs share the row equally): Pause / Resume (D-407; same confirm dialog and
     permission as before) and "Delete agent…" (the existing delete flow and
     typed confirmation, `can_own`). The kind and Default badges move to the
-    rail's About part; a BYO agent (no rail) keeps them in the header. A frozen
+    rail's About part; a BYO agent (no rail) keeps them in the header. A paused
     agent's banner stays full width under the header.
-  - **Sections**, in this order: **Chat** (hosted only) · **Behaviour**
-    (Instructions, Memory, Skills, Evals) · **Triggers** (Schedules, Webhooks, Channels,
-    Peers) · **Computer** (Computer, Terminal, (phase 5, P5-FILES) Files, Previews, (phase 5, P4-SSH) SSH; BYO: Computer: Connect) ·
-    **Access**. Pages keep today's availability rules (Terminal, Files and Previews only
+  - **Sections**, in this order (names as of D-407, P5-REFINE-1; ids unchanged): **Chat** (hosted only) · **Instructions**
+    (Instructions, Memory, Skills, Tests; id `behaviour`) · **Automations** (Schedules, Webhooks, Channels,
+    Other agents; id `triggers`) · **Computer** (Computer, Terminal, (phase 5, P5-FILES) Files, Previews, (phase 5, P4-SSH) SSH; BYO: Computer: Connect) ·
+    **Apps & access** (id `access`). Pages keep today's availability rules (Terminal, Files and Previews only
     where enabled; BYO has only Instructions, Computer: Connect and Access); a
     section with no available page is hidden; a section with several pages shows
     them as a segmented `Tabs` row under the header. The URL keeps
@@ -536,14 +536,14 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     the page. A hosted agent opens on Chat, a BYO agent on Instructions. The
     Delete zone under Instructions is removed (Delete is in Agent actions).
   - (phase 5, P5-POLISH-6, D-382, C-1036; **amended by D-408**, P5-REFINE-11: a labelled **Settings**
-    button replaces the … menu and the tabs become Chat · Automations · Computer) **Behaviour and Access
-    are configuration, reached from the … menu.** The tab bar shows **Chat · Triggers · Computer** (BYO: Computer). The … menu (Agent
-    actions) lists **Behaviour** ("Name, instructions, model, memory, skills"), **Access** ("Apps,
-    accounts and the AI key it uses"), a separator, **Freeze <Agent>** ("Pauses it until you unfreeze
-    it") and **Delete <Agent>…** (danger). On a Behaviour or Access page no tab is selected, the …
+    button replaces the … menu and the tabs become Chat · Automations · Computer) **Instructions and Apps & access
+    are configuration, reached from the … menu.** The tab bar shows **Chat · Automations · Computer** (BYO: Computer). The … menu (Agent
+    actions) lists **Instructions** ("Name, instructions, model, memory, skills"), **Apps & access** ("Apps,
+    accounts and the AI key it uses"), a separator, **Pause <Agent>** ("Pauses it until you resume
+    it") and **Delete <Agent>…** (danger). On an Instructions or Apps & access page no tab is selected, the …
     button is marked, and under the header a back link **Chat**, the page name and one sentence name
-    the page; Behaviour keeps its Instructions · Memory · Skills · Evals row. `?tab=` ids are
-    unchanged. A BYO agent (no Chat) opens on Behaviour as before. This replaces the five-section order
+    the page; Instructions keeps its Instructions · Memory · Skills · Tests row. `?tab=` ids are
+    unchanged. A BYO agent (no Chat) opens on Instructions as before. This replaces the five-section order
     above wherever they disagree.
   - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
     page (Triggers section), bound to `narration_cards` (off by default). Help text: "Posts one message
@@ -1087,29 +1087,63 @@ texts say the same things in the same words.
 
 Binding for every label, title, empty state, error and help text. Code and API names do not change.
 
-| Say | Not | Meaning |
-|---|---|---|
-| **Administration** | Admin, All organizations | the instance level, for instance admins |
-| **Apps & accounts** | Credentials, Apps & services | the topic for what agents can use and how apps are set up |
-| **Account**: "your GitHub account", a **connected account** | Connection, credential, grant target | something an agent can use: an app account, a website with a token, or an AI key |
-| **App**, **Website**, **AI key** (the three kinds of account) | Connection, secret, service, LLM key | App: an account of an app from the catalogue. Website: any other website or API, reached with a token you store. AI key: the key to an AI provider |
-| **Access**: Read only · Ask before changes · Change without asking · Custom | Grant, mode, full access, preset | what one agent may do with one account |
-| **Limit** (of an organization's account, of the organization, of Administration) | Connection access, posture, floor, ceiling, maximum | the most a level below may allow |
-| **Give access**, **Remove access** | Grant, revoke | the verbs for an agent and an account |
-| **Connect**, **Reconnect**, **Remove** | Add a connection, delete | the verbs for an account itself |
-| **Turn off**, **Turn on** | Disable, enable | the verbs for anything that can be paused: an account, a rule, an app |
-| **AI models** | Model access, LLM, Governance › Model access | endpoints and the models agents may use |
-| **Internet access**, **Rule** | Policy, Egress, Governance › Egress | which websites agents may reach, and rules that allow, ask or block |
-| **Check what would happen** | Simulate, Test a request | try a request against access, rules and limits |
-| **Approvals** | — | where agents' questions wait for a person |
-| **People** | Members, Access, Identity, People & sign-in | who can use a level, and how they sign in |
-| **Chat platforms** | Connectors, Channels | Mattermost and similar |
-| **Data** | Storage, Retention, Audit spread out | retention, storage use, audit log |
-| **Platform** | — | instance machinery: runners, secret stores, e-mail, rate limits |
-| **Rate limits** | Limits (for request rates) | the Platform tab for request and gateway rates (tab id `limits`); "limit" alone always means the most a level below may allow |
-| **Apps** (catalogue), **Package sources**, **Publishers**, **Host conflicts** | Plugins, Addon sources, Trusted keys, Host claims | the catalogue's parts; the last three are under Advanced |
-| **Self-hosted apps**, **OAuth clients** | Instances; client keys as labels | unchanged terms (FIX-132) |
-| **Your account** | — | the signed-in person's own Aurora account (`/account`). It is always "your account", so it is never confused with a connected account |
+"Say" is binding: it is the only word a person reads. "Not" lists the retired words; `web/tests/ui-text.test.ts`
+fails when one of them appears in a rendered string (with an empty `VOCABULARY_EXEMPT`). **Introduced at**
+is the altitude where the word first shows (Use, Set up or Expert, `D-406`); a word never shows at a lower
+altitude than its column says (P5-REFINE-3 enforces it). The words of the layer above the agent page were
+unified by D-407 (P5-REFINE-1).
+
+| Say | Not | Meaning | Introduced at |
+|---|---|---|---|
+| **Instructions** (the agent's menu item, page title and field; "Instructions (optional)" when creating) | Behaviour, Brief | what the agent is told and how it works: name, instructions, model, memory, skills, Tests | Use |
+| **Automations** (the agent page section: Schedules, Webhooks, Channels, Other agents) | Triggers | what wakes the agent without a person | Set up |
+| **Tests** (the page), **Grader** ("Grader key", "Grader model"), **Checked by** | Evals, Judge, Judged, Checked as | questions with expected answers that run against the agent, and the model that grades the open ones | Expert |
+| **Other agents**, "Tasks from other agents" | Peers, Peer tasks | agent links and the tasks agents hand each other | Expert |
+| **Apps & access** (the agent's tab, page and menu item) | Access (as a tab name) | the apps, accounts and AI key an agent can use | Use |
+| **Set for you by an Aurora administrator** / **… by your organization's admins** | Limits from above, Set by Administration, Set by your organization | the actor of a limit above, named as WhoCan names it (never a login) | Set up |
+| **Set by the installation** | Set in Helm (as a pill) | a value the operator fixed in the installation; the page's own name is its brief's (P5-REFINE-18) | Expert |
+| **Restrict further…**, **Restricted further below** | Tighten…, Tightened below | what a level below does with a limit | Set up |
+| **Your rules** | Rules people wrote | the rules of a level on Internet access | Set up |
+| **Try a request**, with "Check what would happen" as the sentence under it | Check what would happen (button), Simulate | try a request against access, rules and limits | Set up |
+| **Pause**, **Resume**, **Paused** ("Pausing…"; "Paused by <name> on <date>: <reason>") | Freeze, Unfreeze, Frozen | for agents, workspaces and organizations alike; the API (`frozen`, 423 `frozen`, `/freeze`) does not change | Use |
+| **On**, **Paused** (schedules, webhooks) | Enabled, Disabled (user) | the state of an automation | Use |
+| **Signed (recommended)**, **Password in the header**, **Anyone with the address** | none, hmac_sha256, bearer | how a webhook is verified | Set up |
+| **Received**, **Refused: wrong signature**, **Refused: paused**, **Duplicate, ignored** | accepted, rejected_signature, disabled | a webhook delivery's outcome | Set up |
+| **Answered**, **Skipped by the gate**, **Failed**, **Running** | fired, gated_quiet, gate_failed | a schedule run's outcome | Set up |
+| **Only run when… (a check command)**, **Keep running if I leave** | Gate command, Anchor to workspace | a schedule's condition and who it belongs to | Expert |
+| **Which service is this key for?** | Provider endpoint | the choice in the AI key dialog | Set up |
+| **Sign-in app** | OAuth client, Google sign-in as a thing to set up | what lets people sign in to an app (the Administration tab id stays `oauth-clients`) | Set up |
+| **Chat platform**; **Chat platform host** on the Administration machinery page | Connector, connector host, integration, Channels | the platform a person connects (Mattermost and similar) | Use |
+| **Web address** | Workspace address, URL name, slug | a workspace's address, shown as the full URL | Set up |
+| **Remove this message's content…** ("Removing…") | Redact…, Redacting… | replace a message's content for everyone | Use |
+| **Language <Agent> remembers in** ("Language agents remember in" for a workspace) | Memory language | the language of memory search | Expert |
+| **Came with this workspace** | Default agent, Default (badge) | the agent a new workspace starts with | Use |
+| **Ask an admin** ("Ask an Aurora administrator", "Ask an organization admin", "Ask a workspace owner"); "Needs an admin first"; "Managed by your organization's admins" | Ask alice, Needs alice first, managed by alice | who can do what you cannot: a role, never a login, because instance and organization admins can be several people. A person's name stays where that person is the subject ("Bob asked", "Invited by Alice Admin") | Use |
+| **Administration** | Admin, All organizations | the instance level, for instance admins | Use |
+| **Apps & accounts** | Credentials, Apps & services | the topic for what agents can use and how apps are set up | Use |
+| **Account**: "your GitHub account", a **connected account** | Connection, credential, grant target | something an agent can use: an app account, a website with a token, or an AI key | Use |
+| **App**, **Website**, **AI key** (the three kinds of account) | Connection, secret, service, LLM key | App: an account of an app from the catalogue. Website: any other website or API, reached with a token you store. AI key: the key to an AI provider | Use |
+| **Access**: Read only · Ask before changes · Change without asking · Custom | Grant, mode, full access, preset | what one agent may do with one account | Use |
+| **Limit** (of an organization's account, of the organization, of Administration) | Connection access, posture, floor, ceiling, maximum | the most a level below may allow | Set up |
+| **Give access**, **Remove access** | Grant, revoke | the verbs for an agent and an account | Use |
+| **Connect**, **Reconnect**, **Remove** | Add a connection, delete | the verbs for an account itself | Use |
+| **Turn off**, **Turn on** | Disable, enable | the verbs for anything that can be paused or switched: an account, a rule, an app, a chat platform (organizations, workspaces and agents use **Pause**) | Use |
+| **Suspend**, **Reinstate** | — | the verbs for a person | Set up |
+| **AI models** | Model access, LLM, Governance › Model access | endpoints and the models agents may use | Set up |
+| **Internet access**, **Rule** | Policy, Egress, Governance › Egress | which websites agents may reach, and rules that allow, ask or block | Use |
+| **Approvals** | — | where agents' questions wait for a person | Use |
+| **People** | Members, Access, Identity, People & sign-in | who can use a level, and how they sign in | Use |
+| **Chat platforms** | Connectors, Channels (as the page name) | the topic for Mattermost and similar | Use |
+| **Data** | Storage, Retention, Audit spread out | retention, storage use, audit log | Set up |
+| **Platform** | — | instance machinery: runners, secret stores, e-mail, rate limits | Expert |
+| **Rate limits** | Limits (for request rates) | the Platform tab for request and gateway rates (tab id `limits`); "limit" alone always means the most a level below may allow | Expert |
+| **Apps** (catalogue), **Package sources**, **Publishers**, **Host conflicts** | Plugins, Addon sources, Trusted keys, Host claims | the catalogue's parts; the last three are under Advanced | Expert |
+| **Self-hosted apps**, **Sign-in apps** | Instances; client keys as labels; OAuth clients | unchanged term (FIX-132) and the renamed one (D-407) | Set up |
+| **Your account** | — | the signed-in person's own Aurora account (`/account`). It is always "your account", so it is never confused with a connected account | Use |
+
+**Order of introduction** (a new person meets the words in this order): minute 1: Chat, Instructions, Ask an
+admin · minute 5: Apps & access, Approvals · minute 6: Internet access, Pause · first week: Automations,
+People · on demand: Tests, Other agents, Sign-in app, Chat platform host, Set by the installation.
 
 "Governance", "Policy", "Credentials", "connection", "grant", "secret" and "service" are not used in the
 interface. The words stay in operator docs and APIs. Three notes:
@@ -1198,10 +1232,10 @@ guides keep working.
 - Every page header carries a level badge: **Administration**, **<org>** or **<org> › <workspace>**.
 - An instance admin acting in an org sees the org's pages exactly as its owner would.
 
-**When the pages move** (C-987). Renames land together: the navigation, the page names and the labels on
-those pages ship in one release, never new names on old pages. Each person who used the dashboard before
-sees a one-time notice, "Pages have new names", listing old name → new name for the pages they could see.
-It is dismissible, stored per user on the server, and replayable from the account menu (**What moved**).
+**When the pages move** (C-987, amended by D-407). Renames land together: the navigation, the page names and
+the labels on those pages ship in one release, never new names on old pages. There is no "Pages have new
+names" notice and no "What moved" item in the account menu: there are no users yet, so a person's first
+Welcome is plain. (`notices_seen` stays for other one-time notices.)
 
 #### Scope ladder (D-339, C-963)
 
@@ -1441,8 +1475,8 @@ every other topic is owners/admins and is not listed for a member.)
   link to the usage page; expired attachments render as an "Expired by retention"
   chip (a deleted one as "Removed"), never as a link (C-196).
 - **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged; FIX-171, D-373: each row opens a **Details** view — a settings change as before/after, the other recorded detail, source and ids — and the filters `action` and `critical=1` are in the URL, so a link opens the same view; the workspace Audit tab is the same shared panel), **Settings** (name, slug, members can create
-  workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
-  for owners).
+  workspaces, limits), **Danger zone** (phase 2, RFE-006: **Pause organization**
+  for owners, D-407).
 
 ### Workspace (`/o/<org>/w/<ws>/*`)
 - **Overview**: first-run checklist (store an LLM key → grant it to Daneel →
@@ -1544,10 +1578,10 @@ every other topic is owners/admins and is not listed for a member.)
     workspace** switch with a warning that the item will outlive any single
     member),
     **Peers** (agent links and peer tasks).
-  - **Freeze** (phase 2, RFE-006) — a "Freeze agent" button on the agent header
-    (reason required, confirm dialog listing the effects); a frozen agent shows a
-    banner "Frozen by <name> on <date>: <reason>" with Unfreeze (disabled with the
-    explanation when a higher authority froze it).
+  - **Pause** (phase 2, RFE-006; shown as Pause/Resume since D-407, the API says freeze) — a "Pause agent" button on the agent header
+    (reason required, confirm dialog "Pause <Agent>?" listing the effects, "they resume when you resume it"); a paused agent shows a
+    banner "Paused by <name> on <date>: <reason>" with Resume (disabled with the
+    explanation when a higher authority paused it).
   - **Previews** (phase 4, P4-PRV-1, D-144; the tab exists only for hosted agents when
     `previews.enabled` and the org has switched Port previews on; otherwise the Computer
     tab's port list simply shows no "Share" action) — a table of the agent's shares from
@@ -1837,7 +1871,7 @@ every other topic is owners/admins and is not listed for a member.)
   by group"), and removing a group opens the impact dialog of `GET /v1/groups/{id}/impact` before it
   confirms. The same table is how an owner sees why someone they never added can see the workspace.
   (phase 2, RFE-006) The danger zone offers
-  **Freeze workspace**; frozen workspaces and orgs show a banner on every page.
+  **Pause workspace**; paused workspaces and orgs show a banner on every page.
 
 ### Usage (phase 5, P5-USAGE-2, D-359, D-360, C-1000, C-1003..C-1006)
 
@@ -1899,8 +1933,8 @@ table view; durations "3 h 20 min", "45 min", "under 1 min"; dates as the dashbo
 
 ### Instance administration (`/admin/*`, instance admins only)
 (phase 5, P5-ADMDEL, D-234) **Organizations** (`/admin/orgs`): a `DataTable` of every
-organization — name, slug, members, workspaces, agents, created, state badges ("Frozen",
-"No owner") — with a row **Actions** menu: Freeze / Unfreeze (as before), **Workspaces**
+organization — name, slug, members, workspaces, agents, created, state badges ("Paused",
+"No owner") — with a row **Actions** menu: Pause / Resume (D-407), **Workspaces**
 and **Delete organization…**. **Workspaces** opens `/admin/orgs/<id>`: the organization's
 counts and a table of its workspaces (name, slug, "Personal" badge, agents, created), each
 with **Delete workspace…**. Both deletes use a danger `FormDialog`: it names what goes

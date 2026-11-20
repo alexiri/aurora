@@ -31,7 +31,7 @@ const OUTCOME_WORDS: Record<string, string> = {
   ok: "Started a run",
   failed: "Could not start a run",
   skipped_busy: "Skipped: a run was in progress or the day's limit was reached",
-  skipped_frozen: "Skipped: the agent was frozen",
+  skipped_frozen: "Skipped: the agent was paused",
 };
 
 const DISABLED_WORDS: Record<string, string> = {
@@ -81,7 +81,7 @@ function ScheduleDialog({
       onOpenChange={(o) => {
         if (!o) onClose();
       }}
-      title={schedule ? "Edit eval schedule" : "New eval schedule"}
+      title={schedule ? "Edit test schedule" : "New test schedule"}
       description="Starts a run of all included questions at set times. Runs of a schedule count toward the daily limit."
       submitLabel={schedule ? "Save schedule" : "Create schedule"}
       busy={mut.isPending}
@@ -94,7 +94,7 @@ function ScheduleDialog({
         <input id="evs-cron" className={`${inputClass} font-mono`} value={cron} required onChange={(e) => setCron(e.target.value)} />
       </Field>
       <p className="text-sm text-ink-2" data-testid="cron-preview" aria-live="polite">
-        {tooOften ? "This fires more than once an hour. Eval schedules must be at least an hour apart." : (words ?? "The exact times are shown after saving.")}
+        {tooOften ? "This fires more than once an hour. Test schedules must be at least an hour apart." : (words ?? "The exact times are shown after saving.")}
       </p>
       <Field id="evs-tz" label="Timezone" error={fe.timezone} hint="An IANA name, for example Europe/Zurich.">
         <input id="evs-tz" className={inputClass} value={timezone} onChange={(e) => setTimezone(e.target.value)} />
@@ -173,11 +173,11 @@ export function SchedulesSection({ agentId, defaultTimezone, canOwn, onRunStarte
         </Notice>
       ) : null}
       {items.length === 0 ? (
-        <EmptyState title="No eval schedules">A schedule starts a run for you, for example every morning, so a change that makes the agent worse shows up even when nobody is looking.</EmptyState>
+        <EmptyState title="No test schedules">A schedule starts a run for you, for example every morning, so a change that makes the agent worse shows up even when nobody is looking.</EmptyState>
       ) : (
         <>
           <div className="hidden md:block">
-            <DataTable caption="Eval schedules" className="min-w-0">
+            <DataTable caption="Test schedules" className="min-w-0">
               <thead>
                 <tr>
                   <Th>Name</Th>
@@ -209,7 +209,7 @@ export function SchedulesSection({ agentId, defaultTimezone, canOwn, onRunStarte
               </tbody>
             </DataTable>
           </div>
-          <ItemList aria-label="Eval schedules" className="md:hidden">
+          <ItemList aria-label="Test schedules" className="md:hidden">
             {items.map((s) => (
               <ListRow key={s.id} actions={actions(s)}>
                 <div className="min-w-0 flex-1 space-y-1 text-sm">

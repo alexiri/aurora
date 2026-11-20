@@ -233,7 +233,7 @@ export function RevisionHistory({ agentId, memory }: { agentId: string; memory: 
               {r.revision === memory.revision ? " (latest)" : ""} - {r.author_label} ({r.author_kind}, {r.provenance}) -{" "}
               <When value={r.created_at} />
             </p>
-            {r.redacted ? <p className="text-muted">Redacted</p> : null}
+            {r.redacted ? <p className="text-muted">Content removed</p> : null}
             {viewing === r.revision && r.content != null ? (
               <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-control border border-line bg-subtle p-2 font-mono text-xs text-ink">{r.content}</pre>
             ) : null}
@@ -252,7 +252,7 @@ export function RevisionHistory({ agentId, memory }: { agentId: string; memory: 
                 confirmRedact === r.revision ? (
                   <>
                     <Button type="button" size="sm" variant="outline" onClick={() => void redact.mutateAsync(r.revision).then(() => setConfirmRedact(null))}>
-                      Confirm redact #{r.revision}
+                      Confirm removing content of #{r.revision}
                     </Button>
                     <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmRedact(null)}>Cancel</Button>
                   </>
@@ -262,10 +262,10 @@ export function RevisionHistory({ agentId, memory }: { agentId: string; memory: 
                     size="sm"
                     variant="outline"
                     disabled={!canRedact(r, memory.revision)}
-                    title={r.revision === memory.revision ? "The latest revision cannot be redacted. Save a new version first." : undefined}
+                    title={r.revision === memory.revision ? "The content of the latest revision cannot be removed. Save a new version first." : undefined}
                     onClick={() => setConfirmRedact(r.revision)}
                   >
-                    Redact #{r.revision}
+                    Remove content of #{r.revision}
                   </Button>
                 )
               ) : null}

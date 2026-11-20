@@ -47,9 +47,9 @@ export function ConnectorsAdminView() {
     body = <SelfHostedProvision onToken={(id, token) => { setSecret({ id, token }); list(); }} onCancel={list} />;
   } else {
     body = (
-      <Section id="conn-list" title="Connectors">
+      <Section id="conn-list" title="Chat platforms">
         {q.data.items.length === 0 ? (
-          <EmptyState title="No connectors">Add one to let organizations build integrations on it.</EmptyState>
+          <EmptyState title="No chat platforms">Add one to let organizations connect to it.</EmptyState>
         ) : (
           <ul className="space-y-4">
             {q.data.items.map((c) => (
@@ -67,11 +67,11 @@ export function ConnectorsAdminView() {
       {view.kind === "detail" && detail ? null : (
         <PageHeader
           title="Chat platforms"
-          description="Chat-platform connectors that organizations can build integrations on."
+          description="The chat platforms that organizations can connect to, and the hosts that run them."
           className="mb-6"
           actions={
             view.kind === "list" || view.kind === "detail" ? (
-              <Button onClick={() => setView({ kind: "add" })}>Add connector</Button>
+              <Button onClick={() => setView({ kind: "add" })}>Add chat platform</Button>
             ) : undefined
           }
         />
@@ -80,8 +80,8 @@ export function ConnectorsAdminView() {
       {tokens}
       <SecretOnce
         secret={secret?.token ?? null}
-        title="Copy the connector token"
-        description={`Token for connector "${secret?.id ?? ""}". You won't see it again, so give it to the connector now.`}
+        title="Copy the chat platform token"
+        description={`Token for chat platform "${secret?.id ?? ""}". You won't see it again, so give it to the chat platform host now.`}
         onClose={() => setSecret(null)}
       />
     </div>

@@ -65,7 +65,9 @@ describe("the access request card", () => {
   it("says who can give access to a person who cannot", async () => {
     stub("member");
     wrap(<AccessRequestCard ev={requested} events={[requested]} wsId="w" agent={agent} />);
-    expect(await screen.findByText(/Ada Lovelace/)).toBeInTheDocument();
+    // (P5-REFINE-1, D-407) Who to ask is said by role, never by name.
+    expect(await screen.findByText(/Ask a workspace owner/)).toBeInTheDocument();
+    expect(screen.queryByText(/Ada Lovelace/)).toBeNull();
     expect(screen.queryByRole("link", { name: /Give Daneel/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Not now" })).toBeNull();
   });

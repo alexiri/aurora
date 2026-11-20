@@ -63,7 +63,7 @@ function UserLinks({ integration }: { integration: ChannelIntegration }) {
 }
 
 const AUTOLINK_WARNING =
-  "This extends trust to the connector: it can create links, and therefore speak and approve as any of your members whose verified email it asserts.";
+  "This extends trust to the chat platform host: it can create links, and therefore speak and approve as any of your members whose verified email it asserts.";
 
 /** RFE-001: org-admin opt-in for verified-email auto-linking (default off), with a confirm step. */
 function AutolinkSwitch({
@@ -222,7 +222,7 @@ export function ChannelsView({ orgId }: { orgId: string }) {
         className="mb-6"
       />
 
-      <Section id="connectors" title="Add an integration">
+      <Section id="connectors" title="Add a chat platform">
         {connectors.data.items.length > 0 ? (
           <ul className="flex flex-wrap gap-2">
             {connectors.data.items.map((c) => (
@@ -237,7 +237,7 @@ export function ChannelsView({ orgId }: { orgId: string }) {
           </ul>
         ) : null}
         {blocked.length > 0 ? (
-          <ul className="space-y-2" aria-label="Connectors that are not ready">
+          <ul className="space-y-2" aria-label="Chat platforms that are not ready">
             {blocked.map((b) => (
               <ConnectorBlocked key={b.type_id} item={b} admins={admins} isInstanceAdmin={isInstanceAdmin} />
             ))}
@@ -248,9 +248,9 @@ export function ChannelsView({ orgId }: { orgId: string }) {
         ) : null}
       </Section>
 
-      <Section id="integrations" title="Integrations">
+      <Section id="integrations" title="Connected chat platforms">
         {integrations.data.items.length === 0 ? (
-          <EmptyState title="No integrations yet">Pick a connector above to set one up.</EmptyState>
+          <EmptyState title="No chat platforms connected yet">Pick a chat platform above to set one up.</EmptyState>
         ) : (
           <ul className="space-y-3">
             {integrations.data.items.map((i) => (

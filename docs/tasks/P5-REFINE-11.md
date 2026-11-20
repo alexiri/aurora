@@ -306,6 +306,13 @@ Words are the mockup's unless noted. "Matches" always means both themes at 1256 
     header and the Settings menu reads **Pause / Paused / Resume**. The strings come from P5-REFINE-1; this item checks
     none is left on the pages this brief edits.
 
+11. **Needs-you counts on the agent (owner, 2026-11-20; P5-REFINE-20 row G5).** The owner reported the navigation's
+    count badges don't work. The status rail's **Needs you** shows a count (not only a dot) on its icon when collapsed
+    and in its heading when open: this agent's approvals and access requests waiting for the viewer; the agent's row in
+    the Agents list shows the same count. Live from the approvals stream the page already opens. Same rules as
+    P5-REFINE-16 item 19 (no badge at zero, only for those who can decide, screen-reader text, fits at 390 px), with a
+    vitest and a mocked Playwright spec where the count drops after deciding.
+
 ## Out of scope
 
 - Settings page contents (instructions, memory, skills, tests, new agent, Other agents body): **P5-REFINE-12**.

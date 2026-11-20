@@ -21,7 +21,6 @@ import { useWhoCan } from "@/lib/api/who-can";
 import { useMe, useOrg, useWorkspaces } from "@/lib/api/queries";
 import { workspaceDisplayName } from "@/lib/workspace-name";
 import { entryText, kindLabel } from "@/lib/accounts";
-import { orList } from "@/lib/who-can";
 import { WebhookCardLine } from "@/components/webhook/webhook-card-line";
 import { LimitControl } from "./limit-control";
 
@@ -183,11 +182,11 @@ export function AccountRow({
             {/* (P5-POLISH-9, E2) An organization's account says what it is by its name, not a kind chip. */}
             {account.kind === "website" && !agent && scope.kind !== "organization" ? <Badge>{kindLabel(account.kind)}</Badge> : null}
           </div>
-          {/* (D1) The sharing is one line, not a chip: "Shared by your organization · managed by alice". */}
+          {/* (D1, D-407) The sharing is one line, not a chip, and names the role, never a login: "Shared by your organization · Managed by your organization's admins". */}
           {shared && !agent ? (
             <p className="text-sm text-ink-2">
               Shared by your organization
-              {account.managed_by && account.managed_by.people.length > 0 ? ` · managed by ${orList(account.managed_by.people.map((p) => p.name))}` : ""}
+              {account.managed_by ? ` · Managed by ${account.managed_by.role === "instance_admin" ? "an Aurora administrator" : "your organization's admins"}` : ""}
             </p>
           ) : null}
           {/* (P5-APIGAP-3, C-1049) The key the instance's starter grants give every new agent of the organization. */}
@@ -203,8 +202,6 @@ export function AccountRow({
           {account.app?.app_id === "webhook" && account.ref.type === "connection" && account.can.manage ? (
             <WebhookCardLine connectionId={account.ref.id} name={account.name} />
           ) : null}
-          {/* No who-can line on an agent's page (C1: who manages it is on the account page); in the list only when no one is named. */}
-          {shared && !agent && account.managed_by && account.managed_by.people.length === 0 ? <WhoCan value={account.managed_by} /> : null}
           {/* (P5-UX-11, C-937) The limit of the organization's account, for the people who manage it. */}
           {scope.kind === "organization" && account.scope === "organization" && account.can.manage ? <LimitControl account={account} orgId={orgId} /> : null}
         </div>
