@@ -1332,8 +1332,8 @@ guide links, ladder rows and the organization's accounts.
   fields render changes. SET-4/5 add no sidebar entries.
 - **Other phase-5 work builds inside this structure.** Any spec that adds a page, a tab or a settings
   section places it in a topic above and uses the vocabulary. In particular P5-WEBHOOK-4: an outgoing
-  webhook is an account of kind App, its three connect steps are the journey's Sign in step for that
-  app, its card is a row of the Accounts list, and its organization switch sits on the organization's
+  webhook is an account of kind App, its connect steps (Address, Message) are steps of the journey in
+  place of Sign in (P5-REFINE-13), its card is a row of the Accounts list, and its organization switch sits on the organization's
   Apps tab.
 
 #### Settings in words (D-341, C-972, C-974)
@@ -2872,11 +2872,14 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 
 ### 12. Outgoing webhook: connect steps, editor, card and Send test (P5-WEBHOOK-4, D-320, C-909, C-912, C-913)
 
-- **The connect steps are the journey's Sign in step for the app `webhook`.** There are three, with
-  "Step n of 3" above them; Back keeps what was typed:
-  1. **Name and address.** The address is a password-type field with a Show button. It is never shown again
-     after saving. Nothing is sent to it at connect.
-  2. **What the receiver expects.** One page, top to bottom:
+- **The connect steps are steps of the journey itself** (P5-REFINE-13, access-4): **App · Address · Message · Done**
+  (Access before Address when the app has a level to choose). There is no wizard inside the wizard: Back and Next
+  are the journey's footer, the state lives in the journey, and Back keeps what was typed. (The organization's
+  journey keeps one Sign in step that switches the same two pages.)
+  1. **Address.** "Address to send to" (placeholder `https://hooks.example.com/ops-alerts`, help "<Agent> sends a
+     POST request here.") and "Name". The address is a password-type field with a Show button. It is never shown
+     again after saving. Nothing is sent to it at connect.
+  2. **Message** (what the receiver expects). One page, top to bottom; **Next here connects**:
      - **Preset:** a list (None, then each preset). When the address's host is in a preset's
        `suggest_for_hosts`, a notice offers "Use the <name> preset"; nothing is chosen for the person.
      - **Start from an example** (folded): paste JSON, **Show the example**, then each value is a row with
@@ -2887,12 +2890,23 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
        description, Required, limits, allowed values, a schema for any JSON; Move up, Move down, Remove).
      - **Preview:** sample values from each value's `example`, editable; the body is shown as text with secret
        values as `«secret:name»`.
-  3. **Extras:** description with a counter, secret values (name and password field), headers, signing (Off,
-     Make one, Paste one), method, and limits.
+  - **Extras**, in a fold at the bottom of Message ("Secret values, headers, signing and limits"; it opens by
+    itself when a preset needs secret values or the server refuses something there): description with a counter,
+    secret values (name and password field), headers, signing (Off, Make one, Paste one), method, and limits.
+- **Done offers a test** ("Not sure the address works?" **Send a test**; it sends the configuration's example
+  message). A 2xx is a green "The test went through."; anything else is a red **"The test did not go through"**
+  with one sentence (`lib/labels.ts`: 405 "The address doesn't accept POST. Check the URL and try again.", 404
+  "Nothing is there. Check the address.", 401/403 "The address refused the request. Check the sender's settings.",
+  5xx "The other side had a problem. Try again in a minute.", timeout "It took too long to answer.", unreachable
+  "Couldn't reach the address."). **Details** (collapsed) holds "Answer 405 Method Not Allowed · delivery 01a1…"
+  (an Expert item, shown on a failure) and the receiver's body cut to 200 characters with "(first 200
+  characters)", as text, never HTML. **Send test again** repeats it; **Edit address** goes back to Address with
+  the name kept and the address empty (it is never shown again): the account made a moment ago, with the wrong
+  address, is removed when the new one is saved. The same result view is the card's Send test dialog's.
 - **Errors sit on the control.** `webhook_config_invalid.fields[].path` is shown at the template, the value,
   the header, the limit or the secret value it names (`slots.2.name`, `headers.0.value`, `rate.per_minute`);
-  a path with no control is listed at the top of step 2. `invalid_slot` marks the sample value. The refused
-  address goes back to step 1.
+  a path with no control is listed at the top of Message. `invalid_slot` marks the sample value. The refused
+  address goes back to Address.
 - **The signing secret is shown once**, with Copy and "This will not be shown again", and is held only in the
   dialog's state until the person confirms.
 - **The card** (an Accounts row, for people who manage it) adds the host (never the address), the effective limit

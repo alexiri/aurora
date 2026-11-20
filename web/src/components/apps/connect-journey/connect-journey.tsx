@@ -37,6 +37,9 @@ import {
   type StepId,
 } from "./logic";
 import { SignInStep, WebsiteStep, type SignInResult } from "./sign-in-step";
+import { useDeleteConnection } from "@/lib/api/apps";
+import { WebhookAddressStep, WebhookMessageStep, useWebhookDraft } from "@/components/webhook/webhook-connect-step";
+import { WebhookDoneTest } from "@/components/webhook/webhook-done-test";
 
 type AgentRef = { id: string; name: string; handle?: string };
 
@@ -133,6 +136,11 @@ export function ConnectJourney({
   // close rewrites the URL (a History write on the page being left) and would undo the link's navigation.
   const [leaving, setLeaving] = useState(false);
   const put = usePutAccess();
+  // (P5-REFINE-13, access-4) The Outgoing webhook's Address and Message steps: their state lives here, the footer is the journey's.
+  const webhookDraft = useWebhookDraft();
+  // "Edit address" after a failed test: the account made a moment ago has the wrong address and goes when the new one is saved.
+  const [replacing, setReplacing] = useState<string | null>(null);
+  const deleteConnection = useDeleteConnection({ kind: "workspace", id: workspaceId });
 
   const realApp = choice?.kind === "app" ? choice.appId : undefined;
   const detail = useApp(realApp, workspaceId);
@@ -173,6 +181,7 @@ export function ConnectJourney({
     useExisting,
     hasChoice: levels.length > 0,
     noAgentChosen: agentIds.length === 0,
+    webhook: choice?.kind === "app" && choice.appId === "webhook",
   };
   const steps = stepsOf(shape);
 
@@ -254,6 +263,8 @@ export function ConnectJourney({
   const hasLevels = levels.length > 0;
   const customOnly = app?.app_restrictions?.custom_only === true;
   const finishSignIn = (r: SignInResult) => {
+    if (replacing && replacing !== r.accountId) deleteConnection.mutate(replacing);
+    setReplacing(null);
     refresh();
     setDone({
       accountId: r.accountId,
@@ -409,6 +420,23 @@ export function ConnectJourney({
         }}
       />
     );
+  } else if ((step === "address" || step === "message") && app) {
+    const ctx = {
+      app,
+      workspaceId,
+      orgId,
+      level: levels.length > 0 ? effective : null,
+      agentIds,
+      hasWriteTools: app.tools.some((t) => t.group === "write"),
+      goTo: (s: "address" | "message") => setStep(s),
+      onResult: finishSignIn,
+    };
+    body =
+      step === "address" ? (
+        <WebhookAddressStep draft={webhookDraft} agentName={agent?.name ?? agentWord} onBack={prevStep(shape, "address") ? back : undefined} onNext={() => setStep("message")} />
+      ) : (
+        <WebhookMessageStep draft={webhookDraft} ctx={ctx} onBack={back} />
+      );
   } else if (step === "signin" && app) {
     body = plan.isPending ? (
       <Loading />
@@ -478,6 +506,16 @@ export function ConnectJourney({
         )}
         {warning ? <Notice tone="pending" role="alert">{warning}</Notice> : null}
         {done.missing.length > 0 ? <Notice tone="pending">Some requested permissions were not granted: {done.missing.join(", ")}.</Notice> : null}
+        {!done.grantFailed && done.appId === "webhook" ? (
+          <WebhookDoneTest
+            connectionId={done.accountId}
+            onEditAddress={() => {
+              setReplacing(done.accountId);
+              setDone(null);
+              setStep("address");
+            }}
+          />
+        ) : null}
         {!done.grantFailed && prompt && first ? (
           <div className="rounded-control bg-subtle p-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-muted">Try it</p>

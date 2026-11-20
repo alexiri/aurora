@@ -11,7 +11,7 @@ import { safeHref } from "@/components/ui/markdown";
  * of the Done step and of a failure, and the body of the one request that makes the account and the access.
  */
 
-export type StepId = "app" | "agent" | "account" | "access" | "signin" | "done";
+export type StepId = "app" | "agent" | "account" | "access" | "signin" | "address" | "message" | "done";
 
 export const STEP_LABEL: Record<StepId, string> = {
   app: "App",
@@ -19,6 +19,9 @@ export const STEP_LABEL: Record<StepId, string> = {
   account: "Account",
   access: "Access",
   signin: "Sign in",
+  // (P5-REFINE-13, access-4) The Outgoing webhook's two connect steps replace Sign in.
+  address: "Address",
+  message: "Message",
   done: "Done",
 };
 
@@ -40,6 +43,8 @@ export interface JourneyShape {
   hasChoice: boolean;
   /** No agent will be given access (the Agent step was left empty): the Access step is skipped. */
   noAgentChosen: boolean;
+  /** The Outgoing webhook: Address and Message instead of Sign in (P5-REFINE-13). */
+  webhook?: boolean;
 }
 
 /** The steps that apply, in order; the Done step is always last. */
@@ -49,7 +54,10 @@ export function stepsOf(s: JourneyShape): StepId[] {
   if (!s.agentFixed && !s.noAgents) out.push("agent");
   if (!s.website && s.hasExisting) out.push("account");
   if (!s.website && s.hasChoice && !s.noAgentChosen) out.push("access");
-  if (!(s.hasExisting && s.useExisting && !s.website)) out.push("signin");
+  if (!(s.hasExisting && s.useExisting && !s.website)) {
+    if (s.webhook && !s.website) out.push("address", "message");
+    else out.push("signin");
+  }
   out.push("done");
   return out;
 }

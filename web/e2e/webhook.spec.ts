@@ -29,15 +29,18 @@ for (const scheme of ["light", "dark"] as const) {
         await dialog.getByRole("button", { name: "Give Daneel access" }).click();
         await dialog.getByRole("button", { name: "Next" }).click();
         await dialog.getByLabel("Name", { exact: true }).fill("ops-alerts");
-        await dialog.getByLabel("Webhook address (URL)", { exact: true }).fill(URL_CANARY);
+        await dialog.getByLabel("Address to send to", { exact: true }).fill(URL_CANARY);
         await check(page);
+        // (P5-REFINE-13) Address, Message and Done are the journey's own steps: Back and Next are its footer, no inner wizard.
+        await expect(dialog.getByRole("list", { name: "Steps" })).toContainText("Address");
         await dialog.getByRole("button", { name: "Next" }).click();
         await expect(dialog.getByText("This address looks like Slack.")).toBeVisible();
         await dialog.getByRole("button", { name: "Use the Slack preset" }).click();
         await dialog.getByRole("button", { name: "Preview" }).click();
         await expect(dialog.getByTestId("preview-body")).toContainText("Deploy 42 failed");
         await check(page);
-        await dialog.getByRole("button", { name: "Next" }).click();
+        // The extras (secret values, headers, signing, limits) are in a fold on the Message step.
+        await dialog.getByText("Secret values, headers, signing and limits").click();
         await dialog.getByLabel("Make one").check({ force: true });
         await check(page);
         await dialog.getByRole("button", { name: "Connect", exact: true }).click();
@@ -56,13 +59,37 @@ for (const scheme of ["light", "dark"] as const) {
         expect(html).not.toContain(SIGNING);
       });
 
+      test("Done offers Send a test; a 405 is one plain sentence and the receiver's page is only in Details, cut short", async ({ page }) => {
+        const { sent } = await openWebhook(page, "/o/acme/w/main/apps?tab=apps&connect=webhook", scheme, { testStatus: 405 });
+        const dialog = page.getByRole("dialog");
+        await dialog.getByRole("button", { name: "Give Daneel access" }).click();
+        await dialog.getByRole("button", { name: "Next" }).click();
+        await dialog.getByLabel("Address to send to", { exact: true }).fill("https://hooks.slack.com/services/T0/B0/x");
+        await dialog.getByLabel("Name", { exact: true }).fill("Ops alerts");
+        await dialog.getByRole("button", { name: "Next" }).click();
+        await dialog.getByRole("button", { name: "Use the Slack preset" }).click();
+        await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+        await expect(dialog.getByText("Not sure the address works?")).toBeVisible();
+        await dialog.getByRole("button", { name: "Send a test" }).click();
+        await expect(dialog.getByText("The test did not go through")).toBeVisible();
+        await expect(dialog.getByText("The address doesn't accept POST. Check the URL and try again.")).toBeVisible();
+        // The receiver's page is text under Details, never rendered, and only its first 200 characters.
+        await expect(dialog.getByTestId("test-body")).toBeHidden();
+        await dialog.getByText("Details", { exact: true }).click();
+        await expect(dialog.getByTestId("test-body")).toContainText("(first 200 characters)");
+        expect(await page.evaluate(() => (window as unknown as { hacked?: number }).hacked)).toBeUndefined();
+        await check(page);
+        expect(sent.filter((s) => s.path.endsWith("/test"))).toHaveLength(1);
+        await expect(dialog.getByRole("button", { name: "Edit address" })).toBeVisible();
+      });
+
       test("a preview refusal marks the template; connecting from an example makes the {{text}} slot", async ({ page }) => {
         await openWebhook(page, "/o/acme/w/main/apps?tab=apps&connect=webhook", scheme);
         const dialog = page.getByRole("dialog");
         await dialog.getByRole("button", { name: "Give Daneel access" }).click();
         await dialog.getByRole("button", { name: "Next" }).click();
         await dialog.getByLabel("Name", { exact: true }).fill("ops-alerts");
-        await dialog.getByLabel("Webhook address (URL)", { exact: true }).fill("https://example.org/hook");
+        await dialog.getByLabel("Address to send to", { exact: true }).fill("https://example.org/hook");
         await dialog.getByRole("button", { name: "Next" }).click();
         await dialog.getByText("Start from an example").click();
         await dialog.getByLabel("The example body").fill('{"username": "Aurora", "text": "Hello"}');
@@ -103,7 +130,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(confirm).toContainText("This really calls the webhook");
         expect(sent.filter((s) => s.path.endsWith("/test") && !s.body?.dry_run)).toHaveLength(0);
         await confirm.getByRole("button", { name: "Send", exact: true }).click();
-        await expect(test.getByText("The receiver answered 200.")).toBeVisible();
+        await expect(test.getByText("The test went through.")).toBeVisible();
         await check(page);
         void SECRET_CANARY;
       });

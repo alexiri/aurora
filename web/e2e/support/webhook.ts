@@ -34,7 +34,7 @@ const method = {
 };
 
 /** Opens a route with the API mocked, the webhook routes added and the colour scheme emulated. */
-export async function openWebhook(page: Page, path: string, scheme: Scheme, opts: { withAccount?: boolean } = {}) {
+export async function openWebhook(page: Page, path: string, scheme: Scheme, opts: { withAccount?: boolean; /** What a real test answers with (the receiver's status); 200 by default. */ testStatus?: number } = {}) {
   const sent: Sent[] = [];
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -90,7 +90,9 @@ export async function openWebhook(page: Page, path: string, scheme: Scheme, opts
       sent.push({ method: m, path: p, body });
       return body?.dry_run
         ? json({ method: "POST", content_type: "application/json", headers: [], body: '{"text":"Deploy 42 failed"}' })
-        : json({ status: 200, content_type: "text/plain", body: "ok", truncated: false, delivery_id: "7d2c1d9e-0000-4000-8000-000000000001" });
+        : opts.testStatus && opts.testStatus !== 200
+          ? json({ status: opts.testStatus, content_type: "text/html", body: `<!DOCTYPE html><html><head><title>${opts.testStatus} Not Allowed</title></head><body><script>window.hacked = 1</script>${"x".repeat(300)}</body></html>`, truncated: false, delivery_id: "01a1b2c3-0000-4000-8000-000000000001" })
+          : json({ status: 200, content_type: "text/plain", body: "ok", truncated: false, delivery_id: "7d2c1d9e-0000-4000-8000-000000000001" });
     }
     // The shapes P5-WEBHOOK-2 returns: the organization carries the outgoing-webhook keys and the settings index lists the section.
     if (/^\/v1\/orgs\/[^/]+$/.test(p) && m === "GET") {

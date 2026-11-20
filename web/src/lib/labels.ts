@@ -486,3 +486,30 @@ export function auditWords(
   }
   return { sentence: tpl.sentence(e.actor_label, t, meta), weight: e.critical ? "critical" : tpl.weight, known: true };
 }
+
+/**
+ * (P5-REFINE-13, access-5) A webhook test that did not go through, in one plain sentence: by the status the receiver
+ * answered. 2xx is a success and has no sentence.
+ */
+export function webhookTestSentence(status: number): string {
+  if (status === 405) return "The address doesn't accept POST. Check the URL and try again.";
+  if (status === 404 || status === 410) return "Nothing is there. Check the address.";
+  if (status === 401 || status === 403) return "The address refused the request. Check the sender's settings.";
+  if (status >= 500) return "The other side had a problem. Try again in a minute.";
+  return "The address did not accept the message. Check the URL and try again.";
+}
+
+/** The same for a test that never got an answer (the API's error codes). `null`: not a delivery problem. */
+export function webhookTestErrorSentence(code: string | undefined): string | null {
+  switch (code) {
+    case "webhook_timeout":
+      return "It took too long to answer.";
+    case "link_unreachable":
+    case "link_destination_refused":
+      return "Couldn't reach the address.";
+    case "link_not_found":
+      return "Nothing is there. Check the address.";
+    default:
+      return null;
+  }
+}
