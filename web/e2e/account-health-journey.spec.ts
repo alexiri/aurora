@@ -57,6 +57,9 @@ for (const scheme of ["light", "dark"] as const) {
       test("a method with a probe was checked while connecting: no second test, no warning", async ({ page }) => {
         await openJourney(page, AGENT_ACCESS, scheme);
         probed.add("token");
+        // The Access tab reads GitHub's app (its methods) on load since P5-REFINE-13 and the journey uses that cached
+        // answer: reload so it is read with the probe (the page's mocks stay).
+        await page.reload();
         let tests = 0;
         await page.route(`**${NEW_ACCOUNT_TEST}`, (route) => {
           tests += 1;

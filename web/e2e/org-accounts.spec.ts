@@ -192,9 +192,10 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(row.getByText("Shared by your organization")).toBeVisible();
         await expect(row.getByRole("button", { name: /More for/ })).toHaveCount(0);
         await row.getByRole("button", { name: "Give Daneel access" }).click();
-        // Read only is the only level offered, so it is text, not a select.
-        await expect(row.getByText("Read only", { exact: true })).toBeVisible();
-        await expect(row.getByRole("combobox", { name: /Daneel's access to/ })).toHaveCount(0);
+        // (P5-REFINE-13, access-12) Read only is the only level offered: the same pill, its one entry chosen and no other.
+        const pill = row.getByRole("combobox", { name: /Daneel's access to/ });
+        await expect(pill).toHaveValue("read");
+        await expect(pill.locator("option")).toHaveText(["Read only"]);
         await expect(row.getByText("Limited by Acme Labs.")).toBeVisible();
         await expect(row.getByRole("button", { name: /Reconnect|Remove/ })).toHaveCount(0);
         expect(state.puts).toEqual([{ agent: agent.id, level: "read" }]);
