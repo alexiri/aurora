@@ -135,16 +135,15 @@ test.describe("1280×800", () => {
   });
 
   for (const scheme of ["light", "dark"] as const) {
-    test(`axe: Chat with the rail collapsed and expanded, one Behaviour page (${scheme})`, async ({ page }) => {
+    test(`axe: Chat with the rail collapsed and expanded, one Settings page (${scheme})`, async ({ page }) => {
       await open(page, scheme);
       expect(await serious(page), "collapsed").toEqual([]);
       await rail(page).getByRole("button", { name: "Expand status panel" }).click();
       await expect(rail(page).getByRole("heading", { name: "Status", level: 2 })).toBeVisible();
       expect(await serious(page), "expanded").toEqual([]);
       await page.screenshot({ path: `${SHOTS}/expanded-1280-${scheme}.png` });
-      await page.getByRole("button", { name: "Agent actions" }).click();
-      await page.getByRole("menuitem", { name: /Instructions/ }).click();
-      await expect(page.getByRole("tablist", { name: "Instructions pages" })).toBeVisible();
+      await page.getByRole("button", { name: "Settings" }).click();
+      await expect(page.getByRole("tablist", { name: "Settings pages" })).toBeVisible();
       expect(await serious(page), "behaviour").toEqual([]);
     });
   }
@@ -193,15 +192,16 @@ test.describe("1280×800", () => {
       const header = pageHeader(page);
       const h = await sizeOf(header);
       expect(h.height, "header height").toBeLessThanOrEqual(64);
-      // Breadcrumb above the name, beside the avatar; switcher and Agent actions on the same row.
+      // Breadcrumb above the name, beside the avatar; switcher and the Settings button on the same row.
       const crumb = await sizeOf(page.getByRole("navigation", { name: "Breadcrumb" }));
       const name = await sizeOf(header.getByRole("heading", { level: 1 }));
       expect(crumb.y + crumb.height, "breadcrumb sits above the name").toBeLessThanOrEqual(name.y + 2);
       const switcher = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }));
-      const actions = page.getByRole("button", { name: "Agent actions" });
+      const actions = page.getByRole("button", { name: "Settings" });
       const a = await sizeOf(actions);
-      expect(Math.round(a.width)).toBe(36);
+      // (D-408) A labelled button, not a 36 px icon: 36 px high, as wide as its words.
       expect(Math.round(a.height)).toBe(36);
+      expect(a.width, "Settings keeps its label").toBeGreaterThan(80);
       // FIX-186: the track ends where the last tab ends.
       const lastTab = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab").last());
       expect(Math.abs(switcher.x + switcher.width - (lastTab.x + lastTab.width)), "no empty track after the last tab").toBeLessThanOrEqual(4);
@@ -285,9 +285,9 @@ test.describe("phone, 390 px", () => {
       expect(h.height, "header height").toBeLessThanOrEqual(112);
       const back = await sizeOf(page.getByRole("link", { name: "Back to agents" }));
       const name = await sizeOf(header.getByRole("heading", { level: 1 }));
-      const actions = await sizeOf(page.getByRole("button", { name: "Agent actions" }));
+      const actions = await sizeOf(page.getByRole("button", { name: "Settings" }));
       expect(back.width).toBeGreaterThanOrEqual(44);
-      expect(actions.width).toBeGreaterThanOrEqual(44);
+      expect(actions.width, "Settings keeps its label").toBeGreaterThan(80);
       expect(actions.height).toBeGreaterThanOrEqual(44);
       expect(Math.abs(back.y + back.height / 2 - (actions.y + actions.height / 2)), "back and actions share a row").toBeLessThanOrEqual(4);
       expect(name.y).toBeLessThan(back.y + back.height);

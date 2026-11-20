@@ -12,8 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Altitude, AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
 import { useAltitude, useHiddenControls } from "@/lib/altitude";
-import { ChevronLeftIcon, MoreIcon } from "@/components/ui/icons";
-import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
+import { ChevronLeftIcon, SettingsIcon } from "@/components/ui/icons";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useCanApprove } from "@/lib/api/approvals";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
@@ -37,6 +36,7 @@ import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
 import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, resolvePage, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
 import { AgentState } from "./agent-state";
+import { SettingsFrame } from "./settings-shell";
 import { SshPage } from "./ssh-page";
 import { TerminalTab } from "./terminal-tab";
 import { useInstance, useOrg } from "@/lib/api/queries";
@@ -124,44 +124,13 @@ export function AgentPage() {
         canOwn,
       }
     : null;
-  // Agent actions (D-200): Freeze (with its confirm dialog) and Delete agent…, for `can_own`. A frozen agent's banner
-  // (with Unfreeze) stays under the header; the menu then only offers Delete.
-  const deleteItem = (
-    <MenuItem className="text-danger-ink data-[highlighted]:bg-danger-soft" onSelect={() => setDeleteOpen(true)}>
-      Delete agent…
-    </MenuItem>
-  );
-  const freezeInMenu = !!freezeProps && canOwn && !agent.frozen;
-  const deleteOnlyMenu = !!freezeProps && canOwn && !!agent.frozen;
   const chatPage = tab === "chat" && !byo;
-  // (P5-POLISH-6, D-382) Behaviour and Access are configuration: they live in the … menu, not the tab bar. On one of them no
-  // tab is selected and the button shows the accent outline.
-  const isConfig = sectionId === "behaviour" || sectionId === "access";
-  const barSections = sections.filter((s) => s.id !== "behaviour" && s.id !== "access");
+  // (P5-REFINE-11, D-408) Settings is configuration behind a labelled button, not a tab: on a Settings page no tab is selected and
+  // the button shows the accent outline. Pause and Delete are the danger zone at the bottom of the Settings page.
+  const isConfig = sectionId === "settings";
+  const barSections = sections.filter((s) => s.id !== "settings");
   const triggerClass = isConfig ? "outline outline-2 outline-accent" : "";
-  const lastBehaviour = lastPage.current.behaviour;
-  const configItems = (
-    <>
-      <MenuItem onSelect={() => choosePage(lastBehaviour ?? "instructions")}>
-        <span>
-          Instructions
-          <span className="block text-xs text-muted">Name, instructions, model, memory, skills</span>
-        </span>
-      </MenuItem>
-      <MenuItem onSelect={() => choosePage("access")}>
-        <span>
-          Apps &amp; access
-          <span className="block text-xs text-muted">Apps, accounts and the AI key it uses</span>
-        </span>
-      </MenuItem>
-    </>
-  );
   const backPage: AgentPageId = byo ? "connect" : "chat";
-  const configTitle = sectionId === "access" ? "Apps & access" : "Instructions";
-  const configLead =
-    sectionId === "access"
-      ? `What ${agent.name} can use: apps, accounts and its AI key.`
-      : `How ${agent.name} works: its name, instructions, model, memory and skills.`;
 
   return (
     // The agent page uses the full content width (FIX-129); long-form panels keep a readable width inside themselves.
@@ -210,26 +179,16 @@ export function AgentPage() {
               Status
             </Button>
           ) : null}
-          {freezeInMenu && freezeProps ? (
-            <AgentFreeze {...freezeProps} inMenu menuLead={configItems} menuTriggerClassName={triggerClass} menuExtra={deleteItem} />
-          ) : (
-            <Menu modal={false}>
-              <MenuTrigger asChild>
-                <Button variant="outline" size="sm" aria-label="Agent actions" className={`size-11 min-h-11 px-0 md:size-9 md:min-h-9 ${triggerClass}`}>
-                  <MoreIcon width={20} height={20} />
-                </Button>
-              </MenuTrigger>
-              <MenuContent align="end">
-                {configItems}
-                {deleteOnlyMenu ? (
-                  <>
-                    <MenuSeparator />
-                    {deleteItem}
-                  </>
-                ) : null}
-              </MenuContent>
-            </Menu>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-current={isConfig ? "page" : undefined}
+            className={`min-h-11 md:min-h-9 ${triggerClass}`}
+            onClick={() => choosePage(lastPage.current.settings ?? "instructions")}>
+            <SettingsIcon width={16} height={16} />
+            Settings
+          </Button>
         </div>
         <div className="order-3 w-full min-w-0 md:order-2 md:w-auto md:shrink-0">
           <Tabs
@@ -243,8 +202,9 @@ export function AgentPage() {
           />
         </div>
       </header>
-      {/* The banner of a frozen agent, full width under the header (and the non-owner's read-only copy of it). */}
-      {freezeProps && !freezeInMenu ? <AgentFreeze {...freezeProps} /> : null}
+      {/* The banner of a paused agent, full width under the header (with Resume for owners; members see it read-only). Pause
+          itself lives in the Settings danger zone. */}
+      {freezeProps && agent.frozen ? <AgentFreeze {...freezeProps} /> : null}
       {freezeProps && canOwn ? (
         <DeleteAgentDialog
           agentId={agent.id}
@@ -258,27 +218,25 @@ export function AgentPage() {
       <div
         {...(isConfig ? {} : { role: "tabpanel", id: tabPanelId("agent-section", sectionId), "aria-labelledby": tabId("agent-section", sectionId) })}
         className="space-y-3">
-        {isConfig ? (
-          <div className="space-y-1">
-            <button type="button" onClick={() => choosePage(backPage)} className="inline-flex items-center gap-1 text-sm text-ink-2 hover:text-ink">
-              <ChevronLeftIcon className="size-4" aria-hidden="true" />
-              {backPage === "chat" ? "Chat" : "Computer"}
-            </button>
-            <h2 className="font-display text-xl font-semibold text-ink">{configTitle}</h2>
-            <p className="text-sm text-ink-2">{configLead}</p>
-          </div>
-        ) : null}
-        {section.pages.length > 1 && sectionId !== "computer" && sectionId !== "triggers" ? (
-          <Tabs
-            variant="segmented"
-            items={section.pages.map((p) => ({ value: p.id, label: p.label }))}
-            value={tab}
-            onValueChange={(v) => choosePage(v as AgentPageId)}
-            label={`${section.label} pages`}
-            idBase="agent"
-          />
-        ) : null}
-        {section.pages.length > 1 && (sectionId === "computer" || sectionId === "triggers") ? (
+        <SettingsFrame
+          shell={
+            isConfig
+              ? {
+                  agentId: agent.id,
+                  agentName: agent.name,
+                  orgId: workspace.data?.org_id,
+                  page: tab,
+                  pages: section.pages,
+                  onPage: choosePage,
+                  onBack: () => choosePage(backPage),
+                  backLabel: backPage === "chat" ? "Chat" : "Computer",
+                  canOwn,
+                  frozen: agent.frozen,
+                  onDelete: () => setDeleteOpen(true),
+                }
+              : null
+          }>
+        {section.pages.length > 1 && !isConfig ? (
           <Tabs
             items={section.pages.map((p) => ({ value: p.id, label: p.label }))}
             value={tab}
@@ -338,6 +296,7 @@ export function AgentPage() {
           {tab === "access" && workspace.isPending ? <Loading /> : null}
           {tab === "connect" && byo ? <ConnectTab agent={agent} wsId={wsId} canOwn={canOwn} /> : null}
         </div>
+        </SettingsFrame>
       </div>
       {chatPage ? null : <MoreControlsLine className="pt-2" />}
     </div>

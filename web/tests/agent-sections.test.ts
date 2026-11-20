@@ -20,30 +20,31 @@ describe("agent sections", () => {
   it("maps every legacy ?tab= id to its section", () => {
     expect(SECTION_OF).toEqual({
       chat: "chat",
-      instructions: "behaviour",
-      memory: "behaviour",
-      skills: "behaviour",
-      evals: "behaviour",
+      instructions: "settings",
+      memory: "settings",
+      skills: "settings",
+      evals: "settings",
       schedules: "triggers",
       webhooks: "triggers",
       channels: "triggers",
-      peers: "triggers",
+      peers: "settings",
       computer: "computer",
       terminal: "computer",
       files: "computer",
       previews: "computer",
       ssh: "computer",
       connect: "computer",
-      access: "access",
+      access: "settings",
     });
     expect(Object.keys(SECTION_OF).sort()).toEqual([...AGENT_PAGE_IDS].sort());
   });
 
-  it("lists a hosted agent's five sections in order, with Terminal and Previews only where enabled", () => {
+  it("lists a hosted agent's sections in order (Chat · Automations · Computer, Settings behind its button), with Terminal and Previews only where enabled", () => {
     const s = availableSections(hosted);
-    expect(s.map((x) => x.id)).toEqual(["chat", "behaviour", "triggers", "computer", "access"]);
-    expect(s.find((x) => x.id === "behaviour")!.pages.map((p) => p.label)).toEqual(["Instructions", "Memory", "Skills", "Tests"]);
-    expect(s.find((x) => x.id === "triggers")!.pages.map((p) => p.label)).toEqual(["Schedules", "Webhooks", "Channels", "Other agents"]);
+    expect(s.map((x) => x.id)).toEqual(["chat", "triggers", "computer", "settings"]);
+    expect(s.filter((x) => x.id !== "settings").map((x) => x.label)).toEqual(["Chat", "Automations", "Computer"]);
+    expect(s.find((x) => x.id === "settings")!.pages.map((p) => p.label)).toEqual(["Instructions", "Apps & access", "Memory", "Skills", "Tests", "Other agents"]);
+    expect(s.find((x) => x.id === "triggers")!.pages.map((p) => p.label)).toEqual(["Schedules", "Webhooks", "Channels"]);
     expect(s.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Computer"]);
     const all = availableSections({ byo: false, previews: true, terminal: true });
     expect(all.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Computer", "Terminal", "Files", "Previews"]);
@@ -54,11 +55,11 @@ describe("agent sections", () => {
     expect(resolvePage("files", { byo: false, previews: false, terminal: false })).toBe("chat");
   });
 
-  it("gives a BYO agent Behaviour (Instructions), Computer (Computer: Connect) and Access only", () => {
+  it("gives a BYO agent Computer (Computer: Connect) and Settings (Instructions, Apps & access) only", () => {
     const s = availableSections(byo);
-    expect(s.map((x) => x.id)).toEqual(["behaviour", "computer", "access"]);
-    expect(s[0]!.pages.map((p) => p.id)).toEqual(["instructions"]);
-    expect(s[1]!.pages.map((p) => [p.id, p.label])).toEqual([["connect", "Computer: Connect"]]);
+    expect(s.map((x) => x.id)).toEqual(["computer", "settings"]);
+    expect(s[0]!.pages.map((p) => [p.id, p.label])).toEqual([["connect", "Computer: Connect"]]);
+    expect(s[1]!.pages.map((p) => p.id)).toEqual(["instructions", "access"]);
     expect(isPageAvailable("chat", byo)).toBe(false);
     expect(isPageAvailable("memory", byo)).toBe(false);
     expect(isPageAvailable("connect", hosted)).toBe(false);
@@ -88,29 +89,28 @@ describe("agent sections by altitude (D-406)", () => {
   const at = (floor: "use" | "setup" | "expert") => (level: "setup" | "expert") => level === "setup" ? floor !== "use" : floor === "expert";
   const labels = (s: ReturnType<typeof availableSections>, id: string) => s.find((x) => x.id === id)!.pages.map((p) => p.label);
 
-  it("at Use lists Instructions, Schedules, Webhooks, Channels, Computer, Files and Access only", () => {
+  it("at Use lists Instructions, Apps & access, Schedules, Webhooks, Channels, Computer and Files only", () => {
     const s = availableSections(all, at("use"));
-    expect(labels(s, "behaviour")).toEqual(["Instructions"]);
+    expect(labels(s, "settings")).toEqual(["Instructions", "Apps & access"]);
     expect(labels(s, "triggers")).toEqual(["Schedules", "Webhooks", "Channels"]);
     expect(labels(s, "computer")).toEqual(["Computer", "Files"]);
   });
   it("at Set up adds Memory and Skills; at Expert everything", () => {
-    expect(labels(availableSections(all, at("setup")), "behaviour")).toEqual(["Instructions", "Memory", "Skills"]);
+    expect(labels(availableSections(all, at("setup")), "settings")).toEqual(["Instructions", "Apps & access", "Memory", "Skills"]);
     const s = availableSections(all, at("expert"));
-    expect(labels(s, "behaviour")).toEqual(["Instructions", "Memory", "Skills", "Tests"]);
-    expect(labels(s, "triggers")).toContain("Other agents");
+    expect(labels(s, "settings")).toEqual(["Instructions", "Apps & access", "Memory", "Skills", "Tests", "Other agents"]);
     expect(labels(s, "computer")).toEqual(["Computer", "Terminal", "Files", "Previews", "SSH"]);
   });
   it("keeps the open page listed, and a direct ?tab= still resolves to it", () => {
     expect(resolvePage("evals", hosted)).toBe("evals");
-    expect(labels(availableSections(hosted, at("use"), "evals"), "behaviour")).toEqual(["Instructions", "Tests"]);
+    expect(labels(availableSections(hosted, at("use"), "evals"), "settings")).toEqual(["Instructions", "Apps & access", "Tests"]);
   });
   it("counts the pages the altitude leaves out", () => {
     expect(hiddenPageCount(all, at("use"))).toBe(7);
     expect(hiddenPageCount(all, at("expert"))).toBe(0);
   });
   it("lists a BYO agent's Computer: Connect only at Expert", () => {
-    expect(availableSections(byo, at("use")).map((x) => x.id)).toEqual(["behaviour", "access"]);
-    expect(availableSections(byo, at("expert")).map((x) => x.id)).toEqual(["behaviour", "computer", "access"]);
+    expect(availableSections(byo, at("use")).map((x) => x.id)).toEqual(["settings"]);
+    expect(availableSections(byo, at("expert")).map((x) => x.id)).toEqual(["computer", "settings"]);
   });
 });

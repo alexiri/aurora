@@ -24,7 +24,8 @@ export type AgentPageId =
   | "connect"
   | "access";
 
-export type SectionId = "chat" | "behaviour" | "triggers" | "computer" | "access";
+/** (P5-REFINE-11, D-408) `settings` is the Settings page behind the labelled Settings button; it replaces Behaviour and Access. */
+export type SectionId = "chat" | "triggers" | "computer" | "settings";
 
 /** Every page id, for `useTabParam` (unknown `?tab=` values fall back). */
 export const AGENT_PAGE_IDS: readonly AgentPageId[] = [
@@ -68,11 +69,22 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
 /** Sections in order, each with its pages in order. */
 export const SECTIONS: readonly { id: SectionId; label: string; pages: readonly AgentPageId[] }[] = [
   { id: "chat", label: "Chat", pages: ["chat"] },
-  { id: "behaviour", label: "Instructions", pages: ["instructions", "memory", "skills", "evals"] },
-  { id: "triggers", label: "Automations", pages: ["schedules", "webhooks", "channels", "peers"] },
+  { id: "triggers", label: "Automations", pages: ["schedules", "webhooks", "channels"] },
   { id: "computer", label: "Computer", pages: ["computer", "terminal", "files", "previews", "ssh", "connect"] },
-  { id: "access", label: "Apps & access", pages: ["access"] },
+  // (D-408) One page with a sub-nav; Pause and Delete sit in its danger zone. `peers` (Other agents) moved here from Automations
+  // with its page id kept (P5-REFINE-12 renames and fills it).
+  { id: "settings", label: "Settings", pages: ["instructions", "access", "memory", "skills", "evals", "peers"] },
 ];
+
+/** The one-line lead under a Settings page's name (the old menu's descriptions). */
+export const SETTINGS_LEAD: Partial<Record<AgentPageId, string>> = {
+  instructions: "Name, instructions, model",
+  access: "Apps, accounts and the AI key it uses",
+  memory: "What it remembers",
+  skills: "What it knows how to do",
+  evals: "Checks that tell you whether it still does the job",
+  peers: "Which other agents it may ask",
+};
 
 /** Page id → its section (the one mapping). */
 export const SECTION_OF: Record<AgentPageId, SectionId> = Object.fromEntries(
