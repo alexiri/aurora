@@ -297,12 +297,83 @@ be exactly right. Not Haiku.
 
 (Fill in when done; P5-REFINE-20 reads this.)
 
-- **Items done** (scope items 1–11, with commit ids):
-- **Contract text changed from the draft, and why:**
-- **Deviations from this brief, and why:**
-- **Level rule:** how `level` is computed for each subject, and any case the rule did not cover:
-- **Performance:** p50/p95 of the workspace feed with 20 items, and of `counts`:
-- **Screenshots compared:** none (backend brief); list the API responses attached for the mockups' data (setup-5, setup-8,
-  channels-3) instead:
-- **Gate counts:** fmt, clippy, cargo tests (names and numbers), guards, schema check, OpenAPI, web typecheck:
-- **Open questions for the owner:**
+- **Items done** (scope items 1–11, one commit on `alexiri/p5-agent`, see the lane's worker_done): 1 contracts (05 rows,
+  C-1080/C-1081 corrections at build, C-1022/C-1030/C-1047/C-940 marked amended); 2 migration `20261201000263` (+ an index
+  for the asker's history) and `03`; 3 reason on both asks; 4 decline with a message (organization and Administration
+  routes, 404 across levels); 5 history (`status=history` on the organization list and the asker's own list,
+  `REQUEST_HISTORY_DAYS = 30`, purge still 90); 6 `level`, `message`, `closed_by_role`, `closed_by`, `Asker.reason`; 7 the
+  three feeds (`domains/attention/`, `admin::attention` keeps C-1022's six kinds); 8 `GET /v1/attention/counts`; 9 notice
+  sentences name the role; 10 web client (`attention.ts`: `useAttentionFeed`, `useAttentionCounts`, `attentionKeys`;
+  `app-setup-requests.ts`: reasons, `useDeclineSetup` takes `id` or `{ id, message }`, `useOrgSetupHistory`,
+  `useAdminRequests`, `useAdminDeclineRequest`, `useMyRequests(ws, status)`), `openapi.json`/`schema.d.ts` regenerated;
+  11 permission matrix (5 rows), SEC-135 in `17` and `security-coverage.md`.
+- **Who can read the free text, and why it cannot leak (SEC-135 amended):**
+  - *Reason* (`app_setup_request_askers.reason`): returned in `Asker.reason` only by `to_dto`, which filters the askers to
+    the caller's own ask for every non-admin viewer (`Viewer::Asker`); every asker's reason goes only to the owners and
+    admins of the request's own organization (`require_org_admin` on the org routes, `caller.org(org)` first, so another
+    organization's people get 404) and to instance admins (`InstanceAdmin` extractor on `/admin/*`). The feeds put the
+    first asker's reason in `AttentionItem.reason` only on the organization feed (owners/admins of that org) and
+    Administration's (instance admins); the workspace feed shows a person only their own (`my_request`). The admins'
+    notice quotes it in `detail` only (never `title`, which is also the mail subject).
+  - *Message* (`app_setup_requests.closed_message`): written by an admin of the request's level; shown to that request's
+    askers (their notice, their history with `Viewer::Asker`, their done feed) and to the admins who can see the request.
+    The decliner's **name** (`closed_by`) is never given to an asker; the organization list names only a decliner who was
+    an organization owner/admin (an instance admin is never named outside Administration, C-981).
+  - *Sanitising and bounds* (`app_setup_requests::service::free_text`): `sanitize::block` removes C0/C1 controls, DEL and
+    every Unicode `Cf` character (bidi overrides, zero-width), collapses spaces, keeps at most two line breaks, trims; empty
+    → absent; more than 300 characters → 400 `invalid_request` at `/reason` or `/message`. The columns also `CHECK`
+    1..300. *Links:* stored as typed (plain text, the web renders text, never Markdown or links); quoted in a notice only
+    through `quote()`: one line, first 140 characters, and `sanitize::break_preview_urls` so no mail client or push
+    preview turns an address into a link (tested: no `https://` in the notice). Never given to an agent or a prompt (no
+    agent-facing route reads these tables; the gateway role has no grant), never audited (`has_reason`, `has_message`
+    only; tested).
+  - Agents' own words (`AccessRequest.reason`) and action-approval summaries are **not** copied into feed items.
+- **Contract text changed from the draft, and why:** see C-1080's and C-1081's "Corrections at build" in
+  `API_CONTRACTS.md`: the app rule (below); `broken_account` is the workspace accounts list's set (as the Overview reads
+  it today), counted also for people who cannot fix it; `access_request` shown to `can_own` only; done-request actors
+  include the people a request resolved for (their ask row is deleted on resolution); Administration `done` has request
+  kinds only; sentences, actions and topics fixed; `status=history` is a new value; a re-ask without a reason keeps the
+  stored one; `closed_by` scoping. C-1082 is "a constant number of bounded queries per level" (workspace 5, organization 1,
+  Administration 6: C-1022's five sources and the requests), not one, and no sentence building for requests.
+- **Deviations from this brief, and why:** (a) `domains/apps/guide_render.rs` (the setup guide's "OAuth clients (ask an
+  organization admin: Adam Admin)") now names the role only (acceptance 6, D-407); its unit test and two `app_setup.rs`
+  assertions updated. Not changed: the chat-channel replies "Ask <workspace owners> to bind an agent" in
+  `channels/inbox` (they point to workspace owners, not administrators, and the channels lane owns them), and `WhoCan.people`
+  (the web's "Ask <name>" wording is P5-REFINE-1's). (b) `http/json.rs` gains `JsonOrEmpty` (an optional body) so the
+  setup-request ask and both declines stay valid with no body. (c) `repo/approvals.rs` gains `list_decided_for` (the
+  feed's done approvals; reuses `may_decide`). (d) The `attention_feed.rs` ITs are a child module of `app_setup.rs`
+  (they reuse its world). (e) Acceptance 2's scenario uses a chat platform: an app request cannot be Administration-level
+  today (below).
+- **Level rule:** one function, `app_setup_requests::level::of` (feeds, lists, declines, counts). App: from the request's
+  stored `needs`/`unavailable` (re-evaluated on each readiness change and every 10 minutes) through `need_fixer` (need →
+  role, the same roles `setup.rs` puts in `who_can`): every need is `org_admin` today, so **every app request is
+  `organization`**; the mockup's "Needs an Atlassian sign-in app that only an instance admin can register" cannot occur
+  until readiness has an instance-only need (then it is one row of that table). Chat platform: `administration` while no
+  connector of the asked type (any) is `active` (computed in the request query), else `organization`. AI key:
+  `organization`. A declined request keeps the level that declined it (`closed_by_role`).
+- **Performance:** not yet measured — other lanes' builds and tests were running the whole time (perf only when the machine
+  is idle). Shape: the workspace feed is 5 bounded queries (≤ 200 rows each) + slugs + names + one registry snapshot; the
+  counts skip the slugs, names and snapshot.
+- **Screenshots compared:** none (backend brief). The data for the mockups is asserted in `attention_feed.rs`:
+  setup-5 ("Mia Member wants a chat platform" / "Your organization has no chat platform connected." / "Connect a chat
+  platform", Administration level, `topics["chat-platforms"]`), setup-8 (decline with a message: notice "An admin isn't
+  setting up an AI key now" + "They wrote: …", history with message and role), channels-3 (`reason` on the ask, shown to
+  the admins).
+- **Tests changed:** `services/aurora-api/tests/it/app_setup_requests.rs` (the decline mail subject now names the role);
+  `app_setup.rs` (two guide assertions: role only; mounts `attention_feed`); new `attention_feed.rs` (5 tests);
+  `permission_matrix.rs` (5 rows); new `crates/aurora-db/tests/it/app_setup_request_reason_migration.rs`; unit tests in
+  `level.rs`, `attention/text.rs`, `guide_render.rs` (updated). Removed: none. Web: no test file changed (no component
+  changed); the hooks keep their old call shapes. Playwright: no spec references the changed strings (`e2e/app-setup-requests.spec.ts`
+  mocks the decline by path; unchanged); no production spec to list.
+- **Gate counts (2026-11-20, throwaway Postgres `pg-p5-agent`):** `cargo fmt --check` clean; clippy `-D warnings`
+  aurora-api + aurora-db `--all-targets` clean; `cargo test -p aurora-api --test it app_setup` 37 passed (the 5 new
+  included), `admin_attention` 6 passed (C-1022 shape unchanged), `permission_matrix` 5 passed, `openapi_matches_checked_in`
+  1 passed; `cargo test -p aurora-api --lib -- attention:: app_setup_requests:: guide_render` 5 passed; `cargo test -p
+  aurora-db --test it -- app_setup_request_reason migration_order schema_matches` 4 passed; `scripts/guards/run-all.sh` all
+  passed; `extract-schema.py --check` up to date; `pnpm gen:api` regenerated; `pnpm typecheck` clean; eslint on the two
+  touched files clean; vitest `setup-request-row`, `ask-admin`, `admin-attention`, `org-apps-table`, `connect-journey`,
+  `polish-7`, `context-switcher`, `access-request-card`: 8 files, 108 passed.
+- **Open questions for the owner:** (1) Should an app ever be Administration-level (e.g. an instance-only sign-in app or
+  server)? Today readiness has no such need, so Bob's Jira request of the mockup lands at the organization. (2) Should a
+  broken organization account count on every workspace's rail for people who cannot fix it (the contract's rule, built),
+  or only for the people who can?

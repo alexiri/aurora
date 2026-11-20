@@ -14,6 +14,7 @@ import {
 import { ApiError } from "@/lib/api/client";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
+import { chooseService } from "./support/llm";
 
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
@@ -110,10 +111,10 @@ function open(extra: Record<string, Handler> = {}) {
   return fn;
 }
 
+const SERVICE: Record<string, string> = { bed: "Bedrock EU", az: "Azure", vx: "Vertex" };
 async function pick(endpoint: string) {
-  await screen.findByText(/Bedrock EU/);
-  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "k" } });
-  fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: endpoint } });
+  await chooseService(SERVICE[endpoint]!);
+  fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "k" } });
 }
 
 describe("LLM key form per auth mode (C-811)", () => {
@@ -201,8 +202,6 @@ describe("LLM key form per auth mode (C-811)", () => {
     // The other mode is the plain resource key.
     fireEvent.click(within(group).getByLabelText(/Resource key/));
     expect(screen.getByLabelText("API key")).toBeTruthy();
-    // An endpoint that serves a harness says so in the picker.
-    expect(screen.getByRole("option", { name: /Bedrock EU — Claude models on AWS\. Works with Claude Code\./ })).toBeTruthy();
   });
 
   it("takes a GCP service account key file or pasted JSON, and sends it as the value", async () => {
@@ -295,12 +294,19 @@ describe("LLM key modes (pure helpers)", () => {
 
 // P5-REFINE-18 #16 (setup-7): provider names only, and no "Allowed key scopes" line.
 describe("LLM key form: words (setup-7)", () => {
-  it("lists endpoints by display name with no provider id, and says nothing about key scopes", async () => {
+  it("asks which service the key is for with one card per service: the name and one plain line, no provider id, nothing about key scopes (access-9)", async () => {
     open();
-    await pick("bed");
-    const option = screen.getByRole("option", { name: /Bedrock EU/ });
-    expect(option.textContent).toBe("Bedrock EU — Claude models on AWS. Works with Claude Code.");
-    expect(option.textContent).not.toContain("(bedrock)");
+    expect(await screen.findByRole("radiogroup", { name: "Which service is this key for?" })).toBeTruthy();
+    const card = screen.getByRole("radio", { name: /^Bedrock EU/ });
+    const text = card.closest("label")!.textContent!;
+    expect(text).toBe("BEBedrock EUClaude models on AWS. Works with Claude Code.");
+    expect(text).not.toContain("(bedrock)");
     expect(document.body.textContent).not.toContain("Allowed key scopes");
+    // Next waits for a choice; the key comes after it.
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.queryByLabelText("Name")).toBeNull();
+    fireEvent.click(card);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByLabelText("Name")).toBeTruthy();
   });
 });

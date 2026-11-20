@@ -10,7 +10,8 @@ import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
 import { LoadMore } from "@/components/ui/load-more";
-import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
+import { copyToClipboard } from "@/components/agents/terminal-clipboard";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,8 @@ import {
   roleOptions,
   useAllMembers,
   useCancelInvitation,
+  useInvitationLink,
+  useResendInvitation,
   useInvitations,
   usePatchMember,
   useRemoveMember,
@@ -350,9 +353,23 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   );
 }
 
-function Invitations({ orgId }: { orgId: string }) {
+function Invitations({ orgId, mailOn }: { orgId: string; mailOn: boolean }) {
   const invites = useInvitations(orgId);
   const cancel = useCancelInvitation(orgId);
+  const makeLink = useInvitationLink(orgId);
+  const resend = useResendInvitation(orgId);
+  const [note, setNote] = useState<string | null>(null);
+  // (org-4, D-418) Copy re-issues the link (the old one stops working) and puts the new one on the clipboard; it is never shown.
+  async function copy(id: string, email: string) {
+    setNote(null);
+    try {
+      const r = await makeLink.mutateAsync(id);
+      const ok = await copyToClipboard(r.link);
+      setNote(ok ? `Invitation link copied. Send it to ${email.split("@")[0]} yourself.` : "Couldn't copy the link. Try again.");
+    } catch {
+      // The error notice below says what went wrong.
+    }
+  }
   const now = useWhenNow();
   if (invites.isPending) return <Loading />;
   if (invites.isError) return <ErrorState error={invites.error} onRetry={() => invites.refetch()} />;
@@ -360,7 +377,12 @@ function Invitations({ orgId }: { orgId: string }) {
   if (items.length === 0) return <EmptyState title="No pending invitations" />;
   return (
     <div className="space-y-3">
-      <ErrorNotice error={cancel.error} />
+      <ErrorNotice error={cancel.error ?? makeLink.error ?? resend.error} />
+      {note ? (
+        <p role="status" className="text-sm text-ink-2" data-testid="invite-copied">
+          {note}
+        </p>
+      ) : null}
       {/* (P5-REFINE-17, org-13) Stacked cards under 900 px: the e-mail, who invited and the role, then the actions. */}
       <ResponsiveTable
         caption="Pending invitations"
@@ -381,15 +403,19 @@ function Invitations({ orgId }: { orgId: string }) {
         rows={items}
         rowKey={(i) => i.id}
         actions={(i) => (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={cancel.isPending}
-            aria-label={`Cancel invitation for ${i.email}`}
-            onClick={() => cancel.mutate(i.id)}
-          >
-            Cancel
-          </Button>
+          <>
+            <Button variant="outline" size="sm" disabled={makeLink.isPending} aria-label={`Copy invitation link for ${i.email}`} onClick={() => void copy(i.id, i.email)}>
+              Copy invitation link
+            </Button>
+            {mailOn ? (
+              <Button variant="outline" size="sm" disabled={resend.isPending} aria-label={`Resend invitation to ${i.email}`} onClick={() => resend.mutate(i.id)}>
+                Resend
+              </Button>
+            ) : null}
+            <Button variant="outline" size="sm" disabled={cancel.isPending} aria-label={`Cancel invitation for ${i.email}`} onClick={() => cancel.mutate(i.id)}>
+              Cancel
+            </Button>
+          </>
         )}
       />
     </div>
@@ -432,9 +458,11 @@ export function MembersView({ orgId, viewer }: { orgId: string; viewer: OrgRole 
       <Section id="invites" title="Pending invitations">
         <div className="space-y-3">
           {instance.data?.email_delivery === "log" ? (
-            <Notice role="status">Email is not configured: invitation links are written to the server log.</Notice>
+            <p className="text-sm text-ink-2" role="status">
+              E-mail isn&apos;t set up, so copy each invitation link and send it yourself.
+            </p>
           ) : null}
-          <Invitations orgId={orgId} />
+          <Invitations orgId={orgId} mailOn={instance.data?.email_delivery !== "log"} />
         </div>
       </Section>
     </div>

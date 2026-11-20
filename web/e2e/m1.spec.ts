@@ -72,6 +72,8 @@ test("sign-in (dev IdP) -> workspace -> invite -> accept", async ({ page, browse
   await dialog.getByLabel("Role").selectOption("member");
   await dialog.getByLabel("Research").selectOption("member"); // P2-012: per-workspace access select (was a checkbox)
   await dialog.getByRole("button", { name: "Create invitation" }).click();
+  // (P5-REFINE-17 org-4) The created state offers Copy invitation link; Done closes it.
+  await dialog.getByRole("button", { name: "Done" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText(emailB).first()).toBeVisible();
 

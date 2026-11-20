@@ -6,7 +6,7 @@
 //! line); no manifest body, no setting value, no secret. The same sentences feed the dashboard,
 //! the e-mail and (when the device asked for names) the push.
 
-use super::dto::{AttentionItem, AttentionKind, AttentionList};
+use super::dto::{AttentionItem, AttentionKind, AttentionLevel, AttentionList};
 use crate::app::AppState;
 use crate::domains::auth::mail::Mail;
 use crate::domains::connectors::manifest;
@@ -231,6 +231,16 @@ pub async fn notify_key_changed(
 // GET /v1/admin/attention (C-1022)
 // ---------------------------------------------------------------------------------------------
 
+/// (P5-REFINE-8, C-1080) The rail topic of a C-1022 kind.
+fn topic_of(kind: AttentionKind) -> &'static str {
+    use crate::domains::attention::service::{TOPIC_APPS, TOPIC_CHAT, TOPIC_PEOPLE};
+    match kind {
+        AttentionKind::ConnectorApproval | AttentionKind::ConnectorDown => TOPIC_CHAT,
+        AttentionKind::OwnerlessOrg => TOPIC_PEOPLE,
+        _ => TOPIC_APPS,
+    }
+}
+
 fn item(
     kind: AttentionKind,
     subject_id: String,
@@ -238,20 +248,36 @@ fn item(
     since: chrono::DateTime<chrono::Utc>,
     href: String,
 ) -> AttentionItem {
-    AttentionItem {
-        decision: kind.is_decision(),
+    // (C-1080) "Review" for a decision, "Open" for an item that only informs; the href is C-1022's.
+    let label = if kind.is_decision() { "Review" } else { "Open" };
+    AttentionItem::new(
         kind,
+        AttentionLevel::Administration,
+        topic_of(kind),
         subject_id,
-        title: text.0,
-        detail: text.1,
+        text,
         since,
-        href,
-    }
+        href.clone(),
+    )
+    .action(label, href)
 }
 
-/// Computed on read from existing tables: decisions first (oldest first within a kind group),
-/// then the items that are only informative.
-pub async fn list(s: &AppState) -> Result<AttentionList, ApiError> {
+/// `GET /v1/admin/attention` (C-1022, C-1080): open, the six kinds and the requests of the
+/// Administration level; `done`, the requests closed in the last 30 days (the six kinds have no
+/// "closed" record, C-1080's corrections).
+pub async fn list(s: &AppState, done: bool) -> Result<AttentionList, ApiError> {
+    let mut items = if done {
+        Vec::new()
+    } else {
+        open_items(s).await?
+    };
+    items.extend(crate::domains::attention::service::admin_request_items(s, done).await?);
+    Ok(crate::domains::attention::service::list_of(items, done))
+}
+
+/// The six C-1022 kinds, computed on read from existing tables: decisions first (oldest first within a
+/// kind group), then the items that are only informative.
+pub async fn open_items(s: &AppState) -> Result<Vec<AttentionItem>, ApiError> {
     let mut items = Vec::new();
     for c in repo::connector_candidates(&s.pool).await? {
         let stored = c.manifest.as_ref();
@@ -314,7 +340,7 @@ pub async fn list(s: &AppState) -> Result<AttentionList, ApiError> {
     }
     info.sort_by_key(|i| i.since);
     items.extend(info);
-    Ok(AttentionList { items })
+    Ok(items)
 }
 
 // ---------------------------------------------------------------------------------------------

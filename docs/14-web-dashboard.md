@@ -2885,6 +2885,25 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 
   The ownerless-organization banner (FIX-050) stays. Built from the shared `Card`-less panel pattern,
   tokens only: both themes, no horizontal scroll at 390 px, axe clean.
+- **One feed per level** (P5-REFINE-8, D-417, D-407, C-1080..C-1082; the screens are P5-REFINE-16, -17
+  and -18's). The workspace (`GET /v1/workspaces/{ws}/attention`), the organization
+  (`GET /v1/orgs/{org}/attention`) and Administration (`GET /v1/admin/attention`) serve the same item: kind,
+  title, detail, since, the askers, the first asker's reason, one action, and a done state kept 30 days.
+  A request appears at the one level that can resolve it, and the rail of whoever can act shows
+  `GET /v1/attention/counts`. The API's sentences (`domains/attention/text.rs`):
+  | Kind | Title | Detail | Action |
+  |---|---|---|---|
+  | `app_request` | "Bob Builder wants Jira" ("… and Carol Member want …", "…, Carol Member and 2 others want …") | by need, naming the **role**: "Needs a sign-in app for Jira that only an organization admin can register.", "Needs a Jira server that only an organization admin can register.", "Needs set-up that only an organization admin can do.", "Jira is switched off for the organization; only an organization admin can switch it on." ("an instance admin" at Administration) | **Set up** |
+  | `chat_platform_request` | "Carol Member wants a chat platform" | "Your organization has no chat platform connected." | **Connect a chat platform** (a row may say **Connect**) |
+  | `ai_key_request` | "… wants an AI key" | "Your organization has no AI key its agents can use." | **Add an AI key** |
+  | `approval` | "<Agent> is waiting for your approval" | "It wants to use <App>." / "It wants to reach <host>." | **Review** |
+  | `access_request` | "<Agent> asks for <App>" / "… for a token for <host>" | "Give it access from the agent's Apps & access tab." | **Review** |
+  | `broken_account` | "<Account>: the sign-in expired" / "<Account> stopped working" | the reason; for people who cannot fix it, "Ask a workspace owner." / "Ask an organization admin." | **Sign in again** / **Fix**, or none |
+  | `my_request` (own, never counted) | "You asked for Jira" | "Waiting for an organization admin." (the web adds "since Tuesday"); done: "An admin isn't setting up Jira now" / "Jira is ready" | none |
+
+  Text that points to an administrator names the **role**, never a person (D-407): the asker of a declined
+  request reads "An admin isn't setting up <thing> now" and the decliner's optional message as "They
+  wrote: …"; the request's optional reason is shown to the admins who can resolve it.
 - **Administration › Overview** is the setup checklist until setup is complete, then a health page built
   from the same facts:
   - runners, the gateway and AI endpoints;

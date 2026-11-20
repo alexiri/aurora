@@ -23,7 +23,8 @@ function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: Request | string | URL) => {
-      const req = input as Request;
+      // `useMe` fetches a plain path: build a Request for it.
+      const req = typeof input === "string" ? new Request(new URL(input, "http://localhost")) : (input as Request);
       const url = new URL(req.url, "http://localhost");
       const key = `${req.method} ${url.pathname}`;
       const text = req.method === "GET" || req.method === "DELETE" ? "" : await req.clone().text();
@@ -621,5 +622,21 @@ describe("Chat platforms lead with platforms (P5-REFINE-18 #7, admin-6)", () => 
     expect(await list.findByText("Added")).toBeInTheDocument();
     expect(list.queryByRole("button", { name: "Add Mattermost" })).toBeNull();
     expect(list.getByRole("button", { name: /^Manage / })).toBeInTheDocument();
+  });
+});
+
+describe("Readiness from the host (admin-5, C-1068)", () => {
+  it("never says waiting while a host runs, shows replicas, and names the next step with a way to the organization's page", async () => {
+    mockFetch({
+      "GET /v1/admin/connectors": () => json(200, { items: [{ ...mmConnector, status: "active", host_running: true, next_step: "owner_connects", replicas: [{ replica_id: "r1" }] }] }),
+      "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, added: true }])),
+      "GET /v1/me": () => json(200, { user: { id: "u", display_name: "A", email: "a@x.io", is_instance_admin: true }, memberships: [{ org: { id: "o", slug: "acme", name: "Acme" }, role: "owner", status: "active", workspaces: [] }] }),
+    });
+    wrap(<ConnectorsAdminView />);
+    const list = within(await screen.findByRole("list", { name: "Chat platforms" }));
+    expect(await list.findByText(/Next: an organization owner connects/)).toBeInTheDocument();
+    expect(await list.findByRole("link", { name: "Open Acme's Chat platforms" })).toHaveAttribute("href", "/o/acme/chat-platforms");
+    expect(list.getByText(/1 replica · Ready/)).toBeInTheDocument();
+    expect(screen.queryByText("Waiting for the chat platform host")).toBeNull();
   });
 });

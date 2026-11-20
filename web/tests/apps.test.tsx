@@ -130,6 +130,29 @@ describe("availability editor", () => {
   });
 });
 
+describe("sign-in app Test (org-10, C-1070)", () => {
+  it("says Ready (not tested), tests, and words the result", async () => {
+    let tested = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: Request) => {
+      const u = new URL(input.url);
+      if (u.pathname === "/v1/workspaces/w1/oauth-clients") {
+        return json(200, { items: [{ id: "c1", scope: "workspace", package_id: "p", client_key: "main", fields: { client_id: "abc" }, enabled: true, connection_count: 0, created_at: "", updated_at: "", state: tested ? "ready" : "ready_not_tested", test: tested ? { result: "ok", at: new Date().toISOString() } : null }] });
+      }
+      if (u.pathname === "/v1/oauth-clients/c1/test") {
+        tested = true;
+        return json(200, { result: "ok", checked_at: new Date().toISOString() });
+      }
+      return json(200, { items: [] });
+    }));
+    wrap(<OAuthClientsPanel scope={{ kind: "workspace", id: "w1" }} canOwn />);
+    expect(await screen.findByTestId("oauth-state")).toHaveTextContent("Ready (not tested)");
+    fireEvent.click(screen.getByRole("button", { name: "Test" }));
+    expect(await screen.findByText(/Test passed .*the provider answered and the client ID was accepted/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Test again" })).toBeInTheDocument();
+    expect(screen.getByTestId("oauth-state")).toHaveTextContent("Ready");
+  });
+});
+
 describe("oauth client secrets", () => {
   const client = { id: "c1", scope: "workspace", package_id: "p", client_key: "main", fields: { client_id: "abc" }, enabled: true, connection_count: 0, created_at: "", updated_at: "" };
   it("omits untouched secrets on patch", () => {

@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { wrap } from "./support/render";
+import { chooseService } from "./support/llm";
 import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
@@ -385,11 +386,10 @@ describe("Give agents access step", () => {
       json(201, sec({ id: "s1", kind: "llm", name: "Team key", llm: { endpoint_id: "aigw", provider: "litellm", auth_mode: "api_key" }, origin: { status: "verified", method: "endpoint", value_version: 1 } }));
     routes["GET /v1/workspaces/w1/agents"] = () => json(200, { items: [agent("a1", "Daneel")], next_cursor: null });
     wrap(<LlmKeyForm scope={{ kind: "workspace", id: "w1" }} orgId="o1" />);
-    await screen.findByText(/AI gateway/);
+    await chooseService("AI gateway");
     const box = await screen.findByRole("checkbox", { name: "Daneel can use this key" });
     expect(box).toBeChecked();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team key" } });
-    fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: "aigw" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     expect(await screen.findByText("Saved Team key")).toBeTruthy();
@@ -409,10 +409,9 @@ describe("Give agents access step", () => {
     routes["POST /v1/workspaces/w1/secrets"] = () => json(201, sec({ id: "s1", kind: "llm", name: "Team key", llm: { endpoint_id: "aigw", provider: "litellm", auth_mode: "api_key" }, origin: null }));
     routes["GET /v1/workspaces/w1/agents"] = () => json(200, { items: [agent("a1", "Daneel"), agent("a2", "Giskard")], next_cursor: null });
     wrap(<LlmKeyForm scope={{ kind: "workspace", id: "w1" }} orgId="o1" />);
-    await screen.findByText(/AI gateway/);
+    await chooseService("AI gateway");
     expect(await screen.findByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team key" } });
-    fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: "aigw" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     await screen.findByText("Saved Team key");
@@ -420,10 +419,9 @@ describe("Give agents access step", () => {
     cleanup();
     routes["POST /v1/orgs/o1/secrets"] = () => json(201, sec({ id: "s2", scope: "organization", kind: "llm", name: "Org key", llm: { endpoint_id: "aigw", provider: "litellm", auth_mode: "api_key" }, origin: null }));
     wrap(<LlmKeyForm scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    await screen.findByText(/AI gateway/);
+    await chooseService("AI gateway");
     expect(screen.queryByRole("checkbox", { name: /can use this key/ })).toBeNull();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Org key" } });
-    fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: "aigw" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-2" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     expect(await screen.findByRole("region", { name: "Give agents access" })).toBeTruthy();

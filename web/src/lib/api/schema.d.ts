@@ -234,7 +234,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** What needs an instance admin's attention (C-1022): decisions first, then informational items. */
+        /**
+         * What needs an instance admin's attention (C-1022): decisions first, then informational items.
+         *     (P5-REFINE-8, C-1080) Plus the requests only an instance admin can resolve; `state=done`: those closed
+         *     in the last 30 days.
+         */
         get: operations["adminAttention"];
         put?: never;
         post?: never;
@@ -808,6 +812,46 @@ export interface paths {
         get: operations["adminListRelays"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (C-1081) The setup requests whose resolving level is Administration (C-1080), of every organization;
+         *     `status=history`: closed in the last 30 days. Instance admins only.
+         */
+        get: operations["adminListRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/requests/{id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * (C-1081) Decline a request of the Administration level with an optional message; each asker is told
+         *     once, by role. 404 for a request of the organization level.
+         */
+        post: operations["adminDeclineRequest"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2831,6 +2875,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/attention/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (C-1082) The rails' numbers: per level the caller can act on and asked for, the count and the topics,
+         *     equal to the matching feed's `count`; `null` otherwise (never 403 or 404). Any signed-in person.
+         */
+        get: operations["attentionCounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/cli": {
         parameters: {
             query?: never;
@@ -4342,7 +4406,7 @@ export interface paths {
         };
         /**
          * The organization's app setup requests (`status=open` by default), the latest ask first. Owners and
-         *     admins only; anyone else gets 404.
+         *     admins only; anyone else gets 404. (C-1081) `status=history`: closed in the last 30 days, every level.
          */
         get: operations["listAppSetupRequests"];
         put?: never;
@@ -4362,8 +4426,32 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** "Not now": closes the request as declined; each asker is told once. Owners and admins only. */
+        /**
+         * "Not now": closes the request as declined; each asker is told once, by role (D-407). Owners and admins
+         *     only. (C-1081) An optional body `{ message }` the askers read with the notice; a request of the
+         *     Administration level is 404 here (C-1080).
+         */
         post: operations["declineAppSetupRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (C-1080) The requests the organization's owners and admins can resolve. Owners and admins; 404 for a
+         *     non-member, 403 for a member.
+         */
+        get: operations["orgAttention"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6092,10 +6180,33 @@ export interface paths {
         /**
          * Ask the organization's owners and admins to make an app ready (C-1030). `can_own` of the workspace.
          *     Idempotent per person; 409 `app_ready` when the app is ready already; 429 after 20 asks in an hour.
+         *     (C-1081) An optional body `{ reason }` (plain text, at most 300 characters); a new reason replaces the
+         *     person's.
          */
         post: operations["askAppSetup"];
         /** Withdraw the caller's ask; the request closes when no asker is left. */
         delete: operations["withdrawAppSetup"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (P5-REFINE-8, C-1080) What needs the caller in a workspace: approvals they may decide, agents' access
+         *     requests (workspace owners), accounts that stopped working, and their own waiting requests (`own`,
+         *     never counted). Any active member; 404 otherwise.
+         */
+        get: operations["workspaceAttention"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6377,13 +6488,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The caller's own open requests of every subject, each with only their own ask (C-1047). */
+        /**
+         * The caller's own open requests of every subject, each with only their own ask (C-1047). (C-1081)
+         *     `status=history`: theirs that ended in the last 30 days, with the message and the role, never a name.
+         */
         get: operations["listMySetupRequests"];
         put?: never;
         /**
          * Ask the organization's admins for a chat platform or an AI key (or, with `subject: "app"`, for an app),
          *     C-1047. Any active member of the workspace. Idempotent per person; 409 `already_available`; 429 after
-         *     20 asks in an hour (all subjects together).
+         *     20 asks in an hour (all subjects together). (C-1081) An optional `reason`.
          */
         post: operations["askSetupRequest"];
         delete?: never;
@@ -7366,7 +7480,7 @@ export interface components {
             block_untooled: boolean;
             custom_only: boolean;
         };
-        /** @description An organization's request for an app to be made ready (C-1030). There is no free text. */
+        /** @description An organization's request for an app to be made ready (C-1030). */
         AppSetupRequest: {
             /** @description The app id for `app`; `""` for the other subjects. */
             app_id: string;
@@ -7376,12 +7490,18 @@ export interface components {
             askers: components["schemas"]["Asker"][];
             /** Format: date-time */
             closed_at?: string | null;
+            closed_by?: components["schemas"]["ClosedBy"] | null;
+            closed_by_role?: components["schemas"]["ClosedByRole"] | null;
             /** @description `chat_platform` only: the connector type asked for. */
             connector_type?: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: uuid */
             id: string;
+            /** @description (P5-REFINE-8, C-1080) The level that can resolve it. */
+            level: components["schemas"]["RequestLevel"];
+            /** @description (C-1081) The decliner's message to the askers: plain text, at most 300 characters. */
+            message?: string | null;
             /** @description What is missing (C-1029); empty when the app is switched off. */
             needs: components["schemas"]["SetupNeed"][];
             /** Format: uuid */
@@ -7626,6 +7746,11 @@ export interface components {
             /** Format: uuid */
             workspace_id: string;
         };
+        /** @description (C-1081) The optional body of `POST /workspaces/{ws}/apps/{app}/setup-request`. */
+        AskBody: {
+            /** @description Why the person needs it: plain text, 1..300 characters after trimming. */
+            reason?: string | null;
+        };
         /** @description (P5-UX-16, C-982) What asked the question: the agent's access, or a rule. */
         AskedBy: {
             /** Format: uuid */
@@ -7654,6 +7779,11 @@ export interface components {
             /** Format: date-time */
             asked_at: string;
             display_name: string;
+            /**
+             * @description (P5-REFINE-8, C-1081) The asker's own "Why do you need it?": plain text, at most 300 characters.
+             *     Owners, admins and instance admins see every asker's; a member sees only their own ask.
+             */
+            reason?: string | null;
             /** Format: uuid */
             user_id: string;
             /** Format: uuid */
@@ -7692,32 +7822,104 @@ export interface components {
              */
             turn_id?: string | null;
         };
-        /** @description One thing that needs an instance admin: a fixed sentence filled with names and versions. */
+        /** @description (C-1080) The one primary action. */
+        AttentionAction: {
+            href: string;
+            label: string;
+        };
+        /** @description (C-1080) A person behind an item: display name only, never an e-mail. */
+        AttentionActor: {
+            display_name: string;
+            /** Format: uuid */
+            user_id: string;
+        };
+        /** @description `GET /attention/counts` (C-1082): `null` for every scope the caller cannot act on or did not ask for. */
+        AttentionCounts: {
+            administration?: components["schemas"]["LevelCount"] | null;
+            organization?: components["schemas"]["OrgCount"] | null;
+            workspace?: components["schemas"]["WorkspaceCount"] | null;
+        };
+        /** @description One thing that needs someone at a level: a fixed sentence filled with names (C-1022, C-1080). */
         AttentionItem: {
+            action?: components["schemas"]["AttentionAction"] | null;
+            /** @description (C-1080) The askers (at most 5, oldest first); empty for kinds without people. */
+            actors: components["schemas"]["AttentionActor"][];
+            /**
+             * Format: int64
+             * @description (C-1080) How many askers in all.
+             */
+            actors_total: number;
+            /** @description (C-1080) The caller may decline it (request kinds at the caller's level). */
+            can_decline: boolean;
+            /**
+             * Format: date-time
+             * @description (C-1080) `state=done`: when it closed.
+             */
+            closed_at?: string | null;
+            closed_by?: components["schemas"]["ClosedBy"] | null;
+            closed_by_role?: components["schemas"]["ClosedByRole"] | null;
             /** @description The administrator has to decide (approve, reject, choose); informational items are `false`. */
             decision: boolean;
             detail: string;
-            /** @description The dashboard page that resolves it. */
+            /** @description The dashboard page that resolves it (equals `action.href` when there is an action). */
             href: string;
+            /** @description (C-1080) Stable: the request id for request kinds, `<kind>:<subject_id>` for the others. */
+            id: string;
             kind: components["schemas"]["AttentionKind"];
+            /** @description (C-1080) */
+            level: components["schemas"]["AttentionLevel"];
+            /** @description (C-1080, C-1081) The decline message (plain text, at most 300 characters). */
+            message?: string | null;
+            /** @description (C-1080) The caller's own request (`my_request`); never counted. */
+            own: boolean;
+            /** @description (C-1080, C-1081) The first asker's reason (plain text, at most 300 characters); null otherwise. */
+            reason?: string | null;
             /**
              * Format: date-time
              * @description When the item first appeared (or the row last changed, for an item that predates the notice table).
              */
             since: string;
-            /** @description The connector id, the package or source id, or the organization slug. */
+            /** @description (C-1080) */
+            state: components["schemas"]["AttentionState"];
+            /**
+             * @description The connector id, the package or source id, the organization slug, the request, approval,
+             *     access request or account id.
+             */
             subject_id: string;
             title: string;
+            /**
+             * @description (C-1080) The rail's page that resolves it: `chat-platforms`, `apps`, `ai-models`, `people`,
+             *     `approvals`, `accounts`.
+             */
+            topic: string;
         };
         /**
          * @description (FIX-167 Part B, C-1022) What an item of `GET /v1/admin/attention` is about.
          * @enum {string}
          */
-        AttentionKind: "connector_approval" | "package_approval" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org";
-        /** @description `GET /v1/admin/attention` (C-1022): decisions first, oldest first; computed on read. */
+        AttentionKind: "connector_approval" | "package_approval" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org" | "app_request" | "chat_platform_request" | "ai_key_request" | "approval" | "access_request" | "broken_account" | "my_request";
+        /**
+         * @description (C-1080) The level an item belongs to.
+         * @enum {string}
+         */
+        AttentionLevel: "workspace" | "organization" | "administration";
+        /**
+         * @description `GET /v1/admin/attention` (C-1022), `GET /v1/workspaces/{ws}/attention` and `GET /v1/orgs/{org}/attention`
+         *     (C-1080): decisions first, oldest first; `state=done` newest first; computed on read.
+         */
         AttentionList: {
+            /**
+             * Format: int64
+             * @description (C-1080) What the rail shows: the open items with `own: false`.
+             */
+            count: number;
             items: components["schemas"]["AttentionItem"][];
         };
+        /**
+         * @description (C-1080) `open`, or for `state=done`: `done` (resolved, decided) or `declined`.
+         * @enum {string}
+         */
+        AttentionState: "open" | "done" | "declined";
         AuditEntry: {
             action: string;
             /** Format: uuid */
@@ -7934,6 +8136,15 @@ export interface components {
             id: string;
             used_by_methods: components["schemas"]["MethodRef"][];
         };
+        /** @description (C-1081) The person who declined, by display name only. */
+        ClosedBy: {
+            display_name: string;
+        };
+        /**
+         * @description (P5-REFINE-8, C-1081) Who closed a request, as a role (D-407: never a name for the asker).
+         * @enum {string}
+         */
+        ClosedByRole: "org_admin" | "instance_admin" | "system";
         /** @description (P5-REFINE-4, C-1059) What a person sees of the computer (the header and the Computer page). */
         ComputerView: {
             /** @description `stopped` or `unprovisioned` with no failure (the header's "Asleep"). */
@@ -8897,6 +9108,11 @@ export interface components {
              */
             always?: boolean | null;
             decision: components["schemas"]["Decision"];
+        };
+        /** @description (C-1081) The optional body of a decline. */
+        DeclineBody: {
+            /** @description A message the askers read with the notice: plain text, 1..300 characters after trimming. */
+            message?: string | null;
         };
         /** @enum {string} */
         DefaultAction: "none" | "allow" | "block";
@@ -10138,6 +10354,18 @@ export interface components {
          * @enum {string}
          */
         Level: "read" | "ask" | "act";
+        /** @description One level's rail number and its topics. */
+        LevelCount: {
+            /**
+             * Format: int64
+             * @description C-1080's `count` for the level.
+             */
+            count: number;
+            /** @description The open items per `topic` (only topics with items). */
+            topics: {
+                [key: string]: number;
+            };
+        };
         /**
          * @description (P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's own token screen for one access level, in
          *     the app's own words ("Contents · Read"). For a token method the levels are the journey's `read` and `write`.
@@ -10697,6 +10925,8 @@ export interface components {
             app_id?: string | null;
             /** @description Subject `chat_platform`: the connector type id (optional). */
             connector_type?: string | null;
+            /** @description (C-1081) Why the person needs it: plain text, 1..300 characters after trimming (optional). */
+            reason?: string | null;
             /** @description `app` | `chat_platform` | `ai_key`. */
             subject: string;
         };
@@ -10897,6 +11127,15 @@ export interface components {
              * @default []
              */
             source_cidrs: string[];
+        };
+        OrgCount: {
+            /** Format: int64 */
+            count: number;
+            /** Format: uuid */
+            org_id: string;
+            topics: {
+                [key: string]: number;
+            };
         };
         OrgEgress: {
             /** @default [] */
@@ -13697,6 +13936,11 @@ export interface components {
             /** Format: int64 */
             seq: number;
         };
+        /**
+         * @description (P5-REFINE-8, C-1080) The level that can resolve a request; computed on read, never stored.
+         * @enum {string}
+         */
+        RequestLevel: "organization" | "administration";
         RequestLogEntry: {
             /** Format: uuid */
             agent_id: string;
@@ -15850,6 +16094,15 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        WorkspaceCount: {
+            /** Format: int64 */
+            count: number;
+            topics: {
+                [key: string]: number;
+            };
+            /** Format: uuid */
+            workspace_id: string;
+        };
         /** @description (C-964) What one workspace's published policy sets below its organization. */
         WorkspaceOverride: {
             /** @description The workspace's default rule: `none`, `allow` or `block`. */
@@ -16932,7 +17185,10 @@ export interface operations {
     };
     adminAttention: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `open` (default) | `done` (closed in the last 30 days). */
+                state?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -16945,6 +17201,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttentionList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
@@ -19272,6 +19536,140 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListRequests: {
+        parameters: {
+            query?: {
+                /** @description `open` (default) | `history` (the last 30 days). */
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSetupRequestList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeclineRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Request id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Optional */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DeclineBody"] | null;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSetupRequest"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description already_closed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -27796,6 +28194,55 @@ export interface operations {
             };
         };
     };
+    attentionCounts: {
+        parameters: {
+            query?: {
+                /** @description The organization whose rail asks. */
+                org?: string;
+                /** @description The workspace whose rail asks. */
+                workspace?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttentionCounts"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     startCliLogin: {
         parameters: {
             query?: never;
@@ -34520,7 +34967,10 @@ export interface operations {
     listAppSetupRequests: {
         parameters: {
             query?: {
-                /** @description `open` (default) | `resolved` | `declined` | `withdrawn`. */
+                /**
+                 * @description `open` (default) | `resolved` | `declined` | `withdrawn` | `history` (closed `resolved` or
+                 *     `declined` in the last 30 days, newest first, every level; C-1081).
+                 */
                 status?: string | null;
             };
             header?: never;
@@ -34588,7 +35038,12 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DeclineBody"] | null;
+            };
+        };
         responses: {
             200: {
                 headers: {
@@ -34596,6 +35051,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppSetupRequest"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
@@ -34617,6 +35080,73 @@ export interface operations {
             };
             /** @description already_closed */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    orgAttention: {
+        parameters: {
+            query?: {
+                /** @description `open` (default) | `done` (closed in the last 30 days). */
+                state?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttentionList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -42798,7 +43328,12 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AskBody"] | null;
+            };
+        };
         responses: {
             200: {
                 headers: {
@@ -42806,6 +43341,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppSetupRequest"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
@@ -42872,6 +43415,65 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    workspaceAttention: {
+        parameters: {
+            query?: {
+                /** @description `open` (default) | `done` (closed in the last 30 days). */
+                state?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttentionList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
             401: {
@@ -44008,7 +44610,10 @@ export interface operations {
     };
     listMySetupRequests: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `open` (default) | `history` (the last 30 days). */
+                status?: string | null;
+            };
             header?: never;
             path: {
                 /** @description Workspace id */
@@ -44024,6 +44629,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppSetupRequestList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */

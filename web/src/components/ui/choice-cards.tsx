@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,8 @@ export interface ChoiceCardOption<T extends string> {
   badge?: string;
   /** The card cannot be chosen (its `description` says why). */
   disabled?: boolean;
+  /** A tile before the text (a logo or initials). */
+  icon?: ReactNode;
 }
 
 /**
@@ -57,11 +59,16 @@ export function ChoiceCards<T extends string>({
             className="peer sr-only"
           />
           <span className="block min-h-11 cursor-pointer rounded-control border border-line bg-surface p-3 hover:border-line-strong peer-checked:border-accent peer-checked:bg-accent-soft peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-accent dark:bg-canvas dark:peer-checked:bg-accent-soft">
-            <span className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold text-ink">{o.label}</span>
-              {o.badge ? <Badge tone="accent">{o.badge}</Badge> : null}
+            <span className={cn(o.icon && "flex items-center gap-3")}>
+              {o.icon}
+              <span className="block min-w-0">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-ink">{o.label}</span>
+                  {o.badge ? <Badge tone="accent">{o.badge}</Badge> : null}
+                </span>
+                {o.description ? <span className="mt-1 block text-sm text-ink-2">{o.description}</span> : null}
+              </span>
             </span>
-            {o.description ? <span className="mt-1 block text-sm text-ink-2">{o.description}</span> : null}
           </span>
         </label>
       ))}

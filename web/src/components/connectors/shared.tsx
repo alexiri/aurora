@@ -57,6 +57,10 @@ export function connectorStatus(c: ConnectorAdmin): { label: string; tone: "neut
   if (c.managed && failing) {
     return { label: failing.message ? `Error: ${failing.message}` : "Error", tone: "danger" };
   }
+  // (P5-REFINE-18 admin-5, C-1068) One readiness: a connector whose host is running is never "waiting for the host".
+  if (c.status === "awaiting_registration" && c.managed && c.host_running) {
+    return { label: "Connector host running", tone: "neutral" };
+  }
   if (c.status === "awaiting_registration") {
     return { label: c.managed ? "Waiting for the chat platform host" : "Waiting for the chat platform", tone: "neutral" };
   }

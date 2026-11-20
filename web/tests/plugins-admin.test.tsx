@@ -202,17 +202,23 @@ describe("UploadForm", () => {
       json(422, {
         error: {
           code: "package_invalid",
-          message: "invalid",
-          details: { violations: [{ code: "bad_egress", path: "/hooks/0", message: "host not allowed" }] },
+          message: "That isn't an app package. Upload the .tar.gz that `aurora plugin pack` makes.",
+          details: { violations: [{ code: "archive_corrupt", path: "/hooks/0", message: "invalid gzip header", sentence: "That isn't an app package. Upload the .tar.gz that `aurora plugin pack` makes." }] },
         },
       }),
     );
     wrap(<UploadForm />);
-    const file = new File(["x"], "p.tar.gz");
-    fireEvent.change(screen.getByLabelText("Plugin package"), { target: { files: [file] } });
+    const file = new File(["x"], "notes.txt");
+    fireEvent.change(screen.getByLabelText("App package"), { target: { files: [file] } });
+    expect(screen.getByTestId("chosen-package")).toHaveTextContent("notes.txt");
+    expect(screen.getByRole("button", { name: "Choose another" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Upload" }));
-    expect(await screen.findByText("bad_egress")).toBeInTheDocument();
-    expect(screen.getByText(/host not allowed/)).toBeInTheDocument();
+    // (admin-12, C-1071) The sentence is shown; the code and the validator's words are under Technical details.
+    expect((await screen.findAllByText(/That isn't an app package/)).length).toBeGreaterThan(0);
+    const fold = screen.getByText("Technical details").closest("details")!;
+    expect(fold.textContent).toContain("archive_corrupt");
+    expect(fold.textContent).toContain("invalid gzip header");
+    expect(screen.getByRole("list", { name: "Violations" }).textContent).not.toContain("archive_corrupt");
     expect((calls[0].body as FormData).get("package")).toBeTruthy();
   });
 });

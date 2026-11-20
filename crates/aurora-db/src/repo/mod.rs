@@ -13,6 +13,7 @@ pub mod app_setup_requests;
 pub mod approval_notify;
 pub mod approvals;
 pub mod attachments;
+pub mod attention;
 pub mod audit;
 pub mod automations;
 pub mod availability;
