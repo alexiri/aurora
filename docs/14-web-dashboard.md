@@ -1326,11 +1326,19 @@ guides keep working.
 
 **Administration entry and level** (C-962):
 - **Administration** is a labelled link at the foot of the sidebar and in the account menu.
-- (FIX-167 Part B, D-370, C-1022) For instance admins the entry carries the **count of items that need
-  attention** as a `Badge` (`pending` tone, "3" with the visually hidden text "need your attention"), in
-  the sidebar and in the account menu. The count is `GET /v1/admin/attention`'s item count, fetched on
-  load, on window focus and every 5 minutes. A failed fetch, or no item, shows no badge and never an
-  error. Nobody else fetches it.
+- (FIX-167 Part B, D-370, C-1022; P5-REFINE-18 item 18, C-1082) For instance admins the entry carries the **count of
+  items that need attention** (`CountBadge`, the amber `AttentionChip`: "3" with the visually hidden text "3 need
+  your attention"), on **every** Administration entry: the sidebar-foot link, the account-menu entry and **Overview**
+  in the Administration rail (the total). **Apps & accounts**, **Chat platforms** and **People** carry only their own
+  part (`administration.topics`), so one request is counted once per place by design (Overview is the total, the
+  topic a part of it). The numbers are `GET /v1/attention/counts` (`useAttentionCounts`, shared with the workspace
+  and organization badges): fetched on load, on window focus and every 5 minutes, and again after any mutation
+  succeeds (`useRefreshAttentionOnMutation`), so the count drops without a reload. A failed fetch, a zero, or `null`
+  (everyone who is not an instance admin) shows no badge and never an error.
+- (P5-REFINE-17 item 17, G3, C-1082) For an organization's owners and admins the same badge sits on the switcher's
+  **Manage <org>** row, on the closed switcher (current organization) and in the Manage area's sub-nav (Overview =
+  total, a topic = its own part: Apps & accounts, Chat platforms, AI models; on a phone the select reads "Chat
+  platforms (2)"). It counts the organization's open requests (C-1080 `organization`); nobody else sees one.
 - The org switcher lists organizations only; "All organizations" is gone.
 - Every page header carries a level badge: **Administration**, **<org>** or **<org> › <workspace>**.
 - An instance admin acting in an org sees the org's pages exactly as its owner would.
@@ -1499,10 +1507,20 @@ every other topic is owners/admins and is not listed for a member.)
   `visibleTopics("org", …)`: a member keeps Overview, AI models and Internet access). The switcher's **Manage <org>** row
   (was "Organization settings") opens the Overview; its last row **New organization** opens a dialog (shown where sign-up
   lets the person create one). Every old address keeps working (C-960).
-- **Overview** (`/o/<org>`): **Needs you** (requests for apps, chat platforms and AI keys an admin can resolve, and the
-  invitations waiting), **People** (count, invitations waiting, **Invite**), **Workspaces** (team first, personal
+- **Overview** (`/o/<org>`): **Needs you** (the organization's attention feed, `GET /v1/orgs/{org}/attention`: requests
+  for apps, chat platforms and AI keys an admin can resolve, in the one row shape of every level, the asker's avatar,
+  title, detail, their reason in quotes, the primary action and **Decline**, with a count chip; the invitations waiting
+  follow as an uncounted line; a **History** fold lists what closed in 30 days), **People** (count, invitations waiting, **Invite**), **Workspaces** (team first, personal
   below, **New workspace**), **Agents** (the five most recently changed, **All agents**) and the two rules that apply
   (AI models, Internet access). Members see Workspaces and the two rules only.
+- **Chat platforms** (`/o/<org>/chat-platforms`, P5-REFINE-17 org-1): "Let people talk to agents from the chat tools <org>
+  already uses." One row per connectable platform (icon, name, "Ready · connector running", the **Ready** status line
+  and **Connect**: the same readiness as Administration, a running host that serves the type means connectable). Under
+  the row an owner or admin reads who asked: "Carol Member asked for Mattermost. Connect it and Carol gets a notice."
+  with **Connect Mattermost** (from the open chat-platform requests, `GET /v1/orgs/{org}/app-setup-requests`; an ask
+  with no named platform is one line under the list). **History of internet rules** (org-14, C-1087) reads "Alice added
+  ‘Block tracker’" / "Alice added ‘A’ and removed ‘B’" / "Alice changed 3 rules" with the person's avatar, **Current**
+  or **Roll back to this**; a version with no change list reads "Alice published version 4".
 - **Agents** opens on **Agents** (every agent by workspace: team workspaces A–Z, then personal ones by owner), then
   **Bring your own** (with Previews as a second section) and **Skills**, the last two Expert (behind "Show more
   controls"). The list reads each workspace's agents until the organization-wide route (C-1090) lands.
@@ -2650,11 +2668,14 @@ has not expired." / "Aurora could not reach <App> (<host>)." / "<App> answered w
   it sees **Ask <Name>** instead of a dead end (the journey, P5-POLISH-5; the Apps tab, P5-POLISH-7). The
   request is per organization and app, a second person's ask joins it, and it holds no free text. Every
   owner and admin of the organization sees it in the **Needs you** card of the workspace Overview ("Bob and
-  Carol want Google Calendar", one line on what is missing, **Set up** and **Not now**), gets one e-mail
+  Carol want Google Calendar", one line on what is missing, **Set up** and **Decline**), gets one e-mail
   (folded per hour) and one push, and the app's row in Organization › Apps shows who asked (P5-POLISH-9).
   It closes by itself when the app becomes ready for the asker (each asker is told once and their journey
-  offers the app); a person may withdraw it (Undo); **Not now** tells the askers in one sentence who is not
-  setting it up.
+  offers the app); a person may withdraw it (Undo). **Decline** (P5-REFINE-18 item 13, C-1081; was "Not now") opens
+  one dialog everywhere a request is shown (Needs you, Organization › Apps, Administration): "Decline Carol’s
+  request?" / "Carol Member asked for a chat platform. They will be told you declined." with an optional **Message
+  for Carol** (at most 300 characters, "Carol sees this with the notice."), **Cancel** and **Decline**; the askers are
+  told once, by role, with the message.
 - **Asking for a chat platform or an AI key (P5-APIGAP-2, D-399, C-1047).** The same ask, with a subject
   other than an app. **Ask <Name>** (the first owner or admin; "Asked <Name> · Undo" afterwards, the app
   journey's control and wording, `useAskRequest`/`AskAdmin`) appears on an agent's **Channels** tab when the
@@ -2868,11 +2889,15 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   - The editor toolbar wraps; tab bars show no stray scrollbar; labels never double "(optional)"; help
     links are text, never raw URLs.
   - The admin landing never flashes "You are not in an organization yet".
-- **Administration › Overview** opens, in both modes, with **Needs your attention** (FIX-167 Part B, D-370,
-  C-1022; none of it when `GET /v1/admin/attention` has no item, is loading or failed). It is a
-  `pending`-toned panel like **Needs you** below. Each item shows its **title**, its **detail**, "Since
-  <date>" and one button to its `href`: **Review** (a decision) or **Open** (information). Decisions come
-  first, oldest first. The sentences are fixed and filled with names and versions only:
+- **Administration › Overview** opens, in both modes, with **Needs you** (FIX-167 Part B, D-370, C-1022; P5-REFINE-18
+  item 13, C-1080: the card is `GET /v1/admin/attention`'s feed in the one row shape of every level and has a count
+  chip; none of it when the feed has no item, is loading or failed). It is a `pending`-toned panel. Each item shows
+  the asker's avatar (requests), its **title**, its **detail**, the asker's reason in quotes and one button to its
+  `href` (`action.label`): **Review** (a decision), **Open** (information), **Set up** or **Connect a chat platform**
+  (requests only an instance admin can resolve); a request also has **Decline** (the dialog of §Asking for an app).
+  A closed **History** fold lists what was set up or declined in the last 30 days (with the decline message and who
+  closed it, by role). The Health view's headline reads "Aurora is running. 2 requests are waiting for you." when
+  requests wait. Decisions come first, oldest first. The sentences are fixed and filled with names and versions only:
   | Kind | Title | Detail |
   |---|---|---|
   | `connector_approval`, first registration | "<name> needs your approval" | "This connector registered for the first time and does nothing until you approve it." |

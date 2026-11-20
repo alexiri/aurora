@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
@@ -67,7 +67,7 @@ describe("the words of a setup request", () => {
 });
 
 describe("Needs you: app setup requests (P5-POLISH-4)", () => {
-  it("shows an owner or admin the request with Set up and Not now (one asker)", async () => {
+  it("shows an owner or admin the request with Set up and Decline (one asker)", async () => {
     mockApi("admin", [request()]);
     wrap(<NeedsYou wsId="ws1" orgId="org1" base="/o/acme/w/main" />);
     expect(await screen.findByText("Bob Builder wants Google Calendar")).toBeTruthy();
@@ -99,13 +99,16 @@ describe("Needs you: app setup requests (P5-POLISH-4)", () => {
     expect(calls.some((u) => u.includes("app-setup-requests"))).toBe(false);
   });
 
-  it("Not now confirms, names who will be told, and declines", async () => {
+  it("Decline asks for an optional message, names who will be told, and declines (setup-8, C-1081)", async () => {
     const declined = mockApi("admin", [request({ askers: [asker("Bob Builder", "u1"), asker("Carol Chen", "u2")] })]);
     wrap(<NeedsYou wsId="ws1" orgId="org1" base="/o/acme/w/main" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
-    expect(screen.getByText("2 people will be told you aren't setting up Google Calendar now.")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Decline" }));
+    const dialog = await screen.findByRole("dialog", { name: "Decline Bob and Carol’s request?" });
+    expect(dialog.textContent).toContain("Bob Builder and Carol Chen asked for Google Calendar. Each of them will be told you declined.");
+    expect(screen.queryByRole("button", { name: "Not now" })).toBeNull();
     expect(declined).toEqual([]);
-    fireEvent.click(screen.getAllByRole("button", { name: "Not now" }).at(-1)!);
+    fireEvent.change(screen.getByLabelText("Message for Bob and Carol (optional)"), { target: { value: "Next month." } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Decline" }));
     await waitFor(() => expect(declined).toEqual(["r1"]));
   });
 });

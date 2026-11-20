@@ -7,48 +7,17 @@ import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
 import { InviteDialog } from "@/components/org/invite-dialog";
 import { peopleLine } from "@/components/org/members-view";
 import { AgentRow, useOrgAgents } from "@/components/org/org-agents-list";
-import { SetupRequestItem } from "@/components/overview/setup-request-row";
+import { NeedsYouOrg } from "@/components/org/needs-you-org";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
-import { useOrgSetupRequests } from "@/lib/api/app-setup-requests";
 import { useAllMembers, useInvitations } from "@/lib/api/org";
 import { useMe, useOrg, useResolve, useWorkspaces } from "@/lib/api/queries";
 import { orgRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { workspaceDisplayName } from "@/lib/workspace-name";
-
-function NeedsYouOrg({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
-  const setups = useOrgSetupRequests(orgId, true);
-  const invites = useInvitations(orgId);
-  const requests = setups.data ?? [];
-  const waiting = invites.data?.items.length ?? 0;
-  if (requests.length === 0 && waiting === 0) return null;
-  return (
-    <section aria-labelledby="org-needs-you-h" className="rounded-card border border-pending-line bg-pending-panel p-4 text-ink sm:p-5">
-      <h2 id="org-needs-you-h" className="font-display text-base font-semibold text-pending-ink">
-        Needs you
-      </h2>
-      <ul className="mt-3 space-y-2" aria-label="Waiting for you">
-        {requests.map((r) => (
-          <SetupRequestItem key={r.id} request={r} orgBase={orgRoutes(orgSlug).base} orgId={orgId} />
-        ))}
-        {waiting > 0 ? (
-          <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control bg-surface px-3 py-2 text-sm">
-            <span className="min-w-0 flex-1">
-              {waiting} {waiting === 1 ? "invitation is" : "invitations are"} waiting for an answer.
-            </span>
-            <Link href={`${orgRoutes(orgSlug).base}/people`} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-              See invitations
-            </Link>
-          </li>
-        ) : null}
-      </ul>
-    </section>
-  );
-}
 
 function PeopleCard({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
   const members = useAllMembers(orgId);

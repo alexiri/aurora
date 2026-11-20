@@ -328,7 +328,7 @@ function AdminNavList({ pathname }: { pathname: string }) {
                     label={ADMIN_RAIL_LABEL[t]}
                     icon={TOPIC_ICON[t]!}
                     active={topicActive(pathname, href, t)}
-                    badge={t === "overview" ? <AttentionBadge /> : undefined}
+                    badge={t === "overview" ? <AttentionBadge /> : <AttentionBadge topic={t} />}
                   />
                 );
               })}
@@ -433,7 +433,8 @@ function SidebarContent({
   // The admin navigation is for instance admins only (the page guard already refuses everyone else; the nav must not
   // advertise it to a signed-in member who typed an /admin path, WEBA-11).
   const isInstanceAdmin = useMe().data?.user.is_instance_admin === true;
-  useRefreshAttentionOnMutation(isInstanceAdmin);
+  // (P5-REFINE-17 #17) Organization owners and admins have a count too: any success refetches the active count queries.
+  useRefreshAttentionOnMutation(true);
   const resolved = useResolve(orgSlug);
   useRememberReturn(orgSlug, wsSlug, resolved.data?.org.name, !inAdmin);
   const wsName = resolved.data?.workspace?.name;

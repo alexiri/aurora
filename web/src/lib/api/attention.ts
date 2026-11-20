@@ -11,8 +11,6 @@ export type AttentionItem = components["schemas"]["AttentionItem"];
 export type AttentionList = components["schemas"]["AttentionList"];
 export type AttentionCounts = components["schemas"]["AttentionCounts"];
 
-export const attentionKey = ["admin", "attention"] as const;
-
 /** (P5-REFINE-8, C-1080/C-1082) The feeds and the counts share the `["attention"]` prefix: one invalidation refreshes both. */
 export const attentionKeys = {
   all: ["attention"] as const,
@@ -75,32 +73,18 @@ export function useAttentionCounts({ org, workspace }: { org?: string; workspace
 export const ATTENTION_REFETCH_MS = 5 * 60_000;
 
 /**
- * `GET /v1/admin/attention` (C-1022): what needs an instance admin. `enabled` is false for everyone else
- * (the route answers 403). A failed fetch is not retried and not shown: the badge simply hides.
- */
-export function useAdminAttention(enabled = true) {
-  return useQuery({
-    queryKey: attentionKey,
-    queryFn: () => unwrap(api.GET("/v1/admin/attention")),
-    enabled,
-    retry: false,
-    staleTime: 30_000,
-    refetchOnWindowFocus: true,
-    refetchInterval: ATTENTION_REFETCH_MS,
-  });
-}
-
-/**
- * (P5-REFINE-18 #18) The count drops without a reload: any mutation that succeeds may have resolved an item
- * (an approval, a decision, a connected platform), so the attention query is refetched, once per success. Only an
- * active query refetches, so a person without the badge fetches nothing.
+ * (P5-REFINE-18 #18, P5-REFINE-17 #17) The count drops without a reload: any mutation that succeeds may have resolved an
+ * item (an approval, a decision, a connected platform), so every attention query (feeds and counts) is refetched, once per
+ * success. Only an active query refetches, so a person without a badge fetches nothing.
  */
 export function useRefreshAttentionOnMutation(enabled: boolean): void {
   const qc = useQueryClient();
   useEffect(() => {
     if (!enabled) return;
     return qc.getMutationCache().subscribe((e) => {
-      if (e.type === "updated" && e.action.type === "success") void qc.invalidateQueries({ queryKey: attentionKey });
+      if (e.type === "updated" && e.action.type === "success") {
+        void qc.invalidateQueries({ queryKey: attentionKeys.all });
+      }
     });
   }, [qc, enabled]);
 }
