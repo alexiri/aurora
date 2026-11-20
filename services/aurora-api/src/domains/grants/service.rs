@@ -543,11 +543,15 @@ pub async fn grant_connection_access(
                 .await?
                 .ok_or_else(|| ApiError::not_found("Connection not found."))?;
             let snap = crate::domains::plugins::registry::active_typed_on(&mut tx).await?;
-            let tools = snap
-                .as_ref()
-                .and_then(|s| s.app(&conn.app_id))
-                .map(apps::tools)
-                .unwrap_or_default();
+            let entry = snap.as_ref().and_then(|s| s.app(&conn.app_id));
+            let tools = entry.map(apps::tools).unwrap_or_default();
+            // (C-1067, D-419) `read` on a send-only app is refused before it is expanded.
+            levels::require_offered(
+                level,
+                &tools,
+                entry.is_none_or(|a| a.grants.custom_only),
+                &conn.app_id,
+            )?;
             levels::expand(level, &tools)
         }
         (None, Some(mode)) => PutConnectionGrant {
@@ -1060,13 +1064,17 @@ async fn write_connection_grant(
             tx,
             state,
             agent,
-            &conn.app_id,
-            crate::domains::access_requests::service::level_of(
-                req.mode == GrantMode::Full,
-                &allow,
-                &ask,
-                &app_tools,
-            ),
+            &crate::domains::access_requests::service::Given {
+                app_id: &conn.app_id,
+                account: &conn.label,
+                send_only: levels::send_only(&app_tools),
+                level: crate::domains::access_requests::service::level_of(
+                    req.mode == GrantMode::Full,
+                    &allow,
+                    &ask,
+                    &app_tools,
+                ),
+            },
         )
         .await?;
     }

@@ -12,7 +12,8 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 /// `acc_app` has two read tools and one write tool; `acc_custom` is the same but `custom_only`;
-/// `acc_writes` has no read tool (the `read` level cannot expand to anything).
+/// `acc_writes` has no read tool (send-only: `read` is not offered, C-1067); `acc_none` has no
+/// tool at all (the `read` level expands to nothing, so the grant service refuses it).
 const YAML: &str = r#"package: { id: accpkg, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: P }
 permissions:
   token_hosts: [accounts.example.com]
@@ -88,6 +89,18 @@ apps:
       write:
         items:
           - { id: push, name: Push, host: api.wr.example, path: /push, methods: [POST] }
+  - about: { id: acc_none, name: Acc None, description: D, category: dev, web_hosts: [app.none.example] }
+    credentials:
+      - { name: api_token, secret: true, optional: true }
+    connect:
+      - id: api_key
+        kind: fields
+        fields:
+          - { name: api_token, label: T, type: secret, required: true }
+    hosts:
+      - match: { host: "api.none.example" }
+        inject:
+          - bearer: "{credentials.api_token}"
 "#;
 
 struct W {
@@ -301,12 +314,26 @@ async fn fields_connect_writes_the_account_and_each_level_expands_from_the_snaps
 #[tokio::test]
 async fn a_forced_failure_of_the_access_part_rolls_back_the_account_too() {
     let w = world().await;
-    // The `read` level of an app with no read tool expands to nothing: the grant service refuses
-    // it (`grant_invalid`) after the connection row was inserted, in the same transaction.
+    // (C-1067) A send-only app never takes `read`: refused before any write.
     let (s, v) = w
         .connect(
             &w.owner,
             "acc_writes",
+            w.body(
+                "api_key",
+                Some(json!({"agent_ids": [w.agent], "level": "read"})),
+            ),
+        )
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "level_not_offered", "{v}");
+    assert_eq!(w.count("app_connections").await, 0);
+    // The `read` level of an app with no tool expands to nothing: the grant service refuses
+    // it (`grant_invalid`) after the connection row was inserted, in the same transaction.
+    let (s, v) = w
+        .connect(
+            &w.owner,
+            "acc_none",
             w.body(
                 "api_key",
                 Some(json!({"agent_ids": [w.agent], "level": "read"})),

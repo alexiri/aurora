@@ -52,7 +52,7 @@ const CODE_LABEL: Record<string, string> = {
   timeout: "it took too long",
   no_stored_secret: "there is no stored secret to keep",
   secret_reentry_required: "the address, role or CA changed, so enter the secret again",
-  destination_refused: "this address is private, loopback or a metadata address; an operator can open it with gateway.allowed_private",
+  destination_refused: "Aurora can't reach private addresses; ask whoever installed Aurora to allow it",
   internal: "internal error",
 };
 

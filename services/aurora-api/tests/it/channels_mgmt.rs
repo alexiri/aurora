@@ -2917,6 +2917,57 @@ async fn probe_maps_connector_refusals() {
     );
 }
 
+/// (P5-REFINE-6, C-1089) The chat platforms a person can link: their organizations' connected
+/// integrations by kind, the bot to message, whether they linked; nothing of another
+/// organization and no workspace, channel or token data.
+#[tokio::test]
+async fn my_chat_platforms_lists_my_organizations_connected_platforms() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    sqlx::query(
+        "UPDATE channel_integrations SET shared_bot = '{\"platform_user_ref\": \"B1\", \"handle\": \"daneel\", \"display_name\": \"Daneel\"}' WHERE id = $1",
+    )
+    .bind(integ)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let (s, v) = w
+        .call(&w.plain, Method::GET, "/v1/me/chat-platforms", None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let p = &v["platforms"];
+    assert_eq!(p.as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(p[0]["kind"], "fake");
+    assert_eq!(p[0]["bot_handle"], "daneel");
+    assert_eq!(p[0]["linked"], false);
+    assert_eq!(
+        p[0].as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        ["bot_handle", "display_name", "kind", "linked"],
+        "no other data: {v}"
+    );
+    sqlx::query("INSERT INTO user_links (id, integration_id, platform_user_ref, user_id, method) VALUES ($1,$2,'U9',$3,'admin')")
+        .bind(Uuid::now_v7())
+        .bind(integ)
+        .bind(w.users.plain)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (_, v) = w
+        .call(&w.plain, Method::GET, "/v1/me/chat-platforms", None)
+        .await;
+    assert_eq!(v["platforms"][0]["linked"], true, "{v}");
+    // Someone outside the organization sees none of it.
+    let (s, v) = w
+        .call(&w.outsider, Method::GET, "/v1/me/chat-platforms", None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["platforms"], json!([]));
+}
+
 /// C-712: states per connector row, and a plain member sees names but no ids or e-mails.
 #[tokio::test]
 async fn connector_availability_states_and_instance_admin_names_only() {

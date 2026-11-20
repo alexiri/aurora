@@ -66,7 +66,7 @@ export function PolicyPresets({ children }: { children?: ReactNode }) {
 
   return (
     <div className="space-y-4">
-      <section aria-labelledby="presets-h" className="space-y-3 rounded-card border border-line bg-surface p-4" data-testid="policy-presets">
+      <section id="presets" aria-labelledby="presets-h" className="scroll-mt-24 space-y-3 rounded-card border border-line bg-surface p-4" data-testid="policy-presets">
         <div className="flex flex-wrap items-center gap-2">
           <h2 id="presets-h" className="font-display text-base font-semibold text-ink">
             How much may agents do here?

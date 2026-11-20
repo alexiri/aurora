@@ -17,7 +17,7 @@ import { ApiError } from "@/lib/api/client";
 import { lastScope } from "@/lib/nav/recent-scopes";
 import { pickRailWorkspace, useRailWorkspace, writeRailWorkspace } from "@/lib/nav/manage-return";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
-import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
+import { accountRoutes, ADMIN_RAIL_GROUPS, ADMIN_RAIL_LABEL, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
 import { useTimezoneAutofill } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
@@ -197,6 +197,7 @@ const TOPIC_ICON: Record<string, IconType> = {
   "chat-platforms": MessageIcon,
   data: ScrollIcon,
   platform: ServerIcon,
+  "set-in-helm": LockIcon,
   settings: SettingsIcon,
 };
 
@@ -300,25 +301,41 @@ export function AccountNavList({ pathname }: { pathname: string }) {
 
 function AdminNavList({ pathname }: { pathname: string }) {
   const instanceAdmin = useMe().data?.user.is_instance_admin === true;
+  const visible = new Set(visibleTopics("admin", { instanceAdmin }));
+  // (P5-REFINE-18 #1, rec 9) Overview, then what is decided for everyone, then what belongs to this installation.
   return (
-    <nav aria-label="Administration">
-      <ul className="space-y-0.5">
-        {visibleTopics("admin", { instanceAdmin }).map((t) => {
-          const href = topicHref("admin", t);
-          // (P5-REFINE-18 #18, C-1022/C-1080) Overview carries the total: the same count as the sidebar entry and the account menu.
-          return (
-            <NavItem
-              key={t}
-              tour={t}
-              href={href}
-              label={TOPIC_LABEL[t]}
-              icon={TOPIC_ICON[t]!}
-              active={topicActive(pathname, href, t)}
-              badge={t === "overview" ? <AttentionBadge /> : undefined}
-            />
-          );
-        })}
-      </ul>
+    <nav aria-label="Administration" className="space-y-3">
+      {ADMIN_RAIL_GROUPS.map((g) => {
+        const topics = g.topics.filter((t) => visible.has(t));
+        if (topics.length === 0) return null;
+        const headingId = g.label ? `admin-rail-${g.label.toLowerCase().replace(/\s+/g, "-")}` : undefined;
+        return (
+          <div key={g.label ?? "top"} role={g.label ? "group" : undefined} aria-labelledby={headingId} className="space-y-1">
+            {g.label ? (
+              <p id={headingId} className="px-2.5 text-label font-semibold uppercase tracking-label text-muted">
+                {g.label}
+              </p>
+            ) : null}
+            <ul className="space-y-0.5">
+              {topics.map((t) => {
+                const href = topicHref("admin", t);
+                // (P5-REFINE-18 #18, C-1022/C-1080) Overview carries the total: the same count as the sidebar entry and the account menu.
+                return (
+                  <NavItem
+                    key={t}
+                    tour={t}
+                    href={href}
+                    label={ADMIN_RAIL_LABEL[t]}
+                    icon={TOPIC_ICON[t]!}
+                    active={topicActive(pathname, href, t)}
+                    badge={t === "overview" ? <AttentionBadge /> : undefined}
+                  />
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
     </nav>
   );
 }

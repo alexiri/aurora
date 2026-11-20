@@ -131,20 +131,15 @@ export function SettingField({
       <div className="min-w-0 space-y-2">
         {locked ? (
           <div className="space-y-1">
-            <LockPill owner="Set by the installation" />
+            <LockPill owner="Set by the installation" settingKey={id} />
             <div className="break-words text-sm text-ink" data-testid={`${id}-locked-value`}>
               {lockedValue}
             </div>
-            <p className="text-xs text-muted">
-              Configured in Helm
-              {helmKey ? (
-                <>
-                  {" "}
-                  (<code className="font-mono">{helmKey}</code>)
-                </>
-              ) : null}
-              . Remove it from your values to manage it here.
-            </p>
+            {helmKey ? (
+              <p className="text-xs text-muted">
+                Set in your Helm values: <code className="font-mono">{helmKey}</code>
+              </p>
+            ) : null}
           </div>
         ) : (
           <>

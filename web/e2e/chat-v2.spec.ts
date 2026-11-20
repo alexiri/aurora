@@ -58,7 +58,9 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
     name: "archived-actions-menu",
     fx: fixtures.archived,
     query: () => "",
-    prepare: async (page) => {
+    prepare: async (page, phone) => {
+      // (chat-11) A phone opens the conversation itself; the list with Active/Archived is one tap back.
+      if (phone) await page.getByRole("button", { name: "Back to conversations" }).click();
       await page.getByRole("tab", { name: "Archived" }).click();
       await page.getByRole("button", { name: /Notion handbook review/ }).click();
       await page.getByRole("button", { name: "Conversation actions" }).click();

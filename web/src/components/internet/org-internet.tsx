@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { EgressTab } from "@/components/governance/egress-tab";
 import { InternetLevel, type GovernanceEditor } from "@/components/internet/internet-level";
+import { OrgPolicyPresets } from "@/components/policy/org-policy-presets";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { LoadMore } from "@/components/ui/load-more";
@@ -164,5 +165,11 @@ export function OrgInternet({ org, slug }: { org: Org; slug: string }) {
       </div>
     );
   }
-  return <OrgInternetBody org={org} slug={slug} eff={eff.data} revision={doc.data?.revision ?? 0} initial={formFromDocument(doc.data?.document, eff.data, instance.data)} />;
+  // (P5-REFINE-18 #2) The preset card writes the document too: the page starts again from the new revision.
+  return (
+    <div className="max-w-page space-y-6">
+      <OrgPolicyPresets org={org} part="internet" />
+      <OrgInternetBody key={doc.data?.revision ?? 0} org={org} slug={slug} eff={eff.data} revision={doc.data?.revision ?? 0} initial={formFromDocument(doc.data?.document, eff.data, instance.data)} />
+    </div>
+  );
 }

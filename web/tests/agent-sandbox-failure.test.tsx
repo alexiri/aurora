@@ -15,6 +15,15 @@ vi.mock("@/components/agents/delete-zone", () => ({ DeleteAgentDialog: () => nul
 
 import { AgentPage } from "@/components/agents/agent-page";
 import { ComputerTab } from "@/components/agents/computer-tab";
+import { ComputerStateLine } from "@/components/agents/computer-state";
+import { seedMoreControls } from "./support/render";
+
+/** A client with the person's "Show more controls" switch on (Wake it now, Restart and Sleep now are Set up controls). */
+const client = () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seedMoreControls(qc, true);
+  return qc;
+};
 
 type Handler = (req?: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
@@ -49,6 +58,8 @@ function routes(sandbox: Record<string, unknown>) {
         processes: [], ports: [], restart_to_update: false, ...sandbox,
       }),
     "GET /v1/agents/a1/start-failures": () => json(200, { items: [] }),
+    // (D-412) The machinery of a computer (the start attempt, the log) is for instance admins.
+    "GET /v1/me": () => json(200, { user: { id: "u1", display_name: "Ada", email: "a@b.c", is_instance_admin: true }, memberships: [], groups: [], approval_email: true }),
   };
 }
 
@@ -111,9 +122,10 @@ describe("agent header sandbox pill (FIX-025)", () => {
     expect(screen.getByText(/aurora-runner.aurora \(10.0.0.9\):4105/)).toBeTruthy();
     expect(screen.getByText("65 s after start")).toBeTruthy();
     expect(screen.getByText("BackOff: restarting failed container")).toBeTruthy();
-    // The top card says it in words: the computer couldn't start, and why.
-    expect(screen.getByTestId("computer-state").textContent).toBe("Scout's computer couldn't start");
-    expect(screen.getByRole("region", { name: "Computer" }).textContent).toContain("could not reach the runner");
+    // The state line above the page says it in words: the computer couldn't start, and why.
+    const words = screen.getByTestId("computer-state-words").textContent ?? "";
+    expect(words).toContain("Scout's computer couldn't start");
+    expect(words).toContain("could not reach the runner");
   });
 });
 
@@ -160,8 +172,8 @@ describe("Computer tab start log and retry (FIX-029)", () => {
     };
     mockFetch(rts);
     render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <ComputerTab agentId="a1" />
+      <QueryClientProvider client={client()}>
+        <ComputerStateLine agentId="a1" />
       </QueryClientProvider>,
     );
     const btn = await screen.findByRole("button", { name: "Try again" });
@@ -193,50 +205,51 @@ describe("Computer tab start log and retry (FIX-029)", () => {
   const renderTab = (sandbox: Record<string, unknown>, frozen = false) => {
     mockFetch(routes(sandbox));
     return render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <ComputerTab agentId="a1" frozen={frozen} />
+      <QueryClientProvider client={client()}>
+        <ComputerStateLine agentId="a1" agentName="Scout" frozen={frozen} />
       </QueryClientProvider>,
     );
   };
+  const words = async () => (await screen.findByTestId("computer-state-words")).textContent ?? "";
 
-  // (P5-POLISH-6, C5) The top card says the state in one sentence with the action that fits it: Restart only while awake
-  // (the API answers 409 elsewhere, FIX-049), Try again after a failed start.
+  // (P5-REFINE-15, D-408) The state line says the state in one sentence with the action that fits it: Restart only while
+  // on (the API answers 409 elsewhere, FIX-049), Try again after a failed start.
   it.each([
-    ["stopping", "is asleep"],
-    ["stopped", "is asleep"],
-    ["unprovisioned", "is asleep"],
-    ["starting", "is starting"],
-  ])("offers no Restart when the computer is %s", async (state, words) => {
+    ["stopping", "Stopping"],
+    ["stopped", "Scout's computer is off"],
+    ["unprovisioned", "Scout's computer is off"],
+    ["starting", "Starting Scout's computer"],
+  ])("offers no Restart when the computer is %s", async (state, expected) => {
     renderTab({ state });
-    expect((await screen.findByTestId("computer-state")).textContent).toContain(words);
+    expect(await words()).toContain(expected);
     expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
   });
 
-  it("offers Restart when the computer is awake", async () => {
+  it("offers Restart when the computer is on", async () => {
     renderTab({ state: "running" });
-    expect((await screen.findByTestId("computer-state")).textContent).toContain("is awake");
+    expect(await words()).toContain("Scout's computer is on");
     expect((screen.getByRole("button", { name: "Restart" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("offers Try again after a failed start, and nothing for a frozen agent (the API would answer 423)", async () => {
     renderTab({ state: "failed", failure_code: "pod_failed", retryable: true });
-    expect((await screen.findByTestId("computer-state")).textContent).toContain("couldn't start");
+    expect(await words()).toContain("couldn't start");
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     cleanup();
     renderTab({ state: "failed", failure_code: "pod_failed", retryable: true }, true);
-    await screen.findByTestId("computer-state");
+    await words();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 
   it("says when the computer sleeps, in words, and nothing when idle stop is off (P5-APIGAP-1, C-1046)", async () => {
     renderTab({ state: "running", idle_stop_after_secs: 1800 });
-    expect((await screen.findByRole("region", { name: "Computer" })).textContent).toContain("Sleeps after 30 minutes of quiet.");
+    expect(await words()).toContain("sleeps after 30 minutes of quiet");
     cleanup();
-    renderTab({ state: "stopped", idle_stop_after_secs: 3600 });
-    expect((await screen.findByRole("region", { name: "Computer" })).textContent).toContain("Sleeps after 1 hour of quiet.");
+    renderTab({ state: "running", idle_stop_after_secs: 3600 });
+    expect(await words()).toContain("sleeps after 1 hour of quiet");
     cleanup();
-    renderTab({ state: "stopped", idle_stop_after_secs: null });
-    expect((await screen.findByRole("region", { name: "Computer" })).textContent).not.toContain("Sleeps after");
+    renderTab({ state: "running", idle_stop_after_secs: null });
+    expect(await words()).not.toContain("sleeps after");
   });
 
   it("Wake it now posts the wake, stays pending until the status says starting, and is absent when awake or frozen (C-1045)", async () => {
@@ -251,8 +264,8 @@ describe("Computer tab start log and retry (FIX-029)", () => {
       },
     });
     render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <ComputerTab agentId="a1" />
+      <QueryClientProvider client={client()}>
+        <ComputerStateLine agentId="a1" />
       </QueryClientProvider>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Wake it now" }));
@@ -269,8 +282,13 @@ describe("Computer tab start log and retry (FIX-029)", () => {
     expect(screen.queryByRole("button", { name: "Wake it now" })).toBeNull();
   });
 
-  it("keeps the engine's details collapsed and says which pages are not set up, and who can turn them on", async () => {
-    renderTab({ state: "stopped" });
+  it("keeps the engine's details collapsed (admins only) and says which pages are not set up, and who can turn them on", async () => {
+    mockFetch(routes({ state: "stopped" }));
+    render(
+      <QueryClientProvider client={client()}>
+        <ComputerTab agentId="a1" agentName="Scout" />
+      </QueryClientProvider>,
+    );
     const details = (await screen.findByTestId("technical-details")) as HTMLDetailsElement;
     expect(details.open).toBe(false);
     expect(screen.getByTestId("missing-pages").textContent).toMatch(/Terminal, Files, Previews and SSH aren't set up on this Aurora\. An Aurora administrator can set this up\./);

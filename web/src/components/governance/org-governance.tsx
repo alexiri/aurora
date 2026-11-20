@@ -7,6 +7,7 @@ import { AskAdmin } from "@/components/ask-admin";
 import { ByoPanel } from "@/components/governance/byo-panel";
 import { Errors } from "@/components/governance/controls";
 import { ModelsTab } from "@/components/governance/models-tab";
+import { OrgPolicyPresets } from "@/components/policy/org-policy-presets";
 import { ErrorState, Loading } from "@/components/states";
 import { AiKeyTile } from "@/components/ui/ai-key-tile";
 import { Button } from "@/components/ui/button";
@@ -400,6 +401,7 @@ export function OrgAiModels({ org }: { org: Org }) {
     <GovernanceForm org={org} canEdit={canEdit} saved="Saved. Existing keys were re-checked against the new rules.">
       {({ form, patch, issues, readOnly, eff }) => (
         <div className="space-y-5">
+          <OrgPolicyPresets org={org} part="models" />
           <KeysNotice eff={eff} org={org} />
           <ScopeLadder
             above={modelLimitsFromAbove(eff)}

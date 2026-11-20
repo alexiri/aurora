@@ -90,7 +90,7 @@ test("1. fresh instance: the admin walks the five-step checklist to a working ch
   const dialog = page.getByRole("dialog", { name: "Add an organization AI key" });
   const form = dialog.getByRole("form", { name: "New LLM key" });
   await form.getByLabel("Name").fill("Mock LLM");
-  await form.getByLabel("Which service is this key for?").selectOption(ENDPOINT_ID);
+  await form.getByLabel("Provider").selectOption(ENDPOINT_ID);
   await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
   await dialog.getByRole("button", { name: "Add key" }).click();
   await expect(page.getByTestId("setup-toast")).toContainText("AI key added", { timeout: 60_000 });

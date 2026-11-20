@@ -5,7 +5,7 @@ import { visibleTopics } from "@/lib/api/roles";
 describe("visibleTopics (C-961)", () => {
   it("shows Administration's topics to instance admins only", () => {
     expect(visibleTopics("admin", { instanceAdmin: true })).toEqual([
-      "overview", "agents", "apps", "ai-models", "internet-access", "people", "chat-platforms", "data", "platform", "settings",
+      "overview", "internet-access", "agents", "apps", "chat-platforms", "people", "data", "platform", "ai-models", "set-in-helm", "settings",
     ]);
     expect(visibleTopics("admin", { instanceAdmin: false })).toEqual([]);
   });

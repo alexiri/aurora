@@ -104,6 +104,74 @@ pub async fn list_for_workspace<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P5-REFINE-6, C-1090) One agent of an organization, with its workspace.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OrgAgentRow {
+    pub id: Uuid,
+    pub name: String,
+    pub handle: String,
+    pub kind: String,
+    pub workspace_id: Uuid,
+    pub workspace_slug: String,
+    pub workspace_name: String,
+    /// The person whose personal workspace it is (`None` for a team workspace).
+    pub personal_owner_id: Option<Uuid>,
+    pub personal_owner_name: Option<String>,
+    pub harness: Option<String>,
+    /// The agent, its workspace or its organization is paused (frozen).
+    pub paused: bool,
+    /// When its newest turn was created; `None` when it never ran.
+    pub last_active_at: Option<DateTime<Utc>>,
+    /// (D-425) A turn is queued, dispatched or running (the keep-awake reason `turn`).
+    pub active_turn: bool,
+    /// (D-425) The hosted computer's facts (`None` without a sandbox row).
+    pub sandbox_state: Option<String>,
+    pub start_phase: Option<String>,
+    pub failure_code: Option<String>,
+    /// A busy process runs on the current boot (the keep-awake reason `process`).
+    pub busy_process: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// (C-1090) Every agent of `org`, personal workspaces included, newest first, keyset on
+/// `(created_at, id)`.
+pub async fn list_for_org<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    after: After,
+    fetch: i64,
+) -> Result<Vec<OrgAgentRow>, DbError> {
+    let (t, id) = split(after);
+    Ok(sqlx::query_as(
+        "SELECT a.id, a.name, a.handle, a.kind, w.id AS workspace_id, w.slug AS workspace_slug,
+                w.name AS workspace_name, pu.id AS personal_owner_id,
+                pu.display_name AS personal_owner_name, a.harness,
+                (a.frozen_at IS NOT NULL OR w.frozen_at IS NOT NULL OR o.frozen_at IS NOT NULL) AS paused,
+                (SELECT max(t.created_at) FROM turns t WHERE t.agent_id = a.id) AS last_active_at,
+                EXISTS (SELECT 1 FROM turns t WHERE t.agent_id = a.id AND (
+                    (t.role = 'turn' AND t.status IN ('queued','dispatched','running'))
+                    OR (t.role = 'followup' AND t.status = 'joining'))) AS active_turn,
+                s.state AS sandbox_state, s.start_phase, s.failure_code,
+                coalesce(EXISTS (SELECT 1 FROM processes p WHERE p.sandbox_id = s.id
+                    AND p.boot_id = s.boot_id AND p.status = 'running' AND p.busy), false) AS busy_process,
+                a.created_at
+           FROM agents a
+           JOIN workspaces w ON w.id = a.workspace_id
+           JOIN organizations o ON o.id = a.org_id
+           LEFT JOIN users pu ON pu.id = w.personal_owner_user_id
+           LEFT JOIN sandboxes s ON s.agent_id = a.id
+          WHERE a.org_id = $1
+            AND ($2::timestamptz IS NULL OR (a.created_at, a.id) < ($2, $3))
+          ORDER BY a.created_at DESC, a.id DESC LIMIT $4",
+    )
+    .bind(org)
+    .bind(t)
+    .bind(id)
+    .bind(fetch)
+    .fetch_all(exec)
+    .await?)
+}
+
 pub struct NewAgent<'a> {
     pub id: Uuid,
     pub org_id: Uuid,

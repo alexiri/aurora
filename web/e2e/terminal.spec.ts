@@ -129,9 +129,62 @@ test.describe("agent Terminal tab", () => {
     const before = pty.inputs!.join("");
     await page.keyboard.press("Escape");
     await page.keyboard.press("Tab");
-    await expect(page.getByRole("button", { name: "Open in new window" })).toBeFocused();
+    // (P5-REFINE-15) Focus lands on the control after the pane (it is only visible while focused; the pop-out is Expert).
+    await expect(page.getByRole("button", { name: "Leave the terminal (Esc, then Tab)" })).toBeFocused();
     expect(pty.inputs!.join("").replace(before, "")).not.toContain("\t");
     await expect(page.getByText("Left the terminal.")).toBeVisible();
+  });
+
+  // (P5-REFINE-15, computer-2) After the last retry the pane stops and says so; Try again opens a fresh connection.
+  test("after the last retry: 'Couldn't connect to the computer', no pane, Try again reconnects", async ({ page }) => {
+    test.setTimeout(90_000);
+    await mockApi(page);
+    let opens = 0;
+    await page.routeWebSocket(/\/v1\/agents\/[^/]+\/terminal$/, (ws) => {
+      opens += 1;
+      // 4503: the connection to the sandbox was lost (a retryable close the browser can see, unlike 1006).
+      void ws.close({ code: 4503, reason: "lost" });
+    });
+    await openTab(page);
+    const gaveUp = page.getByTestId("terminal-gave-up");
+    await expect(gaveUp).toBeVisible({ timeout: 45_000 });
+    await expect(gaveUp).toContainText("Couldn't connect to the computer");
+    await expect(gaveUp).toContainText("Tried 4 times. The computer didn't answer.");
+    await expect(page.getByText("Reconnecting…")).toHaveCount(0);
+    await expect(page.getByTestId("terminal-not-connected")).toBeVisible();
+    await expect(page.getByRole("group", { name: "Agent terminal" })).toBeHidden();
+    expect(opens).toBe(5);
+    await gaveUp.getByRole("button", { name: "Try again" }).click();
+    await expect.poll(() => opens, { timeout: 10_000 }).toBeGreaterThan(5);
+  });
+
+  test("the sentence above the pane says an open terminal keeps the computer awake", async ({ page }) => {
+    await mockWithTerminal(page, { output: enc("$ "), resizes: [] });
+    await openTab(page);
+    await expect(page.getByTestId("terminal-keep-awake")).toHaveText("An open terminal keeps the computer awake, so a running command is never cut off.");
+  });
+
+  // (computer-12) A phone has no Esc, Tab or Ctrl: a key row sits under the pane, and Open in new window is not offered.
+  test.describe("phone, 390 px", () => {
+    test.use({ viewport: { width: 390, height: 800 } });
+    test("the key row sends Esc, Tab and arrows; Ctrl latches; no Open in new window", async ({ page }) => {
+      const pty: MockPty = { output: enc("$ "), resizes: [], inputs: [] };
+      await mockWithTerminal(page, pty);
+      await openTab(page);
+      await expect(page.getByRole("group", { name: "Agent terminal" })).toContainText("$", { timeout: 20_000 });
+      await expect(page.getByRole("button", { name: "Open in new window" })).toBeHidden();
+      const keys = page.getByRole("toolbar", { name: "Terminal keys" });
+      await expect(keys).toBeVisible();
+      for (const k of ["Esc", "Tab", "Up"]) await keys.getByRole("button", { name: k, exact: true }).click();
+      await expect.poll(() => pty.inputs!.join("")).toContain("\x1b\t\x1b[A");
+      await keys.getByRole("button", { name: "Ctrl" }).click();
+      await expect(keys.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "true");
+      await page.getByRole("group", { name: "Agent terminal" }).click();
+      await page.keyboard.type("c");
+      await expect.poll(() => pty.inputs!.join("")).toContain("\x03");
+      await expect(keys.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
+      expect(await overflow(page)).toBeLessThanOrEqual(0);
+    });
   });
 
   test("Open in new window opens the standalone route without an opener", async ({ page }) => {

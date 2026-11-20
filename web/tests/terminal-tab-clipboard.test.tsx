@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalTab } from "@/components/agents/terminal-tab";
+import { wrap } from "./support/render";
 import { RecordingSocket } from "./support/terminal";
 
 // Copy and paste in the terminal pane (FIX-156, C-622). wterm's own key handler reads `e.key === "v"` for paste, so
@@ -76,7 +77,7 @@ const sleep = (ms: number) => act(async () => void (await new Promise((r) => set
 const text = (ws: RecordingSocket) => ws.sent.map((f) => (typeof f === "string" ? f : new TextDecoder().decode(f as Uint8Array))).join("");
 
 async function mount() {
-  render(<TerminalTab agentId="agent-1" frozen={false} />);
+  wrap(<TerminalTab agentId="agent-1" frozen={false} />);
   await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
   await screen.findByTestId("wterm-input");
   return { ws: RecordingSocket.instances[0], input: screen.getByTestId("wterm-input") };

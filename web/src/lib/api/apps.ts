@@ -303,6 +303,18 @@ export function useDeleteOAuthClient(scope: CredScope) {
   });
 }
 
+export type OAuthClientTestResult = components["schemas"]["OAuthClientTestResult"];
+export type OAuthClientState = components["schemas"]["OAuthClientState"];
+
+/** (P5-REFINE-6, C-1070) Test a sign-in app against its provider; the client's `state` follows. */
+export function useTestOauthClient(scope: CredScope) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => unwrap(api.POST("/v1/oauth-clients/{id}/test", { params: { path: { id } } })),
+    onSuccess: () => refreshClients(qc, scope),
+  });
+}
+
 export function useAppAvailability(orgId: string | undefined) {
   return useQuery({
     queryKey: appKeys.availability(orgId ?? ""),

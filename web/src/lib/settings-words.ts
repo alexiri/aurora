@@ -189,3 +189,70 @@ export function describeChange(key: string, before: unknown, after: unknown, ctx
   if (ctx.entryId) return `${label}: ${ctx.entryId} now allows more than before.`;
   return `${label} changes from ${valueWords(ctx.field, before)} to ${valueWords(ctx.field, after)}.`;
 }
+
+/** (P5-REFINE-18 #4, admin-4) The setting a validation pointer is about: `a.b[0].host` and `a.b/entry/x` both → `a.b`. */
+export function settingKeyOfPath(path: string): string {
+  return (path.split("/")[0] ?? path).replace(/\[\d+\].*$/, "");
+}
+
+const CONFIG_NAME = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b|\b[a-z][a-z0-9_]*(?:\.[a-z0-9_]+|\[\d+\])+/g;
+
+/** The config keys and environment names a message or pointer mentions: they live only under Technical details. */
+export function technicalNames(path: string, message: string): string[] {
+  const names = new Set<string>();
+  for (const m of `${message}`.matchAll(CONFIG_NAME)) names.add(m[0].replace(/\[\d+\].*$/, ""));
+  const key = settingKeyOfPath(path);
+  if (key.includes(".")) names.add(key);
+  return [...names];
+}
+
+const HAS_CONFIG_NAME = new RegExp(CONFIG_NAME.source);
+const rowed = (prefix: string, text: string) => (prefix ? `${prefix}${text}` : `${text.charAt(0).toUpperCase()}${text.slice(1)}`);
+
+const unitWord = (field: FieldInfo | undefined, secs: number): string => {
+  const { size, label } = field ? editUnit(field) : { size: 1, label: "seconds" };
+  const n = Math.round((secs / size) * 100) / 100;
+  const word = label ?? "seconds";
+  return `${n} ${n === 1 ? word.replace(/s$/, "") : word}`;
+};
+
+/**
+ * (P5-REFINE-18 #4, admin-4) A validation message from the server in the field's own words and unit: "Enter 5 minutes or
+ * more." for a minutes field the server states in seconds, "Row 1: that isn't a website name." for a list entry. No config
+ * key and no environment name survives; those go to `technicalNames`.
+ */
+export function fieldErrorWords(path: string, message: string, field?: FieldInfo): string {
+  const key = settingKeyOfPath(path);
+  const row = /\[(\d+)\]/.exec(path);
+  const rowPrefix = row ? `Row ${Number(row[1]) + 1}: ` : "";
+  if (/allowed_private|cidr/i.test(key) || /\bCIDR\b|not a valid (?:ip|network|cidr|address)/i.test(message)) {
+    return `${rowPrefix}That isn't a valid address range. Use a form like 10.0.0.0/24.`;
+  }
+  if (/allowed_private/.test(message)) return "Aurora can't reach private addresses. Ask whoever installed Aurora to allow it.";
+  if (/\.host$/.test(path) || /known_llm_hosts/.test(path)) {
+    return rowed(rowPrefix, "that isn't a website name. Try docs.example.org.");
+  }
+  if (/\.path$/.test(path)) return rowed(rowPrefix, "the path must start with a slash, like /docs.");
+  const atLeast = /at least (\d+)/.exec(message);
+  if (field?.kind === "duration" && atLeast) {
+    const floor = unitWord(field, Number(atLeast[1]));
+    return `Enter ${floor} or more.${/refresh/.test(key) ? ` Aurora checks at most once every ${floor}.` : ""}`;
+  }
+  const range = /expected (\d+)\.\.=(\d+)/.exec(message) ?? /between (\d+) and (\d+)/.exec(message);
+  if (range) {
+    const unit = field ? (editUnit(field).label ?? "") : "";
+    return `Enter a number from ${range[1]} to ${range[2]}${unit ? ` ${unit}` : ""}.`;
+  }
+  const max = /at most (\d+) entries/.exec(message);
+  if (max) return `Use at most ${max[1]} entries.`;
+  const plain = message
+    .replace(/\s*\([^)]*\)/g, (m) => (HAS_CONFIG_NAME.test(m) ? "" : m))
+    .replace(/`[^`]*`:?\s*/g, "")
+    .replace(CONFIG_NAME, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // A message with no config name in it is already words: it stays as the server wrote it.
+  if (plain === message.trim()) return message;
+  const base = plain.length >= 8 && !/\.\.=|=/.test(plain) ? plain : `That isn't a valid ${field ? field.label.toLowerCase() : "value"}.`;
+  return `${rowPrefix}${base.charAt(0).toUpperCase()}${base.slice(1)}`.replace(/([^.!?])$/, "$1.");
+}

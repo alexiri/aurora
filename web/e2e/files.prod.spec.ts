@@ -26,7 +26,7 @@ for (const scheme of ["light", "dark"] as const) {
     const gutter = await page.locator(".cm-gutters").evaluate((el) => getComputedStyle(el).backgroundColor);
     expect(gutter).not.toBe("rgba(0, 0, 0, 0)");
     await page.getByRole("button", { name: "Back to folder" }).click();
-    await page.getByRole("link", { name: "workspace" }).click();
+    await page.getByRole("link", { name: "Your files with Daneel" }).click();
     await page.getByRole("button", { name: "page.html", exact: true }).click();
     await expect(page.locator(".cm-content")).toContainText("<script>window.__html_ran = true</script>");
     expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__html_ran)).toBeUndefined();

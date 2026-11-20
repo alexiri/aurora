@@ -35,6 +35,17 @@ export function useUpdateMe() {
 
 export const revokeOtherSessions = () => unwrap(api.POST("/v1/auth/sessions/revoke-others"));
 
+export type MyChatPlatform = components["schemas"]["MyChatPlatform"];
+
+/** (P5-REFINE-6, C-1089) The chat platforms the person can link, with the bot to message. */
+export function useMyChatPlatforms() {
+  return useQuery({
+    queryKey: ["me", "chat-platforms"] as const,
+    queryFn: async () => (await unwrap(api.GET("/v1/me/chat-platforms"))).platforms,
+    retry: retryUnlessClientError,
+  });
+}
+
 /** `DELETE /v1/me`: session only; no re-authentication (FIX-157, D-317). 409 `last_owner` when blocked. */
 export const deleteAccount = () => unwrap(api.DELETE("/v1/me"));
 

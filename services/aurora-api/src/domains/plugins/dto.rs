@@ -21,6 +21,9 @@ pub struct PluginViolation {
     pub code: String,
     pub path: String,
     pub message: String,
+    /// (P5-REFINE-6, C-1071) The violation in words; absent on a package stored before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sentence: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]

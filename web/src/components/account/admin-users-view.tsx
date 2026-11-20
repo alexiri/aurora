@@ -7,7 +7,7 @@ import { IdpRolesList } from "@/components/identity/idp-roles-list";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MoreIcon } from "@/components/ui/icons";
+import { Avatar } from "@/components/ui/avatar";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
@@ -48,13 +48,15 @@ export function UsersTable({
   }
 
   if (users.length === 0) return <EmptyState title="No users found" />;
+  // (P5-REFINE-18 #17, admin-13) Role values from the sign-in are a footnote when nobody has any.
+  const noRoles = users.every((u) => (u.idp_roles?.values.length ?? 0) === 0);
   return (
+    <>
     <DataTable caption="Users" stackBelow={900}>
       <thead>
         <tr>
           <Th>User</Th>
           <Th>Last login</Th>
-          <Th>Status</Th>
           <Th>Actions</Th>
         </tr>
       </thead>
@@ -68,25 +70,28 @@ export function UsersTable({
           return (
             <tr key={u.id}>
               <Td cell="title">
-                <div className="font-medium">{u.display_name}</div>
-                <div className="break-all text-muted">{u.email}</div>
+                <div className="flex min-w-0 items-start gap-3">
+                  <Avatar name={u.display_name} size={32} />
+                  <div className="min-w-0">
+                    <div className="font-medium text-ink">{u.display_name}</div>
+                    {/* The e-mail's name and the role, in words: "alice · Instance admin". The full address is the tooltip. */}
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 break-all text-sm text-muted" title={u.email}>
+                      <span>
+                        {u.email.split("@")[0]} · {u.is_instance_admin ? "Instance admin" : "User"}
+                      </span>
+                      {u.instance_admin_idp_value ? <IdpRoleBadge value={u.instance_admin_idp_value} /> : null}
+                      {disabled ? <Badge tone="danger">disabled</Badge> : null}
+                    </div>
+                    {u.idp_roles && showRoles === u.id ? (
+                      <div className="mt-1.5 min-w-60 text-xs" data-testid="idp-role-values">
+                        <IdpRolesList roles={u.idp_roles} />
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
               </Td>
               <Td label="Last login" className="whitespace-nowrap text-ink-2">
                 <When value={u.last_login_at} />
-              </Td>
-              <Td>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <Badge tone={u.is_instance_admin ? "accent" : "neutral"}>
-                    {u.is_instance_admin ? "Instance admin" : "User"}
-                  </Badge>
-                  {u.instance_admin_idp_value ? <IdpRoleBadge value={u.instance_admin_idp_value} /> : null}
-                  {disabled ? <Badge tone="danger">disabled</Badge> : null}
-                </div>
-                {u.idp_roles && showRoles === u.id ? (
-                  <div className="mt-1.5 min-w-60 text-xs" data-testid="idp-role-values">
-                    <IdpRolesList roles={u.idp_roles} />
-                  </div>
-                ) : null}
               </Td>
               <Td cell="actions" className="space-y-1">
                 {/* (P5-POLISH-10) Your own row offers neither "Remove admin" nor "Turn off", and the last instance admin
@@ -95,8 +100,8 @@ export function UsersTable({
                 {canAdmin || canDisable || u.idp_roles ? (
                   <Menu>
                     <MenuTrigger asChild>
-                      <Button variant="ghost" size="sm" aria-label={`More for ${u.email}`}>
-                        <MoreIcon aria-hidden="true" className="size-4" />
+                      <Button variant="outline" size="sm" aria-label={`Manage ${u.display_name}`}>
+                        Manage
                       </Button>
                     </MenuTrigger>
                     <MenuContent align="end">
@@ -131,6 +136,8 @@ export function UsersTable({
         })}
       </tbody>
     </DataTable>
+    {noRoles ? <p className="mt-2 text-sm text-ink-2">Roles from sign-in: none</p> : null}
+    </>
   );
 }
 

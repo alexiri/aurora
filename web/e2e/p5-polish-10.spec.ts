@@ -152,7 +152,7 @@ for (const scheme of ["light", "dark"] as const) {
         const dialog = page.getByRole("dialog", { name: "Add an organization AI key" });
         const form = dialog.getByRole("form", { name: "New LLM key" });
         await form.getByLabel("Name").fill("AIGW key");
-        await form.getByLabel("Which service is this key for?").selectOption("litellm");
+        await form.getByLabel("Provider").selectOption("litellm");
         await form.getByLabel("API key", { exact: true }).fill("sk-test-key");
         await dialog.getByRole("button", { name: "Add key" }).click();
         // The checklist stays, with its toast; the health view is not shown (the try-it step is still open).
@@ -187,7 +187,9 @@ for (const scheme of ["light", "dark"] as const) {
         await waiting.getByRole("link", { name: "Acme tracker", exact: true }).click();
         await expect(page).toHaveURL(new RegExp(`/admin/apps/packages/${UPLOADED}$`));
         await expect(page.getByRole("heading", { name: /Acme tracker/, level: 1 })).toBeVisible();
-        // Sections are open, words not codes, Approve enabled at once.
+        // (P5-REFINE-18 #8) The summary and Approve come first; the sections sit in the closed Technical details, open inside.
+        await expect(page.getByRole("heading", { name: "What this app does" })).toBeVisible();
+        await page.getByText("Technical details", { exact: true }).click();
         await expect(page.getByRole("button", { name: /Egress per hook/ })).toHaveAttribute("aria-expanded", "true");
         await expect(page.getByText("your server's address")).toBeVisible();
         await expect(page.getByText("First install", { exact: true })).toBeVisible();

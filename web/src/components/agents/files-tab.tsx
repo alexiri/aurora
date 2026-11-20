@@ -6,24 +6,28 @@
 // attachment route (SEC-126). docs/14 §Files is the source of truth for the layout.
 import { useQueryClient } from "@tanstack/react-query";
 import { formatCount } from "@/lib/format-date";
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { EmptyState, Loading } from "@/components/states";
+import { Altitude } from "@/components/ui/altitude";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropZone } from "@/components/ui/drop-zone";
 import { CheckboxField } from "@/components/ui/form";
 import { FolderIcon, PlusIcon, UploadIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Notice } from "@/components/ui/notice";
+import { useUndoToast } from "@/components/ui/undo-toast";
 import { UploadTray, type UploadTrayItem } from "@/components/ui/upload-tray";
+import { useAltitude } from "@/lib/altitude";
 import {
   LIST_MAX,
   WORKSPACE_ROOT,
+  baseName,
   breadcrumbs,
   filesErrorMessage,
   filesKeys,
+  isAgentOwn,
   isHidden,
   isManaged,
   isTransient,
@@ -40,8 +44,9 @@ import {
 import { ApiError } from "@/lib/api/client";
 
 import { fromDataTransfer, fromFileList } from "./files/collect";
-import { ClashDialog, DeleteDialog, GoToDialog, NameDialog, type NameDialogKind } from "./files/dialogs";
+import { ClashDialog, DeleteDialog, GoToDialog, HiddenEditDialog, MoveDialog, NameDialog, type NameDialogKind } from "./files/dialogs";
 import { FileList } from "./files/file-list";
+import { useLeaveGate } from "./files/leave-gate";
 import { FileViewer } from "./files/viewer/file-viewer";
 import { UploadQueue, type UploadJob } from "./files/upload-queue";
 import { filesHref, useFilesPath } from "./files/use-files-path";
@@ -58,7 +63,10 @@ function readHidden(): boolean {
 
 const trayState = (j: UploadJob): UploadTrayItem["state"] => j.state;
 
-export function FilesTab({ agentId, frozen }: { agentId: string; frozen: boolean }) {
+/** A path with a hidden segment under `/workspace` (`.claude/settings.json`). */
+const inHiddenPlace = (path: string) => path.split("/").filter(Boolean).slice(1).some((s) => s.startsWith("."));
+
+export function FilesTab({ agentId, agentName, frozen, onOpenInstructions }: { agentId: string; agentName?: string; frozen: boolean; onOpenInstructions?: () => void }) {
   if (frozen) {
     // The freeze banner (with Unfreeze) is the agent header's; no listing and no request while frozen (D-316(d)).
     return (
@@ -67,25 +75,32 @@ export function FilesTab({ agentId, frozen }: { agentId: string; frozen: boolean
       </Notice>
     );
   }
-  return <FilesBrowser agentId={agentId} />;
+  return <FilesBrowser agentId={agentId} agentName={agentName} onOpenInstructions={onOpenInstructions} />;
 }
 
-function FilesBrowser({ agentId }: { agentId: string }) {
+function FilesBrowser({ agentId, agentName, onOpenInstructions }: { agentId: string; agentName?: string; onOpenInstructions?: () => void }) {
   const qc = useQueryClient();
+  const toast = useUndoToast();
+  const altitude = useAltitude();
   const [path, setPath] = useFilesPath();
   const list = useFileList(agentId, path);
   // The tab renders only after the agent page's queries resolved, so it is never server-rendered: reading storage here is safe.
-  const [showHidden, setShowHidden] = useState(readHidden);
+  const [hiddenOn, setShowHidden] = useState(readHidden);
+  // (computer-9) Show hidden is an Expert control: without the switch nothing hidden is listed, whatever this browser stored.
+  const showHidden = hiddenOn && altitude.allows("expert");
   const [goTo, setGoTo] = useState(false);
   const [nameDialog, setNameDialog] = useState<{ kind: NameDialogKind; entry?: FileEntry } | null>(null);
   const [deleting, setDeleting] = useState<FileEntry | null>(null);
+  const [moving, setMoving] = useState<FileEntry | null>(null);
   const [viewing, setViewing] = useState<{ path: string; size?: number; readOnly?: boolean; isNew?: boolean } | null>(null);
-  // The viewer's unsaved changes: leaving the file by any in-page navigation asks first (P5-FILES-3).
-  const [dirty, setDirty] = useState(false);
-  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
+  // The first hidden file opened for editing asks once; the answer holds for this visit.
+  const [pendingHidden, setPendingHidden] = useState<FileEntry | null>(null);
+  const hiddenConfirmed = useRef(false);
+  const leave = useLeaveGate();
   const [actionError, setActionError] = useState<string | null>(null);
   const filesInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
+  const name = agentName ?? "the agent";
 
   const toggleHidden = (on: boolean) => {
     setShowHidden(on);
@@ -106,19 +121,34 @@ function FilesBrowser({ agentId }: { agentId: string }) {
     [agentId, qc],
   );
   const uploads = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
+  // (computer-10) A toast for each finished upload.
+  const told = useRef(new Set<string>());
+  useEffect(() => {
+    for (const j of uploads.jobs) {
+      if (j.state === "done" && !told.current.has(j.id)) {
+        told.current.add(j.id);
+        toast(`Uploaded ${j.label}`);
+      }
+    }
+  }, [uploads.jobs, toast]);
 
   const goNow = (to: string) => {
     setViewing(null);
     setActionError(null);
     setPath(to);
   };
-  const go = (to: string) => (dirty ? setPendingNav(() => () => goNow(to)) : goNow(to));
+  const go = (to: string) => leave.ask(() => goNow(to));
+  const edit = (entry: FileEntry, at: string) => setViewing({ path: at, size: entry.size, readOnly: !entry.writable || isManaged(at) || isAgentOwn(at) });
   const open = (entry: FileEntry) => {
     const target = entry.kind === "symlink" && entry.target ? entry.target : null;
     const kind = effectiveKind(entry);
     const at = target ? target.path : entry.path;
     if (kind === "dir") go(at);
-    else if (kind === "file") setViewing({ path: at, size: entry.size, readOnly: !entry.writable || isManaged(at) });
+    else if (kind === "file") {
+      // (computer-9) A hidden file that can be edited asks once before it opens.
+      if (inHiddenPlace(at) && entry.writable && !isManaged(at) && !hiddenConfirmed.current) setPendingHidden(entry);
+      else leave.ask(() => edit(entry, at));
+    }
   };
 
   const entries = useMemo<FileEntry[]>(() => list.data?.entries ?? [], [list.data]);
@@ -131,8 +161,11 @@ function FilesBrowser({ agentId }: { agentId: string }) {
   const listError = list.error;
   const fileFromUrl = listError instanceof ApiError && listError.code === "not_a_directory";
   const shownFile = viewing ?? (fileFromUrl ? { path } : null);
-  const trail = breadcrumbs(shownFile ? shownFile.path : path);
+  const trail = breadcrumbs(shownFile ? shownFile.path : path).map((t) => (t.path === WORKSPACE_ROOT ? { ...t, label: `Your files with ${name}` } : t));
   const waking = list.isFetching && list.failureCount > 0 && isTransient(list.failureReason);
+  // (computer-2) The listing could not load: Upload and New file stay in place, disabled, with the reason.
+  const failed = !!listError && !fileFromUrl && !(listError instanceof ApiError && listError.code === "files_not_supported");
+  const loaded = !!list.data;
 
   const copyPath = async (entry: FileEntry) => {
     try {
@@ -142,8 +175,14 @@ function FilesBrowser({ agentId }: { agentId: string }) {
     }
   };
 
+  const moveTo = async (entry: FileEntry, dir: string) => {
+    await renameOp(agentId, entry.path, joinPath(dir, entry.name));
+    refresh();
+    toast(`Moved ${entry.name} to ${dir === WORKSPACE_ROOT ? baseName(WORKSPACE_ROOT) : baseName(dir)}`);
+  };
+
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 max-w-full space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <Breadcrumb
           label="Folder path"
@@ -165,14 +204,13 @@ function FilesBrowser({ agentId }: { agentId: string }) {
           readOnly={"readOnly" in shownFile ? shownFile.readOnly : isManaged(shownFile.path)}
           isNew={"isNew" in shownFile ? shownFile.isNew : false}
           onBack={() => go(parentPath(shownFile.path))}
-          onDirtyChange={setDirty}
         />
       ) : (
         <>
           <div role="group" aria-label="File actions" className="flex flex-wrap items-center gap-2">
             <Menu modal={false}>
               <MenuTrigger asChild>
-                <Button type="button" variant="primary" size="sm">
+                <Button type="button" variant="primary" size="sm" disabled={!loaded}>
                   <UploadIcon /> Upload
                 </Button>
               </MenuTrigger>
@@ -181,16 +219,18 @@ function FilesBrowser({ agentId }: { agentId: string }) {
                 <MenuItem onSelect={() => folderInput.current?.click()}>Folder…</MenuItem>
               </MenuContent>
             </Menu>
-            <Button type="button" variant="outline" size="sm" onClick={() => setNameDialog({ kind: "folder" })}>
+            <Button type="button" variant="outline" size="sm" disabled={!loaded} onClick={() => setNameDialog({ kind: "folder" })}>
               <FolderIcon /> New folder
             </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => setNameDialog({ kind: "file" })}>
+            <Button type="button" variant="outline" size="sm" disabled={!loaded} onClick={() => setNameDialog({ kind: "file" })}>
               <PlusIcon /> New file
             </Button>
             <Button type="button" variant="outline" size="sm" onClick={() => void list.refetch()} disabled={list.isFetching}>
               Refresh
             </Button>
-            <CheckboxField id="files-hidden" label="Show hidden" checked={showHidden} onChange={toggleHidden} />
+            <Altitude id="files.hidden" level="expert">
+              <CheckboxField id="files-hidden" label="Show hidden" checked={hiddenOn} onChange={toggleHidden} />
+            </Altitude>
             <input
               ref={filesInput}
               type="file"
@@ -216,6 +256,11 @@ function FilesBrowser({ agentId }: { agentId: string }) {
               }}
             />
           </div>
+          {failed ? (
+            <p className="text-xs text-muted" data-testid="files-nothing-loaded">
+              Nothing loaded. Actions come back when the computer answers.
+            </p>
+          ) : null}
 
           <UploadTray
             items={uploads.jobs.map((j) => ({
@@ -243,6 +288,7 @@ function FilesBrowser({ agentId }: { agentId: string }) {
           <DropZone
             label={`Drop to upload to ${path}`}
             icon={<UploadIcon width={24} height={24} />}
+            disabled={!loaded}
             onDataTransfer={(dt) => {
               // The entries are read synchronously inside the event; the tree is walked afterwards.
               const target = dest();
@@ -263,6 +309,7 @@ function FilesBrowser({ agentId }: { agentId: string }) {
             {listError ? (
               <FilesError
                 error={listError}
+                tries={list.failureCount}
                 path={path}
                 onRetry={() => void list.refetch()}
                 onRoot={() => go(WORKSPACE_ROOT)}
@@ -270,6 +317,19 @@ function FilesBrowser({ agentId }: { agentId: string }) {
             ) : null}
             {list.data ? (
               <div className="space-y-3">
+                {path === WORKSPACE_ROOT && visible.some((e) => isAgentOwn(e.path)) ? (
+                  <Notice tone="neutral" role="note" data-testid="own-note">
+                    The grey files are {name}&apos;s instructions and memory. Aurora keeps them for you; edit them on the{" "}
+                    {onOpenInstructions ? (
+                      <button type="button" className="text-accent-ink underline underline-offset-2" onClick={onOpenInstructions}>
+                        Behaviour page
+                      </button>
+                    ) : (
+                      "Behaviour page"
+                    )}
+                    .
+                  </Notice>
+                ) : null}
                 {visible.length === 0 ? (
                   <EmptyState
                     title="This folder is empty"
@@ -289,14 +349,27 @@ function FilesBrowser({ agentId }: { agentId: string }) {
                   <FileList
                     agent={agentId}
                     entries={visible}
+                    ownGroup={path === WORKSPACE_ROOT ? { name, collapsedOnPhone: true } : undefined}
                     actions={{
                       onOpen: open,
                       onRename: (entry) => setNameDialog({ kind: "rename", entry }),
                       onDelete: setDeleting,
                       onCopyPath: (entry) => void copyPath(entry),
+                      onMove: setMoving,
+                      onDropMove: (from, folder) => {
+                        const entry = entries.find((e) => e.path === from);
+                        if (!entry || entry.path === folder.path) return;
+                        void moveTo(entry, folder.path).catch((e: unknown) => setActionError(filesErrorMessage(e)));
+                      },
+                      onDownloaded: (entry) => toast(`Downloaded ${entry.name}`),
                     }}
                   />
                 )}
+                {showHidden ? (
+                  <Notice tone="pending" role="note" data-testid="hidden-warning">
+                    <strong>Hidden files</strong> hold settings Aurora and the agent rely on. Edit them only if you know why.
+                  </Notice>
+                ) : null}
                 {list.data.truncated ? (
                   <Notice tone="neutral" role="status">
                     Showing the first {formatCount(LIST_MAX)} items. Use the Terminal to see the rest.
@@ -315,36 +388,40 @@ function FilesBrowser({ agentId }: { agentId: string }) {
         onOpenChange={(o) => !o && setNameDialog(null)}
         initial={nameDialog?.entry?.name ?? ""}
         taken={taken}
-        onSubmit={async (name) => {
+        onSubmit={async (value) => {
           const kind = nameDialog?.kind;
-          if (kind === "folder") await mkdirOp(agentId, joinPath(path, name));
+          if (kind === "folder") await mkdirOp(agentId, joinPath(path, value));
           else if (kind === "file") {
             // An empty editor: nothing is created until its first Save (`If-None-Match: *`).
-            setViewing({ path: joinPath(path, name), isNew: true });
+            setViewing({ path: joinPath(path, value), isNew: true });
             return;
-          } else if (kind === "rename" && nameDialog?.entry) await renameOp(agentId, nameDialog.entry.path, joinPath(parentPath(nameDialog.entry.path), name));
+          } else if (kind === "rename" && nameDialog?.entry) {
+            await renameOp(agentId, nameDialog.entry.path, joinPath(parentPath(nameDialog.entry.path), value));
+            toast(`Renamed to ${value}`);
+          }
           refresh();
         }}
       />
-      <ConfirmDialog
-        open={pendingNav !== null}
-        onOpenChange={(o) => !o && setPendingNav(null)}
-        title="Discard your changes?"
-        description="You have unsaved changes in this file. Leaving now loses them."
-        confirmLabel="Discard changes"
-        danger
+      <MoveDialog agent={agentId} entry={moving} onOpenChange={(o) => !o && setMoving(null)} onMove={moveTo} />
+      <HiddenEditDialog
+        name={pendingHidden?.name ?? null}
+        onCancel={() => setPendingHidden(null)}
         onConfirm={() => {
-          const next = pendingNav;
-          setPendingNav(null);
-          next?.();
+          const entry = pendingHidden;
+          hiddenConfirmed.current = true;
+          setPendingHidden(null);
+          if (entry) leave.ask(() => edit(entry, entry.kind === "symlink" && entry.target ? entry.target.path : entry.path));
         }}
       />
+      {leave.dialog}
       <DeleteDialog
         entry={deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
         onConfirm={async (entry) => {
           await deleteOp(agentId, entry.path, entry.kind === "dir");
           refresh();
+          // A delete cannot be taken back (the API has no restore), so the toast has no Undo and the confirm dialog stays.
+          toast(`Deleted ${entry.name}`);
         }}
       />
       <ClashDialog job={uploads.clash} remaining={uploads.remaining} onChoose={(choice, all) => queue.resolveClash(choice, all)} />
@@ -353,7 +430,7 @@ function FilesBrowser({ agentId }: { agentId: string }) {
 }
 
 /** The listing's failure states (docs/14 §Files item 7): each error code in words, with the action that helps. */
-function FilesError({ error, path, onRetry, onRoot }: { error: unknown; path: string; onRetry: () => void; onRoot: () => void }) {
+function FilesError({ error, tries, path, onRetry, onRoot }: { error: unknown; tries: number; path: string; onRetry: () => void; onRoot: () => void }) {
   if (error instanceof ApiError && error.code === "not_a_directory") return <Loading label="Opening…" />;
   if (error instanceof ApiError && error.code === "files_not_supported") {
     return (
@@ -363,11 +440,18 @@ function FilesError({ error, path, onRetry, onRoot }: { error: unknown; path: st
     );
   }
   const transient = isTransient(error);
-  const message = transient ? "The computer did not wake up in time. Try again in a moment." : filesErrorMessage(error);
   const gone = error instanceof ApiError && (error.code === "path_not_found" || error.code === "path_outside_workspace" || error.code === "invalid_path");
   return (
     <Notice tone="danger" role="alert" className="space-y-2">
-      <p className="break-words">{message}</p>
+      {transient ? (
+        <>
+          {/* (computer-2) The retries ran out: say so, once, with the way out. */}
+          <p className="font-semibold">Couldn&apos;t connect to the computer</p>
+          <p className="break-words">Tried {tries} times. The computer didn&apos;t answer.</p>
+        </>
+      ) : (
+        <p className="break-words">{filesErrorMessage(error)}</p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onRetry}>
           Try again

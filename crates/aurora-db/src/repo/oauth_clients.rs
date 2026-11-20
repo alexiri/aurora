@@ -22,12 +22,36 @@ pub struct ClientRow {
     pub connection_count: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// (P5-REFINE-6, C-1070) The last Test of the client and how the provider answered.
+    pub last_test_at: Option<DateTime<Utc>>,
+    pub last_test_result: Option<String>,
+    /// (C-1070) When the newest connection made with this client was created ("verified by use").
+    pub last_connected_at: Option<DateTime<Utc>>,
 }
 
 const SELECT: &str = "SELECT c.id, c.org_id, c.workspace_id, c.package_id, c.client_key, c.fields, \
     c.secret_ref, c.enabled, c.instance_id, \
     (SELECT count(*) FROM app_connections k WHERE k.oauth_client_id = c.id) AS connection_count, \
-    c.created_at, c.updated_at FROM app_oauth_clients c";
+    c.created_at, c.updated_at, c.last_test_at, c.last_test_result, \
+    (SELECT max(k.created_at) FROM app_connections k WHERE k.oauth_client_id = c.id) AS last_connected_at \
+    FROM app_oauth_clients c";
+
+/// (P5-REFINE-6, C-1070) Record a Test's result (`ok` | `rejected` | `unreachable` |
+/// `unexpected`). `updated_at` is left alone: it versions the client's fields (FIX-115).
+pub async fn record_test<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    result: &str,
+) -> Result<DateTime<Utc>, DbError> {
+    Ok(sqlx::query_scalar(
+        "UPDATE app_oauth_clients SET last_test_at = now(), last_test_result = $2 \
+         WHERE id = $1 RETURNING last_test_at",
+    )
+    .bind(id)
+    .bind(result)
+    .fetch_one(exec)
+    .await?)
+}
 
 pub const SCOPE_CONSTRAINT: &str = "app_oauth_clients_scope_uq";
 

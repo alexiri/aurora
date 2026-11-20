@@ -67,7 +67,7 @@ async function mockSsh(page: Page, over: { terminators?: number; keys?: typeof K
       route,
       {
         certificate: "ssh-ed25519-cert-v01@openssh.com AAAACERT aurora:agent", serial: "7", principal: "p", key_id: "k",
-        valid_after: "2026-01-01T00:00:00Z", valid_before: "2026-01-01T00:15:00Z", username: "p", host: "ssh.example.org", port: 22, known_hosts: [],
+        valid_after: new Date().toISOString(), valid_before: new Date(Date.now() + 15 * 60_000).toISOString(), username: "p", host: "ssh.example.org", port: 22, known_hosts: [],
       },
       201,
     ),
@@ -99,7 +99,8 @@ for (const scheme of ["light", "dark"] as const) {
       test("agent page › SSH: connect card, host key, what works", async ({ page }) => {
         await mockSsh(page);
         await open(page, "/o/acme/w/main/agents/daneel?tab=ssh", scheme);
-        await expect(page.getByRole("heading", { name: "Connect with SSH" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Connect to Daneel's computer" })).toBeVisible();
+        await expect(page.getByText("With the Aurora command line:")).toBeVisible();
         await expect(page.getByRole("heading", { name: "Host key" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "What works" })).toBeVisible();
         await expect(page.getByLabel("the known_hosts lines", { exact: true })).toContainText("ssh.example.org ssh-ed25519 AAAAHOSTKEY");
@@ -166,14 +167,21 @@ for (const scheme of ["light", "dark"] as const) {
 
 test.describe("certificate download", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
-  test("Get a certificate offers id_ed25519-cert.pub with the certificate line", async ({ page }) => {
+  test("Get a certificate offers aurora-daneel-cert.pub with a countdown, and Download survives a reload", async ({ page }) => {
     await mockSsh(page);
     await open(page, "/o/acme/w/main/agents/daneel?tab=ssh", "light");
+    await expect(page.getByText("With the Aurora command line:")).toBeVisible();
+    await expect(page.getByLabel("the aurora ssh command")).toHaveText("aurora ssh daneel");
     await page.getByRole("button", { name: "Get a certificate" }).click();
-    const link = page.getByRole("link", { name: /Download id_ed25519-cert\.pub/ });
+    const link = page.getByRole("link", { name: "Download", exact: true });
     await expect(link).toBeVisible();
-    await expect(page.getByText(/Valid for 15 minutes; get a new one to reconnect later/)).toBeVisible();
+    await expect(page.getByTestId("cert-state")).toContainText(/Certificate valid for 1[45] more minutes \(until /);
+    await expect(page.getByText(/Save it as/)).toContainText("~/.ssh/aurora-daneel-cert.pub");
     const [download] = await Promise.all([page.waitForEvent("download"), link.click()]);
-    expect(download.suggestedFilename()).toBe("id_ed25519-cert.pub");
+    expect(download.suggestedFilename()).toBe("aurora-daneel-cert.pub");
+    // The certificate is public: it stays for this tab until it expires, so a reload keeps Download.
+    await page.reload();
+    await expect(page.getByRole("link", { name: "Download", exact: true })).toBeVisible();
+    await expect(page.getByTestId("cert-state")).toContainText("Certificate valid for");
   });
 });

@@ -8,6 +8,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 import { FilesTab } from "@/components/agents/files-tab";
 import { FileViewer } from "@/components/agents/files/viewer/file-viewer";
+import { parseCsv } from "@/components/agents/files/viewer/csv";
 import { imageDataUrl, sniffImage, typeGuess } from "@/components/agents/files/viewer/image";
 import { filesTiming, type FileEntry } from "@/lib/api/files";
 import { json } from "./support/api";
@@ -283,6 +284,52 @@ describe("conflict", () => {
   });
 });
 
+describe("big text files and CSV (computer-11)", () => {
+  it("asks for a preview (preview=1) and shows the start of a big file read-only, with the note and the whole-file download", async () => {
+    stubXhr();
+    const seen = mockApi((r) =>
+      r.path === TEXT_ROUTE ? json(200, textBody("first lines\n", { truncated: true, etag: null, size: 3_565_158 })) : undefined,
+    );
+    renderViewer();
+    await editor();
+    expect(seen[0]!.query.get("preview")).toBe("1");
+    expect(screen.getByTestId("preview-note").textContent).toContain("Showing the first 12 B of 3.4 MiB.");
+    expect(screen.getByRole("link", { name: /Download the whole file/ })).toHaveAttribute("href", "/v1/agents/a1/files/content?path=%2Fworkspace%2Fa.rs");
+    // Never savable: no Save, a Read-only badge.
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.getByText("Read-only")).toBeInTheDocument();
+  });
+
+  it("opens a .csv as a table with a header row, cells as text, and Show as text switches to the editor", async () => {
+    stubXhr();
+    mockApi((r) => (r.path === TEXT_ROUTE ? json(200, textBody('fruit,qty\n"<b>apple</b>",3\n"pear, ripe",5\n', { path: "/workspace/fruit.csv" })) : undefined));
+    renderViewer({ path: "/workspace/fruit.csv" });
+    const table = await screen.findByTestId("csv-table");
+    expect(table.textContent).toContain("fruit.csv · table view · read only");
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["fruit", "qty"]);
+    // A cell is text, never HTML.
+    expect(screen.getByText("<b>apple</b>")).toBeInTheDocument();
+    expect(table.querySelector("b")).toBeNull();
+    expect(screen.getByText("pear, ripe")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show as text" }));
+    expect(await screen.findByTestId("code-editor")).toBeInTheDocument();
+    expect(screen.queryByTestId("csv-table")).toBeNull();
+  });
+});
+
+describe("parseCsv", () => {
+  it("reads quotes, doubled quotes, embedded newlines and CRLF, and caps rows and columns", () => {
+    expect(parseCsv('a,b\r\n"x ""y""","l1\nl2"\r\n').rows).toEqual([["a", "b"], ['x "y"', "l1\nl2"]]);
+    const big = Array.from({ length: 300 }, (_, i) => `r${i},${Array.from({ length: 60 }, (_, j) => j).join(",")}`).join("\n");
+    const got = parseCsv(big);
+    expect(got.rows).toHaveLength(200);
+    expect(got.rows[0]).toHaveLength(50);
+    expect(got.moreRows).toBe(true);
+    expect(got.moreCols).toBe(true);
+    expect(parseCsv("a,b\n").moreRows).toBe(false);
+  });
+});
+
 describe("new file", () => {
   it("opens an empty editor and the first Save creates with If-None-Match: *", async () => {
     const xhrs = stubXhr();
@@ -386,7 +433,7 @@ describe("in the Files page", () => {
     );
   }
 
-  it("asks before leaving a file with unsaved changes; Cancel keeps it, Discard leaves", async () => {
+  it("asks 'Leave without saving?' before leaving a file with unsaved changes; Keep editing keeps it, Discard leaves", async () => {
     stubXhr();
     api((r) => (r.path === TEXT_ROUTE ? json(200, textBody("a")) : undefined));
     page();
@@ -394,15 +441,49 @@ describe("in the Files page", () => {
     const view = await editor();
     await type(view, "b");
     await screen.findByText("Unsaved changes");
-    // The breadcrumb's "workspace" link goes back to the folder.
-    fireEvent.click(screen.getByRole("link", { name: "workspace" }));
-    expect(await screen.findByText("Discard your changes?")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    // The breadcrumb's root link goes back to the folder.
+    fireEvent.click(screen.getByRole("link", { name: "Your files with the agent" }));
+    expect(await screen.findByText("Leave without saving?")).toBeInTheDocument();
+    expect(screen.getByText("a.rs has changes that aren't saved.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
     expect(screen.getByTestId("code-editor")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("link", { name: "workspace" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Discard changes" }));
+    fireEvent.click(screen.getByRole("link", { name: "Your files with the agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
     await screen.findByRole("button", { name: "logo.svg" });
     expect(screen.queryByTestId("code-editor")).toBeNull();
+  });
+
+  it("Save and leave saves, then leaves", async () => {
+    const xhrs = stubXhr();
+    api((r) => (r.path === TEXT_ROUTE ? json(200, textBody("a")) : undefined));
+    page();
+    fireEvent.click(await screen.findByRole("button", { name: "a.rs" }));
+    const view = await editor();
+    await type(view, "b");
+    fireEvent.click(screen.getByRole("button", { name: "Back to folder" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save and leave" }));
+    await waitFor(() => expect(xhrs).toHaveLength(1));
+    expect(xhrs[0]!.body).toBe("ab");
+    xhrs[0]!.respond(200, { entry: { name: "a.rs", path: "/workspace/a.rs", kind: "file", size: 2, mode: "0644", modified_at: "2026-11-15T10:00:00Z", writable: true }, etag: "sha256:new" });
+    await screen.findByRole("button", { name: "logo.svg" });
+    expect(screen.queryByTestId("code-editor")).toBeNull();
+  });
+
+  it("shows a dot while there are unsaved changes and no 'Saved' line that would move the editor", async () => {
+    const xhrs = stubXhr();
+    api((r) => (r.path === TEXT_ROUTE ? json(200, textBody("a")) : undefined));
+    page();
+    fireEvent.click(await screen.findByRole("button", { name: "a.rs" }));
+    const view = await editor();
+    expect(screen.queryByTestId("dirty-dot")).toBeNull();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await type(view, "b");
+    expect(await screen.findByTestId("dirty-dot")).toHaveAttribute("title", "Unsaved changes");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(xhrs).toHaveLength(1));
+    xhrs[0]!.respond(200, { entry: { name: "a.rs", path: "/workspace/a.rs", kind: "file", size: 2, mode: "0644", modified_at: "2026-11-15T10:00:00Z", writable: true }, etag: "sha256:new" });
+    await waitFor(() => expect(screen.queryByTestId("dirty-dot")).toBeNull());
+    expect(screen.queryByText("Saved.")).toBeNull();
   });
 
   it("warns the browser before unloading with unsaved changes, and only then", async () => {

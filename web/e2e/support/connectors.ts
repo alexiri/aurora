@@ -13,11 +13,13 @@ export async function openConnectorScreen(page: Page, screen: ConnectorScreen, s
   await openRoute(page, "/admin/connectors", scheme);
   if (screen === "list") return;
   if (screen === "detail") {
-    await page.getByRole("button", { name: "Manage Mattermost" }).click();
+    // The platforms list and the closed Advanced fold both have a Manage button; the list's comes first.
+    await page.getByRole("button", { name: "Manage Mattermost" }).first().click();
     await page.getByLabel("Callback URL").waitFor();
     return;
   }
-  await page.getByRole("button", { name: "Add chat platform" }).click();
+  // (P5-REFINE-18 #7) The platforms list leads; its Add button opens the choose step.
+  await page.getByRole("button", { name: "Add Mattermost" }).click();
   if (screen === "self-hosted") {
     await page.getByRole("button", { name: "Self-hosted chat platform host (advanced)" }).click();
     await page.getByLabel("Connector id").waitFor();

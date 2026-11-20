@@ -12,6 +12,55 @@ fn code(v: &Value) -> &str {
     v["error"]["code"].as_str().unwrap_or("")
 }
 
+/// (P5-REFINE-6, C-1072) `can_create_org` says exactly when `POST /v1/orgs` works: an instance
+/// admin, or anyone under `auth.org_creation = anyone`; a person already in an organization can
+/// create another.
+#[tokio::test]
+async fn can_create_org_matches_post_orgs() {
+    for anyone in [false, true] {
+        let h = Harness::with_config(|c| {
+            c.org_creation = if anyone {
+                aurora_config::OrgCreation::Anyone
+            } else {
+                aurora_config::OrgCreation::InstanceAdmins
+            };
+        })
+        .await;
+        let org = h.org().await;
+        for admin in [false, true] {
+            let u = h
+                .user(
+                    &format!("p{}{}@x.io", u8::from(anyone), u8::from(admin)),
+                    admin,
+                )
+                .await;
+            h.member(org, u, "member", "active").await;
+            let (_, tok) = h.good_session(u).await;
+            let (s, me) = call(&h, &tok, Method::GET, "/v1/me", None).await;
+            assert_eq!(s, 200, "{me}");
+            let want = admin || anyone;
+            assert_eq!(
+                me["can_create_org"],
+                json!(want),
+                "anyone={anyone} admin={admin}"
+            );
+            let (s, v) = call(
+                &h,
+                &tok,
+                Method::POST,
+                "/v1/orgs",
+                Some(json!({"name": format!("Second {}{}", u8::from(anyone), u8::from(admin))})),
+            )
+            .await;
+            if want {
+                assert_eq!(s, 201, "anyone={anyone} admin={admin}: {v}");
+            } else {
+                assert_eq!((s, code(&v)), (403, "org_creation_forbidden"), "{v}");
+            }
+        }
+    }
+}
+
 /// `GET /v1/me` from `peer`, sending `xff` when given.
 async fn me_from(h: &Harness, tok: &str, peer: &str, xff: Option<&str>) -> Value {
     use axum::extract::ConnectInfo;

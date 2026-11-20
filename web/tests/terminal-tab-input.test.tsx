@@ -1,7 +1,8 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalTab } from "@/components/agents/terminal-tab";
+import { wrap } from "./support/render";
 import { RecordingSocket } from "./support/terminal";
 
 // The terminal input seam (FIX-054): wterm hands `onData` a *string*; the tab must put it
@@ -72,7 +73,7 @@ function openSocket(): RecordingSocket {
 
 describe("terminal tab input framing (FIX-054)", () => {
   it("sends keystrokes as Binary frames with the exact UTF-8 bytes", async () => {
-    render(<TerminalTab agentId="agent-1" frozen={false} />);
+    wrap(<TerminalTab agentId="agent-1" frozen={false} />);
     await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
     const ws = openSocket();
 
@@ -84,7 +85,7 @@ describe("terminal tab input framing (FIX-054)", () => {
   });
 
   it("encodes multi-byte UTF-8 exactly", async () => {
-    render(<TerminalTab agentId="agent-1" frozen={false} />);
+    wrap(<TerminalTab agentId="agent-1" frozen={false} />);
     await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
     const ws = openSocket();
 
@@ -93,7 +94,7 @@ describe("terminal tab input framing (FIX-054)", () => {
   });
 
   it("chunks a >16 KiB paste into ordered Binary frames of at most 16384 bytes", async () => {
-    render(<TerminalTab agentId="agent-1" frozen={false} />);
+    wrap(<TerminalTab agentId="agent-1" frozen={false} />);
     await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
     const ws = openSocket();
 
@@ -119,7 +120,7 @@ describe("terminal tab input framing (FIX-054)", () => {
   });
 
   it("does not send keystrokes while disconnected and says so (FIX-098)", async () => {
-    render(<TerminalTab agentId="agent-1" frozen={false} />);
+    wrap(<TerminalTab agentId="agent-1" frozen={false} />);
     await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
     const ws = openSocket();
     await waitFor(() => expect(screen.queryByTestId("terminal-not-connected")).toBeNull());
@@ -133,7 +134,7 @@ describe("terminal tab input framing (FIX-054)", () => {
   });
 
   it("keeps pty.resize on Text as the JSON control with pty_id: 0", async () => {
-    render(<TerminalTab agentId="agent-1" frozen={false} />);
+    wrap(<TerminalTab agentId="agent-1" frozen={false} />);
     await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
     const ws = openSocket();
 

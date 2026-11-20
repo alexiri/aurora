@@ -107,7 +107,7 @@ async fn upload_plugin(
 
 fn multipart_error(e: axum::extract::multipart::MultipartError) -> ApiError {
     if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
-        ApiError::too_large("Package is too large.")
+        ApiError::too_large(super::sentences::too_large_sentence())
     } else {
         ApiError::invalid_field("Malformed multipart body.", "/", "malformed multipart body")
     }

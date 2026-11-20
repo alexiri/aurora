@@ -75,6 +75,8 @@ test.describe("agent Previews tab", () => {
     // (D-200) Computer is a section; without the org switch its Previews page is not offered.
     await page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { name: "Computer" }).click();
     await expect(page.getByRole("tab", { name: "Previews" })).toHaveCount(0);
+    // (P5-REFINE-15) The Computer opens on Files; the port list is on Details.
+    await page.getByRole("tablist", { name: "Computer pages" }).getByRole("tab", { name: "Details" }).click();
     const ports = page.getByRole("table", { name: "Listening ports" });
     await expect(ports).toBeVisible();
     await expect(ports.getByRole("button", { name: /Share/ })).toHaveCount(0);

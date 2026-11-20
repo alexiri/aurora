@@ -52,6 +52,20 @@ describe("PRESETS", () => {
     expect(near).toMatchObject({ preset: null, basedOn: "locked_down" });
   });
 
+  it("a section with one Helm-locked key and no other preset key still reads as a preset with the lock, never Custom (CI send-back)", () => {
+    // The mock of the Playwright spec: only `governance.egress.minimum_posture` is present, and Helm holds it.
+    const s = detectPreset([{ key: "governance.egress.minimum_posture", value: "restricted", locked: true }]);
+    expect(s.preset).toBe("open");
+    expect(s.lockedApart).toEqual(["governance.egress.minimum_posture"]);
+    // Keys the section lacks are skipped, not mismatched: one unlocked key that differs still makes it Custom.
+    const custom = detectPreset([
+      { key: "governance.egress.minimum_posture", value: "restricted", locked: true },
+      { key: "byo.minimum_posture", value: "enabled", locked: false },
+    ]);
+    expect(custom.preset).toBeNull();
+    expect(custom.basedOn).toBe("open");
+  });
+
   it("a Helm-locked value is left out of the match and counted when it keeps the preset from applying", () => {
     const s = detectPreset(rows({ "governance.llm.minimum_posture": "sanctioned_only", "byo.enabled": false }, ["governance.llm.minimum_posture", "byo.enabled"]));
     expect(s.preset).toBe("open");

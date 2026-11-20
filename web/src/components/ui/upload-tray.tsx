@@ -46,6 +46,19 @@ export function UploadTray({
   onClear?: () => void;
 }) {
   if (items.length === 0) return null;
+  // (P5-REFINE-15, computer-10) Everything done: the panel collapses to one line and stops pushing the list below the fold.
+  if (items.every((i) => i.state === "done")) {
+    return (
+      <section aria-label={label} className="flex flex-wrap items-center gap-x-2 text-sm text-ink-2" data-testid="uploads-done">
+        <span>
+          {label}: {items.length} {items.length === 1 ? "file" : "files"} done
+        </span>
+        <button type="button" className="min-h-9 text-accent-ink underline underline-offset-2 hover:no-underline" onClick={() => (onClear ? onClear() : items.forEach((i) => onDismiss(i.id)))}>
+          Hide
+        </button>
+      </section>
+    );
+  }
   const finished = items.filter((i) => i.state === "done" || i.state === "failed" || i.state === "cancelled" || i.state === "skipped").length;
   return (
     <section aria-label={label} className="space-y-1.5 rounded-card border border-line bg-surface p-3">
