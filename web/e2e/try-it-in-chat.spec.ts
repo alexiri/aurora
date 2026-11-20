@@ -39,14 +39,17 @@ async function giveGithub(page: Page, entry: Entry, scheme: "light" | "dark", op
       await dialog.getByRole("button", { name: "GitHub", exact: true }).click();
       break;
     case "workspace Apps":
-      await page.getByRole("button", { name: "Connect GitHub" }).click();
+      // (P5-POLISH-7) GitHub already has an account in the mock: its card offers "Connect another".
+      await page.getByRole("button", { name: "Connect another GitHub" }).click();
       await dialog.getByRole("button", { name: "Give Daneel access" }).click();
       break;
     case "workspace Apps opened by ?connect=github":
       await dialog.getByRole("button", { name: "Give Daneel access" }).click();
       break;
     case "the workspace Accounts tab":
-      await page.getByRole("button", { name: /Connect an app|Give .* an app|Connect/ }).first().click();
+      // The workspace's Accounts tab (no agent): the Add menu (accounts exist in the mock) has "Connect an app or website".
+      await page.getByRole("button", { name: "Add", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Connect an app or website" }).click();
       await dialog.getByRole("button", { name: "GitHub", exact: true }).click();
       await dialog.getByRole("button", { name: "Give Daneel access" }).click();
       break;
