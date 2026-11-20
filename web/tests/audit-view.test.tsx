@@ -59,7 +59,7 @@ describe("OrgAuditView (RFE-008)", () => {
         <OrgAuditView orgId="o1" />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText("agent.create")).toBeTruthy();
+    expect(await screen.findByText("Created an agent")).toBeTruthy();
     // Only the critical row carries the badge.
     expect(screen.getAllByText("Critical")).toHaveLength(1);
 
@@ -93,7 +93,7 @@ describe("OrgAuditView (RFE-008)", () => {
         <AuditTab wsId="w1" />
       </QueryClientProvider>,
     );
-    await waitFor(() => expect(screen.getAllByText("agent.create")).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByText("Created an agent")).toHaveLength(2));
     const org = seen.find((s) => s.startsWith("/v1/orgs/o1/audit"))!;
     const ws = seen.find((s) => s.startsWith("/v1/workspaces/w1/audit"))!;
     for (const s of [org, ws]) {

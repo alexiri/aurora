@@ -131,8 +131,8 @@ describe("Directory sync page", () => {
     wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner />);
     const exclusive = await screen.findByRole("checkbox", { name: /Directory-managed membership/ });
     fireEvent.click(exclusive);
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    expect(await screen.findByText("Directory sync settings saved.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /sign in again/i })).toBeNull();
     expect(screen.queryByText(/Confirm it is you/)).toBeNull();
     const put = calls.find((c) => c.startsWith(`PUT /v1/orgs/${ORG}/scim`))!;
@@ -153,7 +153,7 @@ describe("Directory sync page", () => {
     fireEvent.change(await screen.findByLabelText(/Allowed e-mail domains/), {
       target: { value: "Example.com, example.org" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(calls.some((c) => c.startsWith("PUT"))).toBe(true));
     const put = calls.find((c) => c.startsWith("PUT"))!;
     expect(put).toContain('{"email_domains":["example.com","example.org"]}');
@@ -209,8 +209,8 @@ describe("Directory sync page", () => {
     // "Copied" only when the browser took the write; a refused one says so (the shared copy helper).
     vi.stubGlobal("navigator", { clipboard: { writeText: async () => {} } });
     fireEvent.click(within(dlg).getByRole("button", { name: "Copy" }));
-    expect(await within(dlg).findByText("Copied")).toBeInTheDocument();
-    fireEvent.click(within(dlg).getByRole("button", { name: "Done" }));
+    expect(await within(dlg).findByRole("button", { name: "Copied" })).toBeInTheDocument();
+    fireEvent.click(within(dlg).getByRole("button", { name: "I have saved it" }));
     await waitFor(() => expect(screen.queryByText("aud_NEW1234567890abcdef")).not.toBeInTheDocument());
   });
 

@@ -13,7 +13,7 @@ import { json } from "./support/api";
 // on the agent's SSH page (with the person for someone who can own the agent) and the disconnect confirmation, the Admin ›
 // Overview SSH line, and the status rail's link to the SSH page.
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }), usePathname: () => "/account/ssh" }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => (
     <a href={href} {...rest}>

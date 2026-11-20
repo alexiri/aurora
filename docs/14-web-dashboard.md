@@ -159,6 +159,52 @@ adds to this section, for every screen:
 - **Focus** is one ring from `:focus-visible`; a container with a focused field changes its border;
   menus and popovers have no outline (D-393).
 
+**Shared patterns (phase 5, P5-REFINE-2, D-405, UX review 5).** One primitive for each thing every page used
+to do its own way. A page uses these; a new page never invents its own. (Mock-ups: UX review 5,
+<https://claude.ai/artifact/1YJcRA7Q84864pkim44Qnt>; local copy `design-ux-review-5/`.)
+- **Save.** `SaveBar` (`ui/save-bar.tsx`) is the only way a settings form saves. Hidden until the first
+  change; then a bar fixed at the bottom of the viewport (inset 1 rem, 36 rem wide, centred): **Unsaved
+  changes** with **Discard** and **Save**; **Saving…**; then a check and **Saved** (or the form's own
+  sentence, with **Undo** where a save can be undone, as on Administration defaults) for two seconds;
+  on a failure "2 fields need fixing" (the page scrolls to and focuses the first bad field) or the failure's
+  sentence with Save still enabled. There is no "Saved." line at the top of a page and no green banner. A
+  control that saves on its own (a switch, a select in a row, the avatar, an access level) shows the small
+  **InlineSaved** next to it. `ApplyBar` is retired.
+- **One-time secrets.** `SecretOnce` (`ui/secret-once.tsx`) shows every key, token, signing secret and
+  webhook URL: the value in a mono box that scrolls and never wraps, **Copy** → **Copied**; closing (the X,
+  Escape, the overlay or the button) before it was copied asks "You haven't copied it. Close anyway?" with
+  **Copy** and **Close anyway**. The value lives only in the opener's state.
+- **Confirm ladder.** Undoable actions (pause, remove from a list, turn off) do not ask: a toast with
+  **Undo** (`useUndoToast`, six seconds). Reversible but disruptive actions (rotate, promote, pause an
+  agent, workspace or organization) open a `ConfirmDialog` whose **consequence sentence is required** and
+  whose button is the verb ("Rotate URL", "Promote to Owner"). Permanent actions (delete) open
+  `TypeToConfirm`: a red consequence line, then "Type the workspace name to confirm: **<visible name>**",
+  never a slug; the danger button stays disabled until it matches (case-sensitive, trimmed). A deleted
+  item is named by its visible name in every dialog.
+- **Dates.** `formatWhen` is the one way to show a time: "Just now", "n min ago", "n h ago", then
+  "19 Nov, 23:50" (with the year when it is not this year), in the person's locale and time zone
+  (`GET /v1/me` `timezone`, else the browser's). `<When>` renders `<time>` with the exact time as its
+  title and re-renders every 30 seconds through one timer for the page. Date inputs are `DateField`: the
+  browser locale's order, ISO on the wire.
+- **Tables on small screens.** `ResponsiveTable` (or `DataTable stackBelow={900}` with `Td cell="title"`,
+  `cell="actions"`, `label=`) is a table from 900 px up and one card per row below it: the title line with
+  its actions at the right edge, then "label value" lines. Nothing hides behind an inner scrollbar. One DOM,
+  CSS breakpoint.
+- **Colour meaning.** Red is a failure, amber is something the viewer can do, green is good news only,
+  neutral is information. A logo without a dark variant sits on a light plate in the dark theme. Row action
+  buttons use the regular icon colour.
+- **Dialogs and loading.** A dialog is anchored at a fixed offset from the top (12 vh from 640 px), so a
+  field that appears does not move the title. A form keeps a one-line slot for its error. A list that is
+  loading shows `SkeletonRows`, not "Loading…".
+- **Not found and context.** An unknown organization, workspace or path is a `NotFoundState` inside the
+  app shell, with the viewer's real organization in the rail; the shell never takes an unknown slug as the
+  current organization. Account pages keep the last visited workspace in the switcher. A link that goes to
+  another page and back carries `?from=<same-origin /o/… path>` and the target shows "← Back to <name>".
+- **Copy system.** `lib/labels.ts` is the only map from an enumeration the API returns to words (`label()`
+  gives "?" for an unknown key, never the key). `copy-guard.test.ts` fails on a snake_case word, a UUID or a
+  dotted key shown outside `<code>` or **Technical details**. `TechnicalDetails` is the one fold for
+  machinery.
+
 **Scope: the whole dashboard.** This section is the dashboard's visual
 identity, not a restyle of individual screens. **Every** screen MUST follow
 it — the screens in the mock-ups and every other existing screen (org,
@@ -1221,6 +1267,9 @@ guide links, ladder rows and the organization's accounts.
 - Enumerations are `ChoiceCards` with a sentence per choice (never `sanctioned_only`). Lists are list
   editors (never JSON).
 - The **Default** badge reads "Default: <value in words>".
+- (P5-REFINE-2) Enumerations the API returns are worded in `web/src/lib/labels.ts`, one table per enum;
+  the settings words (`lib/settings-words.ts`) and error words (`lib/api/errors.ts`) stay where they are. An
+  enum value without a label fails `labels.test.ts`.
 - UI text never cites spec sections ("08 §11.1") or repository paths. Operator docs are linked by title.
   A test fails on `§` or `docs/` in dashboard strings, and on the retired words of the vocabulary table
   (C-974).

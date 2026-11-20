@@ -14,13 +14,8 @@ import { cn } from "@/lib/utils";
  * TODO(P5-REFINE-3): until it merges this renders for everyone; brief 3 replaces the check by the altitude.
  */
 export function TechnicalDetails({
-  children,
   admin = false,
-  title = "Technical details",
-  className,
-  summaryClassName,
-  bodyClassName = "font-mono text-xs text-ink-2",
-  "data-testid": testId,
+  ...props
 }: {
   children: ReactNode;
   /** Instance administrators only. */
@@ -32,8 +27,35 @@ export function TechnicalDetails({
   bodyClassName?: string;
   "data-testid"?: string;
 }) {
+  return admin ? (
+    <AdminOnly>
+      <Fold {...props} />
+    </AdminOnly>
+  ) : (
+    <Fold {...props} />
+  );
+}
+
+function AdminOnly({ children }: { children: ReactNode }) {
   const me = useMe();
-  if (admin && me.data?.user.is_instance_admin !== true) return null;
+  return me.data?.user.is_instance_admin === true ? <>{children}</> : null;
+}
+
+function Fold({
+  children,
+  title = "Technical details",
+  className,
+  summaryClassName,
+  bodyClassName = "font-mono text-xs text-ink-2",
+  "data-testid": testId,
+}: {
+  children: ReactNode;
+  title?: string;
+  className?: string;
+  summaryClassName?: string;
+  bodyClassName?: string;
+  "data-testid"?: string;
+}) {
   return (
     <details data-testid={testId} className={cn("text-sm", className)}>
       <summary className={cn("cursor-pointer text-muted", summaryClassName)}>{title}</summary>

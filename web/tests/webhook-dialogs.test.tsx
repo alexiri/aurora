@@ -192,6 +192,7 @@ describe("connect steps", () => {
     const post = calls.find((c) => c.path === "/v1/apps/webhook/connect")!;
     expect((post.body as { webhook: { signing_secret: unknown; signing: boolean } }).webhook.signing_secret).toEqual({ mode: "generate" });
     fireEvent.click(within(once).getByRole("button", { name: "I have saved it" }));
+    fireEvent.click(within(once).getByRole("button", { name: "Close anyway" }));
     expect(onResult).toHaveBeenCalledTimes(1);
     cleanup();
     expect(document.body.innerHTML).not.toContain(SIGNING);
@@ -358,6 +359,7 @@ describe("Edit", () => {
     expect((calls.find((c) => c.method === "PUT")!.body as { signing_secret: unknown }).signing_secret).toEqual({ mode: "generate" });
     expect(onOpenChange).not.toHaveBeenCalled();
     fireEvent.click(within(once).getByRole("button", { name: /I have saved it/ }));
+    fireEvent.click(within(once).getByRole("button", { name: "Close anyway" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 

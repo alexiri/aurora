@@ -95,7 +95,8 @@ export function SaveBar({
 
   const shell =
     "fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-xl items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-pop";
-  if (saved && !dirty) {
+  // "Saved" wins over a draft that has not caught up with the refetch yet; an edit clears `saved` (`useSaveBar().clear`).
+  if (saved) {
     return (
       <div className={shell} data-testid="save-bar-saved">
         <span role="status" aria-live="polite" className="flex min-w-0 items-center gap-2 text-sm font-medium text-ink">

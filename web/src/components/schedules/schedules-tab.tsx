@@ -11,6 +11,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, FormActions } from "@/components/ui/form";
 import { LoadMore } from "@/components/ui/load-more";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { enabledText } from "@/lib/labels";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
@@ -170,7 +171,7 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
         <code className="font-mono text-xs text-ink-2">{s.cron}</code>
         <span className="text-xs text-muted">{s.timezone}</span>
         <Badge className="sm:ml-auto" tone={s.enabled ? "accent" : "neutral"}>
-          {s.enabled ? "Enabled" : `Disabled${s.disabled_reason ? ` (${s.disabled_reason})` : ""}`}
+          {enabledText(s.enabled, s.disabled_reason)}
         </Badge>
       </div>
       <p className="whitespace-pre-wrap text-sm text-ink-2">{s.prompt}</p>

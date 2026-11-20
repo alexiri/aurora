@@ -141,6 +141,7 @@ describe("Connector host tokens (FIX-120)", () => {
       type_ids: ["mattermost", "fake"],
     });
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
     await waitFor(() => expect(screen.queryByText("auh_once")).toBeNull());
 
     fireEvent.click(screen.getAllByRole("button", { name: "Revoke" })[0]);
@@ -572,6 +573,7 @@ describe("Self-hosted path", () => {
     fireEvent.click(screen.getByRole("button", { name: "Provision" }));
     expect((await screen.findByTestId("secret-key")).textContent).toBe("aun_once");
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
     await waitFor(() => expect(screen.queryByText("aun_once")).toBeNull());
     expect(document.body.textContent).not.toContain("aun_once");
   });

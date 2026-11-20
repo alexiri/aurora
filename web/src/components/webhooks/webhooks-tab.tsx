@@ -12,6 +12,7 @@ import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField, FormActions } from "@/components/ui/form";
 import { LoadMore } from "@/components/ui/load-more";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { enabledText } from "@/lib/labels";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { When } from "@/components/ui/when";
 import { ItemList, Section } from "@/components/ui/section";
@@ -165,7 +166,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
         <code className="break-all font-mono text-xs text-ink-2">{w.url_prefix}…</code>
         <span className="text-xs text-muted">verification: {w.verification.kind}</span>
         <Badge className="sm:ml-auto" tone={w.enabled ? "accent" : "neutral"}>
-          {w.enabled ? "Enabled" : `Disabled${w.disabled_reason ? ` (${w.disabled_reason})` : ""}`}
+          {enabledText(w.enabled, w.disabled_reason)}
         </Badge>
       </div>
       <p className="whitespace-pre-wrap text-sm text-ink-2">{w.instructions}</p>

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { UsersTable } from "@/components/account/admin-users-view";
 import { KeysTab } from "@/components/settings/keys-tab";
 import { AccessTab } from "@/components/settings/access-tab";
-import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
+import { SecretOnce } from "@/components/ui/secret-once";
 import type { AdminUser } from "@/lib/api/account";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
@@ -21,10 +21,10 @@ function mockFetch(routes: Record<string, () => Response>) {
   );
 }
 
-describe("OneTimeKeyDialog", () => {
-  it("shows the key and does not retain it after close", () => {
+describe("SecretOnce", () => {
+  it("shows the key, asks before closing without a copy, and does not retain it after close", () => {
     function Host() {
-      return <OneTimeKeyDialog secret={state.secret} onClose={() => rerender(null)} />;
+      return <SecretOnce secret={state.secret} title="Copy your new API key" description="You won't see it again, so store it somewhere safe now." onClose={() => rerender(null)} />;
     }
     const state = { secret: "auk_secret123" as string | null };
     const { rerender: r } = render(<Host />);
@@ -35,6 +35,10 @@ describe("OneTimeKeyDialog", () => {
     expect(screen.getByTestId("secret-key")).toHaveTextContent("auk_secret123");
     expect(screen.getByText(/won't see it again/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    // Never copied: the dialog asks first and keeps the secret.
+    expect(screen.getByText("You haven't copied it. Close anyway?")).toBeInTheDocument();
+    expect(screen.getByTestId("secret-key")).toHaveTextContent("auk_secret123");
+    fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
     expect(screen.queryByText("auk_secret123")).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain("auk_secret123");
   });
@@ -55,6 +59,7 @@ describe("KeysTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create key" }));
     expect(await screen.findByTestId("secret-key")).toHaveTextContent("auk_topsecret");
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
     await waitFor(() => expect(document.body.textContent).not.toContain("auk_topsecret"));
   });
 });

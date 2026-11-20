@@ -233,6 +233,7 @@ describe("ConnectorsAdminView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Provision" }));
     expect((await screen.findByTestId("secret-key")).textContent).toBe("aun_once");
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
     await waitFor(() => expect(screen.queryByText("aun_once")).toBeNull());
     expect(document.body.textContent).not.toContain("aun_once");
   });
@@ -244,7 +245,7 @@ describe("ConnectorsAdminView", () => {
     });
     wrap(<ConnectorsAdminView />);
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove connector" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Integrations still use");
   });
 });

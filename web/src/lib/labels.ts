@@ -177,6 +177,19 @@ export const RUN_OUTCOME = {
   duplicate: { label: "Already handled" },
 } satisfies LabelTable;
 
+/** Why a webhook or schedule is turned off (`disabled_reason`), after "Disabled". */
+export const DISABLED_REASON = {
+  user: { label: "turned off by you" },
+  authorization: { label: "its owner lost access" },
+  failures: { label: "too many failures" },
+} satisfies LabelTable;
+
+/** "Enabled", or "Disabled (<why>)" in words. */
+export function enabledText(enabled: boolean, reason?: string | null): string {
+  if (enabled) return "Enabled";
+  return reason ? `Disabled (${label(DISABLED_REASON, reason)})` : "Disabled";
+}
+
 /** Webhook verification kinds (how the sender proves who it is). */
 export const VERIFICATION_KIND = {
   hmac: { label: "Signed with a secret" },

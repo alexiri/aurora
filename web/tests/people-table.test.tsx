@@ -85,8 +85,8 @@ describe("People table", () => {
     const row = screen.getByTestId("access-row-c");
     const cell = within(row).getByTitle(formatExact("2025-03-04T10:00:00Z"));
     expect(cell).toHaveTextContent(formatWhen("2025-03-04T10:00:00Z"));
-    // The narrow-screen line under the person says it in words.
-    expect(within(row).getByText(joinedText("2025-03-04T10:00:00Z"))).toBeInTheDocument();
+    // The same cell is the "Joined …" line of the stacked row on a phone (its label comes from the stylesheet).
+    expect(cell.closest("td")).toHaveAttribute("data-label", "Joined");
   });
 
   it("suspends after a confirmation that says what stops, marks the row, and restores", async () => {

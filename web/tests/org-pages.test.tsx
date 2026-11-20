@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { InviteForm } from "@/components/org/invite-dialog";
@@ -139,18 +139,24 @@ describe("invite form", () => {
 });
 
 describe("org danger zone", () => {
-  it("only enables delete when the slug matches", async () => {
+  it("asks for the visible name, only enables delete when it matches, and sends the slug", async () => {
     const fetchFn = mockFetch({ "DELETE /v1/orgs/o1": () => json(204, null) });
     const onDeleted = vi.fn();
-    render(<OrgDangerZone orgId="o1" slug="acme" onDeleted={onDeleted} />);
-    const btn = screen.getByRole("button", { name: "Delete organization" });
+    render(<OrgDangerZone orgId="o1" slug="acme" name="Acme Corp" onDeleted={onDeleted} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete organization" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("It can't be undone.");
+    const btn = within(dialog).getByRole("button", { name: "Delete organization" });
     expect(btn).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Organization URL name"), { target: { value: "acm" } });
+    const field = within(dialog).getByLabelText(/Type the organization name to confirm/);
+    expect(dialog).not.toHaveTextContent("URL name");
+    fireEvent.change(field, { target: { value: "acme" } });
     expect(btn).toBeDisabled();
     expect(fetchFn).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Organization URL name"), { target: { value: "acme" } });
+    fireEvent.change(field, { target: { value: "Acme Corp" } });
     expect(btn).toBeEnabled();
     fireEvent.click(btn);
     await waitFor(() => expect(onDeleted).toHaveBeenCalled());
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });

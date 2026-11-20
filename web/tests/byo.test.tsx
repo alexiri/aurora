@@ -184,7 +184,7 @@ describe("workspace BYO setting (P5-IA-4, C-967)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tighten…" }));
     const sel = (await screen.findByLabelText("In this workspace")) as HTMLSelectElement;
     expect([...sel.options].map((o) => o.value)).toEqual(["", "disabled"]);
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     fireEvent.change(sel, { target: { value: "disabled" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(bodies).toEqual([{ byo_posture: "disabled" }]));
@@ -342,7 +342,7 @@ describe("rules that apply to all agents", () => {
     const notes = await screen.findAllByTestId("all-agents-note");
     expect(notes).toHaveLength(1);
     await waitFor(() => expect(notes[0].textContent).toContain("members creating BYO agents"));
-    fireEvent.click(screen.getByRole("button", { name: "Apply changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const dlg = await screen.findByRole("alertdialog", { name: "Confirm broad rules" });
     expect(dlg.textContent).toContain("broad");
     expect(dlg.textContent).not.toContain("scoped");

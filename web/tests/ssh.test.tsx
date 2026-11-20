@@ -14,7 +14,7 @@ import { json } from "./support/api";
 // errors, rename, delete confirm, hidden without features.ssh) and the agent's SSH page (certificate download, the empty
 // host-key notice, frozen and BYO, the 429 text).
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }), usePathname: () => "/account/ssh" }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => (
     <a href={href} {...rest}>

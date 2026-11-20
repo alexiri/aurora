@@ -320,7 +320,7 @@ function StartFailures({ runnerId }: { runnerId: string }) {
         </tbody>
       </DataTable>
       {q.data.items.some((f) => f.events.length > 0) ? (
-        <TechnicalDetails admin title="Cluster events" className="mt-2">
+        <TechnicalDetails title="Cluster events" className="mt-2">
           <ul className="mt-1 space-y-1">
             {q.data.items.flatMap((f) =>
               f.events.map((e, i) => (

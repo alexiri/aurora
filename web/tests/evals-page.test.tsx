@@ -154,7 +154,7 @@ describe("judge control", () => {
     await screen.findByRole("option", { name: /Org key/ });
     fireEvent.change(select, { target: { value: "s9" } });
     fireEvent.change(screen.getByLabelText("Judge model"), { target: { value: "m-1" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save judge settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText(/must be an AI key that is granted to this agent/)).toBeInTheDocument();
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ judge: { secret_id: "s9", model_id: "m-1" }, regression_notify: true });
   });

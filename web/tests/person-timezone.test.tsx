@@ -66,7 +66,7 @@ describe("Account › Profile time zone", () => {
     const select = await screen.findByLabelText("Time zone");
     expect(select).toHaveValue("Europe/Zurich");
     fireEvent.change(select, { target: { value: "America/New_York" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]).toMatchObject({ timezone: "America/New_York" });
 

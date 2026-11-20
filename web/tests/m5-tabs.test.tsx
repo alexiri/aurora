@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { PeersTab } from "@/components/peers/peers-tab";
@@ -132,6 +132,7 @@ describe("WebhooksTab", () => {
     expect(screen.getByText(/You won't see this again/)).toBeTruthy();
     expect(JSON.stringify(qcRef.getQueryCache().getAll().map((q) => q.state.data))).not.toContain("SECRETTOKEN");
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
     await waitFor(() => expect(screen.queryByTestId("secret-key")).toBeNull());
     expect(document.body.textContent).not.toContain("SECRETTOKEN");
   });
@@ -143,9 +144,12 @@ describe("WebhooksTab", () => {
     });
     wrap(<WebhooksTab agentId="a1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Rotate URL" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm rotate GitHub" }));
+    const confirm = await screen.findByRole("dialog");
+    expect(confirm).toHaveTextContent("The old URL stops working now.");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Rotate URL" }));
     expect((await screen.findByTestId("secret-key")).textContent).toContain("whk_NEW");
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
     await waitFor(() => expect(screen.queryByTestId("secret-key")).toBeNull());
   });
 
