@@ -248,7 +248,7 @@ function Row({
       </Td>
       <Td label="Joined" className="text-ink-2">
         {/* (workspace-4, C-1086) `signed_in` is false until the person's first sign-in: "Not signed in yet" and the link to send. */}
-        {(b as { signed_in?: boolean }).signed_in === false ? (
+        {b.signed_in === false ? (
           <span className="flex flex-wrap items-center gap-2" data-testid="not-signed-in">
             <span className="rounded-full bg-pending-panel px-2 py-0.5 text-label font-medium leading-4 text-pending-ink">Not signed in yet</span>
             {b.joined_at ? <span className="whitespace-nowrap">added <When value={b.joined_at} /></span> : null}

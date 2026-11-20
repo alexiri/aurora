@@ -248,6 +248,23 @@ export const COVERED: Record<string, Record<string, LabelEntry<never>>> = {
 /** (P5-REFINE-11, chat-7) The one plain sentence for a chat error with no copy of its own; the technical line goes under Details. */
 export const SOMETHING_WENT_WRONG = "Something went wrong. Try again.";
 
+/** `LinkPolicy`: one side's policy for tasks the other agent hands it (P5-REFINE-12, channels-1). */
+export const LINK_POLICY = {
+  ask: { label: "Ask me first" },
+  allow: { label: "Allowed" },
+  blocked: { label: "Blocked" },
+} satisfies LabelTable;
+COVERED.LinkPolicy = LINK_POLICY;
+
+/** `peer_tasks.status` (docs/03): where a task between two agents stands, in a sentence's last words. */
+export const PEER_TASK_STATUS = {
+  queued: { label: "waiting its turn" },
+  open: { label: "in progress" },
+  completed: { label: "completed" },
+  cancelled: { label: "cancelled" },
+  expired: { label: "ran out of time" },
+} satisfies LabelTable;
+
 /** `SimVerdict` of "Check what would happen": the bold lead of the answer (workspace-1). */
 export const SIM_VERDICT = {
   allow: { label: "Allowed" },

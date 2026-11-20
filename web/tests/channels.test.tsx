@@ -462,6 +462,7 @@ describe("AccountChannelsView", () => {
         json(200, { items: [{ id: "l1", integration_id: "i1", connector_id: "slack", tenant_label: "Acme Slack", platform_user_ref: "U123", user: { id: "u1", display_name: "Ada" }, method: "verified_email", created_at: T }] }),
       "GET /v1/me/dm-defaults": () => json(200, { items: [{ integration_id: "i1", platform_user_ref: "U123", agent_id: null }] }),
       "GET /v1/me/user-tokens": () => json(200, { tokens: [] }),
+      "GET /v1/me/chat-platforms": () => json(200, { platforms: [] }),
       "PUT /v1/me/dm-defaults": () => err(422, "agent_not_reachable"),
       "DELETE /v1/me/channel-links/l1": () => json(204, null),
     });
@@ -473,5 +474,37 @@ describe("AccountChannelsView", () => {
     expect(calls.find((c) => c.key === "PUT /v1/me/dm-defaults")?.body).toEqual({ integration_id: "i1", agent_id: "a1" });
     fireEvent.click(screen.getByRole("button", { name: "Unlink Acme Slack" }));
     await waitFor(() => expect(calls.some((c) => c.key === "DELETE /v1/me/channel-links/l1")).toBe(true));
+  });
+
+  const accountRoutes = (platforms: unknown[]) => ({
+    "GET /v1/me": () => json(200, { user: { id: "u1", display_name: "Ada", email: "a@x.test" }, memberships: [] }),
+    "GET /v1/me/channel-links": () => json(200, { items: [] }),
+    "GET /v1/me/dm-defaults": () => json(200, { items: [] }),
+    "GET /v1/me/user-tokens": () => json(200, { tokens: [] }),
+    "GET /v1/me/chat-platforms": () => json(200, { platforms }),
+  });
+
+  it("names each chat platform and its bot, with Link account (account-3, C-1089); a linked one says Linked", async () => {
+    mockFetch(
+      accountRoutes([
+        { kind: "mattermost", display_name: "Mattermost", bot_handle: "@aurora-bot", linked: false },
+        { kind: "slack", display_name: "Slack", bot_handle: null, linked: true },
+      ]),
+    );
+    wrap(<AccountChannelsView />);
+    const list = await screen.findByRole("list", { name: "Chat platforms" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows[0].textContent).toContain("Mattermost · Message @aurora-bot in Mattermost and send link.");
+    fireEvent.click(within(rows[0]).getByRole("button", { name: "Link account" }));
+    expect(within(rows[0]).getByText(/The bot replies with a sign-in link/)).toBeInTheDocument();
+    expect(rows[1].textContent).toContain("Slack · Message the bot in Slack and send link.");
+    expect(within(rows[1]).getByText("Linked")).toBeInTheDocument();
+    expect(within(rows[1]).queryByRole("button", { name: "Link account" })).toBeNull();
+  });
+
+  it("no connected platform: says an admin can connect one", async () => {
+    mockFetch(accountRoutes([]));
+    wrap(<AccountChannelsView />);
+    expect(await screen.findByText("No chat platform is connected yet. An admin can connect one.")).toBeInTheDocument();
   });
 });

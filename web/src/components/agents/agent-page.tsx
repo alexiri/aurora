@@ -283,7 +283,7 @@ export function AgentPage() {
           {tab === "evals" && !byo ? <EvalsTab agentId={agent.id} frozen={agent.frozen !== null} canOwn={canOwn} defaultTimezone={workspace.data?.timezone} /> : null}
           {tab === "schedules" && !byo ?<SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} wsId={workspace.data?.id} canOwn={canOwn} /> : null}
           {tab === "webhooks" && !byo ? <WebhooksTab agentId={agent.id} wsId={workspace.data?.id} canOwn={canOwn} /> : null}
-          {tab === "peers" && !byo ? <PeersTab agentId={agent.id} /> : null}
+          {tab === "peers" && !byo ? <PeersTab agentId={agent.id} agentName={agent.name} agentsHref={`${base}/agents`} wsId={wsId} frozen={agent.frozen !== null} /> : null}
           {tab === "channels" && !byo && workspace.data ? (
             <AgentChannelsTab
               agentId={agent.id}
