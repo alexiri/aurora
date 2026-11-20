@@ -200,7 +200,7 @@ impl Html {
                 // The core keeps an `href` only for http, https and mailto; without one the
                 // label stays and the tag goes. Only a paired tag becomes a link.
                 if aurora_core::sanitize::anchor_is_closed(rest) {
-                    let href = attr(inner, "href");
+                    let href = usable_href(inner);
                     if href.is_some() {
                         out.push('[');
                     }
@@ -651,7 +651,40 @@ fn first_line_end(s: &str) -> usize {
 }
 
 /// Convert neutral Markdown for Mattermost. Text with nothing to convert comes back unchanged.
+///
+/// Every text this converts — the post, and each piece it converts on its own (an anchor's label,
+/// a footnote's text) — first has its table cells beyond the header's width made text of the last
+/// cell: GFM drops such a cell (no event, so its raw HTML would stay as typed) while Mattermost
+/// renders it, and a piece can be a table the core never saw as one (FIX-195, D-270). Every raw
+/// tag is then an event this pass replaces.
 pub fn convert(neutral: &str) -> String {
+    convert_parsed(&aurora_core::sanitize::escape_table_excess(neutral))
+}
+
+/// An `href` that may become a link destination (the core keeps no other; this does not rely on it).
+fn usable_href(tag: &str) -> Option<String> {
+    attr(tag, "href").filter(|h| aurora_core::sanitize::allowed_link_scheme(h.trim()))
+}
+
+/// The label of an `<a>` pair, converted the way the core read it: inline content of one
+/// paragraph. Converted as a document of its own it could start blocks the core never saw — an
+/// indented code block that keeps its raw HTML as typed (FIX-182), an HTML block whose text is
+/// escaped (the core's `[url](url)` becomes a bare URL), a table whose extra cell the parser drops
+/// (FIX-195) — so it is one line (soft breaks are spaces), behind a `.` that cannot start a block
+/// and that, like the `>` of the opening tag, is punctuation to the inline rules.
+fn convert_label(inner: &str) -> String {
+    let flat = inner
+        .lines()
+        .map(str::trim_start)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let out = convert(&format!(".{flat}"));
+    // (No edit starts at the first byte: it is text.)
+    out.strip_prefix('.')
+        .map_or_else(|| out.clone(), str::to_owned)
+}
+
+fn convert_parsed(neutral: &str) -> String {
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     let mut refs: Vec<String> = Vec::new();
     let mut defs: Vec<(String, String)> = Vec::new();
@@ -778,7 +811,7 @@ pub fn convert(neutral: &str) -> String {
                         None => edits.push((r.start, r.end, String::new())),
                     }
                 } else if name == "a" {
-                    match (find_close(&evs, i, &name), attr(raw, "href")) {
+                    match (find_close(&evs, i, &name), usable_href(raw)) {
                         (Some(k), Some(href)) => {
                             let end = evs[k].1.end;
                             let inner = &neutral[r.end..evs[k].1.start];
@@ -788,23 +821,20 @@ pub fn convert(neutral: &str) -> String {
                             } else {
                                 ""
                             };
-                            // A label has no indentation: converted as a document, four spaces
-                            // would make an indented code block that keeps its raw HTML (and the
-                            // URLs in it) as typed (FIX-182, the 20 000-case proptest).
-                            let label = convert(
-                                &inner
-                                    .lines()
-                                    .map(str::trim_start)
-                                    .collect::<Vec<_>>()
-                                    .join("\n"),
-                            );
+                            let label = convert_label(inner);
                             // A link cannot hold a link: when the label already has links (the
                             // core wrote `[url](url)` for the URLs in it), the content stays as
                             // it is and the anchor's tags go.
                             let rep = if label.contains("](") {
                                 label
                             } else {
-                                format!("{apart}[{}]({})", escape_label(&label), dest(&href))
+                                // One line: a block break the conversion made (`<p>`, `<li>`, …)
+                                // would cut the link and leave `](href)` as text.
+                                format!(
+                                    "{apart}[{}]({})",
+                                    escape_label(&label.replace(['\r', '\n'], " ")),
+                                    dest(&href)
+                                )
                             };
                             edits.push((r.start, end, rep));
                             consumed = end;
@@ -1125,6 +1155,36 @@ mod tests {
         assert!(
             !out.contains("](a link)") || out.contains("\\]\\(a link\\)"),
             "{out}"
+        );
+    }
+
+    /// FIX-195: a cell beyond the header's width (dropped by GFM, rendered by Mattermost) is text
+    /// of the last cell, so its raw HTML is converted — also when the table only exists in an
+    /// anchor's label, converted as a document of its own.
+    #[test]
+    fn html_in_a_cell_beyond_the_header_is_converted() {
+        assert_eq!(
+            convert("|a|b|\n|-|-|\n|1|2|<a href=\"https://x.example\">t</a>|\n"),
+            "|a|b|\n|-|-|\n|1|2\\|[t](https://x.example)\\|\n"
+        );
+        let out = convert(
+            "<a href=\"https://o.example\"> |a|b|\n|-|-|\n|1|2| <a href=\"https://x.example\">t</a> </a>\n",
+        );
+        assert!(!out.contains('<'), "{out}");
+        assert!(out.contains("[t](https://x.example)"), "{out}");
+        // A table that fits its header is left byte for byte.
+        let s = "|a|b|\n|-|-|\n|1|2|\n";
+        assert_eq!(convert(s), s);
+    }
+
+    /// Only an allowed scheme becomes a link destination; otherwise the label stays, the tags go.
+    #[test]
+    fn an_anchor_with_a_bad_scheme_keeps_only_its_label() {
+        assert_eq!(convert("<a href=\"javascript:x()\">t</a>\n"), "t\n");
+        assert_eq!(convert("<a href=\"data:text/html,x\">t</a>\n"), "t\n");
+        assert_eq!(
+            convert("<div><a href=\"javascript:x()\">t</a></div>\n"),
+            "t\n"
         );
     }
 
