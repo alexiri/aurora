@@ -27,11 +27,13 @@ pub struct ConversationRow {
     pub automation_kind: Option<String>,
     pub automation_id: Option<Uuid>,
     pub automation_deleted_at: Option<DateTime<Utc>>,
+    /// (C-1098) The title before the automation's last rename; null if never renamed.
+    pub previous_title: Option<String>,
 }
 
 const COLS: &str = "id, agent_id, workspace_id, kind, external_ref, direct_user_id, title, \
     origin_conversation_id, last_seq, app_turn_streak, last_activity_at, created_at, archived_at, \
-    title_source, automation_kind, automation_id, automation_deleted_at";
+    title_source, automation_kind, automation_id, automation_deleted_at, previous_title";
 
 pub struct NewConversation<'a> {
     pub agent_id: Uuid,
@@ -197,7 +199,8 @@ pub async fn rename_automation_threads(
     name: &str,
 ) -> Result<u64, DbError> {
     Ok(sqlx::query(
-        "UPDATE conversations SET title = $3, title_source = 'automation', updated_at = now()
+        "UPDATE conversations SET previous_title = title, title = $3, title_source = 'automation',
+            updated_at = now()
          WHERE automation_kind = $1 AND automation_id = $2 AND title IS DISTINCT FROM $3",
     )
     .bind(kind)

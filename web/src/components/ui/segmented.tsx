@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 export interface SegmentedOption<T extends string> {
   value: T;
   label: string;
+  /** This one choice cannot be picked (the others can). */
+  disabled?: boolean;
 }
 
 /**
@@ -33,13 +35,13 @@ export function Segmented<T extends string>({
   return (
     <div role="radiogroup" aria-label={label} className={cn("inline-flex max-w-full gap-0.5 rounded-control bg-subtle p-0.5", className)}>
       {options.map((o) => (
-        <label key={o.value} className={cn("relative", disabled && "opacity-60")}>
+        <label key={o.value} className={cn("relative", (disabled || o.disabled) && "opacity-60")}>
           <input
             type="radio"
             name={name}
             value={o.value}
             checked={value === o.value}
-            disabled={disabled}
+            disabled={disabled || o.disabled}
             onChange={() => onChange(o.value)}
             className="peer sr-only"
           />

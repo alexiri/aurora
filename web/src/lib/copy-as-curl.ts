@@ -4,6 +4,8 @@
  * does not have them after they were shown once.
  */
 
+import { authKind, webhookSnippet } from "@/lib/webhook-snippets";
+
 /** Single-quote a value for a POSIX shell. */
 export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -25,24 +27,12 @@ export interface WebhookCurlInput {
   header?: string | null;
 }
 
-const BODY = `'{"message":"hello"}'`;
-
-/** The command the "How to call it" panel shows for the webhook's verification, with `$SECRET` for the secret. */
+/**
+ * The command the "How to call it" panel shows for the webhook's verification, with `$SECRET` for the secret. It is built by
+ * the panel's own function (`lib/webhook-snippets.ts`): one recipe source. On a card only the stored prefix is known, so the
+ * command says so in a comment above it.
+ */
 export function webhookCurl({ url, prefixOnly = false, kind, header }: WebhookCurlInput): string {
-  const target = shellQuote(prefixOnly ? `${url}…` : url);
-  const note = prefixOnly ? ["# The full address was shown once. Rotate the URL to get a new one, and put it here.\n"] : [];
-  if (kind === "hmac_sha256") {
-    const name = header || "X-Signature";
-    return [
-      ...note,
-      `BODY=${BODY}`,
-      `SIG=$(printf %s "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* //')`,
-      `curl -X POST ${target} -H "Content-Type: application/json" -H "${name}: sha256=$SIG" -d "$BODY"`,
-    ].join("\n");
-  }
-  if (kind === "bearer") {
-    const name = header || "Authorization";
-    return [...note, `curl -X POST ${target} -H "Content-Type: application/json" -H "${name}: Bearer $SECRET" -d ${BODY}`].join("\n");
-  }
-  return [...note, `curl -X POST ${target} -H "Content-Type: application/json" -d ${BODY}`].join("\n");
+  const note = prefixOnly ? "# The full address was shown once. Rotate the URL to get a new one, and put it here.\n" : "";
+  return note + webhookSnippet("curl", { url: prefixOnly ? `${url}…` : url, kind: authKind(kind), header });
 }

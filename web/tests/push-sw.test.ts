@@ -135,6 +135,21 @@ describe("push service worker", () => {
     expect(named.options.data.url, "the worker never trusts the payload's url for this type").toBe("/admin");
   });
 
+  it("schedule_answer: fixed text, the schedule's name only when carried, and the conversation path it was given (P5-SCHED-ONCE, C-835)", async () => {
+    const path = "/o/acme/w/main/agents/daneel?c=3f2b8c1e-6a4d-4e0b-9d57-1c2a7e5b9f10";
+    const plain = await push(JSON.stringify({ v: 1, type: "schedule_answer", url: path, answer: "SECRET-CANARY" }));
+    expect(plain.title).toBe("Aurora — a scheduled task has an answer for you");
+    expect(plain.options.body).toBe("Open the conversation to read it.");
+    expect(plain.options.tag).toBe("aurora-schedule");
+    expect(plain.options.data.url).toBe(path);
+    expect(JSON.stringify(plain)).not.toContain("SECRET-CANARY");
+    const named = await push(JSON.stringify({ v: 1, type: "schedule_answer", url: path, title: "Water the plants" }));
+    expect(named.title).toBe("Aurora — Water the plants");
+    expect(named.options.body).toBe("Open the conversation to read it.");
+    const stray = await push(JSON.stringify({ v: 1, type: "schedule_answer", url: "https://evil.example/x" }));
+    expect(stray.options.data.url, "a path outside Aurora becomes the home page").toBe("/");
+  });
+
   it("never shows a field outside the payload contract", async () => {
     const s = await push(
       JSON.stringify({ v: 1, type: "approval.pending", approval_id: "ap-5", title: "SECRET-CANARY", body: "SECRET-CANARY", url: "/o/a/w/b/approvals" }),

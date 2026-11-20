@@ -352,11 +352,13 @@ pub fn apply_enabled(r: &mut WebhookRow, enabled: Option<bool>, actor: Option<Uu
             }
             r.enabled = true;
             r.disabled_reason = None;
+            r.disabled_by = None;
             r.consecutive_failures = 0;
         }
         Some(false) if r.enabled => {
             r.enabled = false;
             r.disabled_reason = Some("user".into());
+            r.disabled_by = actor;
         }
         _ => {}
     }

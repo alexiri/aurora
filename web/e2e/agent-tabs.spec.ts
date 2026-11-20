@@ -15,6 +15,8 @@ const PAGES: [string, string][] = [
   ["instructions", "Instructions"],
   ["memory", "Memory"],
   ["skills", "Skills"],
+  ["automations", "Automations"],
+  // (P5-REFINE-14) The old ids open the one Automations page, filtered to their kind.
   ["schedules", "Automations"],
   ["webhooks", "Automations"],
   ["peers", "Other agents"],
@@ -121,8 +123,11 @@ test.describe("agent page width", () => {
     await expect(sections.getByRole("tab")).toHaveText(["Chat", "Automations", "Computer"]);
     await expect(sections.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
     await sections.getByRole("tab", { name: "Automations" }).click();
-    await expect(page).toHaveURL(/tab=schedules/);
-    await expect(page.getByRole("tablist", { name: "Automations pages" }).getByRole("tab")).toHaveText(["Schedules", "Webhooks", "Channels"]);
+    // (P5-REFINE-14) One page, no sub-tabs: its own heading and a filter by kind.
+    await expect(page).toHaveURL(/tab=automations/);
+    await expect(page.getByRole("tablist", { name: "Automations pages" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { level: 2, name: "Automations", exact: true })).toBeVisible();
+    await expect(page.getByRole("radiogroup", { name: "Show" }).or(page.getByRole("heading", { name: "No automations yet" }))).toBeVisible();
     await page.getByRole("button", { name: "Settings" }).click();
     await expect(page).toHaveURL(/tab=instructions/);
     await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Other agents" }).click();

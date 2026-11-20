@@ -31,6 +31,8 @@ pub struct Schedule {
     pub enabled: bool,
     /// `user` | `authorization` | `failures` when disabled.
     pub disabled_reason: Option<String>,
+    /// (C-1096) The person whose own pause stands (`disabled_reason = user`); null otherwise.
+    pub paused_by: Option<ScheduleCreator>,
     pub consecutive_failures: i32,
     pub next_fire_at: Option<DateTime<Utc>>,
     pub last_fired_at: Option<DateTime<Utc>>,
@@ -53,6 +55,13 @@ pub struct Schedule {
 
 impl From<ScheduleRow> for Schedule {
     fn from(r: ScheduleRow) -> Self {
+        let paused_by = match (&r.disabled_reason, r.disabled_by, r.enabled) {
+            (Some(reason), Some(id), false) if reason == "user" => Some(ScheduleCreator {
+                id,
+                display_name: r.disabled_by_name.clone().unwrap_or_default(),
+            }),
+            _ => None,
+        };
         Self {
             id: r.id,
             agent_id: r.agent_id,
@@ -66,6 +75,7 @@ impl From<ScheduleRow> for Schedule {
             gate_description: r.gate_description,
             enabled: r.enabled,
             disabled_reason: r.disabled_reason,
+            paused_by,
             consecutive_failures: r.consecutive_failures,
             next_fire_at: r.next_fire_at,
             last_fired_at: r.last_fire_at,

@@ -219,6 +219,7 @@ async fn update_schedule(
         gate_command: req.gate_command,
         gate_description: req.gate_description,
         enabled: req.enabled,
+        paused_by: Some(c.user_id),
     };
     let mut row = service::patch(&s.pool, cur, p).await?;
     record(&c, &s, &a, &row, "schedule.update");

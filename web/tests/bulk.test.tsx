@@ -282,14 +282,14 @@ describe("Accounts", () => {
 
 describe("Automations", () => {
   const picked = [
-    { id: "s1", name: "Morning", enabled: true },
-    { id: "s2", name: "Evening", enabled: true },
-    { id: "s3", name: "Weekly", enabled: false },
+    { id: "s1", name: "Morning", kind: "schedule" as const, enabled: true },
+    { id: "s2", name: "Evening", kind: "schedule" as const, enabled: true },
+    { id: "s3", name: "Weekly", kind: "schedule" as const, enabled: false },
   ];
 
   it("Pause acts at once and a toast offers Undo, which resumes them", async () => {
     const calls = serve({ "PATCH /v1/schedules/s1": () => json(200, {}), "PATCH /v1/schedules/s2": () => json(200, {}), "GET /v1/agents/a1/schedules": () => json(200, { items: [], next_cursor: null }) });
-    mountWith(<AutomationsBulkBar kind="schedule" agentId="a1" picked={picked} onClear={() => undefined} />);
+    mountWith(<AutomationsBulkBar agentId="a1" picked={picked} onClear={() => undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     await waitFor(() => expect(screen.getByText("Paused 2 schedules")).toBeInTheDocument());
     expect(calls.filter((c) => c.method === "PATCH").map((c) => `${c.path} ${JSON.stringify(c.body)}`)).toEqual([
@@ -309,7 +309,7 @@ describe("Automations", () => {
       "DELETE /v1/schedules/s3": () => json(204, null),
       "GET /v1/agents/a1/schedules": () => json(200, { items: [], next_cursor: null }),
     });
-    mountWith(<AutomationsBulkBar kind="schedule" agentId="a1" picked={picked} onClear={() => undefined} />);
+    mountWith(<AutomationsBulkBar agentId="a1" picked={picked} onClear={() => undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     await waitFor(() => expect(screen.getByText("Resumed 1 schedule")).toBeInTheDocument());
     expect(calls.find((c) => c.method === "PATCH")!.path).toBe("/v1/schedules/s3");
@@ -326,10 +326,10 @@ describe("Automations", () => {
 
   it("is a bar only while something is selected, and not at all below Expert", () => {
     serve({});
-    mountWith(<AutomationsBulkBar kind="webhook" agentId="a1" picked={[]} onClear={() => undefined} />);
+    mountWith(<AutomationsBulkBar agentId="a1" picked={[]} onClear={() => undefined} />);
     expect(screen.queryByTestId("bulk-bar")).toBeNull();
     cleanup();
-    mountWith(<AutomationsBulkBar kind="webhook" agentId="a1" picked={picked} onClear={() => undefined} />, false);
+    mountWith(<AutomationsBulkBar agentId="a1" picked={picked} onClear={() => undefined} />, false);
     expect(screen.queryByTestId("bulk-bar")).toBeNull();
   });
 });

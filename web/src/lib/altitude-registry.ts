@@ -47,14 +47,21 @@ export const ALTITUDE_REGISTRY = {
   "policy.restrict": { altitude: "setup", area: "Internet access" },
   "policy.try": { altitude: "setup", area: "Internet access" },
   "policy.presets": { altitude: "setup", area: "Internet access" },
-  "auto.cron": { altitude: "expert", area: "Schedules", later: "P5-REFINE-14" },
-  "auto.gate": { altitude: "expert", area: "Schedules" },
+  "auto.cron": { altitude: "expert", area: "Schedules" },
+  // (P5-REFINE-14) The schedule form's Advanced fold (the check that wakes it, keep running without you); it replaced `auto.gate`.
+  "auto.advanced": { altitude: "setup", area: "Schedules" },
   "auto.anchor": { altitude: "expert", area: "Schedules" },
   "auto.curl": { altitude: "expert", area: "Webhooks", later: "P5-REFINE-14" },
   "auto.signature": { altitude: "expert", area: "Webhooks", later: "P5-REFINE-19" },
   "auto.deliveryids": { altitude: "expert", area: "Webhooks" },
+  // (P5-REFINE-14) The "How to call it" panel is Set up.
+  "auto.howto": { altitude: "setup", area: "Webhooks" },
+  // (P5-REFINE-14) The Chats group of Automations: the body is Set up, Space bindings and Reach requests Expert.
+  "chat.setup": { altitude: "setup", area: "Automations (Chats)" },
+  "chat.bindings": { altitude: "expert", area: "Automations (Chats)" },
+  "chat.reach": { altitude: "expert", area: "Automations (Chats)" },
   "connect.othermethods": { altitude: "expert", area: "Connect journey" },
-  "auto.verification": { altitude: "setup", area: "Webhooks", later: "P5-REFINE-14" },
+  "auto.verification": { altitude: "setup", area: "Webhooks" },
   "log.requests": { altitude: "expert", area: "Activity" },
   "tech.details": { altitude: "setup", area: "Technical details folds" },
   // (P5-REFINE-15, D-406) The Computer's own controls.

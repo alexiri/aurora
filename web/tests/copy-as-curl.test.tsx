@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeyTable } from "@/components/account/key-table";
 import { UndoToastHost } from "@/components/ui/undo-toast";
 import { apiKeyCurl, shellQuote, webhookCurl } from "@/lib/copy-as-curl";
+import { webhookSnippet } from "@/lib/webhook-snippets";
 import { wrap } from "./support/render";
 
 // P5-REFINE-19 item 5: Copy as curl is an Expert control and its commands carry placeholders, never a secret or a key.
@@ -32,7 +33,8 @@ describe("the commands", () => {
     const c = webhookCurl({ url: "https://a.example/hooks/abc", kind: "hmac_sha256", header: "X-Signature" });
     expect(c).toContain('openssl dgst -sha256 -hmac "$SECRET"');
     expect(c).toContain('-H "X-Signature: sha256=$SIG"');
-    expect(c).toContain("curl -X POST 'https://a.example/hooks/abc'");
+    expect(c).toContain("curl -X POST https://a.example/hooks/abc ");
+    expect(c).toBe(webhookSnippet("curl", { url: "https://a.example/hooks/abc", kind: "hmac_sha256", header: "X-Signature" }));
     expect(c).not.toContain("#");
   });
 

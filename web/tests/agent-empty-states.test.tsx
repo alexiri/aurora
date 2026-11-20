@@ -5,7 +5,7 @@ import { EvalsTab } from "@/components/agents/evals/evals-tab";
 import { AgentChannelsTab } from "@/components/channels/agent-channels-tab";
 import { MemoryTab } from "@/components/memory/memory-tab";
 import { SkillsTab } from "@/components/skills/skills-tab";
-import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
+import { AutomationsTab } from "@/components/automations/automations-tab";
 import { json } from "./support/api";
 import { wrap } from "./support/render";
 
@@ -54,11 +54,11 @@ describe("empty states on the agent's pages", () => {
     expect(screen.queryByText("Skills this agent receives")).toBeNull();
   });
 
-  it("Webhooks: the empty state has New webhook", async () => {
-    mockFetch({ "GET /v1/agents/a1/webhooks": page() });
-    wrap(<WebhooksTab agentId="a1" canOwn />);
-    expect(await screen.findByRole("heading", { name: "No webhooks" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "New webhook" }).length).toBeGreaterThan(0);
+  it("Automations: the empty state has New automation (P5-REFINE-14: schedules, webhooks and chats are one page)", async () => {
+    mockFetch({ "GET /v1/agents/a1/schedules": page(), "GET /v1/agents/a1/webhooks": page(), "GET /v1/agents/a1/presences": page(), "GET /v1/agents/a1/presence-options": page() });
+    wrap(<AutomationsTab agentId="a1" agentName="Daneel" agentBase="/o/acme/w/main/agents/daneel" canOwn />);
+    expect(await screen.findByRole("heading", { name: "No automations yet" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "New automation" }).length).toBeGreaterThan(0);
   });
 
   it("Channels: with no chat platform the whole tab is one empty state and none of the sections show", async () => {
@@ -69,7 +69,7 @@ describe("empty states on the agent's pages", () => {
     });
     wrap(<AgentChannelsTab agentId="a1" agentName="Daneel" orgId="o1" canOwn wsId="w1" />);
     expect(await screen.findByRole("heading", { name: "Daneel isn't in any chat yet" })).toBeInTheDocument();
-    expect(screen.getByText("Your organization hasn't connected a chat platform. Once it has, you can add Daneel to channels here.")).toBeInTheDocument();
+    expect(screen.getByText("Only organization owners and admins can connect a chat platform.")).toBeInTheDocument();
     expect(screen.queryByText("Presences")).toBeNull();
     expect(screen.queryByText("Space bindings")).toBeNull();
     expect(screen.queryByText("Reach requests")).toBeNull();

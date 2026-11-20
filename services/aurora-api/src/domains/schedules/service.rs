@@ -48,6 +48,8 @@ pub struct Patch {
     pub gate_command: Option<Option<String>>,
     pub gate_description: Option<Option<String>>,
     pub enabled: Option<bool>,
+    /// (C-1096) The person pausing (recorded with a user pause); null for an agent's tool call.
+    pub paused_by: Option<Uuid>,
 }
 
 fn both_kinds() -> ApiError {
@@ -272,6 +274,7 @@ pub async fn patch_with(
         Some(true) if !r.enabled => {
             r.enabled = true;
             r.disabled_reason = None;
+            r.disabled_by = None;
             r.consecutive_failures = 0;
             r.next_fire_at = match retimed {
                 Some(next) => next,
@@ -282,6 +285,7 @@ pub async fn patch_with(
         Some(false) if r.enabled => {
             r.enabled = false;
             r.disabled_reason = Some("user".into());
+            r.disabled_by = p.paused_by;
             r.next_fire_at = None;
             reschedule = true;
         }

@@ -272,6 +272,7 @@ impl PlatformTool for UpdateT {
                 gate_command: a.gate_command.map(Some),
                 gate_description: a.gate_description.map(Some),
                 enabled: a.enabled,
+                paused_by: None,
             },
         )
         .await

@@ -415,3 +415,59 @@ web source changed besides the generated client; the existing schedule mocks sti
 - `python3 scripts/extract-schema.py --check`: up to date; `bash scripts/guards/run-all.sh`: all
   guards passed.
 - Playwright production specs: none affected (no UI change).
+
+### Part C (lane B, `p5-polish-b`, 2026-11-21)
+
+**Done:** all four items of Part C; nothing waits. The API is unchanged (C-1092..C-1095), so `docs/05`,
+`API_CONTRACTS`, `openapi.json` and `schema.d.ts` were not touched.
+
+**Always-name answers.** Time-zone default of the tools, the push loop and the `url` format are Part A/B's (above).
+Code of P5-REFINE-7 / -11 / -14 bent: only P5-REFINE-14's: `ScheduleSpec` gained `day`, `month`, `date`;
+`cronToSpec` reads a day-and-month cron as Every year instead of Custom (the other odd crons stay Custom);
+`RowShell` / `StateBadge` gained a `done` flag; `useSchedulePreview` takes an optional `run_at`; `whenLine` in
+`schedule-row.tsx` replaced Part B's placeholder ("Once, …" / "Done"). P5-REFINE-11's `AutomationMessage` only got
+`break-words`.
+
+1. **Presets** (`lib/cron.ts`, `lib/schedule-words.ts`, `schedule-form.tsx`): `Every 5 minutes · Hourly · Every day ·
+   Weekdays · Weekly · Every year · Once · Custom`. Every year: day, month, time → cron `M H D Mo *`; summary "Every
+   year on 27 November at 10:00 · next: 27 Nov 2027 (Zurich time)". Once: date (default tomorrow in the chosen
+   zone) + time (09:00) → `run_at` `YYYY-MM-DDTHH:MM`, no `cron`; summary "Once, on Sat 21 Nov at 09:00 (Zurich
+   time)." (the "at most every 5 minutes" sentence is left out for Once). The time-zone Combobox is shared. A past
+   time: the form previews `run_at` through `POST …/schedules/preview` (debounced 1 s) and shows "Pick a time in
+   the future" for the API's "is in the past" (any other API message is shown as is); the button is disabled.
+   Edit opens a yearly cron on Every year and a `run_at` schedule on Once.
+2. **Row states** (`schedule-row.tsx`, `row-parts.tsx`): pending "Once · Sat 21 Nov at 09:00 (Zurich time)" with
+   On / Paused; Waiting is a notice, "Waiting: <Agent> is paused. It runs when <Agent> is resumed.", shown when the
+   schedule is pending and enabled, its `next_fire_at` has passed and the agent is `effective_frozen` (new
+   `agentFrozen` prop from the agent page); Done: badge **Done**, "Ran on Sat 21 Nov at 09:00 · removed on 21 Dec"
+   (`completed_at` + 30 days), actions Run now, **Run again** (the form on Once, date tomorrow, `PATCH run_at`
+   re-arms it) and Delete; no Edit, Pause, Resume, Reassign or anchor item. Done is neither On nor Paused. No test
+   or glossary checked these words before (the words test of P5-REFINE-1 does not cover schedule rows).
+3. **Transcript:** a one-time run in the person's chat arrives as the same `schedule` display, so P5-REFINE-11's
+   renderer shows it; it had no wrapping for a long name, so it got `break-words` (vitest: a 100-character name). I
+   could not open a browser here, so 390 px in both themes is by reading (no fixed width, tokens only), not by
+   screenshot; the mocked Playwright specs below check no horizontal scroll for the new form and rows.
+4. **Service worker:** `schedule_answer` in `TYPES`; "Aurora — a scheduled task has an answer for you" / "Open the
+   conversation to read it."; with `title`: "Aurora — <title>"; tag `aurora-schedule`; `url` goes through the same
+   `/o/` path check as the other types (anything else → `/`).
+
+Docs: `14` (Every year and Once, row states, service worker), `FEATURES`, `PROGRESS`. Mockups: none exist for Part C
+beyond the Automations page ones; the form and rows use the kit (Segmented, Select, Combobox, Badge, Notice).
+
+**Files.** `web/src/lib/{cron,schedule-words}.ts`, `web/src/lib/api/schedules.ts`,
+`web/src/components/automations/{schedule-form,schedule-row,row-parts,automations-tab}.tsx`,
+`web/src/components/agents/agent-page.tsx`, `web/src/components/chat/automation-message.tsx`,
+`web/public/aurora-push-sw.js`.
+
+**Tests changed (none removed).** `web/tests/cron.test.ts` (preset list, `ScheduleSpec` shape, yearly and once),
+`web/tests/schedule-words.test.ts`, `web/tests/automations-page.test.tsx` (preset list; new: Every year, Once, past
+time, pending row, Waiting, no Waiting, Done and Run again), `web/tests/automation-message.test.tsx`,
+`web/tests/push-sw.test.ts`; `web/e2e/automations.spec.ts` (mocked, both themes at 1280 and 390 px: Once and Every
+year, a past time, a pending and a Done row). No production Playwright spec or `scripts/e2e` script sees these
+strings (searched `e2e/`, `scripts/e2e/`); nothing for the nightly.
+
+**Verification.** `pnpm exec tsc --noEmit`: clean. `pnpm exec eslint` on all touched files: clean. `pnpm exec vitest
+run tests/schedule-words.test.ts tests/cron.test.ts tests/automations-page.test.tsx tests/automations.test.tsx
+tests/push-sw.test.ts tests/automation-message.test.tsx` plus every test that mentions `AutomationsTab` or the agent
+page: 12 files, 219 passed. Playwright was not run (mocked spec edited by reading; CI runs it). No Rust, API or
+generated-file change, so no `cargo`, `extract-schema --check` or `openapi` run.
