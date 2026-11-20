@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { ConversationActions } from "@/components/agents/conversation-actions";
+import { ConversationActions, RestoreButton } from "@/components/agents/conversation-actions";
 import { Avatar } from "@/components/agent-avatar";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
@@ -71,6 +71,8 @@ export function ChatThread({
   const { state, loading, error, live } = useTranscript(convId);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [stopErr, setStopErr] = useState<string | null>(null);
+  // (chat-2) Counts accepted sends: the transcript goes to the bottom for each one.
+  const [sent, setSent] = useState(0);
   // (P5-CHAT-2) Reply target, jump requests and the "not available" notice for a permalink or quote that points nowhere.
   const [reply, setReply] = useState<ReplyTarget | null>(null);
   // Files dropped anywhere on the thread pane go to the composer's uploader (P5-CHAT-3).
@@ -120,7 +122,8 @@ export function ChatThread({
     : undefined;
   const segments = [
     ...(isDirect || !conversation ? [] : [kindLabel(conversation.kind)]),
-    ...(conversation?.archived_at ? [`Archived ${DATE.format(new Date(conversation.archived_at))}`] : []),
+    // (chat-1) "Archived 19 Nov 2026 · read only"
+    ...(conversation?.archived_at ? [`Archived ${DATE.format(new Date(conversation.archived_at))}`, "read only"] : archived ? ["Archived", "read only"] : []),
     ...(retentionDays ? [`Deleted after ${retentionDays} days without activity`] : []),
   ];
 
@@ -134,7 +137,14 @@ export function ChatThread({
           segments={segments}
           live={loading || error ? null : live}
           onBack={onBack}
-          actions={onGone ? <ConversationActions agentId={agentId} convId={convId} archived={archived} onGone={onGone} onError={setActionErr} /> : null}
+          actions={
+            onGone ? (
+              <>
+                {archived && !readOnly ? <RestoreButton agentId={agentId} convId={convId} /> : null}
+                <ConversationActions agentId={agentId} convId={convId} archived={archived} onGone={onGone} onError={setActionErr} />
+              </>
+            ) : null
+          }
         />
         {actionErr ? (
           <Notice tone="danger" role="alert" className="m-3 shrink-0">
@@ -159,6 +169,7 @@ export function ChatThread({
             convId={convId}
             agent={agent}
             active={!!active}
+            sent={sent}
             empty={
               empty ? (
                 <div className="mx-auto flex max-w-sm flex-col items-center gap-2 text-center">
@@ -201,6 +212,11 @@ export function ChatThread({
               ) : null}
             </Notice>
           </div>
+        ) : archived ? (
+          // (chat-1) An archived conversation is read-only: no composer, one sentence and Restore in the header.
+          <div className="shrink-0 border-t border-line p-3 md:px-5">
+            <Notice role="note">This conversation is archived. Restore it to write again.</Notice>
+          </div>
         ) : (
           <>
             <AccountsBanner workspaceId={wsId} agent={{ id: agentId, name: agentName }} base={base} />
@@ -218,6 +234,7 @@ export function ChatThread({
             attachRef={attachRef}
             initialDraft={initialDraft}
             onDraftUsed={onDraftUsed}
+            onSent={() => setSent((n) => n + 1)}
           />
           </>
         )}

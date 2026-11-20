@@ -33,7 +33,10 @@ export function TranscriptView({
   empty,
   jump = null,
   onJumpMissing,
+  sent = 0,
 }: {
+  /** (chat-2) Bumped for every message the person sends: the log goes to the bottom, whatever it was following. */
+  sent?: number;
   /** Scroll to (and highlight) the message with this `seq`; a new `n` repeats the request (P5-CHAT-2). */
   jump?: { seq: number; n: number } | null;
   /** The requested message is not in the loaded history. */
@@ -60,6 +63,24 @@ export function TranscriptView({
     const el = ref.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [state]);
+
+  // (chat-2) After sending, the person's message and the answer are in view, always: follow again, go to the bottom now and
+  // once more after the next paint (the message's attachments and the new rows change the height after the first scroll).
+  // `leftAt` is reset in the same effect so "Jump to latest" is not shown.
+  const sentSeen = useRef(sent);
+  useLayoutEffect(() => {
+    if (sent === sentSeen.current) return;
+    sentSeen.current = sent;
+    stick.current = true;
+    const el = ref.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setLeftAt(null);
+    const raf = requestAnimationFrame(() => {
+      if (ref.current && stick.current) ref.current.scrollTop = ref.current.scrollHeight;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [sent]);
 
   // "Jump to latest": while the reader is more than a screen above the bottom, count the messages that arrived since.
   const [leftAt, setLeftAt] = useState<number | null>(null);
@@ -100,6 +121,11 @@ export function TranscriptView({
         role="log"
         aria-live="polite"
         aria-label="Conversation"
+        // (chat-2) An image that finishes loading makes the log taller without a scroll event: keep following when following.
+        onLoadCapture={() => {
+          const el = ref.current;
+          if (el && stick.current) el.scrollTop = el.scrollHeight;
+        }}
         onScroll={(e) => {
           const el = e.currentTarget;
           const dist = el.scrollHeight - el.scrollTop - el.clientHeight;

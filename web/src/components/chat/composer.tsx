@@ -88,7 +88,10 @@ export function Composer({
   attachRef,
   initialDraft,
   onDraftUsed,
+  onSent,
 }: {
+  /** (chat-2) The message was accepted: the transcript scrolls to the bottom. */
+  onSent?: () => void;
   /** (P5-REFINE-13, C-1035) A link's suggested message (`?draft=`), already read from the router. Never sent for the person. */
   initialDraft?: string;
   /** The person edited the box or sent: the page may forget the draft. */
@@ -135,7 +138,6 @@ export function Composer({
   const [expired, setExpired] = useState(0);
   const [mode, setMode] = useState<"write" | "preview">("write");
   const [fmtPref, setFmtPref] = useState<boolean | null>(null);
-  const [wide, setWide] = useState(false);
   const [caret, setCaret] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [hits, setHits] = useState<EmojiHit[]>([]);
@@ -171,17 +173,12 @@ export function Composer({
     window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
-  // The `Aa` choice and the width the unset default depends on.
+  // The remembered `Aa` choice.
   useEffect(() => {
     setFmtPref(loadFormattingPref());
-    const mq = window.matchMedia?.("(min-width: 768px)");
-    if (!mq) return;
-    setWide(mq.matches);
-    const on = (e: MediaQueryListEvent) => setWide(e.matches);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
   }, []);
-  const fmtOn = fmtPref ?? wide;
+  // (chat-8) One row until Aa is pressed, at every width; the choice is remembered.
+  const fmtOn = fmtPref ?? false;
 
   // Drafts: restored once per user and conversation (a `?draft=` suggestion wins over a stored text), then saved
   // on every change; the saved copy is removed when everything is empty (after Send).
@@ -270,6 +267,7 @@ export function Composer({
       setPending([]);
       setMode("write");
       onClearReply?.();
+      onSent?.();
       void qc.invalidateQueries({ queryKey: ["agents", agentId, "conversations"] });
     } catch (err) {
       // The server took the key for other content: never reuse it.
@@ -497,7 +495,8 @@ export function Composer({
               requestAnimationFrame(() => area.current?.focus());
             }
           }}
-          className="max-h-44 min-h-14 overflow-y-auto rounded-control px-2 py-1.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+          // (chat-8) The preview grows with its content: no box of its own with a scrollbar.
+          className="min-h-14 rounded-control px-2 py-1.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
           {mode === "preview" ? (
             text.trim() ? (
               <div className="min-w-0 max-w-full space-y-2 break-words rounded-card rounded-tr-tail bg-bubble px-3.5 py-2.5 text-bubble-ink">
@@ -508,7 +507,7 @@ export function Composer({
             )
           ) : null}
         </div>
-        <div className={fmtPref === null ? "hidden md:block" : fmtOn ? "block" : "hidden"} data-testid="formatting-row">
+        <div className={fmtOn ? "block" : "hidden"} data-testid="formatting-row">
           {/* (P5-UX-1) The row and the toolbar wrap at any width: no clipped button at about 1250 px, none behind a sideways scroll at 390 px. */}
           <div className="mt-1 flex flex-wrap items-center gap-1 border-t border-line pt-1">
             <Tabs
@@ -593,7 +592,7 @@ export function Composer({
             className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-sm font-semibold text-ink-2 hover:bg-subtle hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent aria-pressed:bg-subtle aria-pressed:text-ink md:size-9">
             <span aria-hidden="true">Aa</span>
           </button>
-          <span className="hidden min-w-0 flex-1 px-1 text-xs text-muted md:block" data-testid="composer-hint">
+          <span className="hidden min-w-0 flex-1 truncate whitespace-nowrap px-1 text-xs text-muted md:block" data-testid="composer-hint">
             {fenced ? (
               <>
                 Enter for a new line · <Kbd>{mac ? "⌘" : "Ctrl"}</Kbd> <Kbd>Enter</Kbd> to send

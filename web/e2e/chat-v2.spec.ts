@@ -387,7 +387,8 @@ for (const width of [1250, 390]) {
 
     test("wraps instead of clipping or scrolling", async ({ page }) => {
       await openChat(page, "light", DEFAULT, `?c=${MINE.id}`);
-      if (width < 768) await page.getByRole("button", { name: "Formatting" }).click();
+      // (chat-8) At every width the row opens with Aa.
+      await page.getByRole("button", { name: "Formatting" }).click();
       const row = page.getByTestId("formatting-row");
       await expect(row).toBeVisible();
       const buttons = row.getByRole("toolbar", { name: "Formatting" }).getByRole("button");

@@ -3,6 +3,7 @@
 import type { ComponentType, ReactNode, SVGProps } from "react";
 
 import { Avatar } from "@/components/agent-avatar";
+import { Button } from "@/components/ui/button";
 import { BotIcon, CalendarIcon, EyeIcon, LinkIcon, MessageIcon, PlugIcon, UsersIcon } from "@/components/ui/icons";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs } from "@/components/ui/tabs";
@@ -103,7 +104,12 @@ export function ConversationList({
   status,
   className,
   waitingIds,
+  agentName,
+  onNewChat,
 }: {
+  /** (chat-1) For the empty Active list: "Start a new chat to talk with <agent>." and the New chat button. */
+  agentName?: string;
+  onNewChat?: () => void;
   /** (P5-CHAT-4) The search box with its chips; it replaces the title filter. */
   searchBox: ReactNode;
   /** (P5-CHAT-4) While a message search shows, its results replace the Active/Archived switch and the rows. */
@@ -161,7 +167,15 @@ export function ConversationList({
         aria-labelledby={`chat-list-tab-${archived ? "archived" : "active"}`}
         className="-mx-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1">
         {status}
-        {empty && !status ? (
+        {empty && !status && !query.trim() && !archived && onNewChat ? (
+          <div className="space-y-2 rounded-card border border-dashed border-line-strong p-3">
+            <p className="text-sm font-semibold text-ink">No active conversations</p>
+            <p className="text-sm text-ink-2">Start a new chat to talk with {agentName ?? "the agent"}.</p>
+            <Button type="button" variant="primary" size="sm" className="min-h-11 md:min-h-9" onClick={onNewChat}>
+              New chat
+            </Button>
+          </div>
+        ) : empty && !status ? (
           <p className="px-2 py-3 text-sm text-muted">
             {query.trim() ? "No conversations match." : archived ? "No archived conversations." : "No conversations yet."}
           </p>

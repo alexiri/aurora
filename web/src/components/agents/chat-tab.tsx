@@ -18,7 +18,8 @@ import type { AgentIdent } from "@/components/chat/types";
 import { ErrorState, Loading } from "@/components/states";
 import { ChevronRightIcon } from "@/components/ui/icons";
 import { useApprovalsStream, useCanApprove } from "@/lib/api/approvals";
-import { useConversationById, useConversations, useDirectConversation, type Conversation } from "@/lib/api/conversations";
+import { chatApi, useConversationById, useConversations, useDirectConversation, type Conversation } from "@/lib/api/conversations";
+import { refreshConversations } from "./conversation-actions";
 import { useRetention } from "@/lib/api/org";
 import { conversationTitle, filterConversations, groupConversations, sortByActivity, type ListGroups } from "@/lib/chat/layout";
 
@@ -164,7 +165,8 @@ export function ChatTab({
   const convs = useMemo(() => list.data?.items ?? [], [list.data]);
   const activeConvs = useMemo(() => {
     const items = activeList.data?.items ?? [];
-    return directConv && !items.some((c) => c.id === directConv.id) ? [directConv, ...items] : items;
+    // (chat-1) The person's own chat is listed first even before the list has it, but never while it is archived.
+    return directConv && !directConv.archived_at && !items.some((c) => c.id === directConv.id) ? [directConv, ...items] : items;
   }, [activeList.data, directConv]);
   // The conversation list carries `active_turn` but is not streamed: look again while the page is visible.
   useEffect(() => {
@@ -175,7 +177,7 @@ export function ChatTab({
   }, [qc, agentId]);
   const groups: ListGroups = useMemo(() => {
     if (archived) return { mine: null, others: sortByActivity(filterConversations(convs, query)), memberDirects: [] };
-    const all = directConv && !convs.some((c) => c.id === directConv.id) ? [directConv, ...convs] : convs;
+    const all = directConv && !directConv.archived_at && !convs.some((c) => c.id === directConv.id) ? [directConv, ...convs] : convs;
     return groupConversations(filterConversations(all, query), directConv?.id ?? null);
   }, [archived, convs, directConv, query]);
 
@@ -254,6 +256,16 @@ export function ChatTab({
     select(null, "replace");
   };
   const threadOpen = picked !== null;
+  // (chat-1) Until several chats exist (P5-REFINE-7) "New chat" opens the person's chat, restoring it when it was archived.
+  const newChat = () => {
+    setArchived(false);
+    if (directConv?.archived_at) {
+      void chatApi.unarchive(directConv.id).then(() => {
+        refreshConversations(qc, agentId, directConv.id);
+        select(directConv.id);
+      });
+    } else select(directConv?.id ?? null);
+  };
   const titleOf = (c: Conversation) => conversationTitle(c);
   const ctx: RailContext = {
     status,
@@ -299,6 +311,8 @@ export function ChatTab({
           waitingIds={waitingIds}
           groups={groups}
           selectedId={convId}
+          agentName={agent?.name}
+          onNewChat={newChat}
           archived={archived}
           onArchivedChange={(a) => {
             setArchived(a);

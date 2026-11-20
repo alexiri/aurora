@@ -60,6 +60,10 @@ for (const scheme of ["light", "dark"] as const) {
 
     test("format, Preview, send: the request carries the Markdown; the row is a roving toolbar", async ({ page }) => {
       const box = await openComposer(page, scheme);
+      // (chat-8) The composer is one row until Aa opens the formatting toolbar.
+      await expect(page.getByTestId("formatting-row")).toBeHidden();
+      await page.getByRole("button", { name: "Formatting" }).click();
+      await expect(page.getByTestId("formatting-row")).toBeVisible();
       await box.fill("hello world");
       await box.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(0, 5));
       await page.getByRole("button", { name: "Bold (Ctrl+B)" }).click();
@@ -88,6 +92,7 @@ for (const scheme of ["light", "dark"] as const) {
     test("undo after a toolbar action restores the text (Chromium)", async ({ page, browserName }) => {
       test.skip(browserName !== "chromium", "execCommand undo is checked in Chromium here; Firefox/WebKit are noted in the report");
       const box = await openComposer(page, scheme);
+      await page.getByRole("button", { name: "Formatting" }).click();
       await box.click();
       await page.keyboard.type("keep this");
       await page.keyboard.press("Control+a");
