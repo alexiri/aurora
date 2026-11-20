@@ -15688,6 +15688,29 @@ export interface components {
             id: string;
             name: string;
         };
+        /**
+         * @description `event: request` of the timeline stream (C-1084, SEC-143): a new request-log row of the agent,
+         *     sent only with `?technical=true` and only when the viewer may see its conversation (a row with
+         *     none is sent without its host). It carries **no path, no context label, no secret or connection
+         *     id**: the Technical view reads the full row from `GET /workspaces/{ws}/activity`, which has its own
+         *     authorization, when it sees this event.
+         */
+        TimelineRequestEvent: {
+            /** Format: uuid */
+            agent_id: string;
+            app_id?: string | null;
+            decision: string;
+            /** @description Only with a visible conversation. */
+            host?: string | null;
+            /** Format: uuid */
+            id: string;
+            method: string;
+            /** Format: int32 */
+            status: number;
+            tool_id?: string | null;
+            /** Format: date-time */
+            ts: string;
+        };
         /** @description `event: row` of the timeline stream (C-1084). */
         TimelineRowEvent: {
             item: components["schemas"]["TimelineItem"];
@@ -15704,6 +15727,11 @@ export interface components {
          * @enum {string}
          */
         TimelineState: "running" | "waiting" | "done" | "failed" | "blocked" | "skipped";
+        /** @description The events of the timeline stream by their `event:` name (C-1084); `resync` carries `{}`. */
+        TimelineStreamEvents: {
+            request: components["schemas"]["TimelineRequestEvent"];
+            row: components["schemas"]["TimelineRowEvent"];
+        };
         TokenRequest: {
             device_code: string;
         };
@@ -27125,6 +27153,14 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -27164,10 +27200,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": components["schemas"]["TimelineRowEvent"];
+                    "text/event-stream": components["schemas"]["TimelineStreamEvents"];
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

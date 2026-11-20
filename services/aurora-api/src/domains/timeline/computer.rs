@@ -156,18 +156,17 @@ fn secretish(seg: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "-_:.=+/".contains(c));
     let prefixed = [
-        "aug_", "aub_", "auc_", "sk-", "sk_", "ghp_", "gho_", "xox", "AKIA",
+        "aug_", "aub_", "auc_", "sk-", "sk_", "ghp_", "gho_", "ghs_", "ghu_", "ghr_", "glpat-",
+        "xox", "AKIA", "AIza", "npm_", "pypi-", "eyJ",
     ]
     .iter()
     .any(|p| core.starts_with(p) && core.len() > p.len() + 4);
+    // `NAME=value` (and `--flag=value`): a name that ends like a credential's. The value may be
+    // a quoted multi-word string (`TOKEN="a b"`: the tokenizer keeps it in one word).
     let assignment = core.split_once('=').is_some_and(|(k, v)| {
         !v.is_empty() && {
-            let k = k.to_ascii_lowercase();
-            [
-                "token", "secret", "password", "passwd", "apikey", "api_key", "key",
-            ]
-            .iter()
-            .any(|s| k.ends_with(s))
+            let k = k.trim_start_matches('-').to_ascii_lowercase();
+            SECRET_NAME_ENDS.iter().any(|s| k.ends_with(s))
         }
     });
     // A URL with user information (`scheme://user:token@host`).
@@ -186,29 +185,227 @@ fn redact_segment(seg: &str) -> String {
     }
 }
 
-/// Redact credential-looking words; a word after `Bearer`/`Basic` or an `-u`/`--user`/
-/// `--password` style flag is redacted too.
+/// The end of a variable or flag name that holds a credential (`API_TOKEN`, `DB_PASS`, `GH_PAT`,
+/// `--client-secret`, `SSH_KEY`, ...). Compared in lower case.
+const SECRET_NAME_ENDS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "pass",
+    "pw",
+    "pwd",
+    "pat",
+    "apikey",
+    "api_key",
+    "api-key",
+    "key",
+    "credential",
+    "credentials",
+    "auth",
+];
+
+/// Flags whose next word is a credential (or carries one): users with passwords, tokens,
+/// cookies, request bodies.
+const SECRET_FLAGS: &[&str] = &[
+    "-u",
+    "--user",
+    "--proxy-user",
+    "--password",
+    "--passwd",
+    "--pass",
+    "--token",
+    "--secret",
+    "--api-key",
+    "--apikey",
+    "--auth",
+    "--bearer",
+    "--oauth2-bearer",
+    "--cookie",
+    "--data",
+    "--data-raw",
+    "--data-binary",
+    "--data-urlencode",
+    "--data-ascii",
+    "--json",
+    "--form",
+    "--form-string",
+];
+
+/// Short flags that are a cookie or a request body for an HTTP client (`curl -b`, `curl -d`,
+/// `curl -F`) and mean something else elsewhere (`docker run -d`, `rm -f`): redacted only after
+/// one of these commands.
+const HTTP_CLIENTS: &[&str] = &["curl", "wget", "http", "https", "xh", "httpie", "hurl"];
+const HTTP_SHORT_FLAGS: &[&str] = &["-b", "-d", "-F"];
+
+/// Commands whose `-p` glues a password to the flag (`mysql -pSECRET`).
+const PASSWORD_CLIENTS: &[&str] = &[
+    "mysql",
+    "mysqldump",
+    "mysqladmin",
+    "mariadb",
+    "mongosh",
+    "mongo",
+];
+
+/// HTTP header names (lower case, with the colon) whose value is a credential.
+const SECRET_HEADERS: &[&str] = &[
+    "authorization:",
+    "proxy-authorization:",
+    "cookie:",
+    "set-cookie:",
+    "x-api-key:",
+    "api-key:",
+    "x-auth-token:",
+    "x-access-token:",
+    "x-amz-security-token:",
+    "private-token:",
+];
+
+/// The words of a command line, each kept as written (quotes included): whitespace splits words
+/// except inside single or double quotes, so `TOKEN="a b"` and `-H "Authorization: Token x"` are
+/// one word each. An unterminated quote runs to the end of the line.
+fn words(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                cur.push(c);
+                if c == q {
+                    quote = None;
+                } else if c == '\\' && q == '"' {
+                    cur.extend(chars.next());
+                }
+            }
+            None if c == '\'' || c == '"' => {
+                cur.push(c);
+                quote = Some(c);
+            }
+            None if c == '\\' => {
+                cur.push(c);
+                cur.extend(chars.next());
+            }
+            None if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            None => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// What the next word is, after a word that introduces a credential.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Next {
+    Normal,
+    /// The next word is the credential.
+    Secret,
+    /// Every word up to the next flag is (an unquoted `Authorization: Bearer <token>`).
+    UntilFlag,
+}
+
+const REDACTED: &str = "[redacted]";
+
+/// Redact credential-looking words (SEC-143: a command shown on the timeline never carries a
+/// credential): the value of `NAME=value` with a secret-looking name (quoted values with spaces
+/// too), the words after `-u`/`--user`/`--password`/`-b`/`--cookie`/`-d`/`--data*` style flags,
+/// after `Bearer`/`Basic`, `sshpass -p`, the value of `Authorization:`/`Cookie:`-style headers,
+/// `-pSECRET` (a password glued to the flag), URLs with user information and long tokens.
 fn redact_words(line: &str) -> String {
     let mut out: Vec<String> = Vec::new();
-    let mut next_secret = false;
-    for w in line.split(' ') {
-        if w.is_empty() {
-            out.push(String::new());
+    let mut next = Next::Normal;
+    // What the current command (up to a `|`, `&&`, `;`) is, for the flags that depend on it.
+    let (mut sshpass, mut http, mut pwd_client) = (false, false, false);
+    for w in words(line) {
+        let unquoted = w.trim_matches(|c: char| "\"'".contains(c));
+        let lower = unquoted.to_ascii_lowercase();
+        match next {
+            Next::Secret => {
+                out.push(REDACTED.to_owned());
+                next = Next::Normal;
+                continue;
+            }
+            Next::UntilFlag if !(lower.starts_with('-') && lower.len() > 1) => {
+                out.push(REDACTED.to_owned());
+                continue;
+            }
+            _ => next = Next::Normal,
+        }
+        // A new command in the line starts afresh.
+        if matches!(lower.as_str(), "|" | "||" | "&&" | ";" | "&") {
+            (sshpass, http, pwd_client) = (false, false, false);
+            out.push(w);
             continue;
         }
-        let lw = w.to_ascii_lowercase();
-        let trimmed = lw.trim_matches(|c: char| "\"'".contains(c));
-        // `Authorization: Bearer <token>`: a keyword after a keyword keeps the chain going.
-        let introduces = matches!(
-            trimmed,
-            "bearer" | "basic" | "-u" | "--user" | "--password" | "--token" | "authorization:"
-        );
-        out.push(if next_secret {
-            "[redacted]".to_owned()
+        sshpass |= lower == "sshpass";
+        http |= HTTP_CLIENTS.contains(&lower.as_str());
+        pwd_client |= PASSWORD_CLIENTS.contains(&lower.as_str());
+        // `Authorization: Bearer x`, `Cookie: a=b` (quoted as one word, or split on the colon).
+        if let Some(h) = SECRET_HEADERS.iter().find(|h| lower.starts_with(**h)) {
+            let value = lower[h.len()..].trim();
+            let name = &unquoted[..h.len()];
+            if value.is_empty() {
+                out.push(w);
+                next = Next::UntilFlag;
+            } else {
+                out.push(format!("{name} {REDACTED}"));
+                // `Authorization:Bearer` with the token in the next word.
+                if matches!(value, "bearer" | "basic" | "token" | "digest" | "negotiate") {
+                    next = Next::Secret;
+                }
+            }
+            continue;
+        }
+        // `--password=x`, `--data={"a":1}`: a flag with its value attached.
+        if let Some((flag, _)) = lower.split_once('=')
+            && flag.starts_with('-')
+            && (SECRET_FLAGS.contains(&flag) || secretish(unquoted))
+        {
+            out.push(format!("{}={REDACTED}", &unquoted[..flag.len()]));
+            continue;
+        }
+        if SECRET_FLAGS.contains(&lower.as_str()) || (http && HTTP_SHORT_FLAGS.contains(&unquoted))
+        {
+            out.push(w);
+            next = Next::Secret;
+            continue;
+        }
+        // `sshpass -p x`: a lone `-p` is a port elsewhere (`ssh -p 22`), a password after sshpass.
+        if lower == "-p" && sshpass {
+            out.push(w);
+            next = Next::Secret;
+            continue;
+        }
+        // `mysql -pSECRET`: a password glued to the flag. After a client that takes one, anything;
+        // elsewhere (`mkdir -pv`, `find -print`) only what looks like a password.
+        if let Some(rest) = unquoted.strip_prefix("-p")
+            && !rest.is_empty()
+            && !rest.starts_with('-')
+            && (pwd_client
+                || (rest.len() >= 4
+                    && rest
+                        .chars()
+                        .any(|c| c.is_ascii_digit() || c.is_ascii_uppercase())))
+        {
+            out.push(format!("-p{REDACTED}"));
+            continue;
+        }
+        out.push(if secretish(&w) {
+            REDACTED.to_owned()
         } else {
-            redact_segment(w)
+            w
         });
-        next_secret = introduces;
+        if matches!(lower.as_str(), "bearer" | "basic") {
+            next = Next::Secret;
+        }
     }
     out.join(" ")
 }
@@ -378,6 +575,80 @@ mod tests {
         let c = command("echo sk-proj-1234567890abcdefghij").unwrap();
         assert!(c.contains("[redacted]"), "{c}");
         assert_eq!(command("ls -la").unwrap(), "ls -la");
+    }
+
+    /// SEC-143: one canary per way a credential can sit in a command; it never appears in the
+    /// output. (Each line is a form the review named.)
+    #[test]
+    fn a_credential_in_any_common_form_never_reaches_the_row() {
+        const C: &str = "cAnArY9z";
+        let forms: &[&str] = &[
+            "curl -H 'Authorization: Bearer cAnArY9z' https://x.example/a",
+            "curl -H \"Authorization:Bearer cAnArY9z\" https://x.example/a",
+            "curl -H 'Authorization: Token cAnArY9z' https://x.example/a",
+            "curl -H Authorization:Bearer cAnArY9z https://x.example/a",
+            "curl -H Authorization: Token cAnArY9z https://x.example/a",
+            "curl -H 'Proxy-Authorization: Basic cAnArY9z' https://x.example/a",
+            "curl -H 'X-Api-Key: cAnArY9z' https://x.example/a",
+            "curl -H 'Cookie: session=cAnArY9z; a=b' https://x.example/a",
+            "curl -b session=cAnArY9z https://x.example/a",
+            "curl --cookie session=cAnArY9z https://x.example/a",
+            "curl --cookie=session=cAnArY9z https://x.example/a",
+            "curl -u alice:cAnArY9z https://x.example/a",
+            "curl --user alice:cAnArY9z https://x.example/a",
+            "curl --user=alice:cAnArY9z https://x.example/a",
+            "curl -X POST -d '{\"password\":\"cAnArY9z\"}' https://x.example/a",
+            "curl --data-raw '{\"password\": \"cAnArY9z\"}' https://x.example/a",
+            "curl --data-binary @- --data-urlencode pw=cAnArY9z https://x.example/a",
+            "curl --json '{\"token\":\"cAnArY9z\"}' https://x.example/a",
+            "curl -F password=cAnArY9z https://x.example/a",
+            "curl https://alice:cAnArY9z@host.example/a",
+            "git clone https://cAnArY9z@host.example/a.git",
+            "mysql -u root -pcAnArY9z db",
+            "mysql -pcanary9zlower db",
+            "sshpass -p cAnArY9z ssh host",
+            "sshpass -p cAnArY9z ssh -p 22 host",
+            "export DB_PASS=cAnArY9z && run",
+            "DB_PW=cAnArY9z run",
+            "GH_PAT=cAnArY9z run",
+            "DB_PWD=cAnArY9z run",
+            "SVC_CREDENTIALS=cAnArY9z run",
+            "REG_AUTH=cAnArY9z run",
+            "API_TOKEN=cAnArY9z run",
+            "TOKEN=\"cAnArY9z and more\" run",
+            "SECRET='two cAnArY9z words' run",
+            "run --password cAnArY9z",
+            "run --client-secret=cAnArY9z",
+            "echo hi | curl -H 'authorization: bearer cAnArY9z' https://x.example/a",
+        ];
+        for f in forms {
+            let c = command(f).unwrap();
+            assert!(!c.contains(C), "{f:?} leaked: {c}");
+            assert!(!c.contains("canary9zlower"), "{f:?} leaked: {c}");
+            assert!(c.contains(REDACTED), "{f:?} was not redacted: {c}");
+        }
+    }
+
+    #[test]
+    fn ordinary_commands_keep_their_flags() {
+        for ok in [
+            "ls -la",
+            "mkdir -pv a/b",
+            "ssh -p 22 host",
+            "find . -print",
+            "docker run -d nginx",
+            "git push -u origin main",
+            "tail -f app.log",
+            "rm -f old.txt",
+            "curl -s -o out.json https://x.example/a",
+            "cargo test -p aurora-api",
+        ] {
+            // `-u` is redacted on purpose (curl's user:password); the rest must be left alone.
+            if ok.contains(" -u ") {
+                continue;
+            }
+            assert_eq!(command(ok).unwrap(), ok);
+        }
     }
 
     #[test]

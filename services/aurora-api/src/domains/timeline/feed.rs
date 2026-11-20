@@ -16,7 +16,7 @@
 use super::computer::{self, StepKind};
 use super::dto::{
     TimelineItem, TimelineKind, TimelineLink, TimelineLinkType, TimelinePerson, TimelineRef,
-    TimelineRule, TimelineState,
+    TimelineRequestEvent, TimelineRule, TimelineState,
 };
 use crate::app::AppState;
 use crate::domains::schedules::results;
@@ -390,7 +390,7 @@ impl<'a> Feed<'a> {
             if full(rows.len()) {
                 horizons.extend(rows.last().map(|x| x.created_at));
             }
-            items.extend(rows.iter().map(|r| self.peer_item(r)));
+            items.extend(rows.iter().filter_map(|r| self.peer_item(r)));
         }
         if f.wants(&[TimelineKind::AskedForAccess]) {
             let rows = repo::access_before(pool, agent, t, fetch).await?;
@@ -595,6 +595,33 @@ impl<'a> Feed<'a> {
         };
     }
 
+    /// A new request-log row as the Technical view's live `request` event (SEC-143): only when the
+    /// viewer may see its conversation (an evaluation, another person's direct chat, another
+    /// workspace's: no event), and without the path, context label or ids of secrets. The host
+    /// only with a visible conversation.
+    pub fn request_event(&self, r: &CallRow) -> Option<TimelineRequestEvent> {
+        let conv = ConvFacts {
+            id: r.conversation_id,
+            kind: r.conv_kind.as_deref(),
+            direct_user: r.conv_direct_user,
+            workspace: r.conv_workspace,
+        };
+        if !self.sees(conv) {
+            return None;
+        }
+        Some(TimelineRequestEvent {
+            id: r.id,
+            ts: r.ts,
+            agent_id: self.agent.id,
+            method: r.method.clone(),
+            host: r.conversation_id.map(|_| r.host.clone()),
+            decision: r.decision.clone(),
+            status: r.status,
+            app_id: r.app_id.clone(),
+            tool_id: r.tool_id.clone(),
+        })
+    }
+
     /// A request without a turn: one row of its own (`call:<request id>`).
     pub fn single_call_item(&self, r: &CallRow) -> Option<TimelineItem> {
         if r.llm_model.is_some() || r.turn_id.is_some() {
@@ -612,6 +639,10 @@ impl<'a> Feed<'a> {
         let g = fold_calls(std::slice::from_ref(r)).into_iter().next()?;
         let mut it = self.item(format!("call:{}", r.id), r.ts, TimelineKind::Called);
         self.fill_call(&mut it, &g);
+        // SEC-143: a host is shown only with a visible conversation.
+        if r.conversation_id.is_none() {
+            it.host = None;
+        }
         Some(it)
     }
 
@@ -652,7 +683,9 @@ impl<'a> Feed<'a> {
             .map(|display_name| TimelinePerson { display_name });
         it.app = r.app_id.as_deref().map(|a| self.app_ref(a));
         it.tool = r.tool_id.clone();
-        it.host = Some(r.host.clone());
+        // SEC-143: a host is shown only with a visible conversation (a held request with none keeps
+        // its row, without the host).
+        it.host = r.conversation_id.map(|_| r.host.clone());
         it.rule = rule(r.rule_logical_id, r.rule_name.as_deref());
         it.link = Some(TimelineLink {
             ty: TimelineLinkType::Approval,
@@ -804,7 +837,21 @@ impl<'a> Feed<'a> {
         }
     }
 
-    pub fn peer_item(&self, r: &PeerItemRow) -> TimelineItem {
+    /// A peer task. SEC-143: a task opened from another member's direct chat is invisible to
+    /// anyone who may not read that chat (the row says who asked whom and when); the peer is named
+    /// as Settings > Other agents names it to the same viewer (see `PeerItemRow::peer_name`).
+    pub fn peer_item(&self, r: &PeerItemRow) -> Option<TimelineItem> {
+        // Fail closed: a task whose conversation cannot be found is not shown.
+        r.conversation_id?;
+        let conv = ConvFacts {
+            id: r.conversation_id,
+            kind: r.conv_kind.as_deref(),
+            direct_user: r.conv_direct_user,
+            workspace: r.conv_workspace,
+        };
+        if !self.sees(conv) {
+            return None;
+        }
         let handed = r.from_agent_id == self.agent.id;
         let mut it = self.item(
             format!("peer:{}", r.id),
@@ -839,7 +886,7 @@ impl<'a> Feed<'a> {
             seq: None,
             path: None,
         });
-        it
+        Some(it)
     }
 
     pub fn access_item(&self, r: &AccessItemRow) -> Option<TimelineItem> {
@@ -930,7 +977,7 @@ impl<'a> Feed<'a> {
             },
             repo::Source::Peer => repo::peer_by_id(pool, agent, id)
                 .await?
-                .map(|r| self.peer_item(&r))
+                .and_then(|r| self.peer_item(&r))
                 .into_iter()
                 .collect(),
             repo::Source::Access => repo::access_by_id(pool, id)
@@ -1195,6 +1242,8 @@ mod tests {
             ts: DateTime::from_timestamp(ts, 0).unwrap(),
             turn_id: None,
             conversation_id: None,
+            method: "GET".into(),
+            status: 200,
             host: host.into(),
             app_id: app.map(Into::into),
             tool_id: None,

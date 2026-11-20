@@ -344,6 +344,8 @@ pub struct CallRow {
     pub ts: DateTime<Utc>,
     pub turn_id: Option<Uuid>,
     pub conversation_id: Option<Uuid>,
+    pub method: String,
+    pub status: i32,
     pub host: String,
     pub app_id: Option<String>,
     pub tool_id: Option<String>,
@@ -359,7 +361,7 @@ pub struct CallRow {
 
 fn call_select() -> String {
     format!(
-        "SELECT r.id, r.ts, r.turn_id, r.conversation_id, r.host, r.app_id, r.tool_id, r.decision, \
+        "SELECT r.id, r.ts, r.turn_id, r.conversation_id, r.method, r.status, r.host, r.app_id, r.tool_id, r.decision, \
          r.rule_logical_id, r.rule_name, r.llm_model, {CONV_COLS} \
          FROM request_log r LEFT JOIN conversations c ON c.id = r.conversation_id"
     )
@@ -428,34 +430,6 @@ pub async fn calls_since(
     .bind(agent)
     .bind(since)
     .bind(limit)
-    .fetch_all(pool)
-    .await?)
-}
-
-/// Full request-log rows by id for the Technical view's live `request` events, with the same
-/// direct-conversation rule as `GET /workspaces/{ws}/activity` (`viewer` cannot see another
-/// person's direct conversation unless they own the workspace).
-pub async fn log_rows_by_ids(
-    pool: &PgPool,
-    viewer: Uuid,
-    ws: Uuid,
-    ids: &[Uuid],
-) -> Result<Vec<super::request_log::LogRow>, DbError> {
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT id, ts, agent_id, conversation_id, turn_id, credential_kind, lane, method, host, \
-                path, app_id, tool_id, connection_id, secret_id, decision, rule_logical_id, \
-                rule_name, upstream_status, status, error_code, injected, latency_ms, bytes_up, \
-                bytes_down, context_label, approval_id, resumed, llm_model \
-         FROM request_log WHERE workspace_id = $1 AND id = ANY($2) AND NOT {} \
-         ORDER BY ts DESC, id DESC",
-        crate::authz::hidden_direct_conversation_sql("conversation_id", "$3", "workspace_id")
-    )))
-    .bind(ws)
-    .bind(ids)
-    .bind(viewer)
     .fetch_all(pool)
     .await?)
 }
@@ -764,16 +738,36 @@ pub struct PeerItemRow {
     pub id: Uuid,
     pub from_agent_id: Uuid,
     pub to_agent_id: Uuid,
-    /// The other agent's name.
+    /// The other agent's name: what Settings > Other agents (`GET /agents/{agent}/links`,
+    /// C-1085) shows the same viewer. A task exists only while its link does (`ON DELETE CASCADE`),
+    /// and that list names the peer, in whatever workspace it is, to anyone who can use this agent.
     pub peer_name: String,
     /// `queued` | `open` | `completed` | `cancelled` | `expired`
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// (SEC-143) The conversation whose visibility decides who sees the row, and its facts: the
+    /// task's origin (the chat the task was opened from) when it is in this agent's workspace;
+    /// when the origin is another workspace's chat, the task's own `peer` conversation here.
+    pub conversation_id: Option<Uuid>,
+    pub conv_kind: Option<String>,
+    pub conv_direct_user: Option<Uuid>,
+    pub conv_workspace: Option<Uuid>,
 }
 
 const PEER_COLS: &str = "p.id, p.from_agent_id, p.to_agent_id, \
-    COALESCE(o.name, '') AS peer_name, p.status, p.created_at, p.updated_at";
+    COALESCE(o.name, '') AS peer_name, p.status, p.created_at, p.updated_at, \
+    CASE WHEN oc.workspace_id = me.workspace_id THEN oc.id ELSE tc.id END AS conversation_id, \
+    CASE WHEN oc.workspace_id = me.workspace_id THEN oc.kind ELSE tc.kind END AS conv_kind, \
+    CASE WHEN oc.workspace_id = me.workspace_id THEN oc.direct_user_id ELSE tc.direct_user_id END \
+        AS conv_direct_user, \
+    CASE WHEN oc.workspace_id = me.workspace_id THEN oc.workspace_id ELSE tc.workspace_id END \
+        AS conv_workspace";
+
+/// `me` is the agent whose timeline it is (`$1`); `oc` the task's origin conversation, `tc` its own.
+const PEER_JOINS: &str = "JOIN agents me ON me.id = $1 \
+    LEFT JOIN conversations oc ON oc.id = p.origin_conversation_id \
+    LEFT JOIN conversations tc ON tc.id = p.task_conversation_id";
 
 pub async fn peers_before(
     pool: &PgPool,
@@ -784,10 +778,12 @@ pub async fn peers_before(
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM ( \
            (SELECT {PEER_COLS} FROM peer_tasks p LEFT JOIN agents o ON o.id = p.to_agent_id \
+             {PEER_JOINS} \
              WHERE p.from_agent_id = $1 AND ($2::timestamptz IS NULL OR p.created_at <= $2) \
              ORDER BY p.created_at DESC, p.id DESC LIMIT $3) \
            UNION ALL \
            (SELECT {PEER_COLS} FROM peer_tasks p LEFT JOIN agents o ON o.id = p.from_agent_id \
+             {PEER_JOINS} \
              WHERE p.to_agent_id = $1 AND p.from_agent_id <> $1 \
                AND ($2::timestamptz IS NULL OR p.created_at <= $2) \
              ORDER BY p.created_at DESC, p.id DESC LIMIT $3)) x \
@@ -808,6 +804,7 @@ pub async fn peer_by_id(
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {PEER_COLS} FROM peer_tasks p \
          LEFT JOIN agents o ON o.id = CASE WHEN p.from_agent_id = $1 THEN p.to_agent_id ELSE p.from_agent_id END \
+         {PEER_JOINS} \
          WHERE p.id = $2 AND (p.from_agent_id = $1 OR p.to_agent_id = $1)"
     )))
     .bind(agent)

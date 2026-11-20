@@ -761,7 +761,9 @@ async fn filters_byo_and_refusals() {
         .await;
     let it = items(&v);
     assert_eq!(it.len(), 1);
-    assert_eq!(it[0]["host"], "bad.example");
+    // (SEC-143) A request with no conversation keeps its row without the host.
+    assert_eq!(it[0]["outcome"], "blocked_default");
+    assert!(it[0]["host"].is_null(), "{}", it[0]);
     for bad in ["?limit=0", "?limit=101", "?kind=nope", "?cursor=%%%"] {
         assert_eq!(get(&f, &f.alice_c, bad).await.0, 400, "{bad}");
     }
@@ -932,6 +934,12 @@ async fn the_stream_pushes_each_source_and_updates_in_place() {
         tt.contains("event: request") && tt.contains(&rid.to_string()),
         "{tt}"
     );
+    // SEC-143: the event is slim: no path (the fixture's is `/repos/x/secret-path`), and no host for
+    // a request without a conversation.
+    assert!(
+        !tt.contains("secret-path") && !tt.contains("pypi.org"),
+        "{tt}"
+    );
 
     // A schedule run (its repo writer sends the hint).
     let sched = schedule(h, f.agent, "Morning summary").await;
@@ -1043,4 +1051,376 @@ async fn the_stream_ends_on_lost_access_and_is_limited() {
         .await
         .unwrap();
     assert_eq!(res.status(), 403);
+}
+
+// ---------------------------------------------------------------------------------------------
+// SEC-143 send-back: peer tasks, peer names, technical events, hosts without a conversation
+// ---------------------------------------------------------------------------------------------
+
+/// A link between `agent` and `other`, and a peer task from `from` to `to` opened from `origin`
+/// with its `peer` conversation `task_conv`.
+async fn peer_task(
+    h: &Harness,
+    from: Uuid,
+    to: Uuid,
+    origin: Uuid,
+    task_conv: Uuid,
+    link: Option<Uuid>,
+) -> (Uuid, Uuid) {
+    let link = match link {
+        Some(l) => l,
+        None => {
+            let (a, b) = if from < to { (from, to) } else { (to, from) };
+            let l = Uuid::now_v7();
+            sqlx::query("INSERT INTO agent_links (id, agent_a_id, agent_b_id, policy_a, policy_b) VALUES ($1,$2,$3,'allow','allow')")
+                .bind(l).bind(a).bind(b).execute(h.pool()).await.unwrap();
+            l
+        }
+    };
+    let task = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO peer_tasks (id, link_id, from_agent_id, to_agent_id, origin_conversation_id, task_conversation_id,
+            status, message_budget, expires_at, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,'open',5, now() + interval '1 hour', now() - interval '30 seconds')",
+    )
+    .bind(task).bind(link).bind(from).bind(to).bind(origin).bind(task_conv)
+    .execute(h.pool()).await.unwrap();
+    (task, link)
+}
+
+/// A peer task opened from Bob's direct chat is invisible to a plain member, on the sender's
+/// timeline (`handed_task`) and the receiver's (`got_task`), in the feed and on the stream; Bob and
+/// a workspace owner see it.
+#[tokio::test]
+async fn a_peer_task_from_a_direct_chat_is_seen_only_by_its_person_and_owners() {
+    let f = fx().await;
+    let h = &f.h;
+    let other = h.hosted_agent(f.org, f.ws, "ops").await;
+    let task_conv = conv(h, other, f.ws, "peer", None).await;
+    // The streams are open before the task exists (a stream knows the rows it opened with).
+    let app = test_router(h.state.clone());
+    let uri = format!("/v1/agents/{}/timeline/stream", f.agent);
+    let (_, mut alice) = open(&app, &uri, &f.alice_c).await;
+    let (_, mut bob) = open(&app, &uri, &f.bob_c).await;
+    let (task, _) = peer_task(h, f.agent, other, f.direct, task_conv, None).await;
+    let id = format!("peer:{task}");
+    let timeline_of = |agent: Uuid, cookie: String| {
+        let h = &f.h;
+        async move {
+            let (s, v) = h
+                .get(
+                    &format!("/v1/agents/{agent}/timeline"),
+                    &[("cookie", cookie.as_str())],
+                )
+                .await;
+            assert_eq!(s, 200, "{v}");
+            items(&v)
+        }
+    };
+    for agent in [f.agent, other] {
+        assert!(
+            by_id(&timeline_of(agent, f.alice_c.clone()).await, &id).is_none(),
+            "Alice saw Bob's peer task on {agent}'s timeline"
+        );
+        for c in [&f.bob_c, &f.owner_c] {
+            assert!(
+                by_id(&timeline_of(agent, c.clone()).await, &id).is_some(),
+                "the person and the owner see it on {agent}'s timeline"
+            );
+        }
+    }
+
+    // The same rule on the stream (its hint loads the row by id).
+    let mut tx = h.pool().begin().await.unwrap();
+    aurora_db::repo::timeline::hint(
+        &mut *tx,
+        f.agent,
+        aurora_db::repo::timeline::Source::Peer,
+        task,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let b = read_until(&mut bob, Duration::from_secs(3), |s| s.contains(&id)).await;
+    assert!(b.contains(&id), "Bob's stream gets it: {b}");
+    // Prove Alice's stream is live with something she may see, then check she never got the task.
+    let sched = schedule(h, f.agent, "Nightly").await;
+    let mut tx = h.pool().begin().await.unwrap();
+    let run = aurora_db::repo::schedules::insert_run(&mut tx, sched, None, "gated_quiet")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let rid = format!("run:{}", run.id);
+    let a = read_until(&mut alice, Duration::from_secs(3), |s| s.contains(&rid)).await;
+    assert!(a.contains(&rid) && !a.contains(&id), "{a}");
+}
+
+/// A task from another workspace's chat: the viewer cannot read that chat, but the task's own
+/// `peer` conversation lives in this agent's workspace, so the row is shown — with the peer named
+/// exactly as Settings > Other agents (`GET /agents/{agent}/links`) names it to the same viewer,
+/// who has no access to the peer's workspace.
+#[tokio::test]
+async fn a_cross_workspace_peer_is_named_as_the_links_list_names_it() {
+    let f = fx().await;
+    let h = &f.h;
+    let ws2 = h.workspace(f.org).await;
+    let zed = h.hosted_agent(f.org, ws2, "zed").await;
+    sqlx::query("UPDATE agents SET name = 'Zed Remote' WHERE id = $1")
+        .bind(zed)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let origin = conv(h, zed, ws2, "direct", Some(f.bob)).await;
+    let task_conv = conv(h, f.agent, f.ws, "peer", None).await;
+    let (task, _) = peer_task(h, zed, f.agent, origin, task_conv, None).await;
+    let (s, v) = get(&f, &f.alice_c, "").await;
+    assert_eq!(s, 200);
+    let it = items(&v);
+    let row = by_id(&it, &format!("peer:{task}"))
+        .expect("the task is shown: its peer conversation is here");
+    assert_eq!(row["kind"], "got_task");
+    // Parity with the links list for the same viewer.
+    let (s, links) = h
+        .get(
+            &format!("/v1/agents/{}/links", f.agent),
+            &[("cookie", f.alice_c.as_str())],
+        )
+        .await;
+    assert_eq!(s, 200, "{links}");
+    let peer = &links["items"][0]["peer"];
+    assert_eq!(
+        (row["peer"]["id"].as_str(), row["peer"]["name"].as_str()),
+        (peer["agent_id"].as_str(), peer["name"].as_str()),
+        "the timeline names the peer exactly as the links list does"
+    );
+    assert_eq!(row["peer"]["name"], "Zed Remote");
+    // Alice cannot use the peer's workspace at all.
+    let (s, _) = h
+        .get(
+            &format!("/v1/agents/{zed}/timeline"),
+            &[("cookie", f.alice_c.as_str())],
+        )
+        .await;
+    assert_eq!(s, 404);
+}
+
+/// SEC-143: a held request or a request without a turn that has no conversation keeps its row but
+/// shows no host.
+#[tokio::test]
+async fn a_host_is_shown_only_with_a_visible_conversation() {
+    let f = fx().await;
+    let h = &f.h;
+    let ap = approval(h, &f, None, None, "no-conversation.example", 20.0).await;
+    let call = log(
+        h,
+        &f,
+        f.agent,
+        None,
+        "orphan.example",
+        None,
+        "allow",
+        None,
+        None,
+        10.0,
+    )
+    .await;
+    let with = approval(h, &f, Some(f.group), None, "group-host.example", 5.0).await;
+    let (s, v) = get(&f, &f.alice_c, "").await;
+    assert_eq!(s, 200);
+    let it = items(&v);
+    for (id, what) in [
+        (format!("approval:{ap}"), "approval"),
+        (format!("call:{call}"), "call"),
+    ] {
+        let row = by_id(&it, &id).unwrap_or_else(|| panic!("the {what} row stays: {v}"));
+        assert!(
+            row["host"].is_null(),
+            "{what} shows a host with no conversation: {row}"
+        );
+    }
+    let t = v.to_string();
+    assert!(
+        !t.contains("no-conversation.example") && !t.contains("orphan.example"),
+        "{t}"
+    );
+    assert_eq!(
+        by_id(&it, &format!("approval:{with}")).unwrap()["host"],
+        "group-host.example"
+    );
+}
+
+async fn notify_request(h: &Harness, f: &Fx, id: Uuid) {
+    let ts: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT ts FROM request_log WHERE id = $1")
+            .bind(id)
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+    let row = aurora_db::repo::gateway::RequestLogRow {
+        id,
+        ts,
+        org_id: f.org,
+        workspace_id: f.ws,
+        agent_id: f.agent,
+        conversation_id: None,
+        turn_id: None,
+        credential_kind: "agent",
+        lane: "mitm",
+        method: "POST".into(),
+        host: "h".into(),
+        path: "/".into(),
+        app_id: None,
+        tool_id: None,
+        connection_id: None,
+        secret_id: None,
+        decision: "allow",
+        rule_logical_id: None,
+        rule_name: None,
+        upstream_status: None,
+        status: 200,
+        error_code: None,
+        injected: 0,
+        latency_ms: 1,
+        bytes_up: 0,
+        bytes_down: 0,
+        context_label: None,
+        speaker_user_id: None,
+        approval_id: None,
+        resumed: false,
+        llm_model: None,
+    };
+    aurora_db::repo::timeline::notify_requests(h.pool(), std::slice::from_ref(&row)).await;
+}
+
+/// The Technical view's `request` events follow the row rules (a direct chat's requests reach only
+/// its person and owners; an evaluation's reach nobody) and carry no path, context label or ids.
+#[tokio::test]
+async fn technical_request_events_follow_the_visibility_rules_and_carry_no_path() {
+    let f = fx().await;
+    let h = &f.h;
+    let app = test_router(h.state.clone());
+    let uri = format!("/v1/agents/{}/timeline/stream?technical=true", f.agent);
+    let (_, mut alice) = open(&app, &uri, &f.alice_c).await;
+    let (_, mut owner) = open(&app, &uri, &f.owner_c).await;
+    let t = turn(h, &f, f.direct, "done", Some(f.bob), 5.0).await;
+    let eval = conv(h, f.agent, f.ws, "eval", None).await;
+    let te = turn(h, &f, eval, "done", None, 5.0).await;
+    let direct_req = log(
+        h,
+        &f,
+        f.agent,
+        Some((f.direct, t)),
+        "bob-private.example",
+        None,
+        "allow",
+        None,
+        None,
+        0.0,
+    )
+    .await;
+    let eval_req = log(
+        h,
+        &f,
+        f.agent,
+        Some((eval, te)),
+        "eval-only.example",
+        None,
+        "allow",
+        None,
+        None,
+        0.0,
+    )
+    .await;
+    sqlx::query("UPDATE request_log SET context_label = 'CTX-LABEL' WHERE id = $1")
+        .bind(direct_req)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    for id in [direct_req, eval_req] {
+        notify_request(h, &f, id).await;
+    }
+    // The owner sees the direct chat's request, slim; nobody sees the evaluation's.
+    let o = read_until(&mut owner, Duration::from_secs(3), |s| {
+        s.contains(&direct_req.to_string())
+    })
+    .await;
+    assert!(
+        o.contains("event: request") && o.contains(&direct_req.to_string()),
+        "{o}"
+    );
+    assert!(
+        o.contains("bob-private.example"),
+        "the host comes with a visible conversation: {o}"
+    );
+    for bad in [
+        "secret-path",
+        "/repos/",
+        "CTX-LABEL",
+        "secret_id",
+        "context_label",
+        "\"path\"",
+    ] {
+        assert!(!o.contains(bad), "{bad} in a request event: {o}");
+    }
+    assert!(
+        !o.contains(&eval_req.to_string()) && !o.contains("eval-only"),
+        "{o}"
+    );
+    // Alice: a request she may see proves her stream is live; the direct chat's never arrives.
+    let group_t = turn(h, &f, f.group, "done", None, 4.0).await;
+    let group_req = log(
+        h,
+        &f,
+        f.agent,
+        Some((f.group, group_t)),
+        "group.example",
+        None,
+        "allow",
+        None,
+        None,
+        0.0,
+    )
+    .await;
+    notify_request(h, &f, group_req).await;
+    let a = read_until(&mut alice, Duration::from_secs(3), |s| {
+        s.contains(&group_req.to_string())
+    })
+    .await;
+    assert!(a.contains(&group_req.to_string()), "{a}");
+    assert!(
+        !a.contains(&direct_req.to_string())
+            && !a.contains("bob-private")
+            && !a.contains("secret-path"),
+        "{a}"
+    );
+}
+
+/// Fail closed: a stream whose access check cannot be answered ends instead of keeping the last
+/// role.
+#[tokio::test]
+async fn the_stream_ends_when_its_access_cannot_be_checked() {
+    let f = fx().await;
+    let h = &f.h;
+    let app = test_router(
+        h.state
+            .clone()
+            .with_stream_recheck(Duration::from_millis(200)),
+    );
+    let uri = format!("/v1/agents/{}/timeline/stream", f.agent);
+    let (s, mut body) = open(&app, &uri, &f.owner_c).await;
+    assert_eq!(s, 200);
+    // The access check reads `workspace_access`; making it unreadable is a non-client error.
+    sqlx::query("ALTER TABLE workspace_access RENAME TO workspace_access_gone")
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let ended = loop {
+        match tokio::time::timeout_at(deadline, body.frame()).await {
+            Err(_) => break false,
+            Ok(None) | Ok(Some(Err(_))) => break true,
+            Ok(Some(Ok(_))) => {}
+        }
+    };
+    assert!(ended, "the stream ended when the access check failed");
 }

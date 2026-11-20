@@ -7,10 +7,9 @@
 //! may not see is never built, so it is never sent. The viewer's access is re-read before every
 //! batch and on a timer; losing `can_use` ends the stream.
 
-use super::dto::{TimelineItem, TimelineRowEvent};
+use super::dto::{TimelineItem, TimelineRequestEvent, TimelineRowEvent};
 use super::feed::{AgentCtx, Feed, Filter, Viewer};
 use crate::app::AppState;
-use crate::domains::activity::RequestLogEntry;
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
 use aurora_db::PgPool;
@@ -361,13 +360,15 @@ impl Stream {
                 self.viewer.auth = auth;
                 true
             }
-            Err(e) if e.status().is_client_error() => {
+            // Fail closed (SEC-143): whatever the reason, a stream that cannot confirm the viewer's
+            // access ends (the web reconnects and is checked again by `resolve`); keeping the
+            // last role would keep sending rows to someone who may have lost it.
+            Err(e) => {
+                if !e.status().is_client_error() {
+                    tracing::warn!(error = %e.code(), "timeline stream access check failed; ending the stream");
+                }
                 self.ended = true;
                 false
-            }
-            Err(e) => {
-                tracing::warn!(error = %e.code(), "timeline stream access check failed; will retry");
-                true
             }
         }
     }
@@ -446,14 +447,14 @@ impl Stream {
     async fn build(
         &mut self,
         dirty: Dirty,
-    ) -> Result<(Vec<TimelineItem>, Vec<RequestLogEntry>), ApiError> {
+    ) -> Result<(Vec<TimelineItem>, Vec<TimelineRequestEvent>), ApiError> {
         let pool = self.s.pool.clone();
         let mut turns: HashSet<Uuid> = HashSet::new();
         for (conv, seqs) in &dirty.convs {
             turns.extend(repo::turns_of_events(&pool, *conv, seqs).await?);
         }
         let mut singles: Vec<repo::CallRow> = Vec::new();
-        let mut log_ids: Vec<Uuid> = Vec::new();
+        let mut new_requests: Vec<repo::CallRow> = Vec::new();
         if let Some(q) = dirty.requests_since {
             let since = DateTime::from_timestamp_micros(q).unwrap_or_else(Utc::now);
             let rows = repo::calls_since(
@@ -468,7 +469,9 @@ impl Stream {
                 if !self.remember_request(r.id) {
                     continue;
                 }
-                log_ids.push(r.id);
+                if self.technical {
+                    new_requests.push(r.clone());
+                }
                 match r.turn_id {
                     Some(t) => {
                         turns.insert(t);
@@ -490,15 +493,12 @@ impl Stream {
             }
         }
         items.sort_by(|a, b| (b.at, &b.id).cmp(&(a.at, &a.id)));
-        let requests = if self.technical {
-            let mut rows =
-                repo::log_rows_by_ids(&pool, self.viewer.user, self.agent.workspace_id, &log_ids)
-                    .await?;
-            rows.retain(|r| r.agent_id == self.agent.id);
-            rows.into_iter().map(RequestLogEntry::from).collect()
-        } else {
-            Vec::new()
-        };
+        // (SEC-143) The same visibility check as the rows, and a slim event: no path, context label
+        // or secret id; the host only with a visible conversation.
+        let requests = new_requests
+            .iter()
+            .filter_map(|r| feed.request_event(r))
+            .collect();
         Ok((items, requests))
     }
 

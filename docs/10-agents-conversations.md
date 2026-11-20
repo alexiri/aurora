@@ -444,15 +444,41 @@ workspace Activity page and Settings › Apps & access (`14 §8`).
   tool's output) and redacted events are never read.
 - **Who sees what (SEC-143).** A row from a conversation exists only for a reader who may see that
   conversation (`can_see_conversation`: another person's `direct` conversation only for that person
-  and the workspace's owners); it is never counted into another row. Runs, deliveries and peer
-  tasks are visible to `can_use`. No row carries message text, tool arguments or output, request
-  paths, bodies, headers, e-mail addresses or secrets.
+  and the workspace's owners); it is never counted into another row. Runs and deliveries are
+  visible to `can_use`. **A peer task follows its origin conversation** (the chat it was opened
+  from): a task opened from another member's direct chat is invisible, on the sender's timeline
+  (`handed_task`) and the receiver's (`got_task`), to everyone but that member and the owners;
+  when the origin is another workspace's chat (a task from a linked agent elsewhere) the task's
+  own `peer` conversation in this workspace decides, so the row stays visible to `can_use`. The
+  peer is named exactly as Settings › Other agents names it (`GET /agents/{agent}/links`, C-1085):
+  a task exists only while its link does. **A host is shown only with a visible conversation:** a
+  held request or a request without a turn that has no conversation keeps its row without the host.
+  No row carries message text, tool arguments or output, request paths, bodies, headers, e-mail
+  addresses or secrets. The credential filter of a command (`computer.rs`) redacts `Authorization:`
+  / `Cookie:`-style headers (also glued to the scheme, `Authorization:Bearer x`), the words after
+  `Bearer`/`Basic`, `-u`/`--user`/`--password`/`--token`-style flags, `curl -b`/`--cookie` and
+  request bodies (`-d`, `--data*`, `--json`, `--form`), `sshpass -p x`, `mysql -pSECRET`,
+  `NAME=value` with a credential-looking name (`_TOKEN`, `_SECRET`, `_PASS`, `_PW`, `_PWD`, `_PAT`,
+  `_CREDENTIALS`, `_AUTH`, `_KEY`; quoted values with spaces too), URLs with user information and
+  long or prefixed tokens.
+- **Paging and the horizon.** A page ends at the highest horizon of the sources that returned a
+  full read; the horizon comes from the raw rows **before** the visibility check, so a cursor can
+  exist while the viewer sees no row below it. That reveals only that something older exists (low
+  risk, accepted); the next page is simply empty.
 - **Live.** Writers send an `aurora_timeline` hint (ids only) in their transaction; the gateway sends
   one per agent after each request-log flush; turn steps reuse `aurora_conversation` and gateway
   approvals `aurora_approval`. The stream reloads the row by id, builds it with the reader's access
   (re-read before every batch) and sends it with the same `id`, so a `running` or `waiting` row
-  turns into its outcome in place. Metrics: `aurora_timeline_streams` (gauge),
-  `aurora_timeline_events_total{kind}`.
+  turns into its outcome in place. With `?technical=true` it also sends one slim `request` event
+  per new request-log row of the agent (`id`, `ts`, `agent_id`, `method`, `host`, `decision`,
+  `status`, `app_id`, `tool_id`): the same visibility check as a row (an evaluation's or another
+  member's direct chat's request is not sent), **no path, context label, secret or connection
+  id**, the host only with a visible conversation; the Technical view reads the full row from
+  `GET /workspaces/{ws}/activity` when it sees the event. **Fail closed:** the stream re-reads the
+  reader's access before every batch; if that cannot be answered (not only when it is refused) the
+  stream ends and the client reconnects. **`TIMELINE_STREAMS_PER_USER` (5) is per API replica**
+  (the count lives in the replica's memory), so with several replicas a person can hold more
+  streams in total. Metrics: `aurora_timeline_streams` (gauge), `aurora_timeline_events_total{kind}`.
 
 ### Live narration cards (phase 5, P4-NARR, D-279, D-280, C-846..C-851, SEC-111)
 

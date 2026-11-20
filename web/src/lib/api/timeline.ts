@@ -18,7 +18,7 @@ export type TimelineKind = S["TimelineKind"];
 export type TimelineState = S["TimelineState"];
 export type TimelinePage = S["TimelinePage"];
 export type TimelineRowEvent = S["TimelineRowEvent"];
-export type RequestLogEntry = S["RequestLogEntry"];
+export type TimelineRequestEvent = S["TimelineRequestEvent"];
 
 export interface TimelineFilters {
   kinds?: TimelineKind[];
@@ -101,10 +101,10 @@ export function parseRowEvent(text: string): TimelineRowEvent | null {
   }
 }
 
-function parseRequest(text: string): RequestLogEntry | null {
+function parseRequest(text: string): TimelineRequestEvent | null {
   try {
-    const v = JSON.parse(text) as Partial<RequestLogEntry>;
-    return typeof v?.id === "string" ? (v as RequestLogEntry) : null;
+    const v = JSON.parse(text) as Partial<TimelineRequestEvent>;
+    return typeof v?.id === "string" ? (v as TimelineRequestEvent) : null;
   } catch {
     return null;
   }
@@ -132,7 +132,7 @@ export interface TimelineStreamOptions {
    */
   atTop?: boolean;
   /** Each new request-log entry while `technical` is on. */
-  onRequest?: (entry: RequestLogEntry) => void;
+  onRequest?: (entry: TimelineRequestEvent) => void;
 }
 
 export interface TimelineStream {

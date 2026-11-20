@@ -1,4 +1,4 @@
-use super::dto::{StreamQuery, TimelinePage, TimelineQuery, TimelineRowEvent};
+use super::dto::{StreamQuery, TimelinePage, TimelineQuery, TimelineStreamEvents};
 use super::feed::{self, AgentCtx, Cursor, Feed, Filter, Viewer};
 use super::stream::Stream;
 use crate::app::AppState;
@@ -45,7 +45,7 @@ async fn resolve(s: &AppState, c: &Caller, agent: Uuid) -> Result<(Viewer, Agent
 #[utoipa::path(get, path = "/agents/{agent}/timeline", operation_id = "getAgentTimeline", tag = "timeline",
     params(("agent" = Uuid, Path, description = "Agent id"), TimelineQuery),
     responses((status = 200, body = TimelinePage), (status = 400, body = ErrorEnvelope),
-        (status = 404, body = ErrorEnvelope)),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn timeline(
     c: Caller,
@@ -53,7 +53,9 @@ async fn timeline(
     Path(agent): Path<Uuid>,
     Query(q): Query<TimelineQuery>,
 ) -> Result<Json<TimelinePage>, ApiError> {
-    // Authorise before parsing the query (FIX-181 F7).
+    // The `Query` extractor has already checked the query's shape; authorise before checking its
+    // values (limit, cursor, kind, outcome), so a caller without access learns nothing from them
+    // (FIX-181 F7).
     let (viewer, agent) = resolve(&s, &c, agent).await?;
     let limit = q.limit.unwrap_or(feed::DEFAULT_LIMIT);
     if !(1..=feed::MAX_LIMIT).contains(&limit) {
@@ -77,9 +79,9 @@ async fn timeline(
 /// `resync`; no SSE ids (C-1084).
 #[utoipa::path(get, path = "/agents/{agent}/timeline/stream", operation_id = "streamAgentTimeline", tag = "timeline",
     params(("agent" = Uuid, Path, description = "Agent id"), StreamQuery),
-    responses((status = 200, content_type = "text/event-stream", body = TimelineRowEvent),
-        (status = 401, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 429, body = ErrorEnvelope)),
+    responses((status = 200, content_type = "text/event-stream", body = TimelineStreamEvents),
+        (status = 401, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 429, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn timeline_stream(
     c: SessionCaller,

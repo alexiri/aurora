@@ -180,3 +180,29 @@ pub struct TimelineRowEvent {
     pub op: String,
     pub item: TimelineItem,
 }
+
+/// `event: request` of the timeline stream (C-1084, SEC-143): a new request-log row of the agent,
+/// sent only with `?technical=true` and only when the viewer may see its conversation (a row with
+/// none is sent without its host). It carries **no path, no context label, no secret or connection
+/// id**: the Technical view reads the full row from `GET /workspaces/{ws}/activity`, which has its own
+/// authorization, when it sees this event.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TimelineRequestEvent {
+    pub id: uuid::Uuid,
+    pub ts: chrono::DateTime<chrono::Utc>,
+    pub agent_id: uuid::Uuid,
+    pub method: String,
+    /// Only with a visible conversation.
+    pub host: Option<String>,
+    pub decision: String,
+    pub status: i32,
+    pub app_id: Option<String>,
+    pub tool_id: Option<String>,
+}
+
+/// The events of the timeline stream by their `event:` name (C-1084); `resync` carries `{}`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TimelineStreamEvents {
+    pub row: TimelineRowEvent,
+    pub request: TimelineRequestEvent,
+}
