@@ -313,16 +313,22 @@ async fn unlinked_thread_speaker() {
 }
 
 /// A schedule turn: whose schedule, `me`, and where the final answer goes — exactly where the
-/// doorless-turn mirror posts it (the run conversation's own link), never the origin's link.
+/// doorless-turn mirror posts it (the run conversation's own link, else, FIX-192, the origin
+/// conversation's thread link).
 #[tokio::test]
 async fn schedule_with_and_without_a_thread_link() {
     let w = W::new("ask").await;
     let origin = w.conversation("direct", Some(w.person)).await;
-    w.link(origin, "direct", "D1").await;
     let sched = w
         .schedule("Say goodmorning", Some(w.person), Some(origin))
         .await;
     let run = w.conversation("schedule", None).await;
+    sqlx::query("UPDATE conversations SET origin_conversation_id = $1 WHERE id = $2")
+        .bind(origin)
+        .bind(run)
+        .execute(w.pool())
+        .await
+        .unwrap();
     let t = w
         .turn(
             run,
@@ -343,8 +349,8 @@ async fn schedule_with_and_without_a_thread_link() {
         ],
         "{b}"
     );
-    // A run conversation with a thread link: the answer is posted there.
-    w.link(run, "direct", "D2").await;
+    // The origin has a thread link: the answer is posted there.
+    w.link(origin, "direct", "D1").await;
     let b = w.block(t).await.unwrap();
     assert!(
         b.contains("Your final answer is posted to Mattermost direct message."),

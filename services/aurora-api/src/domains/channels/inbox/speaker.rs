@@ -75,7 +75,19 @@ pub async fn resolve_person(
         return Ok(Speaker::NeedsLink);
     }
     match user_links::insert(pool, ctx.id(), user_ref, user.id, "verified_email").await {
-        Ok(_) => Ok(Speaker::User(user.id)),
+        Ok(link_id) => {
+            // (FIX-193) Cache the person's handle: one queued lookup, best-effort.
+            if let Ok(mut conn) = pool.acquire().await {
+                crate::domains::channels::queue_handle_lookup(
+                    &mut conn,
+                    ctx.id(),
+                    link_id,
+                    user_ref,
+                )
+                .await;
+            }
+            Ok(Speaker::User(user.id))
+        }
         Err(aurora_db::DbError::UniqueViolation { .. }) => {
             // Linked concurrently (to this or another user): read what is there now.
             match user_links::user_link_for(pool, ctx.id(), user_ref)

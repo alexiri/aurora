@@ -795,6 +795,15 @@ async fn verified_email_auto_links_only_when_verified_everywhere() {
             .await
             .unwrap();
     assert_eq!(m, "verified_email");
+    // (FIX-193) The autolink queued one lookup of the person; a second message queues none.
+    let lookups = || {
+        w.count("SELECT count(*) FROM channel_ops WHERE kind='user.lookup' AND payload->>'user_ref'='U5'")
+    };
+    assert_eq!(lookups().await, 1);
+    let mut p2 = dm("U5", "again", "BD1");
+    p2["message_ref"] = json!("m-p2");
+    w.post(w.integ, "e4", p2).await;
+    assert_eq!(lookups().await, 1);
 }
 
 #[tokio::test]
@@ -2699,4 +2708,135 @@ async fn private_notices_name_the_space_by_label_and_never_by_id() {
             assert!(!t.contains(id), "notice names a space id ({id}): {t}");
         }
     }
+}
+
+/// A schedule run in a fresh run conversation whose origin is `origin` (the way `start_run`
+/// makes it), left queued for `World::finish`.
+async fn start_schedule_run(w: &W, agent: Uuid, origin: Uuid) -> Uuid {
+    let sched = Uuid::now_v7();
+    sqlx::query("INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, origin_conversation_id) VALUES ($1,$2,'Weather','p','0 8 * * *','UTC',$3)")
+        .bind(sched).bind(agent).bind(origin).execute(w.h.pool()).await.unwrap();
+    let mut tx = w.h.pool().begin().await.unwrap();
+    let (c, _) = aurora_db::repo::conversations::get_or_create(
+        &mut tx,
+        &aurora_db::repo::conversations::NewConversation {
+            agent_id: agent,
+            workspace_id: w.ws,
+            kind: "schedule",
+            external_ref: &format!("schedule:{sched}"),
+            direct_user_id: None,
+            title: Some("Weather"),
+            origin_conversation_id: Some(origin),
+        },
+    )
+    .await
+    .unwrap();
+    let created = conv::create_turn_tx(
+        &mut tx,
+        &c,
+        &conv::NewMessage {
+            door: json!({"kind": "schedule", "ref": sched.to_string()}),
+            speaker_kind: "system",
+            speaker_user_id: None,
+            speaker_label: "Schedule",
+            text: "Scheduled task: Weather",
+            source_event_id: None,
+            attachment_ids: &[],
+            reply_to_seq: None,
+        },
+    )
+    .await
+    .unwrap();
+    let turn = match created {
+        aurora_db::repo::turns::Created::Turn(t) | aurora_db::repo::turns::Created::Followup(t) => {
+            t
+        }
+    };
+    aurora_db::repo::schedules::insert_run(&mut tx, sched, Some(turn.id), "fired")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    turn.id
+}
+
+/// (FIX-192, docs/10 §Schedules) A schedule made in a chat thread answers in that thread: the
+/// run's final answer is one post to the origin's thread link, and the origin gets the notice.
+/// A failed run posts no answer; a schedule made in the dashboard (no link) posts nothing.
+#[tokio::test]
+async fn schedule_run_answer_is_posted_to_the_origin_thread() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(
+        w.integ,
+        "e1",
+        dm("U1", "every morning at 8, the weather", "BD1"),
+    )
+    .await;
+    w.finish("done", Some("ok, scheduled"), None).await;
+    let origin: Uuid = sqlx::query_scalar("SELECT conversation_id FROM thread_links LIMIT 1")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let before = w.ops("message.post").await.len();
+
+    // Done: one post to the origin's link, plus the notice in the origin.
+    let turn = start_schedule_run(&w, a, origin).await;
+    w.finish("done", Some("Sunny, 21 degrees"), None).await;
+    let posts = w.ops("message.post").await;
+    assert_eq!(posts.len(), before + 1, "{posts:?}");
+    let last = posts.last().unwrap();
+    assert_eq!(last["target"]["space_ref"], "D1");
+    assert!(
+        last["content"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Sunny, 21 degrees"),
+        "{last}"
+    );
+    let dedupe: String = sqlx::query_scalar(
+        "SELECT dedupe_key FROM channel_ops WHERE kind='message.post' ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(dedupe, format!("answer:{turn}"));
+    assert_eq!(
+        w.count(&format!(
+            "SELECT count(*) FROM transcript_events WHERE conversation_id='{origin}' AND type='notice' AND payload->>'code'='schedule_run'"
+        ))
+        .await,
+        1
+    );
+
+    // Failed: only the notice, no post.
+    let before = w.ops("message.post").await.len();
+    start_schedule_run(&w, a, origin).await;
+    w.finish("failed", None, Some("harness_failed")).await;
+    assert_eq!(w.ops("message.post").await.len(), before);
+
+    // A dashboard origin (no thread link) posts nothing.
+    let web = {
+        let mut tx = w.h.pool().begin().await.unwrap();
+        let (c, _) = aurora_db::repo::conversations::get_or_create(
+            &mut tx,
+            &aurora_db::repo::conversations::NewConversation {
+                agent_id: a,
+                workspace_id: w.ws,
+                kind: "schedule",
+                external_ref: "web-origin",
+                direct_user_id: None,
+                title: None,
+                origin_conversation_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        c.id
+    };
+    start_schedule_run(&w, a, web).await;
+    w.finish("done", Some("Cloudy"), None).await;
+    assert_eq!(w.ops("message.post").await.len(), before);
 }

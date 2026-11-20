@@ -577,7 +577,16 @@ no behaviour in phase 0.
 - **Narration cards** (phase 5, P4-NARR, D-279, C-847, C-848): when the agent's `narration_cards` is on and the platform declares `edits`, the turn's receipt is a card that lists its tool steps and is updated as they run; it is collapsed to one summary line when the answer posts or the turn ends (D-286), and it is never the answer. Bounds and privacy: §5.12.
 - **Doorless turns** (system follow-ups, watch fires, schedule and peer-task
   reports, action-approval outcomes) in a conversation that has thread links
-  are posted to its most recently used thread link.
+  are posted to its most recently used thread link. (FIX-192) A **schedule run**
+  lives in the schedule's own run conversation, which never has a thread link,
+  so its final answer goes to the latest thread link of the schedule's
+  **origin conversation** (where the person asked for it), through the same
+  rendering, sanitising, splitting, attachments rule and `channel_ops` row as
+  any mirrored answer: at most one post per run, a reply in an existing thread,
+  so `proactive_messaging` does not gate it (the mirror applies no such gate to
+  any conversation's own thread). A failed or aborted run posts only the
+  `schedule_run` notice in the origin, never a failure line; an origin with no
+  link (a dashboard conversation) gets no post.
 - **Web- and API-originated turns are not mirrored** into platforms.
 - Failed turns post a short platform-voice failure line with the error code's
   copy and a dashboard link.
@@ -771,6 +780,13 @@ Available to an agent only while it has an `active` presence.
   `proactive_messaging` is `off`** (refused). Only this person is reachable this way.
   `user.lookup` results also refresh the handle cache (`user_links.handle`) of linked
   platform users, which the turn context block shows (`10 §Turn context`).
+  (FIX-193) A link's handle is also cached when the link is created, by every
+  creation path (the verified-e-mail autolink, the sign-in link, the admin
+  link): one queued `user.lookup { user_ref }` per new link (never made inline in
+  the request or the inbound message path), whose result sets `handle`. It is
+  best-effort (a failed or unsupported lookup leaves `handle` null), never
+  writes a bot, and there is no backfill: existing links fill through the
+  lookups above or when re-linked.
   The result carries `recipient {alias?, kind,
   label}`. Reach is re-checked at send. Messages to
   the current conversation's own thread are always allowed. Otherwise the

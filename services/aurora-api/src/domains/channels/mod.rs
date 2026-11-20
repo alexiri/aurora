@@ -34,6 +34,7 @@ use serde_json::Value;
 use crate::domains::connectors::ops::CorrelatedError;
 
 pub use dto::*;
+pub use links::queue_handle_lookup;
 pub use routes::router;
 
 const MESSAGE_MAX: usize = 200;
