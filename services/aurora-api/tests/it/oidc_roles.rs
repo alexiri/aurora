@@ -573,9 +573,17 @@ async fn sec78_require_role_refuses_with_no_user_row() {
     assert_eq!(count(&h, "SELECT count(*) FROM users").await, 0);
     assert_eq!(count(&h, "SELECT count(*) FROM user_identities").await, 0);
     assert_eq!(count(&h, "SELECT count(*) FROM organizations").await, 0);
-    assert!(
-        count(&h, "SELECT count(*) FROM audit_log WHERE action = 'user.login' AND outcome = 'denied' AND metadata->>'reason' = 'no_mapped_role'").await >= 1
-    );
+    // The denied login's audit row is best-effort and written after the answer (CI run 44823250244 read 0): wait, bounded.
+    let denied = "SELECT count(*) FROM audit_log WHERE action = 'user.login' AND outcome = 'denied' AND metadata->>'reason' = 'no_mapped_role'";
+    let mut rows = 0;
+    for _ in 0..100 {
+        rows = count(&h, denied).await;
+        if rows >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(rows >= 1, "no denied login was audited");
     // A mapped value signs in.
     set_roles(&idp, "n@example.com", "n1", json!(["aurora-users"]));
     sign_in(&h).await.unwrap();

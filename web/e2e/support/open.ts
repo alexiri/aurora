@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 import { mockApi } from "./mock-api";
 
@@ -49,3 +49,16 @@ export async function openRoute(page: Page, path: string, scheme: Scheme) {
 
 export const overflow = (page: Page) =>
   page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+
+/**
+ * The visible names of the links in a navigation, without an entry's count badge (C-1082, P5-REFINE-20 G3/G4: its digits
+ * are aria-hidden and its words are sr-only, so `allTextContents` would read "Overview33 need your attention").
+ */
+export const navLabels = (nav: Locator) =>
+  nav.getByRole("link").evaluateAll((links) =>
+    links.map((a) => {
+      const copy = a.cloneNode(true) as HTMLElement;
+      copy.querySelectorAll('.sr-only, [aria-hidden="true"]').forEach((n) => n.remove());
+      return (copy.textContent ?? "").trim();
+    }),
+  );

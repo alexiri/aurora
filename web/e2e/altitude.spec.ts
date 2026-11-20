@@ -2,7 +2,7 @@ import { expect as baseExpect, test, type Page } from "@playwright/test";
 
 import { serious } from "./support/axe";
 import { agent, id, mockApi, org, user, ws } from "./support/mock-api";
-import { overflow, titled } from "./support/open";
+import { navLabels, overflow, titled } from "./support/open";
 
 // The first request of a route compiles it in `next dev`; on a loaded host that outlasts the default 5 s.
 const expect = baseExpect.configure({ timeout: 30_000 });
@@ -65,7 +65,7 @@ for (const scheme of ["light", "dark"] as const) {
         const { patches, errors } = await open(page, `${agentUrl}?tab=instructions`, scheme, "member", "member", false);
         if (width >= 768) {
           const nav = page.getByRole("navigation", { name: "Workspace" });
-          await expect.poll(() => nav.getByRole("link").allTextContents()).toEqual(["Overview", "Agents"]);
+          await expect.poll(() => navLabels(nav)).toEqual(["Overview", "Agents"]);
         }
         await expect(page.getByLabel("Name")).toBeVisible();
         await expect(page.getByLabel("Effort")).toHaveCount(0);
@@ -95,7 +95,7 @@ for (const scheme of ["light", "dark"] as const) {
         await open(page, "/o/acme/w/main/agents", scheme, "owner", "owner", false);
         if (width >= 768) {
           const nav = page.getByRole("navigation", { name: "Workspace" });
-          await expect.poll(() => nav.getByRole("link").allTextContents()).toContain("Skills");
+          await expect.poll(() => navLabels(nav)).toContain("Skills");
         }
       });
 
@@ -103,7 +103,7 @@ for (const scheme of ["light", "dark"] as const) {
         await open(page, "/o/acme/w/main/agents", scheme, "member", "member", true);
         if (width >= 768) {
           const nav = page.getByRole("navigation", { name: "Workspace" });
-          await expect.poll(() => nav.getByRole("link").allTextContents()).toEqual(["Overview", "Agents", "Skills", "Apps & accounts", "Internet access", "Activity"]);
+          await expect.poll(() => navLabels(nav)).toEqual(["Overview", "Agents", "Skills", "Apps & accounts", "Internet access", "Activity"]);
         }
       });
     });
