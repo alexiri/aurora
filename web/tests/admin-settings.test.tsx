@@ -114,7 +114,7 @@ const preview = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("Admin › Settings index (SET-1)", () => {
-  it("lists the sections with counts and shows the locked-keys notice, dismissible per viewer", async () => {
+  it("lists the sections with counts and shows one line about the Helm-set values, linking to Set in Helm", async () => {
     mockFetch({
       "GET /v1/admin/settings": () =>
         json(200, {
@@ -130,12 +130,11 @@ describe("Admin › Settings index (SET-1)", () => {
     expect(screen.getByText("Sign-in")).toBeTruthy();
     expect(screen.getByText("1 in Helm")).toBeTruthy();
     expect(screen.getByText("2 in the dashboard")).toBeTruthy();
-    const notice = screen.getByText(/1 setting is configured in Helm and cannot be changed here/);
-    expect(notice.textContent).toContain("it keeps its current value");
-    expect(screen.getByText("config.governance.llm.minimum_posture")).toBeTruthy();
+    expect(screen.getByText(/1 setting is set in Helm\./)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "See them on Set in Helm" }).getAttribute("href")).toBe("/admin/set-in-helm");
+    // The Helm key and the long "remove it from your values" text are on Set in Helm, not here.
+    expect(screen.queryByText("config.governance.llm.minimum_posture")).toBeNull();
     expect(screen.getByRole("link", { name: "Open Sign-in" }).getAttribute("href")).toBe("/admin/people?tab=sign-in");
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    expect(screen.queryByText(/configured in Helm and cannot be changed here/)).toBeNull();
     expect(screen.getByRole("link", { name: "Export YAML" }).getAttribute("href")).toBe("/v1/admin/settings/export?format=yaml");
   });
 
@@ -185,7 +184,9 @@ describe("Generic settings section form (SET-1)", () => {
     expect(await screen.findByText("Limit")).toBeTruthy();
     // Locked: read-only text, the Helm note, no control.
     expect(screen.getByTestId("t.limit-locked-value").textContent).toBe("5");
-    expect(screen.getByText(/Configured in Helm/).textContent).toContain("config.t.limit");
+    // (P5-REFINE-18 #1) The Helm key is named once, in a short line; the long how-to lives on Set in Helm.
+    expect(screen.getByText(/Set in your Helm values:/).textContent).toContain("config.t.limit");
+    expect(screen.getAllByRole("link", { name: /Set by the installation/ }).map((a) => a.getAttribute("href"))).toContain("/admin/set-in-helm#t.limit");
     expect(document.getElementById("t.limit-c")).toBeNull();
     // Dashboard: the control holds the value; Reset names the default.
     expect((document.getElementById("t.count-c") as HTMLInputElement).value).toBe("20");
@@ -242,10 +243,12 @@ describe("Generic settings section form (SET-1)", () => {
     fireEvent.click(document.getElementById("t.flag-c")!);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("This allows more than before:")).toBeTruthy();
+    expect(within(dialog).getByRole("heading", { name: "Allow more than before?" })).toBeTruthy();
+    // `t.flag` has no template: the generic sentence, never the key outside Technical details.
+    expect(within(dialog).getByTestId("loosening-sentences")).not.toHaveTextContent("t.flag");
     expect(within(dialog).getByText("Acme")).toBeTruthy();
     expect(puts).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Yes, save" }));
     await waitFor(() => expect(puts).toHaveBeenCalledTimes(1));
   });
 
@@ -267,8 +270,33 @@ describe("Generic settings section form (SET-1)", () => {
     // The typed value is kept until Reload.
     expect((document.getElementById("t.flag-c") as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("must be between 1 and 100")).toBeTruthy();
-    expect(screen.getByText(/needs t\.flag/)).toBeTruthy();
+    expect(await screen.findByText("Enter a number from 1 to 100 things.")).toBeTruthy();
+    // A message that names a config key is turned into words; the key is only under Technical details.
+    expect(screen.queryByText(/needs t\.flag/)).toBeNull();
+    expect(screen.getByText(/isn't a valid/)).toBeTruthy();
     expect(screen.queryByText(/sign in again/i)).toBeNull();
+  });
+});
+
+// P5-REFINE-18 #16 (setup-6): a server address is one line, not a text area.
+describe("single-line string settings", () => {
+  it("renders a 512-character address as an input and a 20 000-character document as a text area", async () => {
+    mockFetch({
+      "GET /v1/admin/settings/settings_test": () =>
+        json(
+          200,
+          section({
+            fields: [fld("t.url", "Mail server address", "string"), fld("t.doc", "Template", "string")],
+            settings: [
+              setting({ key: "t.url", value: "smtp://mail.example.com:587", source: "dashboard", schema: schema("string", { max_len: 512 }) }),
+              setting({ key: "t.doc", value: "x", source: "dashboard", schema: schema("string", { max_len: 20000 }) }),
+            ],
+          }),
+        ),
+    });
+    wrap(<SettingsSectionView slug="settings-test" />);
+    await screen.findByText("Mail server address");
+    expect(document.getElementById("t.url-c")?.tagName).toBe("INPUT");
+    expect(document.getElementById("t.doc-c")?.tagName).toBe("TEXTAREA");
   });
 });

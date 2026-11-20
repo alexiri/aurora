@@ -140,7 +140,7 @@ describe("Admin › Settings › Governance (SET-2)", () => {
       "POST /v1/admin/settings/governance/preview": () =>
         json(200, {
           generation: 2,
-          diff: [],
+          diff: [{ key: "byo.enabled", before: false, after: true, before_source: "dashboard", after_source: "dashboard" }],
           loosening: [{ key: "byo.enabled", entry_id: null, reason: "`byo.enabled` becomes less strict." }],
           affected_orgs: [{ org_id: "o1", slug: "acme", name: "Acme", changes: [] }],
           affected_orgs_total: 1,
@@ -156,11 +156,52 @@ describe("Admin › Settings › Governance (SET-2)", () => {
     fireEvent.click(document.getElementById("byo.enabled-c") ?? document.getElementById("byo.enabled")!);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("This allows more than before:")).toBeTruthy();
+    expect(within(dialog).getByRole("heading", { name: "Allow more than before?" })).toBeTruthy();
+    // A sentence, not the key: the key and its reason are under Technical details only.
+    expect(within(dialog).getByTestId("loosening-sentences")).toHaveTextContent("People may run agents outside Aurora.");
+    expect(within(dialog).getByTestId("loosening-sentences")).not.toHaveTextContent("byo.enabled");
     expect(within(dialog).getByText("Acme")).toBeTruthy();
     expect(puts).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Yes, save" }));
     await waitFor(() => expect(puts).toHaveBeenCalledTimes(1));
+  });
+});
+
+// P5-REFINE-18 #6 (admin-1, C-1066): a refused "Check where AI keys come from" springs back to Off and says why, in place.
+describe("a failed key-origin save is not kept", () => {
+  it("springs the switch back, names the endpoints by display name, and stays until dismissed", async () => {
+    const puts = vi.fn();
+    mockFetch({
+      "GET /v1/admin/settings/governance": () => json(200, governance()),
+      "GET /v1/admin/settings/governance/orgs": () => json(200, orgs),
+      "POST /v1/admin/settings/governance/preview": () =>
+        json(422, {
+          error: {
+            code: "key_origin_required",
+            message: "These AI endpoints need a rule for where their keys come from: Company AI gateway, Users AI gateway. They are set in Helm, so the rule is added there.",
+            details: { endpoints: [{ id: "central", display_name: "Company AI gateway", source: "helm" }, { id: "users", display_name: "Users AI gateway", source: "helm" }] },
+          },
+        }),
+      "PUT /v1/admin/settings/governance": () => {
+        puts();
+        return json(200, governance());
+      },
+    });
+    wrap(<SettingsSectionView slug="governance" />);
+    await screen.findByRole("heading", { name: "Agent tokens" });
+    const sw = () => (document.getElementById("governance.llm.require_key_origin-c") ?? document.getElementById("governance.llm.require_key_origin")) as HTMLInputElement;
+    fireEvent.click(sw());
+    expect(sw().checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const notice = await screen.findByTestId("key-origin-refused");
+    expect(notice).toHaveTextContent(
+      "Not turned on. 2 AI endpoints have no key origin, so their keys couldn't be checked: Company AI gateway, Users AI gateway. These endpoints are set in Helm, so add the origin there, then try again.",
+    );
+    expect(notice).toHaveTextContent("Nothing changed");
+    await waitFor(() => expect(sw().checked).toBe(false));
+    expect(puts).not.toHaveBeenCalled();
+    fireEvent.click(within(notice).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByTestId("key-origin-refused")).toBeNull();
   });
 });
 

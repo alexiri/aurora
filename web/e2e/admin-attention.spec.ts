@@ -57,6 +57,8 @@ for (const width of [1280, 390]) {
 
       test(`a connector with an update waiting shows Running and a second chip (${scheme})`, async ({ page }) => {
         await open(page, "/admin/chat-platforms", scheme, { "/v1/admin/connectors": { items: [pendingConnector] } });
+        // (P5-REFINE-18 #7) The connector cards sit in the closed Advanced fold under the platforms list.
+        await page.getByText(/Advanced · connector hosts/).click();
         const card = page.getByRole("listitem").filter({ hasText: "Mattermost" }).first();
         await expect(card.getByTestId("status-chip")).toHaveText("Running");
         await expect(card.getByTestId("update-pending-chip")).toHaveText("Update waiting for approval");
@@ -88,5 +90,42 @@ test.describe("the Administration entry", () => {
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.getByTestId("admin-attention-badge")).toHaveCount(0);
     await expect(page.getByTestId("admin-attention")).toHaveCount(0);
+  });
+});
+
+// (P5-REFINE-18 #18, D-417) The count is on every entry (Overview in the Administration rail, the sidebar foot) and
+// drops when an item is resolved, without a reload.
+test.describe("the Administration count follows what is resolved", () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+  test("approving the package drops the count on Overview and on the foot entry", async ({ page }) => {
+    const pkgId = id(700);
+    let waiting = true;
+    const pkg = (status: string) => ({
+      id: pkgId, package_id: "indigo-sso", version: "2.0.0", contract: 1, publisher: "acme", digest: "d".repeat(64), signer: { kind: "unsigned" },
+      source: "upload", origin: "uploaded", summary: null, reaches: [], reaches_more: 0, apps: [{ app_id: "indigo", name: "Indigo SSO" }],
+      status, status_reason: status === "active" ? null : "first_install", violations: [], widenings: [], host_claims: [],
+      permissions: { hooks: [], egress: {}, context: [] }, impact: null, approved_by: null, approved_at: null, created_at: SINCE,
+    });
+    await mockApi(page, { "/v1/admin/attention": { items: ITEMS } });
+    await page.route("**/v1/**", async (route) => {
+      const p = new URL(route.request().url()).pathname;
+      const method = route.request().method();
+      const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+      if (p === "/v1/admin/attention") return json({ items: waiting ? ITEMS : ITEMS.filter((i) => i.kind !== "package_approval") });
+      if (p === `/v1/admin/plugins/${pkgId}` && method === "GET") return json(pkg(waiting ? "pending_approval" : "active"));
+      if (p === `/v1/admin/plugins/${pkgId}/approve` && method === "POST") {
+        waiting = false;
+        return json({ ...pkg("active"), connections_reauth: 0 });
+      }
+      if (p === "/v1/admin/plugins" && method === "GET") return json({ items: [pkg(waiting ? "pending_approval" : "active")], next_cursor: null });
+      return route.fallback();
+    });
+    await page.goto(`/admin/apps/packages/${pkgId}`);
+    const rail = page.getByRole("navigation", { name: "Administration" });
+    await expect(rail.getByTestId("admin-attention-badge")).toHaveText(/3/);
+    await expect(page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: /^Administration 3/ })).toBeVisible();
+    await page.getByRole("button", { name: "Approve" }).click();
+    await expect(rail.getByTestId("admin-attention-badge")).toHaveText(/2/);
+    await expect(page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: /^Administration 2/ })).toBeVisible();
   });
 });

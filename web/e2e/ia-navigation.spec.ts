@@ -63,7 +63,7 @@ for (const scheme of ["light", "dark"] as const) {
       await sidebar.getByRole("link", { name: "Administration" }).click();
       await expect(page).toHaveURL(/\/admin$/);
       await expect(page.getByRole("navigation", { name: "Administration" }).getByRole("link")).toHaveText([
-        "Overview", "Agents", "Apps & accounts", "AI models", "Internet access", "People", "Chat platforms", "Data", "Platform", "Settings",
+        "Overview", "What agents may do", "Agent defaults", "Apps", "Chat platforms", "People & sign-in", "Data", "Health & runners", "AI endpoints", "Set in Helm", "All settings",
       ]);
     });
 

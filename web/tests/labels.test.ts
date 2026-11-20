@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { AUDIT_ACTION, COVERED, GATEWAY_DECISION, HARNESS, harnessVisible, label, SANDBOX_PHASE } from "@/lib/labels";
+import { AUDIT_ACTION, AUDIT_SENTENCE, auditWords, COVERED, GATEWAY_DECISION, HARNESS, harnessVisible, label, SANDBOX_PHASE } from "@/lib/labels";
 
 const SCHEMA = readFileSync(join(__dirname, "..", "src", "lib", "api", "schema.d.ts"), "utf8");
 
@@ -40,6 +40,20 @@ describe("labels (rec 13)", () => {
     expect(label(HARNESS, "claude_code")).toBe("Claude Code");
     expect(label(AUDIT_ACTION, "api_key.revoke")).toBe("Revoked an API key");
     expect(GATEWAY_DECISION.default_denied.sentence()).toMatch(/no rule/);
+  });
+
+  it("has an audit sentence for every named audit action, and says so plainly when one is missing", () => {
+    expect(Object.keys(AUDIT_ACTION).filter((a) => !(a in AUDIT_SENTENCE))).toEqual([]);
+    const gone = { actor_label: "Bob", critical: true, metadata: {} };
+    expect(auditWords({ ...gone, action: "api_key.revoke" }, "ci-script")).toMatchObject({ sentence: "Bob revoked the API key ci-script", weight: "critical" });
+    expect(auditWords({ ...gone, action: "api_key.revoke" }, null).sentence).toBe("Bob revoked a deleted API key");
+    expect(auditWords({ ...gone, critical: false, action: "workspace_access.set", metadata: { role: "owner" } }, "Carol")).toMatchObject({
+      sentence: "Bob changed Carol to Owner",
+      weight: "important",
+    });
+    expect(auditWords({ ...gone, critical: false, action: "workspace.access.grant", metadata: { role: "member" } }, "Carol").weight).toBe("routine");
+    const unknown = auditWords({ ...gone, critical: false, action: "thing.happened" }, null);
+    expect(unknown).toMatchObject({ known: false, sentence: "Bob did something (“thing happened”)" });
   });
 
   it("hides the fake harness outside development builds", () => {

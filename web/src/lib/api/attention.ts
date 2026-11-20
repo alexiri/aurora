@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 
 import { api } from "./client";
 import type { components } from "./schema";
@@ -28,4 +29,19 @@ export function useAdminAttention(enabled = true) {
     refetchOnWindowFocus: true,
     refetchInterval: ATTENTION_REFETCH_MS,
   });
+}
+
+/**
+ * (P5-REFINE-18 #18) The count drops without a reload: any mutation that succeeds may have resolved an item
+ * (an approval, a decision, a connected platform), so the attention query is refetched, once per success. Only an
+ * active query refetches, so a person without the badge fetches nothing.
+ */
+export function useRefreshAttentionOnMutation(enabled: boolean): void {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!enabled) return;
+    return qc.getMutationCache().subscribe((e) => {
+      if (e.type === "updated" && e.action.type === "success") void qc.invalidateQueries({ queryKey: attentionKey });
+    });
+  }, [qc, enabled]);
 }

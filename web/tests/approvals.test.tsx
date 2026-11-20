@@ -138,7 +138,19 @@ describe("approvals", () => {
     routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [], next_cursor: null });
     show();
     expect(await screen.findByRole("heading", { name: "Nothing is waiting for you." })).toBeInTheDocument();
-    expect(screen.getByText("When an agent asks before a change, the request appears here and on Overview.")).toBeInTheDocument();
+    expect(screen.getByText("When one of your agents needs a yes from you, it shows up here and in your notices.")).toBeInTheDocument();
+    // (workspace-11) "Nothing is waiting for you." once, not twice; an example card shows what a question looks like.
+    expect(screen.queryByTestId("approvals-sentence")).toBeNull();
+    const example = screen.getByTestId("approval-example");
+    expect(example).toHaveTextContent("Example · this is what");
+    fireEvent.click(within(example).getByRole("button", { name: "Block" }));
+    expect(screen.getByTestId("example-says")).toHaveTextContent("is told no, and carries on without it.");
+    fireEvent.click(within(example).getByRole("button", { name: "Always allow" }));
+    expect(screen.getByTestId("example-says")).toHaveTextContent("without asking from now on. You can undo it in Apps & accounts.");
+    fireEvent.click(within(example).getByRole("button", { name: "Allow once" }));
+    expect(screen.getByTestId("example-says")).toHaveTextContent("does it this time, and asks again next time.");
+    // The sample calls nothing.
+    expect(calls.filter((c) => c.key.startsWith("POST"))).toEqual([]);
     fireEvent.click(screen.getByRole("tab", { name: "History" }));
     expect(await screen.findByText("No questions have been answered yet.")).toBeInTheDocument();
   });

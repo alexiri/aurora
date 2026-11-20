@@ -537,3 +537,39 @@ pub async fn sealed_refs<'e, E: PgExecutor<'e>>(
     .fetch_all(exec)
     .await?)
 }
+
+/// (P5-REFINE-6, C-1089) A connected chat platform a person can link: one row per active
+/// integration of an organization the person is an active member of.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MyPlatformRow {
+    /// The connector type (`type_id`, else the connector id).
+    pub kind: String,
+    pub display_name: String,
+    /// The shared bot's handle, when the connector reported one.
+    pub bot_handle: Option<String>,
+    /// The person has linked their chat account on this integration.
+    pub linked: bool,
+}
+
+/// `only_org`: an API key sees its own organization's platforms only.
+pub async fn platforms_for_user<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    only_org: Option<Uuid>,
+) -> Result<Vec<MyPlatformRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT COALESCE(c.type_id, c.id) AS kind, c.display_name,
+                NULLIF(i.shared_bot->>'handle', '') AS bot_handle,
+                EXISTS (SELECT 1 FROM user_links l
+                         WHERE l.integration_id = i.id AND l.user_id = $1) AS linked
+           FROM channel_integrations i
+           JOIN connectors c ON c.id = i.connector_id
+           JOIN org_members m ON m.org_id = i.org_id AND m.user_id = $1 AND m.status = 'active'
+          WHERE i.status = 'active' AND ($2::uuid IS NULL OR i.org_id = $2)
+          ORDER BY c.display_name, i.created_at, i.id",
+    )
+    .bind(user)
+    .bind(only_org)
+    .fetch_all(exec)
+    .await?)
+}

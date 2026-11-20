@@ -102,10 +102,15 @@ const selfHosted = { ...mmConnector, id: "custom", display_name: "Custom bridge"
 
 const add = (calls: Rec[]) => calls.filter((c) => c.key === "POST /v1/admin/connectors");
 
-async function openAdd(routes: Record<string, Handler>) {
+/** Opens the choose step: the Add button of the first platform the running host lists, else "Add chat platform" (no host). */
+async function openAdd(routes: Record<string, Handler>, button?: string) {
   const calls = mockFetch({ "GET /v1/admin/connectors": () => json(200, { items: [] }), ...routes });
   wrap(<ConnectorsAdminView />);
-  fireEvent.click(await screen.findByRole("button", { name: "Add chat platform" }));
+  if (button) fireEvent.click(await screen.findByRole("button", { name: button }));
+  else {
+    const list = await screen.findByRole("list", { name: "Chat platforms" });
+    fireEvent.click((await within(list).findAllByRole("button", { name: /^Add / }))[0]!);
+  }
   return calls;
 }
 
@@ -151,7 +156,7 @@ describe("Connector host tokens (FIX-120)", () => {
 
 describe("Add connector flow", () => {
   it("says the chat platform host is not running and keeps the self-hosted path", async () => {
-    await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([], false)) });
+    await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([], false)) }, "Add chat platform");
     expect(await screen.findByText("The chat platform host is not running")).toBeInTheDocument();
     expect(screen.getByText(/“Plugins and connectors” in the operator guide/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Self-hosted chat platform host (advanced)" })).toBeInTheDocument();
@@ -165,7 +170,7 @@ describe("Add connector flow", () => {
     expect(list.getByText("Connect a Mattermost team with a bot account.")).toBeInTheDocument();
     expect(list.getByRole("button", { name: "Add Mattermost" })).toBeInTheDocument();
     cleanup();
-    await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, added: true }])) });
+    await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, added: true }])) }, "Add chat platform");
     const added = within(await screen.findByRole("list", { name: "Chat platform types" }));
     expect(added.getByText("Added")).toBeInTheDocument();
     expect(added.queryByRole("button", { name: "Add Mattermost" })).toBeNull();
@@ -293,7 +298,8 @@ describe("Add connector flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add chat platform" }));
     expect(await screen.findByText(/changed while you were adding it/)).toBeInTheDocument();
     expect(screen.getByTestId("manifest-summary")).toBeInTheDocument();
-    await waitFor(() => expect(calls.filter((c) => c.key === "GET /v1/admin/connector-types").length).toBe(2));
+    // The list, the choose step and the reload after the stale answer each read the types once.
+    await waitFor(() => expect(calls.filter((c) => c.key === "GET /v1/admin/connector-types").length).toBe(3));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     // The form keeps what was typed.
     expect(await screen.findByLabelText("Base URL")).toHaveValue("https://fake.example.org");
@@ -340,7 +346,8 @@ describe("Connector icon (FIX-183, C-1044)", () => {
     await screen.findByText("Self-hosted");
     const srcs = Array.from(container.querySelectorAll("img")).map((i) => i.getAttribute("src"));
     expect(srcs).toEqual(["/v1/connectors/mattermost/icon"]);
-    expect(screen.getAllByTestId("app-icon-fallback")).toHaveLength(1);
+    // One monogram for the self-hosted connector, and one each for Slack and Teams, which are not available yet.
+    expect(screen.getAllByTestId("app-icon-fallback")).toHaveLength(3);
   });
 });
 
@@ -566,7 +573,7 @@ describe("Self-hosted path", () => {
       "POST /v1/admin/connectors": () => json(201, { connector: { ...selfHosted, status: "awaiting_registration" }, token: "aun_once" }),
     });
     wrap(<ConnectorsAdminView />);
-    fireEvent.click(await screen.findByRole("button", { name: "Add chat platform" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Mattermost" }));
     fireEvent.click(await screen.findByRole("button", { name: "Self-hosted chat platform host (advanced)" }));
     fireEvent.change(await screen.findByLabelText("Connector id"), { target: { value: "custom" } });
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Custom bridge" } });
@@ -576,5 +583,43 @@ describe("Self-hosted path", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
     await waitFor(() => expect(screen.queryByText("aun_once")).toBeNull());
     expect(document.body.textContent).not.toContain("aun_once");
+  });
+});
+
+describe("Chat platforms lead with platforms (P5-REFINE-18 #7, admin-6)", () => {
+  it("lists Mattermost as available, Slack and Teams as not available yet, and keeps the machinery in a closed Advanced fold", async () => {
+    mockFetch({
+      "GET /v1/admin/connectors": () => json(200, { items: [] }),
+      "GET /v1/admin/connector-types": () => json(200, types([mattermost])),
+      "GET /v1/admin/connector-host-tokens": () =>
+        json(200, { items: [{ id: "s", name: null, prefix: null, type_ids: null, state: "refused", created_at: T, last_used_at: null, revoked_at: null }] }),
+    });
+    wrap(<ConnectorsAdminView />);
+    expect(await screen.findByText("Where people can talk to agents.")).toBeInTheDocument();
+    const list = within(await screen.findByRole("list", { name: "Chat platforms" }));
+    await list.findByText("Available");
+    const rows = list.getAllByRole("listitem");
+    expect(rows.map((r) => within(r).getByText(/^(Mattermost|Slack|Microsoft Teams)$/).textContent)).toEqual(["Mattermost", "Slack", "Microsoft Teams"]);
+    expect(within(rows[0]!).getByText("Available")).toBeInTheDocument();
+    expect(within(rows[1]!).getAllByText("Not available yet")).toHaveLength(2);
+    expect(within(rows[2]!).getAllByText("Not available yet")).toHaveLength(2);
+    // Hosts, tokens and replicas are behind one closed fold on the same page.
+    const fold = screen.getByTestId("chat-platforms-advanced");
+    expect(fold.tagName).toBe("DETAILS");
+    expect(fold).not.toHaveAttribute("open");
+    expect(within(fold).getByText(/Advanced · connector hosts, tokens and replicas/)).toBeInTheDocument();
+    expect(within(fold).getByText("Shared bootstrap token")).toBeInTheDocument();
+  });
+
+  it("an added platform says Added and offers Manage", async () => {
+    mockFetch({
+      "GET /v1/admin/connectors": () => json(200, { items: [mmConnector] }),
+      "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, added: true }])),
+    });
+    wrap(<ConnectorsAdminView />);
+    const list = within(await screen.findByRole("list", { name: "Chat platforms" }));
+    expect(await list.findByText("Added")).toBeInTheDocument();
+    expect(list.queryByRole("button", { name: "Add Mattermost" })).toBeNull();
+    expect(list.getByRole("button", { name: /^Manage / })).toBeInTheDocument();
   });
 });

@@ -54,6 +54,9 @@ pub struct OrgStorage {
     /// The window in force (after the instance maximum).
     pub attachments_days_effective: Option<i64>,
     pub by_workspace: Vec<WorkspaceStorage>,
+    /// (P5-REFINE-6, C-1072) The three categories; per organization only `files` is counted (the
+    /// organization's attachment bytes, live), `conversations` and `activity` are `null`.
+    pub categories: Vec<StorageCategory>,
     /// When the file counts and the breakdown were computed (FIX-126).
     pub computed_at: DateTime<Utc>,
 }
@@ -83,6 +86,63 @@ pub struct AdminOrgStorage {
 pub struct TableSize {
     pub table: String,
     pub bytes: i64,
+    /// (P5-REFINE-6, C-1072) The category the table counts in; `null` in a snapshot written
+    /// before the categories existed.
+    #[serde(default)]
+    pub category: Option<StorageCategoryId>,
+}
+
+/// (P5-REFINE-6, C-1072) What people store, as the dashboard names it.
+#[derive(Serialize, Deserialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageCategoryId {
+    /// `transcript_events` + `transcript_search`.
+    Conversations,
+    /// `blobs` + `attachments`.
+    Files,
+    /// `request_log` + `audit_log`.
+    Activity,
+}
+
+/// (C-1072) The bytes of one category; `null` when it cannot be computed for this scope (an
+/// organization's conversations and activity: only files are counted per organization).
+#[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq, Eq)]
+pub struct StorageCategory {
+    pub id: StorageCategoryId,
+    pub bytes: Option<i64>,
+}
+
+/// The category of a big table (C-1072).
+#[must_use]
+pub fn category_of(table: &str) -> Option<StorageCategoryId> {
+    match table {
+        "transcript_events" | "transcript_search" => Some(StorageCategoryId::Conversations),
+        "blobs" | "attachments" => Some(StorageCategoryId::Files),
+        "request_log" | "audit_log" => Some(StorageCategoryId::Activity),
+        _ => None,
+    }
+}
+
+/// The three categories, always in this order, summed from the table sizes.
+#[must_use]
+pub fn categories(tables: &[TableSize]) -> Vec<StorageCategory> {
+    [
+        StorageCategoryId::Conversations,
+        StorageCategoryId::Files,
+        StorageCategoryId::Activity,
+    ]
+    .into_iter()
+    .map(|id| StorageCategory {
+        id,
+        bytes: Some(
+            tables
+                .iter()
+                .filter(|t| category_of(&t.table) == Some(id))
+                .map(|t| t.bytes)
+                .sum(),
+        ),
+    })
+    .collect()
 }
 
 /// `GET /admin/storage` (API_CONTRACTS C-172).
@@ -97,8 +157,13 @@ pub struct AdminStorage {
     pub purged_files: i64,
     /// Top 50 orgs by attachment bytes.
     pub orgs: Vec<AdminOrgStorage>,
-    /// `blobs`, `attachments`, `transcript_events`, `request_log`, `audit_log`.
+    /// `blobs`, `attachments`, `transcript_events`, `transcript_search` (P5-REFINE-6),
+    /// `request_log`, `audit_log`, each with its `category`.
     pub tables: Vec<TableSize>,
+    /// (P5-REFINE-6, C-1072) Conversations, files and activity, summed from `tables`. Empty in a
+    /// snapshot written before this field existed (it shows once the snapshot is refreshed).
+    #[serde(default)]
+    pub categories: Vec<StorageCategory>,
     /// When these figures were computed (FIX-126); the page offers a refresh.
     pub computed_at: DateTime<Utc>,
 }
@@ -108,10 +173,11 @@ fn epoch() -> DateTime<Utc> {
 }
 
 const TOP_ORGS: i64 = 50;
-const BIG_TABLES: [&str; 5] = [
+const BIG_TABLES: [&str; 6] = [
     "blobs",
     "attachments",
     "transcript_events",
+    "transcript_search",
     "request_log",
     "audit_log",
 ];
@@ -188,6 +254,7 @@ async fn compute_admin(pool: &PgPool, cfg: &AttachmentsSection) -> Result<AdminS
             tables.push(TableSize {
                 table: t.to_owned(),
                 bytes,
+                category: category_of(t),
             });
         }
     }
@@ -198,6 +265,7 @@ async fn compute_admin(pool: &PgPool, cfg: &AttachmentsSection) -> Result<AdminS
         attachment_files,
         purged_files,
         orgs,
+        categories: categories(&tables),
         tables,
         computed_at: epoch(),
     })
@@ -263,6 +331,14 @@ pub async fn org_storage(
         attachments_days: days,
         attachments_days_effective: quota::effective_days(&state.ops().attachments, days),
         by_workspace: figures.by_workspace,
+        categories: [
+            (StorageCategoryId::Conversations, None),
+            (StorageCategoryId::Files, Some(used)),
+            (StorageCategoryId::Activity, None),
+        ]
+        .into_iter()
+        .map(|(id, bytes)| StorageCategory { id, bytes })
+        .collect(),
         computed_at: at,
     })
 }
@@ -274,4 +350,53 @@ pub async fn refresh_all(pool: &PgPool, cfg: &AttachmentsSection) -> Result<(), 
         snapshot(pool, &org.to_string(), true, || compute_org(pool, org)).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn t(table: &str, bytes: i64) -> TableSize {
+        TableSize {
+            table: table.into(),
+            bytes,
+            category: category_of(table),
+        }
+    }
+
+    #[test]
+    fn the_categories_sum_their_tables() {
+        let tables = [
+            t("blobs", 100),
+            t("attachments", 20),
+            t("transcript_events", 3000),
+            t("transcript_search", 400),
+            t("request_log", 50),
+            t("audit_log", 6),
+        ];
+        let c = categories(&tables);
+        let got: Vec<(StorageCategoryId, Option<i64>)> =
+            c.iter().map(|c| (c.id, c.bytes)).collect();
+        assert_eq!(
+            got,
+            [
+                (StorageCategoryId::Conversations, Some(3400)),
+                (StorageCategoryId::Files, Some(120)),
+                (StorageCategoryId::Activity, Some(56)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_snapshot_written_before_the_categories_still_reads() {
+        let old = serde_json::json!({
+            "blob_bytes": 1, "blob_count": 1, "attachment_bytes": 0, "attachment_files": 0,
+            "purged_files": 0, "orgs": [],
+            "tables": [{"table": "blobs", "bytes": 10}],
+            "computed_at": "2026-11-01T00:00:00Z"
+        });
+        let s: AdminStorage = serde_json::from_value(old).unwrap();
+        assert!(s.categories.is_empty());
+        assert_eq!(s.tables[0].category, None);
+    }
 }

@@ -197,10 +197,10 @@ describe("Admin › Settings › Sign-in (SET-4)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const confirm = await screen.findByRole("dialog");
-    expect(within(confirm).getByText(/This allows more than before/)).toBeTruthy();
+    expect(within(confirm).getByRole("heading", { name: "Allow more than before?" })).toBeTruthy();
     expect(within(confirm).getByText(/becomes an instance administrator/)).toBeTruthy();
     expect(put).toBe(false);
-    fireEvent.click(within(confirm).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(confirm).getByRole("button", { name: "Yes, save" }));
     await waitFor(() => expect(put).toBe(true));
   });
 

@@ -401,3 +401,83 @@ async fn container_config_flags_an_operator_proxy_certificate() {
     // The proxy leg is verified with system roots: no separate proxy trust anchor env for git.
     assert!(cfg["env"].get("GIT_CONFIG_KEY_0").is_none());
 }
+
+/// (P5-REFINE-6, C-1090) The organization's agents across its workspaces, for its owners and
+/// admins only; paged; `paused` when frozen.
+#[tokio::test]
+async fn an_organizations_agents_for_its_owners_and_admins() {
+    let h = Harness::new().await;
+    let org = h.org().await;
+    let ws1 = h.workspace(org).await;
+    let ws2 = h.workspace(org).await;
+    let a1 = h.hosted_agent(org, ws1, "alpha").await;
+    let a2 = h.byo_agent(org, ws2, "bravo", "Bravo").await;
+    // (D-425) One with a running turn (working, last used now), one idle (ready).
+    let a3 = h.byo_agent(org, ws2, "charlie", "Charlie").await;
+    let a4 = h.byo_agent(org, ws2, "delta", "Delta").await;
+    let conv = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'api',$1::text, now())",
+    )
+    .bind(conv)
+    .bind(a3)
+    .bind(ws2)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_label, text)
+         VALUES ($1,$2,$3,'turn','running','{}','system','s','hi')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(conv)
+    .bind(a3)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    let other = h.org().await;
+    let ows = h.workspace(other).await;
+    h.hosted_agent(other, ows, "elsewhere").await;
+    sqlx::query("UPDATE agents SET frozen_at = now(), frozen_reason = 'x', frozen_authority = 'org_admin' WHERE id = $1")
+        .bind(a2)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let admin = h.user("adm@x.io", false).await;
+    h.member(org, admin, "admin", "active").await;
+    let member = h.user("mem@x.io", false).await;
+    h.member(org, member, "member", "active").await;
+    h.bind_ws(ws1, member, "owner").await;
+    let outsider = h.user("out@x.io", false).await;
+    let (_, at) = h.good_session(admin).await;
+    let (_, mt) = h.good_session(member).await;
+    let (_, ot) = h.good_session(outsider).await;
+    let uri = format!("/v1/orgs/{org}/agents");
+    let (s, v) = h.call_tok(&at, Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    let items = v["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4, "{v}");
+    let find = |id: Uuid| items.iter().find(|a| a["id"] == json!(id)).unwrap();
+    assert_eq!(find(a1)["kind"], "hosted");
+    // (D-425) A hosted agent with no AI key cannot answer: the header's "Needs a key".
+    assert_eq!(find(a1)["state"], "needs_key", "{v}");
+    assert!(find(a1)["last_active_at"].is_null());
+    assert!(find(a1)["workspace"]["slug"].is_string());
+    assert_eq!(find(a1)["workspace"]["id"], json!(ws1));
+    assert!(find(a1)["workspace"]["personal_of"].is_null());
+    assert_eq!(find(a2)["kind"], "byo");
+    assert_eq!(find(a2)["state"], "paused");
+    assert_eq!(find(a3)["state"], "working");
+    assert!(find(a3)["last_active_at"].is_string(), "{v}");
+    assert_eq!(find(a4)["state"], "ready");
+    // Paged.
+    let (_, p1) = h
+        .call_tok(&at, Method::GET, &format!("{uri}?limit=1"), None)
+        .await;
+    assert_eq!(p1["items"].as_array().unwrap().len(), 1);
+    assert!(p1["next_cursor"].is_string());
+    // A member (even a workspace owner) is refused; an outsider does not see the organization.
+    assert_eq!(h.call_tok(&mt, Method::GET, &uri, None).await.0, 403);
+    assert_eq!(h.call_tok(&ot, Method::GET, &uri, None).await.0, 404);
+}

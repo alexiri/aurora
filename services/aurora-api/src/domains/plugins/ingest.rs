@@ -46,21 +46,29 @@ pub struct Ingested {
 
 use ::hex::encode as hex;
 
-fn violations_json(v: &[Violation]) -> Value {
-    Value::Array(
-        v.iter()
-            .map(|v| json!({"code": v.code, "path": v.path, "message": v.message}))
-            .collect(),
-    )
+/// Each violation with its sentence (C-1071) next to the raw `code`, `path` and `message`.
+fn violations_json(v: &[Violation]) -> (Value, Vec<String>) {
+    let sentences: Vec<String> = v
+        .iter()
+        .map(|v| super::sentences::violation_sentence(v.code, &v.path, &v.message))
+        .collect();
+    let items = v
+        .iter()
+        .zip(&sentences)
+        .map(|(v, s)| json!({"code": v.code, "path": v.path, "message": v.message, "sentence": s}))
+        .collect();
+    (Value::Array(items), sentences)
 }
 
-/// 422 `package_invalid` (413 for oversize) without creating a row.
+/// 422 `package_invalid` (413 for oversize) without creating a row. (C-1071) `message` is a
+/// sentence; every violation carries its own.
 fn reject(v: &[Violation]) -> ApiError {
     if v.iter().any(|v| v.code == "package_too_large") {
-        return ApiError::too_large("Package is too large.");
+        return ApiError::too_large(super::sentences::too_large_sentence());
     }
-    ApiError::unprocessable("package_invalid", "The package is invalid.")
-        .with_details(json!({"violations": violations_json(v)}))
+    let (items, sentences) = violations_json(v);
+    ApiError::unprocessable("package_invalid", super::sentences::summary(&sentences))
+        .with_details(json!({"violations": items}))
 }
 
 /// `reject` for sibling domains (addon sources surface the same violations).
@@ -404,7 +412,7 @@ async fn ingest_inner(
             reason: Some("addon_update"),
         };
     }
-    let violations_v = violations_json(&violations);
+    let violations_v = violations_json(&violations).0;
     let new_id = ids::new_id();
 
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;

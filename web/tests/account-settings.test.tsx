@@ -44,6 +44,34 @@ describe("SecretOnce", () => {
   });
 });
 
+describe("KeysTab rows and revoke (workspace-6)", () => {
+  it("says what a key can do and when it was used, and asks before revoking", async () => {
+    const key = (id: string, name: string, last: string | null) => ({
+      id, name, kind: "service", org_id: "o", workspace_id: "w", display_prefix: "auk_ab", owner: { id: "u", display_name: "U" },
+      created_at: "2026-01-01T00:00:00Z", last_used_at: last,
+    });
+    const revoked: string[] = [];
+    mockFetch({
+      "GET /v1/workspaces/w/api-keys": () => json(200, { items: [key("k1", "ci-script", "2026-11-20T10:00:00Z"), key("k2", "notebook", null)], next_cursor: null }),
+      "DELETE /v1/api-keys/k1": () => {
+        revoked.push("k1");
+        return json(204, null);
+      },
+    });
+    wrap(<KeysTab wsId="w" workspaceName="Bob's Lab" />);
+    const list = await screen.findByRole("list", { name: "API keys" });
+    expect(list).toHaveTextContent("ci-script");
+    expect(list).toHaveTextContent("Can do everything you can in Bob's Lab");
+    expect(list).toHaveTextContent("never used");
+    fireEvent.click(screen.getByRole("button", { name: "Revoke ci-script" }));
+    expect(await screen.findByText("Revoke ci-script?")).toBeInTheDocument();
+    expect(screen.getByText("Anything using it stops working now.")).toBeInTheDocument();
+    expect(revoked).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Revoke key" }));
+    await waitFor(() => expect(revoked).toEqual(["k1"]));
+  });
+});
+
 describe("KeysTab", () => {
   it("reveals the created key once and drops it on close", async () => {
     const apiKey = {
@@ -54,8 +82,11 @@ describe("KeysTab", () => {
       "GET /v1/workspaces/w/api-keys": () => json(200, { items: [], next_cursor: null }),
       "POST /v1/workspaces/w/api-keys": () => json(201, { api_key: apiKey, key: "auk_topsecret" }),
     });
-    wrap(<KeysTab wsId="w" />);
-    fireEvent.change(await screen.findByLabelText("Key name"), { target: { value: "ci" } });
+    wrap(<KeysTab wsId="w" workspaceName="Bob's Lab" />);
+    expect(await screen.findByText(/A key acts as you in this workspace through the Aurora API/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "API documentation" })).toHaveAttribute("href", "/v1/openapi.json");
+    fireEvent.click(await screen.findByRole("button", { name: "New API key" }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "ci" } });
     fireEvent.click(screen.getByRole("button", { name: "Create key" }));
     expect(await screen.findByTestId("secret-key")).toHaveTextContent("auk_topsecret");
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
@@ -111,15 +142,27 @@ describe("AccessTab", () => {
 });
 
 describe("UsersTable", () => {
-  const openMenu = (email: string) => fireEvent.keyDown(screen.getByRole("button", { name: `More for ${email}` }), { key: "Enter" });
+  const openMenu = (name: string) => fireEvent.keyDown(screen.getByRole("button", { name: `Manage ${name}` }), { key: "Enter" });
   const admin = (id: string, over: Partial<AdminUser> = {}) =>
     ({ id, email: `${id}@x.io`, display_name: id, is_instance_admin: false, ...over }) as AdminUser;
+
+  it("shows the display name, the e-mail's name and the role in words, a Manage button and 'Roles from sign-in: none' (admin-13)", () => {
+    mockFetch({});
+    wrap(<UsersTable users={[admin("alice", { display_name: "Alice Admin", is_instance_admin: true }), admin("bob", { display_name: "Bob Builder" })]} selfId="me" />);
+    expect(screen.getByText("Alice Admin")).toBeInTheDocument();
+    expect(screen.getByText("alice · Instance admin")).toBeInTheDocument();
+    expect(screen.getByText("bob · User")).toBeInTheDocument();
+    const manage = screen.getByRole("button", { name: "Manage Bob Builder" });
+    expect(manage).toHaveTextContent("Manage");
+    expect(screen.getByText("Roles from sign-in: none")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^More for / })).toBeNull();
+  });
 
   it("your own row offers no Remove admin and no Turn off (P5-POLISH-10)", () => {
     mockFetch({});
     wrap(<UsersTable users={[admin("me", { is_instance_admin: true }), admin("ben", { is_instance_admin: true })]} selfId="me" />);
     expect(screen.getByText("This is you.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "More for me@x.io" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage me" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Remove admin|Turn off/ })).toBeNull();
   });
 
@@ -127,7 +170,7 @@ describe("UsersTable", () => {
     const calls: string[] = [];
     mockFetch({ "PATCH /v1/admin/users/ben": () => { calls.push("patch"); return json(200, admin("ben", { is_instance_admin: true })); } });
     wrap(<UsersTable users={[admin("me", { is_instance_admin: true }), admin("ben")]} selfId="me" />);
-    openMenu("ben@x.io");
+    openMenu("ben");
     expect(await screen.findByRole("menuitem", { name: "Turn off" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "Make admin" }));
     await waitFor(() => expect(calls).toEqual(["patch"]));
@@ -136,7 +179,7 @@ describe("UsersTable", () => {
   it("the only instance admin cannot be removed: Remove admin is not offered, Turn off is", async () => {
     mockFetch({});
     wrap(<UsersTable complete users={[admin("me"), admin("ana", { is_instance_admin: true })]} selfId="me" />);
-    openMenu("ana@x.io");
+    openMenu("ana");
     expect(await screen.findByRole("menuitem", { name: "Turn off" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Remove admin" })).toBeNull();
   });
@@ -150,7 +193,7 @@ describe("UsersTable", () => {
         selfId="me"
       />,
     );
-    openMenu("ana@x.io");
+    openMenu("ana");
     expect(await screen.findByRole("menuitem", { name: "Remove admin" })).toBeInTheDocument();
     expect(screen.queryByTestId("idp-role-values")).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: "Show role values (1)" }));

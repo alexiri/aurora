@@ -101,7 +101,42 @@ async fn sec10_token_is_hash_only_and_never_logged() {
     let bad = format!("{}x", &k[..k.len() - 1]);
     let (s, _) = key(h, &bad, Method::GET, &u, None).await;
     assert_eq!(s, 401);
+    // (P5-REFINE-6, SEC-140) Invitation links (create and re-issue) never reach the logs either
+    // (`email.log_links` is off in the test configuration).
+    let (s, v) = sess(
+        h,
+        &owner_tok,
+        Method::POST,
+        &format!("/v1/orgs/{org}/invitations"),
+        Some(json!({"email": "logs@x.io", "role": "member"})),
+    )
+    .await;
+    assert_eq!(s, 201, "{v}");
+    let first_link = v["link"].as_str().unwrap().to_owned();
+    let inv = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = sess(
+        h,
+        &owner_tok,
+        Method::POST,
+        &format!("/v1/invitations/{inv}/link"),
+        None,
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let second_link = v["link"].as_str().unwrap().to_owned();
+    let tokens: Vec<String> = [&first_link, &second_link]
+        .iter()
+        .map(|l| l.split("token=").nth(1).unwrap().to_owned())
+        .collect();
+    // Let the detached mail send log its line.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     let logs = String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned();
+    for t in &tokens {
+        assert!(
+            !logs.contains(t.as_str()),
+            "invitation token leaked into logs"
+        );
+    }
     assert!(
         !logs.is_empty(),
         "the capture must be live, or the check is vacuous"

@@ -49,7 +49,7 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   await form.getByLabel("Name").fill("Mock LLM");
   // By the endpoint's id (deploy/kind/values-llm-mock.yaml): the label carries hints that change ("— Works with
   // Claude Code" since P4-LLM-6), and a label that no longer matches waits out the whole test timeout.
-  await form.getByLabel("Which service is this key for?").selectOption("litellm-mock");
+  await form.getByLabel("Provider").selectOption("litellm-mock");
   await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
   // (P5-UX-4, C-988) The form's "Who can use this key" has Daneel ticked (the workspace's only agent), so the key is saved
   // with its access in one request. Key and access are done from the server's state (the mock endpoint has a default
@@ -81,12 +81,15 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   await nav.getByRole("link", { name: "Activity" }).click();
   await expect(page).toHaveURL(/\/activity$/);
   // The gateway batches its request log (flush every 5 s) and the pages do not poll: reload until it shows.
-  const row = page.getByRole("row").filter({ hasText: LITELLM_HOST }).first();
+  // (P5-REFINE-16) The model call is one sentence ("<agent> answered you"); its raw request is under Details.
+  const row = page.getByTestId("activity-sentences").getByRole("listitem").filter({ hasText: "answered you" }).first();
   await expect(async () => {
     await page.goto(`${base}/activity`);
     await expect(row).toBeVisible({ timeout: 4_000 });
   }).toPass({ timeout: 60_000, intervals: [1_000] });
-  await expect(row.getByText("allow", { exact: true })).toBeVisible();
+  await row.getByRole("button", { name: "Details" }).click();
+  await expect(page.getByTestId("activity-raw")).toContainText(LITELLM_HOST);
+  await expect(page.getByTestId("activity-raw")).toContainText("allow");
   await nav.getByRole("link", { name: "Overview" }).click();
   // (P5-POLISH-7) The Overview's sentence comes from real state: the agent has a key and has answered. (The guide line
   // shows on Overview only once Welcome has been seen, never on both pages.)

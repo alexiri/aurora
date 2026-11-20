@@ -506,9 +506,58 @@ trivial. Many pages, but each is bounded and has a mockup.
 
 Fill in when done; P5-REFINE-20 reads it.
 
-- **Items done** (number, finding keys, commit):
+- **Items done** (number, finding keys; branch `alexiri/p5-lane6`, one commit per item or group, see `git log`):
+  1 Check a request (workspace-1) · 2 part A (workspace-2) · 3 Audit (workspace-3) · 4 Add people dialog and role fold (workspace-4) ·
+  5 Owner promotion with `ROLE_CAN.workspace` (workspace-5) · 7 API keys (workspace-6) · 8 General rename, Saved sentence, switcher refresh,
+  memory-language label (workspace-7) · 9 Delete by visible name (already built by brief 2: `DangerTab` uses `DeleteWithName`; verified, no change) ·
+  10 Apps grid with search and groups, Skills copy and fold (workspace-9, -10) · 11 Approvals one empty state and Example card (workspace-11) ·
+  12 skeleton cards / "Loading your accounts…" (workspace-12) · 13 switcher loading state (firstday-2), guide `checking` state (firstday-3, brief 5 had
+  merged: reads `verification.state` of the key from the secrets list), tour backdrop and "Step n of m" (firstday-4), Welcome reach sentence (firstday-5) ·
+  14 notifications blocked only after a try (account-1) · 15 Create key (account-2) · 17 Account rail and Notifications page (account-4) ·
+  18 SSH key validated on paste (account-5) · 19 the Approvals badge half (G1) and the phone dot (G6): refetch on focus and every 30 s, action
+  approvals counted, screen-reader words, hidden at zero and for people who cannot decide.
 - **Items waiting for a backend brief** (which, what is missing, when picked up):
+  - 2 part B (live per-agent timeline, in-progress rows in place, "n new · Show"): brief 9 not merged.
+  - 4 "Not signed in yet" **data**: the row, chip, "added …" and Copy link are built and tested against `signed_in === false`; the field
+    `AccessBinding.signed_in` (C-1086, built by brief 6) is not in the schema yet, so nothing shows it until -6 merges. Scope 6 (Rust) was not built here, as the
+    brief says.
+  - 11 / 19 Overview: Needs you rows in brief 8's feed shape, the attention count next to Overview and in the Needs you heading, and the Approvals
+    badge read from C-1082: brief 8 not merged.
+  - 16 (account-3, chat platforms naming the platform and the bot): C-1089 (brief 6) not merged; the page is unchanged.
+  - 2 "Automations" filter option: no field on a request-log row says a schedule or automation made it, so the option is not offered until part B.
 - **Deviations from the mockup or this brief and why:**
-- **Screenshots compared** (key, theme, width, path of the new screenshot):
+  - Check a request: the rule name is bold, not a link: there is no rule-editor deep link in the codebase. The dialog keeps its title "Try a request".
+  - Add people: the e-mail field is labelled "Who" (the mockup); pronoun "they" instead of "she".
+  - Audit: only the workspace tab uses sentences (the shared `AuditPanel` keeps its table for organization and Administration, brief 17/18's pages); 45 actions have
+    sentence templates (every action in `AUDIT_ACTION` is covered by a test); the other ~60 critical actions fall back to "<Person> did something (“…”)" until their pages need them.
+    A person's name comes from the workspace's people list, a key's from `metadata.name` (the audit writes it) or the key list.
+  - Skills: the row line "Written by … · used by …" is not built: a skill has no author or user field in the API. The list and editor layout are unchanged.
+  - Activity: the Technical view kept its Decision and Host filters (inside the Expert block); "Automations" is missing (above); the app is named from the apps catalogue.
+  - API keys: "API documentation" links to `/v1/openapi.json` (the instance serves it); a rendered docs page does not exist: **please confirm** the address.
+  - Apps: "Connected" group is a third group above the two (as the brief says). Skeleton cards, not rows, in the grid.
+  - Switcher on the phone: I could not find a handler that navigates into the Default workspace (the drawer only closes on `a[href]`); the likeliest cause was the
+    live-looking card tapped while `me` loaded, which is now a busy, disabled card. Needs checking on a real phone.
+  - **Slow `/apps` (item 12): not measured.** No throwaway cluster here and the machine was busy (perf rule). Reading `list_apps`
+    (`services/aurora-api/src/domains/apps/routes.rs:112`): `service::summary(...).await` and `setup::readiness(...).await` run once per app, sequentially;
+    that is the place to batch. Proposed brief: measure `GET /v1/apps?workspace_id=` per app on aurora-ux5, then load the per-app facts in one query.
+- **Screenshots compared** (key, theme, width, path of the new screenshot): none taken: no Playwright or browser in this lane. Markup of every mockup was read
+  (`UXR5/after/src/<key>.html`); P5-REFINE-20 compares the pairs.
 - **Tests run** (commands and counts):
-- **Open questions:**
+  - Targeted vitest after each item, all green (`pnpm exec vitest run <files>`): activity-sentences + agent-filter + altitude-pages + usage-placement (16), labels + policy (25 → 26),
+    audit-sentences + audit-view + audit-detail + admin-audit (26), people-table + add-people + refine-17-org (30), account-settings + general-rename + byo,
+    app-families + polish-7 (16), workspace-skills (7), approvals + m5-approvals-chat + parked + status-rail (76), waiting-badges (4), context-switcher (24) + switcher-loading,
+    onboarding + onboarding-guide (39), welcome + agent-summary + internet-pages (48), ssh (18) + account-pages-refine16 (6), onboarding (23).
+  - `pnpm exec tsc --noEmit`: clean at the account commit. eslint on every touched src and test file: 0 errors.
+  - Whole web vitest (`cd web && heavy.sh p5-lane6 pnpm exec vitest run`; shared UI changed: app shell, labels, rail): 2797 passed, 1 failed (`design-guards` read the sample "#214" of the Approvals example as a hex colour); fixed with a unicode escape, `design-guards` + `approvals` re-run: 25/25. So 2798/2798 after the fix, not re-run as one suite.
+  - `scripts/guards/run-all.sh`: all guards passed. `pnpm exec tsc --noEmit`: clean after the last change.
+  - Not run: cargo (no Rust change), `extract-schema --check` (no API change), Playwright.
+- **Test files changed or added:** added `tests/activity-sentences`, `audit-sentences`, `general-rename`, `switcher-loading`, `waiting-badges`, `account-pages-refine16`;
+  changed `policy`, `labels`, `altitude-pages`, `usage-placement`, `audit-view`, `people-table`, `add-people`, `account-settings`, `byo`, `app-families`, `polish-7`,
+  `workspace-skills`, `approvals`, `context-switcher`, `onboarding`, `onboarding-guide`, `welcome`, `agent-summary`, `ssh` (the profile SSH-link tests became rail tests: the link moved to the rail).
+  **Removed:** none.
+- **Playwright specs updated by reading (not run here; the nightly or P5-REFINE-20 runs them):** `e2e/first-run.spec.ts` (production: Activity sentence + Details),
+  `add-people-journey.spec.ts` (production) and `add-people.spec.ts` (label "Who"), `ia-4.spec.ts` (memory-language label), `onboarding.spec.ts` ("Step 1 of"),
+  `welcome-summary.spec.ts` (Welcome reach sentence), `web-push.spec.ts` (Notifications moved to `/account/notifications`). New mocked specs: `e2e/refine-16.spec.ts`, written by reading and **not run** (no browser in the lane; the CI Watcher runs them; expect selector fixes). Per theme and width (1280/390): Activity sentences + Details, Audit sentences + Critical, Add people note + Copy link, Settings rename Saved, Apps search, Approvals empty state + Example (no POST), tour backdrop + Esc, Account Create key dialog; plus the phone switcher, the Approvals badge dropping without reload, and Check a request. Not covered by a spec: the Owner confirm dialog, SSH paste in a browser (vitest covers both), and anything of the waiting items.
+- **Open questions:** (1) answered: `/v1/openapi.json` is right; (2) should the shared `AuditPanel` get sentence rows for the organization and Administration
+  pages in briefs 17/18; (3) the phone switcher device check is P5-REFINE-20's.
+

@@ -578,7 +578,7 @@ export function InternetLevel(p: InternetLevelProps) {
       {workspace && simulating ? (
         <Dialog open onOpenChange={(o) => (o ? null : setSimulating(false))}>
           <DialogContent size="lg" title="Try a request">
-            <SimulatePanel wsId={p.scope.id} agents={p.agents ?? []} users={p.users ?? []} currentUserId={p.currentUserId} />
+            <SimulatePanel wsId={p.scope.id} agents={p.agents ?? []} users={p.users ?? []} currentUserId={p.currentUserId} onDone={() => setSimulating(false)} />
           </DialogContent>
         </Dialog>
       ) : null}

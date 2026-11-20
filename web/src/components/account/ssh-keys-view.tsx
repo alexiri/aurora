@@ -24,6 +24,7 @@ import {
 } from "@/lib/api/ssh";
 import { SshSessionsList } from "@/components/ssh/sessions-list";
 import { fmtDate } from "@/lib/utils";
+import { checkSshKey } from "@/lib/ssh-key";
 
 import { CopyBlock, CopyButton, middleTruncate } from "./ssh-copy";
 
@@ -39,6 +40,7 @@ function AddKeyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (checkSshKey(line).state !== "ok") return;
     add.mutate(
       { public_key: line.trim(), name: name.trim() || undefined },
       {
@@ -49,7 +51,9 @@ function AddKeyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
       },
     );
   };
-  const text = add.error ? (sshErrorText(add.error) ?? errorMessage(add.error)) : undefined;
+  // (account-5) Judged as it is typed; the server stays authoritative. A private key is never sent.
+  const check = checkSshKey(line);
+  const text = check.state === "private" || check.state === "unsupported" ? check.message : add.error ? (sshErrorText(add.error) ?? errorMessage(add.error)) : undefined;
   return (
     <FormDialog
       open={open}
@@ -61,7 +65,7 @@ function AddKeyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
       description="Paste the contents of ~/.ssh/id_ed25519.pub. Only ed25519 keys are accepted; the private key never leaves your computer."
       submitLabel="Add key"
       busy={add.isPending}
-      submitDisabled={line.trim() === ""}
+      submitDisabled={check.state !== "ok"}
       onSubmit={submit}
     >
       <Field id="ssh-key-name" label="Name (optional)" hint="Shown in this list. Defaults to the comment at the end of the key.">

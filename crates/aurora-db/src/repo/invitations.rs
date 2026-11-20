@@ -174,6 +174,26 @@ pub async fn upsert_pending<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P5-REFINE-6, C-1069, SEC-140) Replace the token of a pending, unexpired invitation and reset
+/// its expiry to 7 days: the previous link stops working at once. Returns the new expiry, or
+/// `None` when the invitation is not pending (accepted, cancelled or expired).
+pub async fn reissue_token<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    token_hash: &[u8; 32],
+) -> Result<Option<DateTime<Utc>>, DbError> {
+    Ok(sqlx::query_scalar(
+        "UPDATE invitations SET token_hash = $2, expires_at = now() + interval '7 days',
+                updated_at = now()
+         WHERE id = $1 AND status = 'pending' AND expires_at > now()
+         RETURNING expires_at",
+    )
+    .bind(id)
+    .bind(&token_hash[..])
+    .fetch_optional(exec)
+    .await?)
+}
+
 /// Cancel a pending invitation; returns whether one changed.
 pub async fn cancel<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
     Ok(sqlx::query(

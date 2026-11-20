@@ -43,6 +43,7 @@ export const ScrollIcon = make(<><path d="M8 3h11v15a3 3 0 01-3 3H6a3 3 0 003-3V
 export const UserIcon = make(<><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></>);
 export const LockIcon = make(<><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></>);
 export const TrashIcon = make(<><path d="M4 7h16M10 3h4M6 7l1 14h10l1-14M10 11v6M14 11v6"/></>);
+export const BellIcon = make(<><path d="M6 16V11a6 6 0 0112 0v5l1.5 2h-15z"/><path d="M10 21h4"/></>);
 export const ServerIcon = make(<><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></>);
 export const SunIcon = make(<><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></>);
 export const MoonIcon = make(<><path d="M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z"/></>);

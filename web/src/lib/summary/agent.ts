@@ -29,7 +29,16 @@ export interface AgentSummaryInput {
   accounts: Account[];
   /** The workspace's Internet access; `null` when the viewer cannot read it. */
   internet: InternetAccess | null;
+  /**
+   * (firstday-5) Welcome's variant of the reach clause: "It can reach any website." reads as a warning with no way out, so
+   * Welcome says "It can reach websites; you can limit that." (owners; `LIMIT_THAT` is the link) or "It can reach websites."
+   * (members). Every other sentence, and every other page, is exactly the table of `14 §8`.
+   */
+  welcome?: { canLimit: boolean };
 }
+
+/** The words that link to Internet access in Welcome's reach sentence. */
+export const LIMIT_THAT = "you can limit that";
 
 /** "GitHub", "GitHub and Linear", "GitHub, Linear and Notion", "GitHub, Linear and 3 more". */
 export function nameList(names: string[]): string {
@@ -62,7 +71,7 @@ function exceptions(names: string[]): string {
   return `${names.length} kinds of change you always allow`;
 }
 
-export function agentSummary({ agent, agentId, accounts, internet }: AgentSummaryInput): string[] {
+export function agentSummary({ agent, agentId, accounts, internet, welcome }: AgentSummaryInput): string[] {
   const given = accounts.filter((a) => a.given !== false && a.kind !== "ai_key" && a.health.state !== "disabled");
   const name = labels(given);
   const entry = (a: Account) => a.agents.find((e) => e.agent.id === agentId);
@@ -96,7 +105,9 @@ export function agentSummary({ agent, agentId, accounts, internet }: AgentSummar
   for (const a of broken) out.push(`${subject()} can't use ${name.get(a)!} right now: ${healthClause(a)}.`);
 
   if (internet) {
-    const sentence = reachSentence(internet, "It");
+    const plain = reachSentence(internet, "It");
+    // Welcome only, and only where the plain sentence says "any website" with no exception.
+    const sentence = welcome && plain === "It can reach any website." ? (welcome.canLimit ? `It can reach websites; ${LIMIT_THAT}.` : "It can reach websites.") : plain;
     const lead = given.length === 0 ? `${agent} can't use any app yet. ` : "";
     out.push(`${lead}${sentence}`);
     const ask = askSentence(internet);

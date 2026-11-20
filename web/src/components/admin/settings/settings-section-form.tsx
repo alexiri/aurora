@@ -24,8 +24,9 @@ import { Select } from "@/components/ui/select";
 import { SettingField, SettingsCard, settingControlId } from "@/components/ui/setting-field";
 import { Switch } from "@/components/ui/switch";
 import { ApiError } from "@/lib/api/client";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
-import { defaultInWords, valueWords } from "@/lib/settings-words";
+import { errorDetail, errorMessage, fieldErrors } from "@/lib/api/errors";
+import { TechnicalDetails } from "@/components/ui/technical-details";
+import { defaultInWords, describeChange, fieldErrorWords, settingKeyOfPath, technicalNames, valueWords } from "@/lib/settings-words";
 import {
   useSettingsSaver,
   type FieldInfo,
@@ -133,8 +134,13 @@ function formatValue(s: Setting, field: FieldInfo | undefined): ReactNode {
 }
 
 /** Save needs a confirmation when the preview reports loosening, affected organizations or warnings. */
-function needsConfirmation(p: SettingsPreview): boolean {
+export function needsConfirmation(p: SettingsPreview): boolean {
   return p.loosening.length > 0 || p.affected_orgs_total > 0 || p.warnings.length > 0;
+}
+
+/** The values a PUT of this section would send with nothing changed: what the dashboard already holds (C-773). */
+export function savedValues(section: SettingsSection): SettingValues {
+  return toValues(section, initialDraft(section));
 }
 
 /**
@@ -167,6 +173,26 @@ export function SettingsSectionForm(props: {
       footer={props.footer}
     />
   );
+}
+
+/** (P5-REFINE-18 #10, admin-9) A switch whose Off says what people see: the help line and the neutral note beside it. */
+const SWITCH_WORDS: Record<string, { help?: string; off?: string }> = {
+  "terminal.enabled": {
+    help: "Lets people open a terminal on their agent's computer.",
+    off: "Off: people see that the terminal isn't available",
+  },
+};
+
+/** (P5-REFINE-18 #5, admin-2) What a save says changed, for the sections that have a sentence of their own. */
+const SAVED_WORDS: Record<string, string> = {
+  agents: "Saved. New agents use these defaults.",
+  approvals: "Saved. New agents use these defaults.",
+};
+const SAVED_DEFAULT = "Saved. Applied to every replica within seconds.";
+
+function savedWords(saved: { section: string }[] | null): string {
+  const words = (saved ?? []).map((s) => SAVED_WORDS[s.section]);
+  return words.length > 0 && words.every((w) => w !== undefined) ? words[0]! : SAVED_DEFAULT;
 }
 
 /** One section of a stacked page: its settings laid out in titled groups, and whatever sits beneath them. */
@@ -221,7 +247,6 @@ export function SettingsStackForm({
     return { part, initial, draft, dirty };
   });
   const dirty = states.some((s) => s.dirty);
-  const stacked = parts.length > 1;
 
   function edit(part: StackPart, change: (d: Draft) => Draft) {
     setSaved(false);
@@ -260,6 +285,17 @@ export function SettingsStackForm({
     }
   }
 
+  /** (P5-REFINE-18 #6, admin-1, C-1066) A refused key-origin save wrote nothing: the switch springs back to what is saved. */
+  function springBack(s: (typeof states)[number]) {
+    const key = "governance.llm.require_key_origin";
+    edit(s.part, (d) => {
+      const values = { ...d.values };
+      if (key in s.initial.values) values[key] = s.initial.values[key];
+      else delete values[key];
+      return { ...d, values };
+    });
+  }
+
   async function doPut(changed: typeof states) {
     const errs: Record<string, unknown> = {};
     let done = 0;
@@ -274,6 +310,8 @@ export function SettingsStackForm({
       } catch (e) {
         errs[s.part.section.section] = e;
         if (e instanceof ApiError && e.code === "setting_locked") lockedOut();
+        // (P5-REFINE-18 #6, admin-1, C-1066) A refused key-origin save wrote nothing: the switch springs back to what is saved.
+        if (e instanceof ApiError && e.code === "key_origin_required") springBack(s);
         break;
       }
     }
@@ -302,6 +340,7 @@ export function SettingsStackForm({
         } catch (err) {
           setErrors({ [s.part.section.section]: err });
           if (err instanceof ApiError && err.code === "setting_locked") onReload();
+          if (err instanceof ApiError && err.code === "key_origin_required") springBack(s);
           return;
         }
       }
@@ -321,15 +360,27 @@ export function SettingsStackForm({
     }
   }
 
+  // (P5-REFINE-18 #4) After a refused save, bring the first bad field into view (the bar says how many need fixing).
+  const firstBad = states
+    .flatMap(({ part }) => {
+      const err = errors[part.section.section];
+      const known = new Set(part.section.settings.map((s) => s.key));
+      return err ? Object.keys(fieldErrors(err)).map(settingKeyOfPath).filter((k) => known.has(k)) : [];
+    })
+    .find(Boolean);
+  useEffect(() => {
+    if (firstBad) document.getElementById(firstBad)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  }, [errors, firstBad]);
+
   // The bar's words: how many fields need fixing, or the one failure that is not a field's (stale revision, locked key).
   let fieldErrorCount = 0;
   let otherError: ReactNode = undefined;
   for (const { part } of states) {
     const err = errors[part.section.section];
-    if (!err) continue;
+    if (!err || (err instanceof ApiError && err.code === "key_origin_required")) continue;
     const known = new Set(part.section.settings.map((s) => s.key));
     const fe = fieldErrors(err);
-    const mine = Object.keys(fe).filter((k) => known.has(k.split("/")[0] ?? k));
+    const mine = Object.keys(fe).filter((k) => known.has(settingKeyOfPath(k)));
     fieldErrorCount += mine.length;
     if (mine.length === 0) otherError ??= errorMessage(err);
   }
@@ -339,9 +390,20 @@ export function SettingsStackForm({
       {states.map(({ part, draft }) => {
         const section = part.section;
         const error = errors[section.section];
-        const errs = error ? fieldErrors(error) : {};
         const fieldsByKey = new Map((section.fields ?? []).map((f) => [f.key, f]));
         const knownKeys = new Set(section.settings.map((s) => s.key));
+        // (P5-REFINE-18 #4, admin-4) Each message under its field, in the field's own unit; the names go to Technical details.
+        const rawErrs = error ? fieldErrors(error) : {};
+        const errs: Record<string, string> = {};
+        const names = new Set<string>();
+        for (const [path, message] of Object.entries(rawErrs)) {
+          const key = settingKeyOfPath(path);
+          for (const n of technicalNames(path, message)) names.add(n);
+          const words = fieldErrorWords(path, message, fieldsByKey.get(key));
+          // A keyed list's entry errors keep their `<key>/<entry>/…` path; a list item's error sits on the list's key.
+          const slot = path.includes("/") ? path : key;
+          if (!(slot in errs)) errs[slot] = words;
+        }
         const otherErrs = Object.entries(errs).filter(([k]) => !knownKeys.has(k.split("/")[0] ?? k));
         const code = error instanceof ApiError ? error.code : null;
         const setValue = (key: string, v: unknown) => edit(part, (d) => ({ ...d, values: { ...d.values, [key]: v } }));
@@ -373,21 +435,23 @@ export function SettingsStackForm({
                 A setting you changed is configured in Helm and cannot be changed here. The page was reloaded.
               </Notice>
             ) : null}
-            {error && !["stale_revision", "setting_locked", "settings_invalid"].includes(code ?? "") ? (
+            {code === "key_origin_required" ? (
+              <KeyOriginRefused error={error} onDismiss={() => setErrors((all) => ({ ...all, [section.section]: undefined }))} />
+            ) : null}
+            {error && !["stale_revision", "setting_locked", "settings_invalid", "key_origin_required"].includes(code ?? "") ? (
               <ErrorNotice error={error} />
             ) : null}
             {code === "settings_invalid" ? (
               <Notice tone="danger" role="alert">
-                <p>{errorMessage(error)}</p>
+                <p>{Object.keys(rawErrs).length > 0 ? "Some settings aren't valid yet. Fix the marked fields, then save again." : errorMessage(error)}</p>
                 {otherErrs.length > 0 ? (
                   <ul className="mt-1 list-disc pl-5">
                     {otherErrs.map(([k, m]) => (
-                      <li key={k}>
-                        <code className="font-mono">{k}</code>: {m}
-                      </li>
+                      <li key={k}>{m}</li>
                     ))}
                   </ul>
                 ) : null}
+                {names.size > 0 ? <TechnicalDetails title="Technical details">{[...names].join(", ")}</TechnicalDetails> : null}
               </Notice>
             ) : null}
 
@@ -433,7 +497,7 @@ export function SettingsStackForm({
         saved={saved}
         errorCount={fieldErrorCount}
         error={otherError}
-        savedMessage="Saved. Applied to every replica within seconds."
+        savedMessage={savedWords(before)}
         onUndo={undoable ? () => void undo() : undefined}
         onDiscard={() => {
           setDrafts({});
@@ -447,22 +511,54 @@ export function SettingsStackForm({
         onOpenChange={(o) => {
           if (!o) setConfirm(null);
         }}
-        title="Save these settings?"
+        title={confirm?.some((c) => c.preview.loosening.length > 0) ? "Allow more than before?" : "Save these settings?"}
         description="This changes what people and agents are allowed to do."
-        confirmLabel="Save"
+        confirmLabel="Yes, save"
+        cancelLabel="Go back"
         busy={busy}
         onConfirm={() => void confirmed()}
       >
         {confirm
           ? confirm.map((c) => (
               <div key={c.part.section.section} className="space-y-1">
-                {stacked ? <p className="text-sm font-semibold text-ink">{c.part.section.title}</p> : null}
-                <ConfirmDetails preview={c.preview} />
+                <p className="text-sm font-semibold text-ink">{c.part.section.title}</p>
+                <ConfirmDetails preview={c.preview} fields={c.part.section.fields} />
               </div>
             ))
           : null}
       </ConfirmDialog>
     </form>
+  );
+}
+
+/**
+ * (P5-REFINE-18 #6, admin-1, C-1066) "Check where AI keys come from" was refused: it stays where the switch is, in words,
+ * until dismissed. The endpoints are named by their display names; the server's message is under Technical details.
+ */
+function KeyOriginRefused({ error, onDismiss }: { error: unknown; onDismiss: () => void }) {
+  const raw = errorDetail(error, "endpoints");
+  const endpoints = (Array.isArray(raw) ? raw : []).filter(
+    (e): e is { display_name: string; source?: string } => typeof e === "object" && e !== null && typeof (e as { display_name?: unknown }).display_name === "string",
+  );
+  const allHelm = endpoints.length > 0 && endpoints.every((e) => e.source === "helm");
+  const n = endpoints.length;
+  return (
+    <Notice tone="danger" role="alert" data-testid="key-origin-refused" className="space-y-2">
+      <p>
+        Not turned on.{" "}
+        {n > 0
+          ? `${n} AI endpoint${n === 1 ? " has" : "s have"} no key origin, so their keys couldn't be checked: ${endpoints.map((e) => e.display_name).join(", ")}. `
+          : "Some AI endpoints have no key origin, so their keys couldn't be checked. "}
+        {allHelm ? "These endpoints are set in Helm, so add the origin there, then try again." : "Add the origin on the AI models page, then try again."}
+      </p>
+      <TechnicalDetails title="Technical details">{errorMessage(error)}</TechnicalDetails>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-ink-2">Nothing changed</span>
+        <Button type="button" size="sm" variant="outline" onClick={onDismiss}>
+          Dismiss
+        </Button>
+      </div>
+    </Notice>
   );
 }
 
@@ -473,20 +569,35 @@ function keysLost(o: SettingsPreview["affected_orgs"][number]): number {
   return c ? Math.max(0, n(c.before) - n(c.after)) : 0;
 }
 
-function ConfirmDetails({ preview }: { preview: SettingsPreview }) {
+/** (P5-REFINE-18 #3) One sentence per loosening, from the diff's before and after; the key only goes to Technical details. */
+export function looseningSentences(preview: SettingsPreview, fields: FieldInfo[] = []): string[] {
+  return preview.loosening.map((l) => {
+    const d = preview.diff.find((x) => x.key === l.key && (x.entry_id ?? null) === (l.entry_id ?? null)) ?? preview.diff.find((x) => x.key === l.key);
+    return describeChange(l.key, d?.before, d?.after, { field: fields.find((f) => f.key === l.key), entryId: l.entry_id });
+  });
+}
+
+export function ConfirmDetails({ preview, fields }: { preview: SettingsPreview; fields?: FieldInfo[] }) {
+  const sentences = looseningSentences(preview, fields);
   return (
     <div className="space-y-3 text-sm">
       {preview.loosening.length > 0 ? (
         <div>
-          <p className="font-medium text-ink">This allows more than before:</p>
-          <ul className="list-disc pl-5 text-ink-2">
-            {preview.loosening.map((l, i) => (
-              <li key={i}>
-                <code className="font-mono">{l.key}</code>
-                {l.entry_id ? <> ({l.entry_id})</> : null}: {l.reason}
-              </li>
+          <ul className="list-disc pl-5 text-ink-2" data-testid="loosening-sentences">
+            {sentences.map((s, i) => (
+              <li key={i}>{s}</li>
             ))}
           </ul>
+          <TechnicalDetails title="Technical details" className="mt-2">
+            <ul className="space-y-0.5">
+              {preview.loosening.map((l, i) => (
+                <li key={i}>
+                  <code className="font-mono">{l.key}</code>
+                  {l.entry_id ? <> ({l.entry_id})</> : null}: {l.reason}
+                </li>
+              ))}
+            </ul>
+          </TechnicalDetails>
         </div>
       ) : null}
       {preview.affected_orgs_total > 0 ? (
@@ -550,7 +661,7 @@ function SettingRow({
 }) {
   // The registry completeness test keeps every movable key in `fields`; the key is only a last resort for a bare fixture.
   const label = field?.label ?? s.key;
-  const hint = field?.help;
+  const hint = SWITCH_WORDS[s.key]?.help ?? field?.help;
   const docTitle = field?.doc?.title;
   const cid = settingControlId(s.key);
 
@@ -645,7 +756,15 @@ function SettingRow({
     );
   } else if (kind === "bool" || (!field && s.schema.kind === "bool")) {
     control = (
-      <Switch id={cid} aria-label={label} checked={current === true} onCheckedChange={(v) => setValue(s.key, v)} />
+      <div className="space-y-1.5">
+        <Switch id={cid} aria-label={label} checked={current === true} onCheckedChange={(v) => setValue(s.key, v)} />
+        {current !== true && SWITCH_WORDS[s.key]?.off ? (
+          // (P5-REFINE-18 #10, admin-9) Off is a state, not a problem: neutral, said where the switch is.
+          <p data-testid={`${s.key}-off`} className="text-sm text-ink-2">
+            {SWITCH_WORDS[s.key]!.off}
+          </p>
+        ) : null}
+      </div>
     );
   } else if (s.schema.kind === "enum") {
     control = (
@@ -678,7 +797,9 @@ function SettingRow({
       />
     );
   } else if (s.schema.kind === "string") {
-    const long = (s.schema.max_len ?? 0) > 500;
+    // (P5-REFINE-18 #16, setup-6) Only text that is really a document (the 20 000-character ones) is a text area: a server
+    // address or an address line is one line, whatever its limit.
+    const long = (s.schema.max_len ?? 0) > 2000;
     const common = {
       id: cid,
       className: inputClass,

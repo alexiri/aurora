@@ -88,7 +88,7 @@ test.describe("Web Push opt-in", () => {
   test("a person who has not opted in has no service worker, and the card offers Turn on", async ({ page, context, baseURL }) => {
     await context.grantPermissions(["notifications"], { origin: baseURL });
     await setup(page);
-    await page.goto("/account");
+    await page.goto("/account/notifications");
     await expect(page.getByRole("button", { name: "Turn on" })).toBeVisible();
     await page.waitForLoadState("networkidle");
     expect(await registrations(page)).toBe(0);
@@ -98,7 +98,7 @@ test.describe("Web Push opt-in", () => {
     await context.grantPermissions(["notifications"], { origin: baseURL });
     await fakePushSubscription(page);
     const calls = await setup(page);
-    await page.goto("/account");
+    await page.goto("/account/notifications");
     await page.getByRole("button", { name: "Turn on" }).click();
     await expect(page.getByText("Notifications are on for this device.")).toBeVisible({ timeout: 20_000 });
     expect(calls.find((c) => c.method === "POST")?.body).toMatchObject({ vapid_public_key: VAPID, endpoint: "https://fcm.googleapis.com/fcm/send/e2e" });
@@ -156,7 +156,7 @@ test.describe("Web Push opt-in", () => {
     await expect(page).toHaveURL(new RegExp(`/o/acme/w/main/approvals\\?focus=${approvalId}$`));
     await expect(page.locator(`#approval-${approvalId}`)).toHaveAttribute("aria-current", "true");
 
-    await page.goto("/account");
+    await page.goto("/account/notifications");
     const item = page.getByRole("listitem", { name: "Chromium on Linux" });
     await item.getByRole("button", { name: "Remove" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Remove" }).click();
@@ -167,7 +167,7 @@ test.describe("Web Push opt-in", () => {
   test("the card is absent while push is not available", async ({ page }) => {
     await mockApi(page);
     await page.route("**/v1/push/config", (r) => r.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: { code: "push_unavailable", message: "off" } }) }));
-    await page.goto("/account");
+    await page.goto("/account/notifications");
     await expect(page.getByRole("heading", { name: "Approval notifications" })).toBeVisible();
     await page.waitForLoadState("networkidle");
     await expect(page.getByText(/even when Aurora is closed/)).toHaveCount(0);

@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { GovernanceFields } from "@/components/admin/settings/governance-settings-view";
+import { PolicyPresets } from "@/components/policy/policy-presets";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -55,8 +56,11 @@ function Organizations() {
 export function AdminInternet() {
   return (
     <div className="max-w-page space-y-8">
-      <PageHeader title="Internet access" description="Which websites agents can reach. Organizations and workspaces can only restrict further what you set here." className="mb-2" />
-      <GovernanceFields part="internet" />
+      <PageHeader title="What agents may do" description="Which websites agents can reach. Organizations and workspaces can only restrict further what you set here." className="mb-2" />
+      {/* (P5-REFINE-18 #2, D-410) The preset first; today's fields behind Customise. */}
+      <PolicyPresets>
+        <GovernanceFields part="internet" />
+      </PolicyPresets>
       <Organizations />
     </div>
   );

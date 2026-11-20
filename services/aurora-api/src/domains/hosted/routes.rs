@@ -100,16 +100,6 @@ fn can_see_engine(c: &Caller) -> bool {
     c.is_instance_admin
 }
 
-/// (D-178 Q-R5-5, FIX-093) `GET …/start-failures` (C-613, unchanged by C-1059): instance admins and
-/// the agent's workspace owners see the runner's wording and the events; other members who can use
-/// the agent see a start failure's class and a hint only.
-async fn can_see_failure_detail(s: &AppState, c: &Caller, a: &AgentRow) -> Result<bool, ApiError> {
-    if c.is_instance_admin {
-        return Ok(true);
-    }
-    Ok(c.workspace(s, a.workspace_id).await?.can_own())
-}
-
 /// The reduced shape of a sandbox view (everyone but instance admins, SEC-141): class + hint, no
 /// events, detail, image or runner. `computer`, `boot_id`, the phases and the times stay.
 fn reduce_view(v: &mut SandboxView) {
@@ -399,14 +389,15 @@ async fn start_failures(
     Path(agent): Path<Uuid>,
 ) -> Result<Json<AgentStartFailures>, ApiError> {
     let a = hosted_agent(&s, &c, agent).await?;
-    let detailed = can_see_failure_detail(&s, &c, &a).await?;
+    // (FIX-196, D-424; extends SEC-141) The runner's wording and the events are the engine: instance admins only.
+    let detailed = can_see_engine(&c);
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let rows = aurora_db::repo::sandboxes::agent_start_failures(&mut conn, a.id, 20).await?;
     drop(conn);
     let mut items = failure_items(rows, false);
     if !detailed {
-        // (D-178 Q-R5-5) Members see the class and a hint; events, pod/volume detail and the
-        // runner's wording stay with instance admins and workspace owners.
+        // (D-178 Q-R5-5, D-424) Owners and members see the class and a hint; events, pod/volume
+        // detail and the runner's wording stay with instance admins.
         for i in &mut items {
             i.message = readiness::member_hint(&i.code).to_owned();
             i.events.clear();

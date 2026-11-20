@@ -49,7 +49,7 @@ for (const scheme of ["light", "dark"] as const) {
         if (width >= 768) {
           // Administration's sidebar leads to People; at phone width the sidebar is a drawer, so that part is wide only.
           await openRoute(page, "/admin", scheme);
-          await page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: "People", exact: true }).click();
+          await page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: "People & sign-in", exact: true }).click();
         } else {
           await openRoute(page, "/admin/people", scheme);
         }
@@ -86,7 +86,7 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeClean(page)).toEqual([]);
         await openRoute(page, "/o/acme/w/main/settings", scheme);
         await expect(page.getByLabel("Time zone")).toBeVisible();
-        await expect(page.getByLabel("Language agents remember in")).toBeVisible();
+        await expect(page.getByLabel(/^Language .* remembers? in$/)).toBeVisible();
         await expect(page.getByLabel("BYO agent posture")).toHaveCount(0);
       });
     });

@@ -3,7 +3,6 @@
 import { useParams } from "next/navigation";
 
 import { ErrorState, Loading } from "@/components/states";
-import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { useResolve, useWorkspace } from "@/lib/api/queries";
 
@@ -25,14 +24,18 @@ export function WorkspaceSkills() {
   const canOwn = workspace.data.my_role === "owner";
   return (
     <div className="max-w-page">
-      <PageHeader title="Workspace skills" description="Skills every agent in this workspace receives." />
-      <div className="mb-4">
-        <Notice role="status">
-          An agent&apos;s own skill with the same name overrides a workspace skill, and a workspace skill overrides an organization skill. Workspace skills reach hosted
-          agents on their next home sync.
-        </Notice>
-      </div>
+      <PageHeader
+        title="Skills"
+        description="A skill is a set of instructions that teaches an agent how to do one job your way, such as writing a release note or triaging an issue. Every agent in this workspace can use them."
+      />
       <SkillsEditor scope={{ kind: "workspace", id: wsId }} readOnly={!canOwn} orgId={workspace.data.org_id} />
+      <details className="mt-6 rounded-card border border-line bg-surface px-5 py-3 text-sm" data-testid="skills-combine">
+        <summary className="cursor-pointer font-semibold text-ink">How skills combine</summary>
+        <p className="mt-2 text-ink-2">
+          Skills come from your organization and from this workspace. If both have a skill with the same name, the workspace&apos;s version is used. New and
+          changed skills reach your agents shortly.
+        </p>
+      </details>
     </div>
   );
 }

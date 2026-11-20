@@ -15,13 +15,16 @@ export type GuideStepId = "key" | "access" | "hello";
  * - `waiting`: an earlier step comes first.
  * - `owner`: a workspace owner has to do it; the person is a member.
  * - `skipped`: not a step now (a key the agent cannot use is the only reason for "access").
+ * - `checking`: (firstday-3) a key exists and is granted, but it is still being checked: it counts once it has answered.
  */
-export type GuideStepState = "done" | "todo" | "waiting" | "owner" | "skipped";
+export type GuideStepState = "done" | "todo" | "waiting" | "owner" | "skipped" | "checking";
 
 export interface GuideKey {
   id: string;
   name: string;
   scope: "workspace" | "organization";
+  /** (C-1065) Whether the key works, as far as is known; only `checking` changes the guide. */
+  verification?: "checking" | "works" | "rejected" | "unreachable" | "not_checked";
 }
 
 export interface GuideInput {
@@ -42,6 +45,8 @@ export interface GuideStep {
   provider?: string;
   /** A granted key that cannot be used: the first reason code (`not_active`, `origin_unverified`, …). */
   problem?: string;
+  /** `checking`: the name of the key that is being checked. */
+  checkingName?: string;
   /** `todo` for access: the key to give the agent. */
   keyToGrant?: GuideKey;
   /** `todo` for the key: the agent can use a key, but no model resolves, so the step asks for one. */
@@ -86,7 +91,11 @@ export function computeGuide(input: GuideInput): Guide {
     const usable = granted.filter((k) => k.usable);
     const unusable = granted.find((k) => !k.usable);
 
-    if (usable.length > 0) {
+    // (firstday-3) Every usable key is still being checked: the step is open until one has answered.
+    const verdicts = usable.map((u) => keys.find((k) => k.id === u.secret_id)?.verification);
+    if (usable.length > 0 && verdicts.every((v) => v === "checking")) {
+      steps = [{ id: "key", state: "checking", checkingName: usable[0].name }, { id: "access", state: "skipped" }, { id: "hello", state: "waiting" }];
+    } else if (usable.length > 0) {
       const provider = providerText(usable[0].scope, usable[0].name);
       // The key works; without a default model the step stays open to pick one.
       steps = readiness.default
@@ -122,3 +131,6 @@ function providerText(scope: string, name: string): string {
 
 /** The first message the guide suggests to say hello. */
 export const HELLO_MESSAGE = "Hello! What can you help me with?";
+
+/** (P5-REFINE-18 #14) The hello that setup's Open chat types for the admin, with the agent's name. */
+export const helloMessage = (agentName?: string | null): string => (agentName?.trim() ? `Hello ${agentName.trim()}! What can you help me with?` : HELLO_MESSAGE);

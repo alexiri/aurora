@@ -35,6 +35,8 @@ import {
 import { errorMessage } from "@/lib/api/errors";
 import { cn } from "@/lib/utils";
 
+import { useAgents } from "@/lib/api/queries";
+import { ApprovalExample } from "./approval-example";
 import { AlwaysAllowedNote, ApprovalQuestion } from "./approval-question";
 import { OwnSendApprovals } from "./own-send-approvals";
 import { ParkedChip, ResumeBadge } from "./parked";
@@ -121,6 +123,13 @@ export function mergePending(
   ].sort((x, y) => Date.parse(y.item.created_at) - Date.parse(x.item.created_at));
 }
 
+/** The workspace's one agent by name, or "your agents" (workspace-11). */
+function useAgentLabel(wsId: string): { name: string; who: string; many: boolean } {
+  const agents = useAgents(wsId).data?.items ?? [];
+  const first = agents[0]?.name ?? "Your agent";
+  return agents.length === 1 ? { name: first, who: first, many: false } : { name: first, who: "one of your agents", many: true };
+}
+
 function PendingTab({ wsId }: { wsId: string }) {
   const q = usePendingApprovals(wsId);
   const { live } = useApprovalsStream(wsId);
@@ -143,6 +152,7 @@ function PendingTab({ wsId }: { wsId: string }) {
   const focus = useSearchParams()?.get("focus") ?? null;
 
   const params = useParams<{ org?: string; ws?: string }>();
+  const agentLabel = useAgentLabel(wsId);
   // What Always allow just did (C-982): "Daneel will no longer ask before …", kept until the next answer.
   const [always, setAlways] = useState<{ approval: Approval; also: number } | null>(null);
 
@@ -175,7 +185,8 @@ function PendingTab({ wsId }: { wsId: string }) {
   return (
     <div className="space-y-4">
       <p role="status" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-2">
-        <span data-testid="approvals-sentence">{approvalsSentence(total)}</span>
+        {/* (workspace-11) "Nothing is waiting for you." is the empty state's title below, so it is not said twice. */}
+        {total > 0 ? <span data-testid="approvals-sentence">{approvalsSentence(total)}</span> : null}
         <StatusDot tone={live ? "accent" : "pending"}>{live ? "Live" : "Reconnecting…"}</StatusDot>
       </p>
       {batchError ? (
@@ -201,9 +212,13 @@ function PendingTab({ wsId }: { wsId: string }) {
       ) : null}
       {q.data.truncated ? <MoreNotShown what="pending approvals" narrow="Decide the ones shown; the rest appear as these are decided." /> : null}
       {total === 0 ? (
-        <EmptyState title="Nothing is waiting for you.">
-          When an agent asks before a change, the request appears here and on Overview.
-        </EmptyState>
+        <>
+          <EmptyState title="Nothing is waiting for you.">
+            When {agentLabel.who} needs a yes from you, it shows up here and in your notices.
+          </EmptyState>
+          {/* Only while nothing is waiting: a real question and the sample are never on screen together. */}
+          <ApprovalExample agentName={agentLabel.name} org={params?.org ?? ""} ws={params?.ws ?? ""} />
+        </>
       ) : null}
       {merged.length > 0 ? (
         <ul className="space-y-2" aria-label="Waiting for you">
@@ -424,9 +439,10 @@ function HistoryTab({ wsId }: { wsId: string }) {
 
 export function ApprovalsView({ wsId }: { wsId: string }) {
   const [tab, setTab] = useState<"pending" | "history">("pending");
+  const agent = useAgentLabel(wsId);
   return (
     <div className="max-w-5xl">
-      <PageHeader title="Approvals" description="Requests that wait for a person to allow them once or block them." />
+      <PageHeader title="Approvals" description={agent.many ? "Your agents ask you here before they change something." : `${agent.name} asks you here before it changes something.`} />
       <Tabs
         items={[
           { value: "pending", label: "Waiting" },

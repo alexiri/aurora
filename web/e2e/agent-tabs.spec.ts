@@ -96,10 +96,20 @@ test.describe("agent page width", () => {
   test("the content is wider than the old 896 px cap at 1280 px", async ({ page }) => {
     await mockAgent(page);
     await page.goto("/o/acme/w/main/agents/daneel?tab=skills");
+    // (D-408) A settings page is a 13rem sub-nav beside the page body: the content as a whole (sub-nav + body) is
+    // what the old 896 px cap limited, and the body alone is no longer the whole width.
+    const nav = page.getByRole("tablist", { name: "Settings pages" });
     const panel = page.getByRole("tabpanel").first();
+    await expect(nav).toBeVisible();
     await expect(panel).toBeVisible();
     await page.waitForLoadState("networkidle");
-    const width = await panel.evaluate((el) => el.getBoundingClientRect().width);
+    const width = await page.evaluate(
+      ([a, b]) => b - a,
+      await Promise.all([
+        nav.evaluate((el) => el.getBoundingClientRect().left),
+        panel.evaluate((el) => el.getBoundingClientRect().right),
+      ]),
+    );
     expect(width).toBeGreaterThan(896);
   });
 

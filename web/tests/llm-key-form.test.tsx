@@ -113,7 +113,7 @@ function open(extra: Record<string, Handler> = {}) {
 async function pick(endpoint: string) {
   await screen.findByText(/Bedrock EU/);
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "k" } });
-  fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: endpoint } });
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: endpoint } });
 }
 
 describe("LLM key form per auth mode (C-811)", () => {
@@ -190,7 +190,7 @@ describe("LLM key form per auth mode (C-811)", () => {
     fireEvent.click(within(group).getByLabelText(/Resource key/));
     expect(screen.getByLabelText("API key")).toBeTruthy();
     // An endpoint that serves a harness says so in the picker.
-    expect(screen.getByRole("option", { name: /Bedrock EU \(bedrock\) — Works with Claude Code/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Bedrock EU — Works with Claude Code/ })).toBeTruthy();
   });
 
   it("takes a GCP service account key file or pasted JSON, and sends it as the value", async () => {
@@ -278,5 +278,17 @@ describe("LLM key modes (pure helpers)", () => {
     expect(keyReasonMessage(new ApiError("llm_key_invalid", "m", { reason: "new_one" }, 422))).toBeUndefined();
     expect(keyReasonMessage(new ApiError("name_taken", "m", { reason: "missing_field" }, 409))).toBeUndefined();
     expect(keyReasonMessage(new Error("x"))).toBeUndefined();
+  });
+});
+
+// P5-REFINE-18 #16 (setup-7): provider names only, and no "Allowed key scopes" line.
+describe("LLM key form: words (setup-7)", () => {
+  it("lists endpoints by display name with no provider id, and says nothing about key scopes", async () => {
+    open();
+    await pick("bed");
+    const option = screen.getByRole("option", { name: /Bedrock EU/ });
+    expect(option.textContent).toBe("Bedrock EU — Works with Claude Code");
+    expect(option.textContent).not.toContain("(bedrock)");
+    expect(document.body.textContent).not.toContain("Allowed key scopes");
   });
 });

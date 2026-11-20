@@ -36,6 +36,8 @@ interface World {
   extraOrgs: number;
   /** `/v1/instance` `org_creation`: who may create an organization. */
   orgCreation: "instance_admins" | "anyone";
+  /** Items `GET /v1/admin/attention` returns. */
+  attention: number;
 }
 let world: World;
 
@@ -92,6 +94,10 @@ function mockFetch() {
         const body = (await req.clone().json()) as { more_controls: boolean };
         return json(200, { welcome_seen: true, guide_dismissed: [], tour_completed_at: null, notices_seen: [], more_controls: body.more_controls });
       }
+      if (p === "/v1/admin/attention") {
+        const item = { kind: "connector_down", subject_id: "mattermost", title: "Mattermost is not running", detail: "x", since: now, href: "/admin/chat-platforms", decision: false };
+        return json(200, { items: Array.from({ length: world.attention }, () => item) });
+      }
       if (p === "/v1/instance") return json(200, { org_creation: world.orgCreation, email_delivery: "smtp", features: {} });
       if (p === "/v1/orgs") return json(200, { items: [users, acme] });
       if (p === "/v1/resolve") {
@@ -110,7 +116,7 @@ function mockFetch() {
 }
 
 function render(pathname: string, params: Record<string, string | undefined>, over: Partial<World> = {}) {
-  world = { admin: false, orgRole: "member", usersCount: 1, acmeCount: 0, extraOrgs: 0, orgCreation: "instance_admins", ...over };
+  world = { admin: false, orgRole: "member", usersCount: 1, acmeCount: 0, extraOrgs: 0, orgCreation: "instance_admins", attention: 0, ...over };
   nav.pathname = pathname;
   nav.params = params;
   mockFetch();
@@ -263,7 +269,13 @@ describe("Administration rail", () => {
     expect(screen.getByText("You're in")).toBeInTheDocument();
     expect(screen.queryByTestId("scope-switcher")).toBeNull();
     expect(screen.queryByText("Select organization")).toBeNull();
-    expect((await screen.findByRole("link", { name: "People" })).getAttribute("aria-current")).toBe("page");
+    expect((await screen.findByRole("link", { name: "People & sign-in" })).getAttribute("aria-current")).toBe("page");
+    // (P5-REFINE-18 #1) The rail is in two halves, then the footer entry.
+    const rail = screen.getByRole("navigation", { name: "Administration" });
+    const groups = within(rail).getAllByRole("group");
+    expect(groups.map((g) => g.getAttribute("aria-labelledby") && g.querySelector("p")?.textContent)).toEqual(["Policy for everyone", "This installation"]);
+    expect(within(groups[0]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["What agents may do", "Agent defaults", "Apps", "Chat platforms", "People & sign-in", "Data"]);
+    expect(within(groups[1]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["Health & runners", "AI endpoints", "Set in Helm", "All settings"]);
     // The footer entry stays and is current.
     const shell = screen.getByRole("complementary", { name: "Sidebar" });
     const footer = within(shell).getAllByRole("link", { name: "Administration" });
@@ -293,6 +305,40 @@ describe("Administration rail", () => {
     await screen.findByRole("button", { name: /Bob Builder/ });
     expect(screen.queryByRole("navigation", { name: "Administration" })).toBeNull();
     expect(screen.queryByText("You're in")).toBeNull();
+  });
+});
+
+describe("Administration count badge (P5-REFINE-18 #18, C-1022)", () => {
+  it("shows the count on Overview in the Administration rail and on the sidebar-foot entry", async () => {
+    render("/admin/people", {}, { admin: true, attention: 2 });
+    const nav = await screen.findByRole("navigation", { name: "Administration" });
+    const overview = within(nav).getByRole("link", { name: /^Overview/ });
+    await waitFor(() => expect(within(overview).getByTestId("admin-attention-badge")).toHaveTextContent("2"));
+    // Other topics carry no total.
+    expect(within(within(nav).getByRole("link", { name: /^People/ })).queryByTestId("admin-attention-badge")).toBeNull();
+    const shell = screen.getByRole("complementary", { name: "Sidebar" });
+    const foot = within(shell).getByRole("link", { name: /^Administration 2/ });
+    expect(within(foot).getByTestId("admin-attention-badge")).toHaveTextContent("2");
+  });
+
+  it("shows the count on the account menu's Administration entry", async () => {
+    onWorkspace({ admin: true, attention: 3 });
+    const trigger = await screen.findByRole("button", { name: /Bob Builder/ });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const entry = await screen.findByRole("menuitem", { name: /^Administration/ });
+    await waitFor(() => expect(within(entry).getByTestId("admin-attention-badge")).toHaveTextContent("3"));
+  });
+
+  it("shows no badge for a member, and none for an empty list", async () => {
+    render("/admin/people", {}, { admin: true, attention: 0 });
+    await screen.findByRole("navigation", { name: "Administration" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId("admin-attention-badge")).toBeNull();
+    cleanup();
+    onWorkspace({ admin: false, attention: 4 });
+    await screen.findByRole("button", { name: /Bob Builder/ });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId("admin-attention-badge")).toBeNull();
   });
 });
 
@@ -350,9 +396,11 @@ describe("navigation entries", () => {
     expect(screen.queryByRole("link", { name: "Members" })).toBeNull();
   });
 
-  it("shows the account navigation on account pages, with a switcher that asks for a workspace", async () => {
+  it("shows the account navigation on account pages, with a switcher that is busy until the session loads and then keeps the last scope", async () => {
     render("/account", {});
+    // (firstday-2) Loading first, never a live-looking empty card; then the last scope kept for Account pages (P5-REFINE-2).
+    expect(within(switcher()).getByText("Loading workspaces…")).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "Profile" })).toBeInTheDocument();
-    expect(within(switcher()).getByText("Choose a workspace")).toBeInTheDocument();
+    expect(await within(switcher()).findByText("Users")).toBeInTheDocument();
   });
 });

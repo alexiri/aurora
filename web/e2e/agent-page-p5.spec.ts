@@ -86,7 +86,7 @@ test.describe("1280×800", () => {
     await expect(strip.getByRole("button", { name: "Needs you: 2 approvals waiting" })).toBeVisible();
     await expect(strip.getByRole("button", { name: /^What Daneel did: some requests were denied or failed/ })).toBeVisible();
     // (rec 3) Each part has a visible word under its icon.
-    await expect(strip.getByRole("button", { name: "Needs you: 2 approvals waiting" })).toHaveText("2");
+    await expect(strip.getByRole("button", { name: "Needs you: 2 approvals waiting" })).toContainText("2");
     await expect(strip.getByText("Now", { exact: true })).toBeVisible();
     await expect(strip.getByText("Did", { exact: true })).toBeVisible();
     expect(await fits(page), "the page scrolls").toBeLessThanOrEqual(0);

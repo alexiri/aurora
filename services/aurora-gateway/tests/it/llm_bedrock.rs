@@ -362,9 +362,12 @@ async fn request_log_records_the_llm_model_of_a_bedrock_path() {
 #[tokio::test]
 async fn llm_bedrock_large_body_from_a_full_client_socket_is_answered() {
     let env = env_with(BedrockMode::Sigv4, "ext-org-1").await;
-    let body = vec![b' '; 256 * 1024];
+    // 1 MiB (under the 8 MiB signing limit) over a 4 KiB send buffer: many more writes per attempt, so the
+    // last one finds the socket full far more often than with 256 KiB, which a fast runner drained in all
+    // 40 attempts of CI run 44758795820. The test still requires the case to have happened.
+    let body = vec![b' '; 1024 * 1024];
     let mut queued = 0;
-    for attempt in 0..40 {
+    for attempt in 0..60 {
         let s = crate::common::connect_sndbuf(env.proxy, 4096).await;
         let r = request_on(s, env.llm, "POST", INVOKE, "", &body).await;
         assert_eq!(

@@ -1017,6 +1017,13 @@ pub async fn start(
                 return Err(invalid("/grant", "needs workspace scope"));
             };
             grants_service::check_agents_for_new_account(state, caller, ws, &g.agent_ids).await?;
+            // (C-1067, D-419) `read` on a send-only app is refused before it is expanded.
+            levels::require_offered(
+                g.level,
+                &crate::domains::apps::service::tools(app),
+                app.grants.custom_only,
+                app_id,
+            )?;
             if g.level == Level::Act && app.grants.custom_only {
                 return Err(ConnectErr::Api(
                     ApiError::unprocessable(
@@ -1051,6 +1058,12 @@ pub async fn start(
                     "only a new organization account has a limit; change it on the account",
                 ));
             }
+            levels::require_offered(
+                l,
+                &crate::domains::apps::service::tools(app),
+                app.grants.custom_only,
+                app_id,
+            )?;
             if l == Level::Act && app.grants.custom_only {
                 return Err(ConnectErr::Api(
                     ApiError::unprocessable(
@@ -1683,6 +1696,175 @@ fn oauth_url(
     }
 }
 
+/// The authorization-code request to a token endpoint (`grant_type=authorization_code`, the code,
+/// the redirect URI, the PKCE verifier) with the client's id and secret where the manifest's
+/// `client_auth` puts them and in its `body_format`. The code exchange and the sign-in app Test
+/// (C-1070) both build their request here; `http` is one of the guarded clients of `Env`.
+fn token_request(
+    http: &reqwest::Client,
+    url: reqwest::Url,
+    ce: &OauthClientEntry,
+    cf: &(Map<String, Value>, Map<String, Value>),
+    code: &str,
+    redirect: String,
+    pkce_verifier: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let get = |k: &str| {
+        cf.1.get(k)
+            .or_else(|| cf.0.get(k))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let mut params: BTreeMap<String, String> = BTreeMap::from([
+        ("grant_type".into(), "authorization_code".into()),
+        ("code".into(), code.to_owned()),
+        ("redirect_uri".into(), redirect),
+    ]);
+    if let Some(v) = pkce_verifier {
+        params.insert("code_verifier".into(), v.to_owned());
+    }
+    let mut req = http.post(url).header("accept", "application/json");
+    match ce.client_auth {
+        ClientAuth::Basic => {
+            req = req.basic_auth(get("client_id").unwrap_or_default(), get("client_secret"));
+        }
+        ClientAuth::Body => {
+            for k in ["client_id", "client_secret"] {
+                if let Some(v) = get(k) {
+                    params.insert(k.into(), v);
+                }
+            }
+        }
+    }
+    match ce.body_format {
+        BodyFormat::Form => req.form(&params),
+        BodyFormat::Json => req.json(&params),
+    }
+}
+
+/// (P5-REFINE-6, C-1070) What a sign-in app's token endpoint said to a made-up code.
+#[derive(Debug)]
+pub(crate) enum TokenProbe {
+    /// The app's sign-in has no fixed token endpoint (a tenant template) or none at all.
+    NotTestable,
+    /// A network error, a timeout or the destination guard's refusal.
+    Unreachable { host: Option<String> },
+    /// The provider answered: its HTTP status and the OAuth `error` code, if any. Nothing else
+    /// of the body is kept.
+    Answered {
+        host: Option<String>,
+        status: u16,
+        error: Option<String>,
+    },
+}
+
+/// (C-1070) Send one authorization-code request with a random code to the token endpoint of
+/// `client`'s sign-in (from the active manifest), through the destination guard (the instance
+/// client for a client bound to a self-hosted instance), built by [`token_request`]. At most
+/// 8 KiB of the answer is read and only its `error` code is kept.
+pub(crate) async fn probe_token_endpoint(
+    state: &AppState,
+    client: &ClientRow,
+) -> Result<TokenProbe, ApiError> {
+    let Some(snap) = registry::active_typed(state).await? else {
+        return Ok(TokenProbe::NotTestable);
+    };
+    let Some(ce) = snap
+        .oauth_clients
+        .iter()
+        .find(|c| c.package_id == client.package_id && c.client_key == client.client_key)
+    else {
+        return Ok(TokenProbe::NotTestable);
+    };
+    let instance = match client.instance_id {
+        Some(id) => app_instances::get(&state.pool, id).await?,
+        None => None,
+    };
+    let base = instance
+        .as_ref()
+        .map(|i| InstanceBase::new(&i.host, i.base_path.as_deref()));
+    let Some(raw) = oauth_url(&ce.token_url, None, base) else {
+        return Ok(TokenProbe::NotTestable);
+    };
+    let host_of = |u: &str| {
+        reqwest::Url::parse(u)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+    };
+    let env = &state.connect;
+    let Ok(url) = env.prepare(&raw) else {
+        return Ok(TokenProbe::Unreachable {
+            host: host_of(&raw),
+        });
+    };
+    let host = host_of(&raw);
+    let cf = client_fields(state, client).await.map_err(ApiError::from)?;
+    let http = if instance.is_some() {
+        &env.http_instance
+    } else {
+        &env.http
+    };
+    let code = format!("aurora-test-{}", flow::random(16)?);
+    let verifier = if ce.pkce {
+        Some(flow::random(32)?)
+    } else {
+        None
+    };
+    let req = token_request(
+        http,
+        url,
+        ce,
+        &cf,
+        &code,
+        redirect_uri(state),
+        verifier.as_deref(),
+    )
+    .timeout(std::time::Duration::from_secs(10));
+    let Ok(resp) = req.send().await else {
+        return Ok(TokenProbe::Unreachable { host });
+    };
+    let status = resp.status().as_u16();
+    let body = read_at_most(resp, 8 * 1024).await;
+    Ok(TokenProbe::Answered {
+        host,
+        status,
+        error: oauth_error_code(&body),
+    })
+}
+
+/// Up to `cap` bytes of a response body (a longer one is cut; a read error gives what arrived).
+async fn read_at_most(mut resp: reqwest::Response, cap: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    while let Ok(Some(chunk)) = resp.chunk().await {
+        let room = cap.saturating_sub(out.len());
+        out.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        if out.len() >= cap {
+            break;
+        }
+    }
+    out
+}
+
+/// The OAuth `error` code of a token endpoint's answer (JSON, or form-encoded as some providers
+/// answer), at most 64 characters of `[A-Za-z0-9_.-]`; nothing else of the body.
+fn oauth_error_code(body: &[u8]) -> Option<String> {
+    let clean = |s: &str| {
+        let s = s.trim();
+        (!s.is_empty()
+            && s.len() <= 64
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')))
+        .then(|| s.to_owned())
+    };
+    if let Ok(v) = serde_json::from_slice::<Value>(body) {
+        return v.get("error").and_then(Value::as_str).and_then(clean);
+    }
+    let text = std::str::from_utf8(body).ok()?;
+    url::form_urlencoded::parse(text.as_bytes())
+        .find(|(k, _)| k == "error")
+        .and_then(|(_, v)| clean(&v))
+}
+
 async fn token_exchange(
     ctx: &Ctx<'_>,
     ce: &OauthClientEntry,
@@ -1710,37 +1892,15 @@ async fn token_exchange(
     } else {
         &env.http
     };
-    let get = |k: &str| {
-        cf.1.get(k)
-            .or_else(|| cf.0.get(k))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
-    let mut params: BTreeMap<String, String> = BTreeMap::from([
-        ("grant_type".into(), "authorization_code".into()),
-        ("code".into(), code.to_owned()),
-        ("redirect_uri".into(), redirect_uri(ctx.state)),
-    ]);
-    if let Some(v) = &flow.pkce_verifier {
-        params.insert("code_verifier".into(), v.clone());
-    }
-    let mut req = http.post(url).header("accept", "application/json");
-    match ce.client_auth {
-        ClientAuth::Basic => {
-            req = req.basic_auth(get("client_id").unwrap_or_default(), get("client_secret"));
-        }
-        ClientAuth::Body => {
-            for k in ["client_id", "client_secret"] {
-                if let Some(v) = get(k) {
-                    params.insert(k.into(), v);
-                }
-            }
-        }
-    }
-    req = match ce.body_format {
-        BodyFormat::Form => req.form(&params),
-        BodyFormat::Json => req.json(&params),
-    };
+    let req = token_request(
+        http,
+        url,
+        ce,
+        cf,
+        code,
+        redirect_uri(ctx.state),
+        flow.pkce_verifier.as_deref(),
+    );
     let resp = req.send().await.map_err(|_| ConnectErr::Exchange)?;
     if !resp.status().is_success() {
         return Err(ConnectErr::Exchange);

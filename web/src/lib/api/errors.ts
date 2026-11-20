@@ -106,6 +106,10 @@ export const ERROR_MESSAGES: Record<string, string> = {
   oauth_client_required: "Signing in to this app needs a sign-in app that an admin has to register first.",
   above_account_limit: "This is more than the account's limit allows. Whoever manages the account can raise the limit.",
   always_not_available: "\"Always allow\" is not available for this request.",
+  // (P5-REFINE-6, C-1067, C-1069) Send-only apps, invitation links.
+  level_not_offered: "This app only sends. Choose Ask before each send or Send without asking.",
+  invitation_not_pending: "This invitation was accepted, cancelled or has expired. Invite them again.",
+  mail_disabled: "This server can't send e-mail. Copy the invitation link instead.",
 };
 
 /** `details.conflict` of a 422 `instance_host_conflict` (FIX-132): who holds the host. */
@@ -230,7 +234,7 @@ export function probeFailedMessage(d: ProbeFailure, appName: string, host: strin
       break;
     }
     case "destination_refused":
-      return `The gateway may not connect to ${host}: it resolves to a private address. An operator can allow it with gateway.allowed_private.`;
+      return `Aurora can't reach ${host}: it is a private address. Ask whoever installed Aurora to allow it.`;
     case "dns":
       return `${host} could not be found from the Aurora server. Check the spelling. An internal name must resolve in the cluster's DNS.`;
     case "timeout":

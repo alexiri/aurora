@@ -266,7 +266,7 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
     expect(dialog.textContent).toContain("Affects 1 organization");
     expect(dialog.textContent).toContain("Acme Labs — conversations days 365 → 90");
     expect(put).toBe(false);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Yes, save" }));
     await waitFor(() => expect(put).toBe(true));
   });
 });

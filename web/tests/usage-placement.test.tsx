@@ -74,7 +74,7 @@ describe("Activity tabs", () => {
     wrap(<ActivityPage />);
     expect(await screen.findByRole("tab", { name: "Requests" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Usage" })).toHaveAttribute("aria-selected", "false");
-    expect(await screen.findByText(/Every request your agents made through the gateway/)).toBeInTheDocument();
+    expect(await screen.findByText(/What your agents did on the internet and through your apps/)).toBeInTheDocument();
     expect(seen).not.toContain("/v1/workspaces/w1/usage");
   });
 

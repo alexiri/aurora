@@ -188,6 +188,14 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     wrap(<OrgAiModels org={ORG} />);
     await waitFor(() => expect(screen.getByTestId("models-summary").textContent).toBe("Agents in Acme use Company key. People may not add their own."));
     expect(screen.getByText("Key agents use")).toBeTruthy();
+    // (axe definition-list, dlitem) Every row is one div directly under the dl holding only dt and dd, the switch and the
+    // team picker inside a dd.
+    const dl = screen.getByText("Key agents use").closest("dl")!;
+    for (const row of Array.from(dl.children)) {
+      expect(row.tagName).toBe("DIV");
+      expect(Array.from(row.children).every((c) => c.tagName === "DT" || c.tagName === "DD")).toBe(true);
+    }
+    expect(within(dl.querySelectorAll("dd")[2]!).getByRole("switch", { name: "People may add their own key" })).toBeTruthy();
     expect(screen.getByText("Everyone in Acme")).toBeTruthy();
     expect(screen.getByText("Endpoints (1)")).toBeTruthy();
     expect((screen.getByTestId("models-endpoints") as HTMLDetailsElement).open).toBe(false);

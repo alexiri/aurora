@@ -35,6 +35,17 @@ export function useUpdateMe() {
 
 export const revokeOtherSessions = () => unwrap(api.POST("/v1/auth/sessions/revoke-others"));
 
+export type MyChatPlatform = components["schemas"]["MyChatPlatform"];
+
+/** (P5-REFINE-6, C-1089) The chat platforms the person can link, with the bot to message. */
+export function useMyChatPlatforms() {
+  return useQuery({
+    queryKey: ["me", "chat-platforms"] as const,
+    queryFn: async () => (await unwrap(api.GET("/v1/me/chat-platforms"))).platforms,
+    retry: retryUnlessClientError,
+  });
+}
+
 /** `DELETE /v1/me`: session only; no re-authentication (FIX-157, D-317). 409 `last_owner` when blocked. */
 export const deleteAccount = () => unwrap(api.DELETE("/v1/me"));
 
@@ -57,7 +68,22 @@ export function usePatchWorkspace(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: PatchWorkspaceRequest) => unwrap(api.PATCH("/v1/workspaces/{ws}", { params: { path: { ws: wsId } }, body })),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      // (workspace-7) The switcher reads `me.memberships`: put the new name there at once, then refetch the rest.
+      const name = (updated as { name?: string } | undefined)?.name;
+      if (name) {
+        qc.setQueryData(["me"], (me: unknown) => {
+          const m = me as { memberships?: { workspaces?: { id: string; name?: string }[] }[] } | null | undefined;
+          if (!m?.memberships) return me;
+          return {
+            ...m,
+            memberships: m.memberships.map((ms) => ({
+              ...ms,
+              workspaces: ms.workspaces?.map((w) => (w.id === wsId ? { ...w, name } : w)),
+            })),
+          };
+        });
+      }
       void qc.invalidateQueries({ queryKey: ["workspaces"] });
       void qc.invalidateQueries({ queryKey: ["orgs"] });
       void qc.invalidateQueries({ queryKey: ["resolve"] });

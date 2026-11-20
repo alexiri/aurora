@@ -38,6 +38,8 @@ pub struct AccountApp {
     /// The app allows custom access only (C-410): no `act` choice, the actions table opens
     /// directly.
     pub custom_only: bool,
+    /// (P5-REFINE-6, C-1067) The app only sends (no read tool): `levels` are `ask` and `act`.
+    pub send_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]

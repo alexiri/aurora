@@ -206,7 +206,7 @@ function toEntry(d: Draft, base: Entry | null): Entry {
 
 const REASON: Record<string, string> = {
   destination_refused:
-    "This address is private, loopback or a metadata address. An operator can open it with gateway.allowed_private.",
+    "Aurora can't reach private addresses. Ask whoever installed Aurora to allow it.",
   dns: "The name could not be found from the API.",
   timeout: "It did not answer within 10 seconds.",
   connect: "The connection was refused.",
@@ -217,14 +217,14 @@ const REASON: Record<string, string> = {
 
 function TestOutcome({ r }: { r: LlmEndpointTestResult }) {
   return (
-    <div role="status" aria-label="Connection test result" className="space-y-1 rounded-control border border-line p-3">
+    <div role="status" aria-label="Connection test result" className="min-w-0 space-y-1">
       <StatusDot tone={r.reachable ? "accent" : "danger"}>
         {r.reachable
-          ? `The endpoint answers${r.status ? ` (HTTP ${r.status})` : ""}.`
-          : `The endpoint did not answer${r.error_code && REASON[r.error_code] ? `: ${REASON[r.error_code]}` : "."}`}
+          ? `Connected.${r.models && r.models.length > 0 ? ` ${r.models.length} ${r.models.length === 1 ? "model" : "models"} found.` : ""}`
+          : `Couldn't connect${r.error_code && REASON[r.error_code] ? `: ${REASON[r.error_code]}` : "."}`}
       </StatusDot>
       {r.reachable && r.status && r.status >= 400 ? (
-        <p className="text-xs text-ink-2">An answer like this is expected without a key; the endpoint is there.</p>
+        <p className="text-xs text-ink-2">It answered HTTP {r.status}, as expected without a key.</p>
       ) : null}
       {r.models && r.models.length > 0 ? (
         <p className="break-words text-xs text-ink-2">
@@ -270,7 +270,26 @@ export function HelmEndpointDialog({ entry, helmKey, onClose }: { entry: Entry; 
   );
 }
 
-/** Add or edit a dashboard endpoint (SET-3): the provider's own fields, allowed models, key origin, paths, a connection test. */
+/** The endpoint id a name suggests: lowercase letters, digits, `-`; empty when the name has none. */
+export function idFromName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+type Step = "connect" | "models";
+const STEPS: { id: Step; label: string }[] = [
+  { id: "connect", label: "Connect and test" },
+  { id: "models", label: "Models and roles" },
+];
+
+/**
+ * Add or edit a dashboard endpoint (SET-3). (P5-REFINE-18 #9, admin-8) Adding is two steps, **Connect and test** (name,
+ * address, the test result beside its button, the rest under Advanced options) then **Models and roles**; editing shows both
+ * on one page. The endpoint id is made from the name until it is edited under Advanced; it cannot change later.
+ */
 export function EndpointDialog({
   existing,
   providers,
@@ -292,10 +311,14 @@ export function EndpointDialog({
 }) {
   const [d, setD] = useState<Draft>(() => toDraft(existing, providers[0] ?? "litellm"));
   const [result, setResult] = useState<LlmEndpointTestResult | null>(null);
+  const [step, setStep] = useState<Step>("connect");
+  const [skipTest, setSkipTest] = useState(false);
+  const [idTouched, setIdTouched] = useState(existing !== null);
   const test = useTestLlmEndpoint();
   const f = FIELDS[d.provider] ?? FIELDS.litellm!;
+  const adding = existing === null;
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => {
-    setResult(null);
+    if (k !== "roles" && k !== "info" && k !== "default_model" && k !== "models" && k !== "allowed_models") setResult(null);
     setD((x) => ({ ...x, [k]: v }));
   };
   const id = d.id.trim();
@@ -310,63 +333,49 @@ export function EndpointDialog({
         : id && !/^[a-z0-9][a-z0-9_-]*$/.test(id)
           ? "Lowercase letters, digits, `_` or `-`."
           : undefined);
+  const connectMissing = !id || (f.baseUrl === "required" && !d.base_url.trim());
   const missing =
-    !id ||
-    (f.baseUrl === "required" && !d.base_url.trim()) ||
+    connectMissing ||
     (f.models === "required" && split(d.models).length === 0) ||
     (f.defaultModel === "required" && !d.default_model.trim()) ||
     mErr.any;
+  const tested = result?.reachable === true || skipTest;
   const entry = () => toEntry(d, existing);
+  const onConnect = adding && step === "connect";
   function submit(e: FormEvent) {
     e.preventDefault();
     // The dialog sits inside the page's form in the React tree: its submit must not save the page.
     e.stopPropagation();
-    if (idError || missing) return;
+    if (idError) return;
+    if (onConnect) {
+      if (!connectMissing && tested) setStep("models");
+      return;
+    }
+    if (missing) return;
     onSave(entry());
   }
   const methods = f.origin;
-  return (
-    <FormDialog
-      open
-      size="xl"
-      onOpenChange={(o) => !o && onClose()}
-      title={existing ? `Edit ${str(existing.id)}` : "Add an AI endpoint"}
-      description="AI keys are never part of an endpoint: organizations and workspaces add them as accounts."
-      submitLabel="Done"
-      submitDisabled={Boolean(idError) || missing}
-      onSubmit={submit}
-    >
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field id="ep-id" label="Endpoint id" error={idError} hint="Keys name the endpoint by this id. It cannot be changed later.">
-          <input id="ep-id" required disabled={existing !== null} className={inputClass} value={d.id} onChange={(e) => set("id", e.target.value)} />
-        </Field>
-        <Field id="ep-provider" label="Provider" error={errors.provider}>
-          <select
-            id="ep-provider"
-            className={inputClass}
-            value={d.provider}
-            disabled={existing !== null}
-            onChange={(e) => {
-              set("provider", e.target.value);
-              set("method", "");
-            }}
-          >
-            {providers.includes(d.provider) ? null : <option value={d.provider}>{PROVIDER_LABEL[d.provider] ?? d.provider}</option>}
-            {providers.map((p) => (
-              <option key={p} value={p}>
-                {PROVIDER_LABEL[p] ?? p}
-              </option>
-            ))}
-          </select>
-        </Field>
-      </div>
-      <Field id="ep-name" label="Display name" hint="Shown in pickers. Optional." error={errors.display_name}>
-        <input id="ep-name" className={inputClass} value={d.display_name} onChange={(e) => set("display_name", e.target.value)} />
+  const showConnect = !adding || step === "connect";
+  const showModels = !adding || step === "models";
+
+  const connectFields = (
+    <>
+      <Field id="ep-name" label="Name" hint="Shown in pickers and on Health." error={errors.display_name}>
+        <input
+          id="ep-name"
+          className={inputClass}
+          value={d.display_name}
+          onChange={(e) => {
+            const v = e.target.value;
+            setD((x) => ({ ...x, display_name: v, id: idTouched ? x.id : idFromName(v) }));
+            setResult(null);
+          }}
+        />
       </Field>
       {f.baseUrl !== "none" ? (
         <Field
           id="ep-base"
-          label="Base URL"
+          label="Address"
           error={errors.base_url}
           hint={
             d.provider === "azure_openai"
@@ -379,19 +388,115 @@ export function EndpointDialog({
           <input id="ep-base" className={inputClass} value={d.base_url} onChange={(e) => set("base_url", e.target.value)} />
         </Field>
       ) : null}
-      {f.extra.length > 0 ? (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {f.extra.map((k) => (
-            <Field key={k} id={`ep-${k}`} label={EXTRA_LABEL[k]!.label} hint={EXTRA_LABEL[k]!.hint} error={errors[k]}>
-              {k === "auth_header" ? (
-                <Select id={`ep-${k}`} value={d.extra[k] ?? ""} placeholder="authorization (default)" onChange={(v) => set("extra", { ...d.extra, [k]: v })} options={[{ value: "authorization", label: "authorization" }, { value: "api-key", label: "api-key" }, { value: "x-api-key", label: "x-api-key" }]} />
-              ) : (
-                <input id={`ep-${k}`} className={inputClass} value={d.extra[k] ?? ""} onChange={(e) => set("extra", { ...d.extra, [k]: e.target.value })} />
-              )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="endpoint-test-row">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={test.isPending || connectMissing || Boolean(idError)}
+          onClick={() => {
+            setResult(null);
+            test.mutate(entry(), { onSuccess: setResult });
+          }}
+        >
+          {test.isPending ? "Testing…" : "Test connection"}
+        </Button>
+        {result ? <TestOutcome r={result} /> : null}
+        {adding && !result?.reachable && !skipTest ? (
+          <Button type="button" variant="ghost" size="sm" onClick={() => setSkipTest(true)}>
+            Skip the test
+          </Button>
+        ) : null}
+        {adding && skipTest && !result?.reachable ? <span className="text-xs text-muted">Test skipped.</span> : null}
+      </div>
+      {test.isError ? <ErrorNotice error={test.error} /> : null}
+      <details className="group rounded-control border border-line" data-testid="endpoint-advanced">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-ink-2">
+          Advanced options
+          <span aria-hidden="true" className="transition-transform group-open:rotate-90">
+            →
+          </span>
+        </summary>
+        <div className="space-y-3 border-t border-line p-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field id="ep-id" label="Endpoint id" error={idError} hint="Keys name the endpoint by this id. It cannot be changed later.">
+              <input
+                id="ep-id"
+                required
+                disabled={existing !== null}
+                className={inputClass}
+                value={d.id}
+                onChange={(e) => {
+                  setIdTouched(true);
+                  set("id", e.target.value);
+                }}
+              />
             </Field>
-          ))}
+            <Field id="ep-provider" label="Provider" error={errors.provider}>
+              <select
+                id="ep-provider"
+                className={inputClass}
+                value={d.provider}
+                disabled={existing !== null}
+                onChange={(e) => {
+                  set("provider", e.target.value);
+                  set("method", "");
+                }}
+              >
+                {providers.includes(d.provider) ? null : <option value={d.provider}>{PROVIDER_LABEL[d.provider] ?? d.provider}</option>}
+                {providers.map((p) => (
+                  <option key={p} value={p}>
+                    {PROVIDER_LABEL[p] ?? p}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          {f.extra.length > 0 ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {f.extra.map((k) => (
+                <Field key={k} id={`ep-${k}`} label={EXTRA_LABEL[k]!.label} hint={EXTRA_LABEL[k]!.hint} error={errors[k]}>
+                  {k === "auth_header" ? (
+                    <Select id={`ep-${k}`} value={d.extra[k] ?? ""} placeholder="authorization (default)" onChange={(v) => set("extra", { ...d.extra, [k]: v })} options={[{ value: "authorization", label: "authorization" }, { value: "api-key", label: "api-key" }, { value: "x-api-key", label: "x-api-key" }]} />
+                  ) : (
+                    <input id={`ep-${k}`} className={inputClass} value={d.extra[k] ?? ""} onChange={(e) => set("extra", { ...d.extra, [k]: e.target.value })} />
+                  )}
+                </Field>
+              ))}
+            </div>
+          ) : null}
+          <fieldset className="space-y-3 rounded-control border border-line p-3">
+            <legend className="px-1 text-sm font-medium text-ink">Key origin</legend>
+            <Field id="ep-method" label="Method" error={errors["key_origin/method"] ?? errors.key_origin} hint="Which account a key must belong to before it may carry prompts.">
+              <Select id="ep-method" value={d.method} placeholder="No rule" onChange={(v) => set("method", v)} options={methods.map((m) => ({ value: m, label: ORIGIN_LABEL[m] ?? m }))} />
+            </Field>
+            {d.method ? (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Field id="ep-orgs" label="Allowed organization ids" hint="One per line.">
+                  <textarea id="ep-orgs" rows={3} spellCheck={false} className={`${inputClass} font-mono`} value={d.org_ids} onChange={(e) => set("org_ids", e.target.value)} />
+                </Field>
+                <Field id="ep-wss" label="Allowed workspace ids" hint="One per line.">
+                  <textarea id="ep-wss" rows={3} spellCheck={false} className={`${inputClass} font-mono`} value={d.ws_ids} onChange={(e) => set("ws_ids", e.target.value)} />
+                </Field>
+                {d.method === "litellm_team" ? (
+                  <Field id="ep-teams" label="Allowed team ids" hint="One per line.">
+                    <textarea id="ep-teams" rows={3} spellCheck={false} className={`${inputClass} font-mono`} value={d.team_ids} onChange={(e) => set("team_ids", e.target.value)} />
+                  </Field>
+                ) : null}
+              </div>
+            ) : null}
+          </fieldset>
+          {f.allowedPaths ? (
+            <Field id="ep-paths" label="Allowed paths" error={errors.allowed_paths} hint="Extra paths the key may be used on, one per line (absolute; a trailing /* admits a subtree). Inference paths are always allowed.">
+              <textarea id="ep-paths" rows={2} spellCheck={false} className={`${inputClass} font-mono`} value={d.allowed_paths} onChange={(e) => set("allowed_paths", e.target.value)} />
+            </Field>
+          ) : null}
         </div>
-      ) : null}
+      </details>
+    </>
+  );
+
+  const modelFields = (
+    <>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id="ep-default" label="Default model" error={errors.default_model} hint={f.defaultModel === "required" ? "Required for this provider." : "What a hosted agent uses when it has no model of its own."}>
           <input id="ep-default" className={inputClass} value={d.default_model} onChange={(e) => set("default_model", e.target.value)} />
@@ -418,50 +523,39 @@ export function EndpointDialog({
         serverError={errors.model_info}
         max={MODEL_INFO_MAX}
       />
-      <fieldset className="space-y-3 rounded-control border border-line p-3">
-        <legend className="px-1 text-sm font-medium text-ink">Key origin</legend>
-        <Field id="ep-method" label="Method" error={errors["key_origin/method"] ?? errors.key_origin} hint="Which account a key must belong to before it may carry prompts.">
-          <Select id="ep-method" value={d.method} placeholder="No rule" onChange={(v) => set("method", v)} options={methods.map((m) => ({ value: m, label: ORIGIN_LABEL[m] ?? m }))} />
-        </Field>
-        {d.method ? (
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field id="ep-orgs" label="Allowed organization ids" hint="One per line.">
-              <textarea id="ep-orgs" rows={3} spellCheck={false} className={`${inputClass} font-mono`} value={d.org_ids} onChange={(e) => set("org_ids", e.target.value)} />
-            </Field>
-            <Field id="ep-wss" label="Allowed workspace ids" hint="One per line.">
-              <textarea id="ep-wss" rows={3} spellCheck={false} className={`${inputClass} font-mono`} value={d.ws_ids} onChange={(e) => set("ws_ids", e.target.value)} />
-            </Field>
-            {d.method === "litellm_team" ? (
-              <Field id="ep-teams" label="Allowed team ids" hint="One per line.">
-                <textarea id="ep-teams" rows={3} spellCheck={false} className={`${inputClass} font-mono`} value={d.team_ids} onChange={(e) => set("team_ids", e.target.value)} />
-              </Field>
-            ) : null}
-          </div>
-        ) : null}
-      </fieldset>
-      {f.allowedPaths ? (
-        <Field id="ep-paths" label="Allowed paths" error={errors.allowed_paths} hint="Extra paths the key may be used on, one per line (absolute; a trailing /* admits a subtree). Inference paths are always allowed.">
-          <textarea id="ep-paths" rows={2} spellCheck={false} className={`${inputClass} font-mono`} value={d.allowed_paths} onChange={(e) => set("allowed_paths", e.target.value)} />
-        </Field>
+    </>
+  );
+
+  return (
+    <FormDialog
+      open
+      size="xl"
+      onOpenChange={(o) => !o && onClose()}
+      title={existing ? `Edit ${str(existing.name ?? existing.display_name) || str(existing.id)}` : "Add AI endpoint"}
+      description={existing ? "AI keys are never part of an endpoint: organizations and workspaces add them as accounts." : undefined}
+      submitLabel={onConnect ? "Next: models and roles" : "Done"}
+      submitDisabled={onConnect ? connectMissing || Boolean(idError) || !tested : Boolean(idError) || missing}
+      onSubmit={submit}
+    >
+      {adding ? (
+        <ol aria-label="Steps" className="grid grid-cols-2 gap-3">
+          {STEPS.map((s) => (
+            <li key={s.id} aria-current={s.id === step ? "step" : undefined} className="space-y-1.5">
+              <span className={`block h-1 rounded-full ${s.id === step ? "bg-accent" : "bg-line"}`} aria-hidden="true" />
+              <button
+                type="button"
+                className={`text-label font-semibold uppercase tracking-label ${s.id === step ? "text-ink" : "text-muted"}`}
+                disabled={s.id === "models" ? connectMissing || Boolean(idError) || !tested : false}
+                onClick={() => setStep(s.id)}
+              >
+                {s.label}
+              </button>
+            </li>
+          ))}
+        </ol>
       ) : null}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          type="button"
-          variant="outline"
-          disabled={test.isPending || missing || Boolean(idError)}
-          onClick={() => {
-            setResult(null);
-            test.mutate(entry(), { onSuccess: setResult });
-          }}
-        >
-          {test.isPending ? "Testing…" : "Test connection"}
-        </Button>
-        <span className="text-xs text-muted">One request to the models path with no credential. Nothing is saved.</span>
-      </div>
-      {test.isError ? (
-        <ErrorNotice error={test.error} />
-      ) : null}
-      {result ? <TestOutcome r={result} /> : null}
+      {showConnect ? connectFields : null}
+      {showModels ? modelFields : null}
     </FormDialog>
   );
 }

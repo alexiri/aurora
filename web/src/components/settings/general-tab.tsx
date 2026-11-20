@@ -10,7 +10,7 @@ import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Select } from "@/components/ui/select";
 import { usePatchWorkspace } from "@/lib/api/account";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
-import type { Workspace } from "@/lib/api/queries";
+import { useAgents, type Workspace } from "@/lib/api/queries";
 import { MEMORY_LANGUAGES, timeZones } from "@/lib/nav/landing";
 
 export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn: boolean }) {
@@ -21,6 +21,10 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
   const [lang, setLang] = useState(workspace.memory_language);
   const [clientErr, setClientErr] = useState("");
   const bar = useSaveBar();
+  // (workspace-7) The first agent's name in the memory-language label: "Language Dani remembers in".
+  const agents = useAgents(workspace.id);
+  const agentName = agents.data?.items[0]?.name;
+  const [savedName, setSavedName] = useState<string | null>(null);
   // What is saved: the form's start, and again after each save (the workspace-7 finding: "Saved" appears).
   const [base, setBase] = useState({ name: workspace.name, tz: workspace.timezone, lang: workspace.memory_language });
   const dirty = name !== base.name || tz !== base.tz || lang !== base.lang;
@@ -36,6 +40,7 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
       { name: n, timezone: tz, memory_language: lang },
       {
         onSuccess: () => {
+          setSavedName(n !== base.name ? n : null);
           setBase({ name, tz, lang });
           bar.flash();
         },
@@ -68,7 +73,7 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
         <Altitude id="ws.memlang" level="expert" promote={!!fe.memory_language}>
           <Field
             id="set-lang"
-            label="Language agents remember in"
+            label={`Language ${agentName ?? "your agents"} ${agentName ? "remembers" : "remember"} in`}
             hint="Language used for memory search indexing."
             error={fe.memory_language}
           >
@@ -76,6 +81,11 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
           </Field>
         </Altitude>
       </fieldset>
+      {bar.saved && savedName ? (
+        <p role="status" className="text-sm text-accent-ink" data-testid="saved-name">
+          Saved. The workspace is now called {savedName}.
+        </p>
+      ) : null}
       {canOwn ? (
         <SaveBar
           dirty={dirty}

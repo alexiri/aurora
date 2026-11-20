@@ -226,8 +226,9 @@ export function LlmKeyForm({
         </Field>
         <Field
           id="l-endpoint"
-          label="Which service is this key for?"
-          hint={endpoint ? `Allowed key scopes: ${scopes.length ? scopes.join(", ") : "any"}.${harnessLine ? ` ${harnessLine}.` : ""}` : undefined}
+          label="Provider"
+          // (P5-REFINE-18 #16, setup-7) No "Allowed key scopes" line: the scope is the page's, and a refused one has its own error.
+          hint={endpoint && harnessLine ? `${harnessLine}.` : undefined}
           error={scopeOk ? undefined : `Your organization does not permit ${scopeName}-level keys for this endpoint.`}
         >
           <select
@@ -246,7 +247,8 @@ export function LlmKeyForm({
               const h = harnessHint(ep.harnesses ?? []);
               return (
                 <option key={ep.id} value={ep.id}>
-                  {ep.display_name} ({ep.provider}){h ? ` — ${h}` : ""}
+                  {ep.display_name}
+                  {h ? ` — ${h}` : ""}
                 </option>
               );
             })}

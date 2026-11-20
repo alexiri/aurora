@@ -15,24 +15,7 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { exportUrl, useSettingsIndex } from "@/lib/api/settings";
-import { sectionHomes } from "@/lib/routes";
-
-const DISMISS_KEY = "aurora.settings.locked-notice.dismissed";
-
-function readDismissed(): string | null {
-  try {
-    return window.localStorage.getItem(DISMISS_KEY);
-  } catch {
-    return null;
-  }
-}
-function writeDismissed(v: string) {
-  try {
-    window.localStorage.setItem(DISMISS_KEY, v);
-  } catch {
-    // Private windows and blocked storage: the notice just comes back next time.
-  }
-}
+import { adminRoutes, sectionHomes } from "@/lib/routes";
 
 function when(iso: string | null | undefined): string {
   if (!iso) return "never";
@@ -74,15 +57,12 @@ export function groupSections(sections: SectionRow[], search: string): { topic: 
 export function SettingsIndexView() {
   const q = useSettingsIndex();
   const [importing, setImporting] = useState(false);
-  const [dismissed, setDismissed] = useState<string | null>(() => (typeof window === "undefined" ? null : readDismissed()));
   const [search, setSearch] = useState("");
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const { sections, locked } = q.data;
   const groups = groupSections(sections, search);
-  // Dismissed per viewer for this set of locked keys: a new locked key brings the notice back.
-  const fingerprint = locked.map((l) => `${l.key}:${l.entry_id ?? ""}`).join("|");
-  const showNotice = locked.length > 0 && dismissed !== fingerprint;
+  const showNotice = locked.length > 0;
 
   return (
     <div className="max-w-page space-y-6">
@@ -110,33 +90,13 @@ export function SettingsIndexView() {
         }
       />
       {showNotice ? (
-        <Notice tone="neutral" role="status" className="space-y-2">
+        <Notice tone="neutral" role="status">
           <p>
-            {locked.length} setting{locked.length === 1 ? " is" : "s are"} configured in Helm and cannot be changed here. To
-            manage one here, remove it from your Helm values and upgrade: it keeps its current value.
+            {locked.length} setting{locked.length === 1 ? " is" : "s are"} set in Helm.{" "}
+            <Link href={adminRoutes.setInHelm()} className="font-medium underline underline-offset-2">
+              See them on Set in Helm
+            </Link>
           </p>
-          <details>
-            <summary className="cursor-pointer text-sm font-medium">Which settings</summary>
-            <ul className="mt-2 space-y-1 text-sm">
-              {locked.map((l) => (
-                <li key={`${l.key}:${l.entry_id ?? ""}`}>
-                  <code className="font-mono">{l.key}</code>
-                  {l.entry_id ? <> ({l.entry_id})</> : null} — <code className="font-mono">{l.helm_key}</code>
-                </li>
-              ))}
-            </ul>
-          </details>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              writeDismissed(fingerprint);
-              setDismissed(fingerprint);
-            }}
-          >
-            Dismiss
-          </Button>
         </Notice>
       ) : null}
 

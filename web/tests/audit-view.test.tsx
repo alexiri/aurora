@@ -93,7 +93,9 @@ describe("OrgAuditView (RFE-008)", () => {
         <AuditTab wsId="w1" />
       </QueryClientProvider>,
     );
-    await waitFor(() => expect(screen.getAllByText("Created an agent")).toHaveLength(2));
+    // The organization page keeps its table ("Created an agent"); the workspace page reads as a sentence (workspace-3).
+    expect(await screen.findByText("Created an agent")).toBeTruthy();
+    expect(await screen.findByText("a@x.io created an agent")).toBeTruthy();
     const org = seen.find((s) => s.startsWith("/v1/orgs/o1/audit"))!;
     const ws = seen.find((s) => s.startsWith("/v1/workspaces/w1/audit"))!;
     for (const s of [org, ws]) {

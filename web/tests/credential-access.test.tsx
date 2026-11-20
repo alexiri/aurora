@@ -188,15 +188,15 @@ describe("model readiness on the Access tab", () => {
     tab();
     const list = await screen.findByRole("list", { name: "Model roles" });
     const rows = within(list).getAllByRole("listitem").map((r) => r.textContent);
-    expect(rows[0]).toContain("Largeclaude-opusset on this agent");
-    expect(rows[1]).toContain("Mediumglm-4.6from the endpoint");
-    expect(rows[2]).toContain("Smallnonenot set");
+    expect(rows[0]).toContain("Strongest modelclaude-opusset on this agent");
+    expect(rows[1]).toContain("Everyday modelglm-4.6from the endpoint");
+    expect(rows[2]).toContain("Fastest modelnonenot set");
     const notes = screen.getAllByTestId("role-warning").map((n) => n.textContent ?? "");
-    expect(notes.some((t) => t.includes("Large (claude-opus) is not allowed for your organization"))).toBe(true);
-    expect(notes.some((t) => t.includes("Small is not set. On this endpoint, subagents and background requests may ask for a model it does not serve."))).toBe(true);
-    expect(notes.some((t) => t.includes("The Small model set for this agent is no longer usable"))).toBe(true);
-    expect(notes.some((t) => t.includes("Subagents use Small, which is not set"))).toBe(true);
-    expect(screen.getByTestId("subagent-model").textContent).toBe("Subagents use Small.");
+    expect(notes.some((t) => t.includes("Strongest model (claude-opus) is not allowed for your organization"))).toBe(true);
+    expect(notes.some((t) => t.includes("Fastest model is not set. On this endpoint, subagents and background requests may ask for a model it does not serve."))).toBe(true);
+    expect(notes.some((t) => t.includes("The Fastest model set for this agent is no longer usable"))).toBe(true);
+    expect(notes.some((t) => t.includes("Subagents use Fastest model, which is not set"))).toBe(true);
+    expect(screen.getByTestId("subagent-model").textContent).toBe("Subagents use Fastest model.");
     expect(screen.getAllByRole("link", { name: "Change the roles on Instructions" })[0]!.getAttribute("href")).toContain("tab=instructions");
   });
 
@@ -389,7 +389,7 @@ describe("Give agents access step", () => {
     const box = await screen.findByRole("checkbox", { name: "Daneel can use this key" });
     expect(box).toBeChecked();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team key" } });
-    fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: "aigw" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "aigw" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     expect(await screen.findByText("Saved Team key")).toBeTruthy();
@@ -412,7 +412,7 @@ describe("Give agents access step", () => {
     await screen.findByText(/AI gateway/);
     expect(await screen.findByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team key" } });
-    fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: "aigw" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "aigw" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     await screen.findByText("Saved Team key");
@@ -423,7 +423,7 @@ describe("Give agents access step", () => {
     await screen.findByText(/AI gateway/);
     expect(screen.queryByRole("checkbox", { name: /can use this key/ })).toBeNull();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Org key" } });
-    fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: "aigw" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "aigw" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-2" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     expect(await screen.findByRole("region", { name: "Give agents access" })).toBeTruthy();

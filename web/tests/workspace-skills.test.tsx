@@ -75,6 +75,21 @@ describe("workspace skills page", () => {
     await waitFor(() => expect(created).toEqual({ name: "release-notes", description: "Write release notes", body: "steps" }));
   });
 
+  it("opens with what a skill is, keeps the precedence in a closed fold, and never says home sync (workspace-10)", async () => {
+    mockFetch({
+      "GET /v1/resolve": resolve,
+      "GET /v1/workspaces/w1": ws("owner"),
+      "GET /v1/workspaces/w1/skills": () => json(200, { items: [], next_cursor: null }),
+    });
+    wrap(<WorkspaceSkills />);
+    expect(await screen.findByRole("heading", { name: "Skills" })).toBeTruthy();
+    expect(screen.getByText(/A skill is a set of instructions that teaches an agent how to do one job your way/)).toBeTruthy();
+    const fold = screen.getByTestId("skills-combine");
+    expect(fold).not.toHaveAttribute("open");
+    expect(fold).toHaveTextContent("If both have a skill with the same name, the workspace's version is used.");
+    expect(document.body.textContent).not.toMatch(/home sync/i);
+  });
+
   it("owner sees who overrides the skill and can edit", async () => {
     mockFetch({
       "GET /v1/resolve": resolve,

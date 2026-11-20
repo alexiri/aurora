@@ -288,6 +288,27 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     expect(screen.getByRole("button", { name: "Show all workspaces" })).toBeInTheDocument();
   });
 
+  it("(D-427) the organization's Balanced card writes the postures and adds the Ask rule, published at once when nothing else waits", async () => {
+    const gov: unknown[] = [];
+    routes({
+      "PUT /v1/orgs/o1/governance": async (req) => {
+        const b = await req.json();
+        gov.push(b);
+        return json(200, { document: b.document, revision: 5 });
+      },
+    });
+    wrap(<OrgInternet org={org} slug="acme" />);
+    const card = await screen.findByTestId("policy-presets");
+    expect(within(card).getByTestId("preset-state")).toHaveTextContent("Open");
+    fireEvent.click(within(card).getByRole("radio", { name: /Balanced/ }));
+    await waitFor(() => expect(srv.publishes).toHaveLength(1));
+    expect(gov).toHaveLength(1);
+    expect(srv.puts).toHaveLength(1);
+    expect(srv.puts[0]!.rules).toEqual([
+      expect.objectContaining({ name: "Ask before changing data", action: "allow", require_approval: true, targets: [{ type: "network", host: "*", methods: ["POST", "PUT", "PATCH", "DELETE"] }] }),
+    ]);
+  });
+
   it("applies the limits first, then the rules; when the rules fail it says which part was applied and keeps the rest pending", async () => {
     const order: string[] = [];
     let govBody: { revision: number; document: { egress: { posture: string } } } | null = null;

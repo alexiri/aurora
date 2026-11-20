@@ -140,7 +140,7 @@ export function GettingStarted(props: GuideProps) {
           .filter((s) => s.state !== "skipped")
           .map((s, i) => (
             <StepRow key={s.id} step={s} index={i + 1} agent={agent} expanded={expanded === s.id}>
-              <StepBody step={s} agent={agent} {...props} base={base} who={who} keysCount={state.keys.length} />
+              <StepBody step={s} agent={agent} {...props} base={base} who={who} keysCount={state.keys.length} stepsAbove={guide.steps.filter((x) => x.id !== "hello" && x.state !== "skipped").length} />
             </StepRow>
           ))}
       </ol>
@@ -195,7 +195,7 @@ function StepRow({ step, index, agent, expanded, children }: { step: GuideStep; 
             {step.state === "owner" ? <Badge>Needs an owner</Badge> : null}
           </p>
           {done && step.provider ? <p className="mt-0.5 text-sm text-ink-2">{step.provider}</p> : null}
-          {!done && (expanded || step.state === "owner" || step.state === "waiting") ? <div className="mt-2 space-y-3 text-sm text-ink-2">{children}</div> : null}
+          {!done && (expanded || step.state === "owner" || step.state === "waiting" || step.state === "checking") ? <div className="mt-2 space-y-3 text-sm text-ink-2">{children}</div> : null}
         </div>
       </div>
     </li>
@@ -211,10 +211,13 @@ function StepBody({
   base,
   who,
   keysCount,
-}: GuideProps & { step: GuideStep; agent: Agent; base: string; who: WhoCanValue; keysCount: number }) {
+  stepsAbove,
+}: GuideProps & { step: GuideStep; agent: Agent; base: string; who: WhoCanValue; keysCount: number; stepsAbove: number }) {
   // "Not now" on the access panel: put the panel away for this visit; the step stays open.
   const [accessDeferred, setAccessDeferred] = useState(false);
   if (step.state === "done") return null;
+  // (firstday-3) A key that is still being checked does not count yet.
+  if (step.state === "checking") return <p data-testid="key-checking">{step.checkingName ?? "Your key"} is still being checked. It counts once it has answered.</p>;
   if (step.state === "owner" && step.id !== "hello") {
     return <WhoCan value={{ ...who, action: step.id === "key" ? "add_account" : "give_access" }} lead />;
   }
@@ -257,7 +260,7 @@ function StepBody({
     case "hello":
       return (
         <div className="space-y-2">
-          {step.state === "waiting" ? <p>Comes after the steps above.</p> : <p>Open the chat and send a first message. The answer proves everything works.</p>}
+          {step.state === "waiting" ? <p>{stepsAbove === 1 ? "Comes after the step above." : "Comes after the steps above."}</p> : <p>Open the chat and send a first message. The answer proves everything works.</p>}
           {step.state === "waiting" && isOwner ? (
             // Not a link: an `aria-disabled` anchor is still focusable and navigable.
             <Button size="sm" disabled>

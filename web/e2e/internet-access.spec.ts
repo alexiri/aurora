@@ -44,7 +44,7 @@ async function open(page: Page, path: string, scheme: "light" | "dark" = "light"
   page.on("pageerror", (e) => errors.push(e.message));
   await page.emulateMedia({ colorScheme: scheme });
   await page.goto(path);
-  await page.getByRole("heading", { level: 1, name: "Internet access" }).waitFor();
+  await page.getByRole("heading", { level: 1, name: "What agents may do" }).waitFor();
   expect(errors, `${path} threw`).toEqual([]);
 }
 

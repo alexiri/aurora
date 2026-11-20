@@ -2,13 +2,17 @@
 
 import { useId, useState, type ReactNode } from "react";
 
-import { AUDIT_ACTION } from "@/lib/labels";
+import { AUDIT_ACTION, auditArea, auditWords } from "@/lib/labels";
+import { Avatar } from "@/components/ui/avatar";
+import { ResponsiveTable } from "@/components/ui/responsive-table";
+import { cn } from "@/lib/utils";
 import { When } from "@/components/ui/when";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
+import { TechnicalDetails } from "@/components/ui/technical-details";
 import { LoadMore } from "@/components/ui/load-more";
 import { PageHeader } from "@/components/ui/page-header";
 import type { components } from "@/lib/api/schema";
@@ -48,7 +52,15 @@ export function AuditPanel({
   extraFilters,
   showOrg = false,
   headed = true,
+  targetName,
+  areas = false,
+  afterList,
 }: {
+  /**
+   * Present: entries read as sentences ("Bob revoked the API key ci-script") with Critical / Important / Routine, stacked
+   * under 900 px (workspace-3). It names the entry's target from what the page knows; `null` falls back to the entry's own name.
+   */
+  targetName?: (e: AuditEntry) => string | null;
   title: string;
   description: string;
   placeholder: string;
@@ -59,6 +71,10 @@ export function AuditPanel({
   showOrg?: boolean;
   /** False where the page around it already has the heading (the workspace tab). */
   headed?: boolean;
+  /** (P5-REFINE-18 #11) The line under a sentence names where in Administration it happened, not who did it. */
+  areas?: boolean;
+  /** Content right under the list (Administration: how many system events are hidden). */
+  afterList?: ReactNode;
 }) {
   const [input, setInput] = useState(filters.action);
   const items = feed.data?.pages.flatMap((p) => p.items) ?? [];
@@ -96,7 +112,8 @@ export function AuditPanel({
       {feed.isPending ? <Loading /> : null}
       {feed.isError ? <ErrorState error={feed.error} onRetry={() => void feed.refetch()} /> : null}
       {feed.data && items.length === 0 ? <EmptyState title="No audit entries" /> : null}
-      {items.length > 0 ? (
+      {items.length > 0 && targetName ? <SentenceList items={items} title={title} targetName={targetName} areas={areas} showOrg={showOrg} /> : null}
+      {items.length > 0 && !targetName ? (
         <DataTable caption={title} stackBelow={900}>
           <thead>
             <tr>
@@ -118,6 +135,7 @@ export function AuditPanel({
           </tbody>
         </DataTable>
       ) : null}
+      {afterList}
       <LoadMore query={feed} />
     </div>
   );
@@ -166,5 +184,78 @@ function AuditRow({ e, showOrg, columns }: { e: AuditEntry; showOrg: boolean; co
         </tr>
       ) : null}
     </>
+  );
+}
+
+const WEIGHT_WORDS = { critical: "Critical", important: "Important", routine: "Routine" } as const;
+const WEIGHT_CLASS = {
+  critical: "bg-danger-soft text-danger-ink",
+  important: "bg-pending-panel text-pending-ink",
+  routine: "bg-subtle text-ink-2",
+} as const;
+
+/** (workspace-3) The audit as sentences on stacked rows; the raw event is under Details, in Technical details. */
+function SentenceList({
+  items,
+  title,
+  targetName,
+  areas,
+  showOrg,
+}: {
+  items: AuditEntry[];
+  title: string;
+  targetName: (e: AuditEntry) => string | null;
+  areas: boolean;
+  showOrg: boolean;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <ResponsiveTable
+      caption={title}
+      rowKey={(e) => e.id}
+      rows={items}
+      title={{
+        header: "What happened",
+        cell: (e) => {
+          const w = auditWords(e, targetName(e));
+          return (
+            <div className="flex min-w-0 items-start gap-3">
+              <Avatar name={e.actor_label} size={32} />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-ink" data-testid="audit-sentence">{w.sentence}</p>
+                <p className="text-xs text-muted">
+                  <When value={e.created_at} /> · {areas ? (auditArea(e.action) ?? "Administration") : e.actor_label}
+                  {showOrg ? <> · {e.org_id ? (e.org_slug ?? e.org_id) : "Instance"}</> : null}
+                </p>
+                {open === e.id ? (
+                  <div className="mt-2 rounded-control bg-canvas p-3">
+                    <TechnicalDetails title="Technical details" bodyClassName="mt-2 font-sans text-ink">
+                      <p className="mb-2 font-mono text-xs text-ink-2">{e.action}</p>
+                      <AuditDetail entry={e} />
+                    </TechnicalDetails>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          );
+        },
+      }}
+      columns={[
+        {
+          key: "weight",
+          header: "Importance",
+          label: false,
+          cell: (e) => {
+            const w = auditWords(e, targetName(e)).weight;
+            return <span className={cn("inline-flex rounded-full px-2 py-0.5 text-label font-medium leading-4", WEIGHT_CLASS[w])}>{WEIGHT_WORDS[w]}</span>;
+          },
+        },
+      ]}
+      actions={(e) => (
+        <Button variant="ghost" size="sm" aria-expanded={open === e.id} onClick={() => setOpen(open === e.id ? null : e.id)}>
+          Details
+        </Button>
+      )}
+    />
   );
 }

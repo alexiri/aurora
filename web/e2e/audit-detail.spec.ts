@@ -49,7 +49,10 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByLabel("Filter by action")).toHaveValue("instance_settings.");
         expect(new URLSearchParams(seen[0]).get("action")).toBe("instance_settings.");
 
-        await page.getByRole("button", { name: /Details of instance_settings.update/ }).click();
+        // (P5-REFINE-18 #11) The entry reads as a sentence; Details opens the raw event under Technical details.
+        await expect(page.getByTestId("audit-sentence")).toContainText("changed");
+        await page.getByRole("button", { name: "Details" }).click();
+        await page.getByText("Technical details", { exact: true }).click();
         const detail = page.getByTestId("audit-detail");
         await expect(detail).toContainText("llm.endpoints › eu");
         await expect(detail).toContainText("https://old.example.test");
