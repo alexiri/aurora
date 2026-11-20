@@ -35,7 +35,7 @@ test("a member who owns a personal workspace adds a person who has never signed 
   await expect(page).toHaveURL(new RegExp(`${base}/people\\?add=1$`));
   const dialog = page.getByRole("dialog", { name: "Add people" });
   await expect(dialog).toBeVisible();
-  await dialog.getByLabel("E-mail").fill(carol);
+  await dialog.getByLabel("Who").fill(carol);
   await dialog.getByRole("button", { name: "Add", exact: true }).click();
   await expect(dialog.getByText(`${carol} will have access as Member after they first sign in.`)).toBeVisible();
   await expect(dialog.getByText("Aurora does not e-mail them. Send them this link:")).toBeVisible();

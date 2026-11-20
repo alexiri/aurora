@@ -60,7 +60,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(dialog.getByRole("radio", { name: "Member" })).toBeChecked();
         await expect(dialog.getByRole("radio", { name: "Approver" })).toHaveCount(0);
         await check(page);
-        await dialog.getByLabel("E-mail").fill("Carol@Example.org");
+        await dialog.getByLabel("Who").fill("Carol@Example.org");
         await dialog.getByRole("button", { name: "Add", exact: true }).click();
         expect(posted).toEqual([{ email: "Carol@Example.org", role: "member" }]);
         await expect(dialog.getByText("Carol@Example.org will have access as Member after they first sign in.")).toBeVisible();
@@ -81,7 +81,7 @@ for (const scheme of ["light", "dark"] as const) {
         await page.goto("/o/acme/w/main/people");
         await page.getByRole("button", { name: "Add people" }).click();
         const dialog = page.getByRole("dialog", { name: "Add people" });
-        await dialog.getByLabel("E-mail").fill("dan@example.org");
+        await dialog.getByLabel("Who").fill("dan@example.org");
         await dialog.getByRole("button", { name: "Add", exact: true }).click();
         await expect(dialog.getByText("dan@example.org will have access as Member after they first sign in.")).toBeVisible();
         await expect(dialog.getByText(/They also need to be invited/)).toHaveCount(0);

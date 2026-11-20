@@ -18,6 +18,7 @@ import {
   useRemovePending,
   type AddByEmailResponse,
 } from "@/lib/api/pending-access";
+import { copyLabel, useCopy } from "@/lib/use-copy";
 import { askSentence, whoCanFromContacts } from "@/lib/who-can";
 
 type Role = "owner" | "approver" | "member";
@@ -119,7 +120,7 @@ export function AddPeople({
           if (!o) reset();
         }}
       >
-        <DialogContent title="Add people" description="Give one person access to this workspace by e-mail." size="md">
+        <DialogContent title="Add people" description="Give one person access to this workspace." size="md">
           {done ? (
             <div className="space-y-3 text-sm text-ink-2">
               <p role="status" className="font-medium text-ink">
@@ -144,7 +145,7 @@ export function AddPeople({
             </div>
           ) : (
             <form aria-label="Add people" onSubmit={submit} className="space-y-4" noValidate>
-              <Field id="add-people-email" label="E-mail">
+              <Field id="add-people-email" label="Who">
                 <input
                   id="add-people-email"
                   type="email"
@@ -155,6 +156,7 @@ export function AddPeople({
                   placeholder="name@example.org"
                 />
               </Field>
+              <HowTheyOpenIt who={email.trim()} address={`${origin}${workspacePath}`} />
               <div className="space-y-1.5">
                 <span className="block text-sm font-medium text-ink">
                   Role
@@ -180,6 +182,22 @@ export function AddPeople({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/** (workspace-4) Before the person submits: Aurora sends nothing, so say how they open the workspace, with the link to copy. */
+function HowTheyOpenIt({ who, address }: { who: string; address: string }) {
+  const { state, copy } = useCopy();
+  return (
+    <Notice tone="neutral" className="flex flex-wrap items-start gap-x-3 gap-y-2" data-testid="how-they-open">
+      <p className="min-w-0 flex-1 basis-56 text-sm">
+        <strong>Aurora doesn&apos;t send an e-mail.</strong> {who || "The person"} can open this workspace at{" "}
+        <span className="break-all font-mono text-xs">{address.replace(/^https?:\/\//, "")}</span> once they sign in.
+      </p>
+      <Button type="button" variant="outline" size="sm" onClick={() => copy(address)}>
+        {copyLabel(state, "Copy link")}
+      </Button>
+    </Notice>
   );
 }
 
