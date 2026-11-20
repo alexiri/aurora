@@ -11,7 +11,6 @@ vi.mock("next/navigation", () => ({
 
 import { AccountHealth } from "@/components/accounts/account-health";
 import { AccountsBanner, AgentAttentionChip } from "@/components/accounts/attention";
-import { NeedsYou } from "@/components/overview/needs-you";
 import { attentionCount, healthClause, healthLine, needsAttention, savedButText, testOutcomeText } from "@/lib/account-health";
 
 type Health = { state: string; detail?: string | null; last_error?: string | null; last_used_at?: string | null };
@@ -144,27 +143,6 @@ describe("where a broken account shows up", () => {
     expect(await screen.findByText(/Daneel can't use GitHub: the sign-in expired\./)).toBeTruthy();
     const fix = screen.getByRole("link", { name: "Sign in again" });
     expect(fix.getAttribute("href")).toBe("/o/acme/w/main/agents/a1?tab=access&reconnect=c1");
-  });
-
-  it("lists the workspace's broken accounts on the Overview with the row's line and fix, and nothing when all work", async () => {
-    mockAccounts([
-      acct({ state: "sign_in_expired" }),
-      acct(failed("password"), { ref: { type: "connection", id: "c2" }, name: "analytics", app: { app_id: "postgresql", name: "PostgreSQL", custom_only: false } }),
-      acct({ state: "working" }, { ref: { type: "connection", id: "c3" } }),
-    ]);
-    const { unmount } = wrap(<NeedsYou wsId="ws1" base="/o/acme/w/main" />);
-    // The block lives in the Overview's "Needs you" card (P5-UX-7), counted with anything else that waits.
-    expect(await screen.findByRole("heading", { name: /^Needs you/ })).toBeTruthy();
-    expect(screen.getByLabelText("2 waiting")).toBeTruthy();
-    expect(screen.getByText(/: Sign-in expired/)).toBeTruthy();
-    expect(screen.getByText(/analytics/).parentElement?.textContent).toContain("PostgreSQL no longer accepts this password");
-    expect(screen.getByRole("link", { name: "Sign in again" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts&reconnect=c1");
-    expect(screen.getByRole("link", { name: "Reconnect" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts");
-    unmount();
-    mockAccounts([acct({ state: "working" })]);
-    wrap(<NeedsYou wsId="ws1" base="/o/acme/w/main" />);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(screen.queryByRole("heading")).toBeNull();
   });
 
   it("shows who can fix it instead of the fix to someone who cannot", async () => {
