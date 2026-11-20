@@ -24,8 +24,13 @@ import { usePlugins } from "@/lib/api/plugins";
 import { useBackfillStarterGrants, usePlacement, useSavePlacement, type PlacementView as Placement, type PutPlacement } from "@/lib/api/placement";
 import { useAgents, useMe } from "@/lib/api/queries";
 import { useSecrets } from "@/lib/api/secrets";
-import { useAgentReplied } from "@/lib/onboarding/use-guide";
-import { adminRoutes } from "@/lib/routes";
+import { useSettingsSection } from "@/lib/api/settings";
+import { formatTime } from "@/lib/format-date";
+import { When } from "@/components/ui/when";
+import { presetWords } from "@/components/policy/policy-presets";
+import { detectPreset } from "@/lib/policy-presets";
+import { helloMessage } from "@/lib/onboarding/guide";
+import { adminRoutes, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 import { AttentionSection } from "./attention-section";
@@ -37,6 +42,19 @@ import { SshLine } from "./ssh-line";
 
 /** How many steps there are (D-391): builtin apps arrive approved, so there is no approval step. */
 export const SETUP_STEPS = 5;
+
+/** Who the key was just given to: every agent already in the organization gets it with the key (D-414). */
+interface KeyGiven {
+  agents: number;
+  names: string[];
+}
+
+/** "Given to Daneel and 1 other agent already in Acme." */
+export function givenToLine(g: KeyGiven, orgName: string): string {
+  const first = g.names[0] ?? "an agent";
+  const others = g.agents - (g.names[0] ? 1 : 0);
+  return `Given to ${first}${others > 0 ? ` and ${others} other ${others === 1 ? "agent" : "agents"}` : ""} already in ${orgName}.`;
+}
 
 /** The toast after a key is added: what happened, and how many people signed in before the key (the backfill offer). */
 interface Toast {
@@ -87,22 +105,38 @@ export function doneCount(setup: SetupStatus, replied: boolean): number {
   return [signInDone(setup), setup.placement_saved && stepOf(setup, "placement")?.status !== "todo", keyDone(setup), replied, emailDone(setup)].filter(Boolean).length;
 }
 
-/** The admin's own agent: the default agent of their personal workspace, and whether it has answered once. */
-function useTryIt() {
+/**
+ * (P5-REFINE-18 #14, C-1063) Try it, from the server: it ticks itself on the first finished turn of any agent the admin owns
+ * (`try_it.done`) and is offered only when the agent can answer (`try_it.available`, false until a starter key exists).
+ * Open chat goes straight to that agent's chat with the hello typed and not sent (C-1035's `?draft=`).
+ */
+function useTryIt(server: SetupStatus["try_it"] | undefined, hasKey: boolean) {
   const me = useMe();
-  let personal: { id: string; href: string } | null = null;
+  const workspaceId = server?.workspace_id ?? null;
+  let base: { org: string; ws: string } | null = null;
   for (const m of me.data?.memberships ?? []) {
-    const w = m.workspaces.find((x) => x.personal === true);
-    if (w?.id) {
-      personal = { id: w.id, href: `/o/${m.org.slug}/w/${w.slug}` };
+    const w = m.workspaces.find((x) => x.id === workspaceId);
+    if (w) {
+      base = { org: m.org.slug, ws: w.slug };
       break;
     }
   }
-  const agents = useAgents(personal?.id);
-  const agent = agents.data?.items.find((a) => a.is_default) ?? agents.data?.items[0];
-  const replied = useAgentReplied(agent?.id);
-  const href = personal && agent ? `${personal.href}/agents/${agent.handle}?tab=chat` : (personal?.href ?? "/");
-  return { href, replied: replied.data === true, ready: !me.isPending };
+  const agents = useAgents(workspaceId ?? undefined);
+  const agent = agents.data?.items.find((a) => a.id === server?.agent_id);
+  const href =
+    base && agent
+      ? wsRoutes(base.org, base.ws).agent(agent.handle, { tab: "chat", draft: helloMessage(agent.name) })
+      : base
+        ? wsRoutes(base.org, base.ws).home()
+        : "/";
+  return {
+    href,
+    replied: server?.done === true,
+    available: server ? server.available : hasKey,
+    agentName: agent?.name ?? null,
+    person: me.data?.user.display_name ?? null,
+    ready: !me.isPending,
+  };
 }
 
 /** Build the whole-document PUT from the saved view with another starter-grant set (C-521). */
@@ -153,7 +187,16 @@ function BackfillOffer({ waiting, afterKey = false }: { waiting: number; afterKe
  * The AI-key dialog of the checklist: the organization's key form for the default organization. The first key is a
  * starter grant by default, whenever placement allows one (C-922).
  */
-function AiKeyDialog({ open, onOpenChange, onSaved }: { open: boolean; onOpenChange: (o: boolean) => void; onSaved: () => void }) {
+function AiKeyDialog({
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  /** The key's name and, when the placement gave it to agents already there (C-1061), who got it. */
+  onSaved: (keyName: string, applied: KeyGiven | null) => void;
+}) {
   const placement = usePlacement();
   const savePlacement = useSavePlacement();
   const org = placement.data?.default_org ?? null;
@@ -172,8 +215,14 @@ function AiKeyDialog({ open, onOpenChange, onSaved }: { open: boolean; onOpenCha
               const p = placement.data;
               if (p && startersAllowed(p)) {
                 const others = p.starter_grants.map((g) => ({ kind: g.kind, id: g.id }));
-                savePlacement.mutate(putWithStarters(p, [...others, { kind: "secret", id: secret.id }]), { onSettled: onSaved });
-              } else onSaved();
+                savePlacement.mutate(putWithStarters(p, [...others, { kind: "secret", id: secret.id }]), {
+                  onSuccess: (v) => {
+                    const mine = (v.starter_applied ?? []).find((a) => a.id === secret.id);
+                    onSaved(secret.name, mine && mine.agents_granted > 0 ? { agents: mine.agents_granted, names: mine.agent_names } : null);
+                  },
+                  onError: () => onSaved(secret.name, null),
+                });
+              } else onSaved(secret.name, null);
             }}
           />
         ) : (
@@ -181,6 +230,23 @@ function AiKeyDialog({ open, onOpenChange, onSaved }: { open: boolean; onOpenCha
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * (P5-REFINE-18 #2, D-410) Under the checklist, not counted: what agents may do right now and where to change it.
+ * The preset is read from the governance section's effective values, as on the card itself.
+ */
+function PresetLine() {
+  const q = useSettingsSection("governance");
+  if (!q.data) return null;
+  return (
+    <p className="text-sm text-ink-2" data-testid="preset-line">
+      What agents may do · <strong className="font-semibold text-ink">{presetWords(detectPreset(q.data.settings))}</strong> ·{" "}
+      <Link href={`${adminRoutes.internetAccess()}#presets`} className="font-medium text-ink underline underline-offset-2">
+        Change
+      </Link>
+    </p>
   );
 }
 
@@ -213,7 +279,21 @@ function ChecklistRow({ n, row, action, primary }: { n: number; row: Row; action
 }
 
 /** The checklist: five rows, each one state and one button. */
-function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup: SetupStatus; tryIt: ReturnType<typeof useTryIt>; toast: Toast | null; onKeyAdded: () => void; onDismissToast: () => void }) {
+function Checklist({
+  setup,
+  tryIt,
+  toast,
+  given,
+  onKeyAdded,
+  onDismissToast,
+}: {
+  setup: SetupStatus;
+  tryIt: ReturnType<typeof useTryIt>;
+  toast: Toast | null;
+  given: KeyGiven | null;
+  onKeyAdded: (keyName: string, applied: KeyGiven | null) => void;
+  onDismissToast: () => void;
+}) {
   const placement = usePlacement();
   const org = placement.data?.default_org ?? null;
   // (P5-POLISH-11) No request before the placement names an organization (it was GET /v1/orgs//secrets → 400).
@@ -243,7 +323,12 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
       done: keyDone(setup),
       summary: keyDone(setup) ? (
         <>
-          {`${orgKey?.name ?? "The organization's key"} · every new agent gets it`}
+          {`${orgKey?.name ?? "The organization's key"} · every new agent${org ? ` in ${org.name}` : ""} gets it`}
+          {given && org ? (
+            <span className="mt-1 block" data-testid="key-given">
+              {givenToLine(given, org.name)}
+            </span>
+          ) : null}
           {unserved > 0 ? (
             <span className="mt-2 block" data-testid="key-backfill">
               <BackfillOffer waiting={unserved} afterKey />
@@ -252,7 +337,17 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
         </>
       ) : org ? "Add an organization AI key" : "Choose where new people land first",
     },
-    { id: "try", title: "Try it", done: tryIt.replied, summary: "Say hello to your own agent" },
+    {
+      id: "try",
+      title: "Try it",
+      done: tryIt.replied,
+      // No starter key (D-414): Try it is not offered until an agent can answer.
+      summary: tryIt.replied
+        ? `${tryIt.agentName ?? "Your agent"} answered ${tryIt.person ?? "you"}`
+        : tryIt.available
+          ? "Say hello to your own agent"
+          : "Comes after the AI key",
+    },
     {
       id: "email",
       title: "E-mail",
@@ -282,11 +377,11 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
         Add key
       </Button>
     ),
-    try: (
+    try: tryIt.available ? (
       <Link href={tryIt.href} className={linkButton(3)}>
         Open chat
       </Link>
-    ),
+    ) : null,
     email: (
       <Link href={adminRoutes.platform("email")} className={rows[4]!.done ? cn(buttonVariants({ variant: "ghost", size: "sm" })) : rowButton}>
         {rows[4]!.done ? "Review" : "Set up"}
@@ -319,6 +414,7 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
           ))}
         </ol>
       </Card>
+      <PresetLine />
       {waiting > 0 ? (
         <p className="text-sm text-ink-2" data-testid="uploaded-waiting">
           {waiting === 1 ? "1 uploaded app is waiting for review. " : `${waiting} uploaded apps are waiting for review. `}
@@ -330,9 +426,9 @@ function Checklist({ setup, tryIt, toast, onKeyAdded, onDismissToast }: { setup:
       <AiKeyDialog
         open={keyOpen}
         onOpenChange={setKeyOpen}
-        onSaved={() => {
+        onSaved={(keyName, applied) => {
           setKeyOpen(false);
-          onKeyAdded();
+          onKeyAdded(keyName, applied);
         }}
       />
     </div>
@@ -366,10 +462,49 @@ function HealthRow({ tone: t, title, children, href, hrefLabel }: { tone: Status
   );
 }
 
+/** The terminal section is available on this deployment (the same test as the Computers page). */
+function availableOf(section: { extra?: unknown }): boolean {
+  return (section.extra as { available?: boolean } | null | undefined)?.available === true;
+}
+/** Is the terminal switched on in the section: the saved value, else its default; `null` when the key is absent. */
+function terminalOn(section: { settings: { key: string; value: unknown; default?: unknown }[] }): boolean | null {
+  const s = section.settings.find((x) => x.key === "terminal.enabled");
+  if (!s) return null;
+  return (s.value ?? s.default) === true;
+}
+
+/**
+ * (P5-REFINE-18 #15, D-383) One endpoint in the AI models line, by its display name and only what a real call proved:
+ * "Company AI gateway answered 2 min ago." or "Users AI gateway has not been asked yet." A failed real call says when.
+ */
+function EndpointLine({ c }: { c: SetupCheck }) {
+  const name = c.message.replace(/ (answers|did not answer)\.$/, "");
+  const ok = c.last_ok_at ?? null;
+  const err = c.last_error_at ?? null;
+  const failedLast = err !== null && (ok === null || err > ok);
+  return (
+    <span className="mr-1">
+      <strong className="font-semibold text-ink">{name}</strong>{" "}
+      {failedLast ? (
+        <>did not answer at {formatTime(err)}.</>
+      ) : ok !== null && c.evidence === "call" ? (
+        <>
+          answered <When value={ok} />.
+        </>
+      ) : c.status !== "ok" ? (
+        <>did not answer.</>
+      ) : (
+        <>has not been asked yet.</>
+      )}
+    </span>
+  );
+}
+
 /** After setup: what is healthy and what needs the admin, from the same status as the checklist (`14 §9`). */
 function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () => void }) {
   const placement = usePlacement();
   const storage = useAdminStorage();
+  const terminal = useSettingsSection("terminal");
   const optional = stepOf(setup, "optional");
   const gaps = gapsFromChecks(optional?.checks ?? []);
   const blocked = gaps.filter((g) => !g.tokenOnly);
@@ -448,12 +583,17 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
             href={adminRoutes.aiModels("endpoints")}
             hrefLabel="Open AI models"
           >
-            {endpoints.length === 0
-              ? "No AI endpoint is set up."
-              : down.length > 0
-                ? down.map((c) => c.message).join(" ")
-                : `${endpoints.length === 1 ? "1 endpoint answers" : `${endpoints.length} endpoints answer`}.`}
+            {endpoints.length === 0 ? (
+              "No AI endpoint is set up."
+            ) : (
+              endpoints.map((c) => <EndpointLine key={c.id} c={c} />)
+            )}
           </HealthRow>
+          {terminal.data && availableOf(terminal.data) && terminalOn(terminal.data) === false ? (
+            <HealthRow tone="idle" title="Web terminal" href={adminRoutes.sectionPage("terminal", "terminal.enabled")} hrefLabel="Turn on">
+              Off. People see “not available” on their agent&apos;s Computer tab.
+            </HealthRow>
+          ) : null}
           <HealthRow tone="ok" title="New people" href={adminRoutes.people("new-users")} hrefLabel="Change">
             {setup.placement_saved ? "They land where you chose, with a personal workspace and the organization's AI key." : "Not saved yet."}
           </HealthRow>
@@ -485,7 +625,7 @@ export function SetupView() {
   const qc = useQueryClient();
   const setup = useAdminSetup();
   const params = useSearchParams();
-  const tryIt = useTryIt();
+  const tryIt = useTryIt(setup.data?.try_it, setup.data ? keyDone(setup.data) : false);
   // `null` = automatic: the health view when the required steps are done. A choice (or a step just finished) pins it.
   const [view, setView] = useState<View | null>(params.get("setup") === "1" ? "checklist" : null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -498,11 +638,16 @@ export function SetupView() {
   const complete = setup.data ? setupComplete(setup.data, tryIt.replied) : false;
   const shown: View = view ?? (complete && tryIt.ready ? "health" : "checklist");
 
-  async function keyAdded() {
+  const [given, setGiven] = useState<KeyGiven | null>(null);
+  async function keyAdded(keyName: string, applied: KeyGiven | null) {
     setView("checklist");
+    setGiven(applied);
     await qc.invalidateQueries({ queryKey: onboardingKeys.setup });
     const fresh = qc.getQueryData<SetupStatus>(onboardingKeys.setup);
-    setToast({ text: fresh ? `AI key added. ${doneCount(fresh, tryIt.replied)} of ${SETUP_STEPS} done.` : "AI key added.", waiting: fresh?.personal_workspaces_without_starter ?? 0 });
+    // (P5-REFINE-18 #14, D-414) "Company key added. Daneel can use it now." The agents already there got it with the key.
+    const who = applied?.names[0];
+    const lead = who ? `${keyName} added. ${who} can use it now.` : `${keyName} added.`;
+    setToast({ text: fresh ? `${lead} ${doneCount(fresh, tryIt.replied)} of ${SETUP_STEPS} done.` : lead, waiting: fresh?.personal_workspaces_without_starter ?? 0 });
   }
 
   return (
@@ -532,7 +677,7 @@ export function SetupView() {
       <div role="tabpanel" id={tabPanelId("overview", shown)} aria-labelledby={tabId("overview", shown)} className="space-y-6">
         {setup.data && shown === "health" ? <HealthView setup={setup.data} onRunSetup={() => setView("checklist")} /> : null}
         {setup.data && shown === "checklist" ? (
-          <Checklist setup={setup.data} tryIt={tryIt} toast={toast} onKeyAdded={() => void keyAdded()} onDismissToast={() => setToast(null)} />
+          <Checklist setup={setup.data} tryIt={tryIt} toast={toast} given={given} onKeyAdded={(n, a) => void keyAdded(n, a)} onDismissToast={() => setToast(null)} />
         ) : null}
       </div>
     </div>

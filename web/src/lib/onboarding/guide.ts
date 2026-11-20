@@ -131,3 +131,6 @@ function providerText(scope: string, name: string): string {
 
 /** The first message the guide suggests to say hello. */
 export const HELLO_MESSAGE = "Hello! What can you help me with?";
+
+/** (P5-REFINE-18 #14) The hello that setup's Open chat types for the admin, with the agent's name. */
+export const helloMessage = (agentName?: string | null): string => (agentName?.trim() ? `Hello ${agentName.trim()}! What can you help me with?` : HELLO_MESSAGE);
