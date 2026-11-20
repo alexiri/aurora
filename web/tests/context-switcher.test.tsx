@@ -36,8 +36,12 @@ interface World {
   extraOrgs: number;
   /** `/v1/instance` `org_creation`: who may create an organization. */
   orgCreation: "instance_admins" | "anyone";
-  /** Items `GET /v1/admin/attention` returns. */
+  /** The Administration total `GET /v1/attention/counts` returns for an instance admin (C-1082). */
   attention: number;
+  /** The Administration count per topic. */
+  attentionTopics?: Record<string, number>;
+  /** The organization's total (owners and admins only; `null` for everyone else). */
+  orgAttention?: number;
 }
 let world: World;
 
@@ -94,9 +98,15 @@ function mockFetch() {
         const body = (await req.clone().json()) as { more_controls: boolean };
         return json(200, { welcome_seen: true, guide_dismissed: [], tour_completed_at: null, notices_seen: [], more_controls: body.more_controls });
       }
-      if (p === "/v1/admin/attention") {
-        const item = { kind: "connector_down", subject_id: "mattermost", title: "Mattermost is not running", detail: "x", since: now, href: "/admin/chat-platforms", decision: false };
-        return json(200, { items: Array.from({ length: world.attention }, () => item) });
+      if (p === "/v1/attention/counts") {
+        // (C-1082) `null` for a scope the caller cannot act on: Administration for instance admins, the organization for its owners and admins.
+        const orgId = url.searchParams.get("org");
+        const isOrgAdmin = world.orgRole === "owner" || world.orgRole === "admin";
+        return json(200, {
+          administration: world.admin ? { count: world.attention, topics: world.attentionTopics ?? {} } : null,
+          organization: orgId && isOrgAdmin && world.orgAttention !== undefined ? { org_id: orgId, count: world.orgAttention, topics: { "chat-platforms": world.orgAttention } } : null,
+          workspace: null,
+        });
       }
       if (p === "/v1/instance") return json(200, { org_creation: world.orgCreation, email_delivery: "smtp", features: {} });
       if (p === "/v1/orgs") return json(200, { items: [users, acme] });
@@ -227,6 +237,30 @@ describe("scope switcher", () => {
     expect(screen.getByRole("link", { name: "Manage Users" })).toHaveAttribute("href", "/o/users");
   });
 
+  // (P5-REFINE-17 #17, G3, C-1082) What waits in the organization is on its Manage row and on the closed switcher.
+  it("(G3) the Manage row and the switcher carry the organization's count, for its owners and admins only", async () => {
+    onWorkspace({ usersCount: 2, acmeCount: 1, orgRole: "owner", orgAttention: 3 });
+    const trigger = await screen.findByTestId("switcher-attention-badge");
+    expect(trigger).toHaveTextContent("3");
+    await openSwitcher();
+    const row = await screen.findByRole("link", { name: /^Manage Users/ });
+    await waitFor(() => expect(within(row).getByTestId("manage-switcher-badge")).toHaveTextContent("3"));
+    expect(within(row).getByText("3 need your attention")).toBeInTheDocument();
+    cleanup();
+    // A member never gets one (the API answers `null`), and a zero shows nothing.
+    onWorkspace({ usersCount: 2, acmeCount: 1, orgRole: "member", orgAttention: 3 });
+    await screen.findByRole("button", { name: /Bob Builder/ });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId("switcher-attention-badge")).toBeNull();
+    cleanup();
+    onWorkspace({ usersCount: 2, acmeCount: 1, orgRole: "owner", orgAttention: 0 });
+    await openSwitcher();
+    await screen.findByRole("link", { name: /^Manage Users/ });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId("manage-switcher-badge")).toBeNull();
+    expect(screen.queryByTestId("switcher-attention-badge")).toBeNull();
+  });
+
   it("(org-5) New organization is the last row only where sign-up lets this person create one", async () => {
     onWorkspace({ usersCount: 2, acmeCount: 1 });
     await openSwitcher();
@@ -327,6 +361,17 @@ describe("Administration count badge (P5-REFINE-18 #18, C-1022)", () => {
     fireEvent.keyDown(trigger, { key: "Enter" });
     const entry = await screen.findByRole("menuitem", { name: /^Administration/ });
     await waitFor(() => expect(within(entry).getByTestId("admin-attention-badge")).toHaveTextContent("3"));
+  });
+
+  it("(G4) a topic entry carries its own part, and no badge at zero", async () => {
+    render("/admin/people", {}, { admin: true, attention: 2, attentionTopics: { "chat-platforms": 1 } });
+    const nav = await screen.findByRole("navigation", { name: "Administration" });
+    const chat = within(nav).getByRole("link", { name: /^Chat platforms/ });
+    await waitFor(() => expect(within(chat).getByTestId("admin-attention-badge-chat-platforms")).toHaveTextContent("1"));
+    expect(within(chat).getByText("1 needs your attention")).toBeInTheDocument();
+    // Overview carries the total once; People has none of its own.
+    expect(within(within(nav).getByRole("link", { name: /^Overview/ })).getByTestId("admin-attention-badge")).toHaveTextContent("2");
+    expect(within(within(nav).getByRole("link", { name: /^People/ })).queryByTestId("admin-attention-badge-people")).toBeNull();
   });
 
   it("shows no badge for a member, and none for an empty list", async () => {

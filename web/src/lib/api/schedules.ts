@@ -20,10 +20,11 @@ export const scheduleKeys = {
   runs: (agent: string, id: string) => ["agents", agent, "schedules", id, "runs"] as const,
 };
 
-export function useSchedules(agent: string) {
+export function useSchedules(agent: string, enabled = true) {
   return useQuery({
     queryKey: scheduleKeys.list(agent),
     queryFn: () => unwrap(api.GET("/v1/agents/{agent}/schedules", { params: { path: { agent } } })),
+    enabled,
     retry: false,
   });
 }

@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPane, ChatTab } from "@/components/agents/chat-tab";
+import { originRunCard } from "@/lib/chat/first-success";
 import { listTime } from "@/lib/chat/layout";
 import { resetStopped } from "@/lib/chat/stopped";
 import { json } from "./support/api";
@@ -227,5 +228,36 @@ describe("Stop keeps what was written (chat-4, C-1075)", () => {
     expect(stopping).toBeDisabled();
     await act(async () => {});
     expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+  });
+});
+
+describe("an error shows once with its technical line under Details (chat-7, C-1076)", () => {
+  const pane = () => wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} agent={{ id: "a1", name: "Daneel", handle: "daneel" }} />);
+
+  it("reads the harness text from `detail`, not from the sentence, and shows no repeating bubble", () => {
+    st.events = [
+      e(1, "turn.queued", { turn_id: "t1", speaker_label: "Bob", text: "go" }),
+      e(2, "error", { turn_id: "t1", code: "turn_failed", message: "The turn failed.", detail: "API Error: 400 No connected db." }),
+      e(3, "turn.finished", { turn_id: "t1", status: "failed", error_code: "turn_failed" }),
+    ];
+    mock();
+    pane();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.queryByText("API Error: 400 No connected db.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(screen.getByText("API Error: 400 No connected db.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide details" })).toBeTruthy();
+  });
+});
+
+describe("the first-run card's Open the run (C-1074, C-1077)", () => {
+  it("is built from the schedule made in this chat and its newest run's thread; none while running or old", () => {
+    const now = new Date("2026-11-20T10:00:00Z");
+    const run = { fired_at: "2026-11-20T09:00:00Z", conversation_id: "r1", result: "answered" };
+    expect(originRunCard({ name: "Morning summary" }, run, now)).toEqual({ key: "first-run", title: "Morning summary", at: run.fired_at, conversationId: "r1" });
+    expect(originRunCard({ name: "Morning summary" }, { ...run, result: "running" }, now)).toBeNull();
+    expect(originRunCard({ name: "Morning summary" }, { ...run, conversation_id: null }, now)).toBeNull();
+    expect(originRunCard({ name: "Morning summary" }, { ...run, fired_at: "2026-11-01T09:00:00Z" }, now)).toBeNull();
+    expect(originRunCard(undefined, run, now)).toBeNull();
   });
 });

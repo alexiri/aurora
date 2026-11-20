@@ -18,7 +18,7 @@ export type FirstSuccess =
   | { key: "first-answer"; tools: number }
   | { key: "first-app"; appId: string; appName: string }
   | { key: "first-approval" }
-  | { key: "first-run"; title: string; at: string };
+  | { key: "first-run"; title: string; at: string; /** The run's own thread (C-1074), when this card is not inside it. */ conversationId?: string };
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -57,6 +57,20 @@ export function pendingFirstSuccesses(
     if (last) out.push({ key: "first-run", title: conversation.title || "The schedule", at: last.ts });
   }
   return out;
+}
+
+/**
+ * (P5-REFINE-7, C-1077) The first-run card for the chat a schedule was made in: the schedule whose `origin_conversation_id` is this
+ * chat and whose newest run is recent, with that run's own thread for **Open the run**. `null` when there is none.
+ */
+export function originRunCard(
+  s: { name: string } | null | undefined,
+  newestRun: { fired_at: string; conversation_id?: string | null; result: string } | null | undefined,
+  now: Date,
+): Extract<FirstSuccess, { key: "first-run" }> | null {
+  if (!s || !newestRun || newestRun.result === "running" || !newestRun.conversation_id) return null;
+  if (now.getTime() - Date.parse(newestRun.fired_at) > FIRST_SUCCESS_WINDOW_MS) return null;
+  return { key: "first-run", title: s.name, at: newestRun.fired_at, conversationId: newestRun.conversation_id };
 }
 
 /** "Morning summary ran at 09:00." */

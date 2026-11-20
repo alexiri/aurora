@@ -16,36 +16,6 @@ export function useAgentAttention(workspaceId: string | undefined, agentId: stri
   return (q.data?.items ?? []).filter((a) => a.given === true && needsAttention(a));
 }
 
-/** Every account of the workspace that has stopped working (C-945), for the Overview's **Needs you** card. */
-export function useWorkspaceAttention(workspaceId: string): Account[] {
-  const q = useAccounts({ kind: "workspace", id: workspaceId }, true);
-  return (q.data?.items ?? []).filter(needsAttention);
-}
-
-/**
- * One item of the Overview's **Needs you** card: the account's row line and its fix (Reconnect deep-links to the
- * Accounts tab's dialog). For people who cannot fix it, who can.
- */
-export function AccountAttentionItem({ account: a, base, workspaceId }: { account: Account; base: string; workspaceId: string }) {
-  const who = useWhoCan({ workspaceId }, "workspace_owner", "manage_account");
-  const fix = healthLine(a).fix;
-  const href = fix?.kind === "reconnect" ? `${base}/apps?tab=accounts&reconnect=${a.ref.id}` : `${base}/apps?tab=accounts`;
-  return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control bg-surface px-3 py-2 text-sm">
-      <span className="min-w-0 flex-1">
-        <span className="font-medium">{a.name}</span>: {healthLine(a).text}
-      </span>
-      {fix && a.can.manage ? (
-        <Link href={href} className="font-medium text-link underline">
-          {fix.label}
-        </Link>
-      ) : (
-        <WhoCan value={who} />
-      )}
-    </li>
-  );
-}
-
 /** "1 account needs attention" on the agent's header, linking to the Access tab. Nothing when all is well. */
 export function AgentAttentionChip({ workspaceId, agentId, accessHref }: { workspaceId: string; agentId: string; accessHref: string }) {
   const text = attentionCount(useAgentAttention(workspaceId, agentId).length);

@@ -11,8 +11,6 @@ export type AttentionItem = components["schemas"]["AttentionItem"];
 export type AttentionList = components["schemas"]["AttentionList"];
 export type AttentionCounts = components["schemas"]["AttentionCounts"];
 
-export const attentionKey = ["admin", "attention"] as const;
-
 /** (P5-REFINE-8, C-1080/C-1082) The feeds and the counts share the `["attention"]` prefix: one invalidation refreshes both. */
 export const attentionKeys = {
   all: ["attention"] as const,
@@ -54,14 +52,18 @@ export function useAttentionFeed(level: AttentionLevel, id: string | undefined, 
  * (never an error). Refetched on window focus and every 5 minutes; deciding, declining or resolving an item
  * invalidates `attentionKeys.all`.
  */
-export function useAttentionCounts({ org, workspace }: { org?: string; workspace?: string }, enabled = true) {
+export function useAttentionCounts(
+  { org, workspace }: { org?: string; workspace?: string },
+  enabled = true,
+  { intervalMs = ATTENTION_REFETCH_MS, staleTime = 30_000 }: { intervalMs?: number; staleTime?: number } = {},
+) {
   return useQuery({
     queryKey: attentionKeys.counts(org, workspace),
     enabled,
     retry: false,
-    staleTime: 30_000,
+    staleTime,
     refetchOnWindowFocus: true,
-    refetchInterval: ATTENTION_REFETCH_MS,
+    refetchInterval: () => (typeof document === "undefined" || document.visibilityState === "visible" ? intervalMs : false),
     queryFn: () =>
       unwrap(
         api.GET("/v1/attention/counts", {
@@ -71,36 +73,65 @@ export function useAttentionCounts({ org, workspace }: { org?: string; workspace
   });
 }
 
+/** The workspace rail's numbers are read again this often (the pending approvals' own poll, P5-REFINE-16 G1). */
+export const WORKSPACE_COUNTS_MS = 30_000;
+
+/**
+ * (P5-REFINE-16 item 19, G1/G2/G6) The one hook behind every workspace count badge: Approvals, Overview, the phone drawer
+ * and the menu dot all read it, so they show the same number and ask once (one query key). `count` is the whole level
+ * (Overview), `topics` the part per page (`approvals`). Both are 0 for someone who cannot act there (the scope comes back
+ * `null`), while loading and when the read fails: a badge never shows an error.
+ */
+export function useWorkspaceCounts(wsId: string | undefined): { count: number; topics: Record<string, number> } {
+  const q = useAttentionCounts({ workspace: wsId }, !!wsId, { intervalMs: WORKSPACE_COUNTS_MS, staleTime: 0 });
+  const w = wsId && !q.isError ? q.data?.workspace : null;
+  return { count: w?.count ?? 0, topics: w?.topics ?? {} };
+}
+
 /** The badge refetches on window focus and at this interval (FIX-167, D-370). */
 export const ATTENTION_REFETCH_MS = 5 * 60_000;
 
 /**
- * `GET /v1/admin/attention` (C-1022): what needs an instance admin. `enabled` is false for everyone else
- * (the route answers 403). A failed fetch is not retried and not shown: the badge simply hides.
- */
-export function useAdminAttention(enabled = true) {
-  return useQuery({
-    queryKey: attentionKey,
-    queryFn: () => unwrap(api.GET("/v1/admin/attention")),
-    enabled,
-    retry: false,
-    staleTime: 30_000,
-    refetchOnWindowFocus: true,
-    refetchInterval: ATTENTION_REFETCH_MS,
-  });
-}
-
-/**
- * (P5-REFINE-18 #18) The count drops without a reload: any mutation that succeeds may have resolved an item
- * (an approval, a decision, a connected platform), so the attention query is refetched, once per success. Only an
- * active query refetches, so a person without the badge fetches nothing.
+ * (P5-REFINE-18 #18, P5-REFINE-17 #17) The count drops without a reload: any mutation that succeeds may have resolved an
+ * item (an approval, a decision, a connected platform), so every attention query (feeds and counts) is refetched, once per
+ * success. Only an active query refetches, so a person without a badge fetches nothing.
  */
 export function useRefreshAttentionOnMutation(enabled: boolean): void {
   const qc = useQueryClient();
   useEffect(() => {
     if (!enabled) return;
     return qc.getMutationCache().subscribe((e) => {
-      if (e.type === "updated" && e.action.type === "success") void qc.invalidateQueries({ queryKey: attentionKey });
+      if (e.type === "updated" && e.action.type === "success") {
+        void qc.invalidateQueries({ queryKey: attentionKeys.all });
+      }
     });
   }, [qc, enabled]);
+}
+
+/** One level's number for a rail: the total and the open items per topic (`topics`, C-1082). */
+export interface LevelBadge {
+  count: number;
+  topics: Record<string, number>;
+}
+
+/**
+ * (P5-REFINE-18 #18, C-1082) What waits in Administration for an instance admin: the total for the Overview entry and the
+ * sidebar link, and a part per topic (`apps`, `chat-platforms`, `people`). `null` for everyone else, while loading and when
+ * the read failed: a badge never shows an error.
+ */
+export function useAdminBadge(enabled = true): LevelBadge | null {
+  const q = useAttentionCounts({}, enabled);
+  if (!enabled || q.isError) return null;
+  return q.data?.administration ?? null;
+}
+
+/**
+ * (P5-REFINE-17 #17, C-1082) What waits in one organization for its owners and admins (requests for apps, chat platforms
+ * and AI keys): the total for the Manage entry and the Overview, and a part per topic. `null` for everyone else.
+ */
+export function useOrgBadge(orgId: string | undefined, enabled = true): LevelBadge | null {
+  const on = enabled && !!orgId;
+  const q = useAttentionCounts({ org: orgId }, on);
+  if (!on || q.isError) return null;
+  return q.data?.organization ?? null;
 }

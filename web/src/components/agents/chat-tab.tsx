@@ -416,6 +416,7 @@ export function ChatTab({
               select(null);
             }}
             onTurn={setOpenTurn}
+            onOpenConversation={(id) => select(id)}
             initialDraft={draft ?? undefined}
             onDraftUsed={onDraftUsed}
             onSeeWhatItDid={() => (window.innerWidth < 768 ? onStatusSheetOpenChange?.(true) : setRailExpanded(true))}

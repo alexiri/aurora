@@ -460,12 +460,24 @@ Lane A, branch `alexiri/p5-polish-a`, master at 6cbf3a12 then re-merged at 4c92c
     was stopped here or has `abort_requested` (also the computer's "working" while only that turn runs), so it is **Ready at once**; the durable
     `turn_stopped` notice renders as "You stopped this answer" (muted, between two rules) under the partial text (`lib/chat/stopped.ts`,
     `transcript-view.tsx`). The `stopErr` path keeps its message.
+- **Third pass (follow-ups, brief 7 and brief 8 merged; master 58c97b20 merged in):**
+  - **Open the run** — the chat a schedule was made in (`origin_conversation_id`) shows the first-run card for its newest recent run, with **Open the run**
+    (the run's `conversation_id`; opening it also dismisses the card). `originRunCard` in `lib/chat/first-success.ts`; `useSchedules` gained `enabled`.
+    The card inside a run thread keeps its sentence without a button (it already is the run).
+  - **chat-7 from `detail`** — `ErrorBlock` shows the sentence and puts the `error` event's `detail` (C-1076) under Details; an old event without `detail`
+    still falls back to `message`. The bubble suppression also matches `detail`.
+  - **Item 11 / G5 (Needs-you count on the agent's Agents-list row)** — `lib/api/agent-needs.ts` `useAgentNeedsCounts(wsId)`: the workspace's pending gateway
+    and action approvals grouped by agent (the same two lists the rail's Needs you reads, so they match), only for those who can decide (no request
+    otherwise), polled 30 s/10 s plus the approvals stream opened on the page; `AgentsList` shows an `AttentionChip` (count in the link's name for
+    screen readers, none at zero). The rail's own count on its icon and heading already existed. **C-1082 / `useWorkspaceCounts` is workspace-level and
+    carries no agent, so it cannot give a per-agent number; the per-agent hook is therefore separate.** Access requests are not in the row's count
+    (the feed has no agent id).
+  - Tests: `refine-11-chats.test.tsx` (+2: error detail, `originRunCard`), `agent-needs.test.tsx` (new, 3), `e2e/agent-needs.spec.ts` (new: count appears,
+    drops after deciding without a reload, both themes, 1280/390 px, axe) — Playwright not run, for the CI Watcher. Gates: typecheck, eslint on touched files,
+    full web vitest 216 files / 2986 tests passed.
 - **Still waiting (not done, with what they wait for):** item 3's live "What <Agent> did" (last five timeline rows, `useTimelineStream`) → **-9**;
-  item 8's "<Agent> has no AI model yet" card with Add a key / Ask an admin (header words are done) → needs **-8**'s Ask reason and is -12's button;
-  item 11 the Needs-you count on the agent's Agents-list row (`C-1082`) → **-8** (the rail's own count on the icon and in the heading already
-  existed and is kept); the first-run card's **"Open the run"** button (now possible with -7's `conversation_id`; not wired in this pass, it
-  belongs with the first-success cards' next touch) and chat-7's person-facing sentence from the split event (`detail`, C-1076; the client-side
-  handling still works and is cleaner once read from `detail` — left for the pass that does -9).
+  item 8's "<Agent> has no AI model yet" card with Add a key / Ask an admin (header words are done; -8 is merged so the Ask reason exists, but the
+  card's button is -12's and is not wired here). Everything else of the brief that has a merged dependency is done (the third pass above).
 - **Deviations from this brief, and why:**
   - Settings: followed the coordinator's decision (button opens the page; Pause and Delete in the danger zone at the bottom), not the
     mockup's menu. Pause in the zone is an outline button; Delete a danger button.

@@ -21,7 +21,8 @@ for (const scheme of ["light", "dark"] as const) {
         const title = await row.getByRole("heading", { level: 3 }).boundingBox();
         const level = await row.getByRole("combobox", { name: /Daneel's access to/ }).boundingBox();
         const menu = await row.getByRole("button", { name: /^More for/ }).boundingBox();
-        expect(title!.width).toBeGreaterThan(150);
+        // "GitHub · acme-bot" is about 140 px of text: it is not squeezed (nothing hidden) and stays on one line.
+        expect(await row.getByRole("heading", { level: 3 }).evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
         expect(title!.height).toBeLessThan(60);
         expect(level!.y).toBeGreaterThanOrEqual(title!.y + title!.height);
         expect(Math.abs(menu!.y - level!.y)).toBeLessThan(12);

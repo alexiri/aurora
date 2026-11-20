@@ -5,6 +5,7 @@ import { useQueries } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { gapFromSetup, type SignInGap } from "@/components/admin/sign-in-gaps";
+import { SetupDeclineButton } from "@/components/overview/setup-request-row";
 import { ErrorState, Loading } from "@/components/states";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { StatusLine } from "@/components/ui/status-line";
 import { Switch } from "@/components/ui/switch";
 import { productKey, productName } from "@/lib/api/app-name";
-import { useDeclineSetup, useOrgSetupRequests, type AppSetupRequest } from "@/lib/api/app-setup-requests";
+import { useOrgSetupRequests, type AppSetupRequest } from "@/lib/api/app-setup-requests";
 import { appKeys, toggleAllow, useAppAvailability, useApps, usePutAppAvailability, type AppAvailability, type AppSummary } from "@/lib/api/apps";
 import { api } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
@@ -94,7 +95,7 @@ function askersText(r: AppSetupRequest): string {
  * (P5-POLISH-9, E3) Organization › Apps & accounts › Apps as one table: App, Status ("Ready" or "Needs <Provider> sign-in" with
  * Set up) and **People may connect** (a switch that saves when you flip it, with Undo). A note counts the apps that need a
  * sign-in app and names the providers that cover several (Show them sets the filter); an open setup request shows on its
- * app's row ("Bob asked", Set up, Not now); the variants of one product are one row. It replaces "People can't sign in to X
+ * app's row ("Bob asked", Set up, Decline); the variants of one product are one row. It replaces "People can't sign in to X
  * yet" and the availability radio with its Save.
  */
 export function OrgAppsTable({ orgId, orgSlug, canEdit }: { orgId: string; orgSlug: string; canEdit: boolean }) {
@@ -102,7 +103,6 @@ export function OrgAppsTable({ orgId, orgSlug, canEdit }: { orgId: string; orgSl
   const avail = useAppAvailability(orgId);
   const put = usePutAppAvailability(orgId);
   const requests = useOrgSetupRequests(orgId, canEdit);
-  const decline = useDeclineSetup(orgId);
   const items = apps.data?.items ?? [];
   const setups = useQueries({
     queries: items.map((a) => ({
@@ -246,9 +246,7 @@ export function OrgAppsTable({ orgId, orgSlug, canEdit }: { orgId: string; orgSl
                             </Link>
                           ) : null}
                           {canEdit ? (
-                            <Button size="sm" variant="ghost" disabled={decline.isPending} onClick={() => decline.mutate(q.id)}>
-                              Not now
-                            </Button>
+                            <SetupDeclineButton request={q} orgId={orgId} noun={r.name} />
                           ) : null}
                         </p>
                       ))}

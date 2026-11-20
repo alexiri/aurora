@@ -292,7 +292,10 @@ overridden by the named configuration key (`15`).
 | `RETENTION_SWEEP_BATCH` | (phase 2, RFE-010) 200 conversations per transaction, ≤ 5 000 per org per run | — | 10 |
 | `EXPORT_MAX` | (phase 2, RFE-010) 256 MiB and 200 000 events per export | — | 10 |
 | `SCHEDULE_FIRE_LEASE` | 5 min | — | 10 |
-| `SCHEDULE_FAILURE_DISABLE` | 5 consecutive | — | 10 |
+| `SCHEDULE_FAILURE_DISABLE` | 5 consecutive (never disables a one-time schedule, D-421) | — | 10 |
+| `SCHEDULE_ONCE_MAX_AHEAD` | a one-time schedule's `run_at` is at most 5 years (1 827 days) ahead; further → 422 at `/run_at` (phase 5, P5-SCHED-ONCE, D-421, C-1092) | — | 10, 05 |
+| `SCHEDULE_ONCE_RECHECK` | 60 s: a due one-time schedule of a paused agent is checked again this often, so it fires within a minute of Resume (phase 5, P5-SCHED-ONCE, C-1092) | — | 10 |
+| `SCHEDULE_DONE_RETENTION` | 30 days: a Done one-time schedule is deleted by the daily retention pass this long after it ran (phase 5, P5-SCHED-ONCE, C-1092) | — | 10, 05 |
 | `DIRECT_CONVERSATIONS_PER_PERSON_AGENT` | 500 direct conversations (active and archived) per person and agent; the next New chat is 422 `conversation_limit` (phase 5, P5-REFINE-7, C-1073) | — | 10, 05 |
 | `AUTOMATION_THREADS_KEPT` | 200 newest run threads per schedule or webhook; the nightly conversation sweep deletes older ones (phase 5, P5-REFINE-7, C-1074) | — | 10 |
 | `GATE_TIMEOUT` | 30 s | — | 12 |

@@ -144,7 +144,9 @@ for (const scheme of ["light", "dark"] as const) {
         // One button per row; no form on the page.
         await expect(steps.locator("#setup-signin").getByRole("link", { name: "Review" })).toBeVisible();
         await expect(steps.locator("#setup-placement").getByRole("link", { name: "Change" })).toBeVisible();
-        await expect(steps.locator("#setup-try").getByRole("link", { name: "Open chat" })).toBeVisible();
+        // (D-414, P5-REFINE-18 #14) No starter key: Try it is not offered until an agent can answer.
+        await expect(steps.locator("#setup-try").getByRole("link", { name: "Open chat" })).toHaveCount(0);
+        await expect(steps.locator("#setup-try")).toContainText("Comes after the AI key");
         await expect(steps.locator("#setup-email").getByRole("link", { name: "Set up" })).toBeVisible();
         await expect(page.getByText("2 of 5")).toBeVisible();
         await clean(page, width === 390);
@@ -157,7 +159,9 @@ for (const scheme of ["light", "dark"] as const) {
         await form.getByLabel("API key", { exact: true }).fill("sk-test-key");
         await dialog.getByRole("button", { name: "Add key" }).click();
         // The checklist stays, with its toast; the health view is not shown (the try-it step is still open).
-        await expect(page.getByTestId("setup-toast")).toContainText("AI key added. 3 of 5 done.");
+        // (P5-REFINE-18 #14) The toast names the key ("<name> added."), then the count.
+        await expect(page.getByTestId("setup-toast")).toContainText("AIGW key added.");
+        await expect(page.getByTestId("setup-toast")).toContainText("3 of 5 done.");
         await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();
         await expect(steps.locator("#setup-key")).toHaveAttribute("data-done", "true");
         await expect(page.getByTestId("admin-health")).toHaveCount(0);

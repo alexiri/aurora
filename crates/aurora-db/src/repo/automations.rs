@@ -33,6 +33,7 @@ pub async fn schedules<'e, E: PgExecutor<'e>>(
          FROM schedules s JOIN agents a ON a.id = s.agent_id JOIN workspaces w ON w.id = a.workspace_id
          WHERE w.org_id = $1 AND ($2::uuid IS NULL OR w.id = $2)
            AND s.creator_user_id = $3 AND s.anchor = 'creator' AND s.enabled
+           AND s.completed_at IS NULL
          ORDER BY w.name, a.name, s.created_at, s.id",
     )
     .bind(org)

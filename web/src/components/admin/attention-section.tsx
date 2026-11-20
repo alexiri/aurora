@@ -1,50 +1,31 @@
 "use client";
 
-import Link from "next/link";
-
-import { formatDay } from "@/lib/format-date";
-
-import { buttonVariants } from "@/components/ui/button";
-import { useAdminAttention } from "@/lib/api/attention";
-import { cn } from "@/lib/utils";
-
-const fmtSince = (s: string) => formatDay(s);
+import { AttentionHistory, NeedsYouCard } from "@/components/attention/needs-you-feed";
+import { useAdminDeclineRequest } from "@/lib/api/app-setup-requests";
+import { useAttentionFeed } from "@/lib/api/attention";
 
 /**
- * (FIX-167 Part B, D-370, C-1022) Administration › Overview opens with what needs the instance admin:
- * decisions first, then facts. Each item has its title, detail, since, and one button to the page that
- * resolves it. With nothing to show (or while loading, or on an error) there is no section.
+ * (FIX-167 Part B, D-370; P5-REFINE-18 #13, C-1080) Administration › Overview opens with **Needs you**: what needs the
+ * instance admin, decisions first, in the one row shape every level uses: the six C-1022 kinds and the requests only an
+ * instance admin can resolve (a chat platform when none is connected, an app that needs the instance), each with its
+ * primary action and, on a request, **Decline** with an optional message. With nothing to show (or while loading, or on an
+ * error) there is no card; **History** keeps what closed in the last 30 days.
  */
 export function AttentionSection() {
-  const q = useAdminAttention();
-  const items = q.data?.items ?? [];
-  if (items.length === 0) return null;
+  const feed = useAttentionFeed("administration", undefined);
+  const decline = useAdminDeclineRequest();
+  const items = (feed.data?.items ?? []).filter((i) => !i.own);
   return (
-    <section aria-labelledby="attention-h" className="space-y-4 rounded-card border border-pending-line bg-pending-panel p-4" data-testid="admin-attention">
-      <div>
-        <h2 id="attention-h" className="font-display text-base font-semibold text-ink">
-          Needs your attention
-        </h2>
-        <p className="text-sm text-ink-2">Decisions come first. Each item opens the page that resolves it.</p>
-      </div>
-      <ul className="divide-y divide-line">
-        {items.map((i) => (
-          <li key={`${i.kind}:${i.subject_id}`} data-kind={i.kind} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3 text-sm first:pt-0 last:pb-0">
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold text-ink">{i.title}</p>
-              <p className="text-ink-2">{i.detail}</p>
-              <p className="text-xs text-muted">Since {fmtSince(i.since)}</p>
-            </div>
-            <Link
-              href={i.href}
-              aria-label={`${i.decision ? "Review" : "Open"}: ${i.title}`}
-              className={cn(buttonVariants({ variant: i.decision ? "primary" : "outline", size: "sm" }), i.decision && "text-on-primary!")}
-            >
-              {i.decision ? "Review" : "Open"}
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </section>
+    <>
+      <NeedsYouCard
+        id="admin-attention"
+        items={items}
+        count={feed.data?.count ?? 0}
+        declining={decline.isPending}
+        declineError={decline.error}
+        onDecline={(item, message, done) => decline.mutate({ id: item.id, message }, { onSuccess: done })}
+      />
+      <AttentionHistory level="administration" />
+    </>
   );
 }

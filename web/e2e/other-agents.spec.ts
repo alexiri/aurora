@@ -49,7 +49,8 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
         await page.getByRole("button", { name: "Link another agent" }).click();
         const dialog = page.getByRole("dialog", { name: "Link another agent" });
         await expect(dialog.getByRole("option", { name: "Sleepy · Ops (Paused)" })).toBeDisabled();
-        await dialog.getByLabel("Agent").selectOption({ label: "Rex · Ops" });
+        // Exact: the direction cards' names mention agents too.
+        await dialog.getByLabel("Agent", { exact: true }).selectOption({ label: "Rex · Ops" });
         await expect(dialog.getByText("Daneel only works on what Rex sends.")).toBeVisible();
         await dialog.getByRole("radio", { name: /Both ways/ }).check();
         if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);

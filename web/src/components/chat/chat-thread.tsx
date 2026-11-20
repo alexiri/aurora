@@ -45,7 +45,10 @@ export function ChatThread({
   initialDraft,
   onDraftUsed,
   onSeeWhatItDid,
+  onOpenConversation,
 }: {
+  /** The first-run card's "Open the run": opens that conversation (a run thread). */
+  onOpenConversation?: (id: string) => void;
   /** (item 9) The first-answer card's "See what it did": opens the rail's "What <Agent> did". */
   onSeeWhatItDid?: () => void;
   /** (P5-REFINE-13) A link's suggested message for the composer. */
@@ -191,6 +194,8 @@ export function ChatThread({
                   conversation={conversation ?? direct}
                   agentName={agentName}
                   wsId={wsId}
+                  agentId={agentId}
+                  onOpenConversation={onOpenConversation}
                   onSeeWhatItDid={onSeeWhatItDid}
                   onTry={(t) => draftRef.current?.(t)}
                 />

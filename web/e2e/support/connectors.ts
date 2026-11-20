@@ -13,8 +13,11 @@ export async function openConnectorScreen(page: Page, screen: ConnectorScreen, s
   await openRoute(page, "/admin/connectors", scheme);
   if (screen === "list") return;
   if (screen === "detail") {
-    // The platforms list and the closed Advanced fold both have a Manage button; the list's comes first.
-    await page.getByRole("button", { name: "Manage Mattermost" }).first().click();
+    // (P5-REFINE-18 #7) The platforms list has Manage only for a type the API marks `added` (the mock's type is not, so the
+    // add screens keep their Add button); the connector's own card, in the Advanced fold, always has one.
+    const advanced = page.getByTestId("chat-platforms-advanced");
+    await advanced.locator("summary").click();
+    await advanced.getByRole("button", { name: "Manage Mattermost" }).click();
     await page.getByLabel("Callback URL").waitFor();
     return;
   }

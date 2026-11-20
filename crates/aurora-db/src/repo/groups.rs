@@ -978,7 +978,7 @@ pub async fn impact(
         let schedules: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM schedules s JOIN agents a ON a.id = s.agent_id \
               WHERE a.workspace_id = $1 AND s.creator_user_id = ANY($2) \
-                AND s.anchor = 'creator' AND s.enabled",
+                AND s.anchor = 'creator' AND s.enabled AND s.completed_at IS NULL",
         )
         .bind(ws)
         .bind(&ids)

@@ -1204,7 +1204,9 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | agent_id | uuid FK→agents (cascade) | |
 | name | text not null | |
 | prompt | text not null | ≤20 000 |
-| cron | text not null | 5-field |
+| cron | text null | 5-field; (phase 5, P5-SCHED-ONCE, C-1092) null for a one-time schedule |
+| run_at | timestamptz null | (phase 5, P5-SCHED-ONCE, D-421, C-1092) the instant of a one-time schedule, from a local date-time read in `timezone`; exactly one of `cron` / `run_at` |
+| completed_at | timestamptz null | (phase 5, P5-SCHED-ONCE) set when a one-time schedule fired (Done); the retention pass deletes it after `SCHEDULE_DONE_RETENTION` |
 | timezone | text not null | IANA |
 | gate_command | text null | ≤2 000 |
 | gate_description | text null | ≤200 |
@@ -1217,8 +1219,10 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | next_fire_at | timestamptz null | |
 | fire_lease_until | timestamptz null | claim clock |
 | last_fire_at | timestamptz null | |
-| last_outcome | text null CHECK in (`ok`,`failed`,`skipped_busy`,`gated_quiet`,`skipped_frozen`) | `skipped_frozen` (phase 2, RFE-006): fire skipped because the agent is effectively frozen (`10 §Schedules`); `schedule_runs.outcome` (open text) records `skipped_frozen` too |
+| last_outcome | text null CHECK in (`ok`,`failed`,`skipped_busy`,`gated_quiet`,`skipped_frozen`,`waiting_paused`) | `skipped_frozen` (phase 2, RFE-006): fire skipped because the agent is effectively frozen (`10 §Schedules`); `schedule_runs.outcome` (open text) records `skipped_frozen` too; (phase 5, P5-SCHED-ONCE) `waiting_paused`: a due one-time schedule waits for the paused agent |
 | anchor | text not null default `creator` CHECK in (`creator`,`workspace`) | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) |
+| check | `(cron IS NULL) <> (run_at IS NULL)`; `completed_at IS NULL OR run_at IS NOT NULL` | (phase 5, P5-SCHED-ONCE, C-1092) |
+| index | `schedules_completed_idx (completed_at) WHERE completed_at IS NOT NULL` | (phase 5, P5-SCHED-ONCE) retention and the reminder push |
 
 ### `schedule_runs`
 | Column | Type | Notes |
@@ -1228,6 +1232,7 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | turn_id | uuid null | |
 | outcome | text not null | |
 | fired_at | timestamptz not null | |
+| answer_pushed_at | timestamptz null | (phase 5, P5-SCHED-ONCE, C-1095) the reminder push's claim: set once when the `schedule_answer` push of a run in the creator's own chat is sent |
 
 ### `webhooks`
 | Column | Type | Notes |
