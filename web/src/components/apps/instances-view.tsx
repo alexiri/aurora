@@ -353,7 +353,7 @@ function InstanceRow({
           open={confirm}
           onOpenChange={setConfirm}
           title={`Delete ${inst.base_url}?`}
-          description={`Its ${inst.connections} connection${inst.connections === 1 ? "" : "s"} will be disabled and its OAuth clients removed. Nothing is injected on ${inst.base_path ? "this address" : "this host"} again.`}
+          description={`Its ${inst.connections} connection${inst.connections === 1 ? "" : "s"} will be disabled and its sign-in apps removed. Nothing is injected on ${inst.base_path ? "this address" : "this host"} again.`}
           confirmLabel="Delete self-hosted app"
           danger
           busy={del.isPending}

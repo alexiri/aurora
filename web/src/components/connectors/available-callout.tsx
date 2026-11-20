@@ -18,7 +18,7 @@ export function ConnectorAvailableCallout() {
   const open = q.data?.items.filter((t) => !t.added && t.signed !== false) ?? [];
   if (open.length === 0) return null;
   return (
-    <div className="space-y-2" aria-label="Connectors available to add">
+    <div className="space-y-2" aria-label="Chat platforms available to add">
       {open.map((t) => (
         <Notice key={t.type_id} tone="pending" role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <span className="min-w-0 flex-1 basis-60">

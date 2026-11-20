@@ -98,12 +98,6 @@ export function journeyTitle({ step, app, agent, website }: { step: StepId; app?
   return agent ? `${what} for ${agent}` : `Connect ${what}`;
 }
 
-/** "Alice Admin" → "Alice"; the first name in a `who_can`, for "Ask Alice". */
-export function firstName(full: string | null | undefined): string | null {
-  const first = (full ?? "").trim().split(/\s+/)[0];
-  return first ? first : null;
-}
-
 /** The sign-in provider an app shares with others of its package, named for people: "Google", "Microsoft". */
 export function signInProvider(app: { package_id: string; name: string; family?: { name: string } | null }): string {
   if (app.package_id.startsWith("google")) return "Google";
@@ -111,10 +105,10 @@ export function signInProvider(app: { package_id: string; name: string; family?:
   return app.family ? app.family.name : app.name;
 }
 
-/** Why an app waits for an admin, in one line (B1): who sets what up, or that the sign-in is shared. */
-export function needsReason(needs: readonly string[] | undefined, who: string | null, provider: string, shared: boolean): string {
+/** Why an app waits for an admin, in one line (B1): what is set up, or that the sign-in is shared. An admin is a role, never a name (D-407). */
+export function needsReason(needs: readonly string[] | undefined, provider: string, shared: boolean): string {
   const first = needs?.[0];
-  if (first === "oauth_client") return shared ? `Same ${provider} sign-in` : `${who ?? "An admin"} needs to set up ${provider} sign-in`;
+  if (first === "oauth_client") return shared ? `Same ${provider} sign-in` : `An admin needs to set up ${provider} sign-in`;
   if (first === "instance") return "An admin needs to add a server";
   return "Needs setup by an admin";
 }

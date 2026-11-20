@@ -50,7 +50,7 @@ import { WebhookSignInStep } from "@/components/webhook/webhook-connect-step";
 import { DynamicForm } from "../dynamic-form";
 import { InstanceField, OAuthClientField, RequestedScopes, TokenScopes } from "./advanced-fields";
 import { BackNext, StepFooter } from "./frame";
-import { buildJourneyConnect, connectFailure, firstName, hostOf, permissionHints, suggestedMethod, tokenPage } from "./logic";
+import { buildJourneyConnect, connectFailure, hostOf, permissionHints, suggestedMethod, tokenPage } from "./logic";
 import { useSignInWindow } from "./use-sign-in-window";
 
 /** What the step reports when the account exists. `granted` are the agents the access was saved for. */
@@ -406,7 +406,6 @@ function NeedsAdmin({ app, who, workspaceId, onBack }: { app: AppDetail; who: Wh
   const withdraw = useWithdrawSetup(workspaceId);
   const [local, setLocal] = useState<"now" | "no" | null>(null);
   const mine = local ? local === "now" : !!apps.data?.items.find((a) => a.app_id === app.app_id)?.readiness?.requested?.by_me;
-  const name = firstName(who?.people[0]?.name);
   return (
     <div className="space-y-3 text-sm">
       <p className="font-medium text-ink">{app.name} needs an admin to set it up first.</p>
@@ -429,7 +428,7 @@ function NeedsAdmin({ app, who, workspaceId, onBack }: { app: AppDetail; who: Wh
           </Button>
         ) : (
           <Button type="button" size="lg" className="ml-auto" disabled={ask.isPending} onClick={() => ask.mutate(app.app_id, { onSuccess: () => setLocal("now") })}>
-            {name ? `Ask ${name}` : "Ask an admin"}
+            Ask an admin
           </Button>
         )}
       </StepFooter>

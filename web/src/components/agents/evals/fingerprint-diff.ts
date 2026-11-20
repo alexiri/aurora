@@ -28,8 +28,8 @@ const LABEL: Record<string, string> = {
   "model_roles.medium": "Medium model",
   "model_roles.small": "Small model",
   subagent_model: "Subagent model",
-  "judge.secret_id": "Judge key",
-  "judge.model_id": "Judge model",
+  "judge.secret_id": "Grader key",
+  "judge.model_id": "Grader model",
   question_set_version: "Question set (version hash)",
 };
 

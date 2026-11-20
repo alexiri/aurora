@@ -134,20 +134,20 @@ export function AgentPage() {
     <>
       <MenuItem onSelect={() => choosePage(lastBehaviour ?? "instructions")}>
         <span>
-          Behaviour
+          Instructions
           <span className="block text-xs text-muted">Name, instructions, model, memory, skills</span>
         </span>
       </MenuItem>
       <MenuItem onSelect={() => choosePage("access")}>
         <span>
-          Access
+          Apps &amp; access
           <span className="block text-xs text-muted">Apps, accounts and the AI key it uses</span>
         </span>
       </MenuItem>
     </>
   );
   const backPage: AgentPageId = byo ? "connect" : "chat";
-  const configTitle = sectionId === "access" ? "Access" : "Behaviour";
+  const configTitle = sectionId === "access" ? "Apps & access" : "Instructions";
   const configLead =
     sectionId === "access"
       ? `What ${agent.name} can use: apps, accounts and its AI key.`

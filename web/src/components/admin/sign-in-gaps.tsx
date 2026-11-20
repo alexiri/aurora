@@ -102,7 +102,7 @@ export function SignInGaps({ gaps, where }: { gaps: SignInGap[]; where: Where })
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-ink">People can&apos;t sign in to {names} yet</p>
                     <p className="text-ink-2">
-                      {group.length === 1 ? `${g.name} has no other way to connect.` : "They share one sign-in and have no other way to connect."} Register an OAuth client so
+                      {group.length === 1 ? `${g.name} has no other way to connect.` : "They share one sign-in and have no other way to connect."} Register a sign-in app so
                       people can sign in.
                     </p>
                     {group.length === 1 && setupPage(g) ? (
@@ -112,7 +112,7 @@ export function SignInGaps({ gaps, where }: { gaps: SignInGap[]; where: Where })
                     ) : null}
                   </div>
                   <Link href={register(g)} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
-                    Register an OAuth client
+                    Register a sign-in app
                   </Link>
                 </li>
               );
@@ -123,12 +123,12 @@ export function SignInGaps({ gaps, where }: { gaps: SignInGap[]; where: Where })
       {tokenOnly.length > 0 ? (
         <Notice tone="neutral" role="status">
           People can connect {tokenOnly.map((g) => g.name).join(", ")} with a token. Signing in with{" "}
-          {tokenOnly.length === 1 ? "it" : "them"} needs an OAuth client.{" "}
+          {tokenOnly.length === 1 ? "it" : "them"} needs a sign-in app.{" "}
           {tokenOnly.map((g, i) => (
             <span key={g.appId}>
               {i > 0 ? " · " : ""}
               <Link href={register(g)} className="font-medium text-ink underline underline-offset-2">
-                Register an OAuth client for {g.name}
+                Register a sign-in app for {g.name}
               </Link>
             </span>
           ))}

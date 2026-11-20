@@ -188,7 +188,7 @@ function CreateForm({
     <Form
       onSubmit={(e) => void submit(e)}
       className={cn(!bare && "rounded-card border border-line bg-surface p-4 shadow-card sm:p-5")}
-      aria-label="Add OAuth client"
+      aria-label="Add sign-in app"
     >
       <Field id="oc-app" label="App">
         <select
@@ -327,7 +327,7 @@ export function ClientRow({
       ) : null}
       {mode === "delete" ? (
         <Notice tone="danger" role="alertdialog" aria-label={`Delete ${title}`} className="space-y-2">
-          <p>Delete this OAuth client?</p>
+          <p>Delete this sign-in app?</p>
           {del.error ? <p role="alert">{errorMessage(del.error)}</p> : null}
           <div className="flex gap-2">
             <Button size="sm" variant="danger" disabled={del.isPending} onClick={() => del.mutate(c.id, { onSuccess: () => setMode("none") })}>Confirm delete</Button>
@@ -371,14 +371,14 @@ export function OAuthClientsPanel({ scope, canOwn, orgId }: { scope: CredScope; 
           <CreateForm key={wanted} scope={scope} defs={defs} instances={instances} initialChoice={wanted} onDone={() => setAdding(false)} />
         ) : (
           <div>
-            <Button variant="outline" onClick={() => setAdding(true)}>Add an OAuth client</Button>
+            <Button variant="outline" onClick={() => setAdding(true)}>Add a sign-in app</Button>
           </div>
         )
       ) : null}
       {list.data.items.length === 0 ? (
-        <EmptyState title="No OAuth clients yet" />
+        <EmptyState title="No sign-in apps yet" />
       ) : (
-        <ul className="space-y-3" aria-label="OAuth clients">
+        <ul className="space-y-3" aria-label="Sign-in apps">
           {list.data.items.map((c) => (
             <ClientRow
               key={c.id}
@@ -423,7 +423,7 @@ export function OAuthClientDialog({
     <Dialog open onOpenChange={(o) => (o ? undefined : onClose())}>
       <DialogContent
         size="md"
-        title="Register an OAuth client"
+        title="Register a sign-in app"
         description={
           scope.kind === "workspace"
             ? "Only this workspace uses it. Everyone in the organization can use one registered for the organization."
@@ -435,7 +435,7 @@ export function OAuthClientDialog({
         ) : detail.isError ? (
           <ErrorState error={detail.error} onRetry={() => detail.refetch()} />
         ) : defs.size === 0 ? (
-          <p className="text-sm text-ink-2">{appDisplayName(detail.data)} does not sign in with an OAuth client.</p>
+          <p className="text-sm text-ink-2">{appDisplayName(detail.data)} does not sign in with a sign-in app.</p>
         ) : (
           <CreateForm key={only} bare scope={scope} defs={defs} instances={instances} initialChoice={only} onDone={onClose} />
         )}

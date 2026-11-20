@@ -337,7 +337,7 @@ export function LlmKeyForm({
             {agents.isPending ? (
               <p className="text-sm text-muted">Loading agents…</p>
             ) : agentList.length === 0 ? (
-              <p className="text-sm text-muted">No agents yet. Give the key to an agent from its Access tab.</p>
+              <p className="text-sm text-muted">No agents yet. Give the key to an agent from its Apps &amp; access tab.</p>
             ) : (
               agentList.map((a) => (
                 <label key={a.id} className="flex min-h-9 items-center gap-2.5 text-sm">
