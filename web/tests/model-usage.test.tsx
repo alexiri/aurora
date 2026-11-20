@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ActivityView } from "@/components/approvals/activity-view";
+import { seedMoreControls } from "./support/render";
 
 // P5-MODELS-3 (C-879, C-880): the request log's model column, and a turn's tokens per model.
 
@@ -25,6 +26,8 @@ describe("request log model column", () => {
       }),
     );
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // The request log is Expert (D-406, `log.requests`): the switch is on.
+    seedMoreControls(qc);
     render(
       <QueryClientProvider client={qc}>
         <ActivityView wsId="w1" base="/o/x/w/y" />

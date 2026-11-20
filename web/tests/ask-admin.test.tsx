@@ -77,32 +77,32 @@ describe("Ask <Name> for a chat platform or an AI key (P5-APIGAP-2, C-1047)", ()
   it("asks with the subject only, then says Asked <Name> and Undo withdraws it", async () => {
     const calls = mockApi();
     wrap(<AskAdmin workspaceId="ws1" subject="ai_key" who={who} />);
-    fireEvent.click(await screen.findByRole("button", { name: /ask ana for an ai key/i }));
-    expect(await screen.findByText("Asked Ana")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Ask an admin for an AI key" }));
+    expect(await screen.findByText("Asked the admins. You'll see it here when it's done.")).toBeTruthy();
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({ subject: "ai_key" });
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /ask ana/i })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: /ask an admin/i })).toBeTruthy());
     expect(calls.some((c) => c.method === "DELETE" && c.path === "/v1/workspaces/ws1/requests/r1")).toBe(true);
   });
 
   it("starts in the asked state when the person has asked already", async () => {
     mockApi({ mine: [mineRow("chat_platform")] });
     wrap(<AskAdmin workspaceId="ws1" subject="chat_platform" who={who} />);
-    expect(await screen.findByText("Asked Ana")).toBeTruthy();
+    expect(await screen.findByText("Asked the admins. You'll see it here when it's done.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
   });
 
   it("says why when the thing exists already", async () => {
     mockApi({ conflict: true });
     wrap(<AskAdmin workspaceId="ws1" subject="chat_platform" who={who} />);
-    fireEvent.click(await screen.findByRole("button", { name: /ask ana/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ask an admin for a chat platform" }));
     expect(await screen.findByText(/already set up/i)).toBeTruthy();
   });
 
-  it("an agent's Channels tab with no chat platform offers Ask <Name>", async () => {
+  it("an agent's Channels tab with no chat platform offers Ask an admin (never a person's name, D-407)", async () => {
     const calls = mockApi();
     wrap(<AgentChannelsTab agentId="a1" agentName="Bot" orgId="org1" canOwn={false} wsId="ws1" />);
-    fireEvent.click(await screen.findByRole("button", { name: /ask ana for a chat platform/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ask an admin for a chat platform" }));
     await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ subject: "chat_platform" }));
   });
 
@@ -110,7 +110,7 @@ describe("Ask <Name> for a chat platform or an AI key (P5-APIGAP-2, C-1047)", ()
     const calls = mockApi();
     wrap(<OrgChatPlatformsPage />);
     expect(await screen.findByTestId("member-chat-platforms")).toBeTruthy();
-    fireEvent.click(await screen.findByRole("button", { name: /ask ana for a chat platform/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ask an admin for a chat platform" }));
     await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ subject: "chat_platform" }));
   });
 });

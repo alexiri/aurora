@@ -1,6 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { wrap } from "./support/render";
+import { wrap as wrapWith } from "./support/render";
+
+// These tests watch the onboarding GET itself (Dismiss waits for it), so the switch is not seeded into the cache.
+const wrap = (ui: React.ReactNode) => wrapWith(ui, { moreControls: undefined });
 import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({

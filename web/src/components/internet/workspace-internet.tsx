@@ -2,6 +2,7 @@
 
 import { InternetLevel } from "@/components/internet/internet-level";
 import { ErrorState, Loading } from "@/components/states";
+import { AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
 import { useAccess } from "@/lib/api/account";
 import { useEffectiveGovernance } from "@/lib/api/governance";
 import { useAgents, useOrg, useSession, type Workspace } from "@/lib/api/queries";
@@ -19,6 +20,7 @@ export function WorkspaceInternet({ workspace: w, orgSlug, wsSlug }: { workspace
   if (eff.isError) return <ErrorState error={eff.error} onRetry={() => eff.refetch()} />;
   const users = (access.data?.items ?? []).map((b) => ({ id: b.user_id, label: `${b.display_name} (${b.email})` }));
   return (
+    <AltitudeScope>
     <InternetLevel
       level="workspace"
       scope={{ kind: "workspace", id: w.id }}
@@ -33,5 +35,7 @@ export function WorkspaceInternet({ workspace: w, orgSlug, wsSlug }: { workspace
       users={users}
       currentUserId={session.data?.user.id}
     />
+    <MoreControlsLine className="pt-4" />
+    </AltitudeScope>
   );
 }

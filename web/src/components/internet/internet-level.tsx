@@ -8,6 +8,7 @@ import { usePolicyEditor } from "@/components/internet/use-policy-editor";
 import { RuleEditorDialog, type Option, type PickerData } from "@/components/policy/rule-editor";
 import { SimulatePanel } from "@/components/policy/simulate-panel";
 import { ErrorState, Loading } from "@/components/states";
+import { Altitude } from "@/components/ui/altitude";
 import { ApplyBar } from "@/components/ui/apply-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -498,12 +499,14 @@ export function InternetLevel(p: InternetLevelProps) {
 
       {/* (P5-POLISH-7, F1) The simulator is a button that opens it in a dialog, not a form at the bottom of the page. */}
       {workspace ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button variant="outline" onClick={() => setSimulating(true)}>
-            Try a request
-          </Button>
-          <span className="text-sm text-ink-2">Check what would happen: see which rule decides a request.</span>
-        </div>
+        <Altitude id="policy.try" level="setup">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="outline" onClick={() => setSimulating(true)}>
+              Try a request
+            </Button>
+            <span className="text-sm text-ink-2">Check what would happen: see which rule decides a request.</span>
+          </div>
+        </Altitude>
       ) : null}
       {workspace && simulating ? (
         <Dialog open onOpenChange={(o) => (o ? null : setSimulating(false))}>

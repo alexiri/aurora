@@ -12,6 +12,8 @@ pub struct OnboardingRow {
     pub tour_completed_at: Option<DateTime<Utc>>,
     /// (P5-IA-1, C-987) Keys of the one-time notices the person dismissed.
     pub notices_seen: Vec<String>,
+    /// (P5-REFINE-3, C-1056) The "Show more controls" switch.
+    pub more_controls: bool,
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(
@@ -19,7 +21,7 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     user: Uuid,
 ) -> Result<Option<OnboardingRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT welcome_seen, guide_dismissed, tour_completed_at, notices_seen
+        "SELECT welcome_seen, guide_dismissed, tour_completed_at, notices_seen, more_controls
          FROM user_onboarding WHERE user_id = $1",
     )
     .bind(user)
@@ -75,6 +77,8 @@ pub struct Patch {
     pub tour_completed_at: Option<Option<DateTime<Utc>>>,
     /// Appended to `notices_seen` when not already there (the API checks the limit).
     pub notice_seen: Option<String>,
+    /// (C-1056) Sets the "Show more controls" switch.
+    pub more_controls: Option<bool>,
 }
 
 /// Upsert the row, applying only the fields in `patch`; returns the stored row.
@@ -91,9 +95,10 @@ pub async fn apply<'e, E: PgExecutor<'e>>(
         // A new row starts with only the notice sent (D-407: the 2026-11 renames notice is gone, so
         // nothing is seeded; rows that already carry `renames-2026-11` keep it).
         "INSERT INTO user_onboarding
-            (user_id, welcome_seen, guide_dismissed, tour_completed_at, notices_seen)
+            (user_id, welcome_seen, guide_dismissed, tour_completed_at, notices_seen, more_controls)
          VALUES ($1, COALESCE($2, false), COALESCE($3, '{}'), $5,
-            CASE WHEN $6::text IS NULL THEN ARRAY[]::text[] ELSE ARRAY[$6::text] END)
+            CASE WHEN $6::text IS NULL THEN ARRAY[]::text[] ELSE ARRAY[$6::text] END,
+            COALESCE($7, false))
          ON CONFLICT (user_id) DO UPDATE SET
             welcome_seen = COALESCE($2, user_onboarding.welcome_seen),
             guide_dismissed = COALESCE($3, user_onboarding.guide_dismissed),
@@ -102,8 +107,9 @@ pub async fn apply<'e, E: PgExecutor<'e>>(
                 WHEN $6::text IS NULL OR $6 = ANY (user_onboarding.notices_seen)
                     THEN user_onboarding.notices_seen
                 ELSE user_onboarding.notices_seen || $6::text END,
+            more_controls = COALESCE($7, user_onboarding.more_controls),
             updated_at = now()
-         RETURNING welcome_seen, guide_dismissed, tour_completed_at, notices_seen",
+         RETURNING welcome_seen, guide_dismissed, tour_completed_at, notices_seen, more_controls",
     )
     .bind(user)
     .bind(patch.welcome_seen)
@@ -111,6 +117,7 @@ pub async fn apply<'e, E: PgExecutor<'e>>(
     .bind(set_tour)
     .bind(tour)
     .bind(patch.notice_seen.as_deref())
+    .bind(patch.more_controls)
     .fetch_one(exec)
     .await?)
 }

@@ -50825,7 +50825,8 @@
         "required": [
           "welcome_seen",
           "guide_dismissed",
-          "notices_seen"
+          "notices_seen",
+          "more_controls"
         ],
         "properties": {
           "guide_dismissed": {
@@ -50835,6 +50836,10 @@
               "format": "uuid"
             },
             "description": "Workspaces whose getting-started guide the person dismissed."
+          },
+          "more_controls": {
+            "type": "boolean",
+            "description": "(P5-REFINE-3, C-1056) The person's \"Show more controls\" switch: whether the dashboard\nshows Expert-level controls. `false` for a person with no row. It never authorizes\nanything; role stays the floor."
           },
           "notices_seen": {
             "type": "array",
@@ -57487,6 +57492,13 @@
               "format": "uuid"
             },
             "description": "The whole list (at most 200 workspaces). `[]` shows every guide again."
+          },
+          "more_controls": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(C-1056) Set the \"Show more controls\" switch; absent leaves it."
           },
           "notice_seen": {
             "type": [

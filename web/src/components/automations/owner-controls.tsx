@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { Altitude } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
@@ -40,24 +41,27 @@ export function AnchorSwitch({
   onChange: (anchor: "creator" | "workspace") => void;
 }) {
   return (
-    <div className="text-sm">
-      <label className="flex min-h-9 items-center gap-2.5 font-medium text-ink">
-        <input
-          type="checkbox"
-          className="size-4 shrink-0 accent-accent"
-          aria-label={`Keep ${name} running if its owner leaves`}
-          checked={anchor === "workspace"}
-          disabled={busy}
-          onChange={(e) => onChange(e.target.checked ? "workspace" : "creator")}
-        />
-        Keep running if I leave
-      </label>
-      {anchor !== "workspace" ? (
-        <p className="ml-label-offset text-xs text-muted">
-          The item will outlive any single member: it keeps running as long as the workspace has an active owner.
-        </p>
-      ) : null}
-    </div>
+    // (P5-REFINE-3) Expert: "Keep running if I leave".
+    <Altitude id="auto.anchor" level="expert">
+      <div className="text-sm">
+        <label className="flex min-h-9 items-center gap-2.5 font-medium text-ink">
+          <input
+            type="checkbox"
+            className="size-4 shrink-0 accent-accent"
+            aria-label={`Keep ${name} running if its owner leaves`}
+            checked={anchor === "workspace"}
+            disabled={busy}
+            onChange={(e) => onChange(e.target.checked ? "workspace" : "creator")}
+          />
+          Keep running if I leave
+        </label>
+        {anchor !== "workspace" ? (
+          <p className="ml-label-offset text-xs text-muted">
+            The item will outlive any single member: it keeps running as long as the workspace has an active owner.
+          </p>
+        ) : null}
+      </div>
+    </Altitude>
   );
 }
 

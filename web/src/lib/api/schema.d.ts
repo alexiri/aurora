@@ -9911,6 +9911,12 @@ export interface components {
             /** @description Workspaces whose getting-started guide the person dismissed. */
             guide_dismissed: string[];
             /**
+             * @description (P5-REFINE-3, C-1056) The person's "Show more controls" switch: whether the dashboard
+             *     shows Expert-level controls. `false` for a person with no row. It never authorizes
+             *     anything; role stays the floor.
+             */
+            more_controls: boolean;
+            /**
              * @description (P5-IA-1, C-987) Keys of the one-time notices the person dismissed, at most 50. A person
              *     created after the 2026-11 release has `renames-2026-11` from the start.
              */
@@ -11930,6 +11936,8 @@ export interface components {
         PatchOnboarding: {
             /** @description The whole list (at most 200 workspaces). `[]` shows every guide again. */
             guide_dismissed?: string[] | null;
+            /** @description (C-1056) Set the "Show more controls" switch; absent leaves it. */
+            more_controls?: boolean | null;
             /** @description (C-987) Append one notice key (1–64 characters: lowercase letters, digits, `-`). */
             notice_seen?: string | null;
             /** @description `true` records now; `false` clears it so the tour is offered again. */

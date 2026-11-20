@@ -242,3 +242,73 @@ async fn setup_status_is_for_instance_admins_and_has_reason_codes() {
         "no_starter_grant"
     );
 }
+
+#[tokio::test]
+async fn more_controls_defaults_off_persists_and_is_per_person() {
+    // C-1056: the per-person "Show more controls" switch.
+    let h = Harness::new().await;
+    let a = h.user("mc-a@x.io", false).await;
+    let b = h.user("mc-b@x.io", false).await;
+    let (_, ta) = h.good_session(a).await;
+    let (_, ta2) = h.good_session(a).await;
+    let (_, tb) = h.good_session(b).await;
+    let (s, v) = call(&h, &ta, Method::GET, "/v1/me/onboarding", None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["more_controls"], false);
+
+    let (s, v) = call(
+        &h,
+        &ta,
+        Method::PATCH,
+        "/v1/me/onboarding",
+        Some(json!({"more_controls": true})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["more_controls"], true);
+    // Another session of the same person sees it.
+    let (_, v) = call(&h, &ta2, Method::GET, "/v1/me/onboarding", None).await;
+    assert_eq!(v["more_controls"], true);
+
+    // A patch of another field leaves it.
+    let (s, v) = call(
+        &h,
+        &ta,
+        Method::PATCH,
+        "/v1/me/onboarding",
+        Some(json!({"welcome_seen": true})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["more_controls"], true);
+    assert_eq!(v["welcome_seen"], true);
+
+    // Another person is unaffected.
+    let (_, v) = call(&h, &tb, Method::GET, "/v1/me/onboarding", None).await;
+    assert_eq!(v["more_controls"], false);
+    // First write of another person with only the switch creates their row.
+    let (s, v) = call(
+        &h,
+        &tb,
+        Method::PATCH,
+        "/v1/me/onboarding",
+        Some(json!({"more_controls": false})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["more_controls"], false);
+    assert_eq!(v["welcome_seen"], false);
+    let (_, v) = call(&h, &ta, Method::GET, "/v1/me/onboarding", None).await;
+    assert_eq!(v["more_controls"], true);
+
+    // Wrong type and unknown sibling fields are 400.
+    let (s, _) = call(
+        &h,
+        &ta,
+        Method::PATCH,
+        "/v1/me/onboarding",
+        Some(json!({"more_controls": "yes"})),
+    )
+    .await;
+    assert_eq!(s, 400);
+}
