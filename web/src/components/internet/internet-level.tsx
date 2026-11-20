@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+
+import { formatWhen } from "@/lib/format-date";
 import { useState, type ReactNode } from "react";
 
 import { CommonChanges } from "@/components/internet/common-changes";
@@ -100,7 +102,7 @@ function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }
             <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line p-2.5 text-sm text-ink">
               <span>
                 #{g.number} · {g.status} · {g.rule_count} rules
-                {g.published_at ? <span className="text-ink-2"> · {new Date(g.published_at).toLocaleString()}</span> : null}
+                {g.published_at ? <span className="text-ink-2"> · {formatWhen(g.published_at)}</span> : null}
                 {g.published_by ? <span className="text-ink-2"> · {g.published_by.display_name}</span> : null}
               </span>
               {g.status !== "draft" ? (

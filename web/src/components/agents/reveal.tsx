@@ -1,6 +1,7 @@
 "use client";
 
-import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
+import { SecretOnce } from "@/components/ui/secret-once";
+import { formatDay } from "@/lib/format-date";
 import { expiryText } from "@/lib/api/agent-tokens";
 import type { ContainerConfig } from "@/lib/api/agents";
 
@@ -21,7 +22,7 @@ export function AgentRevealDialog({
   onClose: () => void;
 }) {
   return (
-    <OneTimeKeyDialog
+    <SecretOnce
       secret={revealed?.token ?? null}
       onClose={onClose}
       title="Copy the agent token"
@@ -30,7 +31,7 @@ export function AgentRevealDialog({
       {revealed ? (
         <p data-testid="revealed-expiry" className="text-sm text-ink-2">
           {revealed.expiresAt
-            ? `This token expires on ${new Date(revealed.expiresAt).toLocaleDateString()} (${expiryText(revealed.expiresAt).toLowerCase()}). Regenerate it before then.`
+            ? `This token expires on ${formatDay(revealed.expiresAt)} (${expiryText(revealed.expiresAt).toLowerCase()}). Regenerate it before then.`
             : "This token does not expire."}
         </p>
       ) : null}
@@ -60,6 +61,6 @@ export function AgentRevealDialog({
           </p>
         </div>
       ) : null}
-    </OneTimeKeyDialog>
+    </SecretOnce>
   );
 }

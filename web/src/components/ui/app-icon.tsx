@@ -76,7 +76,10 @@ export function AppIcon({
         width={size}
         height={size}
         onError={() => setLightFailed(true)}
-        className={cn(frame, "bg-surface object-contain", showDark && "dark:hidden")}
+        // (P5-REFINE-2, admin-11) A logo without a dark variant sits on a light plate in the dark theme (white at 92 %,
+        // 2 px padding, rounded): dark glyphs stay legible. Logos with a dark variant use it instead.
+        className={cn(frame, "bg-surface object-contain", showDark ? "dark:hidden" : "dark:rounded-control dark:bg-white/90 dark:p-0.5")}
+        data-plate={showDark ? undefined : "true"}
       />
       {showDark ? (
         // eslint-disable-next-line @next/next/no-img-element

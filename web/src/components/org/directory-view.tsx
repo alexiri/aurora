@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
+import { SecretOnce } from "@/components/ui/secret-once";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
@@ -120,7 +120,6 @@ function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
   const create = useCreateScimToken(orgId);
   const revoke = useRevokeScimToken(orgId);
   const [name, setName] = useState("");
-  const tokenCopy = useCopy();
   const [toRevoke, setToRevoke] = useState<ScimTokenEntry | null>(null);
   const err = create.error ?? revoke.error;
   const fe = err ? errorMessage(err) : undefined;
@@ -162,26 +161,12 @@ function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
         </Field>
       </Form>
       ) : null}
-      <Dialog open={!!created} onOpenChange={(o) => !o && create.reset()}>
-        <DialogContent
-          title="Your new token"
-          description="Store it in your identity provider now; it cannot be shown again."
-        >
-          <div className="flex items-center gap-2">
-            <code className="block min-w-0 max-w-full flex-1 break-all rounded bg-surface-2 px-2 py-1 font-mono text-xs">
-              {created}
-            </code>
-            <Button variant="outline" size="sm" onClick={() => tokenCopy.copy(created ?? "")}>
-              {copyLabel(tokenCopy.state)}
-            </Button>
-          </div>
-          <div className="mt-4 flex justify-end">
-            <DialogClose asChild>
-              <Button>Done</Button>
-            </DialogClose>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <SecretOnce
+        secret={created}
+        title="Your new token"
+        description="Store it in your identity provider now; it cannot be shown again."
+        onClose={() => create.reset()}
+      />
       {expiring.length > 0 ? (
         <Notice tone="pending" role="status">
           {expiring.length === 1

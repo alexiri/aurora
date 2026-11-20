@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 
+import { formatDay } from "@/lib/format-date";
+
 import { buttonVariants } from "@/components/ui/button";
 import { useAdminAttention } from "@/lib/api/attention";
 import { cn } from "@/lib/utils";
 
-const fmtSince = (s: string) => new Date(s).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+const fmtSince = (s: string) => formatDay(s);
 
 /**
  * (FIX-167 Part B, D-370, C-1022) Administration › Overview opens with what needs the instance admin:

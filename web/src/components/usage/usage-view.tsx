@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
+
+import { formatExact } from "@/lib/format-date";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { BarChart } from "@/components/ui/bar-chart";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
+import { DateField } from "@/components/ui/date-field";
 import { Field, inputClass } from "@/components/ui/field";
 import { FilterChip } from "@/components/ui/filter-chip";
 import { Segmented } from "@/components/ui/segmented";
@@ -273,7 +276,7 @@ function Tiles({ t, asOf }: { t: UsageCounters; asOf: string | null | undefined 
         label="Awake time"
         value={duration(t.awake_seconds)}
         title={`${exact(t.awake_seconds)} s`}
-        detail={asOf ? `As of ${new Date(asOf).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}` : "Not counted yet"}
+        detail={asOf ? `As of ${formatExact(asOf)}` : "Not counted yet"}
       />
     </div>
   );
@@ -356,10 +359,10 @@ export function UsageView({ level }: { level: UsageLevel }) {
       {range === "custom" ? (
         <>
           <Field id="usage-from" label="From (UTC)" error={rangeError ?? undefined}>
-            <input id="usage-from" type="date" className={cn(inputClass, "w-40 max-w-full")} value={params.from} onChange={(e) => setParams({ from: e.target.value })} />
+            <DateField id="usage-from" value={params.from} onChange={(v) => setParams({ from: v })} />
           </Field>
           <Field id="usage-to" label="To (UTC)">
-            <input id="usage-to" type="date" className={cn(inputClass, "w-40 max-w-full")} value={params.to} onChange={(e) => setParams({ to: e.target.value })} />
+            <DateField id="usage-to" value={params.to} onChange={(v) => setParams({ to: v })} />
           </Field>
         </>
       ) : null}

@@ -26,6 +26,7 @@ import { startTour } from "./onboarding/tour-events";
 import { ThemeSwitch } from "./theme/theme-switch";
 import { Avatar } from "./agent-avatar";
 import { AuroraLogo } from "./ui/aurora-logo";
+import { UndoToastHost } from "./ui/undo-toast";
 import {
   ActivityIcon,
   ArrowLeftIcon,
@@ -513,6 +514,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </main>
         <Tour setNavOpen={tourNavOpen} />
+        <UndoToastHost />
       </div>
     </div>
   );

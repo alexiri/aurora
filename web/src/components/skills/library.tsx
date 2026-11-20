@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { formatCount } from "@/lib/format-date";
+
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -296,7 +298,7 @@ function Preview({ content }: { content: LibrarySkillContent }) {
           <h4 className="text-sm font-semibold text-ink">
             <span className="font-mono">{f.path}</span>{" "}
             <span className="font-normal text-muted">
-              ({f.size.toLocaleString("en-US")} chars{f.executable ? ", executable" : ""})
+              ({formatCount(f.size)} chars{f.executable ? ", executable" : ""})
             </span>
           </h4>
           {f.binary ? (
@@ -433,7 +435,7 @@ export function AddFromLibrary({
                           >
                             <span className="font-mono text-sm text-ink">{i.name}</span>{" "}
                             <span className="text-xs text-muted">
-                              {i.files} file{i.files === 1 ? "" : "s"}, about {i.size.toLocaleString("en-US")} characters
+                              {i.files} file{i.files === 1 ? "" : "s"}, about {formatCount(i.size)} characters
                             </span>{" "}
                             <AddedChips item={i} />
                             <span className="block text-xs text-ink-2">{i.valid ? i.description : <span className="text-danger-ink">Cannot be added: {i.reason}</span>}</span>
@@ -469,7 +471,7 @@ export function AddFromLibrary({
                 <Notice role="status">Pinned to this commit. Changes in the repository are not applied until someone with permission approves them.</Notice>
                 {over ? (
                   <Notice tone="pending" role="status">
-                    This would exceed the {TIER_LABEL[tier].toLowerCase()} library budget: {(usage.bytes + size).toLocaleString("en-US")} of {budget.bytes.toLocaleString("en-US")} characters,{" "}
+                    This would exceed the {TIER_LABEL[tier].toLowerCase()} library budget: {formatCount(usage.bytes + size)} of {formatCount(budget.bytes)} characters,{" "}
                     {usage.count + 1} of {budget.skills} skills.
                   </Notice>
                 ) : null}

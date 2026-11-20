@@ -10,7 +10,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { DangerZone, Section } from "@/components/ui/section";
-import { TypeToConfirmDelete } from "@/components/ui/type-to-confirm-delete";
+import { DeleteWithName } from "@/components/ui/type-to-confirm";
 import { fieldErrors } from "@/lib/api/errors";
 import { deleteOrg, usePatchOrg } from "@/lib/api/org";
 import { useInstance } from "@/lib/api/queries";
@@ -201,30 +201,29 @@ function isOwnerAdmin(org: Org): boolean {
 export function OrgDangerZone({
   orgId,
   slug,
+  name,
   onDeleted,
 }: {
   orgId: string;
   slug: string;
+  /** The organization's visible name, which the person types to confirm. */
+  name: string;
   onDeleted: () => void;
 }) {
   return (
     <DangerZone
       id="delete-org"
       title="Delete this organization"
-      description={
-        <>
-          This permanently deletes the organization, its workspaces and everything in them. Type{" "}
-          <code className="font-mono text-ink">{slug}</code> to confirm.
-        </>
-      }
+      description="This permanently deletes the organization, its workspaces and everything in them."
     >
-      <TypeToConfirmDelete
-        id="del-org"
-        fieldLabel="Organization URL name"
-        slug={slug}
+      <DeleteWithName
         buttonLabel="Delete organization"
-        remove={(confirm) => deleteOrg(orgId, confirm)}
-        onDeleted={onDeleted}
+        title={`Delete ${name}?`}
+        consequence="This deletes the organization, its workspaces, agents, files and conversations. It can't be undone."
+        noun="organization"
+        name={name}
+        run={() => deleteOrg(orgId, slug)}
+        onDone={onDeleted}
       />
     </DangerZone>
   );
@@ -237,7 +236,7 @@ export function OrgDangerSections({ org }: { org: Org }) {
   return (
     <div className="space-y-8">
       <OrgFreeze orgId={org.id} name={org.name} frozen={org.frozen} />
-      <OrgDangerZone orgId={org.id} slug={org.slug} onDeleted={() => router.replace("/")} />
+      <OrgDangerZone orgId={org.id} slug={org.slug} name={org.name} onDeleted={() => router.replace("/")} />
     </div>
   );
 }

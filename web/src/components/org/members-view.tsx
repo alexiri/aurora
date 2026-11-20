@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 
-import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,13 +26,20 @@ import {
   type OrgRole,
 } from "@/lib/api/org";
 import { useOrgOffboarding } from "@/lib/api/automations";
-import { formatExact } from "@/lib/format-date";
+import { When } from "@/components/ui/when";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useInstance, useMe, useOrg } from "@/lib/api/queries";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 
 import { InviteDialog } from "./invite-dialog";
 
 const cap = (s: string) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+
+const ROLE_RANK: Record<OrgRole, number> = { member: 0, admin: 1, owner: 2 };
+const PROMOTE_SENTENCE: Partial<Record<OrgRole, string>> = {
+  owner: "Owners can change settings, add and remove people and delete the organization.",
+  admin: "Admins can change settings and add and remove people. They can't delete the organization.",
+};
 
 export function MemberRow({
   m,
@@ -64,12 +70,12 @@ export function MemberRow({
   const manage = canManageMember(viewer, m.role) && !mine;
   return (
     <tr>
-      <Td>
+      <Td cell="title">
         <div className="font-medium">
           {m.display_name}
           {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
         </div>
-        <div className="text-muted">{m.email}</div>
+        <div className="break-all text-muted">{m.email}</div>
       </Td>
       <Td>
         {options.length > 0 ? (
@@ -123,10 +129,10 @@ export function MemberRow({
           </Badge>
         ) : null}
       </Td>
-      <Td className="whitespace-nowrap text-ink-2">
-        <span title={formatExact(m.created_at)}>{fmtDate(m.created_at)}</span>
+      <Td label="Joined" className="whitespace-nowrap text-ink-2">
+        <When value={m.created_at} />
       </Td>
-      <Td className="text-right">
+      <Td cell="actions" className="text-right">
         {manage && !(m.status === "pending" && fromIdp) ? (
           <Menu>
             <MenuTrigger asChild>
@@ -211,6 +217,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   const [err, setErr] = useState<unknown>(null);
   const [target, setTarget] = useState<{ m: OrgMember; mode: "remove" | "suspend" } | null>(null);
   const [dialogErr, setDialogErr] = useState<unknown>(null);
+  const [promote, setPromote] = useState<{ m: OrgMember; role: OrgRole } | null>(null);
 
   if (members.isPending) return <Loading />;
   if (members.isError) return <ErrorState error={members.error} onRetry={() => members.refetch()} />;
@@ -225,7 +232,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
       {items.length === 0 ? (
         <EmptyState title="No members" />
       ) : (
-        <DataTable caption="People">
+        <DataTable caption="People" stackBelow={900}>
             <thead>
               <tr>
                 <Th>Person</Th>
@@ -249,7 +256,9 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
                   orgName={orgName}
                   onRole={(role) => {
                     setErr(null);
-                    patch.mutate({ user: m.user_id, body: { role } }, { onError });
+                    // Second rung of the confirm ladder: a role that widens what the person can do asks first.
+                    if (ROLE_RANK[role] > ROLE_RANK[m.role] && role !== "member") setPromote({ m, role });
+                    else patch.mutate({ user: m.user_id, body: { role } }, { onError });
                   }}
                   onStatus={(status) => {
                     setErr(null);
@@ -264,6 +273,22 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
         </DataTable>
       )}
       <LoadMore query={members} />
+      <ConfirmDialog
+        open={promote !== null}
+        onOpenChange={(o) => {
+          if (!o) setPromote(null);
+        }}
+        title={promote ? `Make ${promote.m.display_name || promote.m.email} ${promote.role === "owner" ? "an owner" : "an admin"}?` : "Change role"}
+        description={promote ? (PROMOTE_SENTENCE[promote.role] ?? "") : ""}
+        confirmLabel={promote ? (promote.role === "owner" ? "Promote to Owner" : "Make admin") : "Change role"}
+        busy={patch.isPending}
+        onConfirm={() => {
+          if (!promote) return;
+          const { m, role } = promote;
+          setPromote(null);
+          patch.mutate({ user: m.user_id, body: { role } }, { onError });
+        }}
+      />
       <OffboardDialog
         orgId={orgId}
         target={target}
@@ -299,7 +324,7 @@ function Invitations({ orgId }: { orgId: string }) {
   return (
     <div className="space-y-3">
       <ErrorNotice error={cancel.error} />
-      <DataTable caption="Pending invitations">
+      <DataTable caption="Pending invitations" stackBelow={900}>
         <thead>
           <tr>
             <Th>Email</Th>
@@ -314,11 +339,15 @@ function Invitations({ orgId }: { orgId: string }) {
         <tbody>
           {items.map((i) => (
             <tr key={i.id}>
-              <Td>{i.email}</Td>
-              <Td>{i.role}</Td>
-              <Td>{i.workspace_ids.length}</Td>
-              <Td className="whitespace-nowrap text-ink-2">{fmtDate(i.expires_at)}</Td>
-              <Td className="text-right">
+              <Td cell="title" className="break-all font-medium">
+                {i.email}
+              </Td>
+              <Td label="Role">{cap(i.role)}</Td>
+              <Td label="Workspaces">{i.workspace_ids.length}</Td>
+              <Td label="Expires" className="whitespace-nowrap text-ink-2">
+                <When value={i.expires_at} />
+              </Td>
+              <Td cell="actions" className="text-right">
                 <Button
                   variant="outline"
                   size="sm"

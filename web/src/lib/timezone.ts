@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 import { api } from "@/lib/api/client";
 import { useMe } from "@/lib/api/queries";
 import { unwrap } from "@/lib/api/unwrap";
+import { setDisplayTimeZone } from "@/lib/format-date";
 
 /** Per-browser-session marker: the auto-fill below runs at most once per session. */
 const SESSION_KEY = "aurora.timezone-autofill";
@@ -57,6 +58,8 @@ export function useTimezoneAutofill(): void {
   const me = useMe().data;
   const qc = useQueryClient();
   const ran = useRef(false);
+  // (P5-REFINE-2, D-405) Every time on screen is shown in the person's zone (else the browser's).
+  setDisplayTimeZone(me?.timezone);
   useEffect(() => {
     if (ran.current || !me || me.timezone !== null || alreadyRan()) return;
     const tz = browserTimeZone();

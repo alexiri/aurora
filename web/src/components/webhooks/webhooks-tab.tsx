@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
-import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
+import { SecretOnce } from "@/components/ui/secret-once";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
@@ -269,9 +269,8 @@ export function WebhooksTab({ agentId, wsId, canOwn }: { agentId: string; wsId?:
           ))}
         </ItemList>
       ) : null}
-      <OneTimeKeyDialog
+      <SecretOnce
         secret={shown?.url ?? null}
-        name={shown?.name}
         title="Copy your webhook URL"
         description={`Webhook${shown ? ` "${shown.name}"` : ""} URL. You won't see this again, so store it somewhere safe now.`}
         onClose={() => setShown(null)}

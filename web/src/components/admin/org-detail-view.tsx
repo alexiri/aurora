@@ -36,6 +36,7 @@ function WorkspaceRow({ ws, onDeleted }: { ws: AdminOrgWorkspace; onDeleted: (ms
           onOpenChange={setOpen}
           title={`Delete ${ws.name}?`}
           noun="workspace"
+          name={ws.name}
           slug={ws.slug}
           consequences={
             <p>
@@ -131,6 +132,7 @@ export function OrgDetailView({ orgId }: { orgId: string }) {
         onOpenChange={setDeleting}
         title={`Delete ${o.name}?`}
         noun="organization"
+        name={o.name}
         slug={o.slug}
         consequences={<OrgDeleteConsequences org={o} />}
         run={(confirm) => del.mutateAsync({ orgId, confirm })}

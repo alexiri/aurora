@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { formatWhen } from "@/lib/format-date";
+
 import { ScopeGroups } from "@/components/grants/scope-groups";
 import { Button } from "@/components/ui/button";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
@@ -34,7 +36,7 @@ export function ConnectionDetails({ scope, id, canManage }: { scope: Exclude<Cre
       <p className="text-xs text-muted">
         {c.scopes.length ? `Scopes: ${c.scopes.join(", ")} · ` : ""}
         {c.connected_by ? `Connected by ${c.connected_by.display_name} · ` : ""}
-        {c.last_used_at ? `Last used ${new Date(c.last_used_at).toLocaleString()}` : "Never used"}
+        {c.last_used_at ? `Last used ${formatWhen(c.last_used_at)}` : "Never used"}
         {c.instance ? ` · Self-hosted: ${c.instance.base_url}` : ""}
       </p>
       {c.missing_scopes.length ? (

@@ -2,11 +2,13 @@
 
 import { useState, type ChangeEvent, type FormEvent } from "react";
 
+import { formatCount } from "@/lib/format-date";
+
 import { SizeMeter } from "@/components/memory/size-meter";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ConfirmButton } from "@/components/ui/confirm-button";
+import { ConfirmAction } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
@@ -244,11 +246,15 @@ function SkillEditor({ scope, skill, readOnly = false, onDeleted }: { scope: Ski
         {readOnly ? null : (
           <div className="flex flex-wrap gap-2">
             <Button type="submit" size="lg" disabled={bodyOver || update.isPending}>Save</Button>
-            <ConfirmButton
-              type="button"
-              cancelVariant="ghost"
+            <ConfirmAction
               label={managed ? "Remove" : "Delete"}
-              confirmLabel={managed ? "Confirm remove" : "Confirm delete"}
+              title={`${managed ? "Remove" : "Delete"} the skill “${skill.name}”?`}
+              description={
+                managed
+                  ? "Agents stop using it. It can be installed again from the library."
+                  : "Agents stop using it and its files are deleted. This can't be undone."
+              }
+              confirmLabel={managed ? "Remove skill" : "Delete skill"}
               onConfirm={() => void del.mutateAsync(skill.id).then(onDeleted)}
             />
           </div>
@@ -323,7 +329,7 @@ function FileTree({ nodes, readOnly = false, onDelete, onReplace }: { nodes: Fil
           {n.file ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono">{n.name}</span>
-              <span className="text-xs text-muted">{n.file.size.toLocaleString("en-US")} chars{n.file.executable ? ", executable" : ""}</span>
+              <span className="text-xs text-muted">{formatCount(n.file.size)} chars{n.file.executable ? ", executable" : ""}</span>
               {readOnly ? null : (
                 <>
                   <label className="text-xs text-link underline">

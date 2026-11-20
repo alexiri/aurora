@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 
+import { formatCount } from "@/lib/format-date";
+
 import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
@@ -151,7 +153,7 @@ function modelErrors(d: Draft): { roles: Partial<Record<Role, string>>; info: Re
     seen.add(id);
     const c = row.ctx.trim();
     if (c && !(/^\d+$/.test(c) && Number(c) >= CONTEXT_MIN && Number(c) <= CONTEXT_MAX)) {
-      e.ctx = `A whole number from ${CONTEXT_MIN.toLocaleString("en")} to ${CONTEXT_MAX.toLocaleString("en")}.`;
+      e.ctx = `A whole number from ${formatCount(CONTEXT_MIN)} to ${formatCount(CONTEXT_MAX)}.`;
     }
     if (e.id || e.ctx) info[row.k] = e;
   }

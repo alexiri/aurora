@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
+import { SecretOnce } from "@/components/ui/secret-once";
 import { fmtDate } from "@/components/account/key-table";
 import { Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
@@ -119,7 +119,7 @@ export function HostTokens() {
           </Button>
         </div>
       </form>
-      <OneTimeKeyDialog
+      <SecretOnce
         secret={secret?.token ?? null}
         title="Copy the connector host token"
         description={`Token "${secret?.name ?? ""}". You won't see it again: set it as the host's AURORA_CONNECTOR_HOST_TOKEN now.`}

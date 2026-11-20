@@ -7,7 +7,8 @@ import { Avatar } from "@/components/agent-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { formatExact, formatWhen } from "@/lib/format-date";
+import { formatWhen } from "@/lib/format-date";
+import { When } from "@/components/ui/when";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { useMe, useOrg } from "@/lib/api/queries";
 import { sourceText } from "@/lib/api/groups";
@@ -176,13 +177,14 @@ function Row({
   const busy = put.isPending || del.isPending || status.isPending;
   const [confirm, setConfirm] = useState(false);
   const [confirmSuspend, setConfirmSuspend] = useState(false);
+  const [promote, setPromote] = useState(false);
   const offboarding = useWorkspaceOffboarding(wsId, confirm ? b.user_id : null);
   const who = b.display_name || b.email;
   // (P5-APIGAP-4, C-1051) An implicit row's access comes from the organization: a stored suspension does not apply to it.
   const suspended = b.status === "suspended" && !b.implicit;
   return (
     <tr data-testid={`access-row-${b.user_id}`}>
-      <Td>
+      <Td cell="title">
         <div className="flex items-center gap-3">
           <Avatar name={who} tintKey={b.user_id} size={32} />
           <div className="min-w-0">
@@ -195,12 +197,10 @@ function Row({
             </div>
             <div className="text-xs text-muted">{b.email}</div>
             {b.implicit ? <div className="text-xs text-ink-2">Has access as an owner of {orgName ?? "the organization"}</div> : null}
-            {/* Narrow screens have no Joined column: the date is a line under the person. */}
-            {b.joined_at ? <div className="text-xs text-muted sm:hidden">{joinedText(b.joined_at)}</div> : null}
           </div>
         </div>
       </Td>
-      <Td>
+      <Td label="Role">
         {b.implicit ? (
           // (D6) The role is "Owner"; why is a line under the person: "Has access as an owner of Users".
           "Owner"
@@ -215,9 +215,12 @@ function Row({
             className={cn(inputClass, "w-36")}
             value={b.role}
             disabled={busy}
-            onChange={(e) =>
-              put.mutate({ user: b.user_id, role: e.target.value as Role }, { onError })
-            }
+            onChange={(e) => {
+              const next = e.target.value as Role;
+              // Second rung of the confirm ladder: making someone an owner asks first.
+              if (next === "owner" && b.role !== "owner") setPromote(true);
+              else put.mutate({ user: b.user_id, role: next }, { onError });
+            }}
           >
             {/* The last owner's role cannot be lowered (the server refuses): the option is not offered. */}
             {lastOwner ? null : <option value="member">Member</option>}
@@ -228,10 +231,22 @@ function Row({
           ROLE_LABEL[b.role as Role] ?? b.role
         )}
       </Td>
-      <Td className="hidden whitespace-nowrap text-ink-2 sm:table-cell">
-        {b.joined_at ? <span title={formatExact(b.joined_at)}>{formatWhen(b.joined_at)}</span> : <span className="text-muted">—</span>}
+      <Td label="Joined" className="whitespace-nowrap text-ink-2">
+        {b.joined_at ? <When value={b.joined_at} /> : <span className="text-muted">—</span>}
       </Td>
-      <Td className="text-right">
+      <Td cell="actions" className="text-right">
+        <ConfirmDialog
+          open={promote}
+          onOpenChange={setPromote}
+          title={`Make ${who} an owner?`}
+          description="Owners can manage the workspace, its access and settings, and decide approvals."
+          confirmLabel="Promote to Owner"
+          busy={put.isPending}
+          onConfirm={() => {
+            setPromote(false);
+            put.mutate({ user: b.user_id, role: "owner" }, { onError });
+          }}
+        />
         {/* (P5-POLISH-7, D6) A … menu; never on your own row, and not for access that comes from the organization or the IdP. */}
         {canOwn && !b.implicit && !b.idp_value && !mine ? (
           <Menu>
@@ -336,12 +351,12 @@ export function AccessTab({
       {items.length === 0 && inherited.length === 0 ? (
         <EmptyState title="No one has access yet" />
       ) : (
-        <DataTable caption="People with access to this workspace">
+        <DataTable caption="People with access to this workspace" stackBelow={900}>
           <thead>
             <tr>
               <Th>Person</Th>
               <Th>Role</Th>
-              <Th className="hidden sm:table-cell">Joined</Th>
+              <Th>Joined</Th>
               <Th>
                 <span className="sr-only">Actions</span>
               </Th>
@@ -366,7 +381,7 @@ export function AccessTab({
             {/* (P5-POLISH-7, D6) Access through a group or the organization: a row with the reason, and no menu. */}
             {inherited.map((d) => (
               <tr key={`via-${d.user.id}`} data-testid="inherited-row">
-                <Td>
+                <Td cell="title">
                   <div className="flex items-center gap-3">
                     <Avatar name={d.user.display_name || d.user.email} tintKey={d.user.id} size={32} />
                     <div className="min-w-0">
@@ -376,13 +391,12 @@ export function AccessTab({
                       </div>
                       <div className="text-xs text-muted">{d.user.email}</div>
                       <div className="text-xs text-ink-2">{d.sources.map((s) => sourceText(s)).join(" · ")}</div>
-                      {d.joined_at ? <div className="text-xs text-muted sm:hidden">{joinedText(d.joined_at)}</div> : null}
                     </div>
                   </div>
                 </Td>
-                <Td>{ROLE_LABEL[d.role as Role] ?? d.role}</Td>
-                <Td className="hidden whitespace-nowrap text-ink-2 sm:table-cell">
-                  {d.joined_at ? <span title={formatExact(d.joined_at)}>{formatWhen(d.joined_at)}</span> : <span className="text-muted">—</span>}
+                <Td label="Role">{ROLE_LABEL[d.role as Role] ?? d.role}</Td>
+                <Td label="Joined" className="whitespace-nowrap text-ink-2">
+                  {d.joined_at ? <When value={d.joined_at} /> : <span className="text-muted">—</span>}
                 </Td>
                 <Td />
               </tr>

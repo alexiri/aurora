@@ -3,6 +3,7 @@
 // Parked approvals (phase 5, P4-011B-4, D-264, D-265(d), C-822, C-836, docs/14 §Parked approvals): the chip, the
 // sentences and the post-decision states the Approvals page, the chat's inline approval and the overview share.
 import { Badge } from "@/components/ui/badge";
+import { formatTime } from "@/lib/format-date";
 import { useApprovalLimits } from "@/lib/api/policy";
 import type { Approval } from "@/lib/api/approvals";
 
@@ -35,7 +36,7 @@ export function ParkedNote({ className }: { className?: string }) {
 }
 
 const time = (iso?: string | null) =>
-  iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+  iso ? formatTime(iso) : "";
 
 /**
  * What became of a decided parked approval, from `status` and `resume_state` (C-822): approved and waiting for the

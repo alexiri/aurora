@@ -5,6 +5,8 @@
 // field, sent once and never shown again; agents post only after the person approves each post.
 import { useState, type FormEvent } from "react";
 
+import { formatWhen } from "@/lib/format-date";
+
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,7 +29,7 @@ import {
   type UserToken,
 } from "@/lib/api/user-tokens";
 
-const fmtDate = (s?: string | null) => (s ? new Date(s).toLocaleString() : "Never");
+const fmtDate = (s?: string | null) => formatWhen(s, { empty: "Never" });
 
 export const SEND_AS_ME_HELP =
   "In Mattermost, open Profile › Security › Personal Access Tokens and create one. Aurora stores it sealed and uses it only to post as you, after you approve each post.";

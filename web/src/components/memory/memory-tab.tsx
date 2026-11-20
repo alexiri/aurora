@@ -5,11 +5,12 @@ import { useState, type FormEvent } from "react";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ConfirmButton } from "@/components/ui/confirm-button";
+import { ConfirmAction } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList } from "@/components/ui/section";
+import { When } from "@/components/ui/when";
 import { cn } from "@/lib/utils";
 import {
   MEMORY_CONTENT_MAX,
@@ -111,7 +112,7 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
                     >
                       <span className="font-mono font-medium text-ink">{m.key}</span>
                       <span className="block truncate text-xs text-ink-2">{m.index_line}</span>
-                      <span className="block text-xs text-muted">Updated {new Date(m.updated_at).toLocaleString()}</span>
+                      <span className="block text-xs text-muted">Updated <When value={m.updated_at} /></span>
                     </button>
                   </li>
                 ))}
@@ -193,7 +194,13 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
               <Button type="button" variant="outline" onClick={() => setHistory((h) => !h)} aria-expanded={history}>
                 History
               </Button>
-              <ConfirmButton type="button" cancelVariant="ghost" onConfirm={() => void del.mutateAsync(memory.key).then(() => onDone(null))} />
+              <ConfirmAction
+                label="Delete"
+                title={`Delete the memory “${memory.key}”?`}
+                description="The agent forgets it, and its history goes with it. This can't be undone."
+                confirmLabel="Delete memory"
+                onConfirm={() => void del.mutateAsync(memory.key).then(() => onDone(null))}
+              />
             </>
           ) : null}
         </FormActions>
@@ -224,7 +231,7 @@ export function RevisionHistory({ agentId, memory }: { agentId: string; memory: 
             <p>
               <strong>#{r.revision}</strong>
               {r.revision === memory.revision ? " (latest)" : ""} - {r.author_label} ({r.author_kind}, {r.provenance}) -{" "}
-              {new Date(r.created_at).toLocaleString()}
+              <When value={r.created_at} />
             </p>
             {r.redacted ? <p className="text-muted">Redacted</p> : null}
             {viewing === r.revision && r.content != null ? (

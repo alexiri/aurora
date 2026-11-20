@@ -102,6 +102,7 @@ function OrgRowActions({ org, onDeleted, onError }: { org: AdminOrg; onDeleted: 
         onOpenChange={setDeleting}
         title={`Delete ${org.name}?`}
         noun="organization"
+        name={org.name}
         slug={org.slug}
         consequences={<OrgDeleteConsequences org={org} />}
         run={(confirm) => del.mutateAsync({ orgId: org.id, confirm })}

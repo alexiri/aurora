@@ -147,6 +147,7 @@ export function ApprovalQuestion({ approval: a, now, onDecide, pending, message,
           open={confirming}
           onOpenChange={setConfirming}
           title="Allow this request once?"
+          description="The agent's request goes through now. Asking again needs a new approval."
           confirmLabel="Allow once"
           busy={pending}
           onConfirm={() => {

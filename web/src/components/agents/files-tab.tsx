@@ -5,6 +5,7 @@
 // privilege with another interface. Names and bytes are only ever rendered as text; downloads are plain links to the
 // attachment route (SEC-126). docs/14 §Files is the source of truth for the layout.
 import { useQueryClient } from "@tanstack/react-query";
+import { formatCount } from "@/lib/format-date";
 import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { EmptyState, Loading } from "@/components/states";
@@ -298,7 +299,7 @@ function FilesBrowser({ agentId }: { agentId: string }) {
                 )}
                 {list.data.truncated ? (
                   <Notice tone="neutral" role="status">
-                    Showing the first {LIST_MAX.toLocaleString("en-US")} items. Use the Terminal to see the rest.
+                    Showing the first {formatCount(LIST_MAX)} items. Use the Terminal to see the rest.
                   </Notice>
                 ) : null}
               </div>

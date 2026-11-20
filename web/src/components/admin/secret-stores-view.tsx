@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 
+import { formatExact } from "@/lib/format-date";
+
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { LockPill } from "@/components/ui/lock-pill";
@@ -55,7 +57,7 @@ const CODE_LABEL: Record<string, string> = {
 };
 
 function when(iso: string | null | undefined): string {
-  return iso ? new Date(iso).toLocaleString() : "";
+  return iso ? formatExact(iso) : "";
 }
 
 /** The error of a write: stale, validation fields and everything else. */

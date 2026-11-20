@@ -144,7 +144,7 @@ export function QuestionsSection({ agentId }: { agentId: string }) {
           if (!o) setRemoving(null);
         }}
         title="Delete this question?"
-        description={removing ? `Question ${removing.position} is removed from the list. Results of past runs keep their copy of it.` : undefined}
+        description={removing ? `Question ${removing.position} is removed from the list. Results of past runs keep their copy of it.` : ""}
         confirmLabel="Delete question"
         danger
         busy={del.isPending}

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
+import { SecretOnce } from "@/components/ui/secret-once";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -198,7 +198,7 @@ export function AdminRunnersView() {
           <ErrorNotice error={rotate.error} className="mt-3" />
         ) : null}
       </ConfirmDialog>
-      <OneTimeKeyDialog
+      <SecretOnce
         secret={issued?.token ?? null}
         title="Copy the new runner token"
         description={`New token for "${issued?.name ?? ""}". You won't see it again: update the runner's token Secret and roll its Deployment now. ${

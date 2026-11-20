@@ -413,7 +413,7 @@ export function TerminalPane({
   }
   if (core === null) {
     return (
-      <Notice tone="pending" role="status">
+      <Notice tone="neutral" role="status">
         Loading terminal…
       </Notice>
     );
@@ -471,7 +471,7 @@ export function TerminalPane({
   return (
     <div className="space-y-3">
       {status ? (
-        <Notice tone="pending" role="status" aria-live="polite">
+        <Notice tone="neutral" role="status" aria-live="polite">
           {status}
         </Notice>
       ) : null}

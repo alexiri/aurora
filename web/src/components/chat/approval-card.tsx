@@ -1,6 +1,8 @@
 "use client";
 
 import { useParams } from "next/navigation";
+
+import { formatTime } from "@/lib/format-date";
 import { useEffect, useState } from "react";
 
 import { AlwaysAllowedNote, ApprovalQuestion } from "@/components/approvals/approval-question";
@@ -75,7 +77,7 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
       parked && st.status === "approve"
         ? st.windowEnded
           ? "Not used (window ended)"
-          : `The agent will be told${st.resumeExpiresAt ? ` and can repeat the request until ${new Date(st.resumeExpiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}.`
+          : `The agent will be told${st.resumeExpiresAt ? ` and can repeat the request until ${formatTime(st.resumeExpiresAt)}` : ""}.`
         : null;
     return (
       <div

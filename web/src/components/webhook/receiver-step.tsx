@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { formatCount } from "@/lib/format-date";
+
 import { Button } from "@/components/ui/button";
 import { CodeField } from "@/components/ui/code-field";
 import { Field, inputClass } from "@/components/ui/field";
@@ -116,7 +118,7 @@ export function ReceiverStep({
           fileName={config.content_type === "application/json" ? "template.json" : "template.txt"}
           onChange={(t) => onConfig({ ...config, template: t })}
           error={firstMessage(issues, "template")}
-          hint={`Write {{name}} where the agent fills in a value and {{secret:name}} for a secret value. ${config.template.length.toLocaleString()} of ${LIMITS.template.toLocaleString()} characters.`}
+          hint={`Write {{name}} where the agent fills in a value and {{secret:name}} for a secret value. ${formatCount(config.template.length)} of ${formatCount(LIMITS.template)} characters.`}
         />
         <h4 className="text-sm font-semibold text-ink">Values the agent fills in</h4>
         <SlotTable slots={config.slots} contentType={config.content_type} issues={issues} onChange={(slots) => onConfig({ ...config, slots })} />

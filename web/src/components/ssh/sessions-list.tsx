@@ -100,7 +100,7 @@ export function SshSessionsList({
             ? own
               ? `End your SSH session on ${target.agent.name}? Running commands in it stop.`
               : `End ${target.user?.label ?? "this person"}'s SSH session on ${target.agent.name}? Running commands in it stop.`
-            : undefined
+            : ""
         }
         confirmLabel="Disconnect"
         danger

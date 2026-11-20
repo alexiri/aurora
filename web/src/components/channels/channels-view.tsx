@@ -5,7 +5,7 @@ import { useState } from "react";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { ConfirmButton } from "@/components/ui/confirm-button";
+import { ConfirmAction } from "@/components/ui/confirm-dialog";
 import { CheckboxField } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
@@ -178,7 +178,15 @@ function IntegrationRow({
         <Button variant="outline" size="sm" aria-expanded={links} onClick={() => setLinks((v) => !v)}>
           {links ? "Hide user links" : "User links"}
         </Button>
-        <ConfirmButton label="Remove" confirmLabel="Confirm remove" size="sm" pending={del.isPending} onConfirm={() => del.mutate(integration.id)} />
+        <ConfirmAction
+          label="Remove"
+          size="sm"
+          title="Remove this chat platform?"
+          description="The agent stops answering in it and people lose their links to it. Messages already sent stay where they are."
+          confirmLabel="Remove"
+          pending={del.isPending}
+          onConfirm={() => del.mutate(integration.id)}
+        />
       </div>
       <MutationError error={patch.error ?? del.error} />
       {links ? <UserLinks integration={integration} /> : null}
