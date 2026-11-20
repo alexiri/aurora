@@ -272,7 +272,9 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     expect((await screen.findByTestId("internet-summary")).textContent).toMatch(/^What agents in .* may reach\.$/);
     expect(screen.getByRole("heading", { name: "Your rules" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Set above you" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
+    // (org-14) The history is a page section, not a button.
+    expect(screen.getByRole("heading", { name: "History of internet rules" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Limits and defaults" })).toBeNull();
     expect((screen.getByTestId("internet-more") as HTMLDetailsElement).open).toBe(false);
   });

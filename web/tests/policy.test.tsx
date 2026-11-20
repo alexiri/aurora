@@ -158,8 +158,8 @@ describe("Internet access page (InternetLevel)", () => {
       },
     });
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
-    fireEvent.click(await screen.findByText("History of changes"));
-    // (org-14) Rows read as sentences; rolling back asks first.
+    // (org-14) The history is a page section; rows read as sentences; rolling back asks first.
+    expect(await screen.findByRole("heading", { name: "History of internet rules" })).toBeInTheDocument();
     expect(await screen.findByText("Someone published version 2")).toBeInTheDocument();
     expect(screen.getByText("Current")).toBeInTheDocument();
     expect(screen.queryByLabelText("Roll back to version 4")).toBeNull();
