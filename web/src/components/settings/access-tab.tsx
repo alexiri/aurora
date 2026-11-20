@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { formatWhen } from "@/lib/format-date";
 import { When } from "@/components/ui/when";
+import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { useMe, useOrg } from "@/lib/api/queries";
 import { sourceText } from "@/lib/api/groups";
@@ -178,6 +179,7 @@ function Row({
   const [confirm, setConfirm] = useState(false);
   const [confirmSuspend, setConfirmSuspend] = useState(false);
   const [promote, setPromote] = useState(false);
+  const saved = useSaveBar();
   const offboarding = useWorkspaceOffboarding(wsId, confirm ? b.user_id : null);
   const who = b.display_name || b.email;
   // (P5-APIGAP-4, C-1051) An implicit row's access comes from the organization: a stored suspension does not apply to it.
@@ -210,6 +212,7 @@ function Row({
             <IdpRoleBadge value={b.idp_value} />
           </span>
         ) : canOwn && !mine ? (
+          <span className="inline-flex items-center gap-2">
           <select
             aria-label={`Role for ${b.email}`}
             className={cn(inputClass, "w-36")}
@@ -219,7 +222,7 @@ function Row({
               const next = e.target.value as Role;
               // Second rung of the confirm ladder: making someone an owner asks first.
               if (next === "owner" && b.role !== "owner") setPromote(true);
-              else put.mutate({ user: b.user_id, role: next }, { onError });
+              else put.mutate({ user: b.user_id, role: next }, { onError, onSuccess: () => saved.flash() });
             }}
           >
             {/* The last owner's role cannot be lowered (the server refuses): the option is not offered. */}
@@ -227,6 +230,8 @@ function Row({
             {lastOwner ? null : <option value="approver">Approver</option>}
             <option value="owner">Owner</option>
           </select>
+          <InlineSaved show={saved.saved} />
+          </span>
         ) : (
           ROLE_LABEL[b.role as Role] ?? b.role
         )}

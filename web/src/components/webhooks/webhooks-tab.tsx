@@ -3,7 +3,6 @@
 import { useState, type FormEvent } from "react";
 
 import { SecretOnce } from "@/components/ui/secret-once";
-import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,7 +11,9 @@ import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField, FormActions } from "@/components/ui/form";
 import { LoadMore } from "@/components/ui/load-more";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { When } from "@/components/ui/when";
 import { ItemList, Section } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
@@ -37,13 +38,17 @@ function Deliveries({ agentId, id }: { agentId: string; id: string }) {
   if (items.length === 0) return <p className="text-sm text-muted">No deliveries yet.</p>;
   return (
     <div className="flex flex-col gap-3">
-      <DataTable caption="Deliveries">
+      <DataTable caption="Deliveries" stackBelow={900}>
         <tbody>
           {items.map((d) => (
             <tr key={d.id}>
-              <Td className="whitespace-nowrap">{fmtDate(d.received_at)}</Td>
-              <Td>{d.status}</Td>
-              <Td className="whitespace-nowrap">{d.size} B</Td>
+              <Td cell="title" className="whitespace-nowrap">
+                <When value={d.received_at} />
+              </Td>
+              <Td label="Result">{d.status}</Td>
+              <Td label="Size" className="whitespace-nowrap">
+                {d.size} B
+              </Td>
             </tr>
           ))}
         </tbody>
@@ -165,7 +170,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
       </div>
       <p className="whitespace-pre-wrap text-sm text-ink-2">{w.instructions}</p>
       <p className="text-xs text-muted">
-        Last delivery: {w.last_delivery_at ? fmtDate(w.last_delivery_at) : "never"} · <OwnerLabel anchor={w.anchor} creator={w.created_by} />
+        Last delivery: {w.last_delivery_at ? <When value={w.last_delivery_at} /> : "never"} · <OwnerLabel anchor={w.anchor} creator={w.created_by} />
       </p>
       {w.disabled_reason === "authorization" ? (
         <Notice tone="pending" role="status">
@@ -189,41 +194,45 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
         <Button size="sm" variant="outline" disabled={upd.isPending} onClick={() => upd.mutate({ id: w.id, body: { enabled: !w.enabled } })}>
           {w.enabled ? "Turn off" : "Turn on"}
         </Button>
-        {confirm === "rotate" ? (
-          <Button
-            size="sm"
-            variant="danger"
-            disabled={rotate.isPending}
-            onClick={() =>
-              rotate.mutate(w.id, {
-                onSuccess: (res) => {
-                  setConfirm(null);
-                  onSecret(res.url, res.webhook.name);
-                  rotate.reset();
-                },
-              })
-            }
-          >
-            Confirm rotate {w.name}
-          </Button>
-        ) : (
-          <Button size="sm" variant="outline" onClick={() => setConfirm("rotate")}>
-            Rotate URL
-          </Button>
-        )}
+        <Button size="sm" variant="outline" onClick={() => setConfirm("rotate")}>
+          Rotate URL
+        </Button>
         <Button size="sm" variant="outline" aria-expanded={showDeliveries} onClick={() => setShowDeliveries((v) => !v)}>
           {showDeliveries ? "Hide deliveries" : "Deliveries"}
         </Button>
-        {confirm === "delete" ? (
-          <Button size="sm" variant="danger" disabled={del.isPending} onClick={() => del.mutate(w.id)}>
-            Confirm delete {w.name}
-          </Button>
-        ) : (
-          <Button size="sm" variant="outline" onClick={() => setConfirm("delete")}>
-            Delete
-          </Button>
-        )}
+        <Button size="sm" variant="outline" onClick={() => setConfirm("delete")}>
+          Delete
+        </Button>
       </div>
+      {/* (P5-REFINE-2, webhooks-5) The second rung of the ladder: each says what stops working, and the verb is the button. */}
+      <ConfirmDialog
+        open={confirm === "rotate"}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title="Rotate the URL?"
+        description="The old URL stops working now. Update every sender that uses it. The new URL is shown once."
+        confirmLabel="Rotate URL"
+        danger
+        busy={rotate.isPending}
+        onConfirm={() =>
+          rotate.mutate(w.id, {
+            onSuccess: (res) => {
+              setConfirm(null);
+              onSecret(res.url, res.webhook.name);
+              rotate.reset();
+            },
+          })
+        }
+      />
+      <ConfirmDialog
+        open={confirm === "delete"}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title={`Delete ${w.name}?`}
+        description="The webhook and its delivery history are removed. Senders that call it get an error. Conversations it started are kept."
+        confirmLabel="Delete webhook"
+        danger
+        busy={del.isPending}
+        onConfirm={() => del.mutate(w.id, { onSuccess: () => setConfirm(null) })}
+      />
       {showDeliveries ? <Deliveries agentId={agentId} id={w.id} /> : null}
     </li>
   );

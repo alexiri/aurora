@@ -10,13 +10,13 @@ import { usePolicyEditor } from "@/components/internet/use-policy-editor";
 import { RuleEditorDialog, type Option, type PickerData } from "@/components/policy/rule-editor";
 import { SimulatePanel } from "@/components/policy/simulate-panel";
 import { ErrorState, Loading } from "@/components/states";
-import { ApplyBar } from "@/components/ui/apply-bar";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { inputClass } from "@/components/ui/field";
 import { MainAction } from "@/components/ui/main-action";
-import { Notice, SavedNotice } from "@/components/ui/notice";
+import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ScopeLadder, type LadderBelow } from "@/components/ui/scope-ladder";
 import { Section } from "@/components/ui/section";
@@ -258,7 +258,7 @@ export function InternetLevel(p: InternetLevelProps) {
   const [simulating, setSimulating] = useState(false);
   const [confirmBroad, setConfirmBroad] = useState(false);
   const [partial, setPartial] = useState<string | null>(null);
-  const [applied, setApplied] = useState(false);
+  const bar = useSaveBar();
   const gov = p.governance;
 
   const who = { org: p.whoCanOrg, instance: whoCanFromContacts("instance_admin", undefined, "change_this") };
@@ -339,7 +339,7 @@ export function InternetLevel(p: InternetLevelProps) {
 
   async function apply() {
     setPartial(null);
-    setApplied(false);
+    bar.clear();
     let limitsApplied = false;
     if (gov?.dirty) {
       if (!(await gov.apply())) return;
@@ -351,12 +351,12 @@ export function InternetLevel(p: InternetLevelProps) {
         return;
       }
     }
-    setApplied(true);
+    bar.flash();
   }
 
   async function discard() {
     setPartial(null);
-    setApplied(false);
+    bar.clear();
     gov?.discard();
     if (ed.pending > 0) await ed.discard();
   }
@@ -400,7 +400,6 @@ export function InternetLevel(p: InternetLevelProps) {
           ) : null}
         </Notice>
       ) : null}
-      <SavedNotice show={applied}>Changes applied.</SavedNotice>
 
       <CommonChanges scopeWords={workspace ? "workspace" : "organization"} onAdd={(r) => ed.edit({ ...state, rules: [...rules, r] })} />
 
@@ -541,9 +540,17 @@ export function InternetLevel(p: InternetLevelProps) {
         </Notice>
       ) : null}
 
-      <ApplyBar count={count} busy={ed.busy} onApply={() => (broad.length > 0 && ed.pending > 0 ? setConfirmBroad(true) : void apply())} onDiscard={() => void discard()}>
+      <SaveBar
+        dirty={count > 0}
+        saving={ed.busy}
+        saved={bar.saved}
+        savedMessage="Saved. Changes apply to new requests."
+        unsavedLabel={count === 1 ? "1 unsaved change" : `${count} unsaved changes`}
+        onSave={() => (broad.length > 0 && ed.pending > 0 ? setConfirmBroad(true) : void apply())}
+        onDiscard={() => void discard()}
+      >
         {partial}
-      </ApplyBar>
+      </SaveBar>
 
       {editing ? (
         <RuleEditorDialog

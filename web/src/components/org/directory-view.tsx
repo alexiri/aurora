@@ -13,7 +13,8 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { SecretOnce } from "@/components/ui/secret-once";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
@@ -52,22 +53,27 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
   const [enabled, setEnabled] = useState(initial.enabled);
   const [exclusive, setExclusive] = useState(initial.exclusive);
   const [domains, setDomains] = useState(initial.email_domains.join(", "));
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
+  // What is saved: the form's start, and again after each save.
+  const [base, setBase] = useState({ enabled: initial.enabled, exclusive: initial.exclusive, domains: initial.email_domains.join(", ") });
+  const dirty = enabled !== base.enabled || exclusive !== base.exclusive || parseDomains(domains).join(",") !== parseDomains(base.domains).join(",");
   const fe = put.error ? errorMessage(put.error) : undefined;
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    setSaved(false);
+    bar.clear();
     const list = parseDomains(domains);
     const body: { enabled?: boolean; email_domains?: string[]; exclusive?: boolean } = {};
-    if (enabled !== initial.enabled) body.enabled = enabled;
-    if (exclusive !== initial.exclusive) body.exclusive = exclusive;
-    if (list.join(",") !== initial.email_domains.join(",")) body.email_domains = list;
-    if (Object.keys(body).length === 0) {
-      setSaved(true);
-      return;
-    }
-    put.mutate(body, { onSuccess: () => setSaved(true) });
+    if (enabled !== base.enabled) body.enabled = enabled;
+    if (exclusive !== base.exclusive) body.exclusive = exclusive;
+    if (list.join(",") !== parseDomains(base.domains).join(",")) body.email_domains = list;
+    if (Object.keys(body).length === 0) return;
+    put.mutate(body, {
+      onSuccess: () => {
+        setBase({ enabled, exclusive, domains });
+        bar.flash();
+      },
+    });
   }
 
   return (
@@ -93,7 +99,7 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
           autoComplete="off"
           onChange={(e) => {
             setDomains(e.target.value);
-            setSaved(false);
+            bar.clear();
           }}
         />
       </Field>
@@ -104,12 +110,18 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
         checked={exclusive}
         onChange={setExclusive}
       />
-      <SavedNotice show={saved}>Directory sync settings saved.</SavedNotice>
-      <FormActions>
-        <Button type="submit" size="lg" disabled={put.isPending}>
-          {put.isPending ? "Saving…" : "Save settings"}
-        </Button>
-      </FormActions>
+      <SaveBar
+        dirty={dirty}
+        saving={put.isPending}
+        saved={bar.saved}
+        errorCount={fe ? 1 : 0}
+        onDiscard={() => {
+          setEnabled(base.enabled);
+          setExclusive(base.exclusive);
+          setDomains(base.domains);
+          put.reset();
+        }}
+      />
     </Form>
   );
 }

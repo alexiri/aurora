@@ -2,13 +2,13 @@
 
 import { useState, type FormEvent } from "react";
 
-import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
+import { Form } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Select } from "@/components/ui/select";
 import { usePatchWorkspace } from "@/lib/api/account";
-import { fieldErrors } from "@/lib/api/errors";
+import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import type { Workspace } from "@/lib/api/queries";
 import { MEMORY_LANGUAGES, timeZones } from "@/lib/nav/landing";
 
@@ -19,16 +19,27 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
   const [tz, setTz] = useState(workspace.timezone);
   const [lang, setLang] = useState(workspace.memory_language);
   const [clientErr, setClientErr] = useState("");
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
+  // What is saved: the form's start, and again after each save (the workspace-7 finding: "Saved" appears).
+  const [base, setBase] = useState({ name: workspace.name, tz: workspace.timezone, lang: workspace.memory_language });
+  const dirty = name !== base.name || tz !== base.tz || lang !== base.lang;
   const fe = patch.error ? fieldErrors(patch.error) : {};
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    setSaved(false);
+    bar.clear();
     const n = name.trim();
     if (!n || n.length > 200) return setClientErr("Name must be 1 to 200 characters.");
     setClientErr("");
-    patch.mutate({ name: n, timezone: tz, memory_language: lang }, { onSuccess: () => setSaved(true) });
+    patch.mutate(
+      { name: n, timezone: tz, memory_language: lang },
+      {
+        onSuccess: () => {
+          setBase({ name, tz, lang });
+          bar.flash();
+        },
+      },
+    );
   }
 
   const tzOptions = zones.includes(tz) ? zones : [tz, ...zones];
@@ -61,16 +72,21 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
           <Select id="set-lang" value={lang} onChange={setLang} options={langOptions.map((l) => ({ value: l, label: l }))} />
         </Field>
       </fieldset>
-      {patch.error && Object.keys(fe).length === 0 ? (
-        <ErrorNotice error={patch.error} />
-      ) : null}
-      <SavedNotice show={saved}>Settings saved.</SavedNotice>
       {canOwn ? (
-        <FormActions>
-          <Button type="submit" size="lg" disabled={patch.isPending}>
-            {patch.isPending ? "Saving…" : "Save changes"}
-          </Button>
-        </FormActions>
+        <SaveBar
+          dirty={dirty}
+          saving={patch.isPending}
+          saved={bar.saved}
+          errorCount={Object.keys(fe).length + (clientErr ? 1 : 0)}
+          error={patch.error && Object.keys(fe).length === 0 ? errorMessage(patch.error) : undefined}
+          onDiscard={() => {
+            setName(base.name);
+            setTz(base.tz);
+            setLang(base.lang);
+            setClientErr("");
+            patch.reset();
+          }}
+        />
       ) : null}
     </Form>
   );

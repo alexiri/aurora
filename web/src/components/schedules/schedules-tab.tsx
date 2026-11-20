@@ -10,6 +10,7 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, FormActions } from "@/components/ui/form";
 import { LoadMore } from "@/components/ui/load-more";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
@@ -205,16 +206,20 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
         <Button size="sm" variant="outline" aria-expanded={showRuns} onClick={() => setShowRuns((v) => !v)}>
           {showRuns ? "Hide runs" : "Runs"}
         </Button>
-        {confirm ? (
-          <Button size="sm" variant="danger" disabled={del.isPending} onClick={() => del.mutate(s.id)}>
-            Confirm delete {s.name}
-          </Button>
-        ) : (
-          <Button size="sm" variant="outline" onClick={() => setConfirm(true)}>
-            Delete
-          </Button>
-        )}
+        <Button size="sm" variant="outline" onClick={() => setConfirm(true)}>
+          Delete
+        </Button>
       </div>
+      <ConfirmDialog
+        open={confirm}
+        onOpenChange={setConfirm}
+        title={`Delete ${s.name}?`}
+        description="It stops starting runs. Conversations it already started are kept."
+        confirmLabel="Delete schedule"
+        danger
+        busy={del.isPending}
+        onConfirm={() => del.mutate(s.id, { onSuccess: () => setConfirm(false) })}
+      />
       {showRuns ? <Runs agentId={agentId} id={s.id} /> : null}
     </li>
   );

@@ -10,8 +10,9 @@ import { ErrorState, Loading } from "@/components/states";
 import { ThemeSwitch } from "@/components/theme/theme-switch";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
+import { Form } from "@/components/ui/form";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Section } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
 import { useUpdateMe } from "@/lib/api/account";
@@ -29,12 +30,13 @@ function ProfileForm({ me }: { me: Me }) {
   const [org, setOrg] = useState(me.default_org_id ?? "");
   const [tz, setTz] = useState(me.timezone ?? "");
   const [clientErr, setClientErr] = useState("");
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
   const fe = update.error ? fieldErrors(update.error) : {};
+  const dirty = name !== me.user.display_name || org !== (me.default_org_id ?? "") || tz !== (me.timezone ?? "");
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    setSaved(false);
+    bar.clear();
     const trimmed = name.trim();
     if (!trimmed || trimmed.length > 80) {
       setClientErr("Display name must be 1 to 80 characters.");
@@ -43,7 +45,7 @@ function ProfileForm({ me }: { me: Me }) {
     setClientErr("");
     update.mutate(
       { display_name: trimmed, default_org_id: org || null, timezone: tz || null },
-      { onSuccess: () => setSaved(true) },
+      { onSuccess: () => bar.flash() },
     );
   }
 
@@ -88,12 +90,19 @@ function ProfileForm({ me }: { me: Me }) {
       {update.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={update.error} />
       ) : null}
-      <SavedNotice show={saved}>Profile saved.</SavedNotice>
-      <FormActions>
-        <Button type="submit" size="lg" disabled={update.isPending}>
-          {update.isPending ? "Saving…" : "Save changes"}
-        </Button>
-      </FormActions>
+      <SaveBar
+        dirty={dirty}
+        saving={update.isPending}
+        saved={bar.saved}
+        errorCount={Object.keys(fe).length + (clientErr ? 1 : 0)}
+        onDiscard={() => {
+          setName(me.user.display_name);
+          setOrg(me.default_org_id ?? "");
+          setTz(me.timezone ?? "");
+          setClientErr("");
+          update.reset();
+        }}
+      />
     </Form>
   );
 }

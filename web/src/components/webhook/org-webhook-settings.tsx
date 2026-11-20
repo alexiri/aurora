@@ -2,12 +2,13 @@
 
 import { useState, type FormEvent } from "react";
 
-import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { CheckboxField, Form, FormActions } from "@/components/ui/form";
-import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
+import { CheckboxField, Form } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Section } from "@/components/ui/section";
 import { ApiError } from "@/lib/api/client";
+import { errorMessage } from "@/lib/api/errors";
 import { usePatchOrg } from "@/lib/api/org";
 import type { Org } from "@/lib/api/queries";
 import type { OrgWebhookSettings } from "@/lib/api/webhook";
@@ -36,12 +37,15 @@ function OrgWebhookForm({ org }: { org: Org }) {
   const [perMinute, setPerMinute] = useState(s.outgoing_webhooks_per_minute_max?.toString() ?? "");
   const [perDay, setPerDay] = useState(s.outgoing_webhooks_per_day_max?.toString() ?? "");
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [saved, setSaved] = useState(false);
+  const bar = useSaveBar();
+  // What is saved: the form's start, and again after each save.
+  const [base, setBase] = useState({ enabled, perMinute, perDay });
+  const dirty = enabled !== base.enabled || perMinute !== base.perMinute || perDay !== base.perDay;
   const owner = org.my_role === "owner";
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    setSaved(false);
+    bar.clear();
     const pm = parseRate(perMinute);
     const pd = parseRate(perDay);
     const errs: Record<string, string> = {};
@@ -55,7 +59,10 @@ function OrgWebhookForm({ org }: { org: Org }) {
       outgoing_webhooks_per_day_max: pd as number | null,
     };
     patch.mutate({ settings }, {
-      onSuccess: () => setSaved(true),
+      onSuccess: () => {
+        setBase({ enabled, perMinute, perDay });
+        bar.flash();
+      },
       onError: (err) => {
         if (err instanceof ApiError && err.code === "above_instance_ceiling") {
           const msg = "This is above the limit your administrator set for the whole instance.";
@@ -85,16 +92,21 @@ function OrgWebhookForm({ org }: { org: Org }) {
             <input id="org-wh-pd" className={inputClass} inputMode="numeric" value={perDay} onChange={(e) => setPerDay(e.target.value)} />
           </Field>
         </fieldset>
-        {patch.error && !ceilingRefused ? (
-          <ErrorNotice error={patch.error} />
-        ) : null}
-        <SavedNotice show={saved}>Outgoing webhook settings updated.</SavedNotice>
         {owner ? (
-          <FormActions>
-            <Button type="submit" disabled={patch.isPending}>
-              {patch.isPending ? "Updating…" : "Update outgoing webhooks"}
-            </Button>
-          </FormActions>
+          <SaveBar
+            dirty={dirty}
+            saving={patch.isPending}
+            saved={bar.saved}
+            errorCount={Object.values(errors).filter(Boolean).length}
+            error={patch.error && !ceilingRefused ? errorMessage(patch.error) : undefined}
+            onDiscard={() => {
+              setEnabled(base.enabled);
+              setPerMinute(base.perMinute);
+              setPerDay(base.perDay);
+              setErrors({});
+              patch.reset();
+            }}
+          />
         ) : null}
       </Form>
     </Section>
