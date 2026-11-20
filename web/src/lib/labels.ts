@@ -235,3 +235,60 @@ export const COVERED: Record<string, Record<string, LabelEntry<never>>> = {
   LinkMethod: LINK_METHOD,
   Decision: APPROVAL_STATE,
 };
+
+/** `SimVerdict` of "Check what would happen": the bold lead of the answer (workspace-1). */
+export const SIM_VERDICT = {
+  allow: { label: "Allowed" },
+  block: { label: "Blocked" },
+  needs_approval: { label: "Asks first" },
+  rate_limited: { label: "Slowed down" },
+} satisfies LabelTable;
+COVERED.SimVerdict = SIM_VERDICT;
+
+/** `SimReason`: why the verdict came out as it did, after the lead, in a sentence (`rule` names the rule). */
+export const SIM_REASON = {
+  rule: { label: "A rule decided" },
+  default_denied: { label: "No rule allows it" },
+  egress_denied: { label: "Outside internet access" },
+  governance: { label: "Your organization decides" },
+  open_lane: { label: "Browser connection" },
+} satisfies LabelTable;
+COVERED.SimReason = SIM_REASON;
+
+export interface SimWords {
+  /** The bold lead ("Blocked." / "Dani will ask you first."). */
+  lead: string;
+  /** The rest of the first line; `ruleName` is shown in bold between `before` and `after`. */
+  before: string;
+  ruleName: string | null;
+  after: string;
+  /** The small second line, or null. */
+  second: string | null;
+}
+
+/** The sentences of one check (workspace-1), from the verdict, the reason and the rule that matched. */
+export function simWords(
+  sim: { verdict: keyof typeof SIM_VERDICT; reason?: keyof typeof SIM_REASON | null },
+  rule: string | null,
+  agent: string,
+): SimWords {
+  const lead = sim.verdict === "needs_approval" ? `${agent} will ask you first` : label(SIM_VERDICT, sim.verdict);
+  const none = (before: string, second: string | null = null): SimWords => ({ lead: `${lead}.`, before, ruleName: null, after: "", second });
+  const byRule = (before: string, after: string, second: string | null = null): SimWords =>
+    rule ? { lead: `${lead}.`, before, ruleName: rule, after, second } : none(" No rule applies to it.", second);
+  switch (sim.verdict) {
+    case "block":
+      if (sim.reason === "default_denied") return none(" No rule allows it, and the default for sites without an account is to block.");
+      if (sim.reason === "egress_denied") return none(" Internet access for this agent doesn't include this website.");
+      if (sim.reason === "governance") return none(" Your organization doesn't allow it.");
+      return byRule(" Your rule ", " stops it.", `${agent} can't reach this website, and nothing will ask you first.`);
+    case "allow":
+      if (sim.reason === "open_lane") return none(" Browser connections are open to any website.");
+      if (sim.reason === "rule") return byRule(" Your rule ", " allows it.");
+      return none(" No rule stops it, so it goes through.");
+    case "needs_approval":
+      return byRule(" Your rule ", " asks first.", `Nothing happens until you answer in Approvals.`);
+    case "rate_limited":
+      return byRule(" Your rule ", " limits how often this can happen.", `${agent} is slowed down, not stopped.`);
+  }
+}
