@@ -70,7 +70,7 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
           if (SETTINGS_PAGES.has(section)) {
             // (D-408) Settings pages open from the Settings button: no section tab is selected and the page carries its
             // own heading and a sub-nav tab.
-            await expect(page.getByRole("heading", { level: 2, name: section }), `${tab}: its page heading`).toBeVisible();
+            await expect(page.getByRole("heading", { level: 2, name: section, exact: true }), `${tab}: its page heading`).toBeVisible();
             await expect(sections.getByRole("tab", { selected: true }), `${tab}: no section tab is selected`).toHaveCount(0);
           } else {
             await expect(sections.getByRole("tab", { selected: true }), `${tab}: its section is selected`).toHaveText(section);

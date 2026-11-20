@@ -202,7 +202,13 @@ describe("collapsed strip", () => {
       "What Scout did: some requests were denied or failed",
     ]);
     // (rec 3) The visible words under the icons.
-    expect(within(strip).getByText("Need")).toBeInTheDocument();
+    // (WCAG 2.5.3) Every collapsed button's visible text is contained in its accessible name.
+    for (const b of within(strip).getAllByRole("button")) {
+      const clone = b.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll("[aria-hidden=\"true\"]").forEach((n) => n.remove());
+      const visible = (clone.textContent ?? "").trim().toLowerCase();
+      if (visible) expect(b.getAttribute("aria-label")!.toLowerCase()).toContain(visible);
+    }
     expect(within(strip).getByText("Now")).toBeInTheDocument();
     expect(within(strip).getByText("Did")).toBeInTheDocument();
     // The count on the Needs you icon.

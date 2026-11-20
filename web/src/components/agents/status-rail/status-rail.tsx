@@ -201,16 +201,11 @@ export function StatusRail({
           <PopoverTrigger asChild>
             <button type="button" aria-label={labels.needs} className={partButton}>
               <CheckCircleIcon width={20} height={20} />
-              <PartLabel>Need</PartLabel>
+              {/* The visible text is only the count, which the accessible name ("Needs you: 2 approvals waiting") contains
+                  (WCAG 2.5.3 label in name); no cut-off word. With nothing waiting there is just the icon. */}
               <Tip>Needs you</Tip>
               {status.needs.length > 0 ? (
-                // The count is drawn by CSS (`data-count`), not text: the button's visible text stays "Need", which its accessible
-                // name ("Needs you: 2 approvals waiting") contains (WCAG 2.5.3 label in name).
-                <span
-                  aria-hidden="true"
-                  data-count={status.needs.length}
-                  className="absolute -right-1 -top-1 inline-flex items-center rounded-full bg-pending-soft px-1.5 py-0.5 text-label font-medium leading-4 tabular-nums text-pending-ink after:content-[attr(data-count)]"
-                />
+                <span className="text-label font-semibold leading-none tabular-nums text-pending-ink">{status.needs.length}</span>
               ) : null}
             </button>
           </PopoverTrigger>
