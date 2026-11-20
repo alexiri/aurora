@@ -215,7 +215,7 @@ describe("attach empty states", () => {
     setup({}, [], []);
     wrap(<AgentChannelsTab agentId="a1" agentName="Daneel" orgId="o1" canOwn />);
     expect(await screen.findByText("Daneel isn't in any chat yet")).toBeInTheDocument();
-    expect(screen.getByText(/Your organization hasn't connected a chat platform/)).toBeInTheDocument();
+    expect(screen.getByText("Only organization owners and admins can connect a chat platform.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Show progress in chat")).toBeNull();
     expect(screen.queryByRole("button", { name: "Attach" })).toBeNull();
   });

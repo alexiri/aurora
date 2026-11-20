@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { DynamicForm } from "@/components/apps/dynamic-form";
-import { AskAdmin } from "@/components/ask-admin";
+import { AskAdminForm, nameList } from "@/components/ask-admin";
+import { Altitude } from "@/components/ui/altitude";
+import { MailIcon } from "@/components/ui/icons";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -33,7 +35,6 @@ import {
 import { usePatchAgent } from "@/lib/api/agents";
 import { dedicatedFields, formFields, useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
 import { useOrg } from "@/lib/api/queries";
-import { useWhoCan } from "@/lib/api/who-can";
 import { orgRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -429,6 +430,39 @@ function NarrationSwitch({ wsId, agentId, value, canOwn }: { wsId?: string; agen
   );
 }
 
+/**
+ * (P5-REFINE-14, channels-3, D-417) The Chats empty state: "<Agent> isn't in any chat yet", who can connect a platform, and
+ * **Ask an admin** to connect the platforms the instance has connectors for, with an optional reason. The request goes to
+ * every admin who can do it; no one's name is in the control.
+ */
+export function NoChatYet({ agentName, wsId }: { agentName?: string; wsId?: string }) {
+  const name = agentName ?? "This agent";
+  const connectors = useConnectors();
+  const platforms = nameList((connectors.data?.items ?? []).map((c) => c.display_name));
+  return (
+    <EmptyState title={`${name} isn't in any chat yet`} icon={<MailIcon />} when="Only organization owners and admins can connect a chat platform." action={<AskAdminForm workspaceId={wsId} subject="chat_platform" platforms={platforms || undefined} placeholder={`So ${name} can answer in #ops`} />} />
+  );
+}
+
+/** Presences, space bindings, reach requests and progress in chat: the Chats group of the Automations page. */
+export function ChannelsBody({ agentId, orgId, canOwn, wsId, narrationCards = false }: { agentId: string; orgId?: string; canOwn: boolean; wsId?: string; narrationCards?: boolean }) {
+  return (
+    <div className="space-y-8">
+      <NarrationSwitch wsId={wsId} agentId={agentId} value={narrationCards} canOwn={canOwn} />
+      <Presences agentId={agentId} orgId={orgId} canOwn={canOwn} />
+      {/* (P5-REFINE-3, P5-REFINE-14) Space bindings and Reach requests are Expert. */}
+      {canOwn ? (
+        <Altitude id="chat.bindings" level="expert">
+          <Bindings agentId={agentId} />
+        </Altitude>
+      ) : null}
+      <Altitude id="chat.reach" level="expert">
+        <Reach agentId={agentId} canOwn={canOwn} />
+      </Altitude>
+    </div>
+  );
+}
+
 export function AgentChannelsTab({
   agentId,
   agentName,
@@ -448,25 +482,10 @@ export function AgentChannelsTab({
   // the connector types installed on the instance, not what the organization has connected.
   const options = usePresenceOptions(agentId);
   const presences = usePresences(agentId);
-  const who = useWhoCan({ orgId }, "org_admin", "connect_chat");
   // (P5-POLISH-6, C6) The organization has no chat integration and the agent is attached nowhere: the whole tab is one
   // empty state. Presences, Space bindings, Reach requests and Show progress in chat appear only when there is one.
   if (options.data && options.data.items.length === 0 && presences.data && presences.data.items.length === 0) {
-    const name = agentName ?? "This agent";
-    return (
-      <EmptyState
-        title={`${name} isn't in any chat yet`}
-        when={`Your organization hasn't connected a chat platform. Once it has, you can add ${name} to channels here.`}
-        ask={{ whoCan: who, canAct: false, control: <AskAdmin workspaceId={wsId} subject="chat_platform" who={who} /> }}
-      />
-    );
+    return <NoChatYet agentName={agentName} wsId={wsId} />;
   }
-  return (
-    <div className="space-y-8">
-      <NarrationSwitch wsId={wsId} agentId={agentId} value={narrationCards} canOwn={canOwn} />
-      <Presences agentId={agentId} orgId={orgId} canOwn={canOwn} />
-      {canOwn ? <Bindings agentId={agentId} /> : null}
-      <Reach agentId={agentId} canOwn={canOwn} />
-    </div>
-  );
+  return <ChannelsBody agentId={agentId} orgId={orgId} canOwn={canOwn} wsId={wsId} narrationCards={narrationCards} />;
 }

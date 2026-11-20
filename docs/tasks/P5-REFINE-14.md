@@ -404,9 +404,72 @@ in tests, and master's CI broke until the CI Watcher fixed it in `ee7bfa0d`.) So
 
 Fill in when done (P5-REFINE-20 reads it).
 
-- Items done, with commit: 1 · 2 · 3 · 4 · 5 · 6 · 7 · 8 · 9 · 10 · 11 · 12 · 13 · 14.
-- Items that waited for P5-REFINE-7 or -8 and what shipped meanwhile:
-- The file the webhook message renderer went into (item 11):
-- Deviations and why (the On/Paused choice over the mockup's "Running" is already decided):
-- Screenshots compared (Before / After / mine, per finding key, both themes, 1256 and 390 px):
-- Open questions:
+Lane B, worktree `p5-polish-b`, branch `alexiri/p5-polish-b` (master 98d4373c merged first). P5-REFINE-7, -8 and -11 were all on master,
+so no item waited.
+
+- Items done, with commit: `059bec27` (`lib/cron.ts`, `lib/webhook-snippets.ts` and their unit tests: items 3 and 10's libraries); the
+  Automations commit (items 1, 2, 3, 4, 5, 6, 7, 9, 10, 12, 13, 14, docs); the chat commit (items 8 and 11). Commit ids are in the
+  worker_done message.
+  - 1 one Automations page (`components/automations/automations-tab.tsx`; `sections.ts` page id `automations`, the old ids resolve to it
+    with their kind as the filter, `peers` untouched); 2 On / Paused with Pause and Resume and the Undo toast; 3 the schedule form
+    (`schedule-form.tsx`: presets, time picker, zone select defaulting to the workspace's, debounced 1 s preview with the API's 60 s
+    cache, Custom as Expert, "Too often" as you type, Advanced); 4 two buttons and the "…" menu, Edit in place, Reassign as a dialog,
+    Delete as a `ConfirmDialog`; 5 Run now line and the Runs table; 6 `automationThreadHref` in `lib/automation-thread.ts`; 7 menus by
+    kind; 9 the webhook form (Signed default, three cards, Generate, Advanced) and the one-time dialog (`SecretOnce` with `size` and
+    `label`, 640 px, address and secret each in a box, How to call it below); 10 `HowToCall` (curl · Python · Node); 12 Deliveries
+    as a `ResponsiveTable`; 13 Rotate URL, New secret and Delete as dialogs; 14 `AskAdminForm` and `NoChatYet`; 8 the "Schedule
+    deleted" / "Webhook deleted" segment and notice in the thread header; 11 the delivery message.
+- Items that waited for P5-REFINE-7 or -8 and what shipped meanwhile: none waited. Everything that needs C-1073..C-1082 is built on
+  them (run `conversation_id` and `result`, `next_runs`, `useSchedulePreview`, `generate_secret`, `rotate-secret`, delivery `result`,
+  `display`, `reason` on Ask).
+- The file the webhook message renderer went into (item 11): `web/src/components/chat/automation-message.tsx` (used by `Bubble` in
+  `components/chat/message-group.tsx`).
+- Deviations and why:
+  - **Chats rows**: a chat row is one per presence ("Mattermost · tenant", On / Paused from the presence status). The row's primary
+    action is **Open channel**, which scrolls to the Chats group under the list (presences with Re-attach and Detach, progress in chat,
+    space bindings and reach requests): a presence has no channel address to open. The row's menu is **Open channel · Remove from
+    channel…** (detach, with the consequence sentence); **Pause / Resume is not offered** because presences have no pause API. The Chats group is wrapped `chat.setup` (Set up), bindings and reach `chat.bindings` / `chat.reach` (Expert);
+    three new registry rows.
+  - **New automation** is shown to everyone (members could create webhooks before); only the schedule choice is disabled for a person
+    who cannot (with the who-can line), as before.
+  - **Run now** shows the status line under the row at every width (no separate toast on a phone).
+  - **Pause by name**: "Paused by Carol Member" needs an actor the API does not send; the row says "paused, won't run until resumed" and
+    the notices for `authorization` and `failures`.
+  - **Thread rename note** ("Schedule · was 'Every minute ping', renamed with it") is not built: the API has no old title.
+  - **First line of a delivery** reads "<time> · accepted" (not "signed and accepted"): the display payload does not say how the
+    webhook is verified.
+  - **Runs table's Conversation cell** reads "Open the conversation" (the run row has no thread title); "Open details" for a failed run is
+    not built (Technical details is Expert and the run has nothing more to show).
+  - **Time zone select** is a native `<select>` (type-ahead search by the browser) with the workspace's zone first, then the browser's,
+    then every IANA zone; no custom combobox.
+  - The schedule form's summary ends "Schedules run at most every 5 minutes." (the brief's sentence), not the mockup's "The shortest
+    interval is 5 minutes".
+  - Registry: `auto.gate` is replaced by `auto.advanced` (Set up); `auto.cron` and `auto.verification` lose `later`; `auto.howto` is new.
+  - A one-time schedule (`cron` null, `run_at`) reads "Once, <time>" / "Done" in the row: P5-SCHED-ONCE Part C does its words and
+    presets.
+  - Rotating the secret is only in the menu; Edit shows a secret field only when the kind changes (the API refuses `generate_secret` on
+    PATCH).
+- Tests (owner's rule): files changed — `tests/agent-sections.test.ts` (SECTION_OF, Automations page label, legacy ids),
+  `tests/automations.test.tsx` (the schedule tab tests moved to the Automations page: Reassign and Keep running without you are in the
+  "…" menu, Reassign is a dialog), `tests/m5-tabs.test.tsx`, `tests/agent-empty-states.test.tsx`, `tests/agent-next-steps.test.tsx`,
+  `tests/ask-admin.test.tsx` (the new Chats ask: reason, Send request, "Asked an admin · Undo"), `e2e/agent-tabs.spec.ts`. New —
+  `tests/cron.test.ts`, `tests/webhook-snippets.test.ts` (runs the curl recipe and the Node snippet and compares with `crypto`),
+  `tests/schedule-words.test.ts`, `tests/automations-page.test.tsx` (28 cases), `tests/automation-message.test.tsx`,
+  `e2e/automations.spec.ts`. **Removed**: from `tests/m5-tabs.test.tsx` the `SchedulesTab` and `WebhooksTab` describes (7 tests): their
+  feature moved into the Automations page, and every one of them is ported to `tests/automations-page.test.tsx` (lists schedules and
+  runs, `schedule_busy`, Load more, create with server validation → the preset form and "Too often", 403, URL once on create, rotate
+  needs confirmation, 404). `components/schedules/schedules-tab.tsx` and `components/webhooks/webhooks-tab.tsx` are deleted (replaced by
+  the Automations components).
+  - Commands (all through `heavy.sh p5-polish-b`): `pnpm exec vitest run` (whole web suite, once, after the shared-UI changes): 221
+    files, 3100 tests passed (run before the last two small test additions; those were run on their own and pass); `pnpm exec tsc
+    --noEmit -p .` clean; `pnpm exec eslint` on every touched source file and new test: clean after removing one unused import;
+    `bash scripts/guards/run-all.sh`: all guards passed; `python3 scripts/extract-schema.py --check`: up to date (no API change).
+  - Production specs / scripts reading these pages: none found (`rg` over `web/e2e`, `scripts/e2e/*.sh`); `e2e/fix-127-mattermost.spec.ts`
+    opens `?tab=channels` (still opens Automations on Chats; "Attach this agent to Mattermost" and "isn't in any chat yet" are unchanged) —
+    list it for the nightly. `e2e/automations.spec.ts` and the changed `e2e/agent-tabs.spec.ts` were written but not run here (no Playwright
+    in a lane); CI runs them.
+- Screenshots compared (Before / After / mine, per finding key, both themes, 1256 and 390 px): not taken in this lane (no browser here);
+  `e2e/automations.spec.ts` writes its screenshots to `/tmp/aurora-screens/p5-refine-14/` when it runs.
+- Open questions: (1) Should the Chats group get a real "Open channel" once presences or bindings carry a channel address? (2) Does the
+  owner want the schedule's last-run line to name who paused it (needs an actor in `disabled_reason`)? (3) The delivery message's
+  "signed and accepted" needs the verification kind in `display`.
