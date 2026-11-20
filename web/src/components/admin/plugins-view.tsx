@@ -14,6 +14,7 @@ import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { inputClass } from "@/components/ui/field";
+import { TechnicalDetails } from "@/components/ui/technical-details";
 import { checkSummary, useAddonSources, useCheckAllAddonSources } from "@/lib/api/addon-sources";
 import { errorDetail, errorMessage } from "@/lib/api/errors";
 import { usePlugins, useUploadPlugin, type PluginPackage, type PluginViolation } from "@/lib/api/plugins";
@@ -28,13 +29,23 @@ export function violationsOf(err: unknown): PluginViolation[] {
 export function ViolationList({ violations }: { violations: PluginViolation[] }) {
   if (violations.length === 0) return null;
   return (
-    <ul aria-label="Violations" className="space-y-1 text-xs text-danger-ink">
-      {violations.map((v, i) => (
-        <li key={`${v.code}-${v.path}-${i}`}>
-          <code className="font-mono">{v.code}</code> {v.path ? <code className="font-mono">{v.path}</code> : null} {v.message}
-        </li>
-      ))}
-    </ul>
+    // (P5-REFINE-18 admin-12, C-1071) A sentence per problem; the codes, paths and the validator's words are under Technical details.
+    <div className="space-y-1">
+      <ul aria-label="Violations" className="list-disc space-y-1 pl-5 text-sm text-danger-ink">
+        {violations.map((v, i) => (
+          <li key={`${v.code}-${v.path}-${i}`}>{v.sentence?.trim() || "The package has a problem. See Technical details."}</li>
+        ))}
+      </ul>
+      <TechnicalDetails title="Technical details">
+        <ul className="space-y-1">
+          {violations.map((v, i) => (
+            <li key={`${v.code}-${v.path}-${i}`}>
+              {v.code} {v.path ?? ""} {v.message}
+            </li>
+          ))}
+        </ul>
+      </TechnicalDetails>
+    </div>
   );
 }
 
@@ -48,6 +59,7 @@ export function statusTone(status: string): "neutral" | "accent" | "danger" {
 export function UploadForm({ onDone }: { onDone?: () => void }) {
   const upload = useUploadPlugin();
   const [file, setFile] = useState<File | null>(null);
+  const [pick, setPick] = useState(0);
   return (
     <form
       className="space-y-4"
@@ -59,14 +71,26 @@ export function UploadForm({ onDone }: { onDone?: () => void }) {
     >
       <div className="space-y-1.5">
         <label className="block text-sm font-medium text-ink" htmlFor="plugin-package">
-          Plugin package
+          App package
         </label>
         <input
+          key={pick}
           id="plugin-package"
           type="file"
           className={`${inputClass} file:mr-3 file:rounded-control file:border-0 file:bg-subtle file:px-3 file:py-1 file:text-sm file:font-medium file:text-ink`}
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          onChange={(e) => {
+            upload.reset();
+            setFile(e.target.files?.[0] ?? null);
+          }}
         />
+        {file ? (
+          <p className="flex flex-wrap items-center gap-2 text-sm text-ink-2" data-testid="chosen-package">
+            <span className="break-all">{file.name}</span>
+            <Button type="button" variant="ghost" size="sm" onClick={() => { setFile(null); setPick((n) => n + 1); upload.reset(); }}>
+              Choose another
+            </Button>
+          </p>
+        ) : null}
       </div>
       {upload.isError ? (
         <Notice tone="danger" role="alert" className="space-y-1">
@@ -230,7 +254,7 @@ export function PluginsView() {
             <DialogTrigger asChild>
               <Button>Upload app</Button>
             </DialogTrigger>
-            <DialogContent title="Upload app" description="Upload an app package for review.">
+            <DialogContent title="Upload an app" description="Upload an app package for review.">
               <UploadForm onDone={() => setOpen(false)} />
             </DialogContent>
           </Dialog>

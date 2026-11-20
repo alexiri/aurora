@@ -26,9 +26,9 @@ function day(v: string, plus = 0): string | undefined {
 }
 
 /** Admin › Audit (FIX-125): instance-level rows, or every row with the organization. */
-export function useInstanceAudit(f: InstanceAuditFilter) {
+export function useInstanceAudit(f: InstanceAuditFilter, includeSystem = false) {
   return useInfiniteQuery({
-    queryKey: ["admin", "audit", f] as const,
+    queryKey: ["admin", "audit", f, includeSystem] as const,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       unwrap(
@@ -43,6 +43,8 @@ export function useInstanceAudit(f: InstanceAuditFilter) {
               critical: f.criticalOnly || undefined,
               since: day(f.since),
               until: day(f.until, 1),
+              // (C-1088) The system's install events are left out by the server, which counts them in `hidden_system`.
+              include_system: includeSystem,
             },
           },
         }),

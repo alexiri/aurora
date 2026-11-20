@@ -185,7 +185,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page).toHaveURL(/\/admin\/platform\?tab=limits$/);
         await expect(page.getByRole("heading", { name: "Health & runners", level: 1 })).toBeVisible();
         await expect(page.getByText("Set by the installation").first()).toBeVisible();
-        await expect(page.getByText(/Private destinations\./)).toBeVisible();
+        await expect(page.getByText(/Entries in the allowed-private list open an address range/)).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
       });

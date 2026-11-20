@@ -71,7 +71,7 @@ function PeopleCard({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
 
 function AgentsCard({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
   const { rows, pending } = useOrgAgents(orgId);
-  const last = [...rows].sort((a, b) => b.agent.updated_at.localeCompare(a.agent.updated_at)).slice(0, 5);
+  const last = [...rows].sort((a, b) => (b.agent.last_active_at ?? "").localeCompare(a.agent.last_active_at ?? "")).slice(0, 5);
   return (
     <Section
       id="org-agents-summary"

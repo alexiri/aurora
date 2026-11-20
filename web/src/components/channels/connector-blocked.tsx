@@ -63,6 +63,16 @@ export function ConnectorBlocked({
       </li>
     );
   }
+  if (item.setup_state === "registering") {
+    // (P5-REFINE-17 org-1, C-1068) A running host that serves the type: it is ready within one host poll, never "waiting for the host".
+    return (
+      <li data-testid={`blocked-${item.type_id}`}>
+        <Unavailable title={`${name} is starting`} fixer="It will be ready in a moment.">
+          The connector is running and is finishing its first registration. Reload in a few seconds to connect {name}.
+        </Unavailable>
+      </li>
+    );
+  }
   const head = (HEAD[item.setup_state] ?? HEAD.not_added!)(name);
   if (!isInstanceAdmin) {
     // (P5-POLISH-11, F1) Nothing here the viewer can act on (there is no way to ask for a platform): a neutral card, not an amber notice.

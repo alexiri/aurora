@@ -451,10 +451,10 @@ export function LimitsSettingsView() {
       sectionId="limits"
       page={LIMITS_PAGE}
       notice={() => (
-        <Notice tone="neutral" role="status" className="max-w-3xl">
-          <strong>Private destinations.</strong> Every entry in the allowed-private list opens an address range to agents, apps
-          and the gateway&apos;s own connections. Add only what they must reach; the confirmation lists what a change opens.
-        </Notice>
+        // (P5-REFINE-18 admin-14) Neutral text, never a standing red banner: red is for a limit that is being hit.
+        <p className="max-w-3xl text-sm text-ink-2">
+          Entries in the allowed-private list open an address range to agents, apps and sign-in. Add only ranges you trust.
+        </p>
       )}
       controls={{ "ratelimit.api.classes": (ctx) => <RateClassesControl ctx={ctx} /> }}
     />
