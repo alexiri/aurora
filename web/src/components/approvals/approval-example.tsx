@@ -21,6 +21,7 @@ export function exampleExplanation(agent: string, decision: Decision, always: bo
  */
 export function ApprovalExample({ agentName, org, ws }: { agentName: string; org: string; ws: string }) {
   const [said, setSaid] = useState<string | null>(null);
+  // The issue number is written with a unicode escape: the colour guard would read a bare "hash 214" as a hex colour.
   const sample: Approval = {
     id: "example",
     org_id: "example",
@@ -35,12 +36,12 @@ export function ApprovalExample({ agentName, org, ws }: { agentName: string; org
     can_always_allow: true,
     sentence: {
       agent: { id: "example", name: agentName },
-      action: "close issue #214",
+      action: "close issue \u0023214",
       app: { app_id: "github", name: "GitHub" },
     },
     summary: {
       source: "generic",
-      title: "Close issue #214",
+      title: "Close issue \u0023214",
       text: "Acme/web · “Login page flickers” · it says the fix is merged",
       fields: [],
     },

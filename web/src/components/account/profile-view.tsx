@@ -1,10 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-import { ApprovalNotifications } from "@/components/account/approval-notifications";
 import { IdpRolesList } from "@/components/identity/idp-roles-list";
 import { ErrorState, Loading } from "@/components/states";
 import { ThemeSwitch } from "@/components/theme/theme-switch";
@@ -20,9 +18,8 @@ import { useMoreControls } from "@/lib/api/use-more-controls";
 import { useUpdateMe } from "@/lib/api/account";
 import { fieldErrors } from "@/lib/api/errors";
 import { usePatchOnboarding } from "@/lib/api/onboarding";
-import { useInstance, useSession, type Me } from "@/lib/api/queries";
+import { useSession, type Me } from "@/lib/api/queries";
 import { timeZones } from "@/lib/nav/landing";
-import { accountRoutes } from "@/lib/routes";
 
 const ZONES = timeZones();
 
@@ -111,7 +108,6 @@ function ProfileForm({ me }: { me: Me }) {
 
 export function ProfileView() {
   const me = useSession();
-  const sshEnabled = useInstance().data?.features?.ssh === true;
   if (me.isPending) return <Loading />;
   if (me.isError) return <ErrorState error={me.error} onRetry={() => me.refetch()} />;
   return (
