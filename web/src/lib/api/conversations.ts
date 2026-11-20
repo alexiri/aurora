@@ -195,19 +195,50 @@ export const chatApi = {
 export function useDirectConversation(agentId: string) {
   return useQuery({ queryKey: ["agents", agentId, "direct"] as const, queryFn: () => chatApi.direct(agentId), retry: false, staleTime: Infinity });
 }
-export function useConversations(agentId: string, archived = false) {
+/**
+ * `automation` (C-1074): `all` (default) includes the run threads of schedules and webhooks, `none` leaves them out (the
+ * list the person reads; they sit in folders), `only` with `automationId` is one folder's threads.
+ */
+export function useConversations(agentId: string, archived = false, opts: { automation?: AutomationFilter; automationId?: string; enabled?: boolean } = {}) {
+  const { automation, automationId, enabled = true } = opts;
   return useQuery({
-    queryKey: ["agents", agentId, "conversations", archived] as const,
+    // The first three parts are the prefix `refreshConversations` and the 15 s poll invalidate.
+    queryKey: ["agents", agentId, "conversations", archived, ...(automation ? [automation, automationId ?? ""] : [])] as const,
     // Every page (FIX-117): the first 50 are not the whole list, and an older conversation must still resolve.
     queryFn: () =>
       fetchAllPages((cursor) =>
         unwrap(
           api.GET("/v1/agents/{agent}/conversations", {
-            params: { path: { agent: agentId }, query: { limit: PAGE_LIMIT, archived, cursor } },
+            params: {
+              path: { agent: agentId },
+              query: { limit: PAGE_LIMIT, archived, cursor, ...(automation ? { automation } : {}), ...(automationId ? { automation_id: automationId } : {}) },
+            },
           }),
         ),
       ),
+    enabled,
     retry: false,
+  });
+}
+
+/** (D-409) A fresh direct chat. */
+export function useNewDirectChat(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => chatApi.newDirect(agentId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["agents", agentId, "conversations"] }),
+  });
+}
+
+/** (D-409, C-1073) Rename a conversation; `null` goes back to the automatic title. */
+export function useRenameConversation(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string | null }) => chatApi.rename(id, title),
+    onSuccess: (_c, v) => {
+      void qc.invalidateQueries({ queryKey: ["agents", agentId, "conversations"] });
+      void qc.invalidateQueries({ queryKey: ["conversations", v.id, "one"] });
+    },
   });
 }
 

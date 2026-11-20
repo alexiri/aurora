@@ -12,6 +12,7 @@ import { ApiError } from "@/lib/api/client";
 import { chatApi, type Conversation } from "@/lib/api/conversations";
 import { conversationTitle, kindLabel } from "@/lib/chat/layout";
 import { buildPermalink, permalinkSeq, withoutMessageParam } from "@/lib/chat/permalink";
+import { markStopped } from "@/lib/chat/stopped";
 import { activeTurnId } from "@/lib/chat/transcript";
 import { useTranscript } from "@/lib/chat/use-transcript";
 
@@ -147,7 +148,14 @@ export function ChatThread({
             onGone ? (
               <>
                 {archived && !readOnly ? <RestoreButton agentId={agentId} convId={convId} /> : null}
-                <ConversationActions agentId={agentId} convId={convId} archived={archived} onGone={onGone} onError={setActionErr} />
+                <ConversationActions
+                  agentId={agentId}
+                  convId={convId}
+                  archived={archived}
+                  onGone={onGone}
+                  onError={setActionErr}
+                  rename={ownDirect && !readOnly ? { title } : undefined}
+                />
               </>
             ) : null
           }
@@ -223,7 +231,7 @@ export function ChatThread({
                   size="sm"
                   onClick={() => {
                     setStopErr(null);
-                    chatApi.abort(active).catch((e: unknown) => setStopErr(e instanceof ApiError ? e.message : "Could not stop the turn."));
+                    chatApi.abort(active).then(() => markStopped(active)).catch((e: unknown) => setStopErr(e instanceof ApiError ? e.message : "Could not stop the turn."));
                   }}>
                   Stop
                 </Button>

@@ -157,6 +157,16 @@ export function TranscriptView({
             case "system": {
               const { type, payload: p } = r.ev;
               if (type === "notice") {
+                // (chat-4, C-1075) The mark Stop leaves under the partial answer: a muted line between two rules.
+                if (s(p.code) === "turn_stopped") {
+                  return (
+                    <div key={r.key} className="flex items-center gap-3 text-xs text-muted" data-testid="turn-stopped">
+                      <span aria-hidden="true" className="h-px flex-1 bg-line" />
+                      <span>You stopped this answer</span>
+                      <span aria-hidden="true" className="h-px flex-1 bg-line" />
+                    </div>
+                  );
+                }
                 if (s(p.code) === "app_turn_cap_reached") {
                   // Only offer Continue until a later durable reset notice (C-27) exists.
                   const reset = state.events.some((e) => (e.seq ?? 0) > (r.ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === "app_turn_cap_reset");

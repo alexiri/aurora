@@ -445,12 +445,27 @@ Lane A, branch `alexiri/p5-polish-a`, master at 6cbf3a12 then re-merged at 4c92c
   - **Send-back from the coordinator (P5-REFINE-1 failures)** — `c154e215` (agent-evals, app-setup, internet-access specs); altitude `?tab=evals`
     is fixed by the Settings page (its heading is "Tests"); the 390 px tablist overflow: the Computer sub-tabs now use `overflow="menu"`
     (More menu) — **please have the CI Watcher run `agent-tabs.spec.ts` and `files.spec.ts` at 390 px** (Playwright is refused in this lane).
-- **Waiting (not done, with what they wait for):** item 6 several chats / Rename / auto-titles / run-thread folding / `useDirectConversation`
-  no longer the default → **P5-REFINE-7**; item 7 Stop keeps the partial answer + "You stopped this answer" → **-7**; item 3's live
-  "What <Agent> did" (last five timeline rows, `useTimelineStream`) → **-9**; item 8's "<Agent> has no AI model yet" card with Add a key / Ask an
-  admin (header words are done) → needs **-8**'s Ask reason and is -12's button; chat-7's person-facing sentence from the split event → -7;
+- **Done after P5-REFINE-7 merged (master 7337fa1f; second pass on lane A, branch `alexiri/p5-polish-a`):**
+  - **6 Several chats (chat-3, D-409)** — the list header is "Conversations" + **New chat** (`POST …/direct/new`, 200/201 both open the chat at once,
+    composer focused; 422 `conversation_limit` said in words). Each row is the title, "You and Daneel · 23:50" (older rows just the day) and the
+    row's "…" menu: **Rename**, **Archive**, separator, **Delete this conversation…** (the thread header's menu has the same Rename in a dialog, and
+    the exports). **Rename** edits in place (Enter saves and shows "Saved", Esc/blur cancels; empty goes back to the auto title); only the person's own
+    chats can be renamed. `groupConversations` now returns `mine: Conversation[]` (newest first, `isOwnDirect` = direct without `direct_user`). The
+    Active list asks `automation=none`; run threads sit in **"Morning summary · 3 runs"** folders (`conversation-folders`; the threads load when the
+    folder opens, `automation=only&automation_id=`; a folder opens by itself when the selected thread belongs to it; "Schedule deleted"/"Webhook deleted").
+    A run thread is titled "Morning summary · 19 Nov 09:00" everywhere `conversationTitle` is used. `useDirectConversation` stays only as the
+    Chat tab's default (the API returns the latest active chat or creates the first) and is no longer injected into any list; the thread's own-chat
+    state comes from the conversation itself, not from one id. `?c=` links, search permalinks and the Archived view work as before.
+  - **7 chat-4 Stop** — Stop is disabled and reads "Stopping…" while the call runs and until the turn finishes; the header state ignores a turn that
+    was stopped here or has `abort_requested` (also the computer's "working" while only that turn runs), so it is **Ready at once**; the durable
+    `turn_stopped` notice renders as "You stopped this answer" (muted, between two rules) under the partial text (`lib/chat/stopped.ts`,
+    `transcript-view.tsx`). The `stopErr` path keeps its message.
+- **Still waiting (not done, with what they wait for):** item 3's live "What <Agent> did" (last five timeline rows, `useTimelineStream`) → **-9**;
+  item 8's "<Agent> has no AI model yet" card with Add a key / Ask an admin (header words are done) → needs **-8**'s Ask reason and is -12's button;
   item 11 the Needs-you count on the agent's Agents-list row (`C-1082`) → **-8** (the rail's own count on the icon and in the heading already
-  existed and is kept); the first-run card's "Open the run" button → -7.
+  existed and is kept); the first-run card's **"Open the run"** button (now possible with -7's `conversation_id`; not wired in this pass, it
+  belongs with the first-success cards' next touch) and chat-7's person-facing sentence from the split event (`detail`, C-1076; the client-side
+  handling still works and is cleaner once read from `detail` — left for the pass that does -9).
 - **Deviations from this brief, and why:**
   - Settings: followed the coordinator's decision (button opens the page; Pause and Delete in the danger zone at the bottom), not the
     mockup's menu. Pause in the zone is an outline button; Delete a danger button.
@@ -474,5 +489,17 @@ Lane A, branch `alexiri/p5-polish-a`, master at 6cbf3a12 then re-merged at 4c92c
   `agent-sandbox-failure`, `chat-search`, `chat-v2`, `fix-170`; added `agent-state`, `refine-11-chat`, `first-success`; specs changed `agent-tabs`, `agent-config`,
   `agent-page-p5`, `dialogs`, `dialogs.prod`, `chat-v2`, `chat-composer`, `chat-search`, `agent-evals`, `app-setup`, `internet-access`; added `refine-11-chat.spec.ts`.
   Removed: the `dialogs.spec` menu-ring assertion (the agent actions menu is gone) and the rail's Terminal/Files/SSH/About assertions (those controls left the rail).
-- **Production specs only the nightly runs:** `dialogs.prod.spec.ts` (Settings → Delete flow, read not run).
+- **Second pass (several chats, Stop), gates:** `pnpm typecheck` clean; eslint clean on the touched src, tests and e2e files; **full web vitest 214 files,
+  2968 tests, all passed**; `scripts/guards/run-all.sh` all guards passed. No Rust or API change (the contract is C-1073..C-1076, already merged), so
+  `cargo fmt/clippy` and `extract-schema --check` were not run. Playwright (mocked) edited and added by reading, **not run** (refused in this lane): the CI
+  Watcher / P5-REFINE-20 should run `chat-several.spec.ts`, `chat-v2.spec.ts` and `refine-11-chat.spec.ts`. Screenshots against chat-3/chat-4 not taken.
+- **Second pass, tests changed / added:** changed `chat-layout.test.ts` (`mine` is a list; run-thread title; runs label), `chat-v2.test.tsx` (the archived
+  direct chat: New chat now starts a fresh chat, nothing is restored), `conversation-lifecycle.test.tsx` ("Delete this conversation…"), `agent-state.test.tsx`
+  (Stop → Ready); added `refine-11-chats.test.tsx` (10 tests: list order and lines, New chat and its limit error, Rename Enter/Esc, row menu, folders,
+  Stopping…, the stopped marker); specs: added `chat-several.spec.ts` (New chat, Rename, folders, the Stop mark; both themes, 1280/390 px, axe), changed
+  `chat-v2.spec.ts` (Rename first in the header menu, "Delete this conversation…", row buttons matched by `^title` because each row now also has an
+  "Actions for …" button), `refine-11-chat.spec.ts` (same), `support/chat-mock.ts` (folders, `automation=only`, `direct/new`, rename). Removed: none.
+- **Production specs only the nightly runs:** `dialogs.prod.spec.ts` (Settings → Delete flow, read not run). Second pass: none touched
+  (`try-it-in-chat.spec.ts`, `files.spec.ts`, `app-setup.spec.ts` left to the CI Watcher; `try-it-in-chat.spec.ts` still looks for the heading "Direct chat",
+  which holds until a chat has a first message).
 - **Open questions for the owner:** none new; the Settings page's other sub-pages keep their old bodies until -12.

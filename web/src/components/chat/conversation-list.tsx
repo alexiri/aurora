@@ -1,14 +1,17 @@
 "use client";
 
-import type { ComponentType, ReactNode, SVGProps } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useState, type ComponentType, type KeyboardEvent, type ReactNode, type SVGProps } from "react";
 
 import { Avatar } from "@/components/agent-avatar";
+import { ConversationActions, lifecycleError, refreshConversations } from "@/components/agents/conversation-actions";
 import { Button } from "@/components/ui/button";
-import { BotIcon, CalendarIcon, EyeIcon, LinkIcon, MessageIcon, PlugIcon, UsersIcon } from "@/components/ui/icons";
+import { BotIcon, CalendarIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, LinkIcon, MessageIcon, PlugIcon, PlusIcon, UsersIcon } from "@/components/ui/icons";
+import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs } from "@/components/ui/tabs";
-import type { Conversation } from "@/lib/api/conversations";
-import { conversationTitle, isWorking, kindLabel, listTime, type ListGroups } from "@/lib/chat/layout";
+import { chatApi, useConversations, type Conversation, type ConversationFolder } from "@/lib/api/conversations";
+import { conversationTitle, folderRunsLabel, isOwnDirect, isWorking, kindLabel, listTime, type ListGroups } from "@/lib/chat/layout";
 import { cn } from "@/lib/utils";
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -35,13 +38,43 @@ export function KindTile({ kind, size, className }: { kind: string; size: 28 | 3
   );
 }
 
-/** A row: the kind tile (36 px), the title, the kind line or the Working dot, and the last activity on the right. */
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+/** (chat-3) When it last moved: the clock today, "Yesterday", then the weekday or the date. */
+function whenOf(iso: string | null | undefined, now: Date): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000) === 1 ? "Yesterday" : listTime(iso, now);
+}
+
+/** What the row's second line says besides a status: "You and Daneel · 23:50", "Group · Yesterday". */
+function lineOf(c: Conversation, agentName: string | undefined, now: Date): string {
+  const at = c.last_activity_at ?? c.created_at;
+  const when = whenOf(at, now);
+  if (isOwnDirect(c)) {
+    // The mockup names the pair on today's rows and gives older ones just the day.
+    const d = new Date(at);
+    const today = !Number.isNaN(d.getTime()) && startOfDay(now) === startOfDay(d);
+    return today || !when ? `You and ${agentName ?? "the agent"}${when ? ` · ${when}` : ""}` : when;
+  }
+  return when ? `${kindLabel(c.kind)} · ${when}` : kindLabel(c.kind);
+}
+
+/**
+ * A row (chat-3): the kind tile (36 px), the title (a **Rename** turns it into a field: Enter saves, Esc cancels), the
+ * second line (status, or who and when) and the row's "…" menu (Rename, Archive, Delete this conversation…).
+ */
 export function ConversationRow({
   conversation: c,
   selected,
   now,
   onSelect,
   waiting = false,
+  agentId,
+  agentName,
+  onGone,
+  nested = false,
 }: {
   conversation: Conversation;
   selected: boolean;
@@ -49,67 +82,234 @@ export function ConversationRow({
   onSelect: () => void;
   /** (P5-AGENT-2) For approvers: the conversation has a pending approval ("Waiting on you" replaces the kind line). */
   waiting?: boolean;
+  /** Offers the row's menu (omit in places that cannot change the conversation). */
+  agentId?: string;
+  agentName?: string;
+  /** The conversation was deleted from the row's menu. */
+  onGone?: (id: string) => void;
+  /** A run thread inside its automation's folder. */
+  nested?: boolean;
 }) {
+  const qc = useQueryClient();
   const memberDirect = c.kind === "direct" && !!c.direct_user;
   const kind = KIND[c.kind] ?? KIND.api;
   const Glyph = kind.icon;
+  const title = conversationTitle(c, now);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const saved = useSaveBar();
+  // Only the person's own chats can be renamed (a group's rename is for workspace owners, a run thread follows its automation).
+  const canRename = isOwnDirect(c);
+  const menu = !!agentId && !memberDirect;
+
+  const save = () => {
+    const t = value.trim();
+    if (t === title || (t === "" && !c.title)) {
+      setEditing(false);
+      return;
+    }
+    chatApi
+      .rename(c.id, t === "" ? null : t)
+      .then(() => {
+        setEditing(false);
+        setErr(null);
+        if (agentId) refreshConversations(qc, agentId, c.id);
+        saved.flash();
+      })
+      .catch((e: unknown) => setErr(lifecycleError(e)));
+  };
+  const keys = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      save();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setEditing(false);
+      setErr(null);
+    }
+  };
+
+  const second = waiting ? (
+    <StatusDot tone="pending" className="whitespace-nowrap text-pending-ink">
+      Waiting on you
+    </StatusDot>
+  ) : isWorking(c) ? (
+    <StatusDot tone="accent" className="text-accent-ink">
+      Working
+    </StatusDot>
+  ) : memberDirect ? (
+    <span className="flex items-center gap-1 text-xs text-muted">
+      <EyeIcon aria-hidden="true" width={12} height={12} />
+      Read-only
+    </span>
+  ) : c.automation?.deleted ? (
+    <span className="block truncate text-xs text-muted">{c.automation.kind === "webhook" ? "Webhook deleted" : "Schedule deleted"}</span>
+  ) : (
+    <span className="block truncate text-xs text-muted">{lineOf(c, agentName, now)}</span>
+  );
+
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-current={selected ? "true" : undefined}
-      className={cn("flex min-h-14 w-full items-center gap-3 rounded-control px-2.5 py-2 text-left hover:bg-subtle", selected && "bg-subtle")}>
-      {memberDirect ? (
-        <Avatar name={c.direct_user?.display_name || "?"} tintKey={c.direct_user?.id} size={36} />
-      ) : (
-        <span aria-hidden="true" className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-full", kind.tint)}>
-          <Glyph width={18} height={18} />
-        </span>
-      )}
-      <span className="min-w-0 flex-1">
-        <span className={cn("block truncate text-sm text-ink", selected ? "font-semibold" : "font-medium")}>{conversationTitle(c)}</span>
-        {waiting ? (
-          <StatusDot tone="pending" className="whitespace-nowrap text-pending-ink">
-            Waiting on you
-          </StatusDot>
-        ) : isWorking(c) ? (
-          <StatusDot tone="accent" className="text-accent-ink">
-            Working
-          </StatusDot>
-        ) : memberDirect ? (
-          <span className="flex items-center gap-1 text-xs text-muted">
-            <EyeIcon aria-hidden="true" width={12} height={12} />
-            Read-only
+    <div className={cn("flex items-center gap-1 rounded-control hover:bg-subtle", selected && "bg-subtle", nested && "ml-6")}>
+      {editing ? (
+        <div className="flex min-h-14 min-w-0 flex-1 items-center gap-3 px-2.5 py-2">
+          <span aria-hidden="true" className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-full", kind.tint)}>
+            <Glyph width={18} height={18} />
           </span>
-        ) : (
-          <span className="block truncate text-xs text-muted">{c.kind === "direct" && !c.title ? "You and the agent" : kindLabel(c.kind)}</span>
-        )}
-      </span>
-      <span className="shrink-0 self-start pt-0.5 text-xs tabular-nums text-muted">{listTime(c.last_activity_at, now)}</span>
-    </button>
+          <span className="min-w-0 flex-1">
+            <input
+              autoFocus
+              aria-label="Conversation title"
+              aria-invalid={err ? true : undefined}
+              className="block w-full min-h-9 rounded-control border border-line-strong bg-surface px-2 text-sm text-ink aria-[invalid=true]:border-danger-ink dark:bg-canvas"
+              maxLength={200}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={keys}
+              onBlur={() => {
+                setEditing(false);
+                setErr(null);
+              }}
+            />
+            {err ? (
+              <span role="alert" className="block text-xs text-danger-ink">
+                {err}
+              </span>
+            ) : (
+              <span className="block text-xs text-muted">Enter saves · Esc cancels</span>
+            )}
+          </span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-current={selected ? "true" : undefined}
+          className="flex min-h-14 min-w-0 flex-1 items-center gap-3 rounded-control px-2.5 py-2 text-left">
+          {memberDirect ? (
+            <Avatar name={c.direct_user?.display_name || "?"} tintKey={c.direct_user?.id} size={36} />
+          ) : (
+            <span aria-hidden="true" className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-full", kind.tint)}>
+              <Glyph width={18} height={18} />
+            </span>
+          )}
+          <span className="min-w-0 flex-1">
+            <span className={cn("block truncate text-sm text-ink", selected ? "font-semibold" : "font-medium")}>{title}</span>
+            {second}
+            {saved.saved ? <InlineSaved show /> : null}
+          </span>
+        </button>
+      )}
+      {menu && !editing ? (
+        <ConversationActions
+          agentId={agentId}
+          convId={c.id}
+          archived={!!c.archived_at}
+          variant="row"
+          label={`Actions for ${title}`}
+          rename={canRename ? { title, onStart: () => { setValue(c.title ?? title); setErr(null); setEditing(true); } } : undefined}
+          onGone={() => onGone?.(c.id)}
+        />
+      ) : null}
+    </div>
   );
 }
 
-/** The list pane: heading, title filter, Active/Archived switch and the rows. The owners' group is caps-labelled. */
+/**
+ * (D-409, C-1074) An automation's folder: "Morning summary · 3 runs", opening to its run threads (each titled with its
+ * date). The threads load when the folder opens.
+ */
+function FolderRow({
+  folder,
+  agentId,
+  selectedId,
+  defaultOpen,
+  now,
+  onSelect,
+  onGone,
+}: {
+  folder: ConversationFolder;
+  agentId: string;
+  selectedId: string | null;
+  defaultOpen: boolean;
+  now: Date;
+  onSelect: (id: string) => void;
+  onGone?: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const threads = useConversations(agentId, false, { automation: "only", automationId: folder.id, enabled: open });
+  const Glyph = (KIND[folder.kind] ?? KIND.api).icon;
+  const tint = (KIND[folder.kind] ?? KIND.api).tint;
+  const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
+  return (
+    <div role="group" aria-label={folderRunsLabel(folder.name, folder.thread_count)}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex min-h-14 w-full items-center gap-3 rounded-control px-2.5 py-2 text-left hover:bg-subtle">
+        <span aria-hidden="true" className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-full", tint)}>
+          <Glyph width={18} height={18} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-ink">{folderRunsLabel(folder.name, folder.thread_count)}</span>
+          <span className="block truncate text-xs text-muted">
+            {folder.deleted ? (folder.kind === "webhook" ? "Webhook deleted" : "Schedule deleted") : `${folder.kind === "webhook" ? "Webhook" : "Schedule"} · ${whenOf(folder.last_activity_at, now)}`}
+          </span>
+        </span>
+        <Chevron aria-hidden="true" width={16} height={16} className="shrink-0 text-muted" />
+      </button>
+      {open ? (
+        <div className="space-y-0.5">
+          {threads.isPending ? <p className="py-2 pl-8 text-xs text-muted">Loading runs…</p> : null}
+          {(threads.data?.items ?? []).map((c) => (
+            <ConversationRow key={c.id} conversation={c} selected={selectedId === c.id} now={now} onSelect={() => onSelect(c.id)} agentId={agentId} onGone={onGone} nested />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** The list pane: heading with New chat, title filter, Active/Archived switch and the rows. The owners' group is caps-labelled. */
 export function ConversationList({
   groups,
+  folders = [],
   selectedId,
+  selectedAutomationId = null,
   archived,
   onArchivedChange,
   searchBox,
   results,
   query,
   onSelect,
+  onGone,
   now,
   status,
   className,
   waitingIds,
+  agentId,
   agentName,
   onNewChat,
+  newChatBusy = false,
+  newChatError,
 }: {
+  /** The agent whose conversations these are: the rows' menus and the folders load by it. */
+  agentId?: string;
   /** (chat-1) For the empty Active list: "Start a new chat to talk with <agent>." and the New chat button. */
   agentName?: string;
+  /** (D-409) The **New chat** button: a fresh conversation with empty history. */
   onNewChat?: () => void;
+  newChatBusy?: boolean;
+  /** Why New chat failed (the limit of chats), in words. */
+  newChatError?: string | null;
+  /** (C-1074) The agent's schedules and webhooks that have run threads (Active list only). */
+  folders?: ConversationFolder[];
+  /** The selected conversation's automation: its folder opens. */
+  selectedAutomationId?: string | null;
+  /** A conversation was deleted from a row's menu. */
+  onGone?: (id: string) => void;
   /** (P5-CHAT-4) The search box with its chips; it replaces the title filter. */
   searchBox: ReactNode;
   /** (P5-CHAT-4) While a message search shows, its results replace the Active/Archived switch and the rows. */
@@ -130,6 +330,7 @@ export function ConversationList({
   className?: string;
 }) {
   const { mine, others, memberDirects } = groups;
+  const shownFolders = archived ? [] : folders;
   const rows = (items: Conversation[]) =>
     items.map((c) => (
       <ConversationRow
@@ -139,12 +340,28 @@ export function ConversationList({
         now={now}
         onSelect={() => onSelect(c.id)}
         waiting={waitingIds?.has(c.id) ?? false}
+        agentId={agentId}
+        agentName={agentName}
+        onGone={onGone}
       />
     ));
-  const empty = !mine && others.length === 0 && memberDirects.length === 0;
+  const empty = mine.length === 0 && others.length === 0 && memberDirects.length === 0 && shownFolders.length === 0;
   return (
     <nav aria-label="Conversations" className={cn("flex min-h-0 flex-col gap-3 p-3", className)}>
-      <h2 className="font-display text-base font-semibold text-ink">Conversations</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-display text-base font-semibold text-ink">Conversations</h2>
+        {onNewChat ? (
+          <Button type="button" variant="primary" size="sm" className="min-h-11 shrink-0 md:min-h-9" disabled={newChatBusy} onClick={onNewChat}>
+            <PlusIcon aria-hidden="true" width={16} height={16} />
+            New chat
+          </Button>
+        ) : null}
+      </div>
+      {newChatError ? (
+        <p role="alert" className="text-sm text-danger-ink">
+          {newChatError}
+        </p>
+      ) : null}
       {searchBox}
       {results ? (
         results
@@ -171,7 +388,7 @@ export function ConversationList({
           <div className="space-y-2 rounded-card border border-dashed border-line-strong p-3">
             <p className="text-sm font-semibold text-ink">No active conversations</p>
             <p className="text-sm text-ink-2">Start a new chat to talk with {agentName ?? "the agent"}.</p>
-            <Button type="button" variant="primary" size="sm" className="min-h-11 md:min-h-9" onClick={onNewChat}>
+            <Button type="button" variant="primary" size="sm" className="min-h-11 md:min-h-9" disabled={newChatBusy} onClick={onNewChat}>
               New chat
             </Button>
           </div>
@@ -180,8 +397,25 @@ export function ConversationList({
             {query.trim() ? "No conversations match." : archived ? "No archived conversations." : "No conversations yet."}
           </p>
         ) : null}
-        {mine ? rows([mine]) : null}
+        {rows(mine)}
         {rows(others)}
+        {shownFolders.length > 0 && agentId ? (
+          <div role="group" aria-label="Automations" className="space-y-0.5 pt-3">
+            <p className="px-2.5 pb-1 text-label font-semibold uppercase tracking-label text-muted">Automations</p>
+            {shownFolders.map((f) => (
+              <FolderRow
+                key={`${f.kind}:${f.id}`}
+                folder={f}
+                agentId={agentId}
+                selectedId={selectedId}
+                defaultOpen={selectedAutomationId === f.id}
+                now={now}
+                onSelect={onSelect}
+                onGone={onGone}
+              />
+            ))}
+          </div>
+        ) : null}
         {memberDirects.length > 0 ? (
           <div role="group" aria-label="Other members' direct chats" className="space-y-0.5 pt-3">
             <p className="px-2.5 pb-1 text-label font-semibold uppercase tracking-label text-muted">Other members&apos; direct chats</p>
