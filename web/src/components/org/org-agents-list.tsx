@@ -1,25 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useQueries } from "@tanstack/react-query";
-import { useState } from "react";
 
 import { AgentAvatar } from "@/components/agent-avatar";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { StatusDot } from "@/components/ui/status-dot";
-import { api } from "@/lib/api/client";
-import { retryUnlessClientError } from "@/lib/api/errors";
-import { queryKeys, useWorkspaces, type Agent, type Workspace } from "@/lib/api/queries";
-import { unwrap } from "@/lib/api/unwrap";
-
-/** Workspaces read at once; more wait behind "Show the rest" (the fan-out is one request per workspace). */
-export const AGENT_FAN_OUT = 50;
+import { useOrganizationAgents, type OrgAgent, type OrgAgentWorkspace } from "@/lib/api/org";
+import { When } from "@/components/ui/when";
 
 export interface OrgAgentRow {
-  agent: Agent;
-  ws: Workspace;
+  agent: OrgAgent;
+  ws: OrgAgentWorkspace;
 }
 export interface OrgAgentGroup {
   key: string;
@@ -29,7 +21,7 @@ export interface OrgAgentGroup {
 }
 
 /** The group header: "ACME TEAM" for a team workspace, "BOB BUILDER (PERSONAL)" for a person's own. */
-export function groupTitle(ws: Pick<Workspace, "name" | "personal_of">): string {
+export function groupTitle(ws: Pick<OrgAgentWorkspace, "name" | "personal_of">): string {
   return ws.personal_of ? `${ws.personal_of.name} (personal)` : ws.name;
 }
 
@@ -44,37 +36,36 @@ export function groupAgents(rows: OrgAgentRow[]): OrgAgentGroup[] {
   return [...byWs.values()].sort((a, b) => Number(a.personal) - Number(b.personal) || a.title.localeCompare(b.title));
 }
 
-/**
- * The state word of an agent from what the list carries: **Paused** when it, its workspace or the organization is paused,
- * otherwise **Ready**. Working, Asleep and Needs a key come from the organization-wide agents route (C-1090).
- */
-export function agentRowState(a: Pick<Agent, "effective_frozen">): { word: "Ready" | "Paused"; tone: "accent" | "pending" } {
-  return a.effective_frozen ? { word: "Paused", tone: "pending" } : { word: "Ready", tone: "accent" };
+/** (D-425) The state words of an agent's header, with their tone; Needs a key and Can't start are amber (they need a person). */
+export function agentRowState(a: Pick<OrgAgent, "state">): { word: string; tone: "accent" | "pending" | "neutral" } {
+  switch (a.state) {
+    case "paused":
+      return { word: "Paused", tone: "pending" };
+    case "needs_key":
+      return { word: "Needs a key", tone: "pending" };
+    case "failed":
+      return { word: "Can't start", tone: "pending" };
+    case "working":
+      return { word: "Working", tone: "accent" };
+    case "starting":
+      return { word: "Starting its computer…", tone: "neutral" };
+    case "asleep":
+      return { word: "Asleep", tone: "neutral" };
+    default:
+      return { word: "Ready", tone: "accent" };
+  }
 }
 
-/** Every agent of the organization, read workspace by workspace (there is no organization-wide route yet). */
-export function useOrgAgents(orgId: string | undefined, limit: number = AGENT_FAN_OUT) {
-  const workspaces = useWorkspaces(orgId);
-  const all = workspaces.data?.items ?? [];
-  const shown = all.slice(0, limit);
-  const results = useQueries({
-    queries: shown.map((w) => ({
-      queryKey: queryKeys.agents(w.id),
-      queryFn: () => unwrap(api.GET("/v1/workspaces/{ws}/agents", { params: { path: { ws: w.id } } })),
-      retry: retryUnlessClientError,
-    })),
-  });
-  const rows: OrgAgentRow[] = shown.flatMap((w, i) => (results[i]?.data?.items ?? []).map((agent) => ({ agent, ws: w })));
+/** Every agent of the organization from the one organization-wide route (C-1090), with the header's state and last use. */
+export function useOrgAgents(orgId: string | undefined) {
+  const q = useOrganizationAgents(orgId);
+  const rows: OrgAgentRow[] = (q.data?.items ?? []).map((a) => ({ agent: a, ws: a.workspace }));
   return {
     rows,
     groups: groupAgents(rows),
-    hidden: Math.max(0, all.length - shown.length),
-    pending: workspaces.isPending || results.some((r) => r.isPending),
-    error: workspaces.error ?? results.find((r) => r.error)?.error ?? null,
-    refetch: () => {
-      void workspaces.refetch();
-      results.forEach((r) => void r.refetch());
-    },
+    pending: q.isPending,
+    error: q.error ?? null,
+    refetch: () => void q.refetch(),
   };
 }
 
@@ -82,12 +73,20 @@ export function AgentRow({ row, orgSlug }: { row: OrgAgentRow; orgSlug: string }
   const state = agentRowState(row.agent);
   return (
     <li className="flex items-center gap-3 px-4 py-3">
-      <AgentAvatar name={row.agent.name} url={row.agent.avatar_url} tintKey={row.agent.id} size={36} />
+      <AgentAvatar name={row.agent.name} url={null} tintKey={row.agent.id} size={36} />
       <div className="min-w-0 flex-1">
         <Link href={`/o/${orgSlug}/w/${row.ws.slug}/agents/${row.agent.handle}`} className="font-semibold text-ink underline-offset-2 hover:underline">
           {row.agent.name}
         </Link>
-        {row.agent.brief ? <p className="truncate text-sm text-ink-2">{row.agent.brief}</p> : null}
+        <p className="truncate text-sm text-ink-2">
+          {row.agent.last_active_at ? (
+            <>
+              used <When value={row.agent.last_active_at} />
+            </>
+          ) : (
+            "never used"
+          )}
+        </p>
       </div>
       <StatusDot tone={state.tone}>{state.word}</StatusDot>
     </li>
@@ -96,8 +95,7 @@ export function AgentRow({ row, orgSlug }: { row: OrgAgentRow; orgSlug: string }
 
 /** (org-6) Organization › Agents: one card, a header per workspace, a row per agent. */
 export function OrgAgentsList({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
-  const [limit, setLimit] = useState(AGENT_FAN_OUT);
-  const { groups, hidden, pending, error, refetch } = useOrgAgents(orgId, limit);
+  const { groups, pending, error, refetch } = useOrgAgents(orgId);
   if (error) return <ErrorState error={error} onRetry={refetch} />;
   if (pending && groups.length === 0) return <Loading variant="rows" label="Loading agents…" />;
   if (groups.length === 0) return <EmptyState title="No agents yet">Agents show up here once a workspace has one.</EmptyState>;
@@ -115,11 +113,6 @@ export function OrgAgentsList({ orgId, orgSlug }: { orgId: string; orgSlug: stri
           </section>
         ))}
       </Card>
-      {hidden > 0 ? (
-        <Button type="button" variant="outline" size="sm" onClick={() => setLimit((n) => n + AGENT_FAN_OUT)}>
-          Show the rest ({hidden} more workspaces)
-        </Button>
-      ) : null}
     </div>
   );
 }
