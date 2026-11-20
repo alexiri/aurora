@@ -25,7 +25,7 @@ export const presets = [
 
 const webhookApp = {
   app_id: "webhook", available: true, category: "developer", connection_count: 1, description: "Agents call a webhook you set up", has_dark_icon: true,
-  name: "Outgoing webhook", package_id: "webhook", package_version: "1.0.0", app_restrictions: { custom_only: false, block_untooled: false }, serves_library: false,
+  name: "Outgoing webhook", package_id: "webhook", package_version: "1.0.0", app_restrictions: { custom_only: false, block_untooled: false }, serves_library: false, send_only: true,
 };
 const method = {
   id: "url", kind: "fields", access_levels: [], default_scopes: [], scopes: [], recommended: true, label: "Webhook address", description: null,
@@ -47,8 +47,8 @@ export async function openWebhook(page: Page, path: string, scheme: Scheme, opts
   if (opts.withAccount) {
     const who = { agent: { id: agent.id, name: agent.name, handle: agent.handle }, workspace: { id: ws.id, name: ws.name } };
     extraAccounts.push({
-      ref: { type: "connection", id: CONN }, kind: "app", name: "ops-alerts", scope: "workspace", levels: ["read", "ask", "act"],
-      app: { app_id: "webhook", name: "Outgoing webhook", custom_only: false }, health: { state: "not_used" }, agents: [{ ...who, level: "read" }],
+      ref: { type: "connection", id: CONN }, kind: "app", name: "ops-alerts", scope: "workspace", levels: ["ask", "act"],
+      app: { app_id: "webhook", name: "Outgoing webhook", custom_only: false, send_only: true }, health: { state: "not_used" }, agents: [{ ...who, level: "ask" }],
       can: { give_access: true, change_access: true, manage: true },
     });
   }
@@ -62,7 +62,7 @@ export async function openWebhook(page: Page, path: string, scheme: Scheme, opts
     // The package's icon is P5-WEBHOOK-1's; a 1x1 PNG stands in.
     if (p === "/v1/apps/webhook/icon") return route.fulfill({ status: 200, contentType: "image/png", body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64") });
     if (p === "/v1/apps" && m === "GET") return json({ items: [webhookApp] });
-    if (p === "/v1/apps/webhook" && m === "GET") return json({ ...webhookApp, connect: [method], credentials: [], hosts: [], metadata: [], oauth_clients: [], tools: [{ id: "send", name: "Send", group: "write", description: "Send one message." }] });
+    if (p === "/v1/apps/webhook" && m === "GET") return json({ ...webhookApp, connect: [method], credentials: [], hosts: [], metadata: [], oauth_clients: [], tools: [{ id: "send", name: "Send", group: "send", description: "Send one message." }] });
     if (p === "/v1/apps/webhook/connect-plan") return json({ app_id: "webhook", available: true, suggested_method: "url", methods: [{ id: "url", kind: "fields", label: "Webhook address", description: null, recommended: true, audience: "person", needs: [], ready: true, scope_presets: { read: [], write: [] } }] });
     if (p === "/v1/apps/webhook/webhook-presets") return json(presets);
     if (p === "/v1/apps/webhook/webhook-preview" && m === "POST") {

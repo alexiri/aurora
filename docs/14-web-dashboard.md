@@ -2310,7 +2310,8 @@ which wraps it with the id given.
 | `auto.cron` | the raw cron field | Expert | Later: P5-REFINE-14 |
 | `auto.gate`, `auto.anchor` | "Only run when…", "Keep running if I leave" | Expert | Now |
 | `auto.curl`, `auto.signature` | webhook call detail, Copy as curl, signature recipe | Expert | Later: P5-REFINE-14 / 19 |
-| `auto.deliveryids` | delivery ids, raw payload sizes | Expert | Now |
+| `auto.deliveryids` | delivery ids, raw payload sizes, a webhook test's answer code | Expert | Now |
+| `connect.othermethods` | "Other ways to sign in" in the connect journey (a GitHub App, classic tokens) | Expert | Now |
 | `auto.verification` | the verification choice cards | Set up | Later: P5-REFINE-14 |
 | `log.requests` | the request-log table | Expert | Now |
 | `tech.details` | every "Technical details" fold | Set up and above; never for plain members | Now |

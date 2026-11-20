@@ -463,6 +463,11 @@ describe("the App step", () => {
     const connected = screen.getByRole("region", { name: "Already connected · 1" });
     expect(within(connected).getByText("Team Sentry")).toBeInTheDocument();
     expect(within(connected).getByText("Sentry · connected, Daneel can't use it yet")).toBeInTheDocument();
+    // (P5-REFINE-13, access-7) Two tabs with the catalogue's counts, Ready first; the Ready tab ends with a hint naming the others.
+    expect(screen.getByRole("tab", { name: "Ready · 3", selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Needs an admin · 2" })).toBeInTheDocument();
+    expect(screen.getByText(/2 more need an admin to set them up first: Google Calendar, Google Drive/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Needs an admin · 2" }));
     const blocked = screen.getByRole("region", { name: "Needs an admin first · 2" });
     // The reason in one line; the second app of the same provider says so.
     expect(within(blocked).getByText("An admin needs to set up Google sign-in")).toBeInTheDocument();
@@ -478,8 +483,11 @@ describe("the App step", () => {
     fireEvent.change(await screen.findByRole("searchbox", { name: "Search apps" }), { target: { value: "pull" } });
     expect(screen.getByRole("button", { name: "GitHub" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Linear" })).toBeNull();
-    expect(screen.queryByRole("region", { name: /Needs an admin first/ })).toBeNull();
+    // A search matches in both tabs and the tab labels carry the matching counts.
+    expect(screen.getByRole("tab", { name: "Needs an admin · 0" })).toBeInTheDocument();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search apps" }), { target: { value: "calendar" } });
+    expect(await screen.findByRole("tab", { name: "Ready · 0" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Needs an admin · 1" }));
     expect(await screen.findByText("Google Calendar")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "GitHub" })).toBeNull();
     // A group with no match is hidden while searching; "No app matches" only when every group is empty (B1).
@@ -496,6 +504,7 @@ describe("the App step", () => {
       "DELETE /v1/workspaces/w1/apps/gcal/setup-request": () => new Response(null, { status: 204 }),
     });
     open({ appId: null });
+    fireEvent.click(await screen.findByRole("tab", { name: "Needs an admin · 1" }));
     fireEvent.click(await screen.findByRole("button", { name: "Ask an admin" }));
     expect(await screen.findByText(/Asked just now\. You'll get a notice when it's ready, and Daneel's Apps & access tab will offer it\./)).toBeInTheDocument();
     expect(calls.some((c) => c.method === "POST" && c.path === "/v1/workspaces/w1/apps/gcal/setup-request")).toBe(true);
@@ -507,6 +516,7 @@ describe("the App step", () => {
   it("the asked state comes back from requested.by_me when the list is read again", async () => {
     stub(apps([blockedItem("gcal", "Google Calendar", "google-workspace", { readiness: { state: "needs_admin", needs: ["oauth_client"], who_can: ADMIN, requested: { by_me: true, count: 1 } } })]));
     open({ appId: null });
+    fireEvent.click(await screen.findByRole("tab", { name: "Needs an admin · 1" }));
     expect(await screen.findByText(/Asked\. You'll get a notice when it's ready/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Ask an admin" })).toBeNull();

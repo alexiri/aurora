@@ -230,13 +230,16 @@ export function WebhookMessageStep({ draft, ctx, onBack }: { draft: WebhookDraft
             <ExtrasStep mode="connect" config={draft.config} onConfig={draft.setConfig} extras={draft.extras} onExtras={draft.setExtras} issues={draft.issues} problems={problems} ceiling={null} />
           </div>
         </details>
+        <p role="status" aria-live="polite" className="text-sm text-ink-2">
+          {draft.busy ? "Checking the address. Nothing is sent to it." : null}
+        </p>
         {failure ? (
           <Notice tone="danger" role="alert">
             {failure}
           </Notice>
         ) : null}
       </Form>
-      <BackNext form="wh-message-form" onBack={onBack} nextLabel="Connect" busy={draft.busy} busyLabel="Connecting…" />
+      <BackNext form="wh-message-form" onBack={onBack} nextLabel="Connect" busy={draft.busy} busyLabel="Checking…" />
     </>
   );
 }

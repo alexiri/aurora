@@ -102,7 +102,7 @@ for (const scheme of ["light", "dark"] as const) {
         await check(page);
       });
 
-      test("the card shows the effective limit; Edit changes a slot; Send test asks first", async ({ page }) => {
+      test("the card shows the effective limit; Edit changes a slot; Send a test (in the menu) asks first", async ({ page }) => {
         const { sent, errors } = await openWebhook(page, ACCOUNTS, scheme, { withAccount: true });
         const row = page.getByRole("listitem", { name: "ops-alerts" });
         await expect(row.getByTestId("webhook-limit")).toHaveText("30 a minute, 500 a day (your organization's limit)");
@@ -121,7 +121,9 @@ for (const scheme of ["light", "dark"] as const) {
         const put = sent.find((s) => s.method === "PUT")!;
         expect((put.body as { slots: { description: string }[] }).slots[0]!.description).toBe("The alert text");
 
-        await row.getByRole("button", { name: "Send test to ops-alerts" }).click();
+        // (P5-REFINE-13, access-11) Send a test lives in the row's menu now.
+        await row.getByRole("button", { name: "More for ops-alerts" }).click();
+        await page.getByRole("menuitem", { name: "Send a test" }).click();
         const test = page.getByRole("dialog", { name: "Send test: ops-alerts" });
         await test.getByRole("button", { name: "Dry run" }).click();
         await expect(test.getByText("Dry run: nothing was sent.")).toBeVisible();

@@ -14,7 +14,7 @@ import { OutgoingWebhooksOrgSettings } from "@/components/webhook/org-webhook-se
 import { WebhookCardLine } from "@/components/webhook/webhook-card-line";
 import type { Org } from "@/lib/api/queries";
 
-// P5-WEBHOOK-4 (C-912, C-913): the card's line (host, effective limit with its source, Edit, Send test; never the address) and
+// P5-WEBHOOK-4 (C-912, C-913): the card's line (host, effective limit with its source, Edit; never the address) and
 // the organization's switch and limits.
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -63,16 +63,17 @@ describe("the card line", () => {
       expect((await screen.findByTestId("webhook-limit")).textContent).toBe(`5 a minute, 500 a day (${words})`);
       expect(screen.getByText("hooks.slack.com")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Edit alerts" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Send test to alerts" })).toBeInTheDocument();
+      // (P5-REFINE-13, access-11) Send a test is in the row's menu, not on the card.
+      expect(screen.queryByRole("button", { name: "Send test to alerts" })).toBeNull();
     });
   }
-  it("opens Edit and Send test", async () => {
+  it("opens Edit", async () => {
     routes["GET /v1/connections/c1/webhook"] = () => json(200, view("org"));
     routes["GET /v1/apps/webhook/webhook-presets"] = () => json(200, []);
     wrap(<WebhookCardLine connectionId="c1" name="alerts" />);
     await screen.findByTestId("webhook-limit");
-    fireEvent.click(screen.getByRole("button", { name: "Send test to alerts" }));
-    expect(await screen.findByRole("dialog", { name: "Send test: alerts" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit alerts" }));
+    expect(await screen.findByRole("dialog", { name: "Edit alerts" })).toBeInTheDocument();
   });
 });
 

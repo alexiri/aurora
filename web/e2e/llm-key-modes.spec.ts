@@ -89,7 +89,7 @@ for (const scheme of ["light", "dark"] as const) {
         await open(page, "/o/acme/w/main/apps?tab=accounts&kind=ai-key", scheme);
         await openKeyForm(page);
         await page.getByLabel("Name").fill("Bedrock key");
-        await page.getByLabel("Provider", { exact: true }).selectOption("bed");
+        await page.getByLabel("Which service is this key for?", { exact: true }).selectOption("bed");
         const group = page.getByRole("radiogroup", { name: "How Aurora signs in to the provider" });
         await expect(group.getByRole("radio").first()).toBeChecked();
         await expect(group.getByText("Recommended")).toBeVisible();
@@ -108,12 +108,12 @@ for (const scheme of ["light", "dark"] as const) {
       test("Azure: Entra fields and the no-harness notice; Vertex: the key file", async ({ page }) => {
         await open(page, "/o/acme/w/main/apps?tab=accounts&kind=ai-key", scheme);
         await openKeyForm(page);
-        await page.getByLabel("Provider", { exact: true }).selectOption("az");
+        await page.getByLabel("Which service is this key for?", { exact: true }).selectOption("az");
         await expect(page.getByText("No enabled harness speaks this endpoint's API", { exact: false })).toBeVisible();
         await expect(page.getByLabel("Tenant id")).toBeVisible();
         await expect(page.getByLabel("Client secret", { exact: true })).toBeVisible();
         await clean(page);
-        await page.getByLabel("Provider", { exact: true }).selectOption("vx");
+        await page.getByLabel("Which service is this key for?", { exact: true }).selectOption("vx");
         await expect(page.getByLabel("Service account key (JSON)")).toBeVisible();
         await expect(page.getByText("Models are configured by your administrator.")).toBeVisible();
         await clean(page);

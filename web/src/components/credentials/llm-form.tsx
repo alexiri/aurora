@@ -11,6 +11,8 @@ import { CopyValue } from "@/components/ui/copy-value";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { ApiError } from "@/lib/api/client";
+import { serviceOption } from "@/lib/labels";
 import { errorMessage } from "@/lib/api/errors";
 import { preselectAgents } from "@/lib/accounts";
 import { useAgents, useOrg } from "@/lib/api/queries";
@@ -121,6 +123,7 @@ export function LlmKeyForm({
   const [value, setValue] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
   const [clientErr, setClientErr] = useState("");
+  const [rejected, setRejected] = useState(false);
   const [saved, setSaved] = useState<Secret | null>(null);
   // (C-988, C-925) A workspace's key is given to the ticked agents in the same request: the contextual agent, else the
   // only agent, else none. `picked` is what the person changed; until then the default applies.
@@ -157,6 +160,7 @@ export function LlmKeyForm({
     if (!valueComplete(shape, value, fields)) return setClientErr("Fill in every required field.");
     setClientErr("");
     setSaved(null);
+    setRejected(false);
     try {
       const s = await create.mutateAsync(
         buildLlmCreate({
@@ -170,13 +174,13 @@ export function LlmKeyForm({
       setSaved(s);
       setName("");
       setPicked(null);
-      onSaved?.(s);
-    } catch {
-      // surfaced via create.error
-    } finally {
-      // Write-only (SEC-12): nothing typed stays in the form once it was sent.
+      // Write-only (SEC-12): once the key is saved, nothing typed stays in the form.
       setValue("");
       setFields({});
+      onSaved?.(s);
+    } catch (err) {
+      // (P5-REFINE-13, access-8) A refused key stays in the field (masked), so a typo is fixed, not retyped. It was not saved.
+      if (err instanceof ApiError && err.code === "llm_key_invalid") setRejected(true);
     }
   }
 
@@ -226,7 +230,7 @@ export function LlmKeyForm({
         </Field>
         <Field
           id="l-endpoint"
-          label="Provider"
+          label="Which service is this key for?"
           // (P5-REFINE-18 #16, setup-7) No "Allowed key scopes" line: the scope is the page's, and a refused one has its own error.
           hint={endpoint && harnessLine ? `${harnessLine}.` : undefined}
           error={scopeOk ? undefined : `Your organization does not permit ${scopeName}-level keys for this endpoint.`}
@@ -242,16 +246,13 @@ export function LlmKeyForm({
               setFields({});
             }}
           >
-            <option value="">Select an endpoint</option>
-            {endpoints.map((ep) => {
-              const h = harnessHint(ep.harnesses ?? []);
-              return (
-                <option key={ep.id} value={ep.id}>
-                  {ep.display_name}
-                  {h ? ` — ${h}` : ""}
-                </option>
-              );
-            })}
+            <option value="">Choose a service</option>
+            {endpoints.map((ep) => (
+              // The name and one plain line ("Anthropic — Claude models. Works with Claude Code."): no provider id, no scopes.
+              <option key={ep.id} value={ep.id}>
+                {serviceOption(ep.display_name, ep.provider, harnessHint(ep.harnesses ?? []))}
+              </option>
+            ))}
           </select>
         </Field>
         {noHarness ? (
@@ -283,7 +284,13 @@ export function LlmKeyForm({
           </p>
         ) : null}
         {endpoint && shape === "string" ? (
-          <ValueInput id="l-value" label="API key" value={value} onChange={setValue} />
+          <ValueInput
+            id="l-value"
+            label="API key"
+            value={value}
+            onChange={setValue}
+            error={rejected ? "The provider rejected this key. Check it and try again; what you typed is still here." : undefined}
+          />
         ) : null}
         {endpoint && shape === "gcp_service_account" ? <KeyFileInput id="l-value" value={value} onChange={setValue} /> : null}
         {endpoint && shape === "aws_assume_role" && externalId ? (

@@ -54,7 +54,14 @@ export function BackNext({
         disabled={nextDisabled || busy}
         onClick={form ? undefined : onNext}
       >
-        {busy ? busyLabel : nextLabel}
+        {busy ? (
+          <>
+            <span aria-hidden="true" className="mr-2 inline-block size-3.5 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none" />
+            {busyLabel}
+          </>
+        ) : (
+          nextLabel
+        )}
       </Button>
     </StepFooter>
   );

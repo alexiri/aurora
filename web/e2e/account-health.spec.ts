@@ -40,6 +40,8 @@ async function mockAccounts(page: Page) {
         next_cursor: null,
       });
     }
+    // (P5-REFINE-13, access-11) The menu offers Test the connection only for an app with a probe: PostgreSQL has one.
+    if (p === "/v1/apps/postgresql" && m === "GET") return json({ app_id: "postgresql", name: "PostgreSQL", package_id: "postgresql", connect: [{ id: "conn", kind: "fields", has_probe: true, fields: [], scopes: [], access_levels: [] }], tools: [], hosts: [], credentials: [], metadata: [], oauth_clients: [] });
     if (p === `/v1/accounts/connection/${C_PG}/test` && m === "POST") {
       state.tests += 1;
       state.pg = "unreachable";

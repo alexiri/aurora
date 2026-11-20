@@ -102,8 +102,11 @@ describe("AccountsList: one row per kind", () => {
 
   it("offers Give access, Rename, Reconnect, Turn off and Remove for an app; Replace and Test for a website, never a rule or host", async () => {
     listWs([app(), website()]);
+    // (P5-REFINE-13, access-11) The app offers a test where a method has a probe and Sign in again where one is OAuth.
+    routes["GET /v1/apps/aws"] = () => json(200, { app_id: "aws", name: "AWS", connect: [{ id: "keys", kind: "fields", has_probe: true }, { id: "oauth", kind: "oauth2", has_probe: false }], tools: [] });
     list();
     await openMenu("AWS prod");
+    await screen.findByRole("menuitem", { name: "Sign in again" });
     const names = (await screen.findAllByRole("menuitem")).map((m) => m.textContent);
     expect(names).toEqual(["Give access", "Test the connection", "Sign in again", "Rename", "Turn off", "Remove"]);
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
@@ -112,6 +115,43 @@ describe("AccountsList: one row per kind", () => {
     list();
     await openMenu("Stripe API");
     expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual(["Give access", "Test the connection", "Change website", "Replace", "Rename", "Remove"]);
+  });
+
+  it("a calendar link's menu has no test and no sign-in again; the Outgoing webhook's has Send a test (access-11)", async () => {
+    listWs([
+      app({ ref: { type: "connection", id: "c5" }, name: "Team calendar", levels: [], app: { app_id: "ics", name: "Calendar link", custom_only: false }, agents: [entry({ level: "use" })] }),
+      app({ ref: { type: "connection", id: "c6" }, name: "Ops alerts", levels: ["ask", "act"], app: { app_id: "webhook", name: "Outgoing webhook", custom_only: false, send_only: true }, agents: [entry({ level: "ask" })] }),
+    ]);
+    routes["GET /v1/apps/ics"] = () => json(200, { app_id: "ics", name: "Calendar link", connect: [{ id: "url", kind: "fields", has_probe: false }], tools: [] });
+    routes["GET /v1/apps/webhook"] = () => json(200, { app_id: "webhook", name: "Outgoing webhook", connect: [{ id: "url", kind: "fields", has_probe: false }], tools: [] });
+    list();
+    await openMenu("Team calendar");
+    await waitFor(() => expect(sent("GET /v1/apps/ics").length).toBeGreaterThan(0));
+    const cal = (await screen.findAllByRole("menuitem")).map((m) => m.textContent);
+    expect(cal).not.toContain("Test the connection");
+    expect(cal).not.toContain("Sign in again");
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await openMenu("Ops alerts");
+    expect(await screen.findByRole("menuitem", { name: "Send a test" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Test the connection" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Sign in again" })).toBeNull();
+  });
+
+  it("every app row has the level pill, even with one level; a send-only app's levels are worded for sends (access-12, D-419)", async () => {
+    listWs([
+      app({ ref: { type: "connection", id: "c5" }, name: "Team calendar", levels: [], app: { app_id: "ics", name: "Calendar link", custom_only: false }, agents: [entry({ level: "use" })] }),
+      app({ ref: { type: "connection", id: "c6" }, name: "Ops alerts", levels: ["ask", "act"], app: { app_id: "webhook", name: "Outgoing webhook", custom_only: false, send_only: true }, agents: [entry({ level: "ask" })] }),
+    ]);
+    // On an agent's list (its Access tab) every app row carries the agent's level.
+    list({ agent: { id: "a1", name: "Daneel" } });
+    const cal = await screen.findByRole("listitem", { name: "Team calendar" });
+    expect(within(cal).getByRole("combobox", { name: "Daneel's access to Team calendar" })).toHaveDisplayValue("Read only");
+    const ops = screen.getByRole("listitem", { name: "Ops alerts" });
+    const select = within(ops).getByRole("combobox", { name: "Daneel's access to Ops alerts" });
+    const options = within(select).getAllByRole("option").map((o) => o.textContent);
+    expect(options).toContain("Ask before each send");
+    expect(options).toContain("Send without asking");
+    expect(options).not.toContain("Read only");
   });
 
   it("Change website edits the website, the path and the way the token is sent in one save, from the website's own record", async () => {

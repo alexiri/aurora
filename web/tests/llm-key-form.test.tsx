@@ -113,7 +113,7 @@ function open(extra: Record<string, Handler> = {}) {
 async function pick(endpoint: string) {
   await screen.findByText(/Bedrock EU/);
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "k" } });
-  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: endpoint } });
+  fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: endpoint } });
 }
 
 describe("LLM key form per auth mode (C-811)", () => {
@@ -170,8 +170,20 @@ describe("LLM key form per auth mode (C-811)", () => {
     });
     // C-801 details.reason in plain language, never the raw code.
     expect(await screen.findByText(/trust policy: it must allow the source user and require this organization's external id/)).toBeTruthy();
-    expect((screen.getByLabelText("Source secret access key") as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("Source access key id") as HTMLInputElement).value).toBe("");
+    // (P5-REFINE-13, access-8) The refused values stay in their fields (masked): a typo is fixed, not retyped.
+    expect((screen.getByLabelText("Source secret access key") as HTMLInputElement).value).toBe("s3cr3t");
+    expect((screen.getByLabelText("Source access key id") as HTMLInputElement).value).toBe("AKIAEXAMPLE");
+    expect((screen.getByLabelText("Source secret access key") as HTMLInputElement).type).toBe("password");
+  });
+
+  it("keeps the typed API key after the provider rejects it and says so under the field", async () => {
+    open({ "POST /v1/orgs/o1/secrets": () => json(422, { error: { code: "llm_key_invalid", message: "m", details: { reason: "rejected" } } }) });
+    await pick("bed");
+    fireEvent.click(screen.getByLabelText(/Bedrock API key/));
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-typed-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    expect(await screen.findByText("The provider rejected this key. Check it and try again; what you typed is still here.")).toBeTruthy();
+    expect(screen.getByLabelText("API key")).toHaveValue("sk-typed-key");
   });
 
   it("shows the Entra fields for Azure, the harness hint and the no-harness notice", async () => {
@@ -190,7 +202,7 @@ describe("LLM key form per auth mode (C-811)", () => {
     fireEvent.click(within(group).getByLabelText(/Resource key/));
     expect(screen.getByLabelText("API key")).toBeTruthy();
     // An endpoint that serves a harness says so in the picker.
-    expect(screen.getByRole("option", { name: /Bedrock EU — Works with Claude Code/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Bedrock EU — Claude models on AWS\. Works with Claude Code\./ })).toBeTruthy();
   });
 
   it("takes a GCP service account key file or pasted JSON, and sends it as the value", async () => {
@@ -287,7 +299,7 @@ describe("LLM key form: words (setup-7)", () => {
     open();
     await pick("bed");
     const option = screen.getByRole("option", { name: /Bedrock EU/ });
-    expect(option.textContent).toBe("Bedrock EU — Works with Claude Code");
+    expect(option.textContent).toBe("Bedrock EU — Claude models on AWS. Works with Claude Code.");
     expect(option.textContent).not.toContain("(bedrock)");
     expect(document.body.textContent).not.toContain("Allowed key scopes");
   });

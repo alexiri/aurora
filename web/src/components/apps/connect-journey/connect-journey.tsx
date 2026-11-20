@@ -12,7 +12,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
 import { ArrowLeftIcon, CheckIcon } from "@/components/ui/icons";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
-import { LEVEL_LABEL, LEVEL_ORDER, preselectAgents } from "@/lib/accounts";
+import { levelLabel, LEVEL_ORDER, preselectAgents } from "@/lib/accounts";
 import { savedButText } from "@/lib/account-health";
 import { accountKeys, useAccounts, usePutAccess, useTestAccount, type Account, type Level } from "@/lib/api/accounts";
 import { appDisplayName, productName } from "@/lib/api/app-name";
@@ -52,6 +52,8 @@ interface DoneState {
   grantFailed: string | null;
   missing: string[];
   level: Level | null;
+  /** A send-only app: Done says "can now send to <account>, and asks you first". */
+  sendOnly?: boolean;
   appId?: string;
   customOnly?: boolean;
   scopes?: string[];
@@ -171,6 +173,8 @@ export function ConnectJourney({
   const app: AppDetail | undefined = detail.data;
   const levels: Level[] = target ? LEVEL_ORDER.filter((l) => target.levels.includes(l)) : app ? levelsForApp(app) : [];
   const effective: Level = levels.includes(level) ? level : (levels[0] ?? "read");
+  // (D-419) The Outgoing webhook only sends: its levels are "ask" and "act", worded for sends.
+  const sendOnly = (target ? target.app?.send_only : app?.send_only) === true;
 
   const shape: JourneyShape = {
     appGiven: !!appId,
@@ -247,6 +251,7 @@ export function ConnectJourney({
         grantFailed: null,
         missing: [],
         level: levels.length > 0 ? effective : "read",
+        sendOnly,
         appId: target.app?.app_id,
         accountName: target.name,
         firstPrompt: app?.first_prompt ?? null,
@@ -275,6 +280,7 @@ export function ConnectJourney({
       missing: r.missing,
       // A one-level app (no write tools) is read only; the Done line says so (B5). Custom-only apps have no single level.
       level: hasLevels ? effective : customOnly ? null : "read",
+      sendOnly,
       appId: realApp,
       customOnly,
       scopes: r.scopes,
@@ -388,14 +394,15 @@ export function ConnectJourney({
     const who = chosenAgents.length === 1 ? chosenAgents[0]!.name : "These agents";
     body = (
       <div className="space-y-3">
-        <p className="text-sm font-medium text-ink">What may {agentWord || "the agent"} do in {appName}?</p>
+        <p className="text-sm font-medium text-ink">What may {agentWord || "the agent"} do {sendOnly ? "with" : "in"} {appName}?</p>
         <AccessChoice
           account={{ levels, limit: target?.limit, app: target?.app, managed_by: target?.managed_by }}
           agentName={who}
           orgName={orgRecord.data?.name}
+          sendOnly={sendOnly}
           value={effective}
           onChange={setLevel}
-          legend={`What may ${who} do in ${appName}?`}
+          legend={`What may ${who} do ${sendOnly ? "with" : "in"} ${appName}?`}
         />
         <p className="text-xs text-muted">You can change this at any time on {chosenAgents.length === 1 ? `${who}'s` : "each agent's"} Apps &amp; access tab.</p>
         <ErrorNotice error={error} />
@@ -451,6 +458,7 @@ export function ConnectJourney({
         orgId={orgId}
         level={levels.length > 0 ? effective : null}
         agentIds={agentIds}
+        agentName={agent?.name ?? chosenAgents[0]?.name}
         fixedInstanceId={choice.kind === "app" ? choice.instanceId : undefined}
         hasWriteTools={app.tools.some((t) => t.group === "write")}
         onBack={prevStep(shape, "signin") ? back : undefined}
@@ -487,11 +495,11 @@ export function ConnectJourney({
               <CheckIcon className="size-6" />
             </span>
             <p className="text-base font-semibold text-ink">
-              {doneSentence({ agent: who, app: granted.length > 0 ? accountName : done.name, level: done.level, agentChosen: granted.length > 0 })}
+              {doneSentence({ agent: who, app: granted.length > 0 ? accountName : done.name, level: done.level, agentChosen: granted.length > 0, sendOnly: done.sendOnly })}
             </p>
             {granted.length > 0 ? (
               <p className="text-ink-2">
-                {done.level ? `${LEVEL_LABEL[done.level]}. ` : ""}You can change this on{" "}
+                {done.level ? `${levelLabel(done.level, done.sendOnly)}. ` : ""}You can change this on{" "}
                 {accessTab ? (
                   <Link href={accessTab} onClick={() => setLeaving(true)} className="font-medium text-link underline">
                     {who}&apos;s Apps &amp; access tab

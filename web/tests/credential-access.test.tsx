@@ -389,7 +389,7 @@ describe("Give agents access step", () => {
     const box = await screen.findByRole("checkbox", { name: "Daneel can use this key" });
     expect(box).toBeChecked();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team key" } });
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "aigw" } });
+    fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: "aigw" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     expect(await screen.findByText("Saved Team key")).toBeTruthy();
@@ -412,7 +412,7 @@ describe("Give agents access step", () => {
     await screen.findByText(/AI gateway/);
     expect(await screen.findByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team key" } });
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "aigw" } });
+    fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: "aigw" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     await screen.findByText("Saved Team key");
@@ -423,7 +423,7 @@ describe("Give agents access step", () => {
     await screen.findByText(/AI gateway/);
     expect(screen.queryByRole("checkbox", { name: /can use this key/ })).toBeNull();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Org key" } });
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "aigw" } });
+    fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: "aigw" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-2" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     expect(await screen.findByRole("region", { name: "Give agents access" })).toBeTruthy();

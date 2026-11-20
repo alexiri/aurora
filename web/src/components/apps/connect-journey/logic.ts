@@ -75,14 +75,19 @@ export function prevStep(s: JourneyShape, from: StepId): StepId | null {
 }
 
 /** The three choices an app account offers a new access (`14 §2`): none for an app that cannot change anything. */
-export function levelsForApp(app: Pick<AppDetail, "tools" | "app_restrictions">): Level[] {
+export function levelsForApp(app: Pick<AppDetail, "tools" | "app_restrictions"> & { send_only?: boolean }): Level[] {
+  // (P5-REFINE-13, D-419, C-1067) A send-only app (no read tool: the Outgoing webhook) offers "ask" and "act", never "read".
+  if (app.send_only) return appIsCustomOnly(app) ? ["ask"] : ["ask", "act"];
   if (!app.tools.some((t) => t.group === "write")) return [];
   return appIsCustomOnly(app) ? ["read", "ask"] : [...LEVEL_ORDER];
 }
 
 /** The Done sentences of `14 §3`, one per access. `level` is null for a website or an app with no choice. */
-export function doneSentence({ agent, app, level, agentChosen }: { agent: string; app: string; level: Level | null; agentChosen: boolean }): string {
+export function doneSentence({ agent, app, level, agentChosen, sendOnly = false }: { agent: string; app: string; level: Level | null; agentChosen: boolean; sendOnly?: boolean }): string {
   if (!agentChosen) return `${app} is connected. No agent can use it yet.`;
+  // A send-only app names the account: "Dani can now send to Ops alerts, and asks you first."
+  if (sendOnly && level === "ask") return `${agent} can now send to ${app}, and asks you first.`;
+  if (sendOnly && level === "act") return `${agent} can now send to ${app}, and sends without asking.`;
   switch (level) {
     case "read":
       return `${agent} can now read ${app}.`;

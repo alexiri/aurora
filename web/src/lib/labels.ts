@@ -587,6 +587,24 @@ export function auditWords(
   return { sentence: tpl.sentence(e.actor_label, t, meta), weight: e.critical ? "critical" : tpl.weight, known: true };
 }
 
+/** (P5-REFINE-13, access-9) What an AI endpoint's models are, in one phrase, by its provider kind. */
+const SERVICE_MODELS: Record<string, string> = {
+  anthropic: "Claude models",
+  openai: "GPT models",
+  azure_openai: "GPT models on Azure",
+  vertex: "Gemini and Claude models on Google Cloud",
+  bedrock: "Claude models on AWS",
+  litellm: "Your organization's own gateway",
+  openai_compatible: "Your organization's own gateway",
+};
+
+/** "Anthropic — Claude models. Works with Claude Code." for the service picker: the name, then one plain line. */
+export function serviceOption(displayName: string, provider: string, harness: string): string {
+  const models = SERVICE_MODELS[provider];
+  const line = [models, harness].filter(Boolean).join(". ");
+  return line ? `${displayName} — ${line}.` : displayName;
+}
+
 /**
  * (P5-REFINE-13, access-5) A webhook test that did not go through, in one plain sentence: by the status the receiver
  * answered. 2xx is a success and has no sentence.
