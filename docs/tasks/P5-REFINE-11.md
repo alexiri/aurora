@@ -489,9 +489,24 @@ Lane A, branch `alexiri/p5-polish-a`, master at 6cbf3a12 then re-merged at 4c92c
   every link type), `e2e/agent-page-p5.spec.ts` (mocks `/v1/agents/{id}/timeline`, asserts the sentences and links; **not run**: Playwright is refused in
   this lane). Commands: `tsc --noEmit` clean; eslint on touched files clean; whole web vitest (shared rail and labels changed) **220 files, 3020 tests passed**;
   `scripts/guards/run-all.sh` all passed. No Rust or API change.
-- **Still waiting (not done, with what they wait for):** ~~item 3's live "What <Agent> did"~~ done (fourth pass);
-  item 8's "<Agent> has no AI model yet" card with Add a key / Ask an admin (header words are done; -8 is merged so the Ask reason exists, but the
-  card's button is -12's and is not wired here). Everything else of the brief that has a merged dependency is done (the third pass above).
+- **Fifth pass (lane F): item 8's "<Agent> has no AI model yet" is done** (with P5-REFINE-12 item 7's header action; one component set,
+  `components/agents/answer-fix.tsx`). The action is whatever the API chose for the viewer (`AnswerReadiness.fix`, C-1062): `give_key`
+  ("Give Daneel the Company key", one click, toast "Daneel can answer now", the answer check refreshes so the header turns Ready),
+  `add_key` (**Add a key**, a link to the organization's AI keys, `orgRoutes(org).accounts({ kind: "ai-key" })`), `ask_admin` (**Ask an admin**:
+  `AskAdminForm`, subject `ai_key`, with "Why do you need it? (optional)" and Send request, the reason of C-1081; "Asked an admin · Undo" after).
+  `NoModelCard` (a region, "<Agent> has no AI model yet", one sentence for the case, the one action) is the conversation's **empty state**
+  when the answer check says `no_ai_key`, and `NoModelBar` ("<Agent> has no AI model yet, so it can't answer.") **replaces the composer**
+  (disabled) in every chat of that agent, with or without messages; it replaces the chat error "Open AI keys · Agent access · Fix it in the
+  guide" because nothing can be sent into the void any more (an old failed turn keeps its error block). `key_not_usable` and `no_model` are
+  not "no AI model yet": the header says why and the chat stays open. Tests: new `tests/no-model.test.tsx` (8: empty chat per fix, composer
+  off, ask with reason POST, add-key link, one-click grant and the chat opens up, can-answer unchanged, unusable key unchanged, the header's
+  three actions), new `e2e/no-model.spec.ts` (mocked, both themes, 1280/390 px, axe, no overflow; **not run**: Playwright is refused here).
+  `invalidateGrants` also refreshes `answerReadinessKey(agent)`. Commands: `tsc --noEmit` clean; eslint on touched files clean; whole web
+  vitest (the chat thread, the agent page and a shared hook changed) **227 files, 3158 tests passed**; `scripts/guards/run-all.sh` all passed.
+  Searched `web/tests`, `web/e2e` and `scripts/e2e` for the old "Open AI keys / Agent access / Fix it in the guide" chat error and "Say hello to":
+  the error copy is unchanged for old failed turns (`tests` for `errorCopy` still apply), no production spec reads either.
+- **Still waiting (not done, with what they wait for):** ~~item 3's live "What <Agent> did"~~ done (fourth pass), ~~item 8's card~~ done
+  (fifth pass). Everything of the brief that has a merged dependency is done.
 - **Deviations from this brief, and why:**
   - Settings: followed the coordinator's decision (button opens the page; Pause and Delete in the danger zone at the bottom), not the
     mockup's menu. Pause in the zone is an outline button; Delete a danger button.

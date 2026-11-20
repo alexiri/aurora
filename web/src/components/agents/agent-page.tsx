@@ -36,6 +36,7 @@ import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
 import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, LEGACY_AUTOMATION_TAB, resolvePage, sectionLanding, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
 import { AgentState } from "./agent-state";
+import { AnswerFixAction } from "./answer-fix";
 import { SettingsFrame } from "./settings-shell";
 import { SshPage } from "./ssh-page";
 import { TerminalTab } from "./terminal-tab";
@@ -170,7 +171,17 @@ export function AgentPage() {
                 {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
                 {byo ? <Badge>{agent.kind}</Badge> : null}
                 {byo && agent.is_default ? <Badge tone="accent">Default</Badge> : null}
-                {byo || !wsId ? null : <AgentState agentId={agent.id} wsId={wsId} canOwn={canOwn} canApprove={canApprove} hosted />}
+                {byo || !wsId ? null : (
+                  <AgentState
+                    agentId={agent.id}
+                    wsId={wsId}
+                    canOwn={canOwn}
+                    canApprove={canApprove}
+                    hosted
+                    // (access-3) The one action next to "Can't answer: no AI key": give it the Company key, add a key, or ask an admin.
+                    action={<AnswerFixAction agentId={agent.id} agentName={agent.name} wsId={wsId} base={base} />}
+                  />
+                )}
                 {wsId ? <AgentAttentionChip workspaceId={wsId} agentId={agent.id} accessHref={`${base}/agents/${agent.handle}?tab=access`} /> : null}
               </span>
             </div>

@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 
+import { answerReadinessKey } from "./answer-readiness";
 import { api, ApiError } from "./client";
 import { policyKeys } from "./policy";
 import type { components } from "./schema";
@@ -31,6 +32,8 @@ function invalidateGrants(qc: QueryClient, target: GrantTarget, agentIds: string
     void qc.invalidateQueries({ queryKey: policyKeys.grants(a) });
     void qc.invalidateQueries({ queryKey: policyKeys.effective(a) });
     void qc.invalidateQueries({ queryKey: grantKeys.readiness(a) });
+    // (C-1062) Whether the agent can answer: the header and the empty chat follow a grant at once.
+    void qc.invalidateQueries({ queryKey: answerReadinessKey(a) });
   }
 }
 

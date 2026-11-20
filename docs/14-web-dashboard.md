@@ -563,8 +563,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     `triggers`, `computer`, `settings`. The computer's secondary tabs (Terminal, Files, …) collapse into a **More** menu rather
     than scrolling sideways.
   - **The header state** (D-408) is one `StatusLine`: **Can't answer: <reason>** (`no AI key`, `the key stopped working`,
-    `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; an action slot
-    beside it is P5-REFINE-12's) → **Needs you** → **Working** → **Starting its computer…** (spinner, `aria-live` polite) →
+    `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; beside it
+    the one action the API chose for the viewer (`fix`): **Give <Agent> the <key name>** (one click, "<Agent> can answer now",
+    the header turns Ready), **Add a key** (organization owners and admins: the organization's AI keys) or **Ask an admin**
+    (subject `ai_key`, with the optional reason, C-1081); with **no AI key at all** the empty chat says **"<Agent> has no AI
+    model yet"** with the same action and the composer is off (access-3, D-414)) → **Needs you** → **Working** → **Starting its computer…** (spinner, `aria-live` polite) →
     **Asleep** → **Ready**; **Ready only when the computer answers** (`SandboxView.computer.ready`, C-1059). Without computer
     data (not loaded, BYO) the older words apply.
   - **The rail** (D-201, D-415, P5-REFINE-11) has three headings: **Needs you · Doing now · What <Agent> did**. The Computer is
