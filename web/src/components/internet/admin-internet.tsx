@@ -56,7 +56,7 @@ function Organizations() {
 export function AdminInternet() {
   return (
     <div className="max-w-page space-y-8">
-      <PageHeader title="Internet access" description="Which websites agents can reach. Organizations and workspaces can only restrict further what you set here." className="mb-2" />
+      <PageHeader title="What agents may do" description="Which websites agents can reach. Organizations and workspaces can only restrict further what you set here." className="mb-2" />
       {/* (P5-REFINE-18 #2, D-410) The preset first; today's fields behind Customise. */}
       <PolicyPresets>
         <GovernanceFields part="internet" />

@@ -49,7 +49,7 @@ for (const scheme of ["light", "dark"] as const) {
         if (width >= 768) {
           // Administration's sidebar leads to People; at phone width the sidebar is a drawer, so that part is wide only.
           await openRoute(page, "/admin", scheme);
-          await page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: "People", exact: true }).click();
+          await page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: "People & sign-in", exact: true }).click();
         } else {
           await openRoute(page, "/admin/people", scheme);
         }

@@ -2,7 +2,7 @@
 
 import { useId, useState, type ReactNode } from "react";
 
-import { AUDIT_ACTION, auditWords } from "@/lib/labels";
+import { AUDIT_ACTION, auditArea, auditWords } from "@/lib/labels";
 import { Avatar } from "@/components/ui/avatar";
 import { ResponsiveTable } from "@/components/ui/responsive-table";
 import { cn } from "@/lib/utils";
@@ -53,6 +53,8 @@ export function AuditPanel({
   showOrg = false,
   headed = true,
   targetName,
+  areas = false,
+  afterList,
 }: {
   /**
    * Present: entries read as sentences ("Bob revoked the API key ci-script") with Critical / Important / Routine, stacked
@@ -69,6 +71,10 @@ export function AuditPanel({
   showOrg?: boolean;
   /** False where the page around it already has the heading (the workspace tab). */
   headed?: boolean;
+  /** (P5-REFINE-18 #11) The line under a sentence names where in Administration it happened, not who did it. */
+  areas?: boolean;
+  /** Content right under the list (Administration: how many system events are hidden). */
+  afterList?: ReactNode;
 }) {
   const [input, setInput] = useState(filters.action);
   const items = feed.data?.pages.flatMap((p) => p.items) ?? [];
@@ -106,7 +112,7 @@ export function AuditPanel({
       {feed.isPending ? <Loading /> : null}
       {feed.isError ? <ErrorState error={feed.error} onRetry={() => void feed.refetch()} /> : null}
       {feed.data && items.length === 0 ? <EmptyState title="No audit entries" /> : null}
-      {items.length > 0 && targetName ? <SentenceList items={items} title={title} targetName={targetName} /> : null}
+      {items.length > 0 && targetName ? <SentenceList items={items} title={title} targetName={targetName} areas={areas} showOrg={showOrg} /> : null}
       {items.length > 0 && !targetName ? (
         <DataTable caption={title} stackBelow={900}>
           <thead>
@@ -129,6 +135,7 @@ export function AuditPanel({
           </tbody>
         </DataTable>
       ) : null}
+      {afterList}
       <LoadMore query={feed} />
     </div>
   );
@@ -188,7 +195,19 @@ const WEIGHT_CLASS = {
 } as const;
 
 /** (workspace-3) The audit as sentences on stacked rows; the raw event is under Details, in Technical details. */
-function SentenceList({ items, title, targetName }: { items: AuditEntry[]; title: string; targetName: (e: AuditEntry) => string | null }) {
+function SentenceList({
+  items,
+  title,
+  targetName,
+  areas,
+  showOrg,
+}: {
+  items: AuditEntry[];
+  title: string;
+  targetName: (e: AuditEntry) => string | null;
+  areas: boolean;
+  showOrg: boolean;
+}) {
   const [open, setOpen] = useState<string | null>(null);
   return (
     <ResponsiveTable
@@ -205,7 +224,8 @@ function SentenceList({ items, title, targetName }: { items: AuditEntry[]; title
               <div className="min-w-0">
                 <p className="text-sm font-medium text-ink" data-testid="audit-sentence">{w.sentence}</p>
                 <p className="text-xs text-muted">
-                  <When value={e.created_at} /> · {e.actor_label}
+                  <When value={e.created_at} /> · {areas ? (auditArea(e.action) ?? "Administration") : e.actor_label}
+                  {showOrg ? <> · {e.org_id ? (e.org_slug ?? e.org_id) : "Instance"}</> : null}
                 </p>
                 {open === e.id ? (
                   <div className="mt-2 rounded-control bg-canvas p-3">

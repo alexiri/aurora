@@ -34,7 +34,7 @@ for (const scheme of ["light", "dark"] as const) {
         // The section lives on AI models › Rules; the old address redirects there (C-960, C-971).
         await openRoute(page, "/admin/settings/governance", scheme);
         await expect(page).toHaveURL(/\/admin\/ai-models\?tab=rules$/);
-        await expect(page.getByRole("heading", { name: "AI models", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "AI endpoints", level: 1 })).toBeVisible();
         await expect(page.locator("[id='governance.llm.require_key_origin-c']")).toBeChecked();
         // The egress and BYO keys of the same section are not on this page (C-971: three topics).
         await expect(page.locator("[id='governance.egress.minimum_posture-c']")).toHaveCount(0);
@@ -42,7 +42,7 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeClean(page)).toEqual([]);
         // Administration › Internet access holds the egress keys: the Helm-locked one reads as text.
         await openRoute(page, "/admin/internet-access", scheme);
-        await expect(page.getByRole("heading", { name: "Internet access", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "What agents may do", level: 1 })).toBeVisible();
         // (P5-REFINE-18, D-410) The preset card first, saying what Helm keeps; today's fields are behind Customise.
         await expect(page.getByTestId("preset-state")).toContainText("set in Helm");
         await page.getByRole("button", { name: /Customise/ }).click();
@@ -86,7 +86,7 @@ for (const scheme of ["light", "dark"] as const) {
       test("the LLM endpoints page shows providers, a Helm endpoint and a dashboard endpoint", async ({ page }) => {
         await openRoute(page, "/admin/settings/llm", scheme);
         await expect(page).toHaveURL(/\/admin\/ai-models\?tab=endpoints$/);
-        await expect(page.getByRole("heading", { name: "AI models", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "AI endpoints", level: 1 })).toBeVisible();
         await expect(page.getByRole("checkbox", { name: "LiteLLM" })).toBeChecked();
         await expect(page.getByRole("checkbox", { name: "OpenAI", exact: true })).not.toBeChecked();
         await expect(page.getByTestId("llm.provider_preference-locked-value")).toContainText("1. LiteLLM");
@@ -132,7 +132,7 @@ for (const scheme of ["light", "dark"] as const) {
       test("the agents page shows a locked deadline and the runners' sizes", async ({ page }) => {
         await openRoute(page, "/admin/settings/agents", scheme);
         await expect(page).toHaveURL(/\/admin\/agents\?tab=defaults$/);
-        await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Agent defaults", level: 1 })).toBeVisible();
         await expect(page.getByTestId("hosted.idle_stop_secs-locked-value")).toHaveText("30 minutes");
         await expect(page.getByRole("region", { name: "Runners and sandbox sizes" })).toContainText("4096");
         expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -173,7 +173,7 @@ for (const scheme of ["light", "dark"] as const) {
       test("the terminal page shows one Unavailable card for a missing deployment wiring, and no form", async ({ page }) => {
         await openRoute(page, "/admin/settings/terminal", scheme);
         await expect(page).toHaveURL(/\/admin\/agents\?tab=computers$/);
-        await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Agent defaults", level: 1 })).toBeVisible();
         await expect(page.getByText(/does not provide the terminal/)).toBeVisible();
         await expect(page.getByRole("region", { name: "The web terminal isn't available on this Aurora" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -183,7 +183,7 @@ for (const scheme of ["light", "dark"] as const) {
       test("the limits page lists a Helm rate class and warns about private destinations", async ({ page }) => {
         await openRoute(page, "/admin/settings/limits", scheme);
         await expect(page).toHaveURL(/\/admin\/platform\?tab=limits$/);
-        await expect(page.getByRole("heading", { name: "Platform", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Health & runners", level: 1 })).toBeVisible();
         await expect(page.getByText("Set by the installation").first()).toBeVisible();
         await expect(page.getByText(/Private destinations\./)).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -193,7 +193,7 @@ for (const scheme of ["light", "dark"] as const) {
       test("the email page offers a test e-mail", async ({ page }) => {
         await openRoute(page, "/admin/settings/email", scheme);
         await expect(page).toHaveURL(/\/admin\/platform\?tab=email$/);
-        await expect(page.getByRole("heading", { name: "Platform", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Health & runners", level: 1 })).toBeVisible();
         await expect(page.getByRole("button", { name: "Send test e-mail" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);

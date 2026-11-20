@@ -89,25 +89,26 @@ export function ModelsTab({
           <dd className="text-ink-2">Used unless someone picks another</dd>
           <dd className="mt-0.5 text-ink">{keys.names.length === 0 ? "No company key yet" : listWords(keys.names)}</dd>
         </div>
-        <div className="flex items-center justify-between gap-3 px-4 py-3">
-          <div>
-            <dt className="font-medium text-ink">People may add their own key</dt>
-            <dd className="text-ink-2">{peopleMayAdd ? "Allowed" : "Not allowed"}</dd>
-          </div>
-          <Switch
-            aria-label="People may add their own key"
-            checked={peopleMayAdd}
-            disabled={readOnly || live.length === 0}
-            onCheckedChange={(v) =>
-              setAll((e) =>
-                e.locked.key_scopes || !e.allowed ? {} : { key_scopes: v ? [...new Set([...e.key_scopes, "workspace"])] : e.key_scopes.filter((s) => s !== "workspace") },
-              )
-            }
-          />
+        {/* (axe definition-list) Each row is one div directly under the dl, holding only dt and dd; the switch sits in the dd. */}
+        <div className="px-4 py-3">
+          <dt className="font-medium text-ink">People may add their own key</dt>
+          <dd className="flex items-center justify-between gap-3 text-ink-2">
+            <span>{peopleMayAdd ? "Allowed" : "Not allowed"}</span>
+            <Switch
+              aria-label="People may add their own key"
+              checked={peopleMayAdd}
+              disabled={readOnly || live.length === 0}
+              onCheckedChange={(v) =>
+                setAll((e) =>
+                  e.locked.key_scopes || !e.allowed ? {} : { key_scopes: v ? [...new Set([...e.key_scopes, "workspace"])] : e.key_scopes.filter((s) => s !== "workspace") },
+                )
+              }
+            />
+          </dd>
         </div>
-        <div className="space-y-2 px-4 py-3">
+        <div className="px-4 py-3">
           <dt className="font-medium text-ink">Who can use {keys.names[0] ?? "the company key"}</dt>
-          <dd>
+          <dd className="mt-2 space-y-2">
             <ul aria-label="Who can use the key" className="flex flex-wrap gap-1.5">
               {everyone ? <li className="text-ink-2">Everyone in {org.name}</li> : null}
               {chosenTeams.map((id) => (
@@ -131,7 +132,6 @@ export function ModelsTab({
                 </li>
               ))}
             </ul>
-          </dd>
           {readOnly || addable.length === 0 ? null : (
             <select
               aria-label="Add team or workspace"
@@ -150,6 +150,7 @@ export function ModelsTab({
               ))}
             </select>
           )}
+          </dd>
         </div>
       </dl>
 

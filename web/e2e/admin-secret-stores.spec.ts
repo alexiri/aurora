@@ -21,7 +21,7 @@ for (const scheme of ["light", "dark"] as const) {
       test("the stores page shows Helm and dashboard stores", async ({ page }) => {
         await openRoute(page, "/admin/secret-stores", scheme);
         await expect(page).toHaveURL(/\/admin\/platform\?tab=secret-stores$/);
-        await expect(page.getByRole("heading", { name: "Platform", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Health & runners", level: 1 })).toBeVisible();
         const list = page.getByRole("list", { name: "Secret stores" });
         await expect(list.getByText("Set by the installation").first()).toBeVisible();
         await expect(list.getByRole("button", { name: "Edit team-vault" })).toBeVisible();

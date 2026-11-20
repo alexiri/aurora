@@ -61,6 +61,8 @@ export const adminRoutes = {
   platform: (tab?: TabOf<"adminPlatform">, hash?: string) => url("/admin/platform", { tab }, hash),
   /** All settings (the index of every section). */
   settings: (hash?: string) => url("/admin/settings", undefined, hash),
+  /** (P5-REFINE-18 #1) Every value the Helm values set; `key` jumps to one row. */
+  setInHelm: (key?: string) => url("/admin/set-in-helm", undefined, key),
   /** The page of one `governance` key: AI key rules, egress and BYO/agent tokens each live in their own topic. */
   governanceSetting: (key: string) => {
     if (key.startsWith("governance.egress.")) return url("/admin/internet-access", { tab: "limits" }, key);
@@ -178,7 +180,18 @@ export const accountRoutes = {
 } as const;
 
 /** Topic ids per level, in the order of `14 §Topics per level`. */
-export type AdminTopic = "overview" | "agents" | "apps" | "ai-models" | "internet-access" | "people" | "chat-platforms" | "data" | "platform" | "settings";
+export type AdminTopic =
+  | "overview"
+  | "agents"
+  | "apps"
+  | "ai-models"
+  | "internet-access"
+  | "people"
+  | "chat-platforms"
+  | "data"
+  | "platform"
+  | "set-in-helm"
+  | "settings";
 export type OrgTopic = "overview" | "agents" | "apps" | "ai-models" | "internet-access" | "people" | "chat-platforms" | "data" | "settings";
 export type WorkspaceTopic = "overview" | "agents" | "skills" | "apps" | "internet-access" | "approvals" | "activity" | "people" | "settings";
 
@@ -196,8 +209,34 @@ export const TOPIC_LABEL: Record<AdminTopic | OrgTopic | WorkspaceTopic, string>
   "chat-platforms": "Chat platforms",
   data: "Data",
   platform: "Platform",
+  "set-in-helm": "Set in Helm",
   settings: "Settings",
 };
+
+/**
+ * (P5-REFINE-18 #1, rec 9) Administration's rail in two halves: what an administrator decides for everyone, and what
+ * belongs to this installation. Labels here are the rail's; the organization and workspace levels keep `TOPIC_LABEL`.
+ * Route ids do not change.
+ */
+export const ADMIN_RAIL_LABEL: Record<AdminTopic, string> = {
+  overview: "Overview",
+  "internet-access": "What agents may do",
+  apps: "Apps",
+  "chat-platforms": "Chat platforms",
+  people: "People & sign-in",
+  data: "Data",
+  platform: "Health & runners",
+  "ai-models": "AI endpoints",
+  agents: "Agent defaults",
+  "set-in-helm": "Set in Helm",
+  settings: "All settings",
+};
+
+export const ADMIN_RAIL_GROUPS: { label: string | null; topics: AdminTopic[] }[] = [
+  { label: null, topics: ["overview"] },
+  { label: "Policy for everyone", topics: ["internet-access", "agents", "apps", "chat-platforms", "people", "data"] },
+  { label: "This installation", topics: ["platform", "ai-models", "set-in-helm", "settings"] },
+];
 
 /** Where a topic's page is, per level. */
 export function topicHref(level: "admin", topic: AdminTopic): string;

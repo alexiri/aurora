@@ -47,7 +47,7 @@ describe("probeFailedMessage (FIX-144)", () => {
   });
 
   it.each([
-    ["destination_refused", /private address.*gateway\.allowed_private/],
+    ["destination_refused", /can't reach .* private address\. Ask whoever installed Aurora to allow it\./],
     ["dns", /could not be found.*Check the spelling/],
     ["timeout", /did not answer within 10 seconds/],
     ["connect", /refused the connection on port 443/],

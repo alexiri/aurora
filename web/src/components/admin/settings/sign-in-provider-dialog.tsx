@@ -168,7 +168,7 @@ function toEntry(d: Draft, base: Entry | null, withSecret: boolean): Entry {
 const REASON: Record<string, string> = {
   issuer_invalid: "That is not a valid issuer address.",
   issuer_not_https: "The issuer must be an https address.",
-  destination_refused: "This address is private, loopback or a metadata address. An operator can open it with gateway.allowed_private.",
+  destination_refused: "Aurora can't reach private addresses. Ask whoever installed Aurora to allow it.",
   issuer_mismatch: "The issuer in the discovery document is not the one you entered.",
   not_oidc: "The address did not answer with an OpenID Connect discovery document.",
   http_error: "The address answered with an error.",

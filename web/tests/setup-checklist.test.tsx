@@ -73,7 +73,11 @@ const mailOk = withStep("optional", { status: "ok", reason: "optional", checks: 
 const ME = { user: { id: "u1", display_name: "Ada", email: "ada@example.org", is_instance_admin: true }, memberships: [{ org: { id: "o1", slug: "users", name: "Users" }, role: "member", status: "active", workspaces: [{ id: "w1", slug: "ada", name: "Ada's workspace", personal: true }] }] };
 
 function world(opts: { status?: ReturnType<typeof setupStatus>; replied?: boolean; keys?: unknown[]; uploaded?: unknown[] } = {}) {
-  routes["GET /v1/admin/setup"] = () => json(200, opts.status ?? setupStatus());
+  // (C-1063) Try it comes from the server: done on the first finished turn, offered only once an agent can answer.
+  const status = opts.status ?? setupStatus();
+  const hasKey = status.steps.find((x) => x.id === "llm")?.status === "ok";
+  const served = { ...status, try_it: (status as unknown as { try_it?: unknown }).try_it ?? { available: hasKey, done: !!opts.replied, agent_id: "a1", workspace_id: "w1" } };
+  routes["GET /v1/admin/setup"] = () => json(200, served);
   routes["GET /v1/admin/placement"] = () => json(200, placement());
   routes["GET /v1/me"] = () => json(200, ME);
   routes["GET /v1/workspaces/w1/agents"] = () => json(200, { items: [{ id: "a1", handle: "daneel", name: "Daneel", kind: "hosted", is_default: true, frozen: null }], next_cursor: null });
@@ -107,7 +111,42 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     expect(screen.queryByLabelText("Mode")).toBeNull();
     // No bare numbers under check lines, no approval step.
     expect(screen.queryByText(/approv(e|al) (the )?apps/i)).toBeNull();
-    await waitFor(() => expect(within(document.querySelector<HTMLElement>('[data-step="try"]')!).getByRole("link", { name: "Open chat" })).toHaveAttribute("href", "/o/users/w/ada/agents/daneel?tab=chat"));
+    // (D-414) No AI key: Try it is not offered.
+    const tryRow = document.querySelector<HTMLElement>('[data-step="try"]')!;
+    expect(within(tryRow).getByText("Comes after the AI key")).toBeInTheDocument();
+    expect(within(tryRow).queryByRole("link", { name: "Open chat" })).toBeNull();
+  });
+
+  it("shows what agents may do under the checklist, with a Change link to the preset card (not counted)", async () => {
+    world();
+    routes["GET /v1/admin/settings/governance"] = () =>
+      json(200, {
+        section: "governance", title: "Governance", description: "", generation: 1, editable: true, fields: [], extra: null,
+        settings: [
+          { key: "governance.egress.minimum_posture", value: "open", locked: false, source: "default" },
+          { key: "governance.egress.open_lane_minimum", value: "enabled", locked: false, source: "default" },
+          { key: "governance.llm.minimum_posture", value: "open", locked: false, source: "default" },
+          { key: "governance.llm.allowed_key_scopes", value: ["organization", "workspace"], locked: false, source: "default" },
+          { key: "byo.enabled", value: true, locked: false, source: "default" },
+          { key: "byo.minimum_posture", value: "owners_only", locked: false, source: "default" },
+        ],
+      });
+    wrap(<SetupView />);
+    const line = await screen.findByTestId("preset-line");
+    await waitFor(() => expect(line).toHaveTextContent("What agents may do · Open · Change"));
+    expect(within(line).getByRole("link", { name: "Change" })).toHaveAttribute("href", "/admin/internet-access#presets");
+    // Still five rows: the line is not a sixth step.
+    expect(within(await screen.findByRole("list", { name: "Setup steps" })).getAllByRole("listitem")).toHaveLength(5);
+  });
+
+  it("with a key, Open chat goes straight to the agent's chat with the hello typed, not sent (setup-3, C-1035)", async () => {
+    world({ status: keyOk(), keys: [llmSecret("k9", "Users AI gateway")] });
+    wrap(<SetupView />);
+    const tryRow = await row("try");
+    await waitFor(() => expect(within(tryRow).getByRole("link", { name: "Open chat" })).toHaveAttribute("href", "/o/users/w/ada/agents/daneel?tab=chat&draft=Hello+Daneel%21+What+can+you+help+me+with%3F"));
+    expect(within(tryRow).getByText("Say hello to your own agent")).toBeInTheDocument();
+    // Nothing is sent from here.
+    expect(calls.some((c) => c.key.startsWith("POST") && c.key.includes("/turns"))).toBe(false);
   });
 
   it("asks for no organization's keys before the placement names an organization (P5-POLISH-11)", async () => {
@@ -130,7 +169,7 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     world({ status: keyOk(), keys: [llmSecret("k9", "Users AI gateway")] });
     wrap(<SetupView />);
     const done = await row("key");
-    await waitFor(() => expect(within(done).getByText("Users AI gateway · every new agent gets it")).toBeInTheDocument());
+    await waitFor(() => expect(within(done).getByText("Users AI gateway · every new agent in Users gets it")).toBeInTheDocument());
     expect(done.dataset.done).toBe("true");
   });
 
@@ -143,16 +182,18 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     expect(within(done).queryByRole("button", { name: "Add another" })).toBeNull();
   });
 
-  it("Try it is done once the admin's agent has answered", async () => {
+  it("Try it ticks itself from the server (try_it.done) and says who answered", async () => {
     world({ replied: true });
     wrap(<SetupView />);
     const tryIt = await row("try");
     await waitFor(() => expect(tryIt.dataset.done).toBe("true"));
+    await waitFor(() => expect(within(tryIt).getByText("Daneel answered Ada")).toBeInTheDocument());
+    // The web no longer probes the agent's conversations itself.
+    expect(calls.some((c) => c.key === "GET /v1/agents/a1/conversations")).toBe(false);
     cleanup();
-    world({ replied: false });
+    world({ status: keyOk(), replied: false });
     wrap(<SetupView />);
     const again = await row("try");
-    await waitFor(() => expect(calls.some((c) => c.key === "GET /v1/agents/a1/conversations")).toBe(true));
     expect(again.dataset.done).toBe("false");
   });
 
@@ -205,14 +246,14 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     await waitFor(() => expect(within(key).getByRole("button", { name: "Add key" })).toBeEnabled());
     fireEvent.click(within(key).getByRole("button", { name: "Add key" }));
     fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "AIGW" } });
-    fireEvent.change(await screen.findByLabelText("Which service is this key for?"), { target: { value: "litellm" } });
+    fireEvent.change(await screen.findByLabelText("Provider"), { target: { value: "litellm" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-test" } });
     // (P5-POLISH-11) The dialog's buttons are P5-POLISH-7's: Cancel and "Add key".
     const dialog = screen.getByRole("dialog", { name: "Add an organization AI key" });
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Add key" }));
     const toast = await screen.findByTestId("setup-toast");
-    expect(toast).toHaveTextContent("AI key added. 3 of 5 done.");
+    expect(toast).toHaveTextContent("AIGW added. 3 of 5 done.");
     // Still the checklist, with the starter grant saved (C-922).
     expect(screen.getByRole("list", { name: "Setup steps" })).toBeInTheDocument();
     expect(screen.queryByTestId("admin-health")).toBeNull();
@@ -250,10 +291,66 @@ describe("Administration › Overview: the health view", () => {
     expect(screen.queryByRole("list", { name: "Setup steps" })).toBeNull();
   });
 
+  it("says what real calls returned, by display name, and the terminal being off (P5-REFINE-18 #15, #10)", async () => {
+    const status = mailOk(
+      withStep("llm", {
+        status: "ok",
+        reason: "llm_ok",
+        checks: [
+          check("org_key", "ok", "org_key_present", "Users has an LLM key."),
+          check("endpoint:a", "ok", "endpoint_reachable", "Company AI gateway answers.", { evidence: "call", last_ok_at: new Date(Date.now() - 120_000).toISOString() }),
+          check("endpoint:b", "ok", "endpoint_reachable", "Users AI gateway answers.", { evidence: "probe" }),
+          check("endpoint:c", "warning", "endpoint_unreachable", "Edge gateway did not answer.", { evidence: "call", last_ok_at: "2026-11-19T10:00:00Z", last_error_at: "2026-11-20T14:02:00Z" }),
+        ],
+      })(),
+    );
+    world({ status, replied: true });
+    routes["GET /v1/admin/settings/terminal"] = () =>
+      json(200, {
+        section: "terminal", title: "Terminal", description: "", generation: 1, editable: true, fields: [], extra: { available: true },
+        settings: [{ key: "terminal.enabled", value: false, default: false, locked: false, source: "default" }],
+      });
+    wrap(<SetupView />);
+    const health = await screen.findByTestId("admin-health");
+    const ai = await within(health).findByText("Company AI gateway");
+    const line = ai.closest("li")!;
+    expect(line.textContent).toMatch(/Company AI gateway answered .*\./);
+    expect(line.textContent).toContain("Users AI gateway has not been asked yet.");
+    expect(line.textContent).toMatch(/Edge gateway did not answer at /);
+    expect(line.textContent).not.toMatch(/AIGW|VidaiMock|from the API/);
+    const terminal = await within(health).findByText("Web terminal");
+    const row = terminal.closest("li")!;
+    expect(row.textContent).toContain("Off. People see “not available” on their agent's Computer tab.");
+    expect(within(row).getByRole("link", { name: "Turn on" })).toHaveAttribute("href", "/admin/agents?tab=computers#terminal.enabled");
+  });
+
   it("says nothing needs the admin when nothing does", async () => {
     world({ status: complete(), replied: true });
     wrap(<SetupView />);
     expect(await screen.findByText(/Aurora is running\. Nothing needs you\./)).toBeInTheDocument();
     expect(screen.queryByText("Needs you")).toBeNull();
+  });
+
+  it("says who got the key with it: the agents already there (setup-2, C-1061)", async () => {
+    world();
+    let added = false;
+    routes["GET /v1/admin/setup"] = () => json(200, added ? keyOk() : setupStatus());
+    routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: added ? [llmSecret("k10", "Company key")] : [] });
+    routes["POST /v1/orgs/o1/secrets"] = () => {
+      added = true;
+      return json(201, llmSecret("k10", "Company key"));
+    };
+    routes["PUT /v1/admin/placement"] = () =>
+      json(200, { ...placement(), starter_applied: [{ kind: "secret", id: "k10", name: "Company key", agents_granted: 2, agent_names: ["Daneel", "Eli"], already_had: 0 }], starter_pending: 0 });
+    wrap(<SetupView />);
+    const key = await row("key");
+    await waitFor(() => expect(within(key).getByRole("button", { name: "Add key" })).toBeEnabled());
+    fireEvent.click(within(key).getByRole("button", { name: "Add key" }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Company key" } });
+    fireEvent.change(await screen.findByLabelText("Provider"), { target: { value: "litellm" } });
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-test" } });
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Add an organization AI key" })).getByRole("button", { name: "Add key" }));
+    expect(await screen.findByTestId("setup-toast")).toHaveTextContent("Company key added. Daneel can use it now.");
+    expect(await screen.findByTestId("key-given")).toHaveTextContent("Given to Daneel and 1 other agent already in Users.");
   });
 });

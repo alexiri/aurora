@@ -64,7 +64,7 @@ describe("AdminAuditView filters in the URL (FIX-171)", () => {
     const seen: string[] = [];
     stubAudit(seen);
     view();
-    await screen.findByText("instance_settings.update");
+    await screen.findByText("root@x.io changed the instance settings");
     const q = new URLSearchParams(seen[0]);
     expect(q.get("action")).toBe("instance_settings.");
     expect(q.get("scope")).toBe("all");
@@ -77,7 +77,7 @@ describe("AdminAuditView filters in the URL (FIX-171)", () => {
     const seen: string[] = [];
     stubAudit(seen);
     view();
-    await screen.findByText("instance_settings.update");
+    await screen.findByText("root@x.io changed the instance settings");
     const q = new URLSearchParams(seen[0]);
     expect(q.get("scope")).toBe("instance");
     expect(q.has("since")).toBe(false);
@@ -86,7 +86,7 @@ describe("AdminAuditView filters in the URL (FIX-171)", () => {
   it("writes a changed filter back, keeping tab and leaving out empty values", async () => {
     stubAudit([]);
     view();
-    await screen.findByText("instance_settings.update");
+    await screen.findByText("root@x.io changed the instance settings");
     fireEvent.click(screen.getByLabelText("Security-critical only"));
     expect(nav.replace).toHaveBeenLastCalledWith("/admin/data?tab=audit&critical=1", { scroll: false });
     fireEvent.change(screen.getByLabelText("Filter by action"), { target: { value: "plugin." } });
@@ -96,8 +96,8 @@ describe("AdminAuditView filters in the URL (FIX-171)", () => {
   it("opens and closes a row's Details", async () => {
     stubAudit([]);
     view();
-    await screen.findByText("instance_settings.update");
-    const btn = screen.getByRole("button", { name: /Details of instance_settings.update/ });
+    await screen.findByText("root@x.io changed the instance settings");
+    const btn = screen.getByRole("button", { name: "Details" });
     expect(btn).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(btn);
     expect(btn).toHaveAttribute("aria-expanded", "true");
@@ -135,23 +135,54 @@ describe("AdminAuditView (FIX-125)", () => {
         <AdminAuditView />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText("trusted_key.create")).toBeTruthy();
-    expect(screen.queryByText("org.freeze")).toBeNull();
-    expect(screen.queryByText("Organization")).toBeNull();
+    expect(await screen.findByText("root@x.io trusted a new app publisher")).toBeTruthy();
+    expect(screen.queryByText(/acme/)).toBeNull();
     expect(seen[0]).toContain("scope=instance");
     expect(screen.getAllByText("Critical")).toHaveLength(1);
 
     fireEvent.click(screen.getByLabelText("All organizations"));
-    expect(await screen.findByText("org.freeze")).toBeTruthy();
-    expect(screen.getByText("Organization")).toBeTruthy();
-    expect(screen.getByText("acme")).toBeTruthy();
-    // The scope toggle and the instance-level row's organization cell.
-    expect(screen.getAllByText("Instance")).toHaveLength(2);
+    expect(await screen.findByText(/root@x.io did something/)).toBeTruthy();
+    // The line under a sentence names the organization, or the instance for an instance-level row.
+    expect(screen.getByText(/· acme/)).toBeTruthy();
+    expect(screen.getByText(/· Instance$/)).toBeTruthy();
 
     fireEvent.change(await screen.findByLabelText("Organization"), { target: { value: "o1" } });
     await waitFor(() => expect(seen.some((s) => s.includes("org=o1"))).toBe(true));
 
     fireEvent.click(screen.getByLabelText("Security-critical only"));
     await waitFor(() => expect(seen.some((s) => s.includes("critical=true"))).toBe(true));
+  });
+});
+
+describe("System events are hidden, with a count (P5-REFINE-18 #11, admin-10)", () => {
+  it("hides the system's install events, says how many, and shows them with the switch", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Request | string | URL) => {
+        const req = input instanceof Request ? input : null;
+        const url = new URL(req ? req.url : String(input), "http://localhost");
+        const body = url.pathname.endsWith("/admin/orgs")
+          ? { items: [] }
+          : {
+              items: [
+                entry("1", "instance_settings.update", null),
+                { ...entry("2", "plugin.ingest", null), actor_kind: "system", actor_label: "system" },
+                { ...entry("3", "instance_settings.helm_sync", null), actor_kind: "system", actor_label: "system" },
+              ],
+              next_cursor: null,
+            };
+        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    view();
+    await screen.findByText("root@x.io changed the instance settings");
+    expect(screen.queryByText(/system added the package/)).toBeNull();
+    expect(screen.getByText("2 system install events are hidden.")).toBeTruthy();
+    expect(screen.getAllByTestId("audit-sentence")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("switch", { name: "Show system events" }));
+    expect(await screen.findByText("system added the package of an app")).toBeTruthy();
+    expect(screen.getAllByTestId("audit-sentence")).toHaveLength(3);
+    // The line under a sentence names where in Administration it happened.
+    expect(screen.getAllByText(/Instance settings/).length).toBeGreaterThan(0);
   });
 });

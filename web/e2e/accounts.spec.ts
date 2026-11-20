@@ -151,7 +151,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByRole("dialog", { name: "Add an AI key" })).toBeVisible();
         const form = page.getByRole("form", { name: "New LLM key" });
         await form.getByLabel("Name").fill("Team key");
-        await form.getByLabel("Which service is this key for?").selectOption("aigw");
+        await form.getByLabel("Provider").selectOption("aigw");
         await form.getByLabel("API key", { exact: true }).fill("sk-not-a-real-key");
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
         // (P5-POLISH-11, A1) The buttons are the dialog's footer row, not inside the form.

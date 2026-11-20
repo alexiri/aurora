@@ -107,7 +107,9 @@ one new entry without activating it.
 | `byo.enabled` | `true` | `true` | `false` |
 | `byo.minimum_posture` | `owners_only` | `disabled` | `disabled` |
 
-"Asks before changing data on sites they have no account for" (Balanced) has no instance-level key: it is a workspace policy default, so Balanced differs from Open only in key scopes and outside agents.
+**Organization level** (`lib/policy-presets.ts` `ORG_PRESETS`; the organization's governance document, `05` organization governance): Open = `llm.posture open`, `byo.posture` inherit, `egress.posture open`, `egress.open_lane enabled`; Balanced = same but `byo.posture disabled`, plus, on Internet access, an **organization rule** that asks before write actions (D-427: an allow rule with `require_approval` on host `*` for `POST|PUT|PATCH|DELETE`, named "Ask before changing data", the existing Ask rule shape, no new API; published at once when nothing else waits in the draft); Locked down = `sanctioned_only`, `disabled`, `credentialed_only`, `allowlist_only`. A preset looser than the instance's floor for any key is disabled.
+
+The instance card changes only what the instance owns (D-427): Balanced differs from Open only in key scopes and outside agents, and its sentence says that the organizations' Balanced also asks before changes.
 
 Not built yet: SET-1 builds the framework, SET-2..SET-5 and FIX-124 the sections. Until then
 every key below is read from the configuration at start, as the reference table says.

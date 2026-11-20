@@ -234,7 +234,7 @@ export function probeFailedMessage(d: ProbeFailure, appName: string, host: strin
       break;
     }
     case "destination_refused":
-      return `The gateway may not connect to ${host}: it resolves to a private address. An operator can allow it with gateway.allowed_private.`;
+      return `Aurora can't reach ${host}: it is a private address. Ask whoever installed Aurora to allow it.`;
     case "dns":
       return `${host} could not be found from the Aurora server. Check the spelling. An internal name must resolve in the cluster's DNS.`;
     case "timeout":

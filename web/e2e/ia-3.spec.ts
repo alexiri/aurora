@@ -123,7 +123,7 @@ for (const scheme of ["light", "dark"] as const) {
         await open(page, "/admin/agents", scheme);
         await expect(page.getByRole("tab")).toHaveText(["Defaults", "BYO", "Computers", "Skills"]);
         // One heading for the page: the tabs' sections do not repeat it as another title.
-        await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toHaveCount(1);
+        await expect(page.getByRole("heading", { name: "Agent defaults", level: 1 })).toHaveCount(1);
         // The agents section's groups and its runners table are one run on the tab, not a page of their own.
         // (P5-POLISH-2) Settings groups are SettingsCards: a section titled by its heading, no longer a named group.
         await expect(page.getByRole("heading", { name: "Defaults for new agents" })).toBeVisible();
@@ -141,7 +141,7 @@ for (const scheme of ["light", "dark"] as const) {
       test("Administration › AI models has Endpoints and Rules, with the organizations beneath the rules", async ({ page }) => {
         await open(page, "/admin/ai-models", scheme);
         await expect(page.getByRole("tab")).toHaveText(["Endpoints", "Rules"]);
-        await expect(page.getByRole("heading", { name: "AI models", level: 1 })).toHaveCount(1);
+        await expect(page.getByRole("heading", { name: "AI endpoints", level: 1 })).toHaveCount(1);
         expect(await axeClean(page)).toEqual([]);
         await page.getByRole("tab", { name: "Rules" }).click();
         await expect(page.getByRole("heading", { name: "AI keys" })).toBeVisible();

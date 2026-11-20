@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { AppIcon } from "@/components/ui/app-icon";
 import { Badge } from "@/components/ui/badge";
+import { TechnicalDetails } from "@/components/ui/technical-details";
+import { appSummary } from "@/lib/app-summary";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
@@ -168,6 +171,109 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
         breadcrumb={[{ label: "Apps", href: adminRoutes.apps("apps") }, { label: appName }]}
         className="mb-6"
       />
+      {/* (P5-REFINE-18 #8, admin-7) The tile, what the app does in plain sentences, and the decision, before any machinery. */}
+      <Card className="space-y-4" aria-label="Summary">
+        <div className="flex flex-wrap items-center gap-3">
+          <AppIcon appId={plugin.apps[0]?.app_id ?? plugin.package_id} name={appName} hasIcon={Boolean(plugin.apps[0])} size={40} />
+          <div className="min-w-0 flex-1 basis-48">
+            <p className="break-words font-semibold text-ink">{appName}</p>
+            <p className="text-sm text-ink-2">App package, version {plugin.version}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {pending ? (
+              <>
+                <Button
+                  variant="approve"
+                  disabled={act.isPending}
+                  onClick={() =>
+                    act.mutate(
+                      { action: "approve" },
+                      {
+                        // The toast rides on the list's address; an approval that marks connections for reconnecting stays
+                        // here, where its notice says what happens next.
+                        onSuccess: (res) => {
+                          if ((res?.connections_reauth ?? 0) === 0) router.push(adminRoutes.apps("apps", { approved: appName }));
+                        },
+                      },
+                    )
+                  }
+                >
+                  Approve
+                </Button>
+                <Button variant="danger" disabled={act.isPending} onClick={() => setRejecting(true)}>
+                  Reject
+                </Button>
+              </>
+            ) : null}
+            {plugin.status === "active" ? (
+              <Button variant="outline" disabled={act.isPending} onClick={() => act.mutate({ action: "disable" })}>
+                Turn off
+              </Button>
+            ) : null}
+            {plugin.status === "disabled" ? (
+              <Button variant="outline" disabled={act.isPending} onClick={() => act.mutate({ action: "enable" })}>
+                Turn on
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        <div className="space-y-1">
+          <h2 className="font-display text-base font-semibold text-ink">What this app does</h2>
+          <ul className="list-disc space-y-0.5 pl-5 text-sm text-ink-2">
+            {appSummary(plugin).map((s) => (
+              <li key={s}>{s}</li>
+            ))}
+          </ul>
+        </div>
+      </Card>
+
+      {plugin.violations.length > 0 ? <ViolationList violations={plugin.violations} /> : null}
+
+      {plugin.widenings.length > 0 ? (
+        <Notice tone="pending">
+          <h2 className="font-medium">Changes versus the previously approved version</h2>
+          <ul className="list-disc pl-5">
+            {plugin.widenings.map((w, i) => (
+              <li key={i}>
+                <strong>{w.kind}</strong>: {w.detail}
+              </li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
+
+      {majorImpact && impact.connections_needing_reauth > 0 ? (
+        <Notice tone="danger" role="status" aria-label="Upgrade impact">
+          <h2 className="font-medium">{reconnectLine(impact.connections_needing_reauth)}</h2>
+          <p>
+            {impact.major_upgrade ? "This is a major upgrade" : "This upgrade"}
+            {impact.from_version ? ` from ${impact.from_version}` : ""} that changes the credential
+            fields of {impact.connections_needing_reauth === 1 ? "a connection" : "these connections"}. Approving marks
+            {impact.connections_needing_reauth === 1 ? " it" : " them"} as needing reconnection; agents using{" "}
+            {impact.connections_needing_reauth === 1 ? "it" : "them"} are refused until a user reconnects.
+          </p>
+        </Notice>
+      ) : null}
+
+      {converting ? (
+        <Notice tone="pending" role="status" aria-label="Grant conversion">
+          <h2 className="font-medium">{convertLine(impact.grants_to_convert ?? 0)}</h2>
+          <p>
+            This version allows only custom access to its apps. Approving converts each full grant to a custom grant that
+            allows exactly the tools the app has today, so agents keep what they can do with listed tools and lose only
+            requests outside the tool list and tools added later. Nothing is converted back.
+          </p>
+        </Notice>
+      ) : null}
+
+      {/* (P5-REFINE-18 #8) The machinery, closed: the sentences above carry the decision. Sections stay open inside. */}
+      <TechnicalDetails
+        title="Technical details"
+        className="space-y-3"
+        summaryClassName="min-h-11 py-2 font-medium text-ink"
+        bodyClassName="space-y-5 text-sm text-ink-2"
+        data-testid="app-technical-details"
+      >
       <Card>
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
           <dt className="text-muted">Status</dt>
@@ -215,45 +321,6 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           ) : null}
         </dl>
       </Card>
-
-      {plugin.violations.length > 0 ? <ViolationList violations={plugin.violations} /> : null}
-
-      {plugin.widenings.length > 0 ? (
-        <Notice tone="pending">
-          <h2 className="font-medium">Changes versus the previously approved version</h2>
-          <ul className="list-disc pl-5">
-            {plugin.widenings.map((w, i) => (
-              <li key={i}>
-                <strong>{w.kind}</strong>: {w.detail}
-              </li>
-            ))}
-          </ul>
-        </Notice>
-      ) : null}
-
-      {majorImpact && impact.connections_needing_reauth > 0 ? (
-        <Notice tone="danger" role="status" aria-label="Upgrade impact">
-          <h2 className="font-medium">{reconnectLine(impact.connections_needing_reauth)}</h2>
-          <p>
-            {impact.major_upgrade ? "This is a major upgrade" : "This upgrade"}
-            {impact.from_version ? ` from ${impact.from_version}` : ""} that changes the credential
-            fields of {impact.connections_needing_reauth === 1 ? "a connection" : "these connections"}. Approving marks
-            {impact.connections_needing_reauth === 1 ? " it" : " them"} as needing reconnection; agents using{" "}
-            {impact.connections_needing_reauth === 1 ? "it" : "them"} are refused until a user reconnects.
-          </p>
-        </Notice>
-      ) : null}
-
-      {converting ? (
-        <Notice tone="pending" role="status" aria-label="Grant conversion">
-          <h2 className="font-medium">{convertLine(impact.grants_to_convert ?? 0)}</h2>
-          <p>
-            This version allows only custom access to its apps. Approving converts each full grant to a custom grant that
-            allows exactly the tools the app has today, so agents keep what they can do with listed tools and lose only
-            requests outside the tool list and tools added later. Nothing is converted back.
-          </p>
-        </Notice>
-      ) : null}
 
       {converting ? (
         <div className="space-y-2">
@@ -345,6 +412,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           )}
         </Collapsible>
       </div>
+      </TechnicalDetails>
 
       {hasGuide ? (
         <div className="space-y-2">
@@ -356,41 +424,6 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
       ) : null}
 
       <div className="flex flex-wrap gap-2">
-        {pending ? (
-          <>
-            <Button
-              variant="approve"
-              disabled={act.isPending}
-              onClick={() =>
-                act.mutate(
-                  { action: "approve" },
-                  {
-                    // The toast rides on the list's address; an approval that marks connections for reconnecting stays
-                    // here, where its notice says what happens next.
-                    onSuccess: (res) => {
-                      if ((res?.connections_reauth ?? 0) === 0) router.push(adminRoutes.apps("apps", { approved: appName }));
-                    },
-                  },
-                )
-              }
-            >
-              Approve
-            </Button>
-            <Button variant="danger" disabled={act.isPending} onClick={() => setRejecting(true)}>
-              Reject
-            </Button>
-          </>
-        ) : null}
-        {plugin.status === "active" ? (
-          <Button variant="outline" disabled={act.isPending} onClick={() => act.mutate({ action: "disable" })}>
-            Turn off
-          </Button>
-        ) : null}
-        {plugin.status === "disabled" ? (
-          <Button variant="outline" disabled={act.isPending} onClick={() => act.mutate({ action: "enable" })}>
-            Turn on
-          </Button>
-        ) : null}
         <Button variant="danger" disabled={uninstall.isPending} onClick={() => doUninstall(false)}>
           Uninstall
         </Button>

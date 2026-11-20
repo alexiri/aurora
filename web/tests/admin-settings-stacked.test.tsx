@@ -90,7 +90,7 @@ describe("Administration › Agents: stacked settings sections have one Save (P5
     await waitFor(() => expect(puts.approvals).toBeDefined());
     expect(puts.agents).toEqual({ generation: 3, values: { "hosted.turn_ceiling_secs": 7200 } });
     expect(puts.approvals).toEqual({ generation: 3, values: { "approvals.timeout_secs": 900 } });
-    expect(await screen.findByText(/Saved\. Applied to every replica/)).toBeTruthy();
+    expect(await screen.findByText("Saved. New agents use these defaults.")).toBeTruthy();
   });
 
   it("writes only the section that changed", async () => {
@@ -112,7 +112,7 @@ describe("Administration › Agents: stacked settings sections have one Save (P5
     await screen.findByText("Words of approvals.timeout_secs");
     fireEvent.change(document.getElementById("approvals.timeout_secs-c")!, { target: { value: "900" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByText(/Saved\. Applied/);
+    await screen.findByText(/Saved\. New agents use these defaults/);
     expect(puts).toEqual(["approvals"]);
   });
 
@@ -157,6 +157,55 @@ describe("Administration › Agents: stacked settings sections have one Save (P5
     await waitFor(() => expect(puts).toEqual(["terminal", "previews"]));
   });
 
+  it("puts a server error under its field in words, and the config names only under Technical details (P5-REFINE-18 #4)", async () => {
+    mockFetch({
+      "GET /v1/admin/settings/agents": () => json(200, agents()),
+      "GET /v1/admin/settings/approvals": () => json(200, approvals()),
+      "POST /v1/admin/settings/agents/preview": () => json(200, clean),
+      "POST /v1/admin/settings/approvals/preview": () => json(200, clean),
+      "PUT /v1/admin/settings/approvals": () =>
+        json(422, {
+          error: {
+            code: "settings_invalid",
+            message: "Some settings are not valid.",
+            details: { fields: [{ path: "/approvals.timeout_secs", code: "out_of_range", message: "0 is out of range; expected 60..=86400 (APPROVAL_TIMEOUT)" }] },
+          },
+        }),
+    });
+    view(<AgentsDefaultsView />);
+    await screen.findByText("Words of approvals.timeout_secs");
+    fireEvent.change(document.getElementById("approvals.timeout_secs-c")!, { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const field = await screen.findByText(/Enter a number from 60 to 86400/);
+    expect(field.textContent).not.toMatch(/APPROVAL_TIMEOUT|approvals\.timeout_secs/);
+    expect(screen.getByText("1 field needs fixing")).toBeTruthy();
+    expect(screen.getAllByText("Technical details").length).toBeGreaterThan(0);
+  });
+
+  it("says beside the terminal switch what people see when it is off, neutrally (P5-REFINE-18 #10, admin-9)", async () => {
+    const terminal = (on: boolean) =>
+      section(
+        "terminal",
+        "Terminal",
+        [{ ...base, key: "terminal.enabled", value: on, source: "dashboard", default: false, schema: schema("bool") }],
+        { available: true },
+      );
+    const previews = () => section("previews", "Previews", [{ ...base, key: "previews.shares_per_agent", value: 5, source: "default", default: 5, schema: schema("int") }]);
+    mockFetch({
+      "GET /v1/admin/settings/terminal": () => json(200, terminal(false)),
+      "GET /v1/admin/settings/previews": () => json(200, previews()),
+    });
+    view(<ComputersView />);
+    await screen.findByText("Words of previews.shares_per_agent");
+    expect(screen.getByText("Lets people open a terminal on their agent's computer.")).toBeTruthy();
+    const off = screen.getByTestId("terminal.enabled-off");
+    expect(off).toHaveTextContent("Off: people see that the terminal isn't available");
+    // Off is a state, not a problem: no alert role and no danger or amber styling.
+    expect(off.className).not.toMatch(/danger|pending|amber/);
+    fireEvent.click(document.getElementById("terminal.enabled-c")!);
+    expect(screen.queryByTestId("terminal.enabled-off")).toBeNull();
+  });
+
   it("keeps a failing section's draft and shows its error there, after the ones that saved", async () => {
     mockFetch({
       "GET /v1/admin/settings/agents": () => json(200, agents()),
@@ -173,6 +222,6 @@ describe("Administration › Agents: stacked settings sections have one Save (P5
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect((await screen.findAllByText("The timeout is too long.")).length).toBeGreaterThan(0);
     expect((document.getElementById("approvals.timeout_secs-c") as HTMLInputElement).value).toBe("99999999");
-    expect(screen.queryByText(/Saved\. Applied/)).toBeNull();
+    expect(screen.queryByText(/^Saved\./)).toBeNull();
   });
 });

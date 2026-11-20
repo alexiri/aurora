@@ -93,9 +93,9 @@ function AdminOrgAgents({ org, slug }: { org: Org; slug: string }) {
             content: (
               <div className="space-y-6">
                 <OrgByo org={org} />
-                <Section id="org-previews" title="Previews">
-                  <PreviewsForm org={org} />
-                </Section>
+                {/* Its own section ("Port previews", a region of that name) and nothing when previews are off on this instance:
+                    wrapping it in another Section with the same id gave the two one heading id. */}
+                <PreviewsForm org={org} />
               </div>
             ),
           },

@@ -142,15 +142,27 @@ describe("AccessTab", () => {
 });
 
 describe("UsersTable", () => {
-  const openMenu = (email: string) => fireEvent.keyDown(screen.getByRole("button", { name: `More for ${email}` }), { key: "Enter" });
+  const openMenu = (name: string) => fireEvent.keyDown(screen.getByRole("button", { name: `Manage ${name}` }), { key: "Enter" });
   const admin = (id: string, over: Partial<AdminUser> = {}) =>
     ({ id, email: `${id}@x.io`, display_name: id, is_instance_admin: false, ...over }) as AdminUser;
+
+  it("shows the display name, the e-mail's name and the role in words, a Manage button and 'Roles from sign-in: none' (admin-13)", () => {
+    mockFetch({});
+    wrap(<UsersTable users={[admin("alice", { display_name: "Alice Admin", is_instance_admin: true }), admin("bob", { display_name: "Bob Builder" })]} selfId="me" />);
+    expect(screen.getByText("Alice Admin")).toBeInTheDocument();
+    expect(screen.getByText("alice · Instance admin")).toBeInTheDocument();
+    expect(screen.getByText("bob · User")).toBeInTheDocument();
+    const manage = screen.getByRole("button", { name: "Manage Bob Builder" });
+    expect(manage).toHaveTextContent("Manage");
+    expect(screen.getByText("Roles from sign-in: none")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^More for / })).toBeNull();
+  });
 
   it("your own row offers no Remove admin and no Turn off (P5-POLISH-10)", () => {
     mockFetch({});
     wrap(<UsersTable users={[admin("me", { is_instance_admin: true }), admin("ben", { is_instance_admin: true })]} selfId="me" />);
     expect(screen.getByText("This is you.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "More for me@x.io" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage me" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Remove admin|Turn off/ })).toBeNull();
   });
 
@@ -158,7 +170,7 @@ describe("UsersTable", () => {
     const calls: string[] = [];
     mockFetch({ "PATCH /v1/admin/users/ben": () => { calls.push("patch"); return json(200, admin("ben", { is_instance_admin: true })); } });
     wrap(<UsersTable users={[admin("me", { is_instance_admin: true }), admin("ben")]} selfId="me" />);
-    openMenu("ben@x.io");
+    openMenu("ben");
     expect(await screen.findByRole("menuitem", { name: "Turn off" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "Make admin" }));
     await waitFor(() => expect(calls).toEqual(["patch"]));
@@ -167,7 +179,7 @@ describe("UsersTable", () => {
   it("the only instance admin cannot be removed: Remove admin is not offered, Turn off is", async () => {
     mockFetch({});
     wrap(<UsersTable complete users={[admin("me"), admin("ana", { is_instance_admin: true })]} selfId="me" />);
-    openMenu("ana@x.io");
+    openMenu("ana");
     expect(await screen.findByRole("menuitem", { name: "Turn off" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Remove admin" })).toBeNull();
   });
@@ -181,7 +193,7 @@ describe("UsersTable", () => {
         selfId="me"
       />,
     );
-    openMenu("ana@x.io");
+    openMenu("ana");
     expect(await screen.findByRole("menuitem", { name: "Remove admin" })).toBeInTheDocument();
     expect(screen.queryByTestId("idp-role-values")).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: "Show role values (1)" }));

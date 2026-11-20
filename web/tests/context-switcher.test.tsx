@@ -269,7 +269,13 @@ describe("Administration rail", () => {
     expect(screen.getByText("You're in")).toBeInTheDocument();
     expect(screen.queryByTestId("scope-switcher")).toBeNull();
     expect(screen.queryByText("Select organization")).toBeNull();
-    expect((await screen.findByRole("link", { name: "People" })).getAttribute("aria-current")).toBe("page");
+    expect((await screen.findByRole("link", { name: "People & sign-in" })).getAttribute("aria-current")).toBe("page");
+    // (P5-REFINE-18 #1) The rail is in two halves, then the footer entry.
+    const rail = screen.getByRole("navigation", { name: "Administration" });
+    const groups = within(rail).getAllByRole("group");
+    expect(groups.map((g) => g.getAttribute("aria-labelledby") && g.querySelector("p")?.textContent)).toEqual(["Policy for everyone", "This installation"]);
+    expect(within(groups[0]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["What agents may do", "Agent defaults", "Apps", "Chat platforms", "People & sign-in", "Data"]);
+    expect(within(groups[1]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["Health & runners", "AI endpoints", "Set in Helm", "All settings"]);
     // The footer entry stays and is current.
     const shell = screen.getByRole("complementary", { name: "Sidebar" });
     const footer = within(shell).getAllByRole("link", { name: "Administration" });

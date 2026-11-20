@@ -122,6 +122,12 @@ async function open(routes: Record<string, Handler> = {}, o: Opts = {}) {
   return fn;
 }
 
+/** (P5-REFINE-18 #9) Adding is two steps: skip the test and go to "Models and roles". */
+function toModelsStep(dialog: HTMLElement) {
+  fireEvent.click(within(dialog).getByRole("button", { name: "Skip the test" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Next: models and roles" }));
+}
+
 const bodyOf = async (req: Request) => (await req.clone().json()) as { generation: number; values: Record<string, unknown> };
 
 describe("Admin › Settings › LLM endpoints (SET-3)", () => {
@@ -205,29 +211,56 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     const dialog = await screen.findByRole("dialog");
     const select = within(dialog).getByLabelText("Provider") as HTMLSelectElement;
     const has = (label: string) => within(dialog).queryByLabelText(label) !== null;
-    // litellm (the first provider): base URL and allowed paths
-    expect(has("Base URL")).toBe(true);
+    // litellm (the first provider): the address and allowed paths (under Advanced options)
+    expect(has("Address")).toBe(true);
     expect(has("Allowed paths")).toBe(true);
     expect(has("OpenAI organization")).toBe(false);
     fireEvent.change(select, { target: { value: "openai" } });
     expect(has("OpenAI organization")).toBe(true);
     expect(has("OpenAI project")).toBe(true);
-    expect(has("Base URL")).toBe(false);
+    expect(has("Address")).toBe(false);
     fireEvent.change(select, { target: { value: "openai_compatible" } });
     expect(has("Key header")).toBe(true);
     expect(has("Models path")).toBe(true);
-    expect(has("Base URL")).toBe(true);
+    expect(has("Address")).toBe(true);
     fireEvent.change(select, { target: { value: "vertex" } });
     expect(has("Project id")).toBe(true);
     expect(has("Location")).toBe(true);
-    // no allowed_paths for Vertex (C-800), models are required
+    // no allowed_paths for Vertex (C-800)
     expect(has("Allowed paths")).toBe(false);
-    expect(has("Base URL")).toBe(false);
-    // default model and models are both required for Vertex
-    expect(within(dialog).getAllByText("Required for this provider.", { exact: false })).toHaveLength(2);
+    expect(has("Address")).toBe(false);
     // the key origin method follows the provider
     const methods = Array.from((within(dialog).getByLabelText("Method") as HTMLSelectElement).options).map((o) => o.value);
     expect(methods).toEqual(["", "provider_account"]);
+    // default model and models are both required for Vertex: they are on the second step
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Vertex one" } });
+    toModelsStep(dialog);
+    expect(within(dialog).getAllByText("Required for this provider.", { exact: false })).toHaveLength(2);
+  });
+
+  it("adds in two steps: Connect and test (the result beside the button, Next after it passed or was skipped), then Models and roles (P5-REFINE-18 #9)", async () => {
+    await open({
+      "POST /v1/admin/settings/llm/endpoint-test": () => json(200, { reachable: true, status: 200, error_code: null, models: ["a", "b", "c"] }),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add endpoint…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add AI endpoint" });
+    expect(within(dialog).getByRole("list", { name: "Steps" }).textContent).toContain("Connect and test");
+    expect(within(dialog).getByRole("list", { name: "Steps" }).textContent).toContain("Models and roles");
+    // The id is made from the name until it is edited; Next waits for a test (or skipping it).
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Users AI gateway" } });
+    expect(within(dialog).getByLabelText("Endpoint id")).toHaveValue("users-ai-gateway");
+    fireEvent.change(within(dialog).getByLabelText("Address"), { target: { value: "https://llm.acme.example/v1" } });
+    const next = within(dialog).getByRole("button", { name: "Next: models and roles" }) as HTMLButtonElement;
+    expect(next.disabled).toBe(true);
+    expect(within(dialog).queryByLabelText("Default model")).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Test connection" }));
+    const row = within(dialog).getByTestId("endpoint-test-row");
+    expect((await within(row).findByRole("status", { name: "Connection test result" })).textContent).toContain("Connected. 3 models found.");
+    expect(next.disabled).toBe(false);
+    fireEvent.click(next);
+    expect(await within(dialog).findByLabelText("Default model")).toBeTruthy();
+    expect(within(dialog).queryByLabelText("Address")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeTruthy();
   });
 
   it("adds a dashboard endpoint: Done puts it in the save, with only its provider's keys", async () => {
@@ -242,9 +275,10 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add endpoint…" }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Endpoint id"), { target: { value: "gw" } });
-    fireEvent.change(within(dialog).getByLabelText("Base URL"), { target: { value: "https://gw.example.test" } });
-    fireEvent.change(within(dialog).getByLabelText("Allowed models"), { target: { value: "m1\nm2" } });
+    fireEvent.change(within(dialog).getByLabelText("Address"), { target: { value: "https://gw.example.test" } });
     fireEvent.change(within(dialog).getByLabelText("Method"), { target: { value: "endpoint" } });
+    toModelsStep(dialog);
+    fireEvent.change(within(dialog).getByLabelText("Allowed models"), { target: { value: "m1\nm2" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // Done does not save the page.
@@ -267,9 +301,10 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add endpoint…" }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Endpoint id"), { target: { value: "central" } });
-    fireEvent.change(within(dialog).getByLabelText("Base URL"), { target: { value: "https://x.example.test" } });
+    fireEvent.change(within(dialog).getByLabelText("Address"), { target: { value: "https://x.example.test" } });
     expect(within(dialog).getByText("`central` is defined in Helm; choose another id")).toBeTruthy();
-    expect((within(dialog).getByRole("button", { name: "Done" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Skip the test" }));
+    expect((within(dialog).getByRole("button", { name: "Next: models and roles" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows a server's field error on the endpoint's row", async () => {
@@ -305,13 +340,13 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Test connection" }));
     const ok = await within(dialog).findByRole("status", { name: "Connection test result" });
-    expect(ok.textContent).toContain("The endpoint answers (HTTP 401).");
-    expect(ok.textContent).toContain("expected without a key");
+    expect(ok.textContent).toContain("Connected.");
+    expect(ok.textContent).toContain("It answered HTTP 401, as expected without a key.");
     // The request carries the entry, never a key.
     expect(JSON.stringify(bodies[0])).toContain("team.example.test");
     expect(JSON.stringify(bodies[0])).not.toMatch(/api_key|secret|token/);
     fireEvent.click(within(dialog).getByRole("button", { name: "Test connection" }));
-    await waitFor(() => expect(within(dialog).getByRole("status", { name: "Connection test result" }).textContent).toContain("gateway.allowed_private"));
+    await waitFor(() => expect(within(dialog).getByRole("status", { name: "Connection test result" }).textContent).toContain("Aurora can't reach private addresses. Ask whoever installed Aurora to allow it."));
   });
 
   it("asks for confirmation naming the organizations whose keys stop working", async () => {
@@ -396,13 +431,13 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "OpenAI" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const row = (await screen.findByText("Needs attention")).closest("li")!;
-    expect(within(row).getByText(/plain http is only allowed to a private address/)).toBeTruthy();
+    expect(within(row).getByText(/Aurora can't reach private addresses\. Ask whoever installed Aurora to allow it\./)).toBeTruthy();
     // The dialog puts the message on the base URL field itself.
     fireEvent.click(within(row).getByRole("button", { name: "Edit team" }));
     const dialog = await screen.findByRole("dialog");
-    const base = within(dialog).getByLabelText("Base URL");
+    const base = within(dialog).getByLabelText("Address");
     expect(base.getAttribute("aria-invalid")).toBe("true");
-    expect(within(dialog).getByText(/plain http is only allowed to a private address/)).toBeTruthy();
+    expect(within(dialog).getByText(/Aurora can't reach private addresses\. Ask whoever installed Aurora to allow it\./)).toBeTruthy();
   });
 
   it("shows the endpoint_resolves_private warning in the save confirmation (C-813)", async () => {
@@ -470,7 +505,8 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
       fireEvent.click(screen.getByRole("button", { name: "Add endpoint…" }));
       const dialog = await screen.findByRole("dialog");
       fireEvent.change(within(dialog).getByLabelText("Endpoint id"), { target: { value: "gw" } });
-      fireEvent.change(within(dialog).getByLabelText("Base URL"), { target: { value: "https://gw.example.test" } });
+      fireEvent.change(within(dialog).getByLabelText("Address"), { target: { value: "https://gw.example.test" } });
+      toModelsStep(dialog);
       fireEvent.change(within(dialog).getByLabelText("Models"), { target: { value: "glm-4.6\nglm-4.5-air" } });
       // a non-Anthropic endpoint without roles carries the notice until a role is set
       expect(within(dialog).getByTestId("no-roles-notice")).toHaveTextContent("Set the roles.");
@@ -527,7 +563,8 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
       fireEvent.click(screen.getByRole("button", { name: "Add endpoint…" }));
       const dialog = await screen.findByRole("dialog");
       fireEvent.change(within(dialog).getByLabelText("Endpoint id"), { target: { value: "gw" } });
-      fireEvent.change(within(dialog).getByLabelText("Base URL"), { target: { value: "https://gw.example.test" } });
+      fireEvent.change(within(dialog).getByLabelText("Address"), { target: { value: "https://gw.example.test" } });
+      toModelsStep(dialog);
       const done = within(dialog).getByRole("button", { name: "Done" }) as HTMLButtonElement;
       expect(done.disabled).toBe(false);
       fireEvent.change(within(dialog).getByLabelText("Everyday model"), { target: { value: "bad id!" } });
