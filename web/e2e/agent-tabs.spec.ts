@@ -70,7 +70,7 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
           if (SETTINGS_PAGES.has(section)) {
             // (D-408) Settings pages open from the Settings button: no section tab is selected and the page carries its
             // own heading and a sub-nav tab.
-            await expect(page.getByRole("heading", { level: 2, name: section }), `${tab}: its page heading`).toBeVisible();
+            await expect(page.getByRole("heading", { level: 2, name: section, exact: true }), `${tab}: its page heading`).toBeVisible();
             await expect(sections.getByRole("tab", { selected: true }), `${tab}: no section tab is selected`).toHaveCount(0);
           } else {
             await expect(sections.getByRole("tab", { selected: true }), `${tab}: its section is selected`).toHaveText(section);
@@ -96,10 +96,20 @@ test.describe("agent page width", () => {
   test("the content is wider than the old 896 px cap at 1280 px", async ({ page }) => {
     await mockAgent(page);
     await page.goto("/o/acme/w/main/agents/daneel?tab=skills");
+    // (D-408) A settings page is a 13rem sub-nav beside the page body: the content as a whole (sub-nav + body) is
+    // what the old 896 px cap limited, and the body alone is no longer the whole width.
+    const nav = page.getByRole("tablist", { name: "Settings pages" });
     const panel = page.getByRole("tabpanel").first();
+    await expect(nav).toBeVisible();
     await expect(panel).toBeVisible();
     await page.waitForLoadState("networkidle");
-    const width = await panel.evaluate((el) => el.getBoundingClientRect().width);
+    const width = await page.evaluate(
+      ([a, b]) => b - a,
+      await Promise.all([
+        nav.evaluate((el) => el.getBoundingClientRect().left),
+        panel.evaluate((el) => el.getBoundingClientRect().right),
+      ]),
+    );
     expect(width).toBeGreaterThan(896);
   });
 
