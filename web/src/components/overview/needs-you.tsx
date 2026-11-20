@@ -59,7 +59,7 @@ export function NeedsYou({ wsId, base, orgId }: { wsId: string; base: string; or
         <h2 id="needs-you-h" className="font-display text-base font-semibold text-pending-ink">
           Needs you{" "}
           {count > 0 ? (
-            <AttentionChip actionId="needs-you-list" aria-label={`${count} waiting`}>
+            <AttentionChip actionId="needs-you-list" role="img" aria-label={`${count} waiting`}>
               {count}
             </AttentionChip>
           ) : null}

@@ -13,6 +13,8 @@ export type AttentionChipProps = {
   className?: string;
   "aria-hidden"?: boolean | "true" | "false";
   "aria-label"?: string;
+  /** With `aria-label`: a `span` may only carry a name with a role (axe `aria-prohibited-attr`); `img` reads the label as one unit. */
+  role?: "img";
   "data-testid"?: string;
 } & ({ action: ReactNode; actionId?: undefined } | { actionId: string; action?: undefined });
 

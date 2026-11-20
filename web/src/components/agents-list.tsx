@@ -41,7 +41,7 @@ export function AgentsList({
             )}
             <span className="font-mono text-sm text-muted">@{a.handle}</span>
             {base && (needs?.[a.id] ?? 0) > 0 ? (
-              <AttentionChip actionId={`agent-link-${a.id}`} data-testid="agent-needs-count" aria-label={`${needs?.[a.id]} ${needs?.[a.id] === 1 ? "approval" : "approvals"} waiting for you`}>
+              <AttentionChip actionId={`agent-link-${a.id}`} data-testid="agent-needs-count" role="img" aria-label={`${needs?.[a.id]} ${needs?.[a.id] === 1 ? "approval" : "approvals"} waiting for you`}>
                 <span aria-hidden="true">{needs?.[a.id]}</span>
               </AttentionChip>
             ) : null}
