@@ -118,7 +118,18 @@ describe("getting-started guide: every state", () => {
     expect(await screen.findByText(/An AI key is the password to the AI service/)).toBeInTheDocument();
     expect(await screen.findByLabelText("New LLM key")).toBeInTheDocument();
     expect(screen.getByText("0 of 2 done")).toBeInTheDocument();
-    expect(screen.getByText("Comes after the steps above.")).toBeInTheDocument();
+    expect(screen.getByText("Comes after the step above.")).toBeInTheDocument();
+  });
+
+  it("a key still being checked does not count: 0 of 2 done, and hello comes after the step above (firstday-3)", async () => {
+    world({
+      readiness: readiness([keyRow({ scope: "workspace", name: "My Anthropic key", secret_id: "k9" })]),
+      wsKeys: [{ ...llmSecret("k9", "My Anthropic key", "workspace"), verification: { state: "checking", checked_at: null } }],
+    });
+    guide();
+    expect(await screen.findByText("My Anthropic key is still being checked. It counts once it has answered.")).toBeInTheDocument();
+    expect(screen.getByText("0 of 2 done")).toBeInTheDocument();
+    expect(screen.getByText("Comes after the step above.")).toBeInTheDocument();
   });
 
   it("not granted: the access step names the key and preselects the agent", async () => {
@@ -144,7 +155,7 @@ describe("getting-started guide: every state", () => {
     fireEvent.change(select, { target: { value: "litellm\u0000claude-sonnet" } });
     fireEvent.click(screen.getByRole("button", { name: "Use this model" }));
     await waitFor(() => expect(calls.find((c) => c.key === "PATCH /v1/agents/a1")?.body).toEqual({ model_endpoint_id: "litellm", model_id: "claude-sonnet" }));
-    expect(screen.getByText("Comes after the steps above.")).toBeInTheDocument();
+    expect(screen.getByText("Comes after the step above.")).toBeInTheDocument();
   });
 
   it("done: an answer from the agent completes it, whatever else is missing", async () => {
