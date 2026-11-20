@@ -75,8 +75,12 @@ matrix:
   `…/attachments`, `GET /v1/attachments/{id}/content`, turn `abort`/`send-now`
   (owners may), and any `conversation=` filter.
 - `GET /v1/agents/{agent}/conversations` lists only visible conversations (a
-  member sees their own direct one; owners see every direct one, marked
-  `direct_user: {id, display_name}`).
+  member sees their own direct ones; owners see every direct one, marked
+  `direct_user: {id, display_name}`). (phase 5, P5-REFINE-7, D-409, C-1073) A
+  person may have several direct conversations with an agent; each is private to
+  that person exactly as the single one was, and the agent's search scope
+  (D-230) is "the speaker's own direct conversations" (all of them, never
+  another member's).
 - `POST …/messages` and attachment upload on a `direct` conversation by anyone but
   its user → 403 `direct_conversation_forbidden` (even for owners).
 - **Conversation references elsewhere** (`conversation_id` / `origin_conversation_id`
@@ -843,10 +847,13 @@ Phase 5 rows, each answered with the standard error body; the set of routes and 
 ### Conversations and turns
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/agents/{agent}/conversations` | S/K | filters: kind; (phase 2, RFE-010) `archived=true\|false` (default false) |
-| POST `/v1/agents/{agent}/conversations/direct` | S | get-or-create caller's direct conversation |
+| GET `/v1/agents/{agent}/conversations` | S/K | filters: kind; (phase 2, RFE-010) `archived=true\|false` (default false); (phase 5, P5-REFINE-7, C-1074) `automation=all\|none\|only` (default `all`) and `automation_id=<uuid>` (only with `automation=only`, else 400 `invalid_request`); items carry `automation: { kind, id, name, deleted } \| null`, `run_at` and `title_source` (`auto`\|`person`\|`automation`) |
+| POST `/v1/agents/{agent}/conversations/direct` | S | get-or-create the caller's **most recently active non-archived** direct conversation (phase 5, P5-REFINE-7, C-1073: never an archived one; creates the first, `user:<uid>`, when there is none) |
+| POST `/v1/agents/{agent}/conversations/direct/new` | S | (phase 5, P5-REFINE-7, C-1073, D-409) a fresh direct conversation (`can_use`): 200 with the caller's latest direct conversation when it has no events yet, 201 with a new one (`user:<uid>:<uuid>`) otherwise; 422 `conversation_limit` past 500 per person and agent |
+| GET `/v1/agents/{agent}/conversation-folders?cursor=&limit=` | S/K | (phase 5, P5-REFINE-7, C-1074) `can_use`; one item per automation with threads, newest activity first: `{ kind, id, name, deleted, thread_count, last_activity_at, last_result }` |
 | POST `/v1/agents/{agent}/conversations` | K | `kind = api`, `external_ref` (get-or-create) |
 | GET `/v1/conversations/{id}` | S/K | |
+| PATCH `/v1/conversations/{id}` | S/K | (phase 5, P5-REFINE-7, C-1073) `{ title: string \| null }`: 1–200 characters trimmed, no control characters (422 `invalid_title`, `details.fields`); `null` re-derives the auto title. A `direct` conversation: its person only (403 `direct_conversation_forbidden` for anyone else, owners included); `group`/`api`/other kinds: `can_own` (403 `forbidden`); `schedule`/`webhook` threads 409 `title_managed`. Audited `conversation.rename` (ids only) |
 | POST `/v1/conversations/{id}/archive`, `/unarchive`; DELETE `/v1/conversations/{id}` | S/K | (phase 2, RFE-010) `10 §Archive, delete, redaction, retention, export`; delete 409 `conversation_active` |
 | POST `/v1/conversations/{id}/events/{seq}/redact`; POST `/v1/turns/{id}/redact` | S/K | (phase 2, RFE-010) `{ reason?, reset_session? }`; irreversible, audited |
 | GET `/v1/conversations/{id}/export` | S/K | (phase 2, RFE-010) JSON `aurora.conversation.v1` (`attachments=zip` → zip); 422 `export_too_large` |
@@ -868,10 +875,12 @@ Phase 5 rows, each answered with the standard error body; the set of routes and 
 | GET/POST `/v1/agents/{agent}/skills`, `/v1/orgs/{org}/skills`; GET/PATCH/DELETE `/v1/skills/{id}`; PUT/DELETE `/v1/skills/{id}/files/{path}` | S/K | the item routes work for every tier and authorize by the skill's tier (agent: `can_use`; org: org `owner`/`admin`; workspace, phase 3 RFE-020: `can_own`); items carry `tier: "agent"\|"workspace"\|"org"` (phase 3, D-107: next to the existing `scope`, which gains `"workspace"`) |
 | GET/POST `/v1/workspaces/{ws}/skills` | S/K | (phase 3, RFE-020) list (`can_use`) / create (`can_own`) workspace-tier skills; same body as the other tiers; 409 `skill_exists` in the workspace tier, 400 `invalid_request` for reserved/invalid names and 422 `skill_too_large` for size limits, as elsewhere (phase 3, D-107) |
 | GET `/v1/agents/{agent}/skills/effective` | S/K | (phase 3, RFE-020) the effective set the agent receives: `[{ skill, tier, enabled, shadows: [{ id, tier }] }]` plus the skills that lose (`shadowed_by`); `can_use` |
-| GET/POST `/v1/agents/{agent}/schedules`; GET/PATCH/DELETE `/v1/schedules/{id}`; GET `…/runs`; POST `…/run-now` | S/K | (phase 2, RFE-021) items expose `creator`, `anchor` (`creator`\|`workspace`); POST/PATCH accept `anchor` (`can_own` only; tool-created items are always `creator`) |
+| GET/POST `/v1/agents/{agent}/schedules`; GET/PATCH/DELETE `/v1/schedules/{id}`; GET `…/runs`; POST `…/run-now` | S/K | (phase 2, RFE-021) items expose `creator`, `anchor` (`creator`\|`workspace`); POST/PATCH accept `anchor` (`can_own` only; tool-created items are always `creator`); (phase 5, P5-REFINE-7, C-1074, C-1077) every run gets its own conversation (`schedule:<id>:<run>`); `Schedule` gains `next_runs` (three instants, empty when paused) and `last_result`; `ScheduleRun` gains `conversation_id`, `result` (`running`\|`answered`\|`skipped_by_gate`\|`failed`\|`skipped`) and `reason`; `run-now` → 201 with `result: "running"` and the new `conversation_id`, 409 `schedule_busy` while the latest run's turn is active |
+| POST `/v1/agents/{agent}/schedules/preview` | S/K | (phase 5, P5-REFINE-7, C-1077) `can_use`, rate class `check`; `{ cron, timezone? }` → `{ next (three instants), interval_secs, too_frequent, min_interval_secs }`; 422 `invalid_cron` / `invalid_timezone` (`details.fields` names the field); saves nothing |
 | PUT `/v1/schedules/{id}/creator`, PUT `/v1/webhooks/{id}/creator` | S/K | (phase 2, RFE-021) `{ user_id, re_enable? }`; `can_own`; 422 `new_creator_unauthorized`; audited `automation.reassign` |
 | POST `/v1/workspaces/{ws}/automations/reassign` | S/K | (phase 2, RFE-021) `{ from_user_id, to: <user_id> \| "workspace", kinds?: [schedule,webhook], ids? }` → `{ reassigned: n }`; `can_own`; one transaction, one audit row per item |
-| GET/POST `/v1/agents/{agent}/webhooks`; GET/PATCH/DELETE `/v1/webhooks/{id}`; POST `…/rotate`; GET `…/deliveries` | S/K | rotate returns new URL once; (phase 2, RFE-021) same `creator`/`anchor` fields as schedules |
+| GET/POST `/v1/agents/{agent}/webhooks`; GET/PATCH/DELETE `/v1/webhooks/{id}`; POST `…/rotate`; GET `…/deliveries` | S/K | rotate returns new URL once; (phase 2, RFE-021) same `creator`/`anchor` fields as schedules; (phase 5, P5-REFINE-7, C-1078, C-1079) create without `verification` means `{ kind: hmac_sha256, generate_secret: true }` and returns the generated `secret` once; `verification` shows the effective `header` and `format`; every accepted delivery gets its own conversation (`webhook:<id>:<delivery>`); deliveries carry `result`, `conversation_id`, `duplicate_of`, and a repeated delivery is recorded as `duplicate` |
+| POST `/v1/webhooks/{id}/rotate-secret` | S/K | (phase 5, P5-REFINE-7, C-1078) same callers as `rotate`; `hmac_sha256`/`bearer` only (422 `verification_not_signed`); → `{ webhook, secret }` once, the old secret stops working at once; audited `webhook.rotate_secret` |
 | POST `/v1/hooks/{token}` | P | webhook receive (D-178 Q-R5-20: replay protection of a signed delivery without a delivery id is the sender's; 60 s dedup only) |
 | GET `/v1/agents/{agent}/links`; PUT `/v1/agent-links/{id}/policy`; GET `/v1/agents/{agent}/peer-tasks` | S/K | |
 
