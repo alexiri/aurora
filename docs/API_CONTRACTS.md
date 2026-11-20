@@ -1735,6 +1735,7 @@ Briefs, in four fixed waves (D-352, order inside the waves per D-353; "→" mean
   - `user_onboarding.notices_seen text[]` (at most `ONBOARDING_NOTICES_MAX` = 50 keys). `GET /v1/me/onboarding` returns it; `PATCH /v1/me/onboarding` accepts `{ notice_seen: "<key>" }` and appends it.
   - Notice key `renames-2026-11`. People whose account was created after the release never see it (the migration marks it seen for accounts created later).
   - The notice lists old name → new name for the pages the viewer can see (from one table next to `routes.ts`). It is dismissible, and replayable from the account menu (**What moved**).
+  - (D-407, P5-REFINE-1) **The web no longer shows the renames notice, and "What moved" is gone; the field and `PATCH { notice_seen }` stay** for other notices. A new row is no longer seeded with `renames-2026-11` (a new person starts with `notices_seen = []`); rows that already carry the key keep it.
 - C-926 **Labels** (strings only).
   - On the Internet access pages, applied by P5-IA-2 when it rebuilds them (P5-IA-1 hosts the old editor with its old labels, inside the release gate):
     - "No default (defer)" → **Let the organization decide** (workspace) / **None: only rules decide** (organization; there is no instance rule scope).

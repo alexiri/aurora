@@ -1152,10 +1152,10 @@ guides keep working.
 - Every page header carries a level badge: **Administration**, **<org>** or **<org> › <workspace>**.
 - An instance admin acting in an org sees the org's pages exactly as its owner would.
 
-**When the pages move** (C-987). Renames land together: the navigation, the page names and the labels on
-those pages ship in one release, never new names on old pages. Each person who used the dashboard before
-sees a one-time notice, "Pages have new names", listing old name → new name for the pages they could see.
-It is dismissible, stored per user on the server, and replayable from the account menu (**What moved**).
+**When the pages move** (C-987, amended by D-407). Renames land together: the navigation, the page names and
+the labels on those pages ship in one release, never new names on old pages. There is no "Pages have new
+names" notice and no "What moved" item in the account menu: there are no users yet, so a person's first
+Welcome is plain. (`notices_seen` stays for other one-time notices.)
 
 #### Scope ladder (D-339, C-963)
 
