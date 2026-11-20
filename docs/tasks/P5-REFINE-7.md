@@ -1,0 +1,209 @@
+# P5-REFINE-7: Conversations and automation runs backend: several chats, one thread per run, Stop and errors in words, schedule and webhook facts (owner, 2026-11-20)
+
+## Goal
+
+UX review 5 found that the conversation model and the automation results cannot say what happened. This brief is the **Rust side only**. It adds the web `lib/api`
+client and types for every new field and no UI (P5-REFINE-11 builds the chat, P5-REFINE-14 the Automations page).
+
+- **One direct chat per person and agent, so the only fresh start is Delete (chat-3, priority 8, D-409).** Owner decision: several direct conversations per person and agent, each starting with fresh history
+  (New chat, Rename, auto-title from the first message), with the same privacy as today. This amends **D-230**'s one-direct-conversation model. The one-chat rule is a **unique index**
+  (`conversations_direct_user_uq` on `(agent_id, direct_user_id) WHERE kind = 'direct'`) and `service::direct` gets or creates `user:<uid>`.
+- **Archive leaves the conversation in Active (chat-1, priority 1).** The list filter is right (`list_for_agent`, `archived_at`); the dashboard reopens the person's one direct conversation through get-or-create, which
+  returns the archived one with a live composer. With several chats, "the person's direct conversation" must never be an archived one.
+- **Webhook and schedule results pile into one endless conversation (priority 8; D-409).** Each schedule has one run conversation (`schedule:<id>`), each webhook one (`webhook:<id>`); results of every run and delivery
+  pile into it, and the next run is **skipped as busy** while the previous one is still talking. **D-409**: each run and each delivery gets **its own thread**, folded under its automation in the conversation list and linked from
+  Runs and Deliveries. Chat-platform-origin schedules keep posting to their origin thread (**FIX-192**, commit `5ffaa929`): that behaviour stays.
+- **Stop leaves no trace (chat-4).** The bubble disappears and the header keeps saying Working for 10–25 s.
+- **An error shows twice (chat-7):** the agent's bubble "API Error: 400 No connected db." and a red box under it.
+- **Run now gives no feedback; Runs says "fired" (schedules-3); the card shows `*/5 * * * * UTC` and "Next: Nov 19" (schedules-4); renaming leaves the thread under the old name and deleting leaves no sign (schedules-7).**
+- **A webhook verifies nothing by default and makes you invent the secret (webhooks-2); nothing says how to call it (webhooks-1); Deliveries is "Just now | rejected_signature | 31 B" and duplicates vanish (webhooks-3); the message shows the safety wrapper (webhooks-4).**
+
+Decisions that bind this brief: **D-405**, **D-407** (words), **D-409** (several chats; one thread per run; D-230's search scope covers them; FIX-192 kept). The conversation list UI is P5-REFINE-11's.
+
+## Linked requirements
+
+- **The review:** <https://claude.ai/artifact/1YJcRA7Q84864pkim44Qnt>. Workers cannot open artifacts; read the local copy `/home/alex/orca/workspaces/aurora/design-ux-review-5/` (written `UXR5/` below).
+  `UXR5/findings.md` is authoritative; `UXR5/priorities-themes.md` priorities 3, 5, 8 and the theme "Stale live state".
+- **Findings** (artifact anchor `https://claude.ai/artifact/1YJcRA7Q84864pkim44Qnt#f-<key>`; After `UXR5/after/<key>.png` and `<key>-lt.png`; markup `UXR5/after/src/<key>.html`; Before `UXR5/before/<key>-b1.png`; screens `UXR5/screens/<id>.png`):
+  - `chat-3` (New chat, Rename, auto-title; Delete is no longer the only fresh start) · After `chat-3.png`, `chat-3-lt.png`, `src/chat-3.html` · Before `chat-3-b1.png`, `chat-3-b2.png` · Screens `B032-conversation-menu.png`, `B033-agent-actions-menu.png`, `B047-after-delete.png`.
+  - `chat-1` (an archived conversation leaves Active, read-only with Restore) · After `chat-1.png`, `chat-1-lt.png` · Before `chat-1-b1.png` · Screens `B041-archived-conversation.png`, `B042-archived-still-active.png`, `B045-reload-after-archive.png`.
+  - `chat-4` (Stop keeps what was written and adds "You stopped this answer"; the header goes back to Ready at once) · After `chat-4.png`, `chat-4-lt.png` · Before `chat-4-b1.png`, `chat-4-b2.png` · Screens `B048-before-stop.png`, `B049-after-stop.png`, `B051-after-stop-30s.png`.
+  - `chat-7` (an error shows once: one red box with a plain message and Try again; the technical line under Details) · After `chat-7.png`, `chat-7-lt.png` · Before `chat-7-b1.png` · Screens `B189-phone-status.png`.
+  - `schedules-3` (Run now: "Started · Open the conversation"; Runs show Answered, Skipped by the gate, Failed, Running and a link) · After `schedules-3.png`, `schedules-3-lt.png` · Before `schedules-3-b1.png`, `schedules-3-b2.png` · Screens `C009-schedule-run-now.png`, `C010-schedule-runs.png`, `C011-chat-after-run.png`, `C012-schedule-conversation.png`.
+  - `schedules-4` (cadence and the next run in the workspace's time; Running / Paused) and `schedules-1`, `schedules-2` (preview and the 5-minute minimum as you type; owner comment: presets start at **Every 5 minutes**) · After `schedules-4.png`, `schedules-1.png`, `schedules-2.png` (each with `-lt.png`) · Before `schedules-4-b1.png`, `schedules-4-b2.png`, `schedules-1-b1.png`, `schedules-2-b1.png` · Screens `C008-schedule-created.png`, `C015-schedule-off.png`, `C004-triggers.png`, `C005-schedule-dialog.png`, `C006-schedule-bad-cron.png`, `C007-schedule-created.png`.
+  - `schedules-7` (the thread follows the schedule's name; after deletion "Schedule deleted") · After `schedules-7.png`, `schedules-7-lt.png` · Before `schedules-7-b1.png`, `schedules-7-b2.png` · Screens `C014-schedule-saved.png`, `C093-chat-after-deletes.png`.
+  - `webhooks-1` (How to call it: header, signature format, curl) · After `webhooks-1.png`, `webhooks-1-lt.png` · Before `webhooks-1-b1.png`, `webhooks-1-b2.png` · Screens `C019-webhook-form-filled.png`, `C021-webhook-secret-shown.png`, `C027-webhook-edit.png`.
+  - `webhooks-2` (Signed by default with a Generate button) · After `webhooks-2.png`, `webhooks-2-lt.png` · Before `webhooks-2-b1.png` · Screens `C018-webhook-form.png`, `C020-webhook-created.png`.
+  - `webhooks-3` (Deliveries: When · Result · Size · Conversation; "Refused: wrong signature", "Duplicate, ignored") · After `webhooks-3.png`, `webhooks-3-lt.png` · Before `webhooks-3-b1.png` · Screens `C025-webhook-deliveries.png`, `C072-m-webhooks-deliveries.png`.
+  - `webhooks-4` (the message reads "Webhook Deploy notice · delivery" with the payload; the wrapper is for the agent only) · After `webhooks-4.png`, `webhooks-4-lt.png` · Before `webhooks-4-b1.png`, `webhooks-4-b2.png` · Screens `C026-webhook-conversation.png`, `C075-m-webhook-conversation.png`.
+  - Not in this brief: `webhooks-5`, `webhooks-6`, `schedules-5`, `schedules-6` (web), `chat-2`, `chat-5`, `chat-6`, `chat-8..11` (web).
+- **Layer-above:** rec 4 (one timeline, in sentences: P5-REFINE-9 consumes these threads), rec 12 (Automations: runs are threads), rec 10 (first run): `UXR5/layer-above.md`, anchor `…#above`.
+- **Decisions:** D-405, D-407, D-409 (and **D-230** amended). **Contracts:** **C-1073..C-1079** (drafts in
+  `docs/API_CONTRACTS.md` › “Phase 5 — P5-REFINE” (merged with the briefs, 2026-11-20), section P5-REFINE-7). **Land the seven entries in `docs/API_CONTRACTS.md` before coding.**
+  **Migration `20261201000262`.**
+- **Security:** no new SEC number. Privacy of direct conversations is unchanged and has tests (below). The `display` payload shows only what the person could already read in the turn's text. The webhook secret generated server-side is returned once and sealed like any secret (SEC-31, FIX-110 untouched).
+- **Also read:** `docs/10-*` §Schedules, §Webhooks, §The answer rule, §Conversation visibility (`05`); FIX-192 (`docs/tasks/FIX-192.md`, commit `5ffaa929`, `13 §5.2`); D-229, D-230 in `docs/90-decisions.md` :298/:300.
+
+## Wave and order
+
+- Wave 2, **lane E** after brief 4: 4 → **7** → 9 (brief 9, the live timeline, consumes these threads and events).
+- Disjointness (lane E): `services/aurora-api/src/domains/{conversations,schedules,webhooks}/**`, `domains/hosted/{lifecycle,reports}.rs` (the answer buffer and the error event), `domains/channels/inbox/message.rs` (the DM mapping, comment only), `crates/aurora-db/src/repo/{conversations,schedules,webhooks,turns}.rs`,
+  the new migration, the web `lib/api/{conversations,schedules,webhooks}.ts`. Brief 4 (done before) owns `hosted/routes.rs`; brief 8 (lane F) does not touch these files.
+- `web/openapi.json` and `schema.d.ts` regenerated in this change. P5-REFINE-11 and -14 wait for it.
+
+## Context
+
+Paths from the repository root; line numbers are master `c0fe7d10`.
+
+### Direct conversations (Scope 1)
+
+- `crates/aurora-db/migrations/20261105000006_conversations.sql` :9–25: `conversations` (`kind`, `external_ref`, `direct_user_id`, `title`, `origin_conversation_id`, `last_activity_at`, `UNIQUE (agent_id, kind, external_ref)`),
+  **`conversations_direct_user_uq` :23** (the one-chat rule), `conversations_direct_user_idx`. `20261110000010_conversation_lifecycle.sql` adds `archived_at`/`archived_by_user_id`; `20261201000240_conversations_kind_eval.sql` the `eval` kind.
+- `services/aurora-api/src/domains/conversations/service.rs`: `direct` :166 (get-or-create `user:<uid>`), `api_conversation` :191, `get` :231, `load_conversation_for_write` :148, `create_turn_capped` :357 (a person turn **unarchives** the conversation :372 and creates the `turn.queued` event :440 with `payload`), `NewMessage` :305.
+- `crates/aurora-db/src/repo/conversations.rs`: `NewConversation` :29, `get_or_create` :54 (`ON CONFLICT DO NOTHING` then selects by `(agent, kind, external_ref)`), `list_for_agent` :95 (filter: `kind`, viewer/owner for direct, `archived`).
+- Routes `conversations/routes.rs`: `router` :31, `list_conversations` :212, `direct_conversation` :283 (session), `create_api_conversation` :300, `archive`/`unarchive` :58/:72, `delete_conversation`. DTO `conversations/dto.rs`: `Conversation` :88 and `from_row` :274, `ListQuery` :167.
+- **Other writers of direct conversations:** `channels/inbox/message.rs` :230 maps a linked person's **chat-platform DM** to the same `user:<uid>` direct conversation (a DM and the dashboard share one transcript today). `me/service.rs` :31 (an export row).
+- Search: `crates/aurora-db/src/repo/search.rs` `Scope` :328 (`Caller`: own direct ones and, for owners, all; `Agent`: "the speaker's own direct one"): the predicates are `c.direct_user_id = <user>` (:422, :437), so several direct conversations are already in scope; the agent tools: `domains/tools/*` (`conversation_search`, `conversation_read`, C-728).
+- Web: `web/src/lib/api/conversations.ts` (`chatApi.direct` :80, `useDirectConversation`), `web/src/components/agents/chat-tab.tsx`.
+
+### Per-run threads (Scope 2)
+
+- `services/aurora-api/src/domains/schedules/fire.rs`: `start_run` :66 (get-or-create `schedule:<id>`, `kind: "schedule"`, `title: Some(&s.name)`, `origin_conversation_id: s.origin_conversation_id`; **returns `None` — "skipped busy" — when the conversation has an active turn** :84–86), `arm9` :140, `fire_due`
+  :158, `run_now` :205 (409 `schedule_busy` when `start_run` returns `None`), `gate_result`, `on_turn_finished` :358 (the `schedule_run` notice into the origin), `notify_origin` :35.
+- `crates/aurora-db/src/repo/schedules.rs`: `RunRow` :40, `insert_run` :353, `record_manual` :291, `list_runs` :372, `run_by_turn`. Table `schedule_runs` (`20261105000008_schedules_webhooks.sql` :33): `outcome` free text, immutable. `schedules.run_conversation_id` :18.
+- `services/aurora-api/src/domains/webhooks/receive.rs`: `decide` (delivery handling) with `let ref_ = format!("webhook:{id}")` :239, `find_duplicate` :230 (a duplicate returns `Outcome::Duplicate` and **writes no row**), `turn_text` :385 (the SEC-31 wrapper: "UNTRUSTED EXTERNAL DATA …"), `insert_delivery`; `repo/webhooks.rs` `insert_delivery` :299, `list_deliveries` :361, `DeliveryRow` :40.
+  `webhook_deliveries.status CHECK IN ('accepted','rejected','paused')` (`…000008.sql` :66).
+- FIX-192: `channels/mirror.rs` `link_of` / `schedule_origin_link` read `conversations.origin_conversation_id` **of the run conversation**: every per-run conversation must keep `origin_conversation_id = schedule.origin_conversation_id`.
+  `people/turn_context.rs` uses the same function. Do not change either.
+- Schedule/webhook edit and delete: `schedules/service.rs` `update` (name edit :153), `delete` :203, `routes.rs` `delete_schedule` :221; `webhooks/service.rs` update/delete.
+
+### Stop, errors (Scopes 3, 4)
+
+- `conversations/service.rs`: `abort` :801 (a **queued** turn → `finish_turn(... "aborted")` at once; a dispatched/running turn only gets `abort_requested_at` and waits for the supervisor's terminal report or stall recovery), `finish_turn` :494 (fenced; appends `turn.finished`; promotes follow-ups),
+  `crates/aurora-db/src/repo/turns.rs` `request_abort` :275.
+- The answer rule: `hosted/lifecycle.rs` `drain_answer` :19 (writes the answer buffer as durable `text` events, **on every ending**, and deletes the buffer row; `answer_buffer_take` in `repo/hosted.rs` :1194), `finish` :50, `fail_in` :108 (drains, then appends the `error` event).
+  Deltas are staged into the buffer by `hosted/reports.rs` `one_event` (`text.delta` → `StageOp::Append`).
+- The harness result: `hosted/reports.rs` `result` :468 → drains the buffer, appends `error` `{turn_id, code, message}` for a failed turn :498, then `lifecycle::finish`. The Claude Code adapter prints a failed API call as an assistant message ("API Error: 400 …") — `services/aurora-supervisor/src/adapters/claude_code/stream.rs` :398 `parse_status`, `classify_failure`:
+  that text arrives as an ordinary `text.delta`, lands in the buffer, and is written as the agent's bubble **and** the error event repeats it.
+- Web: `web/src/components/agents/chat-tab.tsx`, the transcript's error renderer, `web/src/lib/api/conversations.ts` `chatApi.abort` :109.
+
+### Schedules and webhooks (Scopes 5, 6)
+
+- `schedules/dto.rs`: `Schedule` :14 (no `next_runs`, no `last_result`), `ScheduleRun` :73 (`outcome`: `fired | gated_quiet | gate_failed | skipped_unauthorized | coalesced` and `skipped_frozen`), `CreateScheduleRequest`; `routes.rs`: `list_runs` :241, `run_now` :264 (`201 ScheduleRun`), `create_schedule` :105.
+  `schedules/cron.rs`: `MIN_INTERVAL` :11 (5 minutes), `parse_tz` :17, `next_after` :39, `validate` :55, `validate_min` :60 (the 5-minute rule is enforced **only on create/update**).
+- `webhooks/dto.rs`: `VerificationView` :15, `Webhook` :22, `WebhookWithUrl` :78, `WebhookDelivery` :84, `api_status` (maps stored status+reason), `VerificationInput` :121, `CreateWebhookRequest` :132 (`verification: Option`, default none);
+  `webhooks/service.rs`: `check_verification` :82 (header defaults `X-Signature` / `Authorization`; `secret` 8–512 bytes), `create` :176 (seals the secret with `seal`), `rotate` :385 (URL token), `notify_origin` :412; `routes.rs`: `rotate_webhook` :222, `list_deliveries` :250.
+  Receiver: `receive.rs` `verified` (hmac accepts `sha256=<hex>` or bare hex; bearer accepts `Bearer <secret>` or the bare secret).
+
+## Scope
+
+1. **Several direct conversations (C-1073; chat-3, chat-1).** Anchors `…#f-chat-3`, `…#f-chat-1`. After `chat-3.png`, `chat-1.png`.
+   - **Migration `20261201000262_conversations_threads.sql`** (this brief owns the whole file; Scope 2 and 6 add to it): `DROP INDEX conversations_direct_user_uq`; the partial index `conversations_direct_person_idx`; `title_source`; the Scope 2 columns and backfill; the `webhook_deliveries` CHECK. Run `python3 scripts/extract-schema.py --check` after
+     moving the `03` rows into the live sections.
+   - `service::direct`: choose the caller's most recently active **non-archived** direct conversation with the agent (`ORDER BY last_activity_at DESC`); create `user:<uid>` when the caller has none. Add `service::new_direct` + route `POST /v1/agents/{agent}/conversations/direct/new` (C-1073: 200 when the latest is still empty, 201 otherwise,
+     `conversation_limit` 422 past `DIRECT_CONVERSATIONS_PER_PERSON_AGENT = 500` in `aurora-core::limits`). `external_ref = user:<uid>:<uuid>` for every conversation after the first.
+   - `PATCH /v1/conversations/{id}` (`updateConversation`): caller rules and `title_managed` as in C-1073; `title_source = 'person'`; audit `conversation.rename`. **Auto-title:** in `create_turn_capped` (:357), right after the turn is created, when `speaker_kind = 'person'`, the conversation's `title IS NULL` and `title_source = 'auto'`, set the title from the text (helper `auto_title(text)`: first non-empty line, collapse whitespace,
+     strip markdown/backticks and `@`, cut at 60 characters with "…"; **never** from an attachment-only message; no model call). Unit-test the helper (empty, emoji, very long word, a line of code fence).
+   - **Archive (chat-1):** `direct` never returns an archived conversation. Keep the RFE-010 rule that a person-authored message unarchives (the dashboard shows an archived conversation read-only with Restore and does not offer the composer; that is P5-REFINE-11). A test: archive → `direct` returns another or a new conversation; `GET …/conversations?archived=true` lists the archived one.
+   - **The chat-platform DM:** `channels/inbox/message.rs` :230 keeps mapping a linked person's DM to `user:<uid>` (their first chat). Document it in `13 §5.2` ("a chat-platform direct message continues the person's first dashboard chat") and test that a DM arriving after the person started a second dashboard chat lands in `user:<uid>`, not in the newest one.
+   - **Privacy and search (D-230 amended):** existing predicates already use `direct_user_id = <user>`; extend the tests of `chat_search.rs` (the caller's search finds words in **both** of their direct chats and never in another member's, owners excepted as today) and the agent tools' scope test (the speaker's two direct chats are searchable by the agent; another member's never,
+     even for an owner speaker). Update D-230's sentence in `docs/05` and `10` ("the speaker's own direct conversations").
+   - Web client: `lib/api/conversations.ts` `chatApi.newDirect`, `chatApi.rename`, the `Conversation.title_source`/`automation`/`run_at` types.
+2. **One thread per run, folded under its automation (C-1074; priority 8, schedules-7).** Anchors `…#f-schedules-7`, `…#f-chat-3`. After `schedules-7.png`.
+   - Migration (same file): `automation_kind`, `automation_id`, `automation_deleted_at`, the index, the CHECK, and the **backfill** of C-1074 (derive from `external_ref` with a regex; mark deleted when the schedule/webhook row is gone; `title_source = 'automation'`).
+   - `start_run` (:66): `external_ref = format!("schedule:{}:{}", s.id, run_id)` with the run id generated **before** the conversation is created (so the row and the run share it), `NewConversation` gains `automation_kind`, `automation_id` and `title_source`; `origin_conversation_id` as today (FIX-192). **Busy rule:** replace the "conversation has an active turn" test with "the schedule's latest run's turn is still active" (one query on `schedule_runs` joined to `turns`); `run_now` answers `schedule_busy` on the same test.
+     `repo::record_manual`/`record_fire` keep `run_conversation_id` pointing at the latest thread.
+   - `webhooks/receive.rs` `decide`: `ref_ = webhook:<id>:<delivery>` per **accepted** delivery; same new columns; `set_run_conversation` points at the latest.
+   - `Conversation` DTO: `automation { kind, id, name, deleted }` and `run_at` (resolve the name with one query per page: `SELECT id, name FROM schedules/webhooks WHERE id = ANY($1)`; a missing row means `deleted: true` even before the backfill marks it). `list_conversations` gains `automation` and `automation_id` query parameters (validate: `automation_id` only with `only`).
+   - New `GET /v1/agents/{agent}/conversation-folders` (`listConversationFolders`): one row per `(automation_kind, automation_id)` with `thread_count`, `last_activity_at` and `last_result` (derive the newest run/delivery result with the Scope 5/6 function), `can_use` caller rule (direct conversations are not part of it).
+   - **Title sync and deleted marker:** `schedules::service::update` / `webhooks::service` update (name changes) run `UPDATE conversations SET title = $name WHERE automation_kind = $k AND automation_id = $id` (and `updated_at`); `schedules::service::delete` :203 and the webhook delete set `automation_deleted_at = now()` on the automation's conversations **before** the row is deleted, in the same transaction.
+   - **Volume guard:** a nightly (the existing retention job in `services/aurora-api/src/jobs.rs`; find the conversation-retention function there) deletes automation threads beyond the newest `AUTOMATION_THREADS_KEPT = 200` per automation (use the existing conversation delete path so session purges and search rows go with them). Add the constant to `aurora-core::limits`; test with a lowered value.
+   - **FIX-192 and the origin notices stay:** assert with the existing `channels_inbox` test (`schedule_run_answer_is_posted_to_the_origin_thread`) that it still passes unchanged, and add one case with **two runs** of the same schedule (two run threads, each mirrored once to the origin's thread).
+   - Web client: `lib/api/conversations.ts` (`listFolders`, `list` options), types.
+3. **Stop leaves a mark and keeps what was written (C-1075; chat-4).** Anchor `…#f-chat-4`. After `chat-4.png`.
+   - In `finish_turn` (:494), when `status == "aborted"`, append (same transaction, after `turn.finished`'s predecessors, i.e. before `promote_followups`) the durable `notice` `{ code: "turn_stopped", text: "You stopped this answer.", turn_id }`. The partial answer: `hosted/reports.rs` `result` already calls `drain_answer` before `finish` for **every** terminal report including `aborted`; make `drain_answer` mark the events it writes for a turn that is ending `aborted` with `partial: true`
+     (add a parameter, default false). The queued-turn abort path has no buffer: only the marker.
+   - **Measure the stall.** Using the supervisor/runner test rigs (`services/aurora-api/tests/it/runner_rig.rs`, the supervisor's turn tests), measure the time from `abort_requested_at` to the terminal report and write down where it goes (work item delivery, the supervisor killing the harness, the grace). Fix **only** a late delivery that is a few lines; report the rest.
+   - The dashboard clears "Working" from `Turn.abort_requested`, which the API already returns (no change; the first line of `chat-4`'s fix is client-side).
+4. **An error shows once (C-1076; chat-7).** Anchor `…#f-chat-7`. After `chat-7.png`.
+   - In `reports.rs` `result` (:468) and `lifecycle::fail_in` (:108): before `drain_answer`, when the turn ends `failed`, tell `drain_answer` the failure `message`; it **drops** a buffered message whose text equals, contains, or starts with the message, or starts with `API Error` (case-sensitive prefix of the adapter), and returns the dropped text; the `error` event payload gets `detail` = that text (or the message) clipped to 2,000 characters,
+     sanitised (`sanitize::one_line` is wrong here: multi-line allowed, control characters removed). `message` is unchanged. Keep text the agent wrote itself.
+   - Tests: a failed turn whose buffer is "API Error: 400 No connected db." produces **no** `text` event and one `error` event with `detail`; a failed turn with a real earlier paragraph keeps the paragraph.
+5. **Run now, Runs and schedule times (C-1077; schedules-3, schedules-4, schedules-1/2).** Anchors `…#f-schedules-3`, `…#f-schedules-4`, `…#f-schedules-2`. After `schedules-3.png`, `schedules-4.png`, `schedules-2.png`.
+   - A repository query `runs_with_results(schedule, after, limit)` joining `turns` (by `turn_id`) and `conversations` (by the turn's `conversation_id`) producing `conversation_id` and the turn status; one pure function `run_result(outcome, turn_status, error_code) -> (RunResult, Option<reason>)` with the table of C-1077 and a unit test for every row.
+     `ScheduleRun` gains `conversation_id`, `result`, `reason`; `list_runs` and `run_now` use it; `run_now` returns `result: "running"` with the new conversation id.
+   - `Schedule`: `next_runs` (three instants via `cron::next_after` repeated; empty when `enabled = false`) and `last_result` (newest run's `run_result`; one query for the page). `POST /v1/agents/{agent}/schedules/preview` (`previewSchedule`): parse cron + timezone (default the workspace's), compute the next 12 instants, return the first three, `interval_secs` (smallest gap) and `too_frequent`; field errors as `invalid_cron` / `invalid_timezone`. Rate class `check`. Register in the permission matrix.
+   - Web client: `lib/api/schedules.ts` `useSchedulePreview`, the new fields.
+6. **Webhooks: signed by default, deliveries in words, the message people read (C-1078, C-1079; webhooks-1..4).** Anchors `…#f-webhooks-1`, `…#f-webhooks-2`, `…#f-webhooks-3`, `…#f-webhooks-4`. After `webhooks-1.png`..`webhooks-4.png`.
+   - `check_verification` (service :82) and `create` (:176): `generate_secret` as C-1078 (32 random bytes from the system RNG as 64 hex characters; mutually exclusive with `secret`); an **absent** `verification` becomes `{ hmac_sha256, generate_secret: true }`. `WebhookWithUrl.secret`. New `POST /v1/webhooks/{id}/rotate-secret` (`rotateWebhookSecret`; same caller rule as `rotate_webhook` :222; seals the new secret, discards the old with the existing `discard` helper; audit `webhook.rotate_secret`).
+     `PATCH` with `generate_secret` → 422. `VerificationView` always carries the effective `header` and the new `format` string.
+   - **Duplicates are recorded.** `decide` (:230): on `find_duplicate`, insert a delivery row `status = 'duplicate'`, `reason = <key>`, `turn_id` = the original's, answered as today. The migration widens the CHECK. They count in `count_recent` (the rate limit).
+   - `WebhookDelivery`: `result`, `conversation_id`, `duplicate_of` (store `duplicate_of` in `reason` as the original delivery id or look it up by key: pick the simpler and say which). `result` derivation shares `run_result`'s turn-status mapping. `list_deliveries` joins `turns`/`conversations` like Scope 5.
+   - **The display payload (webhooks-4).** `NewMessage` gains `display: Option<serde_json::Value>`; `create_turn_capped` (:357) writes it into the `turn.queued` payload as `display`. Webhook turns pass `{kind:"webhook", name, delivery_id, content_type, size, truncated, body}` (body = the same cleaned/clipped text `turn_text` already builds, **without** the wrapper or the owner's instructions); schedule turns pass `{kind:"schedule", name, schedule_id, run_id}`.
+     The turn's `text` is byte-for-byte what it is today (SEC-31, FIX-110): add a test that `turns.text` still contains the wrapper and the fence, and that the event's `display.body` does not.
+   - Web client: `lib/api/webhooks.ts` (`rotateSecret`, new fields), a `display` type on the transcript event payload.
+
+## Out of scope
+
+- All UI: the conversation list (New chat, Rename, folders, grouping, archived read-only, Restore), the transcript's stopped marker, error box and webhook/schedule message renderers, the Automations page, Run now's status line, Runs and Deliveries tables, the schedule dialog's presets and preview line, "How to call it" (P5-REFINE-11, -14).
+- The live per-agent timeline and its stream (P5-REFINE-9) and the attention feed (P5-REFINE-8).
+- Changing the harness adapter's error printing in the supervisor (the API drops the duplicate; the adapter stays).
+- Cron presets, the time-zone select, gate and anchoring under Advanced (web).
+- A model-written chat title (auto-title is the first line; a model title is a later decision).
+- Moving a chat-platform DM into a newer dashboard chat.
+
+## Constraints / file ownership
+
+- Everything under "Wave and order". One migration file, `20261201000262`, owned by this brief; additive except the dropped unique index and the widened CHECK (both reversible by re-creating them). **Ask before running it on any shared database**; tests use a throwaway Postgres.
+- Keep `NewConversation` backwards compatible (new fields optional with defaults) so the other creators (`channels`, `peer_tasks`, `evals`) compile unchanged; list every creator in the completion report.
+- Never touch `localhost:4000` or the aurora-dev cluster. Heavy commands only through `heavy.sh`. Fast targeted tests; GitHub CI is the full gate. **No perf runs while other lanes run** (memory: perf only when idle).
+
+## Acceptance criteria
+
+1. **Several chats.** A person gets `direct` → first chat; `direct/new` → 201 a second, 200 (the same) while it is empty; `direct` returns the most recently active non-archived one; archive it → `direct` returns the other; 501st chat → 422 `conversation_limit`.
+   Rename by the person works; by a workspace owner of someone else's direct chat is refused; `schedule`/`webhook` threads are `409 title_managed`. The first message titles an untitled chat (60 characters); a renamed chat keeps its title; `title: null` re-derives.
+2. **Privacy and search.** The existing visibility tests still pass; the search tests of both the dashboard route and the agent tools cover two direct chats per person; another member's direct chats are never in the agent's scope; a chat-platform DM lands in `user:<uid>`.
+3. **Per-run threads.** Two fires of the same schedule create two conversations (`schedule:<id>:<run>`), both with the schedule's `origin_conversation_id`; a fire is skipped `skipped_busy` only while the **latest run's turn** is active; Run now is `409 schedule_busy` then and `201` after; two accepted deliveries of a webhook create two conversations; the list with `automation=none` hides them, `only&automation_id=` returns one automation's; `conversation-folders` gives name, counts, `last_result`.
+   Renaming a schedule/webhook renames its threads; deleting marks them `automation.deleted: true` with transcripts intact. The migration backfill marks existing `schedule:<id>` conversations (and `deleted` when the schedule is gone). The volume guard keeps the newest N.
+   **FIX-192's test passes unchanged**, plus the two-run case.
+4. **Stop.** A queued turn aborted at once and a running turn the supervisor ended `aborted` both end with `turn.finished` and the `turn_stopped` notice; partial text already buffered is a durable `text` event with `partial: true`; the abort-latency measurement is in the completion report.
+5. **Errors.** The failed-turn tests of Scope 4 pass; the existing failed-turn tests (`error` event shape) still pass.
+6. **Run now, Runs, times.** `run-now` returns `conversation_id` and `result: "running"`; `runs` rows carry `result`/`reason` for every outcome in the table (unit test of all rows + an integration with a gate-quiet run, a failed run, a frozen skip); `Schedule.next_runs` has three instants for an enabled schedule and none for a paused one; `preview` returns three instants, `too_frequent: true` for `* * * * *` and `*/4 * * * *`, false for `*/5 * * * *`, and field errors for a bad cron or time zone.
+7. **Webhooks.** Creating a webhook with no `verification` returns `verification.kind = "hmac_sha256"`, `header = "X-Signature"`, `format`, and a one-time `secret` that verifies a signed delivery; `{kind:"none"}` still works; `rotate-secret` returns a new secret and the old one stops verifying (a signed delivery with the old secret is `refused_signature`); a duplicate delivery now has a row (`result: "duplicate"`, `duplicate_of`); deliveries carry `result` and `conversation_id`; `turns.text` still holds the wrapper while `turn.queued.display.body` does not.
+8. **Contracts, schema, docs.** C-1073..C-1079 landed first; `docs/03` (conversations columns, the dropped index, `webhook_deliveries` status), `05`, `10` (§Schedules, §Webhooks, §Conversations, §The answer rule), `13 §5.2` (DM mapping), `docs/tests/security-coverage.md` (privacy rows extended); `extract-schema.py --check` passes; `web/openapi.json` and `schema.d.ts` regenerated; web types and calls added.
+9. **Gates (targeted):** `cargo fmt --check`; `cargo clippy -p aurora-api -p aurora-db -p aurora-core --all-targets -- -D warnings`; `cargo test -p aurora-api --test it -- conversations conversation_lifecycle chat_search schedules webhooks channels_inbox turn_person permission_matrix` (names as they exist);
+   `cargo test -p aurora-api --lib` for the new unit tests; `scripts/guards/run-all.sh`; `python3 scripts/extract-schema.py --check`; OpenAPI check and `pnpm gen:api` with no diff; web `tsc`. Report counts.
+
+## Tests
+
+- **Unit:** `auto_title`, `run_result` (all rows), `generate_secret` shape, `automation` name resolution, `drain_answer` duplicate-drop rules, `new_direct` emptiness rule, the cron preview.
+- **API integration (`services/aurora-api/tests/it/`):** extend `conversations.rs`/`conversation_lifecycle.rs` (several chats, archive, rename, auto-title, limit), `chat_search.rs` (scope), `schedules.rs` (per-run threads, busy rule, runs results, run-now, preview, title sync, deleted marker, volume guard), `webhooks.rs` (default signing, rotate-secret, duplicates, deliveries, display), `channels_inbox.rs` (FIX-192 + DM mapping), `hosted`/`runner_plane` failed-turn tests (error once), a stop test; `permission_matrix.rs` rows for the four new routes.
+- **Migration:** `…262` up on a copy with existing direct, schedule and webhook conversations (indexes, backfill, deleted marker), and a down-compatibility check of the old creators.
+- Do **not** run perf budgets or the full workspace tests.
+
+## Docs to update
+
+- `docs/API_CONTRACTS.md` (C-1073..C-1079 first), `docs/03-data-model.md`, `docs/05-control-plane-api.md` (conversation rows: direct/new, PATCH, folders, list filters; schedule runs/preview; webhook rotate-secret), `docs/10-*` (§Conversations: several chats; §Schedules and §Webhooks: one thread per run; §The answer rule: partial and error rules),
+  `docs/13-channels-connectors.md` §5.2 (DM mapping; FIX-192 note), `docs/tests/security-coverage.md`.
+- `docs/PROGRESS.md` and `docs/FEATURES.md` rows for P5-REFINE-7; tell the Orchestrator that **D-230's one-direct-conversation sentence and `05`'s visibility text are amended by D-409** (already decided).
+
+## Suggested agent/model and reason
+
+Sonnet (`rust-developer`), with Opus for review of the migration and the busy-rule change. It spans the conversation, schedule and webhook domains and one migration that drops a unique index; the per-run thread change interacts with FIX-192, retention and search. Not Haiku.
+
+## Completion report
+
+(Fill in; P5-REFINE-20 reads it.)
+
+- **Items done** (Scope 1–6, each with its commit):
+- **Contracts C-1073..C-1079**, **migration `20261201000262`** (backfill counts on the seeded data):
+- **Several chats:** the `direct` / `direct/new` / rename / auto-title behaviour; the DM mapping decision and its test; the list of every creator of conversations checked:
+- **Per-run threads:** the busy-rule change and its test; FIX-192's test results (unchanged + two-run case); the volume guard and its constant:
+- **Stop:** the marker and `partial: true`; **the abort latency measured and where the time goes**:
+- **Errors:** the drop rules and the tests:
+- **Run now / Runs / times:** the `run_result` table as implemented; an example `ScheduleRun` and `Schedule` payload; the preview's outputs for `*/4`, `*/5`:
+- **Webhooks:** default signing and the one-time secret; `rotate-secret`; duplicates recorded (and how `duplicate_of` is stored); `display` payloads and the proof `turns.text` is unchanged:
+- **Deviations and why:**
+- **Screenshots compared:** none (no UI); the UI briefs compare `chat-1`, `chat-3`, `chat-4`, `chat-7`, `schedules-3`, `schedules-4`, `schedules-7`, `webhooks-1..4`.
+- **Tests run** (commands, counts, anything not run and why):
+- **Open questions** (for the owner or the Orchestrator):
