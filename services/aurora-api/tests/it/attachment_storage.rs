@@ -845,6 +845,41 @@ async fn storage_breakdowns_agree_with_the_tables_and_are_authorization_checked(
             .iter()
             .all(|t| t["bytes"].as_i64().unwrap() > 0)
     );
+    // (P5-REFINE-6, C-1072) Conversations, files and activity, in that order, sum their tables.
+    let size = |names: &[&str]| -> i64 {
+        v["tables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| names.contains(&t["table"].as_str().unwrap()))
+            .map(|t| t["bytes"].as_i64().unwrap())
+            .sum()
+    };
+    assert_eq!(
+        v["categories"],
+        json!([
+            {"id": "conversations", "bytes": size(&["transcript_events", "transcript_search"])},
+            {"id": "files", "bytes": size(&["blobs", "attachments"])},
+            {"id": "activity", "bytes": size(&["request_log", "audit_log"])},
+        ]),
+        "{v}"
+    );
+    assert_eq!(
+        v["tables"].as_array().unwrap().iter().find(|t| t["table"] == "audit_log").unwrap()["category"],
+        "activity"
+    );
+    // An organization's page counts its files only.
+    let (s, o) = f.call(Method::GET, &org_url, &f.admin.1, None).await;
+    assert_eq!(s, 200, "{o}");
+    assert_eq!(
+        o["categories"],
+        json!([
+            {"id": "conversations", "bytes": null},
+            {"id": "files", "bytes": o["used_bytes"]},
+            {"id": "activity", "bytes": null},
+        ]),
+        "{o}"
+    );
 }
 
 /// FIX-126: a Storage page is a cheap read — twenty views by one admin never hit the strict

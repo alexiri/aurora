@@ -41,6 +41,19 @@ pub fn done_sentence(agent: &str, app: &str, level: Option<Level>) -> String {
     }
 }
 
+/// (P5-REFINE-6, C-1067, D-419) The Done sentence for a send-only app (the Outgoing webhook),
+/// named by its account: there is nothing to read.
+#[must_use]
+pub fn send_sentence(agent: &str, account: &str, level: Option<Level>) -> String {
+    match level {
+        Some(Level::Act) => format!("{agent} can now send to {account} without asking."),
+        Some(Level::Ask | Level::Read) => {
+            format!("{agent} can now send to {account}, and asks you first.")
+        }
+        None => format!("{agent} can now use {account}."),
+    }
+}
+
 /// The fixed text of the system turn that restarts the agent (SEC-132): platform words only,
 /// nothing the agent wrote.
 #[must_use]
@@ -52,6 +65,25 @@ pub fn restart_text(app: &str, level: Option<Level>) -> String {
         None => "",
     };
     format!("Access to {app} was given{given}. Continue with what you were doing.")
+}
+
+/// [`restart_text`] for a send-only app (C-1067).
+#[must_use]
+pub fn send_restart_text(account: &str, level: Option<Level>) -> String {
+    let given = match level {
+        Some(Level::Act) => " (Send without asking)",
+        Some(Level::Ask | Level::Read) => " (Ask before each send)",
+        None => "",
+    };
+    format!("Access to {account} was given{given}. Continue with what you were doing.")
+}
+
+/// What a grant gave, for the notice: the account's name is used for a send-only app (C-1067).
+pub struct Given<'a> {
+    pub app_id: &'a str,
+    pub account: &'a str,
+    pub send_only: bool,
+    pub level: Option<Level>,
 }
 
 async fn app_name(state: &AppState, app_id: &str) -> String {
@@ -71,23 +103,27 @@ pub async fn on_access_given(
     tx: &mut PgConnection,
     state: &AppState,
     agent: &AgentRow,
-    app_id: &str,
-    level: Option<Level>,
+    given: &Given<'_>,
 ) -> Result<(), ApiError> {
-    let Some(req) = repo::mark_given_for_app(&mut *tx, agent.id, app_id).await? else {
+    let Some(req) = repo::mark_given_for_app(&mut *tx, agent.id, given.app_id).await? else {
         return Ok(());
     };
-    let app = app_name(state, app_id).await;
+    let level = given.level;
+    let app = app_name(state, given.app_id).await;
     let who = sanitize::label(&agent.name);
-    report_given(
-        tx,
-        &req,
-        &app,
-        &done_sentence(&who, &app, level),
-        &restart_text(&app, level),
-        level,
-    )
-    .await
+    let (sentence, restart) = if given.send_only {
+        let account = sanitize::label(given.account);
+        (
+            send_sentence(&who, &account, level),
+            send_restart_text(&account, level),
+        )
+    } else {
+        (
+            done_sentence(&who, &app, level),
+            restart_text(&app, level),
+        )
+    };
+    report_given(tx, &req, &app, &sentence, &restart, level).await
 }
 
 /// Called when a person accepts an agent's proposed website secret (and so grants it to the
@@ -243,4 +279,30 @@ pub async fn dismiss(state: &AppState, c: &Caller, id: Uuid) -> Result<AccessReq
 /// Marks open requests older than `ACCESS_REQUEST_TTL` `expired`.
 pub async fn sweep(pool: &aurora_db::PgPool) -> Result<u64, ApiError> {
     Ok(repo::expire_overdue(pool, limits::ACCESS_REQUEST_TTL.as_secs_f64()).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_send_only_app_is_named_by_its_account_and_never_read() {
+        assert_eq!(
+            send_sentence("Dani", "Ops alerts", Some(Level::Ask)),
+            "Dani can now send to Ops alerts, and asks you first."
+        );
+        assert_eq!(
+            send_sentence("Dani", "Ops alerts", Some(Level::Act)),
+            "Dani can now send to Ops alerts without asking."
+        );
+        assert_eq!(
+            send_restart_text("Ops alerts", Some(Level::Ask)),
+            "Access to Ops alerts was given (Ask before each send). Continue with what you were doing."
+        );
+        // Other apps are unchanged.
+        assert_eq!(
+            done_sentence("Dani", "GitHub", Some(Level::Read)),
+            "Dani can now read GitHub."
+        );
+    }
 }

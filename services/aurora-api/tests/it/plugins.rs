@@ -134,6 +134,59 @@ async fn unsigned_refused_then_allowed_with_dev_flag() {
     assert_eq!(v["host_claims"][0]["host"], "api.acme.example");
 }
 
+/// (P5-REFINE-6, C-1071) A bad package says so in words; the raw codes stay.
+#[tokio::test]
+async fn a_bad_package_says_so_in_words() {
+    let h = Harness::with_config(|c| c.plugins.allow_unsigned = true).await;
+    let a = setup(&h).await;
+    let no_jargon = |v: &Value| {
+        let mut texts = vec![v["error"]["message"].as_str().unwrap_or("").to_owned()];
+        for x in v["error"]["details"]["violations"].as_array().into_iter().flatten() {
+            texts.push(x["sentence"].as_str().unwrap().to_owned());
+        }
+        for t in texts {
+            for bad in ["gzip header", "archive_corrupt", "Error", "error:"] {
+                assert!(!t.contains(bad), "`{bad}` in `{t}`");
+            }
+        }
+    };
+    // Not a gzip archive at all.
+    let (s, v) = a.upload(b"this is not a package").await;
+    assert_eq!((s, code(&v)), (422, "package_invalid"), "{v}");
+    assert_eq!(
+        v["error"]["message"],
+        "That isn't an app package. Upload the .tar.gz that `aurora plugin pack` makes."
+    );
+    let first = &v["error"]["details"]["violations"][0];
+    assert_eq!(first["code"], "archive_corrupt");
+    assert!(first["message"].as_str().is_some_and(|m| !m.is_empty()), "the technical message stays");
+    assert_eq!(first["sentence"], v["error"]["message"]);
+    no_jargon(&v);
+
+    // An archive without its manifest.
+    let mut b = PackageBuilder::new(&yaml("acme", "1.0.0", &["api.acme.example"]));
+    b.remove_file("plugin.yaml");
+    let (s, v) = a.upload(&b.build().unwrap()).await;
+    assert_eq!((s, code(&v)), (422, "package_invalid"), "{v}");
+    let first = &v["error"]["details"]["violations"][0];
+    assert!(first["code"].is_string(), "{v}");
+    assert!(
+        first["sentence"].as_str().is_some_and(|s| s.contains("plugin.yaml")),
+        "{v}"
+    );
+    no_jargon(&v);
+
+    // Over the size limit: the limit in words.
+    let big = vec![0u8; aurora_core::limits::PACKAGE_MAX + 128 * 1024];
+    let (s, v) = a.upload(&big).await;
+    assert_eq!(s, 413, "{v}");
+    assert_eq!(
+        v["error"]["message"],
+        "That package is too large (limit 20 MB)."
+    );
+    assert_eq!(count(&h).await, 0);
+}
+
 #[tokio::test]
 async fn untrusted_builtin_and_non_admin_refused() {
     let h = Harness::new().await;

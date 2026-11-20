@@ -46,6 +46,7 @@ mod connector_ops;
 mod connectors;
 mod connectors_host_tokens;
 mod connectors_managed;
+mod connectors_readiness;
 mod conversation_lifecycle;
 mod conversations;
 mod counters;

@@ -76,6 +76,9 @@ pub struct Me {
     /// (P5-REFINE-5, C-1064, D-407) Where `user.display_name` comes from: `sign_in` (the token's
     /// `name`, refreshed at every sign-in) or `you` (the person, or their directory, chose it).
     pub display_name_source: String,
+    /// (P5-REFINE-6, C-1072) `POST /v1/orgs` would work for this person: an instance admin, or
+    /// `auth.org_creation = anyone`. The switcher offers "New organization" exactly then.
+    pub can_create_org: bool,
 }
 
 fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>

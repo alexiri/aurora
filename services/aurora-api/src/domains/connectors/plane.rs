@@ -129,7 +129,24 @@ async fn do_register(
         return Err(ApiError::invalid_request("Invalid manifest.", errs));
     }
 
-    let digest_hex = verify_manifest(s, m, &req.signature).await?;
+    // (P5-REFINE-6, C-1068, D-142) A managed connector registers with the signature its host
+    // embedded. A development build embeds none, and the host's own `register` accepts that empty
+    // signature under `plugins.allow_unsigned`; refusing it here left the row in
+    // `awaiting_registration` for ever while the host restarted the connector and reported it
+    // running (UX review 5, org-1/admin-5). The same rule applies: only with the flag, only an
+    // EMPTY signature, only a managed connector; a present signature is always verified.
+    let digest_hex = if conn.managed
+        && s.config.plugins.allow_unsigned
+        && req.signature.trim().is_empty()
+    {
+        tracing::warn!(
+            connector = %conn.id,
+            "plugins.allow_unsigned: managed connector registered without a signature (development only)"
+        );
+        manifest::hex(manifest::digest(m).map_err(|e| ApiError::internal(e.to_string()))?)
+    } else {
+        verify_manifest(s, m, &req.signature).await?
+    };
 
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
     let row = connectors::get_for_update(&mut *tx, &conn.id)

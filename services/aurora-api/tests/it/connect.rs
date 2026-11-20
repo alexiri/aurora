@@ -115,6 +115,14 @@ mod link_connect;
 #[path = "outgoing_webhooks.rs"]
 mod outgoing_webhooks;
 
+// (P5-REFINE-6, C-1067, D-419) Send-only apps: `ask` and `act`, never `read`.
+#[path = "send_only_levels.rs"]
+mod send_only_levels;
+
+// (P5-REFINE-6, C-1070) Test a sign-in app against a mock token endpoint.
+#[path = "oauth_clients_test.rs"]
+mod oauth_clients_test;
+
 // (FIX-194, D-420) `store: label`: a form field names the connection.
 #[path = "label_field.rs"]
 mod label_field;

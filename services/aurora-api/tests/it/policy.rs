@@ -255,6 +255,18 @@ async fn draft_validation_stale_publish_rollback() {
             .iter()
             .any(|g| g["number"] == 1 && g["status"] == "superseded")
     );
+    // (P5-REFINE-6, C-1087) What each generation changed, and who published it.
+    let by_number = |n: i64| items.iter().find(|g| g["number"] == n).unwrap();
+    let g2 = by_number(2);
+    assert_eq!(
+        g2["changes"],
+        json!([{"kind": "added", "rule_name": "r1"}]),
+        "{g2}"
+    );
+    assert_eq!(g2["more"], 0);
+    assert!(g2["actor"]["display_name"].is_string(), "{g2}");
+    assert_eq!(by_number(3)["changes"], json!([]), "the fresh draft copies gen 2");
+    assert!(by_number(3)["actor"].is_null(), "a draft has no publisher");
 
     // (FIX-109) Rollback replaces the draft: it needs the draft revision the caller last read,
     // and a colleague's draft saved since is not discarded (409, draft untouched).

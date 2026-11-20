@@ -163,6 +163,37 @@ async fn joined_at_is_the_binding_time_and_null_for_an_implicit_owner() {
     assert_eq!(boss["status"], "active");
 }
 
+/// (P5-REFINE-6, C-1086) `signed_in` is `users.last_login_at IS NOT NULL`, on direct and implicit
+/// rows; the callers are unchanged (a member who does not own the workspace is refused).
+#[tokio::test]
+async fn signed_in_says_whether_the_person_has_signed_in_yet() {
+    let w = world().await;
+    sqlx::query("UPDATE users SET last_login_at = NULL")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET last_login_at = now() WHERE id = $1")
+        .bind(w.person)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let uri = format!("/v1/workspaces/{}/access", w.ws);
+    let (s, v) = w.h.call(&w.owner_cookie, Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(row(&v, w.person)["signed_in"], json!(true), "{v}");
+    assert_eq!(row(&v, w.owner)["signed_in"], json!(false), "{v}");
+    let boss = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["implicit"] == json!(true))
+        .unwrap();
+    assert_eq!(boss["signed_in"], json!(false), "{boss}");
+    // The approver is not an owner of the workspace: refused as before.
+    let (s, _) = w.h.call(&w.person_cookie, Method::GET, &uri, None).await;
+    assert_eq!(s, 403);
+}
+
 #[tokio::test]
 async fn a_suspension_refuses_every_family_and_restore_gives_it_back() {
     let w = world().await;

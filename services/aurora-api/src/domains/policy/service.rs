@@ -170,12 +170,25 @@ pub async fn generations(
     let page = crate::http::pagination::Page::from_rows(rows, p.limit, |r| {
         (r.generation.created_at, r.generation.id)
     });
+    let mut items = Vec::with_capacity(page.items.len());
+    for row in page.items {
+        // (P5-REFINE-6, C-1087) What it changed against the generation before it.
+        let g = &row.generation;
+        let new_rules = repo::rules_of(&state.pool, g.id).await?;
+        let old_rules = match repo::predecessor(&state.pool, g.org_id, g.workspace_id, g.number)
+            .await?
+        {
+            Some(prev) => repo::rules_of(&state.pool, prev).await?,
+            None => Vec::new(),
+        };
+        let (changes, more) = super::dto::rule_changes(&old_rules, &new_rules);
+        let mut dto = summary_dto(row)?;
+        dto.changes = changes;
+        dto.more = more;
+        items.push(dto);
+    }
     Ok(crate::http::pagination::Page {
-        items: page
-            .items
-            .into_iter()
-            .map(summary_dto)
-            .collect::<Result<_, _>>()?,
+        items,
         next_cursor: page.next_cursor,
     })
 }

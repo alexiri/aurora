@@ -23,6 +23,7 @@ mod managed;
 pub(crate) mod manifest;
 pub mod ops;
 mod plane;
+pub(crate) mod readiness;
 mod routes;
 mod setup;
 

@@ -48,6 +48,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "connection.webhook.update",
     "oauth_client.create",
     "oauth_client.delete",
+    // (P5-REFINE-6, C-1070) a sign-in app's Test records its result with the row
+    "oauth_client.test",
     "oauth_client.update",
     // (P4-SSH-1, D-239(b), C-790) a person's registered SSH public keys
     "ssh_key.create",
@@ -97,6 +99,9 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "invitation.accept",
     "invitation.cancel",
     "invitation.create",
+    // (P5-REFINE-6, C-1069, SEC-140) a re-issued invitation link replaces the token
+    "invitation.link",
+    "invitation.resend",
     "member.add",
     "member.remove",
     "member.update",

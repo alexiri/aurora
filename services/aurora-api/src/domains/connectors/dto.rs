@@ -231,6 +231,12 @@ pub struct ConnectorAdmin {
     pub host_status: Vec<HostStatusInfo>,
     /// (C-1044, D-398) True exactly when `GET /v1/connectors/{id}/icon` serves a PNG.
     pub has_icon: bool,
+    /// (P5-REFINE-6, C-1068) The same readiness as `GET /v1/connector-availability`.
+    pub setup_state: ConnectorSetupState,
+    /// (C-1068) As on the availability item.
+    pub host_running: bool,
+    /// (C-1068) Administration's next step: `owner_connects` once usable.
+    pub next_step: ConnectorNextStep,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -278,9 +284,31 @@ pub struct ConnectorInfo {
 pub enum ConnectorSetupState {
     Active,
     NotAdded,
+    /// No live connector host announces the type (C-1068: only then).
     WaitingForHost,
     Disabled,
     NeedsApproval,
+    /// (P5-REFINE-6, C-1068) A live host announces the type and the connector's first
+    /// registration is pending; it becomes `active` within one host poll.
+    Registering,
+}
+
+/// (P5-REFINE-6, C-1068) The next thing a person does about a connector.
+#[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorNextStep {
+    /// An organization owner or admin connects it (the caller is one).
+    Connect,
+    /// An organization owner connects it ("Next: an organization owner connects Mattermost").
+    OwnerConnects,
+    /// No live host announces the type: start the connector host.
+    StartHost,
+    /// An instance admin approves its manifest.
+    Approve,
+    /// An instance admin turns it back on.
+    Enable,
+    /// An instance admin adds it.
+    Add,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -291,6 +319,14 @@ pub struct ConnectorAvailability {
     pub setup_state: ConnectorSetupState,
     /// The connector's id when one exists.
     pub connector_id: Option<String>,
+    /// (C-1068) A live connector host announces the type or reports the connector running (a
+    /// self-hosted connector: it has a live replica).
+    pub host_running: bool,
+    /// (C-1068) `setup_state = active`: integrations can be connected now.
+    pub can_connect: bool,
+    /// (C-1068) For this caller: `connect` for an organization owner or admin of an `active`
+    /// type, `owner_connects` for anyone else.
+    pub next_step: ConnectorNextStep,
 }
 
 #[derive(Serialize, ToSchema)]

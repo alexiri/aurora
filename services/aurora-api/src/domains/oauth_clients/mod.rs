@@ -2,5 +2,6 @@
 pub mod dto;
 mod routes;
 pub mod service;
+mod test;
 
 pub use routes::router;

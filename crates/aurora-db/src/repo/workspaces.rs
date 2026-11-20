@@ -312,6 +312,8 @@ pub struct AccessRow {
     /// (P5-APIGAP-4, C-1051) The direct row's `status` (`active` | `suspended`); `active` for an
     /// implicit row without a direct row.
     pub status: String,
+    /// (P5-REFINE-6, C-1086) The person has signed in at least once (`users.last_login_at`).
+    pub signed_in: bool,
 }
 
 // The implicit rows follow the **effective** org role (FIX-083, D-130(b)): a member whose group
@@ -322,7 +324,8 @@ const ACCESS_SEL: &str = "SELECT u.id AS user_id, u.email::text AS email, u.disp
     COALESCE(a.created_at, m.created_at) AS created_at,
     substring(a.idp_source from '^idp:[^:]*:(.*)$') AS idp_value,
     a.created_at AS joined_at,
-    COALESCE(a.status, 'active') AS status
+    COALESCE(a.status, 'active') AS status,
+    (u.last_login_at IS NOT NULL) AS signed_in
   FROM workspaces w
   JOIN org_members m ON m.org_id = w.org_id AND m.status = 'active'
   JOIN effective_org_members e ON e.org_id = m.org_id AND e.user_id = m.user_id

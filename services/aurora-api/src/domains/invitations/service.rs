@@ -122,23 +122,85 @@ pub async fn create(
         .metadata(serde_json::json!({"email": row.email, "role": req.role.as_str()}));
     audit::commit_critical(tx, &ev).await?;
 
-    let link = format!(
+    let link = join_link(state, &tok);
+    let inviter_name = row.invited_by_name.as_deref().unwrap_or("A teammate");
+    mail::send_detached(&state.mailer, invitation_mail(&email, &org_name, inviter_name, &link));
+    // (C-1069, SEC-140) The link is in this response only (the caller is an organization owner or
+    // admin): never in a list, a `GET`, the audit row or a log.
+    let mut inv: Invitation = row.into();
+    inv.link = Some(link);
+    Ok(inv)
+}
+
+fn join_link(state: &AppState, tok: &str) -> String {
+    format!(
         "{}/join?token={tok}",
         state.config.external_url.trim_end_matches('/')
-    );
-    let inviter_name = row.invited_by_name.as_deref().unwrap_or("A teammate");
-    mail::send_detached(
-        &state.mailer,
-        Mail::new(
-            &email,
-            &format!("You are invited to join {org_name} on Aurora"),
-            &format!(
-                "{inviter_name} invited you to join {org_name} on Aurora. The link expires in 7 days."
-            ),
-            &link,
+    )
+}
+
+fn invitation_mail(email: &str, org_name: &str, inviter_name: &str, link: &str) -> Mail {
+    Mail::new(
+        email,
+        &format!("You are invited to join {org_name} on Aurora"),
+        &format!(
+            "{inviter_name} invited you to join {org_name} on Aurora. The link expires in 7 days."
         ),
-    );
-    Ok(row.into())
+        link,
+    )
+}
+
+/// What a re-issue is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reissue {
+    /// `POST /v1/invitations/{id}/link`: the new link is returned (audited `invitation.link`).
+    Link,
+    /// `POST /v1/invitations/{id}/resend`: the new link is e-mailed (audited `invitation.resend`).
+    Resend,
+}
+
+/// (P5-REFINE-6, C-1069, D-418, SEC-140) Re-issue a pending invitation's link: a new token
+/// replaces the old one (the previous link stops working at once) and the expiry is reset to 7
+/// days, audited in the same transaction with the invitation id and e-mail only. The caller has
+/// already been authorized as an owner or admin of `inv.org_id`. `409 invitation_not_pending` for
+/// an accepted, cancelled or expired invitation.
+pub async fn reissue(
+    state: &AppState,
+    inv: &aurora_db::repo::invitations::InvitationRow,
+    what: Reissue,
+    actor: AuditActor,
+) -> Result<(String, chrono::DateTime<chrono::Utc>), ApiError> {
+    let tok = token::generate(TokenPrefix::Invitation).expose().clone();
+    let mut tx = audit::begin(state).await?;
+    let expires_at = repo::reissue_token(&mut *tx, inv.id, &token::hash(&tok))
+        .await?
+        .ok_or_else(|| {
+            ApiError::conflict(
+                "invitation_not_pending",
+                "This invitation is no longer pending: it was accepted, cancelled or has expired.",
+            )
+        })?;
+    let action = match what {
+        Reissue::Link => "invitation.link",
+        Reissue::Resend => "invitation.resend",
+    };
+    let ev = AuditEvent::new(actor, action, Outcome::Success)
+        .org(inv.org_id)
+        .target("invitation", inv.id)
+        .metadata(serde_json::json!({"email": inv.email}));
+    audit::commit_critical(tx, &ev).await?;
+    let link = join_link(state, &tok);
+    if what == Reissue::Resend {
+        let org_name = orgs::name_of(&state.pool, inv.org_id)
+            .await?
+            .unwrap_or_default();
+        let inviter = inv.invited_by_name.as_deref().unwrap_or("A teammate");
+        mail::send_detached(
+            &state.mailer,
+            invitation_mail(&inv.email, &org_name, inviter, &link),
+        );
+    }
+    Ok((link, expires_at))
 }
 
 /// Public preview: only pending, unexpired invitations are visible.
