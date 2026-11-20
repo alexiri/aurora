@@ -1,6 +1,7 @@
 //! App setup requests (P5-POLISH-4, D-386, C-1030, SEC-135): a person asks the organization's owners
 //! and admins to make an app ready. A request is a record and a notice, never a grant: nothing here
-//! touches availability, OAuth clients or access. No free text is stored.
+//! touches availability, OAuth clients or access. (P5-REFINE-8, C-1081, SEC-135 amended) The only free
+//! text is the asker's `reason` and the decliner's `closed_message`, sanitized and bounded by the API.
 
 use crate::DbError;
 use chrono::{DateTime, Utc};
@@ -21,10 +22,23 @@ pub struct RequestRow {
     pub created_at: DateTime<Utc>,
     pub closed_at: Option<DateTime<Utc>>,
     pub closed_by: Option<Uuid>,
+    /// (C-1081) The decliner's message to the askers.
+    pub closed_message: Option<String>,
+    /// (C-1081) `org_admin` | `instance_admin` | `system`.
+    pub closed_by_role: Option<String>,
+    /// The decliner's display name (never an e-mail).
+    pub closed_by_name: Option<String>,
+    /// (C-1080) A connector of the asked type (any, for none) is `active` on the instance: the chat
+    /// platform's level rule. Computed in the query (always false for the other subjects).
+    pub connector_active: bool,
 }
 
-const SELECT: &str = "SELECT id, org_id, subject, app_id, status, needs, unavailable, created_at, closed_at, closed_by \
-    FROM app_setup_requests";
+const SELECT: &str = "SELECT r.id, r.org_id, r.subject, r.app_id, r.status, r.needs, r.unavailable, \
+    r.created_at, r.closed_at, r.closed_by, r.closed_message, r.closed_by_role, \
+    cu.display_name AS closed_by_name, \
+    (r.subject = 'chat_platform' AND EXISTS (SELECT 1 FROM connectors k WHERE k.status = 'active' \
+        AND (r.app_id = '' OR k.id = r.app_id OR k.type_id = r.app_id))) AS connector_active \
+    FROM app_setup_requests r LEFT JOIN users cu ON cu.id = r.closed_by";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AskerRow {
@@ -33,6 +47,8 @@ pub struct AskerRow {
     pub display_name: String,
     pub workspace_id: Uuid,
     pub asked_at: DateTime<Utc>,
+    /// (C-1081) The asker's own reason.
+    pub reason: Option<String>,
 }
 
 /// The open request of an organization for an app, locked for the rest of the transaction.
@@ -43,7 +59,8 @@ pub async fn open_for_update<'e, E: PgExecutor<'e>>(
     app: &str,
 ) -> Result<Option<RequestRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{SELECT} WHERE org_id = $1 AND subject = $2 AND app_id = $3 AND status = 'open' FOR UPDATE"
+        "{SELECT} WHERE r.org_id = $1 AND r.subject = $2 AND r.app_id = $3 AND r.status = 'open' \
+         FOR UPDATE OF r"
     )))
     .bind(org)
     .bind(subject)
@@ -54,7 +71,7 @@ pub async fn open_for_update<'e, E: PgExecutor<'e>>(
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<RequestRow>, DbError> {
     Ok(
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE id = $1")))
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE r.id = $1")))
             .bind(id)
             .fetch_optional(exec)
             .await?,
@@ -104,21 +121,26 @@ pub async fn set_needs<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
-/// Adds the person's ask (or moves it to the workspace they ask from); true when it is new.
+/// Adds the person's ask (or moves it to the workspace they ask from); true when it is new. (C-1081) A
+/// `reason` replaces the person's stored one; `None` keeps it.
 pub async fn add_asker<'e, E: PgExecutor<'e>>(
     exec: E,
     request: Uuid,
     user: Uuid,
     workspace: Uuid,
+    reason: Option<&str>,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query_scalar(
-        "INSERT INTO app_setup_request_askers (request_id, user_id, workspace_id) VALUES ($1, $2, $3) \
-         ON CONFLICT (request_id, user_id) DO UPDATE SET workspace_id = EXCLUDED.workspace_id \
+        "INSERT INTO app_setup_request_askers (request_id, user_id, workspace_id, reason) \
+         VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (request_id, user_id) DO UPDATE SET workspace_id = EXCLUDED.workspace_id, \
+             reason = COALESCE(EXCLUDED.reason, app_setup_request_askers.reason) \
          RETURNING (xmax = 0)",
     )
     .bind(request)
     .bind(user)
     .bind(workspace)
+    .bind(reason)
     .fetch_one(exec)
     .await?)
 }
@@ -140,20 +162,32 @@ pub async fn remove_asker<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// How a request closes (C-1081): its status, and for a decline who, as which role, with what message.
+#[derive(Debug, Clone, Copy)]
+pub struct Closing<'a> {
+    pub status: &'a str,
+    pub by: Option<Uuid>,
+    /// `org_admin` | `instance_admin` | `system`; `None` for `withdrawn`.
+    pub role: Option<&'a str>,
+    pub message: Option<&'a str>,
+}
+
 /// Closes an open request; false when it was not open.
 pub async fn close<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
-    status: &str,
-    closed_by: Option<Uuid>,
+    how: Closing<'_>,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query(
-        "UPDATE app_setup_requests SET status = $2, closed_at = now(), closed_by = $3, updated_at = now() \
+        "UPDATE app_setup_requests SET status = $2, closed_at = now(), closed_by = $3, \
+             closed_by_role = $4, closed_message = $5, updated_at = now() \
          WHERE id = $1 AND status = 'open'",
     )
     .bind(id)
-    .bind(status)
-    .bind(closed_by)
+    .bind(how.status)
+    .bind(how.by)
+    .bind(how.role)
+    .bind(how.message)
     .execute(exec)
     .await?
     .rows_affected()
@@ -165,9 +199,25 @@ pub async fn askers<'e, E: PgExecutor<'e>>(
     requests: &[Uuid],
 ) -> Result<Vec<AskerRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT a.request_id, a.user_id, u.display_name, a.workspace_id, a.asked_at \
+        "SELECT a.request_id, a.user_id, u.display_name, a.workspace_id, a.asked_at, a.reason \
          FROM app_setup_request_askers a JOIN users u ON u.id = a.user_id \
          WHERE a.request_id = ANY($1) ORDER BY a.asked_at, a.user_id",
+    )
+    .bind(requests)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (C-1080) The people a request was resolved for (they received its `resolved` notice; their ask is
+/// gone): `(request_id, user_id, display_name, notice time)`, oldest first.
+pub async fn resolved_for<'e, E: PgExecutor<'e>>(
+    exec: E,
+    requests: &[Uuid],
+) -> Result<Vec<(Uuid, Uuid, String, DateTime<Utc>)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT n.request_id, n.user_id, u.display_name, n.created_at \
+         FROM app_setup_request_notices n JOIN users u ON u.id = n.user_id \
+         WHERE n.request_id = ANY($1) AND n.kind = 'resolved' ORDER BY n.created_at, n.user_id",
     )
     .bind(requests)
     .fetch_all(exec)
@@ -181,7 +231,8 @@ pub async fn list_org<'e, E: PgExecutor<'e>>(
     status: Option<&str>,
 ) -> Result<Vec<RequestRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{SELECT} WHERE org_id = $1 AND ($2::text IS NULL OR status = $2) ORDER BY updated_at DESC, id LIMIT 500"
+        "{SELECT} WHERE r.org_id = $1 AND ($2::text IS NULL OR r.status = $2) \
+         ORDER BY r.updated_at DESC, r.id LIMIT 500"
     )))
     .bind(org)
     .bind(status)
@@ -189,13 +240,73 @@ pub async fn list_org<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// Every open request, of one organization or of all (the periodic re-evaluation).
+/// (C-1081) Requests closed `resolved` or `declined` in the last `days`, of one organization or of all,
+/// newest first.
+pub async fn closed_within<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Option<Uuid>,
+    days: i32,
+    limit: i64,
+) -> Result<Vec<RequestRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} WHERE r.status IN ('resolved', 'declined') AND ($1::uuid IS NULL OR r.org_id = $1) \
+         AND r.closed_at >= now() - make_interval(days => $2) \
+         ORDER BY r.closed_at DESC, r.id LIMIT $3"
+    )))
+    .bind(org)
+    .bind(days)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (C-1081) The person's own history in an organization: the requests resolved for them (by their
+/// `resolved` notice, the request may still be open for others) and the ones declined with their ask on
+/// them, in the last `days`. `done_at` is when it ended for them; newest first.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MineDone {
+    #[sqlx(flatten)]
+    pub row: RequestRow,
+    pub done_at: DateTime<Utc>,
+    /// It ended because it was resolved for this person (not declined).
+    pub resolved_for_me: bool,
+}
+
+pub async fn history_of_asker<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    user: Uuid,
+    days: i32,
+    limit: i64,
+) -> Result<Vec<MineDone>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT q.*, d.done_at, d.resolved_for_me FROM ({SELECT}) q \
+         JOIN (SELECT n.request_id, n.created_at AS done_at, true AS resolved_for_me \
+                 FROM app_setup_request_notices n WHERE n.user_id = $2 AND n.kind = 'resolved' \
+               UNION ALL \
+               SELECT x.id, x.closed_at, false FROM app_setup_requests x \
+                 JOIN app_setup_request_askers a ON a.request_id = x.id AND a.user_id = $2 \
+                 WHERE x.status = 'declined' AND x.org_id = $1) d ON d.request_id = q.id \
+         WHERE q.org_id = $1 AND d.done_at >= now() - make_interval(days => $3) \
+         ORDER BY d.done_at DESC, q.id LIMIT $4"
+    )))
+    .bind(org)
+    .bind(user)
+    .bind(days)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Every open request, of one organization or of all (the periodic re-evaluation, the feeds and the
+/// counts of C-1080), oldest first.
 pub async fn open_requests<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Option<Uuid>,
 ) -> Result<Vec<RequestRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{SELECT} WHERE status = 'open' AND ($1::uuid IS NULL OR org_id = $1) ORDER BY created_at LIMIT 2000"
+        "{SELECT} WHERE r.status = 'open' AND ($1::uuid IS NULL OR r.org_id = $1) \
+         ORDER BY r.created_at, r.id LIMIT 2000"
     )))
     .bind(org)
     .fetch_all(exec)
@@ -226,9 +337,9 @@ pub async fn open_of_asker<'e, E: PgExecutor<'e>>(
     user: Uuid,
 ) -> Result<Vec<RequestRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{SELECT} WHERE org_id = $1 AND status = 'open' \
-         AND id IN (SELECT request_id FROM app_setup_request_askers WHERE user_id = $2) \
-         ORDER BY updated_at DESC, id LIMIT 100"
+        "{SELECT} WHERE r.org_id = $1 AND r.status = 'open' \
+         AND r.id IN (SELECT request_id FROM app_setup_request_askers WHERE user_id = $2) \
+         ORDER BY r.updated_at DESC, r.id LIMIT 100"
     )))
     .bind(org)
     .bind(user)

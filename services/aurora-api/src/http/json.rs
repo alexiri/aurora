@@ -80,6 +80,35 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for Json<T> {
     }
 }
 
+/// (P5-REFINE-8) An optional JSON body: an empty body is `T::default()`; anything else is read exactly as
+/// [`Json`] (`Content-Type: application/json`, the same 400s), so a route that had no body keeps working
+/// for callers that send none.
+pub struct JsonOrEmpty<T>(pub T);
+
+impl<T: DeserializeOwned + Default, S: Send + Sync> FromRequest<S> for JsonOrEmpty<T> {
+    type Rejection = ApiError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, ApiError> {
+        let (parts, body) = req.into_parts();
+        let bytes = Bytes::from_request(Request::from_parts(parts.clone(), body), state)
+            .await
+            .map_err(|e| {
+                if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                    ApiError::too_large("Request body too large.")
+                } else {
+                    ApiError::invalid_request("Could not read request body.", vec![])
+                }
+            })?;
+        if bytes.iter().all(u8::is_ascii_whitespace) {
+            return Ok(Self(T::default()));
+        }
+        let req = Request::from_parts(parts, axum::body::Body::from(bytes));
+        Json::<T>::from_request(req, state)
+            .await
+            .map(|Json(v)| Self(v))
+    }
+}
+
 pub struct Query<T>(pub T);
 
 impl<T: DeserializeOwned, S: Send + Sync> FromRequestParts<S> for Query<T> {

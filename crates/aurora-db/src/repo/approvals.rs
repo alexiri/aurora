@@ -317,6 +317,29 @@ pub async fn list_pending_for(
     .await?)
 }
 
+/// (P5-REFINE-8, C-1080) Approvals of a workspace the user may decide that a person decided in the last
+/// `days` (the feed's `state=done`), newest decision first.
+pub async fn list_decided_for(
+    pool: &PgPool,
+    user: Uuid,
+    ws: Uuid,
+    days: i32,
+    limit: i64,
+) -> Result<Vec<ApprovalRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} WHERE a.status <> 'pending' AND a.decided_at IS NOT NULL AND {} \
+         AND a.workspace_id = $2 AND a.decided_at >= now() - make_interval(days => $3) \
+         ORDER BY a.decided_at DESC, a.id DESC LIMIT $4",
+        may_decide()
+    )))
+    .bind(user)
+    .bind(ws)
+    .bind(days)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
 async fn notify_tx(
     tx: &mut sqlx::PgConnection,
     id: Uuid,

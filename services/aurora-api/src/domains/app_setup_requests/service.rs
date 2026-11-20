@@ -2,12 +2,21 @@
 //!
 //! A person who cannot connect an app because it needs an organization owner or admin first (no sign-in
 //! app, no server, switched off) asks them. The request is a record and a notice: it changes no
-//! availability, OAuth client or access, it holds no free text, and it is visible only to the
-//! organization's owners and admins (a person sees their own ask and the count). It closes by itself
-//! when the app becomes ready for its askers ([`reevaluate`]), when the last asker withdraws, or when an
-//! owner or admin declines it.
+//! availability, OAuth client or access, and it is visible only to the people who can resolve it at its
+//! level (C-1080: the organization's owners and admins, or instance admins) and to the asker (their own
+//! ask). It closes by itself when the app becomes ready for its askers ([`reevaluate`]), when the last
+//! asker withdraws, or when an admin of its level declines it.
+//!
+//! (P5-REFINE-8, C-1081, SEC-135 amended) The two free texts — the asker's `reason` and the decliner's
+//! `message` — go through [`free_text`]: control and invisible formatting characters removed, line breaks
+//! kept, at most [`FREE_TEXT_MAX`] characters (400 above). They are shown to the people C-1081 names,
+//! quoted in a notice only as its `detail` (never its title), with links defused for mail and push, and
+//! never given to an agent, put in a prompt or audited.
 
-use super::dto::{AppSetupRequest, Asker, NewRequest, Requested};
+use super::dto::{
+    AppSetupRequest, Asker, ClosedBy, ClosedByRole, NewRequest, RequestLevel, Requested,
+};
+use super::level;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::apps::service as apps;
@@ -16,7 +25,7 @@ use crate::domains::auth::mail::Mail;
 use crate::http::auth::{Caller, require_own};
 use aurora_core::{ApiError, dash_paths, ids, sanitize};
 use aurora_db::DbError;
-use aurora_db::repo::app_setup_requests::{self as repo, RequestRow};
+use aurora_db::repo::app_setup_requests::{self as repo, Closing, RequestRow};
 use aurora_db::repo::contacts;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -29,8 +38,16 @@ const SWEEP_LIMIT: i64 = 100;
 pub const SWEEP_EVERY: Duration = Duration::from_secs(600);
 /// Closed requests are purged after this many days (03 §app_setup_requests).
 pub const RETENTION_DAYS: i32 = 90;
+/// (P5-REFINE-8, C-1080/C-1081) Closed requests are *shown* (history, `state=done`) for this many days.
+pub const REQUEST_HISTORY_DAYS: i32 = 30;
 /// A push for a request older than this is noise.
 pub const PUSH_MAX_AGE: Duration = Duration::from_secs(3600);
+/// (C-1081) The most characters a reason or a decline message holds.
+pub const FREE_TEXT_MAX: usize = 300;
+/// (C-1081) The most characters of a reason or a message a notice (mail, push) quotes.
+pub const NOTICE_QUOTE_MAX: usize = 140;
+/// The most rows a history list returns.
+const HISTORY_LIMIT: i64 = 200;
 
 fn need_str(n: SetupNeed) -> &'static str {
     match n {
@@ -40,7 +57,47 @@ fn need_str(n: SetupNeed) -> &'static str {
     }
 }
 
-fn needs_of(v: &serde_json::Value) -> Vec<SetupNeed> {
+/// (C-1081, SEC-135 amended) A reason or a decline message: `None` when absent or empty after cleaning;
+/// control and invisible formatting characters (`sanitize::is_stripped`) removed, runs of spaces
+/// collapsed, line breaks kept (at most two in a row), trimmed; 400 `invalid_request` at `field` when it
+/// is longer than [`FREE_TEXT_MAX`] characters.
+pub fn free_text(field: &str, raw: Option<&str>) -> Result<Option<String>, ApiError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let clean = sanitize::block(raw, usize::MAX);
+    let clean = clean.trim();
+    if clean.is_empty() {
+        return Ok(None);
+    }
+    if clean.chars().count() > FREE_TEXT_MAX {
+        return Err(ApiError::invalid_field(
+            "Invalid request.",
+            field,
+            format!("at most {FREE_TEXT_MAX} characters"),
+        ));
+    }
+    Ok(Some(clean.to_owned()))
+}
+
+/// (C-1081) A free text quoted in a notice's detail (mail and push): one line, the first
+/// [`NOTICE_QUOTE_MAX`] characters, and written so no mail client or push turns an address into a link.
+pub fn quote(text: &str) -> String {
+    sanitize::break_preview_urls(&sanitize::one_line(text, NOTICE_QUOTE_MAX))
+}
+
+/// Who reads a request (C-1081): what they may see of the askers and the decliner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Viewer {
+    /// The asker: only their own ask, never the decliner's name.
+    Asker(Uuid),
+    /// The organization's owners and admins: every ask; the decliner when an owner or admin declined.
+    OrgAdmin,
+    /// Instance admins (Administration): every ask and the decliner.
+    InstanceAdmin,
+}
+
+pub(crate) fn needs_of(v: &serde_json::Value) -> Vec<SetupNeed> {
     v.as_array()
         .into_iter()
         .flatten()
@@ -70,12 +127,27 @@ fn name(s: &str) -> String {
     sanitize::one_line(s, 80)
 }
 
-async fn app_name(state: &AppState, app_id: &str) -> String {
-    match apps::snapshot(state).await {
-        Ok(Some(s)) => apps::find_app(&s, app_id)
-            .map(|(a, _)| sanitize::label(&a.about.name))
-            .unwrap_or_else(|_| sanitize::label(app_id)),
-        _ => sanitize::label(app_id),
+/// An app's name from a snapshot read once (a list reads the registry snapshot once, not per row).
+pub(crate) fn app_name_in(
+    snap: Option<&aurora_registry::snapshot::Snapshot>,
+    app_id: &str,
+) -> String {
+    snap.and_then(|s| apps::find_app(s, app_id).ok())
+        .map_or_else(
+            || sanitize::label(app_id),
+            |(a, _)| sanitize::label(&a.about.name),
+        )
+}
+
+/// The registry snapshot when some of `rows` are apps (one read per list).
+pub(crate) async fn snapshot_for(
+    state: &AppState,
+    rows: &[RequestRow],
+) -> Option<aurora_registry::snapshot::Snapshot> {
+    if rows.iter().any(|r| r.subject == SUBJECT_APP) {
+        apps::snapshot(state).await.ok().flatten()
+    } else {
+        None
     }
 }
 
@@ -114,13 +186,38 @@ async fn org_names(state: &AppState, org: Uuid) -> Result<Names, ApiError> {
     Ok(Names { org_slug, org_name })
 }
 
+/// The label of a request's thing in a sentence: the app's name, "a chat platform" or the connector's
+/// name, "an AI key".
+pub(crate) fn thing_in(
+    snap: Option<&aurora_registry::snapshot::Snapshot>,
+    subject: &str,
+    key: &str,
+) -> String {
+    match subject {
+        SUBJECT_CHAT if key.is_empty() => "a chat platform".to_owned(),
+        SUBJECT_CHAT => chat_label(key),
+        SUBJECT_KEY => "an AI key".to_owned(),
+        _ => app_name_in(snap, key),
+    }
+}
+
+/// "\n\nThey wrote: …" for a notice's detail (C-1081), or nothing.
+fn they_wrote(text: Option<&str>) -> String {
+    text.map_or_else(String::new, |t| format!("\n\nThey wrote: {}", quote(t)))
+}
+
 async fn to_dto(
     state: &AppState,
     rows: Vec<RequestRow>,
-    only: Option<Uuid>,
+    viewer: Viewer,
 ) -> Result<Vec<AppSetupRequest>, ApiError> {
     let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
     let askers = repo::askers(&state.pool, &ids).await?;
+    let only = match viewer {
+        Viewer::Asker(u) => Some(u),
+        _ => None,
+    };
+    let snap = snapshot_for(state, &rows).await;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let (app_id, connector_type, label) = match r.subject.as_str() {
@@ -130,11 +227,28 @@ async fn to_dto(
                 chat_label(&r.app_id),
             ),
             SUBJECT_KEY => (String::new(), None, "An AI key".to_owned()),
-            _ => (r.app_id.clone(), None, app_name(state, &r.app_id).await),
+            _ => (
+                r.app_id.clone(),
+                None,
+                app_name_in(snap.as_ref(), &r.app_id),
+            ),
+        };
+        let role = r.closed_by_role.as_deref().and_then(ClosedByRole::parse);
+        // The decliner's name: never for the asker; for the organization only when one of its owners or
+        // admins declined (C-981: an instance admin is not named outside Administration).
+        let closed_by = match (viewer, role) {
+            (Viewer::InstanceAdmin, Some(ClosedByRole::OrgAdmin | ClosedByRole::InstanceAdmin))
+            | (Viewer::OrgAdmin, Some(ClosedByRole::OrgAdmin)) => {
+                r.closed_by_name.as_deref().map(|n| ClosedBy {
+                    display_name: name(n),
+                })
+            }
+            _ => None,
         };
         out.push(AppSetupRequest {
             id: r.id,
             org_id: r.org_id,
+            level: level::of(&r),
             subject: r.subject,
             connector_type,
             app_name: label,
@@ -148,12 +262,16 @@ async fn to_dto(
                     display_name: a.display_name.clone(),
                     workspace_id: a.workspace_id,
                     asked_at: a.asked_at,
+                    reason: a.reason.clone(),
                 })
                 .collect(),
             needs: needs_of(&r.needs),
             unavailable: r.unavailable,
             created_at: r.created_at,
             closed_at: r.closed_at,
+            message: r.closed_message,
+            closed_by_role: role,
+            closed_by,
         });
     }
     Ok(out)
@@ -168,17 +286,45 @@ fn audit_event(
     app: &str,
     request: Uuid,
 ) -> AuditEvent {
+    audit_event_with(
+        actor,
+        action,
+        org,
+        ws,
+        subject,
+        app,
+        request,
+        serde_json::json!({}),
+    )
+}
+
+/// [`audit_event`] with more metadata (C-1081: `has_reason`, `has_message`, `closed_by_role`; never the
+/// text itself).
+#[allow(clippy::too_many_arguments)]
+fn audit_event_with(
+    actor: AuditActor,
+    action: &'static str,
+    org: Uuid,
+    ws: Option<Uuid>,
+    subject: &str,
+    app: &str,
+    request: Uuid,
+    extra: serde_json::Value,
+) -> AuditEvent {
     let target = if app.is_empty() {
         request.to_string()
     } else {
         app.to_owned()
     };
-    let meta = match subject {
+    let mut meta = match subject {
         SUBJECT_APP => serde_json::json!({ "app_id": app, "request_id": request }),
         SUBJECT_CHAT => serde_json::json!({ "subject": subject,
             "connector_type": (!app.is_empty()).then_some(app), "request_id": request }),
         _ => serde_json::json!({ "subject": subject, "request_id": request }),
     };
+    if let (Some(m), serde_json::Value::Object(x)) = (meta.as_object_mut(), extra) {
+        m.extend(x);
+    }
     let ev = AuditEvent::new(actor, action, Outcome::Success)
         .org(org)
         .target(subject, &target)
@@ -190,13 +336,15 @@ fn audit_event(
 }
 
 /// `POST /workspaces/{ws}/apps/{app}/setup-request`: asks the organization's owners and admins to make
-/// `app_id` ready. Idempotent per person.
+/// `app_id` ready. Idempotent per person; (C-1081) a new `reason` replaces the person's.
 pub async fn ask(
     state: &AppState,
     caller: &Caller,
     ws: Uuid,
     app_id: &str,
+    reason: Option<&str>,
 ) -> Result<AppSetupRequest, ApiError> {
+    let reason = free_text("/reason", reason)?;
     let auth = caller.workspace(state, ws).await?;
     require_own(&auth)?;
     let org = auth.org_id;
@@ -250,7 +398,8 @@ pub async fn ask(
     }
     let req = req.ok_or_else(|| ApiError::internal("The request vanished."))?;
     repo::set_needs(&mut *tx, req.id, &needs_json, unavailable).await?;
-    let new_asker = repo::add_asker(&mut *tx, req.id, caller.user_id, ws).await?;
+    let new_asker =
+        repo::add_asker(&mut *tx, req.id, caller.user_id, ws, reason.as_deref()).await?;
     let sentence = need_sentence(&app_label, &readiness.needs, unavailable);
     let href = format!(
         "{}&app={app_id}",
@@ -261,7 +410,10 @@ pub async fn ask(
         let (title, detail) = if opened {
             (
                 format!("{asker} wants {app_label} in {}", name(&names.org_name)),
-                format!("{asker} asked for {app_label}.\n\n{sentence}"),
+                format!(
+                    "{asker} asked for {app_label}.{}\n\n{sentence}",
+                    they_wrote(reason.as_deref())
+                ),
             )
         } else {
             // Others joined an open request: one digest per hour (the hour is part of the claim).
@@ -274,9 +426,10 @@ pub async fn ask(
                     name(&names.org_name)
                 ),
                 format!(
-                    "{} now want {app_label}: {}.\n\n{sentence}",
+                    "{} now want {app_label}: {}.{}\n\n{sentence}",
                     who.len(),
-                    list.join(", ")
+                    list.join(", "),
+                    they_wrote(reason.as_deref())
                 ),
             )
         };
@@ -288,7 +441,7 @@ pub async fn ask(
     if new_asker {
         audit::record(
             state,
-            audit_event(
+            audit_event_with(
                 AuditActor::from_caller(caller),
                 "app_setup_request.ask",
                 org,
@@ -296,6 +449,7 @@ pub async fn ask(
                 SUBJECT_APP,
                 app_id,
                 req.id,
+                serde_json::json!({ "has_reason": reason.is_some() }),
             ),
         );
     }
@@ -303,8 +457,12 @@ pub async fn ask(
         .await?
         .unwrap_or(req);
     // The asker sees only their own ask (an owner or admin sees them all).
-    let only = (!org_admin).then_some(caller.user_id);
-    to_dto(state, vec![row], only)
+    let viewer = if org_admin {
+        Viewer::OrgAdmin
+    } else {
+        Viewer::Asker(caller.user_id)
+    };
+    to_dto(state, vec![row], viewer)
         .await?
         .pop()
         .ok_or_else(|| ApiError::internal("The request vanished."))
@@ -334,7 +492,17 @@ async fn withdraw_row(
         && let Some(left) = repo::remove_asker(&mut *tx, req.id, caller.user_id).await?
     {
         if left == 0 {
-            repo::close(&mut *tx, req.id, "withdrawn", None).await?;
+            repo::close(
+                &mut *tx,
+                req.id,
+                Closing {
+                    status: "withdrawn",
+                    by: None,
+                    role: None,
+                    message: None,
+                },
+            )
+            .await?;
         }
         tx.commit().await.map_err(DbError::from)?;
         audit::record(
@@ -372,14 +540,57 @@ pub async fn withdraw_by_id(
 }
 
 /// `GET /workspaces/{ws}/requests` (C-1047): the caller's own open requests, each with only their ask.
+/// (C-1081) `status=history`: their own requests that ended in the last 30 days — declined with their
+/// ask on it, or resolved for them (the request may still be open for others: it reads `resolved` with
+/// the time it ended for them) — with the message and the role, never the admin's name.
 pub async fn list_mine(
     state: &AppState,
     caller: &Caller,
     ws: Uuid,
+    status: Option<&str>,
 ) -> Result<Vec<AppSetupRequest>, ApiError> {
+    let history = open_or_history(status)?;
     let auth = caller.workspace(state, ws).await?;
-    let rows = repo::open_of_asker(&state.pool, auth.org_id, caller.user_id).await?;
-    to_dto(state, rows, Some(caller.user_id)).await
+    let me = Viewer::Asker(caller.user_id);
+    if !history {
+        let rows = repo::open_of_asker(&state.pool, auth.org_id, caller.user_id).await?;
+        return to_dto(state, rows, me).await;
+    }
+    let done = repo::history_of_asker(
+        &state.pool,
+        auth.org_id,
+        caller.user_id,
+        REQUEST_HISTORY_DAYS,
+        HISTORY_LIMIT,
+    )
+    .await?;
+    let rows = done
+        .into_iter()
+        .map(|d| {
+            let mut row = d.row;
+            if d.resolved_for_me {
+                row.status = "resolved".to_owned();
+                row.closed_by_role = Some(ClosedByRole::System.as_str().to_owned());
+                row.closed_message = None;
+            }
+            row.closed_at = Some(d.done_at);
+            row
+        })
+        .collect();
+    to_dto(state, rows, me).await
+}
+
+/// `open` (default) or `history` (C-1081); 400 for anything else.
+pub(crate) fn open_or_history(status: Option<&str>) -> Result<bool, ApiError> {
+    match status.unwrap_or("open") {
+        "open" => Ok(false),
+        "history" => Ok(true),
+        _ => Err(ApiError::invalid_field(
+            "Unknown status.",
+            "/status",
+            "open or history",
+        )),
+    }
 }
 
 /// `POST /workspaces/{ws}/requests` (C-1047): the setup request with a subject.
@@ -392,13 +603,14 @@ pub async fn ask_subject(
     let bad = |m: &str, f: &str| {
         ApiError::invalid_request("Invalid request.", vec![aurora_core::FieldError::new(f, m)])
     };
+    let reason = free_text("/reason", body.reason.as_deref())?;
     let (subject, key) = match body.subject.as_str() {
         SUBJECT_APP => {
             let app = body
                 .app_id
                 .filter(|a| !a.is_empty())
                 .ok_or_else(|| bad("required for an app", "/app_id"))?;
-            return ask(state, caller, ws, &app).await;
+            return ask(state, caller, ws, &app, reason.as_deref()).await;
         }
         SUBJECT_CHAT => {
             let t = body.connector_type.unwrap_or_default();
@@ -457,13 +669,18 @@ pub async fn ask_subject(
         req = repo::open_for_update(&mut *tx, org, subject, &key).await?;
     }
     let req = req.ok_or_else(|| ApiError::internal("The request vanished."))?;
-    let new_asker = repo::add_asker(&mut *tx, req.id, caller.user_id, ws).await?;
+    let new_asker =
+        repo::add_asker(&mut *tx, req.id, caller.user_id, ws, reason.as_deref()).await?;
     if opened || new_asker {
         let (kind, title, detail) = if opened {
             (
                 "asked".to_owned(),
                 format!("{asker} wants {label} in {org_name}"),
-                format!("{asker} asked for {label}.\n\n{}", fix_sentence(subject)),
+                format!(
+                    "{asker} asked for {label}.{}\n\n{}",
+                    they_wrote(reason.as_deref()),
+                    fix_sentence(subject)
+                ),
             )
         } else {
             let who = repo::askers(&mut *tx, &[req.id]).await?;
@@ -472,9 +689,10 @@ pub async fn ask_subject(
                 format!("more:{}", Utc::now().format("%Y%m%d%H")),
                 format!("{asker} also wants {label} in {org_name}"),
                 format!(
-                    "{} now want {label}: {}.\n\n{}",
+                    "{} now want {label}: {}.{}\n\n{}",
                     who.len(),
                     list.join(", "),
+                    they_wrote(reason.as_deref()),
                     fix_sentence(subject)
                 ),
             )
@@ -507,7 +725,7 @@ pub async fn ask_subject(
     if new_asker {
         audit::record(
             state,
-            audit_event(
+            audit_event_with(
                 AuditActor::from_caller(caller),
                 "app_setup_request.ask",
                 org,
@@ -515,14 +733,19 @@ pub async fn ask_subject(
                 subject,
                 &key,
                 req.id,
+                serde_json::json!({ "has_reason": reason.is_some() }),
             ),
         );
     }
     let row = repo::open_for_update(&state.pool, org, subject, &key)
         .await?
         .unwrap_or(req);
-    let only = (!auth.org_role.is_admin()).then_some(caller.user_id);
-    to_dto(state, vec![row], only)
+    let viewer = if auth.org_role.is_admin() {
+        Viewer::OrgAdmin
+    } else {
+        Viewer::Asker(caller.user_id)
+    };
+    to_dto(state, vec![row], viewer)
         .await?
         .pop()
         .ok_or_else(|| ApiError::internal("The request vanished."))
@@ -555,38 +778,112 @@ pub async fn list(
 ) -> Result<Vec<AppSetupRequest>, ApiError> {
     require_org_admin(state, caller, org).await?;
     let status = status.unwrap_or("open");
+    if status == "history" {
+        // (C-1081) Closed in the display window, every level of the organization, newest first.
+        let rows = repo::closed_within(&state.pool, Some(org), REQUEST_HISTORY_DAYS, HISTORY_LIMIT)
+            .await?;
+        return to_dto(state, rows, Viewer::OrgAdmin).await;
+    }
     if !["open", "resolved", "declined", "withdrawn"].contains(&status) {
         return Err(ApiError::invalid_request(
             "Unknown status.",
             vec![aurora_core::FieldError::new(
                 "/status",
-                "open, resolved, declined or withdrawn",
+                "open, resolved, declined, withdrawn or history",
             )],
         ));
     }
     let rows = repo::list_org(&state.pool, org, Some(status)).await?;
-    to_dto(state, rows, None).await
+    to_dto(state, rows, Viewer::OrgAdmin).await
 }
 
-/// `POST /orgs/{org}/app-setup-requests/{id}/decline`: "Not now". Tells each asker once.
+/// (C-1081) `GET /admin/requests?status=open|history` (instance admins): the requests whose level is
+/// `administration`, of every organization.
+pub async fn admin_list(
+    state: &AppState,
+    status: Option<&str>,
+) -> Result<Vec<AppSetupRequest>, ApiError> {
+    let rows = if open_or_history(status)? {
+        repo::closed_within(&state.pool, None, REQUEST_HISTORY_DAYS, HISTORY_LIMIT).await?
+    } else {
+        repo::open_requests(&state.pool, None).await?
+    };
+    let rows = rows
+        .into_iter()
+        .filter(|r| level::of(r) == RequestLevel::Administration)
+        .take(HISTORY_LIMIT as usize)
+        .collect();
+    to_dto(state, rows, Viewer::InstanceAdmin).await
+}
+
+/// `POST /orgs/{org}/app-setup-requests/{id}/decline`: "Not now". Tells each asker once. (C-1080) A request
+/// of the Administration level is not the organization's to decline: 404.
 pub async fn decline(
     state: &AppState,
     caller: &Caller,
     org: Uuid,
     id: Uuid,
+    message: Option<&str>,
 ) -> Result<AppSetupRequest, ApiError> {
+    let message = free_text("/message", message)?;
     require_org_admin(state, caller, org).await?;
     let req = repo::get(&state.pool, id)
         .await?
         .filter(|r| r.org_id == org)
+        .filter(|r| level::of(r) == RequestLevel::Organization)
         .ok_or_else(|| ApiError::not_found("Request not found."))?;
-    let app_label = match req.subject.as_str() {
-        SUBJECT_CHAT if req.app_id.is_empty() => "a chat platform".to_owned(),
-        SUBJECT_CHAT => chat_label(&req.app_id),
-        SUBJECT_KEY => "an AI key".to_owned(),
-        _ => app_name(state, &req.app_id).await,
-    };
-    let decliner = name(&repo::asker_name(&state.pool, caller.user_id).await?);
+    close_declined(
+        state,
+        caller,
+        req,
+        ClosedByRole::OrgAdmin,
+        message,
+        AuditActor::from_caller(caller),
+        Viewer::OrgAdmin,
+    )
+    .await
+}
+
+/// (C-1081) `POST /admin/requests/{id}/decline` (instance admins): a request of the Administration level;
+/// 404 for any other.
+pub async fn admin_decline(
+    state: &AppState,
+    caller: &Caller,
+    id: Uuid,
+    message: Option<&str>,
+) -> Result<AppSetupRequest, ApiError> {
+    let message = free_text("/message", message)?;
+    let req = repo::get(&state.pool, id)
+        .await?
+        .filter(|r| level::of(r) == RequestLevel::Administration)
+        .ok_or_else(|| ApiError::not_found("Request not found."))?;
+    close_declined(
+        state,
+        caller,
+        req,
+        ClosedByRole::InstanceAdmin,
+        message,
+        AuditActor::instance_admin(caller),
+        Viewer::InstanceAdmin,
+    )
+    .await
+}
+
+/// Declines an open request as `role`: each asker gets one notice naming the role (D-407), with the
+/// message as "They wrote: …" in its detail (C-1081).
+async fn close_declined(
+    state: &AppState,
+    caller: &Caller,
+    req: RequestRow,
+    role: ClosedByRole,
+    message: Option<String>,
+    actor: AuditActor,
+    viewer: Viewer,
+) -> Result<AppSetupRequest, ApiError> {
+    let org = req.org_id;
+    let id = req.id;
+    let snap = snapshot_for(state, std::slice::from_ref(&req)).await;
+    let thing = thing_in(snap.as_ref(), &req.subject, &req.app_id);
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     let locked = repo::open_for_update(&mut *tx, org, &req.subject, &req.app_id)
         .await?
@@ -598,44 +895,70 @@ pub async fn decline(
         ));
     };
     let askers = repo::askers(&mut *tx, &[locked.id]).await?;
-    repo::close(&mut *tx, locked.id, "declined", Some(caller.user_id)).await?;
+    repo::close(
+        &mut *tx,
+        locked.id,
+        Closing {
+            status: "declined",
+            by: Some(caller.user_id),
+            role: Some(role.as_str()),
+            message: message.as_deref(),
+        },
+    )
+    .await?;
+    let (title, detail) = declined_text(&thing, message.as_deref());
     for a in &askers {
         let ws_slug = contacts::slugs(&state.pool, org, Some(a.workspace_id))
             .await?
             .and_then(|(o, w)| w.map(|w| (o, w)));
         let href = ws_slug.map_or_else(|| "/".to_owned(), |(o, w)| format!("/o/{o}/w/{w}/apps"));
         repo::insert_notice(
-            &mut *tx,
-            locked.id,
-            a.user_id,
-            "declined",
-            &format!("{decliner} isn't setting up {app_label} now"),
-            &format!("{decliner} isn't setting up {app_label} for the organization now."),
-            &href,
+            &mut *tx, locked.id, a.user_id, "declined", &title, &detail, &href,
         )
         .await?;
     }
     tx.commit().await.map_err(DbError::from)?;
     audit::record(
         state,
-        audit_event(
-            AuditActor::from_caller(caller),
+        audit_event_with(
+            actor,
             "app_setup_request.decline",
             org,
             None,
             &req.subject,
             &req.app_id,
             id,
+            serde_json::json!({ "has_message": message.is_some(), "closed_by_role": role.as_str() }),
         ),
     );
     let row = repo::get(&state.pool, id)
         .await?
         .ok_or_else(|| ApiError::internal("The request vanished."))?;
-    to_dto(state, vec![row], None)
+    to_dto(state, vec![row], viewer)
         .await?
         .pop()
         .ok_or_else(|| ApiError::internal("The request vanished."))
 }
+
+/// (C-1081, D-407) The asker's notice of a decline: the role, never the decliner's name; the message's
+/// first 140 characters in the detail only.
+pub fn declined_text(thing: &str, message: Option<&str>) -> (String, String) {
+    (
+        format!("An admin isn't setting up {thing} now"),
+        format!(
+            "An admin isn't setting up {thing} for the organization now.{}",
+            they_wrote(message)
+        ),
+    )
+}
+
+/// A request that closes by itself: the system resolved it (C-1081 `closed_by_role: "system"`).
+const RESOLVED: Closing<'static> = Closing {
+    status: "resolved",
+    by: None,
+    role: Some("system"),
+    message: None,
+};
 
 /// The catalogue's `requested` for every app with an open request: only whether the caller asked and
 /// how many people did.
@@ -745,7 +1068,7 @@ async fn reevaluate_inner(state: &AppState, org: Option<Uuid>) -> Result<(), Api
             .await?;
         }
         if left <= 0 {
-            repo::close(&mut *tx, req.id, "resolved", None).await?;
+            repo::close(&mut *tx, req.id, RESOLVED).await?;
         }
         tx.commit().await.map_err(DbError::from)?;
         audit::record(
@@ -819,7 +1142,7 @@ async fn reevaluate_other(state: &AppState, req: &RequestRow) -> Result<(), ApiE
         .await?;
     }
     if left <= 0 {
-        repo::close(&mut *tx, req.id, "resolved", None).await?;
+        repo::close(&mut *tx, req.id, RESOLVED).await?;
     }
     tx.commit().await.map_err(DbError::from)?;
     audit::record(

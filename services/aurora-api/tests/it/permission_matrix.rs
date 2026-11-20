@@ -736,6 +736,13 @@ const ROWS: &[Row] = &[
         G::Admin,
         false,
     ),
+    // (P5-REFINE-8, C-1080..C-1082) One attention feed per level, the rail counts, and Administration's
+    // requests.
+    r("GET", "/v1/workspaces/{ws}/attention", G::WsUse, false),
+    r("GET", "/v1/orgs/{org}/attention", G::Admin, false),
+    r("GET", "/v1/attention/counts", G::Auth, false),
+    r("GET", "/v1/admin/requests", G::Inst, false),
+    r("POST", "/v1/admin/requests/{id}/decline", G::Inst, false),
     r("GET", "/v1/connectors", G::Auth, false),
     r("GET", "/v1/connectors/{id}/icon", G::Auth, false),
     r("POST", "/v1/apps/{app}/connect", G::Auth, false),

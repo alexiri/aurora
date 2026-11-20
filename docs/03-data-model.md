@@ -689,7 +689,7 @@ The gateway database role's column-level `SELECT (id, status, gateway_instance_i
 | index | (created_at) where `mailed_at IS NULL OR pushed_at IS NULL` | the sweepers' work set; rows older than 30 days are pruned hourly |
 
 ### `app_setup_requests`
-(phase 5, P5-POLISH-4, D-386, C-1030, SEC-135; migration `20261201000255`) A person's ask that the organization's owners and admins make an app ready. A request is a record and a notice: it gives nothing and changes no availability, OAuth client or access. **No free text anywhere in these three tables.**
+(phase 5, P5-POLISH-4, D-386, C-1030, SEC-135; migration `20261201000255`) A person's ask that the organization's owners and admins make an app ready. A request is a record and a notice: it gives nothing and changes no availability, OAuth client or access. **The only free text in these three tables** (P5-REFINE-8, C-1081, SEC-135 amended; migration `20261201000263`) is the asker's `reason` and the decliner's `closed_message`: plain text, 1..300 characters, sanitized by the API on write (control and invisible formatting characters removed), shown only to the people C-1081 names, never given to an agent or put in a prompt, never audited.
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid pk | |
@@ -701,6 +701,8 @@ The gateway database role's column-level `SELECT (id, status, gateway_instance_i
 | unavailable | boolean | the app is switched off for the organization (nothing in `needs` then) |
 | closed_at | timestamptz null | null while open (`created_at`, `updated_at` per §Conventions) |
 | closed_by | uuid null FK→users (set null) | the decliner; null for `resolved` (the system) and `withdrawn` |
+| closed_message | text null CHECK (null or 1..300 characters) | (P5-REFINE-8, C-1081) the decliner's optional message to the askers ("They wrote: …"); null otherwise |
+| closed_by_role | text null CHECK in (`org_admin`,`instance_admin`,`system`) | (P5-REFINE-8, C-1081) who closed it, as a role: a decline from the organization's route (`org_admin`) or Administration's (`instance_admin`), a resolution (`system`); null while open and for `withdrawn`. Migration `20261201000263` backfilled declined rows with a `closed_by` as `org_admin` and resolved rows as `system` |
 Closed rows (with their askers and notices) are deleted 90 days after `closed_at` by the hourly sweep (`app_setup_requests::service::spawn`). The gateway role has no grant on them.
 
 ### `app_setup_request_askers`
@@ -710,6 +712,7 @@ Closed rows (with their askers and notices) are deleted 90 days after `closed_at
 | user_id | uuid FK→users (cascade) | pk part: one ask per person |
 | workspace_id | uuid FK→workspaces (cascade) | where the person asked (the resolution link) |
 | asked_at | timestamptz | |
+| reason | text null CHECK (null or 1..300 characters) | (P5-REFINE-8, C-1081) the asker's optional "Why do you need it?"; a repeat ask with a new reason replaces it; shown to the organization's owners and admins (and instance admins for an Administration-level request) and to the asker |
 A person who withdraws, or for whom the app became ready, loses the row; the request closes (`withdrawn` / `resolved`) when none is left.
 
 ### `app_setup_request_notices`
@@ -719,6 +722,7 @@ One row per (request, recipient, kind): the claims that keep the e-mail and the 
 | request_id, user_id, kind | uuid, uuid, text | primary key |
 | title, detail, href | text not null | fixed sentences built from the app name and display names, and the dashboard path the notice opens (`/o/<org>/apps?tab=…&app=<id>` or the workspace's `/apps`); never a decision link |
 | mailed_at, pushed_at | timestamptz null | claimed (`now()`) by the e-mail sweeper and the push loop with `FOR UPDATE SKIP LOCKED`, then sent; push only for notices younger than an hour |
+| index | (user_id, created_at) where `kind = 'resolved'` | (P5-REFINE-8, migration `20261201000263`) the asker's history: the requests resolved for them (their ask row is gone) |
 
 ### `approval_notifications`
 (phase 2, RFE-011a) One row per (approval, decider) e-mail claim.

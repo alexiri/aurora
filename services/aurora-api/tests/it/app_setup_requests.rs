@@ -218,7 +218,7 @@ async fn an_admin_declines_once_and_each_asker_is_told_once() {
     assert_eq!(declined.len(), 2);
     assert_eq!(
         declined[0].subject,
-        "Adam Admin isn't setting up Linear Like now"
+        "An admin isn't setting up Linear Like now"
     );
     assert_eq!(
         notify_once(&w.h.state).await.unwrap(),

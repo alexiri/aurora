@@ -1376,14 +1376,34 @@
         "tags": [
           "admin"
         ],
-        "summary": "What needs an instance admin's attention (C-1022): decisions first, then informational items.",
+        "summary": "What needs an instance admin's attention (C-1022): decisions first, then informational items.\n(P5-REFINE-8, C-1080) Plus the requests only an instance admin can resolve; `state=done`: those closed\nin the last 30 days.",
         "operationId": "adminAttention",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "description": "`open` (default) | `done` (closed in the last 30 days).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AttentionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -4529,6 +4549,194 @@
             }
           },
           "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/requests": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "(C-1081) The setup requests whose resolving level is Administration (C-1080), of every organization;\n`status=history`: closed in the last 30 days. Instance admins only.",
+        "operationId": "adminListRequests",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`open` (default) | `history` (the last 30 days).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSetupRequestList"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/requests/{id}/decline": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "(C-1081) Decline a request of the Administration level with an optional message; each asker is told\nonce, by role. 404 for a request of the organization level.",
+        "operationId": "adminDeclineRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Request id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/DeclineBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSetupRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already_closed",
             "content": {
               "application/json": {
                 "schema": {
@@ -15747,6 +15955,84 @@
         ]
       }
     },
+    "/v1/attention/counts": {
+      "get": {
+        "tags": [
+          "attention"
+        ],
+        "summary": "(C-1082) The rails' numbers: per level the caller can act on and asked for, the count and the topics,\nequal to the matching feed's `count`; `null` otherwise (never 403 or 404). Any signed-in person.",
+        "operationId": "attentionCounts",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "query",
+            "description": "The organization whose rail asks.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "description": "The workspace whose rail asks.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionCounts"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/auth/cli": {
       "post": {
         "tags": [
@@ -24847,7 +25133,7 @@
         "tags": [
           "apps"
         ],
-        "summary": "The organization's app setup requests (`status=open` by default), the latest ask first. Owners and\nadmins only; anyone else gets 404.",
+        "summary": "The organization's app setup requests (`status=open` by default), the latest ask first. Owners and\nadmins only; anyone else gets 404. (C-1081) `status=history`: closed in the last 30 days, every level.",
         "operationId": "listAppSetupRequests",
         "parameters": [
           {
@@ -24863,7 +25149,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "`open` (default) | `resolved` | `declined` | `withdrawn`.",
+            "description": "`open` (default) | `resolved` | `declined` | `withdrawn` | `history` (closed `resolved` or\n`declined` in the last 30 days, newest first, every level; C-1081).",
             "required": false,
             "schema": {
               "type": [
@@ -24937,7 +25223,7 @@
         "tags": [
           "apps"
         ],
-        "summary": "\"Not now\": closes the request as declined; each asker is told once. Owners and admins only.",
+        "summary": "\"Not now\": closes the request as declined; each asker is told once, by role (D-407). Owners and admins\nonly. (C-1081) An optional body `{ message }` the askers read with the notice; a request of the\nAdministration level is 404 here (C-1080).",
         "operationId": "declineAppSetupRequest",
         "parameters": [
           {
@@ -24961,12 +25247,38 @@
             }
           }
         ],
+        "requestBody": {
+          "description": "Optional",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/DeclineBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AppSetupRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -24992,6 +25304,102 @@
           },
           "409": {
             "description": "already_closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/attention": {
+      "get": {
+        "tags": [
+          "attention"
+        ],
+        "summary": "(C-1080) The requests the organization's owners and admins can resolve. Owners and admins; 404 for a\nnon-member, 403 for a member.",
+        "operationId": "orgAttention",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "`open` (default) | `done` (closed in the last 30 days).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -36732,7 +37140,7 @@
         "tags": [
           "apps"
         ],
-        "summary": "Ask the organization's owners and admins to make an app ready (C-1030). `can_own` of the workspace.\nIdempotent per person; 409 `app_ready` when the app is ready already; 429 after 20 asks in an hour.",
+        "summary": "Ask the organization's owners and admins to make an app ready (C-1030). `can_own` of the workspace.\nIdempotent per person; 409 `app_ready` when the app is ready already; 429 after 20 asks in an hour.\n(C-1081) An optional body `{ reason }` (plain text, at most 300 characters); a new reason replaces the\nperson's.",
         "operationId": "askAppSetup",
         "parameters": [
           {
@@ -36755,12 +37163,38 @@
             }
           }
         ],
+        "requestBody": {
+          "description": "Optional",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AskBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AppSetupRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -36852,6 +37286,93 @@
         "responses": {
           "204": {
             "description": "Withdrawn"
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/attention": {
+      "get": {
+        "tags": [
+          "attention"
+        ],
+        "summary": "(P5-REFINE-8, C-1080) What needs the caller in a workspace: approvals they may decide, agents' access\nrequests (workspace owners), accounts that stopped working, and their own waiting requests (`own`,\nnever counted). Any active member; 404 otherwise.",
+        "operationId": "workspaceAttention",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "`open` (default) | `done` (closed in the last 30 days).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthenticated: no credential, or an invalid or expired one",
@@ -38590,7 +39111,7 @@
         "tags": [
           "apps"
         ],
-        "summary": "The caller's own open requests of every subject, each with only their own ask (C-1047).",
+        "summary": "The caller's own open requests of every subject, each with only their own ask (C-1047). (C-1081)\n`status=history`: theirs that ended in the last 30 days, with the message and the role, never a name.",
         "operationId": "listMySetupRequests",
         "parameters": [
           {
@@ -38602,6 +39123,18 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`open` (default) | `history` (the last 30 days).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -38610,6 +39143,15 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AppSetupRequestList"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -38657,7 +39199,7 @@
         "tags": [
           "apps"
         ],
-        "summary": "Ask the organization's admins for a chat platform or an AI key (or, with `subject: \"app\"`, for an app),\nC-1047. Any active member of the workspace. Idempotent per person; 409 `already_available`; 429 after\n20 asks in an hour (all subjects together).",
+        "summary": "Ask the organization's admins for a chat platform or an AI key (or, with `subject: \"app\"`, for an app),\nC-1047. Any active member of the workspace. Idempotent per person; 409 `already_available`; 429 after\n20 asks in an hour (all subjects together). (C-1081) An optional `reason`.",
         "operationId": "askSetupRequest",
         "parameters": [
           {
@@ -42260,7 +42802,7 @@
       },
       "AppSetupRequest": {
         "type": "object",
-        "description": "An organization's request for an app to be made ready (C-1030). There is no free text.",
+        "description": "An organization's request for an app to be made ready (C-1030).",
         "required": [
           "id",
           "org_id",
@@ -42271,7 +42813,8 @@
           "askers",
           "needs",
           "unavailable",
-          "created_at"
+          "created_at",
+          "level"
         ],
         "properties": {
           "app_id": {
@@ -42296,6 +42839,28 @@
             ],
             "format": "date-time"
           },
+          "closed_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClosedBy",
+                "description": "(C-1081) The decliner, for owners, admins and instance admins of the level that declined it only;\nnever for the asker."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_by_role": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClosedByRole",
+                "description": "(C-1081) Who closed it, as a role."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "connector_type": {
             "type": [
               "string",
@@ -42310,6 +42875,17 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "level": {
+            "$ref": "#/components/schemas/RequestLevel",
+            "description": "(P5-REFINE-8, C-1080) The level that can resolve it."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1081) The decliner's message to the askers: plain text, at most 300 characters."
           },
           "needs": {
             "type": "array",
@@ -43093,6 +43669,20 @@
           }
         }
       },
+      "AskBody": {
+        "type": "object",
+        "description": "(C-1081) The optional body of `POST /workspaces/{ws}/apps/{app}/setup-request`.",
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the person needs it: plain text, 1..300 characters after trimming."
+          }
+        },
+        "additionalProperties": false
+      },
       "AskedBy": {
         "oneOf": [
           {
@@ -43200,6 +43790,13 @@
           "display_name": {
             "type": "string"
           },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-REFINE-8, C-1081) The asker's own \"Why do you need it?\": plain text, at most 300 characters.\nOwners, admins and instance admins see every asker's; a member sees only their own ask."
+          },
           "user_id": {
             "type": "string",
             "format": "uuid"
@@ -43300,19 +43897,153 @@
           }
         }
       },
+      "AttentionAction": {
+        "type": "object",
+        "description": "(C-1080) The one primary action.",
+        "required": [
+          "label",
+          "href"
+        ],
+        "properties": {
+          "href": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "AttentionActor": {
+        "type": "object",
+        "description": "(C-1080) A person behind an item: display name only, never an e-mail.",
+        "required": [
+          "user_id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AttentionCounts": {
+        "type": "object",
+        "description": "`GET /attention/counts` (C-1082): `null` for every scope the caller cannot act on or did not ask for.",
+        "properties": {
+          "administration": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LevelCount"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "organization": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OrgCount"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workspace": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceCount"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "AttentionItem": {
         "type": "object",
-        "description": "One thing that needs an instance admin: a fixed sentence filled with names and versions.",
+        "description": "One thing that needs someone at a level: a fixed sentence filled with names (C-1022, C-1080).",
         "required": [
+          "id",
           "kind",
+          "level",
+          "topic",
           "subject_id",
           "title",
           "detail",
           "since",
           "href",
-          "decision"
+          "decision",
+          "actors",
+          "actors_total",
+          "own",
+          "can_decline",
+          "state"
         ],
         "properties": {
+          "action": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttentionAction",
+                "description": "(C-1080) The one primary action; null when the caller cannot act (\"Ask <role>\" is in `detail`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionActor"
+            },
+            "description": "(C-1080) The askers (at most 5, oldest first); empty for kinds without people."
+          },
+          "actors_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(C-1080) How many askers in all."
+          },
+          "can_decline": {
+            "type": "boolean",
+            "description": "(C-1080) The caller may decline it (request kinds at the caller's level)."
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(C-1080) `state=done`: when it closed."
+          },
+          "closed_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClosedBy",
+                "description": "(C-1080) The decliner, only for viewers who may act at that level; never for the asker."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_by_role": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClosedByRole",
+                "description": "(C-1080, C-1081) Who closed it, as a role."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "decision": {
             "type": "boolean",
             "description": "The administrator has to decide (approve, reject, choose); informational items are `false`."
@@ -43322,22 +44053,56 @@
           },
           "href": {
             "type": "string",
-            "description": "The dashboard page that resolves it."
+            "description": "The dashboard page that resolves it (equals `action.href` when there is an action)."
+          },
+          "id": {
+            "type": "string",
+            "description": "(C-1080) Stable: the request id for request kinds, `<kind>:<subject_id>` for the others."
           },
           "kind": {
             "$ref": "#/components/schemas/AttentionKind"
+          },
+          "level": {
+            "$ref": "#/components/schemas/AttentionLevel",
+            "description": "(C-1080)"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1080, C-1081) The decline message (plain text, at most 300 characters)."
+          },
+          "own": {
+            "type": "boolean",
+            "description": "(C-1080) The caller's own request (`my_request`); never counted."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1080, C-1081) The first asker's reason (plain text, at most 300 characters); null otherwise."
           },
           "since": {
             "type": "string",
             "format": "date-time",
             "description": "When the item first appeared (or the row last changed, for an item that predates the notice table)."
           },
+          "state": {
+            "$ref": "#/components/schemas/AttentionState",
+            "description": "(C-1080)"
+          },
           "subject_id": {
             "type": "string",
-            "description": "The connector id, the package or source id, or the organization slug."
+            "description": "The connector id, the package or source id, the organization slug, the request, approval,\naccess request or account id."
           },
           "title": {
             "type": "string"
+          },
+          "topic": {
+            "type": "string",
+            "description": "(C-1080) The rail's page that resolves it: `chat-platforms`, `apps`, `ai-models`, `people`,\n`approvals`, `accounts`."
           }
         }
       },
@@ -43350,16 +44115,38 @@
           "addon_key_changed",
           "host_claim_conflict",
           "connector_down",
-          "ownerless_org"
+          "ownerless_org",
+          "app_request",
+          "chat_platform_request",
+          "ai_key_request",
+          "approval",
+          "access_request",
+          "broken_account",
+          "my_request"
+        ]
+      },
+      "AttentionLevel": {
+        "type": "string",
+        "description": "(C-1080) The level an item belongs to.",
+        "enum": [
+          "workspace",
+          "organization",
+          "administration"
         ]
       },
       "AttentionList": {
         "type": "object",
-        "description": "`GET /v1/admin/attention` (C-1022): decisions first, oldest first; computed on read.",
+        "description": "`GET /v1/admin/attention` (C-1022), `GET /v1/workspaces/{ws}/attention` and `GET /v1/orgs/{org}/attention`\n(C-1080): decisions first, oldest first; `state=done` newest first; computed on read.",
         "required": [
-          "items"
+          "items",
+          "count"
         ],
         "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(C-1080) What the rail shows: the open items with `own: false`."
+          },
           "items": {
             "type": "array",
             "items": {
@@ -43367,6 +44154,15 @@
             }
           }
         }
+      },
+      "AttentionState": {
+        "type": "string",
+        "description": "(C-1080) `open`, or for `state=done`: `done` (resolved, decided) or `declined`.",
+        "enum": [
+          "open",
+          "done",
+          "declined"
+        ]
       },
       "AuditEntry": {
         "type": "object",
@@ -44054,6 +44850,27 @@
             }
           }
         }
+      },
+      "ClosedBy": {
+        "type": "object",
+        "description": "(C-1081) The person who declined, by display name only.",
+        "required": [
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          }
+        }
+      },
+      "ClosedByRole": {
+        "type": "string",
+        "description": "(P5-REFINE-8, C-1081) Who closed a request, as a role (D-407: never a name for the asker).",
+        "enum": [
+          "org_admin",
+          "instance_admin",
+          "system"
+        ]
       },
       "ComputerView": {
         "type": "object",
@@ -46873,6 +47690,20 @@
             "$ref": "#/components/schemas/Decision"
           }
         }
+      },
+      "DeclineBody": {
+        "type": "object",
+        "description": "(C-1081) The optional body of a decline.",
+        "properties": {
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A message the askers read with the notice: plain text, 1..300 characters after trimming."
+          }
+        },
+        "additionalProperties": false
       },
       "DefaultAction": {
         "type": "string",
@@ -50908,6 +51739,32 @@
           "act"
         ]
       },
+      "LevelCount": {
+        "type": "object",
+        "description": "One level's rail number and its topics.",
+        "required": [
+          "count",
+          "topics"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "C-1080's `count` for the level."
+          },
+          "topics": {
+            "type": "object",
+            "description": "The open items per `topic` (only topics with items).",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "LevelHints": {
         "type": "object",
         "description": "(P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's own token screen for one access level, in\nthe app's own words (\"Contents · Read\"). For a token method the levels are the journey's `read` and `write`.",
@@ -52642,6 +53499,13 @@
             ],
             "description": "Subject `chat_platform`: the connector type id (optional)."
           },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1081) Why the person needs it: plain text, 1..300 characters after trimming (optional)."
+          },
           "subject": {
             "type": "string",
             "description": "`app` | `chat_platform` | `ai_key`."
@@ -53176,6 +54040,34 @@
             },
             "description": "Org default source list (≤32 CIDRs, each inside the instance default when that is set).",
             "default": []
+          }
+        }
+      },
+      "OrgCount": {
+        "type": "object",
+        "required": [
+          "org_id",
+          "count",
+          "topics"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "topics": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         }
       },
@@ -62049,6 +62941,14 @@
           }
         }
       },
+      "RequestLevel": {
+        "type": "string",
+        "description": "(P5-REFINE-8, C-1080) The level that can resolve a request; computed on read, never stored.",
+        "enum": [
+          "organization",
+          "administration"
+        ]
+      },
       "RequestLogEntry": {
         "type": "object",
         "required": [
@@ -68688,6 +69588,34 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "WorkspaceCount": {
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "count",
+          "topics"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "topics": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },

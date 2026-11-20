@@ -628,7 +628,7 @@ async fn the_guide_is_filled_in_for_a_workspace_owner() {
     assert!(g.contains(&format!("Setup: {setup}")), "{g}");
     assert!(g.contains(&format!("Clients: {setup}")), "{g}");
     assert!(
-        g.contains("Hosted: Self-hosted apps (ask an organization admin: Adam Admin)"),
+        g.contains("Hosted: Self-hosted apps (ask an organization admin)"),
         "{g}"
     );
     assert!(
@@ -723,11 +723,11 @@ async fn a_plain_member_sees_the_external_id_and_who_to_ask() {
     assert_eq!(s, 200, "{g}");
     assert!(g.contains(&format!("External id: `{o}`")), "{g}");
     assert!(
-        g.contains("Setup: the app's setup page (ask a workspace owner: Adam Admin, Wendy Owner)"),
+        g.contains("Setup: the app's setup page (ask a workspace owner)"),
         "{g}"
     );
     assert!(
-        g.contains("Clients: OAuth clients (ask an organization admin: Adam Admin)"),
+        g.contains("Clients: OAuth clients (ask an organization admin)"),
         "{g}"
     );
     // Someone outside the organization learns nothing about it: not found, no id.
@@ -791,6 +791,9 @@ async fn an_unknown_placeholder_is_refused_when_the_package_is_uploaded() {
 
 #[path = "app_setup_requests.rs"]
 mod requests;
+
+#[path = "attention_feed.rs"]
+mod attention_feed;
 
 // ---- P5-POLISH-3 (D-388, C-1029): readiness in the catalogue ----
 

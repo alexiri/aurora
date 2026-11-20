@@ -51,14 +51,20 @@ async fn list_users(
 }
 
 /// What needs an instance admin's attention (C-1022): decisions first, then informational items.
+/// (P5-REFINE-8, C-1080) Plus the requests only an instance admin can resolve; `state=done`: those closed
+/// in the last 30 days.
 #[utoipa::path(get, path = "/admin/attention", operation_id = "adminAttention", tag = "admin",
-    responses((status = 200, body = AttentionList), (status = 403, body = ErrorEnvelope)),
+    params(AttentionQuery),
+    responses((status = 200, body = AttentionList), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn attention(
     _c: InstanceAdmin,
     State(s): State<AppState>,
+    Query(q): Query<AttentionQuery>,
 ) -> Result<Json<AttentionList>, ApiError> {
-    Ok(Json(super::attention::list(&s).await?))
+    let done = crate::domains::attention::service::parse_state(q.state.as_deref())?;
+    Ok(Json(super::attention::list(&s, done).await?))
 }
 
 /// Grant/revoke instance-admin, disable/enable a user.

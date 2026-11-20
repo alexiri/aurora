@@ -1,4 +1,5 @@
 //! Single integration-test binary for this crate (OPS-016): one link instead of one per file.
+mod app_setup_request_reason_migration;
 mod authz_groups;
 mod counters_build;
 mod db;

@@ -11,7 +11,7 @@
 
 use crate::app::AppState;
 use crate::http::auth::Caller;
-use crate::http::who_can::{self, WhoCanRole};
+use crate::http::who_can::WhoCanRole;
 use aurora_core::{ApiError, dash_paths};
 use aurora_db::repo::{connections, contacts};
 use aurora_registry::guide;
@@ -22,12 +22,8 @@ use uuid::Uuid;
 pub enum Target {
     /// A link the caller can open.
     Link { label: String, path: String },
-    /// A page the caller cannot open: who can (role, at most three names).
-    Ask {
-        label: String,
-        role: WhoCanRole,
-        people: Vec<String>,
-    },
+    /// A page the caller cannot open: the role that can (P5-REFINE-8, D-407: a role, never a person).
+    Ask { label: String, role: WhoCanRole },
 }
 
 /// Everything [`render`] substitutes.
@@ -111,18 +107,8 @@ fn target_text(t: &Target, base: &str) -> String {
             let url = format!("{}{path}", base.trim_end_matches('/'));
             format!("[{}]({})", escape(label), link_url(&url))
         }
-        Target::Ask {
-            label,
-            role,
-            people,
-        } => {
-            let who = if people.is_empty() {
-                role_words(*role).to_owned()
-            } else {
-                let names: Vec<_> = people.iter().map(|p| escape(p)).collect();
-                format!("{}: {}", role_words(*role), names.join(", "))
-            };
-            format!("{} (ask {who})", escape(label))
+        Target::Ask { label, role } => {
+            format!("{} (ask {})", escape(label), role_words(*role))
         }
     }
 }
@@ -152,7 +138,6 @@ enum Level {
     None,
     Workspace {
         org: Uuid,
-        workspace: Uuid,
         org_slug: String,
         ws_slug: String,
         owner: bool,
@@ -165,25 +150,10 @@ enum Level {
     },
 }
 
-async fn ask(
-    state: &AppState,
-    label: &str,
-    role: WhoCanRole,
-    org: Option<Uuid>,
-    workspace: Option<Uuid>,
-) -> Target {
-    let people = match org {
-        Some(org) => who_can::people(state, role, org, workspace)
-            .await
-            .into_iter()
-            .map(|p| p.name)
-            .collect(),
-        None => Vec::new(),
-    };
+fn ask(label: &str, role: WhoCanRole) -> Target {
     Target::Ask {
         label: label.to_owned(),
         role,
-        people,
     }
 }
 
@@ -212,7 +182,6 @@ pub async fn resolve(
                 .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
             Level::Workspace {
                 org: a.org_id,
-                workspace: ws,
                 org_slug,
                 ws_slug: ws_slug.unwrap_or_default(),
                 owner: a.can_own(),
@@ -233,10 +202,9 @@ pub async fn resolve(
         (None, None) => Level::None,
     };
     let instance_admin = caller.is_instance_admin;
-    let (org, workspace) = match &level {
-        Level::None => (None, None),
-        Level::Workspace { org, workspace, .. } => (Some(*org), Some(*workspace)),
-        Level::Org { org, .. } => (Some(*org), None),
+    let org = match &level {
+        Level::None => None,
+        Level::Workspace { org, .. } | Level::Org { org, .. } => Some(*org),
     };
     let external_id = match org {
         Some(org) => connections::org_external_id(&state.pool, org).await?,
@@ -272,26 +240,8 @@ pub async fn resolve(
             label: format!("{app_name} setup"),
             path: dash_paths::org_app_setup(org_slug, app_id),
         },
-        Level::Workspace { .. } => {
-            ask(
-                state,
-                "the app's setup page",
-                WhoCanRole::WorkspaceOwner,
-                org,
-                workspace,
-            )
-            .await
-        }
-        _ => {
-            ask(
-                state,
-                "the app's setup page",
-                WhoCanRole::OrgAdmin,
-                org,
-                None,
-            )
-            .await
-        }
+        Level::Workspace { .. } => ask("the app's setup page", WhoCanRole::WorkspaceOwner),
+        _ => ask("the app's setup page", WhoCanRole::OrgAdmin),
     };
 
     let oauth_clients = if instance_admin {
@@ -317,7 +267,7 @@ pub async fn resolve(
             path: dash_paths::ws_app_setup(org_slug, ws_slug, app_id),
         }
     } else {
-        ask(state, "OAuth clients", WhoCanRole::OrgAdmin, org, None).await
+        ask("OAuth clients", WhoCanRole::OrgAdmin)
     };
 
     let self_hosted = if instance_admin {
@@ -331,7 +281,7 @@ pub async fn resolve(
             path: dash_paths::org_self_hosted(slug),
         }
     } else {
-        ask(state, "Self-hosted apps", WhoCanRole::OrgAdmin, org, None).await
+        ask("Self-hosted apps", WhoCanRole::OrgAdmin)
     };
 
     let packages = if instance_admin {
@@ -340,7 +290,7 @@ pub async fn resolve(
             path: dash_paths::admin_apps("packages"),
         }
     } else {
-        ask(state, "Packages", WhoCanRole::InstanceAdmin, org, None).await
+        ask("Packages", WhoCanRole::InstanceAdmin)
     };
 
     Ok(GuideValues {
@@ -368,19 +318,16 @@ mod tests {
                 path: "/o/acme/w/web/apps/demo".into(),
             },
             oauth_clients: Target::Ask {
-                label: "OAuth clients".into(),
+                label: "OAuth *clients*".into(),
                 role: WhoCanRole::OrgAdmin,
-                people: vec!["Ana *B*".into(), "Bo".into()],
             },
             self_hosted: Target::Ask {
                 label: "Self-hosted apps".into(),
                 role: WhoCanRole::OrgAdmin,
-                people: vec![],
             },
             packages: Target::Ask {
                 label: "Packages".into(),
                 role: WhoCanRole::InstanceAdmin,
-                people: vec![],
             },
         }
     }
@@ -391,7 +338,7 @@ mod tests {
         let out = render(raw, &values(Some("ext`*[x](y)")));
         assert_eq!(
             out,
-            "`https://aurora.example/v1/oauth/callback` | ``ext`*[x](y)`` | [Demo setup](https://aurora.example/o/acme/w/web/apps/demo) | OAuth clients (ask an organization admin: Ana \\*B\\*, Bo) | Self-hosted apps (ask an organization admin) | Packages (ask an administrator of this Aurora instance)"
+            "`https://aurora.example/v1/oauth/callback` | ``ext`*[x](y)`` | [Demo setup](https://aurora.example/o/acme/w/web/apps/demo) | OAuth \\*clients\\* (ask an organization admin) | Self-hosted apps (ask an organization admin) | Packages (ask an administrator of this Aurora instance)"
         );
         // A non-member gets the sentence, not the id.
         assert_eq!(

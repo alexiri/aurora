@@ -185,6 +185,7 @@
     ],
     "app_setup_request_askers": [
       "asked_at",
+      "reason",
       "request_id",
       "user_id",
       "workspace_id"
@@ -203,6 +204,8 @@
       "app_id",
       "closed_at",
       "closed_by",
+      "closed_by_role",
+      "closed_message",
       "id",
       "needs",
       "org_id",
@@ -1772,6 +1775,7 @@
     },
     "app_setup_request_askers": {
       "asked_at": "timestamptz",
+      "reason": "text null",
       "request_id": "uuid",
       "user_id": "uuid",
       "workspace_id": "uuid"
@@ -1790,6 +1794,8 @@
       "app_id": "text",
       "closed_at": "timestamptz null",
       "closed_by": "uuid null",
+      "closed_by_role": "text null",
+      "closed_message": "text null",
       "id": "uuid not null",
       "needs": "jsonb",
       "org_id": "uuid",
