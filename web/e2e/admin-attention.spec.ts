@@ -57,6 +57,8 @@ for (const width of [1280, 390]) {
 
       test(`a connector with an update waiting shows Running and a second chip (${scheme})`, async ({ page }) => {
         await open(page, "/admin/chat-platforms", scheme, { "/v1/admin/connectors": { items: [pendingConnector] } });
+        // (P5-REFINE-18 #7) The connector cards sit in the closed Advanced fold under the platforms list.
+        await page.getByText(/Advanced · connector hosts/).click();
         const card = page.getByRole("listitem").filter({ hasText: "Mattermost" }).first();
         await expect(card.getByTestId("status-chip")).toHaveText("Running");
         await expect(card.getByTestId("update-pending-chip")).toHaveText("Update waiting for approval");

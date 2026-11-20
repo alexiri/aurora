@@ -13,7 +13,8 @@ export async function openConnectorScreen(page: Page, screen: ConnectorScreen, s
   await openRoute(page, "/admin/connectors", scheme);
   if (screen === "list") return;
   if (screen === "detail") {
-    await page.getByRole("button", { name: "Manage Mattermost" }).click();
+    // The platforms list and the closed Advanced fold both have a Manage button; the list's comes first.
+    await page.getByRole("button", { name: "Manage Mattermost" }).first().click();
     await page.getByLabel("Callback URL").waitFor();
     return;
   }

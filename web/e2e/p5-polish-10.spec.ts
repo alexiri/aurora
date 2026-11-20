@@ -152,7 +152,7 @@ for (const scheme of ["light", "dark"] as const) {
         const dialog = page.getByRole("dialog", { name: "Add an organization AI key" });
         const form = dialog.getByRole("form", { name: "New LLM key" });
         await form.getByLabel("Name").fill("AIGW key");
-        await form.getByLabel("Which service is this key for?").selectOption("litellm");
+        await form.getByLabel("Provider").selectOption("litellm");
         await form.getByLabel("API key", { exact: true }).fill("sk-test-key");
         await dialog.getByRole("button", { name: "Add key" }).click();
         // The checklist stays, with its toast; the health view is not shown (the try-it step is still open).
