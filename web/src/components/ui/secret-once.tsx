@@ -66,7 +66,7 @@ export function SecretBox({
         <code
           data-testid="secret-key"
           tabIndex={0}
-          aria-label="Secret"
+          aria-label="Value shown once"
           className="block min-w-0 flex-1 select-all overflow-x-auto whitespace-nowrap rounded-control border border-line bg-subtle p-3 font-mono text-sm text-ink"
         >
           {secret}

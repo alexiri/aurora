@@ -181,6 +181,7 @@ owner cannot be demoted or removed).
 | guide_dismissed | uuid[] not null default `{}` | workspaces whose getting-started guide the person dismissed (≤ 200) |
 | tour_completed_at | timestamptz null | when the navigation tour was finished or skipped; `null` = not yet |
 | notices_seen | text[] not null default `{renames-2026-11}` CHECK ≤ 50 | (phase 5, P5-IA-1, C-987) keys of one-time notices the person has dismissed, at most `ONBOARDING_NOTICES_MAX` (50). The migration gave every existing person a row with `{}` and then set the default, so only people who used the dashboard before see "Pages have new names"; a person without a row is answered as having seen it |
+| more_controls | boolean not null default false | (phase 5, P5-REFINE-3, C-1056, D-406) the person's "Show more controls" switch: whether the dashboard shows Expert-level controls; per person, follows them across browsers |
 
 ### `workspace_access`
 | Column | Type | Notes |

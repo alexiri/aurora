@@ -86,6 +86,10 @@ function mockFetch() {
           memberships,
         });
       }
+      if (p === "/v1/me/onboarding" && req?.method === "PATCH") {
+        const body = (await req.clone().json()) as { more_controls: boolean };
+        return json(200, { welcome_seen: true, guide_dismissed: [], tour_completed_at: null, notices_seen: [], more_controls: body.more_controls });
+      }
       if (p === "/v1/orgs") return json(200, { items: [users, acme] });
       if (p === "/v1/resolve") {
         const slug = url.searchParams.get("org");
@@ -281,6 +285,20 @@ describe("account menu", () => {
     const trigger = await screen.findByRole("button", { name: /Bob Builder/ });
     fireEvent.keyDown(trigger, { key: "Enter" });
   }
+
+  it("has the per-person Show more controls switch above Show me around; toggling it does not close the menu (D-406)", async () => {
+    onWorkspace();
+    await openMenu();
+    const sw = await screen.findByRole("menuitemcheckbox", { name: "Show more controls" });
+    // The test client starts with the switch on (tests/support/render.tsx).
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    const order = [...document.querySelectorAll("[role^='menuitem']")].map((i) => i.textContent);
+    expect(order.indexOf("Show more controls")).toBeLessThan(order.indexOf("Show me around"));
+    fireEvent.click(sw);
+    // Optimistic: it reads off at once; the menu is still open.
+    await waitFor(() => expect(screen.getByRole("menuitemcheckbox", { name: "Show more controls" })).toHaveAttribute("aria-checked", "false"));
+    expect(screen.getByText("bob@example.org")).toBeInTheDocument();
+  });
 
   it("is headed by the display name and e-mail, with Sign out apart", async () => {
     onWorkspace();

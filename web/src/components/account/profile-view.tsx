@@ -15,6 +15,8 @@ import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Section } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
+import { SwitchField } from "@/components/ui/switch";
+import { useMoreControls } from "@/lib/api/use-more-controls";
 import { useUpdateMe } from "@/lib/api/account";
 import { fieldErrors } from "@/lib/api/errors";
 import { usePatchOnboarding } from "@/lib/api/onboarding";
@@ -172,9 +174,34 @@ export function ProfileView() {
       <Section id="getting-started" title="Getting started" description="Replay the introduction to Aurora." card>
         <GettingStartedControls />
       </Section>
+      <Section id="controls" title="Controls" card>
+        <MoreControlsSwitch />
+      </Section>
       <Section id="appearance" title="Appearance" description="Stored in this browser only." card>
         <ThemeSwitch />
       </Section>
+    </div>
+  );
+}
+
+/** (P5-REFINE-3, D-406) The per-person switch, stored server-side so it follows the person across browsers. */
+function MoreControlsSwitch() {
+  const { more, setMore, pending, error } = useMoreControls();
+  return (
+    <div className="space-y-2">
+      <SwitchField
+        id="acc-more-controls"
+        label="Show more controls"
+        hint="Shows Terminal, Tests, model settings and other expert controls. You only see what your role allows."
+        checked={more}
+        onChange={setMore}
+        disabled={pending}
+      />
+      {error ? (
+        <p role="alert" className="text-sm text-danger-ink">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

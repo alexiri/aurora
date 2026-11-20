@@ -191,7 +191,8 @@ describe("SshPage", () => {
 
   it("shows the empty host-key notice while no terminator is live, and the CLI command", async () => {
     base();
-    wrap(<SshPage agentId={AGENT} frozen={false} />);
+    // The CLI snippet is Expert (D-406, `fold.cli`).
+    wrap(<SshPage agentId={AGENT} frozen={false} />, { moreControls: true });
     await screen.findByText(/no SSH server is running/);
     expect(screen.getByLabelText("the aurora ssh command").textContent).toBe(`aurora ssh ${AGENT}`);
     expect(screen.getByLabelText("the ssh command").textContent).toBe(

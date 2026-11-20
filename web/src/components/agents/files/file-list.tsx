@@ -130,10 +130,10 @@ export function FileList({ agent, entries, actions, now }: { agent: string; entr
               <Td cell="title">
                 <NameCell entry={e} onOpen={actions.onOpen} />
               </Td>
-              <Td className="whitespace-nowrap text-right tabular-nums text-ink-2 max-[899px]:text-left max-[899px]:text-xs max-[899px]:text-muted">
+              <Td className="whitespace-nowrap text-right tabular-nums text-ink-2 max-stack:text-xs max-stack:text-muted">
                 {e.kind === "dir" || e.kind === "symlink" ? "—" : humanSize(e.size)}
               </Td>
-              <Td className="whitespace-nowrap text-ink-2 max-[899px]:text-xs max-[899px]:text-muted">
+              <Td className="whitespace-nowrap text-ink-2 max-stack:text-xs max-stack:text-muted">
                 {now === undefined ? <When value={e.modified_at} /> : <span title={e.modified_at ? formatExact(e.modified_at) : undefined}>{formatWhen(e.modified_at, { now })}</span>}
               </Td>
               <Td cell="actions" className="w-px text-right">

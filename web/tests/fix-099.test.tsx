@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-q
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { json } from "./support/api";
+import { seedMoreControls } from "./support/render";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "ops", handle: "scout" }),
@@ -150,7 +151,10 @@ describe("agent page (WEBA-1 effort, WEBX-14 access)", () => {
       id: "a1", handle: "scout", name: "Scout", kind: "byo", brief: "b", effort: "high", proactive_messaging: "ask",
       is_default: false, avatar_url: null, frozen: null, updated_at: "2026-01-01T00:00:00Z",
     };
-    wrap(<InstructionsTab agent={agent as never} wsId="w1" />);
+    // Effort is Expert (D-406): the switch is on.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    seedMoreControls(qc);
+    wrap(<InstructionsTab agent={agent as never} wsId="w1" />, qc);
     fireEvent.change(await screen.findByLabelText("Effort"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));

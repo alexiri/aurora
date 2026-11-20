@@ -39,7 +39,7 @@ export function ResponsiveTable<R>({
   rowKey: (row: R) => string;
   actions?: (row: R) => ReactNode;
   actionsHeader?: string;
-  stackBelow?: 640 | 900;
+  stackBelow?: 900;
   className?: string;
 }) {
   return (

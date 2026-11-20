@@ -16,6 +16,7 @@ import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { When } from "@/components/ui/when";
 import { ItemList, Section } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
+import { Altitude } from "@/components/ui/altitude";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { fieldErrors } from "@/lib/api/errors";
 import {
@@ -63,9 +64,12 @@ function Deliveries({ agentId, id }: { agentId: string; id: string }) {
                 <When value={d.received_at} />
               </Td>
               <Td label="Result">{DELIVERY_STATUS[d.status] ?? d.status}</Td>
-              <Td label="Size" className="whitespace-nowrap">
-                {d.size} B
-              </Td>
+              {/* (P5-REFINE-3) Expert: the raw payload size (and, where shown, the delivery id). */}
+              <Altitude id="auto.deliveryids" level="expert">
+                <Td label="Size" className="whitespace-nowrap">
+                  {d.size} B
+                </Td>
+              </Altitude>
             </tr>
           ))}
         </tbody>

@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { Altitude, AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
@@ -48,6 +49,7 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
     : [lang, ...MEMORY_LANGUAGES];
 
   return (
+    <AltitudeScope>
     <Form onSubmit={submit} noValidate className="max-w-md">
       {!canOwn ? <Notice role="status">Only workspace owners can change these settings.</Notice> : null}
       <fieldset disabled={!canOwn || patch.isPending} className="space-y-4">
@@ -63,14 +65,16 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
         <Field id="set-tz" label="Time zone" error={fe.timezone}>
           <Select id="set-tz" value={tz} onChange={setTz} options={tzOptions.map((z) => ({ value: z, label: z }))} />
         </Field>
-        <Field
-          id="set-lang"
-          label="Language agents remember in"
-          hint="Language used for memory search indexing."
-          error={fe.memory_language}
-        >
-          <Select id="set-lang" value={lang} onChange={setLang} options={langOptions.map((l) => ({ value: l, label: l }))} />
-        </Field>
+        <Altitude id="ws.memlang" level="expert" promote={!!fe.memory_language}>
+          <Field
+            id="set-lang"
+            label="Language agents remember in"
+            hint="Language used for memory search indexing."
+            error={fe.memory_language}
+          >
+            <Select id="set-lang" value={lang} onChange={setLang} options={langOptions.map((l) => ({ value: l, label: l }))} />
+          </Field>
+        </Altitude>
       </fieldset>
       {canOwn ? (
         <SaveBar
@@ -88,6 +92,8 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
           }}
         />
       ) : null}
+      <MoreControlsLine />
     </Form>
+    </AltitudeScope>
   );
 }

@@ -129,7 +129,8 @@ describe("a workspace's Internet access page", () => {
       "GET /v1/orgs/o1/secrets": () => json(200, { items: [] }),
     });
   }
-  const page = () => wrap(<InternetLevel level="workspace" scope={scope} orgId="o1" orgSlug="acme" wsSlug="main" canEdit eff={EFF as never} whoCanHere={WHO} whoCanOrg={WHO} />);
+  // "Restrict further…" and "Try a request" are Set up (D-406): these tests run with Show more controls on.
+  const page = () => wrap(<InternetLevel level="workspace" scope={scope} orgId="o1" orgSlug="acme" wsSlug="main" canEdit eff={EFF as never} whoCanHere={WHO} whoCanOrg={WHO} />, { moreControls: true });
 
   it("opens on the summary, the line about apps, Common changes and the empty rules; the controls are closed", async () => {
     routes();

@@ -62,9 +62,9 @@ describe("ResponsiveTable", () => {
       </DataTable>,
     );
     const region = container.querySelector("[role=region]")!;
-    expect(region.className).toContain("min-[900px]:overflow-x-auto");
+    expect(region.className).toContain("stack:overflow-x-auto");
     expect(region.className).not.toMatch(/(^|\s)overflow-x-auto/);
-    expect(container.querySelector("table")!.className).toContain("min-[900px]:min-w-max");
+    expect(container.querySelector("table")!.className).toContain("stack:min-w-max");
   });
 
   it("keeps today's scrolling table without stackBelow", () => {

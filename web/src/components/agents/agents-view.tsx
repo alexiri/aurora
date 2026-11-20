@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 
 import { AgentsList } from "@/components/agents-list";
 import { ErrorState, Loading } from "@/components/states";
+import { Altitude, AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
 import { MainAction } from "@/components/ui/main-action";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
@@ -23,6 +24,7 @@ export function AgentsView() {
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
   if (!wsId) return <ErrorState error={{ code: "not_found" }} />;
   return (
+    <AltitudeScope>
     <div className="space-y-4">
       <PageHeader
         title="Agents"
@@ -36,7 +38,11 @@ export function AgentsView() {
         }
         className="mb-2"
       />
-      {workspace.data ? <WorkspaceByoRow workspace={workspace.data} /> : null}
+      {workspace.data ? (
+        <Altitude id="agent.byo" level="setup">
+          <WorkspaceByoRow workspace={workspace.data} />
+        </Altitude>
+      ) : null}
       {agents.isPending ? <Loading /> : null}
       {agents.isError ? <ErrorState error={agents.error} onRetry={() => agents.refetch()} /> : null}
       {agents.data ? (
@@ -46,6 +52,8 @@ export function AgentsView() {
           showTokenBadges={workspace.data?.my_role === "owner"}
         />
       ) : null}
+      <MoreControlsLine />
     </div>
+    </AltitudeScope>
   );
 }

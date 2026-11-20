@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
  * The scrolling wrapper is a labelled, focusable region so keyboard users can scroll it too
  * (axe `scrollable-region-focusable`; the global `:focus-visible` ring marks it).
  *
- * (P5-REFINE-2, D-405) `stackBelow` (900 or 640 px) turns the table into stacked rows below that width instead of
+ * (P5-REFINE-2, D-405) `stackBelow` (900 px) turns the table into stacked rows below that width instead of
  * scrolling: cells say what they are with `<Td cell="title">`, `<Td cell="actions">` and `label="Joined"` (see
  * `ResponsiveTable`, which builds the whole table from data).
  */
@@ -19,7 +19,7 @@ export function DataTable({
   children,
   stackBelow,
   ...props
-}: { caption: string; stackBelow?: 640 | 900 } & HTMLAttributes<HTMLTableElement>) {
+}: { caption: string; stackBelow?: 900 } & HTMLAttributes<HTMLTableElement>) {
   return (
     <div
       role="region"
@@ -27,12 +27,12 @@ export function DataTable({
       tabIndex={0}
       className={cn(
         "relative max-w-full rounded-card border border-line bg-surface shadow-card",
-        stackBelow === 900 ? "min-[900px]:overflow-x-auto" : stackBelow === 640 ? "sm:overflow-x-auto" : "overflow-x-auto",
+        stackBelow ? "stack:overflow-x-auto" : "overflow-x-auto",
       )}
     >
       <table
         data-stack={stackBelow}
-        className={cn("w-full text-left text-sm text-ink", stackBelow ? "min-[900px]:min-w-max" : "min-w-max", className)}
+        className={cn("w-full text-left text-sm text-ink", stackBelow ? "stack:min-w-max" : "min-w-max", className)}
         {...props}
       >
         <caption className="sr-only">{caption}</caption>

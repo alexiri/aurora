@@ -1211,6 +1211,10 @@ guides keep working.
   also see Apps & accounts and Internet access, read-only.
 - **Workspace owners** also see People and Settings.
 - **Administration** is shown only to instance admins.
+- (P5-REFINE-3, D-406) **Altitude** narrows these lists at Use: a workspace member, an approver and the
+  owner of a personal workspace see Overview, Agents and Approvals (where they may approve); an
+  organization member sees Workspaces. The rest needs Set up (§Altitudes). A direct link to a hidden topic
+  still opens it.
 
 **What a person sees of something they cannot do** (C-961, one rule for every page):
 - The page's **main action** (for example **Give <Agent> an app**, **Add**, **Add rule**, **Add people**)
@@ -2117,7 +2121,93 @@ diff with **Approve**. No secret value is ever displayed after entry. Everything
 §Visual design (tokens, shared primitives and page patterns, both themes, no horizontal scroll
 at 390 px).
 
+## Altitudes (phase 5, P5-REFINE-3, D-405, D-406)
+
+**Why.** Everyone met the whole control surface at one height: a nine-item rail, an agent with sixteen
+pages, a schedule that is a cron string. Role-based topics (C-961) removed whole pages but never the depth
+inside a page. Disclosure now has one home.
+
+**Three altitudes**; every control belongs to exactly one:
+- **Use**: everyone who may use the thing (chat, approvals, Overview, an account's access choice, Files, the
+  agent's summary and timeline, the Name, Instructions and Model card).
+- **Set up**: the default for owners and admins, and for anyone who turns on More controls.
+- **Expert**: only with More controls on (and instance admins inside Administration, where Expert is on by
+  default).
+
+**Role sets the floor** (`lib/api/roles.ts viewerFloor`): an instance admin, an organization owner or admin
+and the owner of a **team** workspace start at **Set up**; an instance admin inside Administration starts at
+**Expert**; a workspace member, an approver, an organization member and the owner of the person's own
+**personal** workspace start at **Use** (the walk-through of "the first ten minutes" shows a person who owns
+their personal workspace with Overview, Agents and Approvals only; one line in `viewerFloor` changes this).
+While a role loads the floor is Use, so nothing deeper flashes in.
+
+**One per-person switch**, "Show more controls", stored server-side on `GET`/`PATCH /v1/me/onboarding`
+(`more_controls`, C-1056, next to `welcome_seen`), so it follows the person across browsers. It is in the
+account menu (a row with a switch, above Show me around, which does not close the menu) and on Account ›
+Profile. It widens what a person **sees** only up to what their role may use: a member with it on does not
+get owner-only controls. It never authorizes anything and the server never reads it.
+
+**Altitude hides navigation and depth, never routes.** A direct link to a hidden topic or to an agent's
+`?tab=evals` opens the page normally; it is only not listed.
+
+**The `<Altitude>` primitive** (`components/ui/altitude.tsx`): `<Altitude id level="setup"|"expert" allowed?
+label? promote?>`. It renders its children when the person's floor or switch reaches `level` and `allowed`
+(the caller's role cap) is true. Otherwise it registers one hidden control with the page's `<AltitudeScope>`
+and, when `label` is set, draws a collapsed line in its place ("Model roles, effort and agent program ·
+Show") that opens just that control in place. `<MoreControlsLine />` is the page's footer: "3 more controls
+hidden · Show" (**Show** turns the switch on), "Showing more controls · Hide" while it is on, nothing when
+nothing is hidden. After the person has opened three collapsed lines in place a one-time notice offers the
+switch ("Want everything? Turn on Show more controls."; counters in `localStorage`).
+
+**Contextual promotion.** `promote` shows the children at any altitude when the situation needs them: a chat
+error about the AI key shows the key fix; a failed webhook test shows the receiver's status; a rejected
+value inside an Expert group shows the group. The caller passes the condition.
+
+**The classification** is data (`lib/altitude-registry.ts`), the same ids and levels as this table.
+"Now" = wrapped on a page that exists today; "Later: brief N" = the control is created or rebuilt by brief N,
+which wraps it with the id given.
+
+| Id | Control | Altitude | Now / Later |
+|---|---|---|---|
+| `chat` | Chat, Approvals, Overview, Give an app, an account's access choice, Files, the agent's summary and timeline | Use | no wrapper |
+| `rail.skills`, `rail.apps`, `rail.internet`, `rail.activity`, `rail.people`, `rail.settings` | rail topics other than Overview, Agents, Approvals | Set up | Now (`visibleTopics`) |
+| `rail.platform` | Administration topics | Expert (default for instance admins) | Now (no hiding; marks the rule) |
+| `agent.instructions` | Name, Instructions, Model | Use | no wrapper |
+| `agent.memory`, `agent.skills` | Memory, Skills pages | Set up | Now (`PAGE_ALTITUDE`) |
+| `agent.tests`, `agent.otheragents` | Tests, Other agents pages | Expert | Now |
+| `agent.terminal`, `agent.ssh`, `agent.previews`, `agent.connect` | Terminal, SSH, Previews, Computer: Connect pages | Expert | Now (Files stays Use) |
+| `agent.byo` | BYO as a kind of agent: the kind select in New agent (Expert), the BYO row on the Agents list (Set up) | Expert / Set up | Now |
+| `agent.roles`, `agent.effort`, `agent.harness`, `agent.program` | Model roles, Subagents use, Effort, Harness / agent program | Expert | Now (one group) |
+| `agent.proactive` | "<Agent> may message you first" | Set up | Now |
+| `agent.handle` | the agent's @handle line | Expert | Now |
+| `policy.restrict`, `policy.try` | "Restrict further…" (the "Set for you by" ladder detail stays), "Try a request" | Set up | Now |
+| `policy.presets` | Open / Balanced / Locked down | Set up | Later: P5-REFINE-18 |
+| `auto.cron` | the raw cron field | Expert | Later: P5-REFINE-14 |
+| `auto.gate`, `auto.anchor` | "Only run when…", "Keep running if I leave" | Expert | Now |
+| `auto.curl`, `auto.signature` | webhook call detail, Copy as curl, signature recipe | Expert | Later: P5-REFINE-14 / 19 |
+| `auto.deliveryids` | delivery ids, raw payload sizes | Expert | Now |
+| `auto.verification` | the verification choice cards | Set up | Later: P5-REFINE-14 |
+| `log.requests` | the request-log table | Expert | Now |
+| `tech.details` | every "Technical details" fold | Set up and above; never for plain members | Now |
+| `export.yaml` | YAML/JSON export and Import of settings | Expert (Administration: visible) | Now |
+| `export.agent` | Export / Import an agent | Expert | Later: P5-REFINE-19 |
+| `ws.memlang` | Memory language | Expert | Now |
+| `chat.redact` | "Remove this message's content…" (Redact) | Expert | Now |
+| `org.groups`, `org.directory` | Groups, Directory sync tabs | Expert unless a directory provider is configured (then Set up) | Now |
+| `apikeys` | Account › API keys explained | Set up | Now |
+| `palette.verbs`, `kbd`, `bulk` | palette verbs, keyboard shortcuts, bulk actions | Expert | Later: P5-REFINE-19 |
+| `fold.cli` | "From your terminal" CLI/API snippets | Expert | Now (SSH snippet); later 14, 15, 19 |
+
+A control not in the table is a gap in the classification: add the row (and the registry row) first.
+
+**The lint** (`tests/altitude-registry.test.ts`): every `<Altitude id level>` names a registry id at its level;
+every row not marked later or rule-only is used in the code; rendered at Use with the switch off, the Expert
+strings are absent.
+
 ## Onboarding (phase 4, P4-ONB-2, D-141)
+
+(Phase 5, P5-REFINE-3, C-1056) `GET`/`PATCH /v1/me/onboarding` also carries `more_controls`, the person's
+"Show more controls" switch (§Altitudes), stored with the rest of the person's onboarding state.
 
 **Why.** Today a new user lands on Overview with a three-item checklist and has to
 work out alone what an LLM key is, that the agent needs access to it, and that the

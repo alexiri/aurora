@@ -8,6 +8,8 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type C
 import { usePendingApprovals } from "@/lib/api/approvals";
 import { clearDrafts } from "@/components/chat/composer/drafts";
 import { logout, useMe, useOrg, useResolve, useWorkspace } from "@/lib/api/queries";
+import { useAltitude } from "@/lib/altitude";
+import { useMoreControls } from "@/lib/api/use-more-controls";
 import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { ApiError } from "@/lib/api/client";
@@ -54,7 +56,7 @@ import {
   UsersIcon,
   XIcon,
 } from "./ui/icons";
-import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuSwitchItem, MenuTrigger } from "./ui/menu";
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -97,6 +99,7 @@ function UserMenu() {
   const me = useMe();
   const router = useRouter();
   const name = me.data?.user.display_name;
+  const more = useMoreControls();
   // The tour points at the workspace navigation: from a page without it (Account, Admin) go to the landing page first.
   function onTour() {
     const here = [...document.querySelectorAll("[data-tour='agents']")].some((el) => el.getClientRects().length > 0 || window.matchMedia("(max-width: 767px)").matches);
@@ -158,6 +161,10 @@ function UserMenu() {
             </Link>
           </MenuItem>
         ) : null}
+        {/* (P5-REFINE-3, D-406) The per-person switch; it does not close the menu. */}
+        <MenuSwitchItem checked={more.more} onCheckedChange={more.setMore} disabled={more.pending} className={itemClass}>
+          Show more controls
+        </MenuSwitchItem>
         <MenuItem onSelect={onTour} className={itemClass}>
           <HomeIcon className="size-4 shrink-0 text-muted" />
           Show me around
@@ -200,7 +207,8 @@ function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
   const org = useOrg(resolved.data?.org.id);
   const instanceAdmin = useMe().data?.user.is_instance_admin === true;
   // While the role loads, list what every member sees; the pages refuse nothing they list.
-  const topics = visibleTopics("org", { instanceAdmin, org: org.data?.my_role ?? (instanceAdmin ? undefined : "member") });
+  const altitude = useAltitude({ orgId: resolved.data?.org.id });
+  const topics = visibleTopics("org", { instanceAdmin, org: org.data?.my_role ?? (instanceAdmin ? undefined : "member") }, altitude);
   return (
     <nav aria-label="Organization">
       <ul className="space-y-0.5">
@@ -237,7 +245,8 @@ export function WorkspaceNav({
   const instanceAdmin = useMe().data?.user.is_instance_admin === true;
   const role = useWorkspace(wsId).data?.my_role;
   // While the role loads, list what every member sees (Approvals, People and Settings wait for the role).
-  const topics = visibleTopics("workspace", { instanceAdmin, workspace: role ?? (instanceAdmin ? undefined : "member") });
+  const altitude = useAltitude({ wsId });
+  const topics = visibleTopics("workspace", { instanceAdmin, workspace: role ?? (instanceAdmin ? undefined : "member") }, altitude);
   return (
     <nav aria-label="Workspace">
       <ul className="space-y-0.5">

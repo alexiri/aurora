@@ -16,6 +16,10 @@ pub struct MeOnboarding {
     /// (P5-IA-1, C-987) Keys of the one-time notices the person dismissed, at most 50. A person
     /// created after the 2026-11 release has `renames-2026-11` from the start.
     pub notices_seen: Vec<String>,
+    /// (P5-REFINE-3, C-1056) The person's "Show more controls" switch: whether the dashboard
+    /// shows Expert-level controls. `false` for a person with no row. It never authorizes
+    /// anything; role stays the floor.
+    pub more_controls: bool,
 }
 
 #[derive(Deserialize, ToSchema, Debug)]
@@ -28,6 +32,8 @@ pub struct PatchOnboarding {
     pub tour_completed: Option<bool>,
     /// (C-987) Append one notice key (1–64 characters: lowercase letters, digits, `-`).
     pub notice_seen: Option<String>,
+    /// (C-1056) Set the "Show more controls" switch; absent leaves it.
+    pub more_controls: Option<bool>,
 }
 
 /// Status of one setup step or check.

@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { Altitude } from "@/components/ui/altitude";
+import { useAltitude } from "@/lib/altitude";
 import { useCreateAgent } from "@/lib/api/agents";
 import { fieldErrors } from "@/lib/api/errors";
 import { useInstance, useWorkspace } from "@/lib/api/queries";
@@ -27,6 +29,9 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
       : posture?.value === "owners_only" && ws.data && ws.data.my_role !== "owner"
         ? "BYO agents are for workspace owners only"
         : null;
+  // (P5-REFINE-3, D-406) The kind select is Expert: without it the dialog creates a hosted agent (brief 12 changes the default).
+  const kindShown = useAltitude().allows("expert");
+  const hostedOnly = !kindShown && hostedAllowed;
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
@@ -59,7 +64,7 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
       const res = await create.mutateAsync({
         name: n,
         handle: h || undefined,
-        kind: byoBlocked && hostedAllowed ? "hosted" : kind,
+        kind: hostedOnly || (byoBlocked && hostedAllowed) ? "hosted" : kind,
         brief: brief.trim() || undefined,
       });
       setOpen(false);
@@ -104,22 +109,24 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
             >
               <input id="agent-handle" className={inputClass} value={handle} onChange={(e) => setHandle(e.target.value)} />
             </Field>
-            <Field id="agent-kind" label="Kind">
-              <select
-                id="agent-kind"
-                className={inputClass}
-                value={byoBlocked && hostedAllowed ? "hosted" : kind}
-                onChange={(e) => setKind(e.target.value as "byo" | "hosted")}
-              >
-                <option value="byo" disabled={byoBlocked !== null}>
-                  Bring your own (BYO){byoBlocked ? " (owners only)" : ""}
-                </option>
-                {hostedAllowed ? <option value="hosted">Hosted</option> : null}
-              </select>
-            </Field>
-            {byoBlocked ? (
-              <Notice role="status">{byoBlocked}.</Notice>
-            ) : null}
+            <Altitude id="agent.byo" level="expert">
+              <Field id="agent-kind" label="Kind">
+                <select
+                  id="agent-kind"
+                  className={inputClass}
+                  value={byoBlocked && hostedAllowed ? "hosted" : kind}
+                  onChange={(e) => setKind(e.target.value as "byo" | "hosted")}
+                >
+                  <option value="byo" disabled={byoBlocked !== null}>
+                    Bring your own (BYO){byoBlocked ? " (owners only)" : ""}
+                  </option>
+                  {hostedAllowed ? <option value="hosted">Hosted</option> : null}
+                </select>
+              </Field>
+              {byoBlocked ? (
+                <Notice role="status">{byoBlocked}.</Notice>
+              ) : null}
+            </Altitude>
             <Field id="agent-brief" label="Instructions (optional)" error={fe.brief}>
               <textarea id="agent-brief" className={inputClass} rows={3} value={brief} onChange={(e) => setBrief(e.target.value)} />
             </Field>

@@ -20,18 +20,18 @@ describe("AppIcon plate (admin-11)", () => {
   it("puts a logo without a dark variant on a light plate in the dark theme, and leaves a logo with one alone", () => {
     const { container } = render(<AppIcon appId="sentry" name="Sentry" />);
     const img = container.querySelector("img")!;
-    expect(img.className).toContain("dark:bg-white/92");
+    expect(img.className).toContain("dark:bg-plate");
     expect(img.className).toContain("dark:p-0.5");
     expect(img.className).toContain("dark:rounded-control");
     cleanup();
     const dark = render(<AppIcon appId="github" name="GitHub" hasDarkIcon />);
-    for (const i of dark.container.querySelectorAll("img")) expect(i.className).not.toContain("white/92");
+    for (const i of dark.container.querySelectorAll("img")) expect(i.className).not.toContain("bg-plate");
   });
 
   it("does not put a plate on the monogram tile", () => {
     const { container } = render(<AppIcon appId="x" name="Zed" hasIcon={false} />);
     expect(container.querySelector("img")).toBeNull();
-    expect(screen.getByTestId("app-icon-fallback").className).not.toContain("white/92");
+    expect(screen.getByTestId("app-icon-fallback").className).not.toContain("bg-plate");
   });
 });
 

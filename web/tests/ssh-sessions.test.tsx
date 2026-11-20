@@ -183,7 +183,7 @@ describe("Active sessions on the agent's SSH page", () => {
   it("asks for no sessions while the agent is frozen", async () => {
     const calls = mockFetch({ ...base });
     wrap(<SshPage agentId={AGENT} frozen />);
-    await screen.findByText(/This agent is frozen/);
+    await screen.findByText(/This agent is paused/);
     expect(calls.some((c) => c.includes("ssh-sessions"))).toBe(false);
   });
 });

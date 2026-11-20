@@ -16,6 +16,7 @@ import { useModels } from "@/lib/api/conversations";
 import { useMe, type Agent } from "@/lib/api/queries";
 import { errorTarget, ROLES } from "@/lib/model-roles";
 import { adminRoutes } from "@/lib/routes";
+import { Altitude } from "@/components/ui/altitude";
 
 import { AvatarField } from "./avatar-field";
 import { automaticModelText, READINESS_WARNING_COPY } from "./model-readiness";
@@ -95,6 +96,10 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     return same ? null : { model_roles: next };
   }
 
+  // What the form holds, so "Saved" stays only while nothing was edited after the save.
+  const draftSig = JSON.stringify([name, brief, effort, proactive, model, harness, roles, subagent]);
+  const [savedSig, setSavedSig] = useState<string | null>(null);
+  const justSaved = bar.saved && savedSig === draftSig;
   const dirty =
     name !== agent.name ||
     brief !== agent.brief ||
@@ -132,6 +137,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         ...(rolesPatch() ?? {}),
         ...(agent.kind === "hosted" && !roleless && subagent !== agent.subagent_model ? { subagent_model: subagent } : {}),
       });
+      setSavedSig(draftSig);
       bar.flash();
     } catch {
       // surfaced via patch.error
@@ -200,21 +206,28 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
             </p>
           ))}
         </Field>
-        <SwitchField
-          id="a-proactive"
-          label={`${agent.name} may message you first`}
-          hint="For example when a schedule finds something."
-          checked={proactive !== "off"}
-          onChange={(on) => setProactive(on ? (agent.proactive_messaging !== "off" ? agent.proactive_messaging : "ask") : "off")}
-        />
+        <Altitude id="agent.proactive" level="setup" promote={!!fe.proactive_messaging}>
+          <SwitchField
+            id="a-proactive"
+            label={`${agent.name} may message you first`}
+            hint="For example when a schedule finds something."
+            checked={proactive !== "off"}
+            onChange={(on) => setProactive(on ? (agent.proactive_messaging !== "off" ? agent.proactive_messaging : "ask") : "off")}
+          />
+        </Altitude>
         {fe.proactive_messaging ? (
           <p role="alert" className="text-xs text-danger-ink">
             {fe.proactive_messaging}
           </p>
         ) : null}
-        <details className="rounded-control border border-line px-3 py-2">
-          <summary className="cursor-pointer text-sm font-medium text-ink">Advanced: model roles, effort, agent program</summary>
-          <div className="mt-3 space-y-5">
+        {/* (P5-REFINE-3) Expert: below it the collapsed line stands in; a rejected value in here shows it anyway. */}
+        <Altitude
+          id="agent.roles"
+          level="expert"
+          label="Model roles, effort and agent program"
+          promote={!!fe.harness || !!fe.effort || hasRoleError(roleErrors)}>
+          <div className="space-y-5 rounded-control border border-line px-3 py-3">
+            <p className="text-sm font-medium text-ink">Model roles, effort and agent program</p>
             <Field
               id="a-harness"
               label="Harness"
@@ -275,13 +288,13 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
               <Select id="a-effort" value={effort} placeholder="Default" onChange={setEffort} options={["low", "medium", "high", "max"].map((o) => ({ value: o, label: o }))} />
             </Field>
           </div>
-        </details>
+        </Altitude>
         {/* (P5-POLISH-6, P5-REFINE-2) The one save bar: only after a change, at the bottom of the viewport; "Saved" for two seconds. */}
         <SaveBar
           // "Saved" shows even while the agent has not been refetched yet.
-          dirty={dirty && !bar.saved}
+          dirty={dirty && !justSaved}
           saving={patch.isPending}
-          saved={bar.saved}
+          saved={justSaved}
           errorCount={Object.keys(fe).length + (clientErr ? 1 : 0) + (hasRoleError(roleErrors) ? 1 : 0)}
           error={patch.error && Object.keys(fe).length === 0 && !hasRoleError(roleErrors) ? errorMessage(patch.error) : undefined}
           onDiscard={discard}

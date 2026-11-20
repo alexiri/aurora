@@ -8,6 +8,7 @@ import { useState } from "react";
 import { ImportDialog } from "@/components/admin/settings/import-dialog";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
+import { Altitude } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
@@ -89,6 +90,7 @@ export function SettingsIndexView() {
         title="All settings"
         description="Every instance-wide setting, grouped by the topic where you change it, applied live. A setting configured in Helm is shown read-only."
         actions={
+          <Altitude id="export.yaml" level="expert">
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline" size="sm">
               <a href={exportUrl("yaml")} download>
@@ -104,6 +106,7 @@ export function SettingsIndexView() {
               Import…
             </Button>
           </div>
+          </Altitude>
         }
       />
       {showNotice ? (
