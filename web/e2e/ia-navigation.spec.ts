@@ -1,7 +1,7 @@
 import { expect as baseExpect, test, type Locator, type Page } from "@playwright/test";
 
 import { id, mockApi, org, user, ws } from "./support/mock-api";
-import { openRoute } from "./support/open";
+import { navLabels, openRoute } from "./support/open";
 
 // The first request of a route compiles it in `next dev`; on a loaded host that outlasts the default 5 s.
 const expect = baseExpect.configure({ timeout: 30_000 });
@@ -29,7 +29,8 @@ const meAs = (u: typeof user, orgRole: string, wsRole: string) => ({
   [`/v1/workspaces/${id(2)}`]: { ...ws, my_role: wsRole },
 });
 
-const labels = (nav: Locator) => nav.getByRole("link").allTextContents();
+// Without an entry's count badge (C-1082).
+const labels = (nav: Locator) => navLabels(nav);
 
 for (const scheme of ["light", "dark"] as const) {
   test.describe(`navigation by role (${scheme})`, () => {
