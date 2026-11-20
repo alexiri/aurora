@@ -160,7 +160,8 @@ export function AccountRow({
         ) : account.kind === "ai_key" ? (
           <AiKeyTile />
         ) : null}
-        <div className="min-w-0 flex-1 space-y-1">
+        {/* (P5-REFINE-13, access-2) Under 600 px the title keeps its line (the icon's width is taken off); the level and the menu wrap to their own line. */}
+        <div className="min-w-0 flex-1 space-y-1 max-[599px]:min-w-[calc(100%-3rem)]">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="min-w-0 break-words font-display text-base font-semibold text-ink">
               {account.app ? (

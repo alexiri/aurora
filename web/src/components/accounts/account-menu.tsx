@@ -78,7 +78,7 @@ export function AccountMenu({
     <>
       <Menu>
         <MenuTrigger asChild>
-          <Button variant="outline" size="sm" aria-label={`More for ${account.name}`}>
+          <Button variant="outline" size="sm" className="pointer-coarse:min-h-11" aria-label={`More for ${account.name}`}>
             <span aria-hidden="true">…</span>
           </Button>
         </MenuTrigger>

@@ -147,10 +147,13 @@ export function AccessControl({
       levels.length === 1 ? (
         <p className={cn("text-sm text-ink", inRow && "whitespace-nowrap")}>{LEVEL_LABEL[levels[0]!]}</p>
       ) : (
-        <span className="inline-flex items-center gap-2">
+        <span className={cn("inline-flex items-center gap-2", inRow && "max-[599px]:min-w-0 max-[599px]:flex-1")}>
         <select
           aria-label={`${entry.agent.name}'s access to ${account.name}`}
-          className={cn("h-9 rounded-control border border-line-strong bg-surface px-2 text-sm text-ink", inRow ? "w-auto max-w-56" : "w-full max-w-xs")}
+          className={cn(
+            "h-9 rounded-control border border-line-strong bg-surface px-2 text-sm text-ink pointer-coarse:h-11",
+            inRow ? "w-auto max-w-56 max-[599px]:w-full max-[599px]:max-w-none" : "w-full max-w-xs",
+          )}
           disabled={put.isPending}
           value={entry.level === "custom" ? CUSTOM : (level ?? "")}
           onChange={(e) => {
