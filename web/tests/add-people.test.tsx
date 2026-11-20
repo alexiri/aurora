@@ -79,7 +79,7 @@ describe("the Add people dialog", () => {
     expect(calls.find((c) => c.key === "POST /v1/workspaces/w1/access/by-email")?.body).toEqual({ email: "carol@example.org", role: "member" });
     expect(screen.getByText("Aurora does not e-mail them. Send them this link:")).toBeInTheDocument();
     expect(screen.getByText(`${window.location.origin}/o/acme/w/bob`)).toBeInTheDocument();
-    expect(await screen.findByText(/They also need to be invited to Acme\. Ask Ada Lovelace or Alan Turing \(organization owners and admins\)\./)).toBeInTheDocument();
+    expect(await screen.findByText(/They also need to be invited to Acme\. Ask an organization admin\./)).toBeInTheDocument();
   });
 
   it("open sign-up: no invitation sentence; someone already in the organization: access at once", async () => {

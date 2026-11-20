@@ -17,13 +17,13 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByTestId("ws-app-setup")).toBeVisible();
         const ways = page.getByTestId("setup-ways");
         await expect(ways.getByText("Needs setup")).toBeVisible();
-        await expect(ways.getByText(/Sign in with Linear needs an OAuth client: none is set up for this workspace/)).toBeVisible();
-        // not an organization admin: who can do it for everyone is named
-        await expect(ways.getByText(/Ask Ada Lovelace or Alan Turing/)).toBeVisible();
+        await expect(ways.getByText(/Sign in with Linear needs a sign-in app: none is set up for this workspace/)).toBeVisible();
+        // not an organization admin: who can do it for everyone is named by role (D-407)
+        await expect(ways.getByText(/Ask an organization admin/)).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
 
-        await ways.getByRole("button", { name: "Register an OAuth client for this workspace" }).click();
-        const dialog = page.getByRole("dialog", { name: "Register an OAuth client" });
+        await ways.getByRole("button", { name: "Register a sign-in app for this workspace" }).click();
+        const dialog = page.getByRole("dialog", { name: "Register a sign-in app" });
         await expect(dialog.getByLabel("App")).toHaveValue("linear|linear");
         await expect(dialog.getByRole("option", { name: "Linear — for Sign in with Linear" })).toHaveCount(1);
         await expect(dialog.getByText("https://aurora.example.org/v1/oauth/callback")).toBeVisible();
@@ -87,7 +87,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("Administration's catalogue entry links to the OAuth clients of the app, with its form open", async ({ page }) => {
         await openRoute(page, "/admin/apps/packages/github", scheme);
-        await page.getByRole("link", { name: "OAuth clients for this app" }).click();
+        await page.getByRole("link", { name: "Sign-in apps for this app" }).click();
         await expect(page).toHaveURL(/\/admin\/apps\?tab=oauth-clients&package=github/);
         await expect(page.locator("#oc-app")).toHaveValue("github|github");
       });

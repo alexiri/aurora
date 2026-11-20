@@ -81,10 +81,10 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("an organization admin narrows the allowed models and the page keeps Administration's limit visible above", async ({ page }) => {
         await open(page, "/o/acme/ai-models", scheme);
-        const above = page.getByRole("region", { name: "Limits from above" });
+        const above = page.getByRole("region", { name: "Set for you by an Aurora administrator" });
         await expect(above).toContainText("Which AI keys agents may use");
         await expect(above).toContainText("Only keys an administrator approved");
-        await expect(above).toContainText("Set by Administration");
+        await expect(above).toContainText("Set for you by an Aurora administrator");
         await expect(page.getByTestId("keys-notice")).toContainText("2 AI keys no longer follow these rules");
         await expect(page.getByRole("link", { name: /Accounts/ }).first()).toHaveAttribute("href", /kind=ai-key/);
         const models = page.getByLabel("Allowed models");
@@ -103,7 +103,7 @@ for (const scheme of ["light", "dark"] as const) {
       test("the organization's Agents page: BYO under Administration's limits, then Skills and Previews", async ({ page }) => {
         await open(page, "/o/acme/agents", scheme);
         await expect(page.getByRole("tab")).toHaveText(["BYO", "Skills", "Previews"]);
-        const above = page.getByRole("region", { name: "Limits from above" });
+        const above = page.getByRole("region", { name: "Set for you by an Aurora administrator" });
         await expect(above).toContainText("Only workspace owners may run agents outside Aurora");
         await expect(above).toContainText("Up to 90 days");
         await expect(page.getByLabel("Maximum token age (days)")).toBeVisible();

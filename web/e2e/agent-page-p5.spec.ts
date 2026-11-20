@@ -143,8 +143,8 @@ test.describe("1280×800", () => {
       expect(await serious(page), "expanded").toEqual([]);
       await page.screenshot({ path: `${SHOTS}/expanded-1280-${scheme}.png` });
       await page.getByRole("button", { name: "Agent actions" }).click();
-      await page.getByRole("menuitem", { name: /Behaviour/ }).click();
-      await expect(page.getByRole("tablist", { name: "Behaviour pages" })).toBeVisible();
+      await page.getByRole("menuitem", { name: /Instructions/ }).click();
+      await expect(page.getByRole("tablist", { name: "Instructions pages" })).toBeVisible();
       expect(await serious(page), "behaviour").toEqual([]);
     });
   }

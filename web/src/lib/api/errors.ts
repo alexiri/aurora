@@ -72,7 +72,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
     "The path must start with / and have at most 8 segments of letters, digits and . _ ~ - (for example /jira), 128 characters in all.",
   instance_required: "Choose which instance to connect to.",
   instance_oauth_client_required:
-    "Ask an administrator to register an OAuth application for this instance first (Credentials, OAuth clients).",
+    "Ask an admin to register a sign-in app for this instance first (Apps & accounts, Sign-in apps).",
   instance_deleted: "The self-hosted app of this connection was deleted. Connect again.",
   not_proposed: "This secret is no longer awaiting a value.",
   stale_revision: "The policy was changed by someone else. Reload to see the latest version.",
@@ -100,7 +100,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   skill_libraries_disabled: "Skill libraries are turned off on this instance.",
   // (P5-UX-1, C-915, C-958, C-980) Refusals the connect journey and the access choices show in words.
   connect_probe_failed: "The app did not accept these details. Check them and try again.",
-  oauth_client_required: "Signing in to this app needs an OAuth client that an administrator has to register first.",
+  oauth_client_required: "Signing in to this app needs a sign-in app that an admin has to register first.",
   above_account_limit: "This is more than the account's limit allows. Whoever manages the account can raise the limit.",
   always_not_available: "\"Always allow\" is not available for this request.",
 };

@@ -194,6 +194,7 @@ export function AppStep({
             {blocked.map((p) => {
               const app = hostedOf(p);
               const r = app.readiness!;
+              const who = r.who_can ?? null;
               const provider = signInProvider(app);
               const shared = r.needs?.[0] === "oauth_client" && seenProviders.has(provider);
               if (r.needs?.[0] === "oauth_client") seenProviders.add(provider);

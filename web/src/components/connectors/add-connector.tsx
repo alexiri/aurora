@@ -206,7 +206,7 @@ function SettingsStep({
             Back
           </Button>
           <Button type="submit" disabled={create.isPending}>
-            Add connector
+            Add chat platform
           </Button>
         </div>
       </form>
@@ -263,7 +263,7 @@ export function AddConnectorFlow({
       actions={
         onSelfHosted ? (
           <Button variant="ghost" size="sm" onClick={onSelfHosted}>
-            Self-hosted connector (advanced)
+            Self-hosted chat platform host (advanced)
           </Button>
         ) : undefined
       }

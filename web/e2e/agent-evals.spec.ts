@@ -16,10 +16,10 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("the page lists questions, the judge, runs and schedules", async ({ page }) => {
         await openEvals(page, "page", scheme);
-        await expect(page.getByRole("tab", { name: "Evals" }).first()).toBeVisible();
-        for (const h of ["Questions", "Judge", "Runs", "Schedules"]) await expect(page.getByRole("heading", { name: h, level: 2 })).toBeVisible();
+        await expect(page.getByRole("tab", { name: "Tests" }).first()).toBeVisible();
+        for (const h of ["Questions", "Grader", "Runs", "Schedules"]) await expect(page.getByRole("heading", { name: h, level: 2 })).toBeVisible();
         await expect(page.getByText("3 of 100 questions, 3 included in runs.", { exact: false })).toBeVisible();
-        await expect(page.getByLabel("Judge key")).toBeVisible();
+        await expect(page.getByLabel("Grader key")).toBeVisible();
         // The newest run dropped 12.5 points: a notice with counts only.
         await expect(page.getByTestId("regression-notice")).toContainText("fell by 12.5 points");
         // On a phone the tables are stacked lists with the same content; the table that is hidden is not announced twice.

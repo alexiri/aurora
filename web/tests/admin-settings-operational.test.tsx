@@ -217,7 +217,7 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
     expect(screen.getByText(/Private destinations\./)).toBeTruthy();
     const list = screen.getByRole("list", { name: "Rate class overrides" });
     expect(within(list).getByText("write")).toBeTruthy();
-    expect(within(list).getByText("Set in Helm")).toBeTruthy();
+    expect(within(list).getByText("Set by the installation")).toBeTruthy();
     // The Helm class cannot be picked again.
     const pick = screen.getByRole("combobox", { name: "Class to override" }) as HTMLSelectElement;
     expect([...pick.options].map((o) => o.value)).not.toContain("write");

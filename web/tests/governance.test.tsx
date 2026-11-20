@@ -108,7 +108,7 @@ describe("OrgByo (P5-IA-3, C-967)", () => {
     wrap(<OrgByo org={ORG} />);
     const above = await screen.findByRole("list", { name: "Limits set above this level" });
     const rows = within(above).getAllByRole("listitem").map((r) => r.textContent ?? "");
-    expect(rows.some((r) => /Who may run agents outside Aurora/.test(r) && /Only workspace owners/.test(r) && /Set by Administration/.test(r))).toBe(true);
+    expect(rows.some((r) => /Who may run agents outside Aurora/.test(r) && /Only workspace owners/.test(r) && /Set for you by an Aurora administrator/.test(r))).toBe(true);
     expect(rows.some((r) => /Longest a token lasts/.test(r) && /Up to 90 days/.test(r))).toBe(true);
     expect(screen.getByLabelText("Maximum token age (days)")).toBeTruthy();
     expect(screen.queryByLabelText("Allowed models")).toBeNull();
@@ -173,7 +173,7 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     // The instance decides the endpoint's permission and key scopes; the posture and allowed models are the organization's.
     expect(rows.some((r) => /AI endpoints organizations may use/.test(r) && /Anthropic allowed/.test(r))).toBe(true);
     expect(rows.some((r) => /Who may add Anthropic keys/.test(r) && /keys for the whole organization/.test(r))).toBe(true);
-    expect(rows.every((r) => /Set by Administration/.test(r) && /An Aurora administrator can set this up|administrator/.test(r))).toBe(true);
+    expect(rows.every((r) => /Set for you by an Aurora administrator/.test(r) && /An Aurora administrator can set this up|administrator/.test(r))).toBe(true);
     expect(rows.some((r) => /Which AI keys agents may use/.test(r))).toBe(false);
     // Above the rules: the ladder's list comes first in the document.
     const rules = screen.getByLabelText("LLM posture");

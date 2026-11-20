@@ -38,7 +38,7 @@ export function ConnectorCard({
           <span className="text-xs text-muted">{c.managed ? "Managed" : "Self-hosted"}</span>
           {c.version ? <span className="text-xs text-muted">v{c.version}</span> : null}
           <span className="text-xs text-muted sm:ml-auto">
-            {plural(c.integration_count, "organization connected", "organizations connected")} ·{" "}
+            {plural(c.integration_count, "connection")} ·{" "}
             {c.managed ? `${plural(hosts, "host")} reporting` : plural(c.replicas.length, "replica")}
           </span>
         </div>

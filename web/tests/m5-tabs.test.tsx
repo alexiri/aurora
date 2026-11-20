@@ -41,7 +41,7 @@ describe("SchedulesTab", () => {
     wrap(<SchedulesTab agentId="a1" />);
     expect(await screen.findByText("Morning")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Runs" }));
-    expect(await screen.findByText("gated_quiet")).toBeTruthy();
+    expect(await screen.findByText("Skipped by the gate")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Run now" }));
     expect((await screen.findByRole("alert")).textContent).toContain("already has a run in progress");
   });
@@ -63,11 +63,11 @@ describe("SchedulesTab", () => {
     });
     wrap(<SchedulesTab agentId="a1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Runs" }));
-    expect(await screen.findByText("gated_quiet")).toBeTruthy();
-    expect(screen.queryByText("coalesced")).toBeNull();
+    expect(await screen.findByText("Skipped by the gate")).toBeTruthy();
+    expect(screen.queryByText("Skipped: it was already running")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-    expect(await screen.findByText("coalesced")).toBeTruthy();
-    expect(screen.getByText("gated_quiet")).toBeTruthy();
+    expect(await screen.findByText("Skipped: it was already running")).toBeTruthy();
+    expect(screen.getByText("Skipped by the gate")).toBeTruthy();
     expect(cursors).toEqual([null, "CUR1"]);
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });

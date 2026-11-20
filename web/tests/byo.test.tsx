@@ -164,10 +164,10 @@ describe("workspace BYO setting (P5-IA-4, C-967)", () => {
     wrap(<GeneralTab workspace={workspace()} canOwn />);
     expect(screen.queryByLabelText("BYO agent posture")).toBeNull();
     expect(screen.getByLabelText("Time zone")).toBeTruthy();
-    expect(screen.getByLabelText("Memory language")).toBeTruthy();
+    expect(screen.getByLabelText("Language agents remember in")).toBeTruthy();
   });
 
-  it("is a ladder row in the agents list header: the organization's value above, the choice behind Tighten…", async () => {
+  it("is a ladder row in the agents list header: the organization's value above, the choice behind Restrict further…", async () => {
     const bodies: Record<string, unknown>[] = [];
     mockFetch({
       "GET /v1/orgs/o1/governance/effective": () => json(200, eff({ posture: { value: "owners_only", source: "org" } })),
@@ -177,11 +177,11 @@ describe("workspace BYO setting (P5-IA-4, C-967)", () => {
       },
     });
     wrap(<WorkspaceByoRow workspace={workspace({ effective_byo_posture: { value: "owners_only", level: "org" } })} />);
-    const above = await screen.findByRole("region", { name: "Limits from above" });
+    const above = await screen.findByRole("region", { name: "Set for you by your organization's admins" });
     expect(above).toHaveTextContent("Only workspace owners can create BYO agents");
-    expect(above).toHaveTextContent("Set by your organization");
+    expect(above).toHaveTextContent("Set for you by your organization's admins");
     expect(screen.queryByLabelText("In this workspace")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Tighten…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restrict further…" }));
     const sel = (await screen.findByLabelText("In this workspace")) as HTMLSelectElement;
     expect([...sel.options].map((o) => o.value)).toEqual(["", "disabled"]);
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
@@ -193,8 +193,8 @@ describe("workspace BYO setting (P5-IA-4, C-967)", () => {
   it("a workspace member reads the value as text, with no controls", async () => {
     const calls = mockFetch({});
     wrap(<WorkspaceByoRow workspace={workspace({ my_role: "member", effective_byo_posture: { value: "disabled", level: "org" } })} />);
-    expect(await screen.findByRole("region", { name: "Limits from above" })).toHaveTextContent("Nobody can create BYO agents");
-    expect(screen.queryByRole("button", { name: "Tighten…" })).toBeNull();
+    expect(await screen.findByRole("region", { name: "Set for you by your organization's admins" })).toHaveTextContent("Nobody can create BYO agents");
+    expect(screen.queryByRole("button", { name: "Restrict further…" })).toBeNull();
     expect(calls.mock.calls.some(([r]) => String((r as Request).url).includes("/governance/"))).toBe(false);
   });
 });

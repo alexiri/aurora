@@ -69,7 +69,7 @@ function base(extra: Record<string, Handler>, opts: { connectors?: unknown[]; av
 describe("Channels: blocked states name the next actor", () => {
   it.each([
     ["not_added", "An instance administrator needs to add Mattermost first."],
-    ["waiting_for_host", "Mattermost is added, but its connector isn't running"],
+    ["waiting_for_host", "Mattermost is added, but its chat platform host isn't running"],
     ["disabled", "Mattermost is disabled. An instance administrator can enable it."],
     ["needs_approval", "needs an instance administrator's approval"],
   ])("%s, as a plain member: says what is wrong and who to ask", async (state, text) => {
@@ -77,7 +77,9 @@ describe("Channels: blocked states name the next actor", () => {
     wrap(<ChannelsView orgId="o1" />);
     const note = await screen.findByTestId("blocked-mattermost");
     expect(note.textContent).toContain(text);
-    expect(note.textContent).toContain("Ask: Ada Admin, Bo Boss.");
+    // (D-407) The role, never the people's names.
+    expect(note.textContent).toContain("Ask an Aurora administrator.");
+    expect(note.textContent).not.toContain("Ada Admin");
     expect(screen.queryByRole("button", { name: "Add Mattermost" })).toBeNull();
     expect(screen.queryByRole("link", { name: /Administration › Chat platforms/ })).toBeNull();
   });
@@ -115,17 +117,17 @@ describe("Channels: blocked states name the next actor", () => {
     base({}, { availability: { items: [{ type_id: "fake", name: "fake", setup_state: "waiting_for_host", icon_url: null }], instance_admins: [] }, admin: true });
     wrap(<ChannelsView orgId="o1" />);
     const card = await screen.findByTestId("blocked-fake");
-    expect(within(card).getByRole("region", { name: "Fake is added, but its connector isn't running" })).toBeInTheDocument();
+    expect(within(card).getByRole("region", { name: "Fake is added, but its chat platform host isn't running" })).toBeInTheDocument();
     expect(card.textContent).not.toContain("instance administrator");
     expect(card.textContent).not.toContain("operator must start");
     expect(within(card).getByRole("link", { name: /Administration › Chat platforms/ })).toHaveAttribute("href", "/admin/chat-platforms");
   });
 
-  it("nothing announced: names the administrators instead of a dead end", async () => {
+  it("nothing announced: names the role instead of a dead end", async () => {
     base({}, { availability: { items: [], instance_admins: [{ name: "Ada Admin" }] } });
     wrap(<ChannelsView orgId="o1" />);
     expect(await screen.findByText(/No chat platform is available yet/)).toBeInTheDocument();
-    expect(screen.getByText(/Ask Ada Admin to set one up/)).toBeInTheDocument();
+    expect(screen.getByText(/Ask an Aurora administrator to set one up/)).toBeInTheDocument();
   });
 });
 

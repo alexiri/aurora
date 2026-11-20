@@ -275,7 +275,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
             <ManagedBadge managed />
             <ConnectorStatusChip c={c} />
             <span>
-              {plural(c.integration_count, "organization connected", "organizations connected")}{c.version ? ` · v${c.version}` : ""}
+              {plural(c.integration_count, "connection")}{c.version ? ` · v${c.version}` : ""}
             </span>
           </span>
         }
@@ -304,7 +304,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
         title="Delete chat platform"
         description={
           inUse
-            ? `${plural(c.integration_count, "organization")} still ${c.integration_count === 1 ? "uses" : "use"} this chat platform. Remove ${c.integration_count === 1 ? "it" : "them"} first.`
+            ? `${plural(c.integration_count, "connection")} still ${c.integration_count === 1 ? "uses" : "use"} this chat platform. Remove ${c.integration_count === 1 ? "it" : "them"} first.`
             : "Removes the chat platform and its stored settings and secrets."
         }
       >

@@ -375,7 +375,7 @@ test.describe("Files journey (C-907)", () => {
     });
     await mockFiles(page, fs, { frozen: true });
     await page.goto("/o/acme/w/main/agents/daneel?tab=files");
-    await expect(page.getByText(/Files are unavailable while it is frozen/)).toBeVisible();
+    await expect(page.getByText(/Files are unavailable while it is paused/)).toBeVisible();
     expect(requests).toEqual([]);
   });
 });

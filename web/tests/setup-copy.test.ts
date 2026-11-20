@@ -36,14 +36,14 @@ describe("setup copy: one sentence per way to connect (C-932)", () => {
     expect(GITHUB.map((x) => methodChip(x, "workspace", owner))).toEqual(["ready", "needs_setup", "admin_only"]);
     expect(methodSentence("GitHub", GITHUB[0]!, "workspace")).toBe("People can connect GitHub with a personal access token.");
     expect(methodSentence("GitHub", GITHUB[1]!, "workspace", { orgName: "Users" })).toBe(
-      "Sign in with GitHub needs an OAuth client: none is set up for this workspace, Users or Aurora.",
+      "Sign in with GitHub needs a sign-in app: none is set up for this workspace, Users or Aurora.",
     );
     expect(methodSentence("GitHub", GITHUB[2]!, "workspace")).toMatch(/^GitHub App installation needs details from whoever runs your GitHub organization/);
   });
 
   it("the organization view does not name the workspace", () => {
     expect(methodSentence("GitHub", GITHUB[1]!, "organization", { orgName: "Users" })).toBe(
-      "Sign in with GitHub needs an OAuth client: none is set up for Users or Aurora.",
+      "Sign in with GitHub needs a sign-in app: none is set up for Users or Aurora.",
     );
   });
 

@@ -124,7 +124,7 @@ export function ScheduleForm({
         <textarea id="sch-prompt" className={inputClass} rows={3} value={prompt} required onChange={(e) => setPrompt(e.target.value)} />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field id="sch-cron" label="Repeat (cron, 5 fields)" error={fe.cron ?? localErr ?? undefined} hint="e.g. 0 9 * * 1-5">
+        <Field id="sch-cron" label="Cron (5 fields)" error={fe.cron ?? localErr ?? undefined} hint="e.g. 0 9 * * 1-5">
           <input id="sch-cron" className={`${inputClass} font-mono`} value={cron} required onChange={(e) => setCron(e.target.value)} />
         </Field>
         <Field id="sch-tz" label="Timezone" error={fe.timezone} hint="IANA name, e.g. Europe/Zurich">
