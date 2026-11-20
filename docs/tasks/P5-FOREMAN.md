@@ -36,9 +36,15 @@ Since Foreman 3.0 the Puppet resources (environments, classes, class parameters)
 **Read (GET):**
 - Status and identity: `/api/status`, `/api/current_user`, `/api/dashboard`.
 - Hosts: `/api/hosts` (with `search`, Foreman's scoped search), `/api/hosts/*`, `/api/hosts/*/status`,
-  `/api/hosts/*/facts`, `/api/hosts/*/parameters`, `/api/hosts/*/config_reports`, `/api/hosts/*/enc`
-  (the Puppet external node classifier output: classes and parameters the host gets),
-  `/api/hosts/*/interfaces`.
+  `/api/hosts/*/facts`, `/api/hosts/*/parameters`, `/api/hosts/*/config_reports`,
+  `/api/hosts/*/interfaces`, and the host's Puppet classes from the `foreman_puppet` API.
+- **Hidden parameter values.** Foreman parameters marked hidden often hold secrets. They are masked in
+  normal reads but revealed by `show_hidden=true` (host, hostgroup and global parameters, smart class
+  parameter overrides) and by the ENC output (`/api/hosts/*/enc`, which Puppet needs unmasked). So:
+  `/api/hosts/*/enc` is **not a tool** (it is refused, below). For each parameter read, check in the docs
+  and a recorded response whether `show_hidden` is honoured for the token's permissions. If it is, keep the
+  tool only if the gateway can force `show_hidden=false` on it (the `query` inject mechanism on a host
+  entry with that path prefix). Otherwise leave the tool out and report it. The security review checks this.
 - Hostgroups: `/api/hostgroups`, `/api/hostgroups/*`, `/api/hostgroups/*/parameters`.
 - Puppet (`foreman_puppet`): environments, `puppetclasses` (list and one), `smart_class_parameters` (list and
   one, with their overrides).
@@ -63,7 +69,7 @@ Since Foreman 3.0 the Puppet resources (environments, classes, class parameters)
 
 **Refused** (`REFUSED["foreman"]`, each a `refused …` case): host deletion (`DELETE /api/hosts/*`), power
 and boot actions (`PUT /api/hosts/*/power`, `PUT /api/hosts/*/boot`), rebuild (`PUT /api/hosts/*/rebuild_config`,
-`build` via `PUT /api/hosts/*`), host and hostgroup edits (`PUT /api/hosts/*`, `PUT /api/hostgroups/*`),
+`build` via `PUT /api/hosts/*`), the ENC output (`GET /api/hosts/*/enc`: hidden values in clear), host and hostgroup edits (`PUT /api/hosts/*`, `PUT /api/hostgroups/*`),
 **personal access token creation** (`POST /api/users/*/personal_access_tokens`, SEC-145), user and role
 edits (`/api/users`, `/api/roles`, `/api/filters`), and Katello content-view publish/promote
 (`/katello/api/content_views/*/publish`, `…/promote`) if a Katello server is the target.
@@ -75,11 +81,11 @@ edits (`/api/users`, `/api/roles`, `/api/filters`), and Katello content-view pub
   syntax (`search=hostgroup ~ "lxplus" and last_report < "2 hours ago"`), `per_page` (≤ 100) and `page`;
   JSON bodies with `Content-Type: application/json`; a job runs commands on real machines, so propose the
   exact target and inputs before asking.
-- Guide: `api-notes.md` (scoped search syntax and the most useful search keys, the ENC output, report
+- Guide: `api-notes.md` (scoped search syntax and the most useful search keys, hidden parameters, report
   statuses, pagination, the Puppet plugin paths); recipes `failed-puppet-runs.md` ("Which hosts failed their
   last Puppet run?": `/api/hosts?search=last_report > "1 day ago" and status.failed > 0`, then each host's
   last report, grouped by error) and `host-overview.md` ("Tell me about a host": status, hostgroup,
-  environment, ENC classes, key facts, last report).
+  environment, Puppet classes, key facts, last report).
 
 ## Fixtures
 

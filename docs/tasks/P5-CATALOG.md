@@ -100,6 +100,24 @@ test to get green. List the test files changed in the completion report.
 - Suggested order: Grafana → Foreman → Rundeck → ServiceNow → Zoom. Zoom is last because it is the only one
   with a hook.
 
+## Security review (before each merge)
+
+Each package gets a focused review of its tool classification and approvals against SEC-145, SEC-04/59
+(credentials only on the registered host and base path) and the brief's refused list:
+- **Grafana**: the datasource proxy forwards any method and path. Check that only the named backend paths
+  are tools, and that encoded or dot segments (`%2F`, `..`, `%2e%2e`) and trailing variants cannot reach an
+  unlisted backend path (for example the Prometheus admin API) through a read tool. Compare the gateway's path
+  normalization (`06` step 3) with what Grafana forwards. Also check that no read tool returns stored
+  datasource secrets.
+- **Foreman**: `run_job`'s approval shows the exact target and inputs as sent; hidden parameter values are
+  never readable through a tool (`show_hidden`, ENC; see the brief).
+- **Rundeck** (light): `run_job`'s approval shows the options and node filter as sent; ad hoc run endpoints
+  and key storage select no tool; the header is injected only under the registered base path.
+- **ServiceNow**: every readable table is named (no catch-all), credential tables select no tool; the OAuth
+  refresh is built for the connection's instance only.
+- **Zoom**: the `token.mint` hook (secret never echoed, egress `zoom.us` only), the bounded recording
+  download hosts, refresh-token rotation.
+
 ## Suggested agent/model
 
 Sonnet for each brief (`rust-developer` for Zoom, because of the hook crate). The packages are YAML and
