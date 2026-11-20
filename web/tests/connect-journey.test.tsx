@@ -7,7 +7,6 @@ import {
   buildJourneyConnect,
   connectFailure,
   doneSentence,
-  firstName,
   hostOf,
   journeyTitle,
   levelsForApp,
@@ -161,12 +160,11 @@ describe("words and payloads", () => {
   });
 
   it("the reasons an app waits for an admin", () => {
-    expect(firstName("Alice Admin")).toBe("Alice");
-    expect(firstName(undefined)).toBeNull();
-    expect(needsReason(["oauth_client"], "Alice Admin", "Google", false)).toBe("Alice Admin needs to set up Google sign-in");
-    expect(needsReason(["oauth_client"], "Alice Admin", "Google", true)).toBe("Same Google sign-in");
-    expect(needsReason(["instance"], null, "Jira", false)).toBe("An admin needs to add a server");
-    expect(needsReason(["admin_material"], null, "AWS", false)).toBe("Needs setup by an admin");
+    // (D-407) An admin is a role, never a name.
+    expect(needsReason(["oauth_client"], "Google", false)).toBe("An admin needs to set up Google sign-in");
+    expect(needsReason(["oauth_client"], "Google", true)).toBe("Same Google sign-in");
+    expect(needsReason(["instance"], "Jira", false)).toBe("An admin needs to add a server");
+    expect(needsReason(["admin_material"], "AWS", false)).toBe("Needs setup by an admin");
   });
 
   it("a website's host is read from what was typed", () => {
@@ -300,7 +298,7 @@ describe("the journey for a fixed agent and a given app", () => {
     // Done names the account and the access, and offers the first prompt as an unsent draft (C-1035).
     expect(await screen.findByText("Daneel can now read Team repos.")).toBeInTheDocument();
     expect(screen.getByText(/Read only\. You can change this on/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Daneel's Access tab" })).toHaveAttribute("href", "/o/acme/w/main/agents/daneel?tab=access");
+    expect(screen.getByRole("link", { name: "Daneel's Apps & access tab" })).toHaveAttribute("href", "/o/acme/w/main/agents/daneel?tab=access");
     expect(screen.getByText("“Which pull requests are waiting for my review?”")).toBeInTheDocument();
     expect(post(calls)?.body).toMatchObject({
       method_id: "token", fields: { access_token: "ghp_x" }, scopes: ["read:org"], grant: { agent_ids: ["a1"], level: "read" },
@@ -368,14 +366,15 @@ describe("the journey for a fixed agent and a given app", () => {
     open();
     fireEvent.click(await screen.findByRole("button", { name: "Next" }));
     expect(await screen.findByText("GitHub needs an admin to set it up first.")).toBeInTheDocument();
-    expect(screen.getAllByText(/Ada Lovelace/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Ask an organization admin/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Ada Lovelace/)).toBeNull();
     expect(screen.queryByLabelText("Token")).toBeNull();
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Ask Ada" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask an admin" }));
     expect(await screen.findByText(/Asked just now/)).toBeInTheDocument();
     expect(calls.some((c) => c.method === "POST" && c.path === "/v1/workspaces/w1/apps/github/setup-request")).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    expect(await screen.findByRole("button", { name: "Ask Ada" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Ask an admin" })).toBeInTheDocument();
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
   });
 
@@ -452,9 +451,9 @@ describe("the App step", () => {
     expect(within(connected).getByText("Sentry · connected, Daneel can't use it yet")).toBeInTheDocument();
     const blocked = screen.getByRole("region", { name: "Needs an admin first · 2" });
     // The reason in one line; the second app of the same provider says so.
-    expect(within(blocked).getByText("Alice Admin needs to set up Google sign-in")).toBeInTheDocument();
+    expect(within(blocked).getByText("An admin needs to set up Google sign-in")).toBeInTheDocument();
     expect(within(blocked).getByText("Same Google sign-in")).toBeInTheDocument();
-    expect(within(blocked).getAllByRole("button", { name: "Ask Alice" })).toHaveLength(2);
+    expect(within(blocked).getAllByRole("button", { name: "Ask an admin" })).toHaveLength(2);
     // No plan is fetched to decide the groups.
     expect((fetch as unknown as { mock: { calls: Request[][] } }).mock.calls.some((c) => c[0]!.url.includes("connect-plan"))).toBe(false);
   });
@@ -483,11 +482,11 @@ describe("the App step", () => {
       "DELETE /v1/workspaces/w1/apps/gcal/setup-request": () => new Response(null, { status: 204 }),
     });
     open({ appId: null });
-    fireEvent.click(await screen.findByRole("button", { name: "Ask Alice" }));
-    expect(await screen.findByText(/Asked just now\. You'll get a notice when it's ready, and Daneel's Access tab will offer it\./)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Ask an admin" }));
+    expect(await screen.findByText(/Asked just now\. You'll get a notice when it's ready, and Daneel's Apps & access tab will offer it\./)).toBeInTheDocument();
     expect(calls.some((c) => c.method === "POST" && c.path === "/v1/workspaces/w1/apps/gcal/setup-request")).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    expect(await screen.findByRole("button", { name: "Ask Alice" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Ask an admin" })).toBeInTheDocument();
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
   });
 
@@ -496,7 +495,7 @@ describe("the App step", () => {
     open({ appId: null });
     expect(await screen.findByText(/Asked\. You'll get a notice when it's ready/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Ask Alice" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ask an admin" })).toBeNull();
   });
 
   it("Give access on an Already connected row goes to the Access step and saves only the access", async () => {

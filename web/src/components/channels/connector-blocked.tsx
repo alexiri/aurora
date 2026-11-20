@@ -12,10 +12,8 @@ import type { ConnectorAvailability } from "@/lib/api/connectors";
 import { adminRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
-/** Who to ask, in words ("Ana, Ben"), or a generic fallback. */
-export function adminNames(admins: { name: string }[]): string {
-  return admins.length ? admins.map((a) => a.name).join(", ") : "your instance administrator";
-}
+/** Who to ask (D-407): the role, never a login; several people can be Aurora administrators. */
+const ASK_INSTANCE_ADMIN = "an Aurora administrator";
 
 /** The platform's name for people: never the connector's raw id ("fake" → "Fake"). */
 export function platformName(item: { name: string; type_id: string }): string {
@@ -37,11 +35,11 @@ const HEAD: Record<string, (name: string) => string> = {
  */
 export function ConnectorBlocked({
   item,
-  admins,
   isInstanceAdmin,
 }: {
   item: ConnectorAvailability;
-  admins: { name: string }[];
+  /** Kept for callers; the administrators are never named (D-407). */
+  admins?: { name: string }[];
   isInstanceAdmin: boolean;
 }) {
   const [adding, setAdding] = useState(false);
@@ -51,8 +49,8 @@ export function ConnectorBlocked({
     return (
       <li data-testid={`blocked-${item.type_id}`}>
         <Unavailable
-          title={`${name} is added, but its connector isn't running`}
-          fixer={isInstanceAdmin ? "Start the connector host that runs it." : <>Ask: {adminNames(admins)}.</>}
+          title={`${name} is added, but its chat platform host isn't running`}
+          fixer={isInstanceAdmin ? "Start the chat platform host that runs it." : <>Ask {ASK_INSTANCE_ADMIN}.</>}
           guide={
             isInstanceAdmin ? (
               <Link href={adminRoutes.chatPlatforms()} className="font-medium text-link underline">
@@ -70,7 +68,7 @@ export function ConnectorBlocked({
     // (P5-POLISH-11, F1) Nothing here the viewer can act on (there is no way to ask for a platform): a neutral card, not an amber notice.
     return (
       <li data-testid={`blocked-${item.type_id}`}>
-        <Unavailable title={head} fixer={<>Ask: {adminNames(admins)}.</>}>
+        <Unavailable title={head} fixer={<>Ask {ASK_INSTANCE_ADMIN}.</>}>
           Until then, {name} can&apos;t be connected.
         </Unavailable>
       </li>
@@ -80,7 +78,7 @@ export function ConnectorBlocked({
     <li>
       <Notice tone="pending" role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="min-w-0 flex-1 basis-60" data-testid={`blocked-${item.type_id}`}>
-          <strong className="font-semibold">{head}</strong> {isInstanceAdmin ? null : <>Ask: {adminNames(admins)}.</>}
+          <strong className="font-semibold">{head}</strong> {isInstanceAdmin ? null : <>Ask {ASK_INSTANCE_ADMIN}.</>}
         </span>
         {isInstanceAdmin ? (
           item.setup_state === "not_added" ? (
@@ -96,7 +94,7 @@ export function ConnectorBlocked({
       </Notice>
       {adding ? (
         <Dialog open onOpenChange={(o) => !o && setAdding(false)}>
-          <DialogContent title={`Add ${item.name}`} description="Adding approves the connector and makes it available to every organization.">
+          <DialogContent title={`Add ${item.name}`} description="Adding approves the chat platform and makes it available to every organization.">
             <AddConnectorFlow only={item.type_id} onAdded={() => setAdding(false)} />
           </DialogContent>
         </Dialog>
@@ -106,12 +104,12 @@ export function ConnectorBlocked({
 }
 
 /** Nothing at all is announced: the connector host is not running. */
-export function NoConnectorsYet({ admins, isInstanceAdmin }: { admins: { name: string }[]; isInstanceAdmin: boolean }) {
+export function NoConnectorsYet({ isInstanceAdmin }: { admins?: { name: string }[]; isInstanceAdmin: boolean }) {
   return (
     <Notice tone="pending" role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2">
       <span className="min-w-0 flex-1 basis-60">
         <strong className="font-semibold">No chat platform is available yet.</strong>{" "}
-        {isInstanceAdmin ? "Start the connector host, then add a connector." : <>Ask {adminNames(admins)} to set one up.</>}
+        {isInstanceAdmin ? "Start the chat platform host, then add a chat platform." : <>Ask {ASK_INSTANCE_ADMIN} to set one up.</>}
       </span>
       {isInstanceAdmin ? (
         <Link href={adminRoutes.chatPlatforms()} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>

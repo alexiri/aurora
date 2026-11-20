@@ -49,7 +49,7 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   await form.getByLabel("Name").fill("Mock LLM");
   // By the endpoint's id (deploy/kind/values-llm-mock.yaml): the label carries hints that change ("— Works with
   // Claude Code" since P4-LLM-6), and a label that no longer matches waits out the whole test timeout.
-  await form.getByLabel("Provider endpoint").selectOption("litellm-mock");
+  await form.getByLabel("Which service is this key for?").selectOption("litellm-mock");
   await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
   // (P5-UX-4, C-988) The form's "Who can use this key" has Daneel ticked (the workspace's only agent), so the key is saved
   // with its access in one request. Key and access are done from the server's state (the mock endpoint has a default

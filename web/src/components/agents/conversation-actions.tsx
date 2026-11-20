@@ -179,9 +179,9 @@ export function RedactDialog({ convId, seq, open, onOpenChange }: { convId: stri
         onOpenChange(o);
         setErr(null);
       }}
-      title="Redact this message?"
+      title="Remove this message's content?"
       description="The content is replaced for everyone and cannot be restored."
-      submitLabel={busy ? "Redacting…" : "Redact"}
+      submitLabel={busy ? "Removing…" : "Remove content"}
       danger
       busy={busy}
       onSubmit={(e) => void submit(e)}>

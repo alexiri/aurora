@@ -62,7 +62,7 @@ export function FilesTab({ agentId, frozen }: { agentId: string; frozen: boolean
     // The freeze banner (with Unfreeze) is the agent header's; no listing and no request while frozen (D-316(d)).
     return (
       <Notice tone="neutral" role="status">
-        This agent is frozen. Files are unavailable while it is frozen.
+        This agent is paused. Files are unavailable while it is paused.
       </Notice>
     );
   }

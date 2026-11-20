@@ -87,7 +87,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByRole("checkbox", { name: "LiteLLM" })).toBeChecked();
         await expect(page.getByRole("checkbox", { name: "OpenAI", exact: true })).not.toBeChecked();
         await expect(page.getByTestId("llm.provider_preference-locked-value")).toContainText("1. LiteLLM");
-        await expect(page.getByText("Set in Helm").first()).toBeVisible();
+        await expect(page.getByText("Set by the installation").first()).toBeVisible();
         await expect(page.getByRole("button", { name: "Edit team" })).toBeVisible();
         await expect(page.getByRole("button", { name: "Edit central" })).toHaveCount(0);
         // P4-LLM-6: harness badges, the no-harness notice and the private-address mark with its link to Limits.
@@ -112,7 +112,7 @@ for (const scheme of ["light", "dark"] as const) {
         await openRoute(page, "/admin/settings/sign-in", scheme);
         await expect(page).toHaveURL(/\/admin\/people\?tab=sign-in$/);
         await expect(page.getByRole("heading", { name: "People", level: 1 })).toBeVisible();
-        await expect(page.getByText("Set in Helm").first()).toBeVisible();
+        await expect(page.getByText("Set by the installation").first()).toBeVisible();
         await expect(page.getByRole("button", { name: "Edit corp" })).toBeVisible();
         await expect(page.getByRole("button", { name: "Edit helm" })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -181,7 +181,7 @@ for (const scheme of ["light", "dark"] as const) {
         await openRoute(page, "/admin/settings/limits", scheme);
         await expect(page).toHaveURL(/\/admin\/platform\?tab=limits$/);
         await expect(page.getByRole("heading", { name: "Platform", level: 1 })).toBeVisible();
-        await expect(page.getByText("Set in Helm").first()).toBeVisible();
+        await expect(page.getByText("Set by the installation").first()).toBeVisible();
         await expect(page.getByText(/Private destinations\./)).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);

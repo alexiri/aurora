@@ -72,7 +72,7 @@ export function methodSentence(
     return `People can connect ${appName} with ${withLabel(m.label)}.`;
   }
   const parts: string[] = [];
-  if (m.needs.includes("oauth_client")) parts.push(`needs an OAuth client: none is set up for ${placesPhrase(view, orgName)}`);
+  if (m.needs.includes("oauth_client")) parts.push(`needs a sign-in app: none is set up for ${placesPhrase(view, orgName)}`);
   if (m.needs.includes("instance")) parts.push(`needs a self-hosted ${appName} server to be registered first`);
   if (m.needs.includes("admin_material"))
     parts.push(`needs details from whoever runs your ${appName} organization, such as an app ID and a private key`);

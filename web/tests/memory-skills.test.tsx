@@ -54,14 +54,14 @@ describe("revisions", () => {
       "POST /v1/agents/a1/memories/k/revisions/2/redact": () => { redacted = true; return json(204, null); },
     });
     wrap(<RevisionHistory agentId="a1" memory={memory} />);
-    const latest = await screen.findByRole("button", { name: "Redact #3" });
+    const latest = await screen.findByRole("button", { name: "Remove content of #3" });
     expect((latest as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("Redacted")).toBeTruthy();
+    expect(screen.getByText("Content removed")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Restore #2" }));
     await waitFor(() => expect(restored).toEqual({ revision: 2 }));
-    fireEvent.click(screen.getByRole("button", { name: "Redact #2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove content of #2" }));
     expect(redacted).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Confirm redact #2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm removing content of #2" }));
     await waitFor(() => expect(redacted).toBe(true));
   });
 });

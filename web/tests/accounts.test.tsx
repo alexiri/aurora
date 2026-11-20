@@ -172,7 +172,7 @@ describe("AccountsList: one row per kind", () => {
     const stripe = await screen.findByRole("listitem", { name: "Stripe API" });
     expect(within(stripe).getByText("No agent can use this")).toBeInTheDocument();
     const gitlab = screen.getByRole("listitem", { name: "Org GitLab" });
-    expect(within(gitlab).getByText("Shared by your organization")).toBeInTheDocument();
+    expect(within(gitlab).getByText(/Shared by your organization/)).toBeInTheDocument();
     expect(within(gitlab).queryByRole("button", { name: /^More for / })).toBeNull();
   });
 

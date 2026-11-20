@@ -40,7 +40,7 @@ function TypeList({
   onStale: () => void;
 }) {
   return (
-    <ItemList aria-label="Connector types">
+    <ItemList aria-label="Chat platform types">
       {items.map((t) => {
         const desc = shortDescription(t.setup_guide_md);
         // (D-219) Nothing to type: review inline and add with one button.
@@ -78,7 +78,7 @@ function TypeList({
 
 function NoHost() {
   return (
-    <EmptyState title="The connector host is not running">
+    <EmptyState title="The chat platform host is not running">
       No connector host has reported in the last 90 seconds, so there are no connector types to add. Start the host and
       reload; see “Plugins and connectors” in the operator guide.
     </EmptyState>
@@ -87,7 +87,7 @@ function NoHost() {
 
 function Review({ type, onBack, onNext, stale }: { type: ConnectorType; onBack: () => void; onNext: () => void; stale: boolean }) {
   return (
-    <Section id="add-review" title={`Review ${type.name}`} description="What this connector can do, before you add it." card>
+    <Section id="add-review" title={`Review ${type.name}`} description="What this chat platform can do, before you add it." card>
       <div className="space-y-4">
         {stale ? (
           <Notice tone="pending" role="status">
@@ -188,7 +188,7 @@ function SettingsStep({
             onChange={(e) => setDisplayName(e.target.value)}
           />
         </Field>
-        {fields.length === 0 ? <p className="text-sm text-ink-2">This connector has no instance settings.</p> : null}
+        {fields.length === 0 ? <p className="text-sm text-ink-2">This chat platform has no instance settings.</p> : null}
         <DynamicForm
           fields={fields}
           values={values}
@@ -206,7 +206,7 @@ function SettingsStep({
             Back
           </Button>
           <Button type="submit" disabled={create.isPending}>
-            Add connector
+            Add chat platform
           </Button>
         </div>
       </form>
@@ -258,12 +258,12 @@ export function AddConnectorFlow({
   return (
     <Section
       id="add-choose"
-      title="Choose a connector type"
-      description="Types offered by the running connector host."
+      title="Choose a chat platform type"
+      description="Types offered by the running chat platform host."
       actions={
         onSelfHosted ? (
           <Button variant="ghost" size="sm" onClick={onSelfHosted}>
-            Self-hosted connector (advanced)
+            Self-hosted chat platform host (advanced)
           </Button>
         ) : undefined
       }

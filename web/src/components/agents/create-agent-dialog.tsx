@@ -120,7 +120,7 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
             {byoBlocked ? (
               <Notice role="status">{byoBlocked}.</Notice>
             ) : null}
-            <Field id="agent-brief" label="Brief (optional)" error={fe.brief}>
+            <Field id="agent-brief" label="Instructions (optional)" error={fe.brief}>
               <textarea id="agent-brief" className={inputClass} rows={3} value={brief} onChange={(e) => setBrief(e.target.value)} />
             </Field>
             {create.error && Object.keys(fe).length === 0 ? (

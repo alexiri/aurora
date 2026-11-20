@@ -41,8 +41,8 @@ describe("agent sections", () => {
   it("lists a hosted agent's five sections in order, with Terminal and Previews only where enabled", () => {
     const s = availableSections(hosted);
     expect(s.map((x) => x.id)).toEqual(["chat", "behaviour", "triggers", "computer", "access"]);
-    expect(s.find((x) => x.id === "behaviour")!.pages.map((p) => p.label)).toEqual(["Instructions", "Memory", "Skills", "Evals"]);
-    expect(s.find((x) => x.id === "triggers")!.pages.map((p) => p.label)).toEqual(["Schedules", "Webhooks", "Channels", "Peers"]);
+    expect(s.find((x) => x.id === "behaviour")!.pages.map((p) => p.label)).toEqual(["Instructions", "Memory", "Skills", "Tests"]);
+    expect(s.find((x) => x.id === "triggers")!.pages.map((p) => p.label)).toEqual(["Schedules", "Webhooks", "Channels", "Other agents"]);
     expect(s.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Computer"]);
     const all = availableSections({ byo: false, previews: true, terminal: true });
     expect(all.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Computer", "Terminal", "Files", "Previews"]);

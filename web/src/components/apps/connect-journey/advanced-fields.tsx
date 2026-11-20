@@ -77,7 +77,7 @@ export function OAuthClientField({
   id?: string;
 }) {
   return (
-    <Field id={id} label="OAuth client" hint="Leave on automatic to use the most specific enabled client.">
+    <Field id={id} label="Sign-in app" hint="Leave on automatic to use the most specific enabled sign-in app.">
       <select id={id} className={inputClass} value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">Automatic</option>
         {clients.map((c) => (

@@ -16,11 +16,11 @@ import { cn } from "@/lib/utils";
 export function Locked({ setting }: { setting?: string }) {
   const me = useMe();
   const badge = (
-    <LockPill owner="Set by Administration" className="ml-2 align-middle" />
+    <LockPill owner="Set for you by an Aurora administrator" className="ml-2 align-middle" />
   );
   if (!setting || me.data?.user.is_instance_admin !== true) return badge;
   return (
-    <Link href={adminRoutes.governanceSetting(setting)} className="no-underline" aria-label={`Set by Administration: open the ${setting} setting`}>
+    <Link href={adminRoutes.governanceSetting(setting)} className="no-underline" aria-label={`Set for you by an Aurora administrator: open the ${setting} setting`}>
       {badge}
     </Link>
   );

@@ -161,7 +161,7 @@ export const FILES_ERROR_SENTENCES: Record<string, string> = {
   too_many_entries: "This folder has more than 10,000 items; delete it from the Terminal.",
   terminal_disabled: "Files are not available on this instance.",
   files_not_supported: "Files are not available for this agent.",
-  frozen: "This agent is frozen. Unfreeze it to use its files.",
+  frozen: "This agent is paused. Resume it to use its files.",
   sandbox_waking: "Waking the computer…",
   sandbox_unavailable: "The agent's computer is not running and cannot be started right now.",
   wake_limited: "The computer was woken too many times this hour. Try again later.",

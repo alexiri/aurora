@@ -49,27 +49,27 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
   instructions: "Instructions",
   memory: "Memory",
   skills: "Skills",
-  evals: "Evals",
+  evals: "Tests",
   schedules: "Schedules",
   webhooks: "Webhooks",
   channels: "Channels",
-  peers: "Peers",
+  peers: "Other agents",
   computer: "Computer",
   terminal: "Terminal",
   files: "Files",
   previews: "Previews",
   ssh: "SSH",
   connect: "Computer: Connect",
-  access: "Access",
+  access: "Apps & access",
 };
 
 /** Sections in order, each with its pages in order. */
 export const SECTIONS: readonly { id: SectionId; label: string; pages: readonly AgentPageId[] }[] = [
   { id: "chat", label: "Chat", pages: ["chat"] },
-  { id: "behaviour", label: "Behaviour", pages: ["instructions", "memory", "skills", "evals"] },
-  { id: "triggers", label: "Triggers", pages: ["schedules", "webhooks", "channels", "peers"] },
+  { id: "behaviour", label: "Instructions", pages: ["instructions", "memory", "skills", "evals"] },
+  { id: "triggers", label: "Automations", pages: ["schedules", "webhooks", "channels", "peers"] },
   { id: "computer", label: "Computer", pages: ["computer", "terminal", "files", "previews", "ssh", "connect"] },
-  { id: "access", label: "Access", pages: ["access"] },
+  { id: "access", label: "Apps & access", pages: ["access"] },
 ];
 
 /** Page id → its section (the one mapping). */

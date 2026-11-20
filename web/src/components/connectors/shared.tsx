@@ -10,10 +10,10 @@ import { connectorIconUrl, type ConnectorAdmin } from "@/lib/api/connectors";
 import { fieldErrors } from "@/lib/api/errors";
 
 const MESSAGES: Record<string, string> = {
-  connector_exists: "A connector with this id already exists.",
-  unknown_connector_type: "No running connector host offers this type any more.",
-  connector_not_managed: "This connector is self-hosted, so its settings are not edited here.",
-  connector_managed: "A managed connector has no token: Aurora runs it.",
+  connector_exists: "A chat platform with this id already exists.",
+  unknown_connector_type: "No running chat platform host offers this type any more.",
+  connector_not_managed: "This chat platform is self-hosted, so its settings are not edited here.",
+  connector_managed: "A managed chat platform has no token: Aurora runs it.",
   secret_store_unavailable: "The secret store is temporarily unavailable. Nothing was changed; try again in a moment.",
 };
 
@@ -58,7 +58,7 @@ export function connectorStatus(c: ConnectorAdmin): { label: string; tone: "neut
     return { label: failing.message ? `Error: ${failing.message}` : "Error", tone: "danger" };
   }
   if (c.status === "awaiting_registration") {
-    return { label: c.managed ? "Waiting for the connector host" : "Waiting for the connector", tone: "neutral" };
+    return { label: c.managed ? "Waiting for the chat platform host" : "Waiting for the chat platform", tone: "neutral" };
   }
   return { label: "Running", tone: "accent" };
 }

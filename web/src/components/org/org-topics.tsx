@@ -23,11 +23,10 @@ import { OrgSkills } from "@/components/skills/org-skills";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
-import { WhoCan } from "@/components/ui/who-can";
 import { AskAdmin } from "@/components/ask-admin";
 import { useScimSettings } from "@/lib/api/scim";
 import { useWorkspaces, type Org } from "@/lib/api/queries";
-import { whoCanFromContacts } from "@/lib/who-can";
+import { onlySentence, whoCanFromContacts } from "@/lib/who-can";
 import { UsageView } from "@/components/usage/usage-view";
 import { OutgoingWebhooksOrgSettings } from "@/components/webhook/org-webhook-settings";
 import { type TABS } from "@/lib/routes";
@@ -110,7 +109,7 @@ export function OrgAppsPage() {
             },
             {
               id: "oauth-clients",
-              label: "OAuth clients",
+              label: "Sign-in apps",
               content: <OAuthClientsPanel scope={{ kind: "organization", id: org.id }} canOwn orgId={org.id} />,
             },
             { id: "self-hosted", label: "Self-hosted apps", content: <InstancesView scope={{ kind: "organization", id: org.id }} canManage /> },
@@ -198,7 +197,8 @@ function MemberChatPlatforms({ org }: { org: Org }) {
         className="mb-2"
       />
       <div className="flex flex-wrap items-center gap-3 rounded-control bg-subtle px-3 py-2">
-        <WhoCan value={who} lead />
+        {/* (D-407, channels-3) The role says who can; the button asks them. Nobody is named. */}
+        <p className="text-sm text-ink-2">{onlySentence(who)}</p>
         <AskAdmin workspaceId={workspaces.data?.items[0]?.id} subject="chat_platform" who={who} />
       </div>
     </div>

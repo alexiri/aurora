@@ -163,7 +163,7 @@ describe("getting-started guide: every state", () => {
     // The owners come from the workspace's `contacts` (C-981): a member can read them, no access list is needed.
     world({ contacts: { owners: [{ name: "Ada Lovelace" }] } });
     guide({ isOwner: false });
-    expect(await screen.findByText("Only workspace owners can add an account. Ask Ada Lovelace.")).toBeInTheDocument();
+    expect(await screen.findByText("Only workspace owners can add an account. Ask a workspace owner.")).toBeInTheDocument();
     expect(calls.some((c) => c.key === "GET /v1/workspaces/w1/access")).toBe(false);
     expect(screen.queryByLabelText("New LLM key")).not.toBeInTheDocument();
     expect(calls.some((c) => c.key === "GET /v1/agents/a1/model-readiness")).toBe(false);
@@ -436,7 +436,7 @@ describe("teaching empty states (D-141)", () => {
     expect(screen.getByText("Use one for recurring work.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New schedule" })).toBeInTheDocument();
     // (C-916) A viewer who can act is never told to ask someone else.
-    expect(screen.queryByText(/Ask Bob Builder/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ask a workspace owner/)).not.toBeInTheDocument();
   });
 
   it("a person who cannot act sees who can instead of a dead button", () => {
@@ -446,6 +446,6 @@ describe("teaching empty states (D-141)", () => {
       </EmptyState>,
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.getByText("Only workspace owners can set up a schedule. Ask Bob Builder.")).toBeInTheDocument();
+    expect(screen.getByText("Only workspace owners can set up a schedule. Ask a workspace owner.")).toBeInTheDocument();
   });
 });

@@ -29,6 +29,23 @@ import {
 
 const KINDS = ["none", "hmac_sha256", "bearer"] as const;
 
+/** (D-407, webhooks-2) The verification options in words; the stored values do not change. */
+const KIND_LABEL: Record<(typeof KINDS)[number], string> = {
+  hmac_sha256: "Signed (recommended)",
+  bearer: "Password in the header",
+  none: "Anyone with the address",
+};
+
+/** A delivery's status in words (a refusal says why); `duplicate` is answered with the original and not logged. */
+const DELIVERY_STATUS: Record<string, string> = {
+  accepted: "Received",
+  rejected_signature: "Refused: wrong signature",
+  rejected_size: "Refused: too large",
+  unauthorized: "Refused: not allowed",
+  disabled: "Refused: paused",
+  duplicate: "Duplicate, ignored",
+};
+
 function Deliveries({ agentId, id }: { agentId: string; id: string }) {
   const q = useWebhookDeliveries(agentId, id, true);
   if (q.isPending) return <Loading />;
@@ -42,7 +59,7 @@ function Deliveries({ agentId, id }: { agentId: string; id: string }) {
           {items.map((d) => (
             <tr key={d.id}>
               <Td className="whitespace-nowrap">{fmtDate(d.received_at)}</Td>
-              <Td>{d.status}</Td>
+              <Td>{DELIVERY_STATUS[d.status] ?? d.status}</Td>
               <Td className="whitespace-nowrap">{d.size} B</Td>
             </tr>
           ))}
@@ -108,7 +125,7 @@ export function WebhookForm({
         <textarea id="wh-instr" className={inputClass} rows={3} value={instructions} required onChange={(e) => setInstructions(e.target.value)} />
       </Field>
       <Field id="wh-kind" label="Verification" error={fe.verification}>
-        <Select id="wh-kind" value={kind} onChange={setKind} options={KINDS.map((k) => ({ value: k, label: k }))} />
+        <Select id="wh-kind" value={kind} onChange={setKind} options={KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))} />
       </Field>
       {kind !== "none" ? (
         <div className="grid gap-4 sm:grid-cols-2">
@@ -121,7 +138,7 @@ export function WebhookForm({
         </div>
       ) : null}
       {!initial && canOwn ? (
-        <CheckboxField id="wh-anchored" label="Anchor to workspace (outlives any single member)" checked={anchored} onChange={setAnchored} />
+        <CheckboxField id="wh-anchored" label="Keep running if I leave (outlives any single member)" checked={anchored} onChange={setAnchored} />
       ) : null}
       {mut.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={mut.error} />
@@ -160,7 +177,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
         <code className="break-all font-mono text-xs text-ink-2">{w.url_prefix}…</code>
         <span className="text-xs text-muted">verification: {w.verification.kind}</span>
         <Badge className="sm:ml-auto" tone={w.enabled ? "accent" : "neutral"}>
-          {w.enabled ? "Enabled" : `Disabled${w.disabled_reason ? ` (${w.disabled_reason})` : ""}`}
+          {w.enabled ? "On" : "Paused"}
         </Badge>
       </div>
       <p className="whitespace-pre-wrap text-sm text-ink-2">{w.instructions}</p>
@@ -169,7 +186,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
       </p>
       {w.disabled_reason === "authorization" ? (
         <Notice tone="pending" role="status">
-          Disabled because its owner lost access. Reassign it to a current member to bring it back.
+          Paused because its owner lost access. Reassign it to a current member to bring it back.
         </Notice>
       ) : null}
       {canOwn ? <AnchorSwitch name={w.name} anchor={w.anchor} busy={upd.isPending} onChange={(anchor) => upd.mutate({ id: w.id, body: { anchor } })} /> : null}
