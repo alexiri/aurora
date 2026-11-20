@@ -46,6 +46,24 @@ beforeEach(() => {
 const png = (size = 10) => new File([new Uint8Array(size)], "a.png", { type: "image/png" });
 
 describe("avatar upload", () => {
+  it("shows a visible Change picture button, the true limit and a Remove button only when there is a picture (behaviour-8)", () => {
+    mockFetch({});
+    const { unmount } = wrap(<InstructionsTab agent={without} wsId="w1" />);
+    expect(screen.getByRole("button", { name: "Change picture" })).toBeVisible();
+    expect(screen.getByText("PNG, JPG or WebP, up to 512 KiB. Shown round.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove picture" })).toBeNull();
+    unmount();
+    wrap(<InstructionsTab agent={withAvatar} wsId="w1" />);
+    expect(screen.getByRole("button", { name: "Remove picture" })).toHaveTextContent("Remove");
+  });
+
+  it("says Saved beside the picture after an upload", async () => {
+    mockFetch({ "PUT /v1/agents/a1/avatar": () => json(200, withAvatar), "GET /v1/models": () => json(200, { items: [] }) });
+    wrap(<InstructionsTab agent={without} wsId="w1" />);
+    fireEvent.change(screen.getByLabelText("Avatar file"), { target: { files: [png()] } });
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+  });
+
   it("shows the current avatar and uploads the raw file with PUT", async () => {
     mockFetch({ "PUT /v1/agents/a1/avatar": () => json(200, withAvatar), "GET /v1/models": () => json(200, { items: [] }) });
     const { container } = wrap(<InstructionsTab agent={without} wsId="w1" />);
@@ -64,7 +82,7 @@ describe("avatar upload", () => {
     wrap(<InstructionsTab agent={without} wsId="w1" />);
     const input = screen.getByLabelText("Avatar file");
     fireEvent.change(input, { target: { files: [new File(["<svg/>"], "a.svg", { type: "image/svg+xml" })] } });
-    expect(await screen.findByRole("alert")).toHaveTextContent("PNG, JPEG or WebP");
+    expect(await screen.findByRole("alert")).toHaveTextContent("PNG, JPG or WebP");
     fireEvent.change(input, { target: { files: [png(512 * 1024 + 1)] } });
     expect(await screen.findByRole("alert")).toHaveTextContent("512 KiB");
     expect(calls.filter((c) => c.method === "PUT")).toHaveLength(0);
@@ -84,7 +102,7 @@ describe("avatar upload", () => {
     mockFetch({ "DELETE /v1/agents/a1/avatar": () => json(204, null) });
     const { container } = wrap(<InstructionsTab agent={withAvatar} wsId="w1" />);
     expect(container.querySelector("img")).toHaveAttribute("src", "/v1/public/avatars/KEY");
-    fireEvent.click(screen.getByRole("button", { name: "Remove avatar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove picture" }));
     await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.path === "/v1/agents/a1/avatar")).toBe(true));
   });
 });

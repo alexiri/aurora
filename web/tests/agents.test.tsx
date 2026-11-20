@@ -4,10 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import { ConnectTab } from "@/components/agents/connect-tab";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { WorkspaceNav } from "@/components/app-shell";
+import { UndoToastHost } from "@/components/ui/undo-toast";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), push }), useParams: () => ({ org: "acme", ws: "ops" }) }));
 
 function mockFetch(routes: Record<string, () => Response>) {
   const fn = vi.fn(async (input: Request | string | URL) => {
@@ -41,16 +43,23 @@ async function createFlow(kind: "byo" | "hosted") {
         container_config: kind === "byo" ? config : null,
       }),
   });
-  // The kind select is Expert (D-406): these flows pick a kind, so the switch is on.
-  wrap(<CreateAgentDialog wsId="w1" />, { moreControls: true });
+  wrap(<CreateAgentDialog wsId="w1" />);
   fireEvent.click(screen.getByRole("button", { name: "New agent" }));
   fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Bot" } });
-  if (kind === "hosted") {
-    await waitFor(() => expect(screen.getByRole("option", { name: "Hosted" })).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "hosted" } });
+  await screen.findByLabelText("Where it runs");
+  if (kind === "byo") {
+    // BYO sits under "More options" (P5-REFINE-12).
+    fireEvent.click(screen.getByText(/More options: bring your own agent/));
+    fireEvent.change(screen.getByLabelText("Where it runs"), { target: { value: "byo" } });
   }
   fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
 }
+
+const postedBody = async (fn: ReturnType<typeof mockFetch>) => {
+  await waitFor(() => expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method === "POST")).toBe(true));
+  const post = fn.mock.calls.map(([r]) => r).find((r): r is Request => r instanceof Request && r.method === "POST")!;
+  return (await post.clone().json()) as Record<string, unknown>;
+};
 
 describe("create agent", () => {
   it("reveals the BYO token once and clears it on close", async () => {
@@ -68,27 +77,81 @@ describe("create agent", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Create agent" })).not.toBeInTheDocument());
     expect(screen.queryByTestId("secret-key")).not.toBeInTheDocument();
   });
-  it("hides the hosted option when the feature is off", async () => {
+  it("offers no hosted option when the feature is off and says so", async () => {
     mockFetch({ "GET /v1/instance": () => json(200, instance(false)) });
-    wrap(<CreateAgentDialog wsId="w1" />, { moreControls: true });
+    wrap(<CreateAgentDialog wsId="w1" />);
     fireEvent.click(screen.getByRole("button", { name: "New agent" }));
-    await screen.findByLabelText("Kind");
-    expect(screen.queryByRole("option", { name: "Hosted" })).not.toBeInTheDocument();
+    expect(await screen.findByText(/This instance has no hosted agents/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Where it runs")).not.toBeInTheDocument();
   });
-  it("has no Kind select at Use and creates a hosted agent (D-406)", async () => {
+  it("creates a hosted agent by default (Runs on Aurora), with BYO only under More options", async () => {
     const fn = mockFetch({
       "GET /v1/instance": () => json(200, instance(true)),
       "POST /v1/workspaces/w1/agents": () => json(201, { agent: agent("hosted"), token: null, container_config: null }),
     });
-    wrap(<CreateAgentDialog wsId="w1" />, { moreControls: false });
+    wrap(<CreateAgentDialog wsId="w1" />);
     fireEvent.click(screen.getByRole("button", { name: "New agent" }));
     fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Bot" } });
-    expect(screen.queryByLabelText("Kind")).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Create agent" })).toBeEnabled());
+    const where = await screen.findByLabelText("Where it runs");
+    expect((where as HTMLSelectElement).value).toBe("hosted");
+    expect(screen.getByRole("option", { name: "Runs on Aurora (recommended)" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /my own computer/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Aurora hosts the agent and its computer for you.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Brief")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
-    await waitFor(() => expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method === "POST")).toBe(true));
-    const post = fn.mock.calls.map(([r]) => r).find((r): r is Request => r instanceof Request && r.method === "POST")!;
-    expect((await post.clone().json()).kind).toBe("hosted");
+    expect((await postedBody(fn)).kind).toBe("hosted");
+  });
+  it("starts from General assistant: the template fills Instructions, the handle follows the name", async () => {
+    const fn = mockFetch({
+      "GET /v1/instance": () => json(200, instance(true)),
+      "POST /v1/workspaces/w1/agents": () => json(201, { agent: agent("hosted"), token: null, container_config: null }),
+    });
+    wrap(<CreateAgentDialog wsId="w1" />);
+    fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+    expect(await screen.findByRole("radio", { name: "General assistant" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual([
+      "General assistant", "Research", "Ops helper", "Calendar secretary", "Writer", "A blank agent",
+    ]);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Rex The Helper" } });
+    expect((screen.getByLabelText("Handle (optional)") as HTMLInputElement).value).toBe("rex-the-helper");
+    expect((screen.getByLabelText("Instructions (optional)") as HTMLTextAreaElement).value).toContain("You are Rex The Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+    const body = await postedBody(fn);
+    expect(body.handle).toBe("rex-the-helper");
+    expect(String(body.brief)).toContain("Never change anything outside this chat without asking first.");
+  });
+  it("a template fills Name only while it is empty, and a blank agent leaves Instructions empty", async () => {
+    mockFetch({ "GET /v1/instance": () => json(200, instance(true)) });
+    wrap(<CreateAgentDialog wsId="w1" />);
+    fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Research" }));
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Researcher");
+    fireEvent.click(screen.getByRole("radio", { name: "Writer" }));
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Researcher");
+    expect((screen.getByLabelText("Instructions (optional)") as HTMLTextAreaElement).value).toContain("You are Researcher, a writing assistant");
+    fireEvent.click(screen.getByRole("radio", { name: "A blank agent" }));
+    expect((screen.getByLabelText("Instructions (optional)") as HTMLTextAreaElement).value).toBe("");
+  });
+  it("a hosted agent opens in its chat with the template's first message as a draft, and a toast", async () => {
+    push.mockClear();
+    mockFetch({
+      "GET /v1/instance": () => json(200, instance(true)),
+      "POST /v1/workspaces/w1/agents": () => json(201, { agent: agent("hosted"), token: null, container_config: null }),
+    });
+    wrap(
+      <>
+        <CreateAgentDialog wsId="w1" />
+        <UndoToastHost />
+      </>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Bot" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+    await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
+    const href = String(push.mock.calls[0][0]);
+    expect(href.startsWith("/o/acme/w/ops/agents/bot?")).toBe(true);
+    expect(new URL(href, "http://x").searchParams.get("draft")).toBe("Hi Bot, what can you do for me?");
+    expect(await screen.findByText("Bot is ready")).toBeInTheDocument();
   });
 });
 

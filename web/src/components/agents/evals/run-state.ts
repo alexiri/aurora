@@ -28,7 +28,7 @@ export function startBlockedReason(
 /** Share of the run's questions that have an outcome (the run's progress while it is active). */
 export function progressRatio(r: Pick<EvalRun, "counts">): number {
   const c = r.counts;
-  return c.total > 0 ? (c.passed + c.failed + c.errored) / c.total : 0;
+  return c.total > 0 ? (c.passed + c.failed + c.errored + c.not_scored) / c.total : 0;
 }
 
 /** `85` → `85%`, `66.666` → `66.7%`; null when nothing was scored. */

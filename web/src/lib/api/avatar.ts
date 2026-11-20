@@ -13,7 +13,7 @@ export const AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 
 /** Client-side pre-check for UX only; returns an error message or null. */
 export function avatarProblem(file: Pick<File, "type" | "size">): string | null {
-  if (!(AVATAR_TYPES as readonly string[]).includes(file.type)) return "Choose a PNG, JPEG or WebP image.";
+  if (!(AVATAR_TYPES as readonly string[]).includes(file.type)) return "Choose a PNG, JPG or WebP image.";
   if (file.size > AVATAR_MAX_BYTES) return "That image is larger than 512 KiB.";
   return null;
 }

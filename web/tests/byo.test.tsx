@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ByoSettings } from "@/components/agents/byo-settings";
 import { WorkspaceByoRow } from "@/components/agents/workspace-byo";
@@ -20,6 +20,9 @@ import {
 import { allAgentsText, appliesToAllAgents, type RuleInput } from "@/lib/api/policy";
 import { wrap } from "./support/render";
 import { type Handler, json, mockFetch } from "./support/api";
+
+// The create dialog navigates to the new agent (P5-REFINE-12).
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }), useParams: () => ({ org: "acme", ws: "w1" }) }));
 
 const ORG = { id: "o1", slug: "acme", name: "Acme", my_role: "owner" } as unknown as Org;
 
@@ -385,9 +388,12 @@ describe("BYO posture in the agent UI", () => {
     });
     const { unmount } = wrap(<CreateAgentDialog wsId="w1" />);
     fireEvent.click(screen.getByRole("button", { name: "New agent" }));
-    await screen.findByLabelText("Kind");
-    await waitFor(() => expect(screen.getByRole("option", { name: /Bring your own/ }).hasAttribute("disabled")).toBe(true));
-    expect(screen.getByText(/workspace owners only/)).toBeTruthy();
+    await screen.findByLabelText("Where it runs");
+    // Hosted is the default and BYO sits under "More options" (P5-REFINE-12).
+    expect(screen.queryByRole("option", { name: /my own computer/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText(/More options: bring your own agent/));
+    await waitFor(() => expect(screen.getByRole("option", { name: /my own computer/ }).hasAttribute("disabled")).toBe(true));
+    expect(screen.getByText("BYO agents are for workspace owners only.")).toBeTruthy();
     unmount();
     mockFetch({
       "GET /v1/instance": () => json(200, instanceWith(true)),
@@ -395,8 +401,9 @@ describe("BYO posture in the agent UI", () => {
     });
     wrap(<CreateAgentDialog wsId="w1" />);
     fireEvent.click(screen.getByRole("button", { name: "New agent" }));
-    await screen.findByLabelText("Kind");
-    expect(screen.getByRole("option", { name: /Bring your own/ }).hasAttribute("disabled")).toBe(false);
+    await screen.findByLabelText("Where it runs");
+    fireEvent.click(screen.getByText(/More options: bring your own agent/));
+    expect(screen.getByRole("option", { name: /my own computer/ }).hasAttribute("disabled")).toBe(false);
   });
   it("says why BYO is unavailable when disabled and no hosted alternative exists", async () => {
     mockFetch({
@@ -405,7 +412,7 @@ describe("BYO posture in the agent UI", () => {
     });
     wrap(<CreateAgentDialog wsId="w1" />);
     fireEvent.click(screen.getByRole("button", { name: "New agent" }));
-    expect(await screen.findByText(/disabled by the org settings/)).toBeTruthy();
+    expect(await screen.findByText(/disabled by the org settings\. This instance has no hosted agents\./)).toBeTruthy();
     expect((screen.getByRole("button", { name: "Create agent" }) as HTMLButtonElement).disabled).toBe(true);
   });
   it("hides regeneration from non-owners under owners_only and when disabled", async () => {

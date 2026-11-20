@@ -41,7 +41,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.locator("text=claude-sonnet-5-5 >> visible=true").first()).toBeVisible();
         await expect(page.locator("text=Instructions (hash) >> visible=true").first()).toBeVisible();
         // A reason in words, never a code.
-        await expect(page.locator("text=The reply did not end with an ANSWER: line. >> visible=true").first()).toBeVisible();
+        await expect(page.locator("text=Daneel's reply had no ANSWER line, so Aurora could not compare it. The reply is shown below. >> visible=true").first()).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         const { violations } = await new AxeBuilder({ page }).analyze();
         expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id)).toEqual([]);

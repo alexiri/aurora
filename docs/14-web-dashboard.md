@@ -2208,6 +2208,51 @@ A control not in the table is a gap in the classification: add the row (and the 
 every row not marked later or rule-only is used in the code; rendered at Use with the switch off, the Expert
 strings are absent.
 
+## Agent settings pages (phase 5, P5-REFINE-12, D-406, D-407, D-411, D-413, D-414)
+
+**New agent.** The dialog "New agent" starts from a purpose: a row of chips **Start from** (General assistant,
+Research, Ops helper, Calendar secretary, Writer, A blank agent; General assistant by default). A template sets
+the name suggestion (only while Name is empty), the editable Instructions and a suggested first message; it never
+changes access. The templates are data in `web/src/lib/onboarding/templates.ts` (no API, not editable per
+organization; an optional `schedule { cron, prompt }` is data for the schedule form of P5-REFINE-14). Fields: Name,
+Handle (optional; follows the name until edited), **Where it runs** ("Runs on Aurora (recommended)" by default;
+bring-your-own appears only under "More options: bring your own agent…" and is disabled with its reason when the
+posture forbids it; when the instance has no hosted agents the dialog says so and BYO is the only choice) and
+**Instructions (optional)**. After Create: the toast "<Agent> is ready" and the new agent's chat, with the
+template's first message in the composer as a `?draft=` (C-1035), not sent. A BYO agent opens on Connect after its
+token has been copied.
+
+**Instructions.** The picture is a visible **Change picture** button with a real **Remove** and the hint "PNG, JPG
+or WebP, up to 512 KiB. Shown round." (the API's true limit). Models show display names only. **Advanced** (Expert)
+opens with "Advanced is for admins and power users. Most people never need it." and names the roles **Strongest
+model · Everyday model · Fastest model**, each defaulting to "Same as the default"; the harness is "Agent program".
+One save bar; "Saved" for two seconds.
+
+**Memory.** One box: "What should <Agent> remember?", an optional Title, Save, Cancel. The key is made by Aurora
+(`lib/memory-key.ts`): from the title, else the first six words; kebab-case ASCII, at most 64 characters, `note`
+when nothing is left, unique by a numeric suffix, one retry on a 409. Lists show the title (else the first line,
+60 characters) and a preview, never the key; the key is in Technical details at Expert (`memory.key`).
+
+**Skills.** Name, "Use it when…" (the API's one-line `description`), Instructions (the `body`), "On for <Agent>",
+Save and Delete. The folder name is made by Aurora (`lib/skill-name.ts`: kebab-case, at most 64 characters, `aurora-`
+prefixed names become `my-aurora-…`, unique by suffix, one retry on a 409). **Advanced: files and scripts** (Expert,
+`skill.files`) holds the folder name, the files, Executable and the precedence rule. The form is shared with the
+workspace and organization pages.
+
+**Tests.** A run is "Test run, <date>" with "Started by …"; tiles Pass rate · Passed · Failed · Couldn't be
+checked; Refused writes under Details; the configuration hash in Technical details. A result row says `Matches 42`
+or `Answer was "pong", expected 42`; a missing ANSWER line is "<Agent>'s reply had no ANSWER line, so Aurora could
+not compare it. The reply is shown below." (never blaming the agent). An active run reads "Running · 1 of 2 done ·
+started by …" with live counters (C-864 amendment) and each row has **Re-run** (`question_ids`, disabled with its
+reason while a run is active). Saving a judge says "Judge saved and tested: it answered in 3 s." or "Judge saved, but
+the test failed: …" from the settings response's `test` (C-863 amendment).
+
+**The missing AI key.** On Access, a card "<Agent> can't answer yet: it has no AI key." with **Give <Agent> the
+<key name>** (one click, toast "<Agent> can answer now") and **Choose another**, when the organization has a
+starter key the agent was not given. Other agents (Link another agent) and the header action wait for P5-REFINE-10
+and -11.
+
+
 ## Onboarding (phase 4, P4-ONB-2, D-141)
 
 (Phase 5, P5-REFINE-3, C-1056) `GET`/`PATCH /v1/me/onboarding` also carries `more_controls`, the person's

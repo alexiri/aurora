@@ -276,7 +276,7 @@ async fn fire(
         return Ok(());
     }
     let fp = current_fingerprint(s, &agent).await?;
-    match start_tx(conn, &agent, &fp, "schedule", Some(row.id), None).await {
+    match start_tx(conn, &agent, &fp, "schedule", Some(row.id), None, None).await {
         Ok(run) => {
             repo::record_schedule_fire(conn, row.id, next, true, "ok", Some(run)).await?;
             let ev = run_audit(
