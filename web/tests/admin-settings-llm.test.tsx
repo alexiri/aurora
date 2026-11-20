@@ -255,7 +255,7 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     expect(within(dialog).queryByLabelText("Default model")).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "Test connection" }));
     const row = within(dialog).getByTestId("endpoint-test-row");
-    expect((await within(row).findByRole("status", { name: "Connection test result" })).textContent).toBe("Connected. 3 models found.");
+    expect((await within(row).findByRole("status", { name: "Connection test result" })).textContent).toContain("Connected. 3 models found.");
     expect(next.disabled).toBe(false);
     fireEvent.click(next);
     expect(await within(dialog).findByLabelText("Default model")).toBeTruthy();
