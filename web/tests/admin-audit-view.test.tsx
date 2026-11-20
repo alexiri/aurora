@@ -154,35 +154,28 @@ describe("AdminAuditView (FIX-125)", () => {
   });
 });
 
-describe("System events are hidden, with a count (P5-REFINE-18 #11, admin-10)", () => {
-  it("hides the system's install events, says how many, and shows them with the switch", async () => {
+describe("System events are hidden by the server, with its count (C-1088, admin-10)", () => {
+  it("asks include_system=false, shows hidden_system, and asks again with the switch", async () => {
+    const seen: string[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: Request | string | URL) => {
         const req = input instanceof Request ? input : null;
         const url = new URL(req ? req.url : String(input), "http://localhost");
-        const body = url.pathname.endsWith("/admin/orgs")
-          ? { items: [] }
-          : {
-              items: [
-                entry("1", "instance_settings.update", null),
-                { ...entry("2", "plugin.ingest", null), actor_kind: "system", actor_label: "system" },
-                { ...entry("3", "instance_settings.helm_sync", null), actor_kind: "system", actor_label: "system" },
-              ],
-              next_cursor: null,
-            };
-        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+        if (url.pathname.endsWith("/admin/orgs")) return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "content-type": "application/json" } });
+        seen.push(url.search);
+        const withSystem = url.searchParams.get("include_system") === "true";
+        const items = [entry("1", "instance_settings.update", null), ...(withSystem ? [{ ...entry("2", "plugin.ingest", null), actor_kind: "system", actor_label: "system" }] : [])];
+        return new Response(JSON.stringify({ items, next_cursor: null, ...(withSystem ? {} : { hidden_system: 40 }) }), { status: 200, headers: { "content-type": "application/json" } });
       }),
     );
     view();
     await screen.findByText("root@x.io changed the instance settings");
-    expect(screen.queryByText(/system added the package/)).toBeNull();
-    expect(screen.getByText("2 system install events are hidden.")).toBeTruthy();
-    expect(screen.getAllByTestId("audit-sentence")).toHaveLength(1);
+    expect(new URLSearchParams(seen[0]).get("include_system")).toBe("false");
+    expect(await screen.findByText("40 system install events are hidden.")).toBeTruthy();
     fireEvent.click(screen.getByRole("switch", { name: "Show system events" }));
     expect(await screen.findByText("system added the package of an app")).toBeTruthy();
-    expect(screen.getAllByTestId("audit-sentence")).toHaveLength(3);
-    // The line under a sentence names where in Administration it happened.
-    expect(screen.getAllByText(/Instance settings/).length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId("audit-sentence")).toHaveLength(2);
+    expect(new URLSearchParams(seen[seen.length - 1]).get("include_system")).toBe("true");
   });
 });

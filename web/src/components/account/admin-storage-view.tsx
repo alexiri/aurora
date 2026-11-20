@@ -3,11 +3,18 @@
 import { ErrorState, Loading } from "@/components/states";
 import { Card } from "@/components/ui/card";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
+import { TechnicalDetails } from "@/components/ui/technical-details";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { formatBytes } from "@/lib/api/attachments";
 import { StorageFreshness } from "@/components/storage-freshness";
 import { useAdminStorage, useRefreshAdminStorage } from "@/lib/api/org";
+
+const CATEGORY: Record<string, { name: string; line: string }> = {
+  conversations: { name: "Conversations", line: "Messages and what agents did" },
+  files: { name: "Files", line: "Uploads and agent files" },
+  activity: { name: "Activity", line: "Request history and the audit log" },
+};
 
 /** Instance storage (RFE-015): blob and attachment bytes, the top orgs and the big tables. */
 export function AdminStorageView() {
@@ -20,10 +27,23 @@ export function AdminStorageView() {
     <div className="max-w-page space-y-6">
       <PageHeader
         title="Storage"
-        description="Where the database disk goes: attachment blobs, per organization, and the largest tables."
+        description="What people have stored in Aurora."
         className="mb-6"
       />
       <StorageFreshness computedAt={s.computed_at} refresh={refresh} />
+      {/* (P5-REFINE-18 admin-14, C-1072) What people store, by category; the tables are under Technical details. */}
+      <ItemList aria-label="What is stored">
+        {(s.categories ?? []).map((c) => (
+          <ListRow key={c.id}>
+            <div className="min-w-0">
+              <p className="font-medium text-ink">{CATEGORY[c.id]?.name ?? c.id}</p>
+              <p className="text-sm text-ink-2">{CATEGORY[c.id]?.line}</p>
+            </div>
+            <span className="ml-auto text-sm tabular-nums text-ink">{c.bytes == null ? "—" : formatBytes(c.bytes)}</span>
+          </ListRow>
+        ))}
+      </ItemList>
+      <TechnicalDetails title="Technical details" bodyClassName="mt-3 space-y-6 font-sans text-sm text-ink-2">
       <Card>
         <dl className="grid gap-4 sm:grid-cols-3">
           <div>
@@ -82,6 +102,7 @@ export function AdminStorageView() {
           ))}
         </ItemList>
       </Section>
+      </TechnicalDetails>
     </div>
   );
 }

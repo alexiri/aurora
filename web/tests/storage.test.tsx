@@ -51,11 +51,17 @@ describe("storage pages (RFE-015)", () => {
         blob_bytes: 2 * MIB, blob_count: 2, attachment_bytes: 2 * MIB, attachment_files: 2, purged_files: 0,
         orgs: [{ org_id: "o1", slug: "acme", name: "Acme", attachment_bytes: 2 * MIB, files: 2, quota_bytes: null }],
         tables: [{ table: "blobs", bytes: 3 * MIB }],
+        categories: [{ id: "conversations", bytes: 4 * MIB }, { id: "files", bytes: 2 * MIB }, { id: "activity", bytes: MIB }],
         computed_at: new Date().toISOString(),
       },
     });
     wrap(<AdminStorageView />);
     expect(await screen.findByText("Acme")).toBeInTheDocument();
+    // (admin-14) What people store comes first, by category; the tables are under Technical details.
+    const cats = screen.getByRole("list", { name: "What is stored" });
+    expect(cats.textContent).toMatch(/Conversations.*Files.*Activity/);
+    expect(screen.getByText("What people have stored in Aurora.")).toBeInTheDocument();
+    expect(screen.getByText("Technical details")).toBeInTheDocument();
     expect(screen.getByText("Unlimited")).toBeInTheDocument();
     expect(screen.getByText("blobs")).toBeInTheDocument();
     // FIX-126: the figures are a snapshot; the page says how old and offers a refresh.
