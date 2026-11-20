@@ -104,7 +104,9 @@ export function detectPreset(settings: SettingLike[]): PresetState {
     const lockedApart: PresetKey[] = [];
     for (const k of PRESET_KEYS) {
       const s = by.get(k);
-      const eq = s !== undefined && same(s.value, PRESETS[id].values[k]);
+      // A key the section does not carry cannot be compared: it neither matches nor breaks a match.
+      if (s === undefined) continue;
+      const eq = same(s.value, PRESETS[id].values[k]);
       if (s?.locked) {
         if (!eq) lockedApart.push(k);
         continue;
