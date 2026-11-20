@@ -108,6 +108,9 @@ fn check(
         app_id: None,
         package: None,
         client_key: None,
+        evidence: None,
+        last_ok_at: None,
+        last_error_at: None,
     }
 }
 
@@ -151,7 +154,31 @@ async fn reachable(http: &reqwest::Client, url: &str) -> bool {
     )
 }
 
-pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiError> {
+/// How long a successful real call keeps an endpoint "ok" without the probe (C-1063).
+const CALL_EVIDENCE_FRESH: chrono::Duration = chrono::Duration::hours(24);
+
+/// The status of an endpoint's check from real calls, else from the probe (C-1063). Pure.
+/// Returns `(status, evidence)`.
+fn endpoint_status(
+    ok_at: Option<chrono::DateTime<Utc>>,
+    err_at: Option<chrono::DateTime<Utc>>,
+    probe_up: bool,
+    now: chrono::DateTime<Utc>,
+) -> (SetupState, &'static str) {
+    match (ok_at, err_at) {
+        // The newest real call failed after the last success.
+        (ok, Some(e)) if ok.is_none_or(|o| e > o) => (SetupState::Warning, "call"),
+        (Some(o), _) if now - o <= CALL_EVIDENCE_FRESH => (SetupState::Ok, "call"),
+        _ if probe_up => (SetupState::Ok, "probe"),
+        _ => (SetupState::Warning, "probe"),
+    }
+}
+
+pub async fn setup(
+    state: &AppState,
+    caller: &crate::http::auth::Caller,
+) -> Result<SetupStatus, ApiError> {
+    let admin = caller.user_id;
     let placed = placement::view(state).await?;
     let live = state.auth();
     let providers = &live.auth.oidc_providers;
@@ -247,6 +274,8 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
             .map(|e| reachable(&state.llm_http, &e.base_url)),
     )
     .await;
+    let evidence = aurora_db::repo::account::endpoint_call_evidence(&state.pool).await?;
+    let now = Utc::now();
     let mut llm = Vec::new();
     if endpoints.is_empty() {
         llm.push(
@@ -265,7 +294,14 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
         } else {
             e.display_name.as_str()
         };
-        llm.push(if up {
+        // (C-1063, D-383) Real calls through a key of this endpoint decide first; the
+        // unauthenticated probe only when no real call speaks.
+        let (ok_at, err_at) = evidence
+            .iter()
+            .find(|(id, _, _)| id == &e.id)
+            .map_or((None, None), |(_, o, r)| (*o, *r));
+        let (status, via) = endpoint_status(ok_at, err_at, up, now);
+        let mut c = if status == SetupState::Ok {
             check(
                 format!("endpoint:{}", e.id),
                 SetupState::Ok,
@@ -278,11 +314,15 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
                 format!("endpoint:{}", e.id),
                 SetupState::Warning,
                 "endpoint_unreachable",
-                format!("{name} did not answer from the API."),
+                format!("{name} did not answer."),
             )
             .value(e.base_url.clone())
             .helm("llm.endpoints[].base_url")
-        });
+        };
+        c.evidence = Some(via.to_owned());
+        c.last_ok_at = ok_at;
+        c.last_error_at = err_at;
+        llm.push(c);
         // (FIX-170, D-372) A LiteLLM endpoint without a default model is fine: agents use the first allowed chat
         // model each key serves, unless one is set. (The old warning code `no_default_model` is no longer used here.)
         if e.provider == "litellm" {
@@ -532,9 +572,30 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
         optional.reason = "optional".to_owned();
     }
 
+    let try_it = {
+        let target = aurora_db::repo::account::try_it_agent(&state.pool, admin).await?;
+        let done = aurora_db::repo::account::try_it_done(&state.pool, admin).await?;
+        let mut available = false;
+        if let Some((agent_id, _)) = target
+            && let Some(agent) = aurora_db::repo::agents::get(&state.pool, agent_id).await?
+        {
+            available = crate::domains::hosted::answer::compute(state, caller, &agent)
+                .await?
+                .can_answer;
+        }
+        SetupTryIt {
+            available,
+            done,
+            agent_id: target.map(|t| t.0),
+            workspace_id: target.map(|t| t.1),
+        }
+    };
+
     Ok(SetupStatus {
         placement_saved: placed.saved,
+        try_it,
         personal_workspaces_without_starter: placement::personal_without_starter(state).await?,
+        agents_without_starter: placement::agents_without_starter(state).await?,
         you,
         steps: vec![
             step("roles", "roles_ok", roles),
@@ -544,4 +605,45 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
             optional,
         ],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration as D;
+
+    #[test]
+    fn real_calls_decide_before_the_probe() {
+        let now = Utc::now();
+        let ago = |m: i64| Some(now - D::minutes(m));
+        // A fresh success wins over a failing probe.
+        assert_eq!(
+            endpoint_status(ago(2), None, false, now),
+            (SetupState::Ok, "call")
+        );
+        // A failure after the last success is a warning, whatever the probe says.
+        assert_eq!(
+            endpoint_status(ago(10), ago(1), true, now),
+            (SetupState::Warning, "call")
+        );
+        // A failure with no success at all too.
+        assert_eq!(
+            endpoint_status(None, ago(1), true, now),
+            (SetupState::Warning, "call")
+        );
+        // A success after the failure: ok.
+        assert_eq!(
+            endpoint_status(ago(1), ago(10), false, now),
+            (SetupState::Ok, "call")
+        );
+        // A success older than 24 h no longer speaks: the probe decides.
+        assert_eq!(
+            endpoint_status(Some(now - D::hours(30)), None, true, now),
+            (SetupState::Ok, "probe")
+        );
+        assert_eq!(
+            endpoint_status(None, None, false, now),
+            (SetupState::Warning, "probe")
+        );
+    }
 }

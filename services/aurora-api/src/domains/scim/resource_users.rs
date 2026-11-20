@@ -374,8 +374,10 @@ pub async fn create_user(
             Some(u) => (u.id, false),
             None => {
                 let id = ids::new_id();
-                let name = global_display(&input, &names).unwrap_or_else(|| email.clone());
-                repo::insert_preprovisioned_user(&mut tx, id, &email, &name)
+                let named = global_display(&input, &names);
+                let directory_named = named.is_some();
+                let name = named.unwrap_or_else(|| email.clone());
+                repo::insert_preprovisioned_user(&mut tx, id, &email, &name, directory_named)
                     .await
                     .map_err(uniqueness)?;
                 (id, true)
@@ -1117,12 +1119,13 @@ async fn apply_update(
                 // Free globally but the placeholder is shared with another org: a new
                 // pre-provisioned user, created exactly like a POST would.
                 let nid = ids::new_id();
+                let directory_named = u.display.is_some();
                 let name = u
                     .display
                     .clone()
                     .map(|d| sanitize::one_line(&d, 80))
                     .unwrap_or_else(|| u.email.clone());
-                repo::insert_preprovisioned_user(&mut tx, nid, &u.email, &name)
+                repo::insert_preprovisioned_user(&mut tx, nid, &u.email, &name, directory_named)
                     .await
                     .map_err(uniqueness)?;
                 Some(nid)

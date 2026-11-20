@@ -12,6 +12,8 @@ export type PatchOnboarding = S["PatchOnboarding"];
 export type SetupStatus = S["SetupStatus"];
 export type SetupStep = S["SetupStep"];
 export type SetupCheck = S["SetupCheck"];
+/** (C-1063) The "Try it" card from the server: offered only once an agent can answer; done after a finished turn. */
+export type SetupTryIt = S["SetupTryIt"];
 
 export const onboardingKeys = {
   me: ["me", "onboarding"] as const,

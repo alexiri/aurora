@@ -33,6 +33,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(start_failures))
         .routes(routes!(list_models))
         .routes(routes!(model_readiness))
+        .routes(routes!(super::answer::answer_readiness))
         .routes(routes!(list_harnesses))
 }
 

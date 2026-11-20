@@ -2,7 +2,7 @@
 //! recorded. Real use (an agent's call, written by the gateway, C-985) and Test (C-943) are recorded apart:
 //! only real use decides `working` and `failing`; a passed Test is reported next to the state, never as it.
 
-use super::dto::{Health, HealthState, HealthTest};
+use super::dto::{Health, HealthState, HealthTest, Verification, VerificationState};
 use aurora_registry::snapshot::AppEntry;
 use chrono::{DateTime, Utc};
 
@@ -77,10 +77,129 @@ pub fn health(status: Option<&str>, rec: Recorded<'_>, word: &'static str) -> He
     }
 }
 
+/// (C-1065) Whether an AI key works. `origin` is the stored origin (status and when it was
+/// checked), `queued` that a background re-check is running on this replica. A pending origin with
+/// a queued re-check is `checking` whatever older evidence says (the key was just saved or
+/// replaced); otherwise the **newest** evidence decides: a verified origin, a real call or a
+/// passed Test is `works`; a rejection from the provider is `rejected`; a Test that found nothing
+/// answering is `unreachable`. With none, `not_checked`. Advisory: Test is authoritative.
+pub fn verification(
+    origin: Option<(aurora_llm::governance::OriginStatus, Option<DateTime<Utc>>)>,
+    rec: &Recorded<'_>,
+    queued: bool,
+) -> Verification {
+    use aurora_llm::governance::OriginStatus;
+    let pending = matches!(origin, Some((OriginStatus::Pending, _)));
+    if pending && queued {
+        return Verification {
+            state: VerificationState::Checking,
+            checked_at: None,
+        };
+    }
+    let mut evidence: Vec<(DateTime<Utc>, VerificationState)> = Vec::new();
+    if let Some((OriginStatus::Verified, Some(at))) = origin {
+        evidence.push((at, VerificationState::Works));
+    }
+    if let Some(at) = rec.last_ok_at {
+        evidence.push((at, VerificationState::Works));
+    }
+    if let Some(at) = rec.last_error_at {
+        match rec.last_error {
+            Some("rejected") => evidence.push((at, VerificationState::Rejected)),
+            Some("unreachable") => evidence.push((at, VerificationState::Unreachable)),
+            _ => {}
+        }
+    }
+    if let (Some(at), Some(r)) = (rec.last_test_at, rec.last_test_result) {
+        match r {
+            "ok" => evidence.push((at, VerificationState::Works)),
+            "rejected" => evidence.push((at, VerificationState::Rejected)),
+            "unreachable" => evidence.push((at, VerificationState::Unreachable)),
+            _ => {}
+        }
+    }
+    match evidence.into_iter().max_by_key(|(at, _)| *at) {
+        Some((at, state)) => Verification {
+            state,
+            checked_at: Some(at),
+        },
+        None => Verification {
+            state: VerificationState::NotChecked,
+            checked_at: None,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aurora_llm::governance::OriginStatus;
     use chrono::Duration;
+
+    #[test]
+    fn verification_pending_is_checking_only_while_a_recheck_is_queued() {
+        let none = Recorded::default();
+        let p = Some((OriginStatus::Pending, None));
+        assert_eq!(
+            verification(p, &none, true).state,
+            VerificationState::Checking
+        );
+        assert_eq!(
+            verification(p, &none, false).state,
+            VerificationState::NotChecked
+        );
+        // A passed Test resolves a pending key; a verified origin works.
+        let t = Utc::now();
+        let tested = Recorded {
+            last_test_at: Some(t),
+            last_test_result: Some("ok"),
+            ..Recorded::default()
+        };
+        assert_eq!(
+            verification(p, &tested, false).state,
+            VerificationState::Works
+        );
+        let v = Some((OriginStatus::Verified, Some(t)));
+        assert_eq!(
+            verification(v, &none, false).state,
+            VerificationState::Works
+        );
+    }
+
+    #[test]
+    fn verification_the_newest_evidence_wins() {
+        let t = Utc::now();
+        let earlier = t - Duration::minutes(5);
+        let v = Some((OriginStatus::Verified, Some(earlier)));
+        let rejected_now = Recorded {
+            last_test_at: Some(t),
+            last_test_result: Some("rejected"),
+            ..Recorded::default()
+        };
+        assert_eq!(
+            verification(v, &rejected_now, false).state,
+            VerificationState::Rejected
+        );
+        let ok_after_error = Recorded {
+            last_ok_at: Some(t),
+            last_error_at: Some(earlier),
+            last_error: Some("rejected"),
+            ..Recorded::default()
+        };
+        assert_eq!(
+            verification(None, &ok_after_error, false).state,
+            VerificationState::Works
+        );
+        let unreachable = Recorded {
+            last_test_at: Some(t),
+            last_test_result: Some("unreachable"),
+            ..Recorded::default()
+        };
+        assert_eq!(
+            verification(None, &unreachable, false).state,
+            VerificationState::Unreachable
+        );
+    }
 
     #[test]
     fn the_status_wins_then_the_newer_of_a_failure_and_a_success_then_not_used() {

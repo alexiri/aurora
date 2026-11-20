@@ -54,6 +54,11 @@ pub struct SetupStatus {
     /// starter grant of the saved placement: people who signed in before it was set. `0` when
     /// no placement or no starter grant is saved.
     pub personal_workspaces_without_starter: i64,
+    /// (C-1061) Hosted agents of the default organization, in any workspace, that lack at least
+    /// one starter credential of the saved placement. `0` when none is saved.
+    pub agents_without_starter: i64,
+    /// (C-1063) The "Try it" card, from the server (the client no longer guesses it).
+    pub try_it: SetupTryIt,
     /// The calling admin's last sign-in, when it read a role claim.
     pub you: Option<SetupYou>,
     /// In order: `roles`, `placement`, `llm`, `runners`, `optional`. ("Try it" is the client's.)
@@ -102,4 +107,24 @@ pub struct SetupCheck {
     pub package: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_key: Option<String>,
+    /// (C-1063) `endpoint:<id>` checks: `call` when an agent's real call through a key of the
+    /// endpoint decided the status, `probe` when the reachability probe did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
+    /// (C-1063) `endpoint:<id>` checks: the newest successful / failed real call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_ok_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error_at: Option<DateTime<Utc>>,
+}
+
+/// (C-1063) The "Try it" card: whether it is offered and whether the admin has done it.
+#[derive(Serialize, ToSchema)]
+pub struct SetupTryIt {
+    /// `false` while the agent cannot answer (no AI key yet): Try it is not offered.
+    pub available: bool,
+    /// The calling admin has one finished turn of their own in a hosted agent they own.
+    pub done: bool,
+    pub agent_id: Option<Uuid>,
+    pub workspace_id: Option<Uuid>,
 }

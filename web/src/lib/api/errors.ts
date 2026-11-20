@@ -14,6 +14,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
   too_many_streams: "Too many open tabs or streams. Close some and reload.",
   csrf_rejected: "The request was rejected for security reasons. Reload the page and try again.",
   forbidden: "You do not have permission to do that.",
+  // (C-1066) The server names the endpoints in its own message; this is the fallback.
+  key_origin_required:
+    "Some AI endpoints need a rule for where their keys come from. Endpoints set in Helm get their rule there.",
   not_found: "We could not find what you were looking for.",
   slug_taken: "That URL name is already in use. Choose another one.",
   org_creation_forbidden:

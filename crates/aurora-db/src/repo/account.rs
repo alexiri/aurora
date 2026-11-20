@@ -65,11 +65,18 @@ pub async fn update_display_name<'e, E: PgExecutor<'e>>(
     id: Uuid,
     name: &str,
 ) -> Result<(), DbError> {
-    sqlx::query("UPDATE users SET display_name = $2, updated_at = now() WHERE id = $1")
-        .bind(id)
-        .bind(name)
-        .execute(exec)
-        .await?;
+    // (C-1064) A **changed** name is the person's own from now on: the sign-in stops refreshing it.
+    sqlx::query(
+        "UPDATE users SET
+           display_name_edited_at = CASE WHEN display_name <> $2 THEN now()
+                                         ELSE display_name_edited_at END,
+           display_name = $2, updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(name)
+    .execute(exec)
+    .await?;
     Ok(())
 }
 
@@ -317,6 +324,57 @@ pub async fn upsert_bootstrap_admin<'e, E: PgExecutor<'e>>(
     .bind(id)
     .bind(email)
     .bind(display_name)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// Newest real-call evidence per LLM endpoint (C-1063): the newest `last_ok_at` and
+/// `last_error_at` over the endpoint's active keys, written by the gateway for agent calls.
+pub async fn endpoint_call_evidence<'e, E: PgExecutor<'e>>(
+    exec: E,
+) -> Result<Vec<(String, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT llm_endpoint_id, max(last_ok_at), max(last_error_at)
+         FROM secrets
+         WHERE kind = 'llm' AND status = 'active' AND llm_endpoint_id IS NOT NULL
+         GROUP BY llm_endpoint_id",
+    )
+    .fetch_all(exec)
+    .await?)
+}
+
+/// The agent "Try it" talks to (C-1063): the default agent of the caller's personal workspace,
+/// else the default agent of the default workspace of their default organization. `(agent,
+/// workspace)`.
+pub async fn try_it_agent<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+) -> Result<Option<(Uuid, Uuid)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT a.id, a.workspace_id FROM agents a JOIN workspaces w ON w.id = a.workspace_id
+         LEFT JOIN users u ON u.id = $1
+         WHERE a.is_default AND a.kind = 'hosted'
+           AND (w.personal_owner_user_id = $1 OR (w.slug = 'default' AND w.org_id = u.default_org_id))
+         ORDER BY (w.personal_owner_user_id = $1) DESC, w.created_at, w.id LIMIT 1",
+    )
+    .bind(user)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// Has `user` one finished turn of their own in a conversation of a hosted agent in a workspace
+/// they own (C-1063 `try_it.done`)?
+pub async fn try_it_done<'e, E: PgExecutor<'e>>(exec: E, user: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1 FROM turns t
+           JOIN agents a ON a.id = t.agent_id AND a.kind = 'hosted'
+           WHERE t.speaker_user_id = $1 AND t.status = 'done' AND t.role = 'turn'
+             AND EXISTS (SELECT 1 FROM effective_workspace_access ea
+                          WHERE ea.workspace_id = a.workspace_id AND ea.user_id = $1
+                            AND ea.role = 'owner'))",
+    )
+    .bind(user)
     .fetch_one(exec)
     .await?)
 }

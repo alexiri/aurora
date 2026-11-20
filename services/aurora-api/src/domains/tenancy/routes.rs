@@ -496,6 +496,9 @@ async fn create_workspace(
         req.memory_language.as_deref(),
     )
     .await?;
+    // (C-1061) The default agent of a new workspace in the placement's default organization
+    // gets the starter grants too.
+    crate::domains::placement::service::apply_new_agent_starters(&mut tx, &s, &agent).await?;
     tx.commit().await.map_err(DbError::from)?;
     audit::record(
         &s,

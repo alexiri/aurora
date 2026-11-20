@@ -312,3 +312,144 @@ async fn more_controls_defaults_off_persists_and_is_per_person() {
     .await;
     assert_eq!(s, 400);
 }
+
+/// P5-REFINE-5 (C-1063): Health reads real calls first, named by the display name; Try it is
+/// decided by the server from the admin's own finished turn.
+#[tokio::test]
+async fn refine5_health_reads_real_calls_and_try_it_completes_by_itself() {
+    let h = Harness::with_config(|c| {
+        c.llm.endpoints = vec![aurora_config::LlmEndpoint {
+            id: "company".into(),
+            provider: "litellm".into(),
+            // Nothing listens here: the unauthenticated probe fails.
+            base_url: Some("http://127.0.0.1:1".into()),
+            display_name: Some("Company AI".into()),
+            default_model: Some("claude-test".into()),
+            ..Default::default()
+        }];
+    })
+    .await;
+    let admin = h.user("a@x.io", true).await;
+    let (_, tok) = h.good_session(admin).await;
+    let org = h.org().await;
+    h.member(org, admin, "owner", "active").await;
+    let ws = h.workspace(org).await;
+    h.bind_ws(ws, admin, "owner").await;
+    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2 WHERE id = $1")
+        .bind(ws)
+        .bind(admin)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let agent = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, is_default) VALUES ($1,$2,$3,'daneel','Daneel','hosted','fake',true)")
+        .bind(agent)
+        .bind(org)
+        .bind(ws)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let setup = || async {
+        let (s, v) = call(&h, &tok, Method::GET, "/v1/admin/setup", None).await;
+        assert_eq!(s, 200, "{v}");
+        v
+    };
+
+    // No key yet: Try it is not offered; the endpoint check says it did not answer (the probe),
+    // by its display name.
+    let v = setup().await;
+    assert_eq!(v["try_it"]["available"], false, "{v}");
+    assert_eq!(v["try_it"]["done"], false);
+    assert_eq!(v["try_it"]["agent_id"], json!(agent));
+    assert_eq!(v["try_it"]["workspace_id"], json!(ws));
+    let c = check(step(&v, "llm"), "endpoint:company").unwrap().clone();
+    assert_eq!(c["status"], "warning", "{c}");
+    assert_eq!(c["evidence"], "probe");
+    let msg = c["message"].as_str().unwrap();
+    assert!(
+        msg.contains("Company AI") && msg.contains("did not answer"),
+        "{msg}"
+    );
+    assert!(
+        !msg.contains("from the API") && !msg.contains("(litellm)"),
+        "{msg}"
+    );
+
+    // A key that an agent's real call went through successfully: ok on the evidence of the call,
+    // although the probe still fails; and the agent can answer once the key is granted.
+    let key = Uuid::now_v7();
+    sqlx::query("INSERT INTO secrets (id, org_id, name, kind, llm_provider, llm_auth_mode, llm_endpoint_id, host_pattern, injection, value_source, value_ref, last_ok_at) VALUES ($1,$2,'k','llm','litellm','api_key','company','127.0.0.1','{}','managed','x', now())")
+        .bind(key)
+        .bind(org)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, secret_id) VALUES ($1,$2,$3,$4)")
+        .bind(Uuid::now_v7())
+        .bind(ws)
+        .bind(agent)
+        .bind(key)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let v = setup().await;
+    let c = check(step(&v, "llm"), "endpoint:company").unwrap().clone();
+    assert_eq!(
+        (c["status"].as_str(), c["evidence"].as_str()),
+        (Some("ok"), Some("call")),
+        "{c}"
+    );
+    assert!(c["last_ok_at"].is_string());
+    assert!(c["message"].as_str().unwrap().contains("Company AI"));
+    assert_eq!(v["try_it"]["available"], true, "{v}");
+
+    // A real call that failed after the last success: a warning on the evidence of the call.
+    sqlx::query("UPDATE secrets SET last_error_at = now() + interval '1 second', last_error = 'unreachable' WHERE id = $1")
+        .bind(key)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let v = setup().await;
+    let c = check(step(&v, "llm"), "endpoint:company").unwrap().clone();
+    assert_eq!(
+        (c["status"].as_str(), c["evidence"].as_str()),
+        (Some("warning"), Some("call")),
+        "{c}"
+    );
+    assert!(c["last_error_at"].is_string());
+
+    // Try it is done after one finished turn of the admin's own, in any conversation.
+    assert_eq!(setup().await["try_it"]["done"], false);
+    let conv = Uuid::now_v7();
+    sqlx::query("INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, direct_user_id, last_activity_at) VALUES ($1,$2,$3,'direct',$4,$5, now())")
+        .bind(conv)
+        .bind(agent)
+        .bind(ws)
+        .bind(format!("direct:{admin}"))
+        .bind(admin)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let turn = |status: &'static str| {
+        let (pool, conv, agent) = (h.pool().clone(), conv, agent);
+        async move {
+            sqlx::query("INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_user_id, speaker_label, text) VALUES ($1,$2,$3,'turn',$4,'{}','person',$5,'a','hello')")
+                .bind(Uuid::now_v7())
+                .bind(conv)
+                .bind(agent)
+                .bind(status)
+                .bind(admin)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+    turn("queued").await;
+    assert_eq!(
+        setup().await["try_it"]["done"],
+        false,
+        "an unfinished turn is not it"
+    );
+    turn("done").await;
+    assert_eq!(setup().await["try_it"]["done"], true);
+}

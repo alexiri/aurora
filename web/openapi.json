@@ -7819,6 +7819,76 @@
         ]
       }
     },
+    "/v1/agents/{agent}/answer-readiness": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Can this agent answer, and what fixes it (C-1062; any caller who can use the agent).",
+        "operationId": "getAgentAnswerReadiness",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerReadiness"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found or not visible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/apps/{app}/access": {
       "get": {
         "tags": [
@@ -39310,6 +39380,17 @@
               "null"
             ],
             "description": "(FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it\noff: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again)."
+          },
+          "verification": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Verification",
+                "description": "(C-1065) An AI key only: whether it works (omitted on other kinds)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -40881,6 +40962,111 @@
             "type": "string"
           }
         }
+      },
+      "AnswerFix": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Give this agent a key that already exists (the caller can own the workspace).",
+            "required": [
+              "key",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "give_key"
+                ]
+              },
+              "key": {
+                "$ref": "#/components/schemas/FixKey"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Add the organization's first AI key (the caller administers the organization).",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "add_key"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Someone else must: the roles that can (never names).",
+            "required": [
+              "who_can",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "ask_admin"
+                ]
+              },
+              "who_can": {
+                "$ref": "#/components/schemas/WhoCan"
+              }
+            }
+          }
+        ],
+        "description": "What fixes it, chosen for the caller."
+      },
+      "AnswerReadiness": {
+        "type": "object",
+        "required": [
+          "can_answer",
+          "usable_keys"
+        ],
+        "properties": {
+          "can_answer": {
+            "type": "boolean"
+          },
+          "fix": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AnswerFix"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AnswerReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usable_keys": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Granted keys the dispatcher can use now.",
+            "minimum": 0
+          }
+        }
+      },
+      "AnswerReason": {
+        "type": "string",
+        "description": "Why an agent cannot answer.",
+        "enum": [
+          "no_ai_key",
+          "key_not_usable",
+          "no_model"
+        ]
       },
       "ApiKey": {
         "type": "object",
@@ -44812,8 +44998,7 @@
       "CreateAgentRequest": {
         "type": "object",
         "required": [
-          "name",
-          "kind"
+          "name"
         ],
         "properties": {
           "brief": {
@@ -44841,8 +45026,11 @@
             ]
           },
           "kind": {
-            "type": "string",
-            "description": "`byo` | `hosted`."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`byo` | `hosted`. (C-1066) Absent = `hosted` when hosted agents are enabled, else `byo`."
           },
           "model_endpoint_id": {
             "type": [
@@ -47827,6 +48015,28 @@
           }
         }
       },
+      "FixKey": {
+        "type": "object",
+        "description": "The key `give_key` offers. The name is shown only to people who can own the workspace.",
+        "required": [
+          "secret_id",
+          "name",
+          "scope"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`organization` | `workspace`."
+          },
+          "secret_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "Followup": {
         "type": "object",
         "required": [
@@ -50674,7 +50884,8 @@
           "approval_email",
           "admin_attention_email",
           "memberships",
-          "groups"
+          "groups",
+          "display_name_source"
         ],
         "properties": {
           "admin_attention_email": {
@@ -50698,6 +50909,10 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "display_name_source": {
+            "type": "string",
+            "description": "(P5-REFINE-5, C-1064, D-407) Where `user.display_name` comes from: `sign_in` (the token's\n`name`, refreshed at every sign-in) or `you` (the person, or their directory, chose it)."
           },
           "groups": {
             "type": "array",
@@ -52874,6 +53089,17 @@
                     "null"
                   ],
                   "description": "(FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it\noff: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again)."
+                },
+                "verification": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Verification",
+                      "description": "(C-1065) An AI key only: whether it works (omitted on other kinds)."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               }
             }
@@ -58213,6 +58439,8 @@
           "shared_workspaces",
           "personal_workspace",
           "starter_grants",
+          "starter_applied",
+          "starter_pending",
           "personal_orgs",
           "warnings"
         ],
@@ -58253,11 +58481,24 @@
             "type": "string",
             "description": "The configured `auth.signup_mode` (read-only here)."
           },
+          "starter_applied": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StarterApplied"
+            },
+            "description": "(C-1061) What the `PUT` just gave to agents that already existed: one entry per starter\ngrant the save **added**. Empty on `GET` and when the save added nothing."
+          },
           "starter_grants": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/StarterGrantView"
             }
+          },
+          "starter_pending": {
+            "type": "integer",
+            "format": "int32",
+            "description": "(C-1061) Hosted agents of the default organization the save did not reach (one save is\nbounded to 2,000 agents; the backfill route finishes them). `0` on `GET`.",
+            "minimum": 0
           },
           "updated_at": {
             "type": [
@@ -63151,6 +63392,13 @@
               "null"
             ]
           },
+          "evidence": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1063) `endpoint:<id>` checks: `call` when an agent's real call through a key of the\nendpoint decided the status, `probe` when the reachability probe did."
+          },
           "helm": {
             "type": [
               "string",
@@ -63161,6 +63409,21 @@
           "id": {
             "type": "string",
             "description": "Stable id, e.g. `endpoint:litellm`, `default_model:litellm`, `gateway`."
+          },
+          "last_error_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_ok_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(C-1063) `endpoint:<id>` checks: the newest successful / failed real call."
           },
           "message": {
             "type": "string",
@@ -63343,9 +63606,16 @@
         "required": [
           "placement_saved",
           "personal_workspaces_without_starter",
+          "agents_without_starter",
+          "try_it",
           "steps"
         ],
         "properties": {
+          "agents_without_starter": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(C-1061) Hosted agents of the default organization, in any workspace, that lack at least\none starter credential of the saved placement. `0` when none is saved."
+          },
           "personal_workspaces_without_starter": {
             "type": "integer",
             "format": "int64",
@@ -63361,6 +63631,10 @@
               "$ref": "#/components/schemas/SetupStep"
             },
             "description": "In order: `roles`, `placement`, `llm`, `runners`, `optional`. (\"Try it\" is the client's.)"
+          },
+          "try_it": {
+            "$ref": "#/components/schemas/SetupTryIt",
+            "description": "(C-1063) The \"Try it\" card, from the server (the client no longer guesses it)."
           },
           "you": {
             "oneOf": [
@@ -63399,6 +63673,38 @@
           },
           "status": {
             "$ref": "#/components/schemas/SetupState"
+          }
+        }
+      },
+      "SetupTryIt": {
+        "type": "object",
+        "description": "(C-1063) The \"Try it\" card: whether it is offered and whether the admin has done it.",
+        "required": [
+          "available",
+          "done"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "`false` while the agent cannot answer (no AI key yet): Try it is not offered."
+          },
+          "done": {
+            "type": "boolean",
+            "description": "The calling admin has one finished turn of their own in a hosted agent they own."
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           }
         }
       },
@@ -64866,6 +65172,47 @@
             "description": "`ABCD-EFGH`."
           },
           "verification_url": {
+            "type": "string"
+          }
+        }
+      },
+      "StarterApplied": {
+        "type": "object",
+        "description": "One starter grant a placement save gave to agents that already existed (C-1061).",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "agents_granted",
+          "agent_names",
+          "already_had"
+        ],
+        "properties": {
+          "agent_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 3 agent display names (\"Given to Daneel and 1 other agent\")."
+          },
+          "agents_granted": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "already_had": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/StarterKind"
+          },
+          "name": {
             "type": "string"
           }
         }
@@ -66637,6 +66984,25 @@
           }
         }
       },
+      "Verification": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the evidence behind `state` was recorded; null for `checking` / `not_checked`."
+          },
+          "state": {
+            "$ref": "#/components/schemas/VerificationState"
+          }
+        }
+      },
       "VerificationInput": {
         "type": "object",
         "description": "Write-only verification settings.",
@@ -66664,6 +67030,17 @@
           }
         },
         "additionalProperties": false
+      },
+      "VerificationState": {
+        "type": "string",
+        "description": "(C-1065) Whether an AI key works, as far as is known. Advisory: Test is always authoritative.",
+        "enum": [
+          "checking",
+          "works",
+          "rejected",
+          "unreachable",
+          "not_checked"
+        ]
       },
       "VerificationView": {
         "type": "object",

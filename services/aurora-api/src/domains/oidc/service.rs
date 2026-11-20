@@ -439,24 +439,27 @@ fn domain_in(domains: &[String], email: &str) -> bool {
         })
 }
 
-fn display_name(v: &Verified) -> String {
-    let raw = v
-        .name
-        .as_deref()
+/// The token's `name`, cleaned (C-1064): trimmed, none when empty or holding control characters,
+/// bidi and zero-width characters dropped (FIX-116, `02 §Untrusted text`), at most 80
+/// characters; `None` when nothing is left.
+fn clean_name_claim(name: Option<&str>) -> Option<String> {
+    let raw = name
         .map(str::trim)
-        .filter(|n| !n.is_empty() && !n.chars().any(char::is_control))
-        .unwrap_or_else(|| v.email.split('@').next().unwrap_or("User"));
-    // (FIX-116) bidi and zero-width characters are dropped (`02 §Untrusted text`).
+        .filter(|n| !n.is_empty() && !n.chars().any(char::is_control))?;
     let cleaned: String = raw
         .chars()
         .filter(|c| !aurora_core::sanitize::is_stripped(*c))
         .take(80)
         .collect();
-    if cleaned.trim().is_empty() {
-        "User".to_owned()
-    } else {
-        cleaned
-    }
+    let cleaned = cleaned.trim();
+    (!cleaned.is_empty()).then(|| cleaned.to_owned())
+}
+
+fn display_name(v: &Verified) -> String {
+    // A new person with no usable `name` is called by the e-mail's local part.
+    clean_name_claim(v.name.as_deref())
+        .or_else(|| clean_name_claim(v.email.split('@').next()))
+        .unwrap_or_else(|| "User".to_owned())
 }
 
 /// A failed callback: the error code, and (FIX-152, C-890) the re-authentication's `return_to`
@@ -697,6 +700,16 @@ async fn sign_in(
     };
     if user.disabled_at.is_some() {
         return Err(Fail("user_disabled"));
+    }
+    // (C-1064, D-407) The name comes from the sign-in until the person (or their directory)
+    // sets it: refreshed on every sign-in — a new person, an existing identity and the e-mail
+    // bind of a bootstrap, invited or SCIM-provisioned account. A missing `name` never writes.
+    if user.display_name_edited_at.is_none()
+        && let Some(n) = clean_name_claim(v.name.as_deref())
+        && n != user.display_name
+        && users::set_display_name_from_signin(&mut *tx, user.id, &n).await?
+    {
+        user.display_name = n;
     }
 
     // The e-mail list is a manual source: it takes the flag over from a claim and is granted

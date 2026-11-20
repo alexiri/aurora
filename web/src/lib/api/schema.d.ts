@@ -1443,6 +1443,23 @@ export interface paths {
         patch: operations["updateAgent"];
         trace?: never;
     };
+    "/v1/agents/{agent}/answer-readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Can this agent answer, and what fixes it (C-1062; any caller who can use the agent). */
+        get: operations["getAgentAnswerReadiness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/apps/{app}/access": {
         parameters: {
             query?: never;
@@ -6349,6 +6366,7 @@ export interface components {
              *     off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
              */
             status_reason?: string | null;
+            verification?: components["schemas"]["Verification"] | null;
         };
         AccountAgent: {
             handle: string;
@@ -6852,6 +6870,34 @@ export interface components {
             id: string;
             name: string;
         };
+        /** @description What fixes it, chosen for the caller. */
+        AnswerFix: {
+            /** @enum {string} */
+            action: "give_key";
+            key: components["schemas"]["FixKey"];
+        } | {
+            /** @enum {string} */
+            action: "add_key";
+        } | {
+            /** @enum {string} */
+            action: "ask_admin";
+            who_can: components["schemas"]["WhoCan"];
+        };
+        AnswerReadiness: {
+            can_answer: boolean;
+            fix?: components["schemas"]["AnswerFix"] | null;
+            reason?: components["schemas"]["AnswerReason"] | null;
+            /**
+             * Format: int32
+             * @description Granted keys the dispatcher can use now.
+             */
+            usable_keys: number;
+        };
+        /**
+         * @description Why an agent cannot answer.
+         * @enum {string}
+         */
+        AnswerReason: "no_ai_key" | "key_not_usable" | "no_model";
         ApiKey: {
             /** Format: date-time */
             created_at: string;
@@ -8090,8 +8136,8 @@ export interface components {
             effort?: string | null;
             handle?: string | null;
             harness?: string | null;
-            /** @description `byo` | `hosted`. */
-            kind: string;
+            /** @description `byo` | `hosted`. (C-1066) Absent = `hosted` when hosted agents are enabled, else `byo`. */
+            kind?: string | null;
             model_endpoint_id?: string | null;
             model_id?: string | null;
             name: string;
@@ -9030,6 +9076,14 @@ export interface components {
             /** @description Present when the size is at most `FILES_EDIT_MAX`. */
             etag?: string | null;
         };
+        /** @description The key `give_key` offers. The name is shown only to people who can own the workspace. */
+        FixKey: {
+            name: string;
+            /** @description `organization` | `workspace`. */
+            scope: string;
+            /** Format: uuid */
+            secret_id: string;
+        };
         Followup: {
             /** Format: date-time */
             created_at: string;
@@ -9879,6 +9933,11 @@ export interface components {
             client_address?: string | null;
             /** Format: uuid */
             default_org_id?: string | null;
+            /**
+             * @description (P5-REFINE-5, C-1064, D-407) Where `user.display_name` comes from: `sign_in` (the token's
+             *     `name`, refreshed at every sign-in) or `you` (the person, or their directory, chose it).
+             */
+            display_name_source: string;
             /** @description (phase 4, P4-GRP-1) The caller's groups (active memberships only). */
             groups: components["schemas"]["MeGroup"][];
             idp_roles?: components["schemas"]["IdpRoles"] | null;
@@ -10641,6 +10700,7 @@ export interface components {
                  *     off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
                  */
                 status_reason?: string | null;
+                verification?: components["schemas"]["Verification"] | null;
             }[];
             next_cursor?: string | null;
         };
@@ -12167,7 +12227,18 @@ export interface components {
             shared_workspaces: components["schemas"]["SharedWorkspaceView"][];
             /** @description The configured `auth.signup_mode` (read-only here). */
             signup_mode: string;
+            /**
+             * @description (C-1061) What the `PUT` just gave to agents that already existed: one entry per starter
+             *     grant the save **added**. Empty on `GET` and when the save added nothing.
+             */
+            starter_applied: components["schemas"]["StarterApplied"][];
             starter_grants: components["schemas"]["StarterGrantView"][];
+            /**
+             * Format: int32
+             * @description (C-1061) Hosted agents of the default organization the save did not reach (one save is
+             *     bounded to 2,000 agents; the backfill route finishes them). `0` on `GET`.
+             */
+            starter_pending: number;
             /** Format: date-time */
             updated_at?: string | null;
             /** Format: uuid */
@@ -13720,10 +13791,22 @@ export interface components {
             /** @description (C-924) `app_needs_oauth_client` and `app_token_only`: the app the check is about. */
             app_id?: string | null;
             client_key?: string | null;
+            /**
+             * @description (C-1063) `endpoint:<id>` checks: `call` when an agent's real call through a key of the
+             *     endpoint decided the status, `probe` when the reachability probe did.
+             */
+            evidence?: string | null;
             /** @description The Helm value that changes it, for config-only things. */
             helm?: string | null;
             /** @description Stable id, e.g. `endpoint:litellm`, `default_model:litellm`, `gateway`. */
             id: string;
+            /** Format: date-time */
+            last_error_at?: string | null;
+            /**
+             * Format: date-time
+             * @description (C-1063) `endpoint:<id>` checks: the newest successful / failed real call.
+             */
+            last_ok_at?: string | null;
             /** @description One short plain sentence for the page. */
             message: string;
             /**
@@ -13785,6 +13868,12 @@ export interface components {
         SetupStatus: {
             /**
              * Format: int64
+             * @description (C-1061) Hosted agents of the default organization, in any workspace, that lack at least
+             *     one starter credential of the saved placement. `0` when none is saved.
+             */
+            agents_without_starter: number;
+            /**
+             * Format: int64
              * @description (C-922) Personal workspaces of the default organization whose default agent lacks a
              *     starter grant of the saved placement: people who signed in before it was set. `0` when
              *     no placement or no starter grant is saved.
@@ -13794,6 +13883,8 @@ export interface components {
             placement_saved: boolean;
             /** @description In order: `roles`, `placement`, `llm`, `runners`, `optional`. ("Try it" is the client's.) */
             steps: components["schemas"]["SetupStep"][];
+            /** @description (C-1063) The "Try it" card, from the server (the client no longer guesses it). */
+            try_it: components["schemas"]["SetupTryIt"];
             you?: components["schemas"]["SetupYou"] | null;
         };
         SetupStep: {
@@ -13802,6 +13893,17 @@ export interface components {
             /** @description Machine-readable reason of the worst check (see `API_CONTRACTS` C-533). */
             reason: string;
             status: components["schemas"]["SetupState"];
+        };
+        /** @description (C-1063) The "Try it" card: whether it is offered and whether the admin has done it. */
+        SetupTryIt: {
+            /** Format: uuid */
+            agent_id?: string | null;
+            /** @description `false` while the agent cannot answer (no AI key yet): Try it is not offered. */
+            available: boolean;
+            /** @description The calling admin has one finished turn of their own in a hosted agent they own. */
+            done: boolean;
+            /** Format: uuid */
+            workspace_id?: string | null;
         };
         SetupValues: {
             /** @description The redirect URI to register at the provider. */
@@ -14232,6 +14334,19 @@ export interface components {
             /** @description `ABCD-EFGH`. */
             user_code: string;
             verification_url: string;
+        };
+        /** @description One starter grant a placement save gave to agents that already existed (C-1061). */
+        StarterApplied: {
+            /** @description At most 3 agent display names ("Given to Daneel and 1 other agent"). */
+            agent_names: string[];
+            /** Format: int32 */
+            agents_granted: number;
+            /** Format: int32 */
+            already_had: number;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["StarterKind"];
+            name: string;
         };
         StarterGrantInput: {
             /** Format: uuid */
@@ -14766,6 +14881,14 @@ export interface components {
             source: string;
             value: string;
         };
+        Verification: {
+            /**
+             * Format: date-time
+             * @description When the evidence behind `state` was recorded; null for `checking` / `not_checked`.
+             */
+            checked_at?: string | null;
+            state: components["schemas"]["VerificationState"];
+        };
         /** @description Write-only verification settings. */
         VerificationInput: {
             /** @description Header carrying the signature/token (defaults: `X-Signature`, `Authorization`). */
@@ -14775,6 +14898,11 @@ export interface components {
             /** @description Shared secret; required when choosing a kind (or switching to one). Never returned. */
             secret?: string | null;
         };
+        /**
+         * @description (C-1065) Whether an AI key works, as far as is known. Advisory: Test is always authoritative.
+         * @enum {string}
+         */
+        VerificationState: "checking" | "works" | "rejected" | "unreachable" | "not_checked";
         /** @description Verification as exposed: never contains the secret. */
         VerificationView: {
             header?: string | null;
@@ -20853,6 +20981,55 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentAnswerReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnswerReadiness"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found or not visible */
             404: {
                 headers: {
                     [name: string]: unknown;

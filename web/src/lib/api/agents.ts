@@ -8,6 +8,7 @@ import { queryKeys, type Agent } from "./queries";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
+/** (C-1066) `kind` is optional: absent = hosted when hosted agents are enabled, else BYO. */
 export type CreateAgentRequest = components["schemas"]["CreateAgentRequest"];
 export type PatchAgentRequest = components["schemas"]["PatchAgentRequest"];
 export type ContainerConfig = components["schemas"]["ContainerConfig"];

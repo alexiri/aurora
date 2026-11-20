@@ -175,6 +175,18 @@ pub struct StarterGrantView {
     pub detail: String,
 }
 
+/// One starter grant a placement save gave to agents that already existed (C-1061).
+#[derive(Serialize, ToSchema, Debug)]
+pub struct StarterApplied {
+    pub kind: StarterKind,
+    pub id: Uuid,
+    pub name: String,
+    pub agents_granted: u32,
+    /// At most 3 agent display names ("Given to Daneel and 1 other agent").
+    pub agent_names: Vec<String>,
+    pub already_had: u32,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct PersonalOrgView {
     pub org_id: Uuid,
@@ -204,6 +216,12 @@ pub struct PlacementView {
     pub shared_workspaces: Vec<SharedWorkspaceView>,
     pub personal_workspace: PersonalWorkspaceView,
     pub starter_grants: Vec<StarterGrantView>,
+    /// (C-1061) What the `PUT` just gave to agents that already existed: one entry per starter
+    /// grant the save **added**. Empty on `GET` and when the save added nothing.
+    pub starter_applied: Vec<StarterApplied>,
+    /// (C-1061) Hosted agents of the default organization the save did not reach (one save is
+    /// bounded to 2,000 agents; the backfill route finishes them). `0` on `GET`.
+    pub starter_pending: u32,
     pub personal_orgs: PersonalOrgs,
     /// `placement_unsaved` | `per_user_orgs_active` | `default_org_missing`.
     pub warnings: Vec<String>,

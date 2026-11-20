@@ -489,12 +489,13 @@ async fn require_key_origin_names_the_endpoint_without_one() {
     let (s, e) = w.put(json!({"llm.endpoints": [w.team_entry()]})).await;
     assert_eq!(s, 200, "{e}");
     // Turning the rule on while `team` has no key origin names the endpoint.
+    // (P5-REFINE-5, C-1066) One `key_origin_required` error that names the endpoints.
     let (s, e) = put_gov(json!({"governance.llm.require_key_origin": true})).await;
     assert_eq!(s, 422, "{e}");
-    assert!(
-        fields(&e)
-            .iter()
-            .any(|(p, _)| p == "/llm.endpoints/team/key_origin"),
+    assert_eq!(e["error"]["code"], "key_origin_required", "{e}");
+    assert_eq!(e["error"]["details"]["endpoints"][0]["id"], "team", "{e}");
+    assert_eq!(
+        e["error"]["details"]["endpoints"][0]["source"], "dashboard",
         "{e}"
     );
     // The other direction: the rule is on, an endpoint without an origin is refused.
@@ -504,12 +505,8 @@ async fn require_key_origin_names_the_endpoint_without_one() {
     assert_eq!(s, 200, "{e}");
     let (s, e) = w.put(json!({"llm.endpoints": [w.team_entry()]})).await;
     assert_eq!(s, 422, "{e}");
-    assert!(
-        fields(&e)
-            .iter()
-            .any(|(p, _)| p == "/llm.endpoints/team/key_origin"),
-        "{e}"
-    );
+    assert_eq!(e["error"]["code"], "key_origin_required", "{e}");
+    assert_eq!(e["error"]["details"]["endpoints"][0]["id"], "team", "{e}");
     let mut with_origin = w.team_entry();
     with_origin["key_origin"] = json!({"method": "endpoint"});
     let (s, e) = w.put(json!({"llm.endpoints": [with_origin]})).await;
@@ -997,5 +994,70 @@ async fn the_endpoint_test_probes_each_providers_own_path() {
         (v["reachable"].as_bool(), v["error_code"].as_str()),
         (Some(false), Some("destination_refused")),
         "{v}"
+    );
+}
+
+/// P5-REFINE-5 (C-1066, admin-1): turning on "check where AI keys come from" while a Helm endpoint
+/// has no rule is refused with one error naming the endpoint and where its rule is set, and the
+/// refused save is not kept: same value, same generation, no row, no audit event.
+#[tokio::test]
+async fn refine5_a_refused_key_origin_save_names_the_endpoints_and_writes_nothing() {
+    let w = world(true, "").await;
+    let before = w
+        .call(Method::GET, "/v1/admin/settings/governance", &w.admin, None)
+        .await
+        .1;
+    let rows = |w: &W| {
+        let pool = w.h.pool().clone();
+        async move {
+            let n: i64 = sqlx::query_scalar("SELECT count(*) FROM instance_settings")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            let a: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM audit_log WHERE action LIKE 'instance_settings.%'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            (n, a)
+        }
+    };
+    let counts = rows(&w).await;
+    let (s, e) = w
+        .call(
+            Method::PUT,
+            "/v1/admin/settings/governance",
+            &w.admin,
+            Some(json!({
+                "generation": before["generation"],
+                "values": {"governance.llm.require_key_origin": true}
+            })),
+        )
+        .await;
+    assert_eq!(s, 422, "{e}");
+    assert_eq!(e["error"]["code"], "key_origin_required", "{e}");
+    assert_eq!(
+        e["error"]["details"]["endpoints"],
+        json!([{"id": "central", "display_name": "central", "source": "helm"}]),
+        "{e}"
+    );
+    let msg = e["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("central") && msg.contains("Helm"), "{msg}");
+    assert!(
+        !msg.contains("llm.endpoints"),
+        "no raw key in the sentence: {msg}"
+    );
+    // Nothing was kept.
+    let after = w
+        .call(Method::GET, "/v1/admin/settings/governance", &w.admin, None)
+        .await
+        .1;
+    assert_eq!(after["generation"], before["generation"]);
+    assert_eq!(after["settings"], before["settings"]);
+    assert_eq!(
+        rows(&w).await,
+        counts,
+        "no instance_settings row, no audit event"
     );
 }

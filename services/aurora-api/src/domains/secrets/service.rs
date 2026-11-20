@@ -7,6 +7,7 @@ use crate::http::pagination::Pagination;
 use aurora_core::{ApiError, Secret as Plain};
 use aurora_db::repo::{credentials, derived_rules, secrets as repo};
 use aurora_db::{DbError, conflict_code};
+use aurora_llm::governance::OriginStatus;
 use aurora_policy::{HostPattern, PathPattern};
 use aurora_secrets::{Purpose, SealContext, SecretError, SecretRef, ValueSource};
 use serde_json::Value;
@@ -526,7 +527,10 @@ pub async fn create(
         // (C-1047) An AI key now exists: askers of one are told (a failure here never undoes the key).
         crate::domains::app_setup_requests::service::reevaluate(state, Some(scope.org)).await;
     }
-    load(state, id).await
+    let saved = load(state, id).await?;
+    // (C-1065) The endpoint did not answer at save: keep checking in the background.
+    spawn_recheck(state, &saved);
+    Ok(saved)
 }
 
 async fn insert_tx(
@@ -815,7 +819,93 @@ pub async fn set_value(
         };
         discard(state, &c, &old, src).await;
     }
-    load(state, row.id).await
+    let saved = load(state, row.id).await?;
+    spawn_recheck(state, &saved);
+    Ok(saved)
+}
+
+/// Secret ids whose background re-check is running on this replica (C-1065): `checking` while
+/// present. In memory only; a replica that dies loses its re-checks and the key reads
+/// `not_checked` until someone presses Test (which always works).
+fn rechecking() -> &'static std::sync::Mutex<std::collections::HashSet<Uuid>> {
+    static S: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<Uuid>>> =
+        std::sync::OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+/// Is a background re-check of this key running on this replica?
+pub fn recheck_queued(id: Uuid) -> bool {
+    rechecking()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .contains(&id)
+}
+
+/// When the retries of a re-check run, from the moment the key was saved (C-1065).
+pub const RECHECK_AT: [std::time::Duration; 3] = [
+    std::time::Duration::from_secs(5),
+    std::time::Duration::from_secs(30),
+    std::time::Duration::from_secs(120),
+];
+
+static RECHECK_SCHEDULE: std::sync::OnceLock<[std::time::Duration; 3]> = std::sync::OnceLock::new();
+
+/// Tests only: shorten the re-check schedule (first caller wins; the schedule is a process-wide
+/// constant otherwise).
+pub fn set_recheck_schedule(s: [std::time::Duration; 3]) {
+    let _ = RECHECK_SCHEDULE.set(s);
+}
+
+fn recheck_schedule() -> [std::time::Duration; 3] {
+    RECHECK_SCHEDULE.get().copied().unwrap_or(RECHECK_AT)
+}
+
+fn is_pending(row: &SecretRow) -> bool {
+    row.origin
+        .as_ref()
+        .and_then(|o| {
+            serde_json::from_value::<aurora_llm::governance::StoredOrigin>(o.clone()).ok()
+        })
+        .is_some_and(|o| o.status == OriginStatus::Pending)
+}
+
+/// A key saved while its endpoint did not answer and no origin rule applies stays `pending`:
+/// retry [`verify`] (the one function Test uses) at +5 s, +30 s and +2 min and stop at the first
+/// pass, or when the key is gone, disabled or no longer pending. One task per secret, bounded,
+/// no table. A pass stores `verified` and notifies the gateway (`verify` does both).
+fn spawn_recheck(state: &AppState, row: &SecretRow) {
+    if row.kind != "llm" || !is_pending(row) {
+        return;
+    }
+    {
+        let mut q = rechecking().lock().unwrap_or_else(|p| p.into_inner());
+        if !q.insert(row.id) {
+            return; // already retrying
+        }
+    }
+    let state = state.clone();
+    let id = row.id;
+    tokio::spawn(async move {
+        let started = tokio::time::Instant::now();
+        for at in recheck_schedule() {
+            tokio::time::sleep_until(started + at).await;
+            let Ok(row) = load(&state, id).await else {
+                break; // gone
+            };
+            if row.status != "active" || !is_pending(&row) {
+                break;
+            }
+            if let Ok(o) = verify(&state, &row).await
+                && o.status != "pending"
+            {
+                break;
+            }
+        }
+        rechecking()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&id);
+    });
 }
 
 /// Re-verify the stored key; persists mismatch/unverifiable results.

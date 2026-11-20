@@ -2,7 +2,7 @@
 
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "./client";
+import { api, ApiError } from "./client";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -88,6 +88,22 @@ export function useSettingsSections(sections: string[]) {
 }
 
 export type LlmEndpointTestResult = components["schemas"]["EndpointTestResult"];
+
+/** One endpoint a refused save names (C-1066): `source` says where its key-origin rule is set. */
+export interface KeyOriginEndpoint {
+  id: string;
+  display_name: string;
+  source: "helm" | "dashboard";
+}
+
+/** `details.endpoints` of a 422 `key_origin_required` (C-1066), else `null` for any other error. */
+export function keyOriginEndpoints(err: unknown): KeyOriginEndpoint[] | null {
+  if (!(err instanceof ApiError) || err.code !== "key_origin_required") return null;
+  const d = err.details;
+  if (typeof d !== "object" || d === null || !("endpoints" in d)) return [];
+  const e = (d as { endpoints: unknown }).endpoints;
+  return Array.isArray(e) ? (e as KeyOriginEndpoint[]) : [];
+}
 
 /** One unauthenticated request to an endpoint's models path from the API (C-779): nothing is saved. */
 export function useTestLlmEndpoint() {

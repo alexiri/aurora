@@ -10,6 +10,8 @@ import { unwrap } from "./unwrap";
 type S = components["schemas"];
 export type Account = S["Account"];
 export type AgentAccess = S["AgentAccess"];
+/** (C-1065) An AI key row's `verification`: checking | works | rejected | unreachable | not_checked (advisory; Test decides). */
+export type Verification = S["Verification"];
 export type PutConnectionAccess = S["PutConnectionAccess"];
 export type Level = "read" | "ask" | "act";
 

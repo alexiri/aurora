@@ -107,6 +107,102 @@ pub(super) fn invalid(fields: Vec<Value>) -> ApiError {
     .with_details(json!({ "fields": fields }))
 }
 
+/// Which endpoint a "key origin required" problem is about: by id (`llm.endpoints/<id>/key_origin`,
+/// the form the settings evaluation reports) or by list position (`llm.endpoints[3].key_origin`,
+/// the validator's own).
+enum Missing {
+    Id(String),
+    Index(usize),
+}
+
+fn missing_origin(p: &Problem) -> Option<Missing> {
+    if !p.message.contains("require_key_origin") {
+        return None;
+    }
+    if let Some(id) = p
+        .key
+        .strip_prefix("llm.endpoints/")
+        .and_then(|r| r.strip_suffix("/key_origin"))
+    {
+        return Some(Missing::Id(id.to_owned()));
+    }
+    p.key
+        .strip_prefix("llm.endpoints[")?
+        .strip_suffix("].key_origin")?
+        .parse()
+        .ok()
+        .map(Missing::Index)
+}
+
+/// (C-1066) When the validator refused only because `governance.llm.require_key_origin` is on and
+/// some endpoints have no rule, one error that names them all and says where the rule is set,
+/// instead of one raw `llm.endpoints[2].key_origin: required because …` per endpoint. Any other
+/// problem keeps the generic `settings_invalid` list. Nothing is written either way: the whole
+/// save is one transaction that this error aborts.
+fn key_origin_error(eff: &aurora_config::Effective, problems: &[Problem]) -> Option<ApiError> {
+    let missing: Vec<Missing> = problems.iter().filter_map(missing_origin).collect();
+    if missing.is_empty() || missing.len() != problems.len() {
+        return None;
+    }
+    let entries = eff
+        .keys
+        .get("llm.endpoints")
+        .and_then(|k| k.entries.as_ref());
+    let mut endpoints = Vec::new();
+    for m in missing {
+        let ep = match &m {
+            Missing::Id(id) => eff.raw.llm.endpoints.iter().find(|e| &e.id == id),
+            Missing::Index(i) => eff.raw.llm.endpoints.get(*i),
+        };
+        let id = match (&m, ep) {
+            (_, Some(e)) => e.id.clone(),
+            (Missing::Id(id), None) => id.clone(),
+            (Missing::Index(i), None) => format!("endpoint {}", i + 1),
+        };
+        let display = ep
+            .and_then(|e| e.display_name.clone())
+            .filter(|d| !d.is_empty())
+            .unwrap_or_else(|| id.clone());
+        let source = entries
+            .and_then(|es| es.iter().find(|e| e.id == id))
+            .map_or(aurora_config::Source::Dashboard, |e| e.source);
+        endpoints.push((id, display, source));
+    }
+    let names = endpoints
+        .iter()
+        .map(|(_, d, _)| d.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let all_helm = endpoints
+        .iter()
+        .all(|(_, _, s)| *s == aurora_config::Source::Helm);
+    let message = if all_helm {
+        format!(
+            "These AI endpoints need a rule for where their keys come from: {names}. They are set in Helm, so the rule is added there."
+        )
+    } else {
+        format!(
+            "These AI endpoints need a rule for where their keys come from: {names}. Add one on the AI models page."
+        )
+    };
+    Some(
+        ApiError::unprocessable("key_origin_required", message).with_details(json!({
+            "endpoints": endpoints.iter().map(|(id, d, s)| json!({
+                "id": id,
+                "display_name": d,
+                "source": if *s == aurora_config::Source::Helm { "helm" } else { "dashboard" },
+            })).collect::<Vec<_>>()
+        })),
+    )
+}
+
+/// [`problems_error`] with the instance's merged view at hand, for the one refusal that has its
+/// own answer (`key_origin_required`).
+fn problems_error_in(state: &AppState, problems: Vec<Problem>) -> ApiError {
+    let snap = state.settings.snapshot();
+    key_origin_error(&snap.effective, &problems).unwrap_or_else(|| problems_error(problems))
+}
+
 fn problems_error(problems: Vec<Problem>) -> ApiError {
     invalid(
         problems
@@ -1233,7 +1329,7 @@ async fn apply_inner(
     overlay(&mut stored, &changed);
     let after = match h.evaluate(&stored) {
         Ok(e) => e,
-        Err(problems) => return Err(problems_error(problems)),
+        Err(problems) => return Err(problems_error_in(state, problems)),
     };
     // D-238(b): a save by an admin never strands that admin (the shell is exempt).
     if let Via::Admin(c) = via
@@ -1383,7 +1479,10 @@ pub async fn proposed_effective(
     let (stored, _) = stored_from_rows(&rows);
     let mut after = stored.clone();
     overlay(&mut after, &[&plan]);
-    state.settings.evaluate(&after).map_err(problems_error)
+    state
+        .settings
+        .evaluate(&after)
+        .map_err(|p| problems_error_in(state, p))
 }
 
 pub async fn preview(
@@ -1414,7 +1513,7 @@ pub async fn preview(
     })?;
     let after = match h.evaluate(&stored_after) {
         Ok(e) => e,
-        Err(p) => return Err(problems_error(p)),
+        Err(p) => return Err(problems_error_in(state, p)),
     };
     let (diff, mut loosening) = effective_diff(section, &before, &after, &plan.old, &plan.new);
     if section == "sign_in" {
@@ -1987,7 +2086,9 @@ async fn preview_import(
                 .collect(),
         )
     })?;
-    let after = h.evaluate(&stored_after).map_err(problems_error)?;
+    let after = h
+        .evaluate(&stored_after)
+        .map_err(|p| problems_error_in(state, p))?;
     let (diff, mut loosening) = effective_diff(section, &before, &after, &plan.old, &plan.new);
     if section == "sign_in" {
         loosening.extend(super::sign_in::entry_loosening(&before, &after));
