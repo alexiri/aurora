@@ -1066,6 +1066,12 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/agents/{agent}/restart", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/models", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/model-readiness", G::WsOwn, false),
+    r(
+        "GET",
+        "/v1/agents/{agent}/answer-readiness",
+        G::WsUse,
+        false,
+    ),
     r("GET", "/v1/agents/{agent}/grants", G::WsOwn, false),
     r(
         "PUT",

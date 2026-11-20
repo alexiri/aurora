@@ -274,6 +274,75 @@ pub async fn count_personal_without_starter<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// Active LLM keys of the agent's organization (org-level) or workspace that are **not** granted
+/// to `agent`, oldest first (C-1062: what "give this agent a key" can offer).
+pub async fn ungranted_llm_keys<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent: Uuid,
+    org: Uuid,
+    workspace: Uuid,
+) -> Result<Vec<crate::repo::hosted::LlmCandidate>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT s.id, s.name, s.status, s.workspace_id, s.llm_provider, s.llm_endpoint_id,
+                s.llm_auth_mode, s.origin, s.value_version
+         FROM secrets s
+         WHERE s.kind = 'llm' AND s.org_id = $2 AND s.status = 'active'
+           AND (s.workspace_id IS NULL OR s.workspace_id = $3)
+           AND s.llm_provider IS NOT NULL AND s.llm_endpoint_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM grants g WHERE g.secret_id = s.id AND g.agent_id = $1)
+         ORDER BY s.created_at, s.id LIMIT 200",
+    )
+    .bind(agent)
+    .bind(org)
+    .bind(workspace)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// The agents starter grants reach in `org`, oldest first, at most `limit` (C-1061): every hosted
+/// agent of every workspace, plus the default agent of a personal workspace whatever its kind
+/// (the sign-in has always given it the grants, C-922).
+pub async fn hosted_agents_of_org<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    limit: i64,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT a.id FROM agents a WHERE a.org_id = $1 AND (a.kind = 'hosted' OR (a.is_default AND
+           EXISTS (SELECT 1 FROM workspaces w WHERE w.id = a.workspace_id
+                     AND w.personal_owner_user_id IS NOT NULL)))
+         ORDER BY a.created_at, a.id LIMIT $2",
+    )
+    .bind(org)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// How many hosted agents of `org` lack at least one of the starter credentials
+/// (C-1061, `agents_without_starter`).
+pub async fn count_agents_without_starter<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    secret_ids: &[Uuid],
+    connection_ids: &[Uuid],
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM agents a WHERE a.org_id = $1 AND (a.kind = 'hosted' OR (a.is_default AND
+           EXISTS (SELECT 1 FROM workspaces w WHERE w.id = a.workspace_id
+                     AND w.personal_owner_user_id IS NOT NULL)))
+           AND (EXISTS (SELECT 1 FROM unnest($2::uuid[]) s(id) WHERE NOT EXISTS
+                  (SELECT 1 FROM grants g WHERE g.agent_id = a.id AND g.secret_id = s.id))
+             OR EXISTS (SELECT 1 FROM unnest($3::uuid[]) c(id) WHERE NOT EXISTS
+                  (SELECT 1 FROM grants g WHERE g.agent_id = a.id AND g.connection_id = c.id)))",
+    )
+    .bind(org)
+    .bind(secret_ids)
+    .bind(connection_ids)
+    .fetch_one(exec)
+    .await?)
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PersonalOrg {
     pub org_id: Uuid,

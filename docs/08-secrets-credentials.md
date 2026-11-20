@@ -659,6 +659,16 @@ feeds the model picker (FIX-105): an endpoint that answers an error or nothing n
 If the endpoint is unreachable: without a key-origin rule the key may be saved
 anyway (`origin.status = pending`, verified by the gateway before first use);
 with a key-origin rule → 422 `llm_endpoint_unreachable`, nothing saved.
+(Phase 5, P5-REFINE-5, D-383, C-1065) A key saved as `pending` is re-checked in the
+background by the API replica that saved it, with the same `verify` the Test button
+uses, at +5 s, +30 s and +2 min (one task per key, no table; it stops at the first
+pass or when the key is gone, disabled or no longer pending; a replica that dies loses
+the retries). The account list says what is known: `verification.state` is `checking`
+while a re-check is queued, `works` (origin verified, a real call succeeded or the last
+Test passed — the newest evidence wins), `rejected`, `unreachable` or `not_checked`.
+It is advisory; Test is authoritative. A key the provider **rejects** at save is
+`422 llm_key_invalid` and nothing is stored (no row; the value is sealed only after
+the check passes).
 
 Org-level LLM secrets are common (one central LiteLLM key per org). Personal
 keys at workspace scope are allowed where governance permits workspace-scoped

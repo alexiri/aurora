@@ -63,6 +63,29 @@ pub struct HealthTest {
     pub result: String,
 }
 
+/// (C-1065) Whether an AI key works, as far as is known. Advisory: Test is always authoritative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationState {
+    /// The origin is `pending` and a background re-check is queued on this replica.
+    Checking,
+    /// Origin verified, a real call succeeded, or the last Test passed.
+    Works,
+    /// The last Test or real call says the provider refused the key.
+    Rejected,
+    /// The last Test found nothing answering.
+    Unreachable,
+    /// Pending with no re-check queued, or nothing known yet.
+    NotChecked,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+pub struct Verification {
+    pub state: VerificationState,
+    /// When the evidence behind `state` was recorded; null for `checking` / `not_checked`.
+    pub checked_at: Option<DateTime<Utc>>,
+}
+
 /// C-944, amended by C-1033: `state` follows the account's status and what agents' real calls showed.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Health {
@@ -192,6 +215,9 @@ pub struct Account {
     /// grants give it to every new agent of the organization.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub starter: Option<bool>,
+    /// (C-1065) An AI key only: whether it works (omitted on other kinds).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<Verification>,
 }
 
 /// (C-943) What Test found.

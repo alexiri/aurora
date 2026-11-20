@@ -282,16 +282,20 @@ pub async fn create(
     req: CreateAgentRequest,
 ) -> Result<Created, ApiError> {
     let name = name_ok(&req.name)?;
-    if req.kind != "byo" && req.kind != "hosted" {
-        return Err(bad("/kind", "must be byo or hosted"));
-    }
-    if req.kind == "hosted" && !state.ops().hosted.enabled {
+    // (C-1066) No kind: a hosted agent when hosted agents are on, else a BYO one.
+    let kind: &str = match req.kind.as_deref() {
+        Some(k @ ("byo" | "hosted")) => k,
+        Some(_) => return Err(bad("/kind", "must be byo or hosted")),
+        None if state.ops().hosted.enabled => "hosted",
+        None => "byo",
+    };
+    if kind == "hosted" && !state.ops().hosted.enabled {
         return Err(ApiError::unprocessable(
             "hosted_disabled",
             "Hosted agents are disabled on this instance.",
         ));
     }
-    if req.kind == "byo" {
+    if kind == "byo" {
         // (phase 2, RFE-025) creation is governed by the effective BYO posture.
         let org = super::byo::org_byo(state, org_id).await?;
         let wsrow = aurora_db::repo::workspaces::get(&state.pool, ws)
@@ -314,7 +318,7 @@ pub async fn create(
         Some(h) => Some(h.clone()),
         None => None,
     };
-    let harness = if req.kind == "hosted" {
+    let harness = if kind == "hosted" {
         let h = req
             .harness
             .clone()
@@ -357,7 +361,7 @@ pub async fn create(
             workspace_id: ws,
             handle: &handle,
             name: &name,
-            kind: &req.kind,
+            kind,
             harness: harness.as_deref(),
             model_provider: model_provider.as_deref(),
             model_endpoint_id: req.model_endpoint_id.as_deref(),
@@ -375,6 +379,9 @@ pub async fn create(
         let (t, exp) = mint_agent_token(&mut tx, row.id, max).await?;
         (Some(t), exp)
     } else {
+        // (C-1061) A new hosted agent of the placement's default organization gets the
+        // starter grants in this transaction.
+        crate::domains::placement::service::apply_new_agent_starters(&mut tx, state, &row).await?;
         (None, None)
     };
     tx.commit().await.map_err(DbError::from)?;

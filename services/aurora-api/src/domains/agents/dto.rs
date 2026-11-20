@@ -129,8 +129,8 @@ where
 pub struct CreateAgentRequest {
     pub name: String,
     pub handle: Option<String>,
-    /// `byo` | `hosted`.
-    pub kind: String,
+    /// `byo` | `hosted`. (C-1066) Absent = `hosted` when hosted agents are enabled, else `byo`.
+    pub kind: Option<String>,
     pub brief: Option<String>,
     pub harness: Option<String>,
     pub model_endpoint_id: Option<String>,

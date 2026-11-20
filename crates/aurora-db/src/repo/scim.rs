@@ -470,13 +470,19 @@ pub async fn insert_preprovisioned_user(
     id: Uuid,
     email: &str,
     display_name: &str,
+    directory_named: bool,
 ) -> Result<(), DbError> {
-    sqlx::query("INSERT INTO users (id, email, display_name) VALUES ($1, $2::citext, $3)")
-        .bind(id)
-        .bind(email)
-        .bind(display_name)
-        .execute(&mut *conn)
-        .await?;
+    // (C-1064) A name the directory wrote is never overwritten by the sign-in.
+    sqlx::query(
+        "INSERT INTO users (id, email, display_name, display_name_edited_at)
+         VALUES ($1, $2::citext, $3, CASE WHEN $4 THEN now() END)",
+    )
+    .bind(id)
+    .bind(email)
+    .bind(display_name)
+    .bind(directory_named)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 

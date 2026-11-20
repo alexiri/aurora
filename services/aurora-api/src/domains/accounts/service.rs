@@ -396,6 +396,7 @@ fn connection_row(
         given: None,
         default_model: None,
         starter: None,
+        verification: None,
     };
     Row {
         account,
@@ -452,6 +453,36 @@ fn secret_row(
             given: None,
             default_model: None,
             starter: None,
+            verification: (kind == AccountKind::AiKey).then(|| {
+                // (C-1065) From the stored origin, what was recorded and the replica's queue.
+                let origin = s
+                    .origin
+                    .as_ref()
+                    .and_then(|o| {
+                        serde_json::from_value::<aurora_llm::governance::StoredOrigin>(o.clone())
+                            .ok()
+                    })
+                    .map(|o| {
+                        let at = o
+                            .checked_at
+                            .as_deref()
+                            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                            .map(|t| t.with_timezone(&chrono::Utc));
+                        (o.status, at)
+                    });
+                health::verification(
+                    origin,
+                    &health::Recorded {
+                        last_ok_at: s.last_ok_at,
+                        last_error_at: s.last_error_at,
+                        last_error: s.last_error.as_deref(),
+                        last_test_at: s.last_test_at,
+                        last_test_result: s.last_test_result.as_deref(),
+                        last_used_at: s.last_used_at,
+                    },
+                    crate::domains::secrets::service::recheck_queued(s.id),
+                )
+            }),
         },
         tools: Vec::new(),
         limit: None,

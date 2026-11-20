@@ -2083,3 +2083,106 @@ async fn bedrock_model_listing_merges_profiles_and_falls_back_to_the_static_list
         "{v}"
     );
 }
+
+/// P5-REFINE-5 (C-1065): a key saved while its endpoint does not answer says `checking`, and
+/// once the endpoint answers the background re-check stores `verified`: the account reads `works`.
+#[tokio::test]
+async fn refine5_a_pending_key_is_rechecked_in_the_background_and_then_works() {
+    use aurora_api::domains::secrets::service as svc;
+    use std::time::Duration;
+    svc::set_recheck_schedule([
+        Duration::from_millis(1500),
+        Duration::from_millis(2500),
+        Duration::from_millis(3500),
+    ]);
+    let w = world().await;
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.owner,
+            Some(json!({
+                "name": "bg-key", "kind": "llm", "llm": {"endpoint_id": "flaky"}, "value": "sk-later"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["status"], "pending", "{v}");
+    let id: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    async fn state(w: &World) -> String {
+        let uri = format!("/v1/orgs/{}/accounts?kind=ai_key", w.org);
+        let (s, v) = w.call(Method::GET, &uri, &w.owner, None).await;
+        assert_eq!(s, 200, "{v}");
+        let row = v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["name"] == "bg-key")
+            .cloned()
+            .unwrap();
+        row["verification"]["state"].as_str().unwrap().to_owned()
+    }
+    assert!(svc::recheck_queued(id));
+    assert_eq!(state(&w).await, "checking");
+
+    // The endpoint comes back; the retry stores the origin and the account says it works.
+    w._flaky.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [{"id": "m1"}]})))
+        .mount(&w._flaky)
+        .await;
+    let mut got = String::new();
+    for _ in 0..80 {
+        got = state(&w).await;
+        if got == "works" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert_eq!(got, "works");
+    let status: Value = sqlx::query_scalar("SELECT origin FROM secrets WHERE id = $1")
+        .bind(id)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(status["status"], "verified", "{status}");
+    for _ in 0..40 {
+        if !svc::recheck_queued(id) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(!svc::recheck_queued(id), "the task ends at the first pass");
+}
+
+/// C-1065: a key the provider rejects at save is `422 llm_key_invalid` and stores nothing.
+#[tokio::test]
+async fn refine5_a_rejected_key_leaves_nothing_behind() {
+    let w = world().await;
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.owner,
+            Some(json!({
+                "name": "rejected-key", "kind": "llm", "llm": {"endpoint_id": "central"},
+                "value": "sk-bad"})),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_invalid")),
+        "{v}"
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM secrets WHERE name = 'rejected-key'")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "no secret row");
+    let sealed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM secrets WHERE value_ref LIKE '%sk-bad%'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(sealed, 0, "no sealed value");
+}

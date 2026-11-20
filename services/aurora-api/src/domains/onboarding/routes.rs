@@ -44,5 +44,5 @@ async fn patch_onboarding(
     responses((status = 200, body = SetupStatus), (status = 403, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn setup(c: InstanceAdmin, State(s): State<AppState>) -> Result<Json<SetupStatus>, ApiError> {
-    Ok(Json(service::setup(&s, c.user_id).await?))
+    Ok(Json(service::setup(&s, &c).await?))
 }

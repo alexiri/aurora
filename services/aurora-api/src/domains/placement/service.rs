@@ -237,7 +237,8 @@ async fn ensure_personal_workspace(
         .ok()
         .and_then(|t| t.render(&lookup).name)
         .unwrap_or_else(|| template::fallback_name(user.id));
-    let name = template::person_name(&lookup).unwrap_or_else(|| slug_text.clone());
+    // (C-1064) "<First>'s workspace"; the slug is still the template's.
+    let name = template::personal_workspace_name(&lookup).unwrap_or_else(|| slug_text.clone());
     let (ws, agent) = tenancy::create_workspace_named_in_tx(
         tx,
         &state.ops(),
@@ -267,19 +268,44 @@ async fn ensure_personal_workspace(
     .await?;
     let starters: Vec<Starter> =
         serde_json::from_value(row.starter_grants.clone()).unwrap_or_default();
+    apply_starters(tx, state, &agent, &starters, "signin", false).await?;
+    Ok(())
+}
+
+/// What happened to one starter credential on one agent.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Applied {
+    Granted,
+    AlreadyHad,
+    Skipped,
+}
+
+/// Give `agent` the starter credentials (C-1061): the one function the sign-in placement, a new
+/// agent, a placement save and the backfill share. One savepoint per grant inside the caller's
+/// transaction (a refusal, even one that was a failed statement, is rolled back to it and
+/// skipped, and the transaction stays usable), the grant written by the same
+/// `grant_*_as_system` the sign-in always used, audited `grant.create` with
+/// `actor_label = placement`, `starter: true` and `via`; a refused credential is skipped and
+/// audited `Denied`. Returns one outcome per starter, in order.
+async fn apply_starters(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    agent: &aurora_db::repo::agents::AgentRow,
+    starters: &[Starter],
+    via: &str,
+    backfill: bool,
+) -> Result<Vec<Applied>, ApiError> {
+    let mut out = Vec::with_capacity(starters.len());
     for s in starters {
-        // Each starter runs in a savepoint inside the shared sign-in transaction: a refusal
-        // (even one that was a failed statement) is rolled back to here and skipped, and the
-        // transaction stays usable for the audit row and the rest of the placement.
         sqlx::query("SAVEPOINT starter_grant")
             .execute(&mut **tx)
             .await
             .map_err(aurora_db::DbError::from)?;
         let res = match s.kind.as_str() {
-            "secret" => grants::grant_secret_as_system(tx, &agent, s.id, actor())
+            "secret" => grants::grant_secret_as_system(tx, agent, s.id, actor())
                 .await
                 .map(|w| w.event),
-            "connection" => grants::grant_connection_as_system(tx, state, &agent, s.id, actor())
+            "connection" => grants::grant_connection_as_system(tx, state, agent, s.id, actor())
                 .await
                 .map(|w| w.event),
             _ => Err(ApiError::not_found("Unknown credential kind.")),
@@ -292,11 +318,18 @@ async fn ensure_personal_workspace(
                     .map_err(aurora_db::DbError::from)?;
                 if let Some(mut ev) = w {
                     ev.metadata["starter"] = json!(true);
+                    ev.metadata["via"] = json!(via);
+                    if backfill {
+                        ev.metadata["backfill"] = json!(true);
+                    }
                     audit_tx(tx, ev).await?;
+                    out.push(Applied::Granted);
+                } else {
+                    out.push(Applied::AlreadyHad);
                 }
             }
             // A server-side failure (database, internal) is not a refusal: it propagates and
-            // the sign-in fails with its real cause instead of being logged as a skipped grant.
+            // the caller fails with its real cause instead of logging a skipped grant.
             Err(e) if e.status().is_server_error() => return Err(e),
             // A credential that was deleted or disabled since the admin saved, or an app that
             // became `custom_only` after the starter was saved, must not lock people out: skip
@@ -319,16 +352,46 @@ async fn ensure_personal_workspace(
                 audit_tx(
                     tx,
                     AuditEvent::new(actor(), "grant.create", Outcome::Denied)
-                        .org(org_id)
-                        .workspace(ws.id)
+                        .org(agent.org_id)
+                        .workspace(agent.workspace_id)
                         .target("agent", agent.id)
-                        .metadata(json!({"starter": true, "kind": s.kind, "id": s.id,
-                                         "reason": reason})),
+                        .metadata(json!({"starter": true, "via": via, "kind": s.kind,
+                                         "id": s.id, "reason": reason})),
                 )
                 .await?;
+                out.push(Applied::Skipped);
             }
         }
     }
+    Ok(out)
+}
+
+/// A new hosted agent of the placement's default organization gets the starter grants in its
+/// creation transaction (C-1061, `via: "new_agent"`). Nothing for a BYO agent, another
+/// organization, or a placement that is not `shared_org` with personal workspaces on.
+pub async fn apply_new_agent_starters(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    agent: &aurora_db::repo::agents::AgentRow,
+) -> Result<(), ApiError> {
+    if agent.kind != "hosted" {
+        return Ok(());
+    }
+    let Some(row) = repo::get(&mut **tx).await? else {
+        return Ok(());
+    };
+    if PlacementMode::parse(&row.mode) != PlacementMode::SharedOrg
+        || !row.personal_enabled
+        || row.default_org_id != Some(agent.org_id)
+    {
+        return Ok(());
+    }
+    let starters: Vec<Starter> =
+        serde_json::from_value(row.starter_grants.clone()).unwrap_or_default();
+    if starters.is_empty() {
+        return Ok(());
+    }
+    apply_starters(tx, state, agent, &starters, "new_agent", false).await?;
     Ok(())
 }
 
@@ -381,6 +444,8 @@ pub async fn view(state: &AppState) -> Result<PlacementView, ApiError> {
             name_template: DEFAULT_TEMPLATE.to_owned(),
         },
         starter_grants: vec![],
+        starter_applied: vec![],
+        starter_pending: 0,
         personal_orgs: PersonalOrgs {
             count: repo::count_personal_orgs(&state.pool).await?,
             items: repo::list_personal_orgs(&state.pool, PERSONAL_ORG_LIST_CAP)
@@ -635,6 +700,28 @@ pub async fn put(
         updated_at: chrono::Utc::now(),
     };
     repo::save(&mut *tx, &row, c.user_id).await?;
+    // C-1061: a grant this save adds reaches the agents that already exist.
+    let (applied, pending) = match org_id {
+        Some(org) if personal_enabled => {
+            // A different default organization starts from nothing: every starter is new there.
+            let previous: Vec<Starter> = before
+                .as_ref()
+                .filter(|b| b.default_org_id == Some(org))
+                .map(|b| serde_json::from_value(b.starter_grants.clone()).unwrap_or_default())
+                .unwrap_or_default();
+            let added: Vec<Starter> = starters
+                .iter()
+                .filter(|s| !previous.iter().any(|p| p.kind == s.kind && p.id == s.id))
+                .cloned()
+                .collect();
+            if added.is_empty() {
+                (vec![], 0)
+            } else {
+                apply_added_starters(&mut tx, state, org, &added).await?
+            }
+        }
+        _ => (vec![], 0),
+    };
     if let Some(o) = &created_org {
         audit_tx(
             &mut tx,
@@ -664,7 +751,66 @@ pub async fn put(
         "starter_grants": starters.len(),
     }));
     audit::commit_critical(tx, &ev).await?;
-    view(state).await
+    let mut v = view(state).await?;
+    v.starter_applied = applied;
+    v.starter_pending = pending;
+    Ok(v)
+}
+
+/// Most agents one placement save reaches (C-1061); the rest are `starter_pending`.
+const MAX_AGENTS_PER_SAVE: i64 = 2_000;
+
+/// Give the starter grants a save **added** to every existing hosted agent of the default
+/// organization (C-1061, `via: "placement_save"`), inside the save's transaction.
+async fn apply_added_starters(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    org: Uuid,
+    added: &[Starter],
+) -> Result<(Vec<StarterApplied>, u32), ApiError> {
+    let ids = repo::hosted_agents_of_org(&mut **tx, org, MAX_AGENTS_PER_SAVE + 1).await?;
+    let pending =
+        u32::try_from(ids.len().saturating_sub(MAX_AGENTS_PER_SAVE as usize)).unwrap_or(u32::MAX);
+    let mut out: Vec<StarterApplied> = Vec::new();
+    for s in added {
+        let (kind, name) = match s.kind.as_str() {
+            "secret" => (
+                StarterKind::Secret,
+                secrets::get(&mut **tx, s.id).await?.map(|x| x.name),
+            ),
+            _ => (
+                StarterKind::Connection,
+                connections::get(&mut **tx, s.id).await?.map(|x| x.label),
+            ),
+        };
+        out.push(StarterApplied {
+            kind,
+            id: s.id,
+            name: name.unwrap_or_default(),
+            agents_granted: 0,
+            agent_names: vec![],
+            already_had: 0,
+        });
+    }
+    for agent_id in ids.into_iter().take(MAX_AGENTS_PER_SAVE as usize) {
+        let Some(agent) = aurora_db::repo::agents::get(&mut **tx, agent_id).await? else {
+            continue;
+        };
+        let res = apply_starters(tx, state, &agent, added, "placement_save", true).await?;
+        for (a, r) in out.iter_mut().zip(res) {
+            match r {
+                Applied::Granted => {
+                    a.agents_granted += 1;
+                    if a.agent_names.len() < 3 {
+                        a.agent_names.push(agent.name.clone());
+                    }
+                }
+                Applied::AlreadyHad => a.already_had += 1,
+                Applied::Skipped => {}
+            }
+        }
+    }
+    Ok((out, pending))
 }
 
 /// The saved placement's starter credentials as `(secret ids, connection ids)`.
@@ -696,8 +842,23 @@ pub async fn personal_without_starter(state: &AppState) -> Result<i64, ApiError>
     Ok(repo::count_personal_without_starter(&state.pool, org, &secrets, &connections).await?)
 }
 
-/// Give the placement's starter grants to the default agent of every existing personal
-/// workspace of the default organization (C-922). Idempotent: a grant that exists is left as
+/// How many hosted agents of the default organization lack a starter grant (C-1061).
+pub async fn agents_without_starter(state: &AppState) -> Result<i64, ApiError> {
+    let Some(row) = repo::get(&state.pool).await? else {
+        return Ok(0);
+    };
+    let Some(org) = row.default_org_id else {
+        return Ok(0);
+    };
+    let (secrets, connections) = starter_ids(&row);
+    if secrets.is_empty() && connections.is_empty() {
+        return Ok(0);
+    }
+    Ok(repo::count_agents_without_starter(&state.pool, org, &secrets, &connections).await?)
+}
+
+/// Give the placement's starter grants to every hosted agent of the default organization
+/// (C-922, C-1061). Idempotent: a grant that exists is left as
 /// it is and counted as skipped; one the normal grant path refuses is skipped too. Each grant is
 /// its own transaction with its own audit row (`actor_label = placement`, `backfill = true`).
 pub async fn backfill_starter_grants(
@@ -729,7 +890,9 @@ pub async fn backfill_starter_grants(
         granted: 0,
         skipped: 0,
     };
-    for agent_id in repo::personal_default_agents(&state.pool, org_id).await? {
+    // (C-1061) every hosted agent of the default organization, not only the default agent of
+    // each personal workspace.
+    for agent_id in repo::hosted_agents_of_org(&state.pool, org_id, 100_000).await? {
         let Some(agent) = aurora_db::repo::agents::get(&state.pool, agent_id).await? else {
             continue;
         };
@@ -752,6 +915,7 @@ pub async fn backfill_starter_grants(
                 Ok(Some(mut ev)) => {
                     ev.metadata["starter"] = json!(true);
                     ev.metadata["backfill"] = json!(true);
+                    ev.metadata["via"] = json!("backfill");
                     ev.metadata["requested_by"] = json!(c.user_id);
                     audit::commit_critical(tx, &ev).await?;
                     out.granted += 1;

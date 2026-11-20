@@ -9,6 +9,8 @@ pub struct UserRow {
     pub email: String,
     pub email_verified_at: Option<DateTime<Utc>>,
     pub display_name: String,
+    /// (C-1064) Set when the person (or their directory) chose the name; `None` = the sign-in's.
+    pub display_name_edited_at: Option<DateTime<Utc>>,
     pub is_instance_admin: bool,
     pub disabled_at: Option<DateTime<Utc>>,
     pub default_org_id: Option<Uuid>,
@@ -18,7 +20,7 @@ pub struct UserRow {
 }
 
 const COLS: &str = "id, email::text AS email, email_verified_at, display_name, \
-    is_instance_admin, disabled_at, default_org_id, last_login_at, created_at, updated_at";
+    display_name_edited_at, is_instance_admin, disabled_at, default_org_id, last_login_at, created_at, updated_at";
 
 pub async fn find_by_id<'e, E: PgExecutor<'e>>(
     exec: E,
@@ -43,6 +45,23 @@ pub async fn find_by_email<'e, E: PgExecutor<'e>>(
     .bind(email.trim())
     .fetch_optional(exec)
     .await?)
+}
+
+/// (C-1064) The sign-in's name, written only while nobody has edited it. Returns whether it wrote.
+pub async fn set_display_name_from_signin<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    name: &str,
+) -> Result<bool, DbError> {
+    let r = sqlx::query(
+        "UPDATE users SET display_name = $2, updated_at = now()
+         WHERE id = $1 AND display_name_edited_at IS NULL AND display_name <> $2",
+    )
+    .bind(id)
+    .bind(name)
+    .execute(exec)
+    .await?;
+    Ok(r.rows_affected() > 0)
 }
 
 pub async fn set_default_org<'e, E: PgExecutor<'e>>(

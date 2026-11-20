@@ -11,6 +11,8 @@ export type PutPlacement = components["schemas"]["PutPlacement"];
 export type PlacementMode = components["schemas"]["PlacementMode"];
 export type PlacementChoices = components["schemas"]["PlacementChoices"];
 export type PlacementPreview = components["schemas"]["PlacementPreview"];
+/** (C-1061) What a save gave to agents that already existed: "Given to Daneel and 1 other agent". */
+export type StarterApplied = components["schemas"]["StarterApplied"];
 
 /** The saved new-user placement (D-140; instance admins). */
 export function usePlacement(enabled = true) {

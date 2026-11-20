@@ -28,6 +28,17 @@ pub(crate) async fn harness(
     tweak: impl FnOnce(&mut OidcProvider),
     admins: &[&str],
 ) -> Harness {
+    harness_cfg(idp, mode, tweak, admins, |_| {}).await
+}
+
+/// [`harness`] with more instance configuration applied last.
+pub(crate) async fn harness_cfg(
+    idp: &MockIdp,
+    mode: SignupMode,
+    tweak: impl FnOnce(&mut OidcProvider),
+    admins: &[&str],
+    extra: impl FnOnce(&mut aurora_config::ApiConfig) + 'static,
+) -> Harness {
     let p = provider(idp, tweak);
     let admins: Vec<String> = admins.iter().map(|s| (*s).to_owned()).collect();
     Harness::with_config(move |c| {
@@ -36,6 +47,7 @@ pub(crate) async fn harness(
         c.auth.instance_admins = admins;
         c.oidc_client_secrets
             .insert(PID.into(), Redacted::new(CLIENT_SECRET.into()));
+        extra(c);
     })
     .await
 }

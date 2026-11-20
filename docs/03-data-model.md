@@ -35,6 +35,7 @@ MUST implement it exactly; any change starts here.
 | email | citext unique not null | lower-cased, trimmed |
 | email_verified_at | timestamptz null | |
 | display_name | text not null | ≤80 |
+| display_name_edited_at | timestamptz null | (phase 5, P5-REFINE-5, D-407, C-1064; migration `20261201000261_display_name_edited.sql`) set when the person changes their own name (`PATCH /v1/me`) or a directory writes `displayName` (SCIM); while `null` every OIDC sign-in refreshes `display_name` from the token's `name` claim. Backfill: `created_at` for a name that is not the e-mail's local part (a chosen name is kept), `null` for one that is (the bootstrap admin "alice") |
 | is_instance_admin | bool not null default false | |
 | disabled_at | timestamptz null | instance-level disable |
 | default_org_id | uuid null FK→organizations (set null) | |

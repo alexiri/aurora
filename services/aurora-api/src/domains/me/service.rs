@@ -83,6 +83,12 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
         approval_email,
         admin_attention_email,
         client_address: None,
+        display_name_source: if user.display_name_edited_at.is_some() {
+            "you"
+        } else {
+            "sign_in"
+        }
+        .to_owned(),
         user: user.into(),
         memberships,
     })

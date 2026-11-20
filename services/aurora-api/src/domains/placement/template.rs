@@ -236,15 +236,33 @@ impl Template {
     }
 }
 
-/// The name a personal workspace shows (C-923): the person's given name, else their full name,
-/// else the part of their e-mail before the `@`. Cleaned like any template value; `None` only
-/// when none of the three holds a letter or digit.
-pub fn person_name(src: &dyn Lookup) -> Option<String> {
-    [Var::GivenName, Var::Name, Var::EmailLocal]
-        .iter()
-        .filter_map(|v| src.get(v))
+/// Longest name a workspace may have (`tenancy::validate_name`).
+const WORKSPACE_NAME_MAX: usize = 80;
+const WORKSPACE_SUFFIX: &str = "'s workspace";
+
+/// The name a new personal workspace gets (C-1064, amends C-923): `<First>'s workspace`, with
+/// the first name being the token's `given_name`, else the first word of `name`, else the part of
+/// the e-mail before the `@` (each cleaned like a template value). The whole name stays within
+/// the workspace-name cap. `None` only when none of the three holds a letter or digit.
+pub fn personal_workspace_name(src: &dyn Lookup) -> Option<String> {
+    let first = src
+        .get(&Var::GivenName)
         .map(|x| clean(&x))
-        .find(|x| has_alnum(x))
+        .filter(|x| has_alnum(x))
+        .or_else(|| {
+            src.get(&Var::Name)
+                .map(|x| clean(&x))
+                .and_then(|x| x.split_whitespace().next().map(str::to_owned))
+                .filter(|x| has_alnum(x))
+        })
+        .or_else(|| {
+            src.get(&Var::EmailLocal)
+                .map(|x| clean(&x))
+                .filter(|x| has_alnum(x))
+        })?;
+    let room = WORKSPACE_NAME_MAX - WORKSPACE_SUFFIX.chars().count();
+    let first: String = first.chars().take(room).collect();
+    Some(format!("{}{WORKSPACE_SUFFIX}", first.trim_end()))
 }
 
 /// `user-<first 8 hex digits of the id>`: the last resort.
@@ -409,6 +427,48 @@ mod tests {
         let r = t.render(&Sample("bobj"));
         assert_eq!(r.name, None);
         assert_eq!(r.unresolved, vec!["sub"]);
+    }
+
+    fn workspace_name(claims: Value, email: &str) -> Option<String> {
+        personal_workspace_name(&TokenClaims {
+            claims: &claims,
+            email,
+        })
+    }
+
+    /// C-1064: "<First>'s workspace" from the given name, else the first word of `name`, else the
+    /// e-mail's local part.
+    #[test]
+    fn personal_workspace_is_named_after_the_first_name() {
+        assert_eq!(
+            workspace_name(
+                json!({"given_name": "Dana", "name": "Dana Scully"}),
+                "d@x.org"
+            )
+            .as_deref(),
+            Some("Dana's workspace")
+        );
+        assert_eq!(
+            workspace_name(json!({"name": "Bob Builder"}), "bob@x.org").as_deref(),
+            Some("Bob's workspace")
+        );
+        assert_eq!(
+            workspace_name(json!({}), "carol.j@x.org").as_deref(),
+            Some("carol.j's workspace")
+        );
+        assert_eq!(workspace_name(json!({"name": "!!!"}), "@x.org"), None);
+    }
+
+    #[test]
+    fn personal_workspace_name_drops_bidi_and_stays_within_80() {
+        assert_eq!(
+            workspace_name(json!({"given_name": "Da\u{202E}na\u{200B}"}), "d@x.org").as_deref(),
+            Some("Dana's workspace")
+        );
+        let long = "a".repeat(200);
+        let n = workspace_name(json!({"given_name": long}), "d@x.org").unwrap();
+        assert_eq!(n.chars().count(), 80);
+        assert!(n.ends_with("'s workspace"));
     }
 
     #[test]

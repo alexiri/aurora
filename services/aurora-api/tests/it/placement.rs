@@ -154,7 +154,7 @@ async fn two_users_one_org_two_personal_workspaces_with_starter_grant() {
         let (s, name, wr) = e.personal(email).await.unwrap();
         assert_eq!(
             (s.as_str(), name.as_str(), wr.as_deref()),
-            (slug, "Test User", Some("owner"))
+            (slug, "Test's workspace", Some("owner"))
         );
         // Default agent holding the starter grant, nothing else.
         assert_eq!(
@@ -174,7 +174,9 @@ async fn two_users_one_org_two_personal_workspaces_with_starter_grant() {
                 .unwrap();
         assert_eq!(landing, Some(org));
     }
-    assert_eq!(e.n("SELECT count(*) FROM grants").await, 2);
+    // Two personal default agents, and the default workspace's agent that existed when the key
+    // was saved (C-1061: a key reaches every hosted agent, not only new people's).
+    assert_eq!(e.n("SELECT count(*) FROM grants").await, 3);
 
     // A second sign-in of the same user creates nothing.
     let before = (
@@ -315,7 +317,10 @@ async fn sec79_templates_use_only_validated_claims_and_fall_back() {
     e.sign_in().await.unwrap();
     // C-923: the template sets the slug (`ada-l`); the name is the person's (the `name` claim).
     let (slug, name, _) = e.personal("a@example.com").await.unwrap();
-    assert_eq!((slug.as_str(), name.as_str()), ("ada-l", "Test User"));
+    assert_eq!(
+        (slug.as_str(), name.as_str()),
+        ("ada-l", "Test's workspace")
+    );
     // Missing claim: next alternative.
     e.idp.identity("s2", "b@example.com", true);
     e.idp.set(|c| {
@@ -325,13 +330,16 @@ async fn sec79_templates_use_only_validated_claims_and_fall_back() {
     });
     e.sign_in().await.unwrap();
     let (slug, name, _) = e.personal("b@example.com").await.unwrap();
-    assert_eq!((slug.as_str(), name.as_str()), ("bo-jones", "Bo")); // given name wins
+    assert_eq!(
+        (slug.as_str(), name.as_str()),
+        ("bo-jones", "Bo's workspace")
+    ); // given name wins
     // Nothing but the e-mail: last alternative.
     e.idp.identity("s3", "c.d@example.com", true);
     e.idp.set(|c| c.extra.clear());
     e.sign_in().await.unwrap();
     let (slug, name, _) = e.personal("c.d@example.com").await.unwrap();
-    assert_eq!((slug.as_str(), name.as_str()), ("c-d", "Test User"));
+    assert_eq!((slug.as_str(), name.as_str()), ("c-d", "Test's workspace"));
     // Control characters never reach a name; a template with no usable result falls to user-<id>.
     e.shared_again(json!({"personal_workspace": {"enabled": true, "name_template": "{claim:x}"}}))
         .await;
@@ -344,7 +352,7 @@ async fn sec79_templates_use_only_validated_claims_and_fall_back() {
     let u = e.user("z@example.com").await;
     let (slug, name, _) = e.personal("z@example.com").await.unwrap();
     assert_eq!(slug, format!("user-{}", &u.simple().to_string()[..8]));
-    assert_eq!(name, "Test User");
+    assert_eq!(name, "Test's workspace");
     // Request input cannot add variables: unknown ones are refused when saving.
     let (s, _) = e
         .put(json!({"mode": "shared_org", "create_default_org": "X",
@@ -375,7 +383,13 @@ async fn c922_backfill_gives_starter_grants_to_earlier_people_and_is_idempotent(
     let waiting = || async {
         let (s, v) = e.call(&e.admin, Method::GET, "/v1/admin/setup", None).await;
         assert_eq!(s, 200, "{v}");
-        v["personal_workspaces_without_starter"].as_i64().unwrap()
+        // (C-1061) every hosted agent of the default organization; the personal-workspace count
+        // stays for older clients.
+        assert!(
+            v["personal_workspaces_without_starter"].as_i64().unwrap()
+                <= v["agents_without_starter"].as_i64().unwrap()
+        );
+        v["agents_without_starter"].as_i64().unwrap()
     };
     // No starter grant saved: nothing is waiting, and the backfill has nothing to give.
     assert_eq!(waiting().await, 0);
@@ -388,12 +402,21 @@ async fn c922_backfill_gives_starter_grants_to_earlier_people_and_is_idempotent(
     let (s, v) = backfill(json!({"credential_ids": [Uuid::now_v7()]})).await;
     assert_eq!(s, 400, "{v}");
 
-    assert_eq!(waiting().await, 2);
+    // (C-1061) The save already gave the key to every existing agent; take those grants away so
+    // the backfill has something to do: the two personal default agents and the default
+    // workspace's agent.
+    assert_eq!(waiting().await, 0);
+    sqlx::query("DELETE FROM grants WHERE secret_id = $1")
+        .bind(key)
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(waiting().await, 3);
     let (s, v) = backfill(json!({})).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         (v["granted"].as_u64(), v["skipped"].as_u64()),
-        (Some(2), Some(0))
+        (Some(3), Some(0))
     );
     assert_eq!(waiting().await, 0);
     let held = format!(
@@ -408,18 +431,20 @@ async fn c922_backfill_gives_starter_grants_to_earlier_people_and_is_idempotent(
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         (v["granted"].as_u64(), v["skipped"].as_u64()),
-        (Some(0), Some(2))
+        (Some(0), Some(3))
     );
     assert_eq!(e.n(&held).await, 2);
 
-    // One audit row per grant, written by the placement, marked as a backfill.
+    // One audit row per grant, written by the placement, marked as a backfill (the save's own
+    // rows carry `via: placement_save`, the route's `via: backfill`).
     let rows: Vec<Value> = sqlx::query_scalar(
-        "SELECT metadata FROM audit_log WHERE action = 'grant.create' AND actor_label = 'placement'",
+        "SELECT metadata FROM audit_log WHERE action = 'grant.create' AND actor_label = 'placement'
+         AND metadata->>'via' = 'backfill'",
     )
     .fetch_all(e.h.pool())
     .await
     .unwrap();
-    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows.len(), 3, "{rows:?}");
     assert!(
         rows.iter()
             .all(|m| m["backfill"] == true && m["starter"] == true)
@@ -452,16 +477,16 @@ async fn c923_personal_workspace_is_named_after_the_person() {
             "bob.smith@example.com",
             Some("Bob Smith"),
             Some("Bob"),
-            "Bob",
+            "Bob's workspace",
         ),
         (
             "p-2",
             "dana@example.com",
             Some("Dana Cole"),
             None,
-            "Dana Cole",
+            "Dana's workspace",
         ),
-        ("p-3", "eve.k@example.com", None, None, "eve.k"),
+        ("p-3", "eve.k@example.com", None, None, "eve.k's workspace"),
     ] {
         e.idp.identity(sub, email, true);
         e.idp.set(|c| {
@@ -511,7 +536,9 @@ async fn sec79_starter_grants_land_only_on_the_new_default_agent_and_are_audited
         .unwrap();
     e.who("s1", "bob@example.com", Some("bobj"));
     e.sign_in().await.unwrap();
-    assert_eq!(e.n("SELECT count(*) FROM grants").await, 1);
+    // The key saved earlier reached the default workspace's agent (C-1061); the BYO `Old` agent is
+    // never touched, and the new person's default agent got it at sign-in.
+    assert_eq!(e.n("SELECT count(*) FROM grants").await, 2);
     assert_eq!(
         e.n(&format!(
             "SELECT count(*) FROM grants g JOIN agents a ON a.id = g.agent_id JOIN workspaces w ON w.id = a.workspace_id \
@@ -521,7 +548,8 @@ async fn sec79_starter_grants_land_only_on_the_new_default_agent_and_are_audited
         1
     );
     let ev: Value = sqlx::query_scalar(
-        "SELECT metadata FROM audit_log WHERE action = 'grant.create' AND actor_label = 'placement'",
+        "SELECT metadata FROM audit_log WHERE action = 'grant.create' AND actor_label = 'placement'
+         AND metadata->>'via' = 'signin'",
     )
     .fetch_one(e.h.pool())
     .await
@@ -529,7 +557,8 @@ async fn sec79_starter_grants_land_only_on_the_new_default_agent_and_are_audited
     assert_eq!(ev["starter"], true);
     assert_eq!(ev["secret_id"], json!(key));
     let kind: String = sqlx::query_scalar(
-        "SELECT actor_kind FROM audit_log WHERE action = 'grant.create' AND actor_label = 'placement'",
+        "SELECT actor_kind FROM audit_log WHERE action = 'grant.create' AND actor_label = 'placement'
+         AND metadata->>'via' = 'signin'",
     )
     .fetch_one(e.h.pool())
     .await
@@ -1122,13 +1151,19 @@ async fn fix045_default_template_names_new_workspaces_from_the_sub() {
     let (slug1, name1, _) = e.personal("bob@example.com").await.unwrap();
     let (slug2, name2, _) = e.personal("robert@example.com").await.unwrap();
     // C-923: the slug comes from the template, the name is the person's own.
-    assert_eq!((slug1.as_str(), name1.as_str()), ("sub-bob-1", "Test User"));
-    assert_eq!((slug2.as_str(), name2.as_str()), ("sub-bob-2", "Test User"));
+    assert_eq!(
+        (slug1.as_str(), name1.as_str()),
+        ("sub-bob-1", "Test's workspace")
+    );
+    assert_eq!(
+        (slug2.as_str(), name2.as_str()),
+        ("sub-bob-2", "Test's workspace")
+    );
     // A `sub` with characters the slug derivation trims still yields a usable slug.
     e.who("Sub.Bob@3", "bobby@example.com", Some("bobj"));
     e.sign_in().await.unwrap();
     let (slug3, name3, _) = e.personal("bobby@example.com").await.unwrap();
-    assert_eq!(name3, "Test User");
+    assert_eq!(name3, "Test's workspace");
     assert_eq!(slug3, "sub-bob-3");
     // Three distinct workspaces, no collision slug anywhere.
     assert_eq!(
@@ -1228,8 +1263,14 @@ async fn fix045_same_alias_from_two_providers_gets_distinct_sub_named_workspaces
     let (slug_b, name_b) = row_b
         .expect("personal_of(robert) timed out")
         .expect("no personal ws for robert");
-    assert_eq!((slug_a.as_str(), name_a.as_str()), ("s-bob-a", "Test User"));
-    assert_eq!((slug_b.as_str(), name_b.as_str()), ("s-bob-b", "Test User"));
+    assert_eq!(
+        (slug_a.as_str(), name_a.as_str()),
+        ("s-bob-a", "Test's workspace")
+    );
+    assert_eq!(
+        (slug_b.as_str(), name_b.as_str()),
+        ("s-bob-b", "Test's workspace")
+    );
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM workspaces WHERE personal_owner_user_id IS NOT NULL"
@@ -1680,4 +1721,322 @@ async fn fix080_placement_obeys_the_exclusive_gate_and_the_seat_cap() {
     e.who("s-cy", "cy@example.com", Some("cy"));
     e.sign_in().await.unwrap();
     assert_eq!(member_of("cy@example.com").await, 1);
+}
+
+// ---- P5-REFINE-5 (D-414, C-1061): the starter key reaches every hosted agent -----------------
+
+/// [`env`] that can create hosted agents (they need the gateway CA directory).
+async fn env_hosted(mode: SignupMode) -> Env {
+    let dir = std::env::temp_dir().join(format!("aurora-ca-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("ca.pem"), "-----BEGIN CERTIFICATE-----\nX\n").unwrap();
+    let ca = dir.to_string_lossy().into_owned();
+    let idp = MockIdp::start().await;
+    let h = crate::oidc::harness_cfg(&idp, mode, |_| {}, &[], move |c| c.gateway_ca_dir = ca).await;
+    h.unsave_placement().await;
+    let admin = h.user(ADMIN, true).await;
+    let (_, tok) = h.good_session(admin).await;
+    Env {
+        h,
+        idp,
+        admin: cookie(&tok),
+    }
+}
+
+impl Env {
+    async fn default_ws(&self, org: Uuid) -> Uuid {
+        sqlx::query_scalar("SELECT id FROM workspaces WHERE org_id = $1 AND slug = 'default'")
+            .bind(org)
+            .fetch_one(self.h.pool())
+            .await
+            .unwrap()
+    }
+
+    async fn new_agent(&self, ws: Uuid, name: &str, kind: Option<&str>) -> (u16, Value) {
+        let mut b = json!({"name": name});
+        if let Some(k) = kind {
+            b["kind"] = json!(k);
+        }
+        self.call(
+            &self.admin,
+            Method::POST,
+            &format!("/v1/workspaces/{ws}/agents"),
+            Some(b),
+        )
+        .await
+    }
+
+    async fn grants_of(&self, key: Uuid) -> i64 {
+        self.n(&format!(
+            "SELECT count(*) FROM grants WHERE secret_id = '{key}'"
+        ))
+        .await
+    }
+
+    async fn starter_audit(&self, via: &str) -> i64 {
+        self.n(&format!(
+            "SELECT count(*) FROM audit_log WHERE action = 'grant.create' AND actor_label = 'placement' \
+             AND metadata->>'via' = '{via}' AND metadata->>'starter' = 'true'"
+        ))
+        .await
+    }
+}
+
+#[tokio::test]
+async fn refine5_the_starter_key_reaches_existing_agents_once_and_every_new_hosted_agent() {
+    let e = env_hosted(SignupMode::Open).await;
+    let org = e.shared(json!({})).await;
+    let key = e.org_secret(org, "Company key", "generic").await;
+    let dws = e.default_ws(org).await;
+    // Three hosted agents in two workspaces before the key exists: the default agent, Rex, and the
+    // default agent of a second workspace.
+    let (s, v) = e.new_agent(dws, "Rex", None).await;
+    assert_eq!(
+        (s, v["agent"]["kind"].as_str()),
+        (201, Some("hosted")),
+        "{v}"
+    );
+    let (s, w2) = e
+        .call(
+            &e.admin,
+            Method::POST,
+            &format!("/v1/orgs/{org}/workspaces"),
+            Some(json!({"name": "Team"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{w2}");
+    assert_eq!(e.grants_of(key).await, 0);
+
+    // The save that adds the key gives it to all three, and says so.
+    let (s, v) = e
+        .put(json!({"mode": "shared_org", "default_org_id": org,
+            "personal_workspace": {"enabled": true},
+            "starter_grants": [{"kind": "secret", "id": key}]}))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let applied = &v["starter_applied"][0];
+    assert_eq!(applied["id"], json!(key), "{v}");
+    assert_eq!(applied["name"], "Company key");
+    assert_eq!(applied["agents_granted"], 3, "{v}");
+    assert_eq!(applied["agent_names"].as_array().unwrap().len(), 3, "{v}");
+    assert_eq!(applied["already_had"], 0);
+    assert_eq!(v["starter_pending"], 0);
+    assert_eq!(e.grants_of(key).await, 3);
+    assert_eq!(
+        e.starter_audit("placement_save").await,
+        3,
+        "one row per agent"
+    );
+
+    // The same save again applies nothing; removing the key removes nothing and applies nothing.
+    let same = json!({"mode": "shared_org", "default_org_id": org,
+        "personal_workspace": {"enabled": true},
+        "starter_grants": [{"kind": "secret", "id": key}]});
+    let (s, v) = e.put(same).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["starter_applied"], json!([]), "{v}");
+    assert_eq!(e.grants_of(key).await, 3);
+    let (s, v) = e
+        .put(json!({"mode": "shared_org", "default_org_id": org,
+            "personal_workspace": {"enabled": true}}))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["starter_applied"], json!([]), "{v}");
+    assert_eq!(
+        e.grants_of(key).await,
+        3,
+        "removing a starter removes no grant"
+    );
+    e.shared_again(json!({"personal_workspace": {"enabled": true},
+        "starter_grants": [{"kind": "secret", "id": key}]}))
+        .await;
+
+    // A new hosted agent gets the key in its creation transaction; a BYO agent does not.
+    let before = e.starter_audit("new_agent").await;
+    let (s, v) = e.new_agent(dws, "Nova", None).await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(e.grants_of(key).await, 4);
+    assert_eq!(e.starter_audit("new_agent").await, before + 1);
+    let (s, v) = e.new_agent(dws, "Byo", Some("byo")).await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(e.grants_of(key).await, 4, "a BYO agent gets none");
+    // The default agent of a new workspace is an agent too.
+    let (s, v) = e
+        .call(
+            &e.admin,
+            Method::POST,
+            &format!("/v1/orgs/{org}/workspaces"),
+            Some(json!({"name": "Third"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(e.grants_of(key).await, 5);
+
+    // An agent of another organization gets none.
+    let other = e.h.org().await;
+    let ows = e.h.workspace(other).await;
+    let admin_id = e.user(ADMIN).await;
+    e.h.member(other, admin_id, "owner", "active").await;
+    let (s, v) = e.new_agent(ows, "Elsewhere", None).await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(e.grants_of(key).await, 5);
+
+    // A credential that went away is skipped and audited; the creation still succeeds.
+    sqlx::query("UPDATE secrets SET status = 'rejected' WHERE id = $1")
+        .bind(key)
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = e.new_agent(dws, "Later", None).await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(
+        e.n(
+            "SELECT count(*) FROM audit_log WHERE action = 'grant.create' AND outcome = 'denied' \
+             AND actor_label = 'placement' AND metadata->>'via' = 'new_agent'"
+        )
+        .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn refine5_the_backfill_reaches_every_hosted_agent_and_setup_counts_them() {
+    let e = env(SignupMode::Open).await;
+    let org = e.shared(json!({})).await;
+    let key = e.org_secret(org, "Company key", "generic").await;
+    e.shared_again(json!({"personal_workspace": {"enabled": true},
+        "starter_grants": [{"kind": "secret", "id": key}]}))
+        .await;
+    let dws = e.default_ws(org).await;
+    // A hosted agent that appeared without going through the API (nothing granted it the key).
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, effort, brief) VALUES (gen_random_uuid(), $1, $2, 'late', 'Late', 'hosted', 'fake', 'medium', '')")
+        .bind(org)
+        .bind(dws)
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    let waiting = || async {
+        let (s, v) = e.call(&e.admin, Method::GET, "/v1/admin/setup", None).await;
+        assert_eq!(s, 200, "{v}");
+        v["agents_without_starter"].as_i64().unwrap()
+    };
+    assert_eq!(waiting().await, 1);
+    let (s, v) = e
+        .call(
+            &e.admin,
+            Method::POST,
+            "/v1/admin/placement/starter-grants/backfill",
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["granted"], 1, "{v}");
+    assert_eq!(waiting().await, 0);
+}
+
+// ---- P5-REFINE-5 (D-407, C-1064): names from the sign-in -------------------------------------
+
+#[tokio::test]
+async fn refine5_the_sign_in_names_a_person_until_they_edit_it() {
+    let e = env(SignupMode::Open).await;
+    e.shared(json!({})).await;
+    // (a) A bootstrap admin created as "alice" is named by the token at the next sign-in.
+    sqlx::query("INSERT INTO users (id, email, display_name, is_instance_admin, email_verified_at) VALUES (gen_random_uuid(), 'alice@example.com', 'alice', true, now())")
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    e.idp.identity("s-alice", "alice@example.com", true);
+    e.idp.set(|c| {
+        c.name = Some("Alice Admin".into());
+        c.extra.clear();
+    });
+    let ck = e.sign_in().await.unwrap();
+    let name = |email: &'static str| {
+        let pool = e.h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT display_name FROM users WHERE email = $1")
+                .bind(email)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(name("alice@example.com").await, "Alice Admin");
+    let (s, me) = e.call(&ck, Method::GET, "/v1/me", None).await;
+    assert_eq!(s, 200, "{me}");
+    assert_eq!(me["display_name_source"], "sign_in");
+    // A later token name refreshes it.
+    e.idp.set(|c| c.name = Some("Alice A. Admin".into()));
+    e.sign_in().await.unwrap();
+    assert_eq!(name("alice@example.com").await, "Alice A. Admin");
+    // No `name` in the token never overwrites.
+    e.idp.set(|c| c.name = None);
+    e.sign_in().await.unwrap();
+    assert_eq!(name("alice@example.com").await, "Alice A. Admin");
+
+    // (b) A person who edits their name keeps it across sign-ins.
+    let (s, me) = e
+        .call(
+            &ck,
+            Method::PATCH,
+            "/v1/me",
+            Some(json!({"display_name": "Ally"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{me}");
+    assert_eq!(me["display_name_source"], "you");
+    e.idp.set(|c| c.name = Some("Alice Admin".into()));
+    e.sign_in().await.unwrap();
+    assert_eq!(name("alice@example.com").await, "Ally");
+    // Saving the same name again is not an edit.
+    let (_, me) = e
+        .call(
+            &ck,
+            Method::PATCH,
+            "/v1/me",
+            Some(json!({"display_name": "Ally"})),
+        )
+        .await;
+    assert_eq!(me["display_name_source"], "you");
+
+    // (c) A name a directory wrote is kept: the pre-provisioned person binds by e-mail.
+    let id = Uuid::now_v7();
+    let mut conn = e.h.pool().acquire().await.unwrap();
+    aurora_db::repo::scim::insert_preprovisioned_user(
+        &mut conn,
+        id,
+        "carol@example.com",
+        "Carol From Directory",
+        true,
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    e.idp.identity("s-carol", "carol@example.com", true);
+    e.idp.set(|c| c.name = Some("Carol Token".into()));
+    e.sign_in().await.unwrap();
+    assert_eq!(name("carol@example.com").await, "Carol From Directory");
+
+    // (f) A new person with no `name` is called by the e-mail's local part.
+    e.idp.identity("s-dave", "dave.k@example.com", true);
+    e.idp.set(|c| c.name = None);
+    e.sign_in().await.unwrap();
+    assert_eq!(name("dave.k@example.com").await, "dave.k");
+}
+
+#[tokio::test]
+async fn refine5_the_personal_workspace_is_named_after_the_given_name() {
+    let e = env(SignupMode::Open).await;
+    e.shared(json!({"personal_workspace": {"enabled": true, "name_template": "{sub}"}}))
+        .await;
+    e.idp.identity("s-dana", "dana@example.com", true);
+    e.idp.set(|c| {
+        c.name = Some("Dana Scully".into());
+        c.extra.clear();
+        c.extra.insert("given_name".into(), json!("Dana"));
+    });
+    e.sign_in().await.unwrap();
+    let (slug, name, _) = e.personal("dana@example.com").await.unwrap();
+    assert_eq!(name, "Dana's workspace");
+    assert_eq!(slug, "s-dana", "the slug is still the template's");
 }
