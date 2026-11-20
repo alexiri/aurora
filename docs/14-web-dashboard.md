@@ -2394,7 +2394,9 @@ and **the typed values stay, secrets included** (component state only, masked, n
 P5-UX-3's "typed values that are not secret survive"); a choice of ways ("Sign in with:") appears only when
 more than one works, **More options** holds scopes, the OAuth client and the server. Done names the account
 and the access ("Daneel can now read Team calendar", "Read only. You can change this on Daneel's Access tab."),
-shows the package's `first_prompt` and **Try it in chat** opens the agent's chat with `?draft=` (C-1035).
+shows the package's `first_prompt` and **Try it in chat** opens the agent's Chat tab (`?tab=chat&draft=`, C-1035; one click, the dialog closes, the box
+holds the prompt and has focus, nothing is sent) from every place the journey opens: the agent's Access tab, Apps,
+Accounts and an app's page. The agent page follows the router, and the composer reads the draft from it.
 
 **What the buttons say.** One rule, so that one flow has one name:
 

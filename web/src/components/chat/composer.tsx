@@ -86,7 +86,13 @@ export function Composer({
   onClearReply,
   onRestoreReply,
   attachRef,
+  initialDraft,
+  onDraftUsed,
 }: {
+  /** (P5-REFINE-13, C-1035) A link's suggested message (`?draft=`), already read from the router. Never sent for the person. */
+  initialDraft?: string;
+  /** The person edited the box or sent: the page may forget the draft. */
+  onDraftUsed?: () => void;
   /** (P5-CHAT-2, C-725) The message this one replies to; sent as `reply_to.seq`. */
   reply?: ReplyTarget | null;
   onClearReply?: () => void;
@@ -111,7 +117,15 @@ export function Composer({
   // loading (`autoFocus` false), and the initializer would never run again — the guide's suggested message was
   // lost. The param only exists on links from the guide, and the box is empty on every other path, so an
   // unconditional read cannot clobber a typed message.
-  const [text, setText] = useState(() => (typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("draft") ?? "").slice(0, 500) : ""));
+  // (P5-REFINE-13) The page hands the draft over as `initialDraft` (read from the router: during a client-side
+  // navigation `window.location` still shows the previous page). The `window.location` read is the fallback.
+  const [text, setText] = useState(() =>
+    initialDraft !== undefined
+      ? initialDraft.slice(0, 500)
+      : typeof window !== "undefined"
+        ? (new URLSearchParams(window.location.search).get("draft") ?? "").slice(0, 500)
+        : "",
+  );
   const [followups, setFollowups] = useState<Followup[]>([]);
   const [sendErr, setSendErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -252,6 +266,7 @@ export function Composer({
       keyRef.current = null;
       if (out.kind === "followup") setFollowups((f) => [...f, out.followup]);
       setText("");
+      onDraftUsed?.();
       setPending([]);
       setMode("write");
       onClearReply?.();
@@ -438,6 +453,7 @@ export function Composer({
             onChange={(e) => {
               setText(e.target.value);
               setCaret(e.target.selectionEnd);
+              onDraftUsed?.();
             }}
             onSelect={(e) => setCaret(e.currentTarget.selectionEnd)}
             onKeyDown={onKeyDown}
