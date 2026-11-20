@@ -780,6 +780,13 @@ Available to an agent only while it has an `active` presence.
   `proactive_messaging` is `off`** (refused). Only this person is reachable this way.
   `user.lookup` results also refresh the handle cache (`user_links.handle`) of linked
   platform users, which the turn context block shows (`10 §Turn context`).
+  (FIX-193) A link's handle is also cached when the link is created, by every
+  creation path (the verified-e-mail autolink, the sign-in link, the admin
+  link): one queued `user.lookup { user_ref }` per new link (never made inline in
+  the request or the inbound message path), whose result sets `handle`. It is
+  best-effort (a failed or unsupported lookup leaves `handle` null), never
+  writes a bot, and there is no backfill: existing links fill through the
+  lookups above or when re-linked.
   The result carries `recipient {alias?, kind,
   label}`. Reach is re-checked at send. Messages to
   the current conversation's own thread are always allowed. Otherwise the

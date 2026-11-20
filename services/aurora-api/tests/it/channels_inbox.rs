@@ -795,6 +795,15 @@ async fn verified_email_auto_links_only_when_verified_everywhere() {
             .await
             .unwrap();
     assert_eq!(m, "verified_email");
+    // (FIX-193) The autolink queued one lookup of the person; a second message queues none.
+    let lookups = || {
+        w.count("SELECT count(*) FROM channel_ops WHERE kind='user.lookup' AND payload->>'user_ref'='U5'")
+    };
+    assert_eq!(lookups().await, 1);
+    let mut p2 = dm("U5", "again", "BD1");
+    p2["message_ref"] = json!("m-p2");
+    w.post(w.integ, "e4", p2).await;
+    assert_eq!(lookups().await, 1);
 }
 
 #[tokio::test]

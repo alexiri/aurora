@@ -59,6 +59,48 @@ pub async fn list_for_integration(
     })
 }
 
+/// (FIX-193, C-1053) Queues one `user.lookup { user_ref }` for a new link so its handle gets
+/// cached (the result handler in `connectors/ops.rs` writes it). Queued work only, never waited
+/// for; best-effort: any problem is logged at debug and the link is unaffected. The dedupe key
+/// is per link, so a link created again later looks up again.
+pub async fn queue_handle_lookup(
+    conn: &mut sqlx::PgConnection,
+    integration: Uuid,
+    link_id: Uuid,
+    platform_user_ref: &str,
+) {
+    let op = crate::domains::connectors::ops::NewOp {
+        kind: "user.lookup".to_owned(),
+        connector_id: None,
+        integration_id: Some(integration),
+        presence_id: None,
+        payload: json!(aurora_protocol::connector::UserLookupOp {
+            user_ref: Some(platform_user_ref.to_owned()),
+            query: None,
+            limit: Some(1),
+        }),
+        dedupe_key: Some(format!("link-handle:{link_id}")),
+    };
+    let mut sp = match sqlx::Connection::begin(&mut *conn).await {
+        Ok(sp) => sp,
+        Err(e) => {
+            tracing::debug!(error = %e, "link handle lookup not queued");
+            return;
+        }
+    };
+    match crate::domains::connectors::ops::enqueue(&mut sp, op).await {
+        Ok(_) => {
+            if let Err(e) = sp.commit().await {
+                tracing::debug!(error = %e, "link handle lookup not queued");
+            }
+        }
+        Err(e) => {
+            tracing::debug!(error = %e.message(), "link handle lookup not queued");
+            let _ = sp.rollback().await;
+        }
+    }
+}
+
 pub async fn admin_create(
     s: &AppState,
     c: &Caller,
@@ -88,6 +130,7 @@ pub async fn admin_create(
     let id = repo::insert(&mut *tx, integration, refl, req.user_id, "admin")
         .await
         .map_err(|e| conflict_code(e, &[(LINK_CONSTRAINT, "already_linked")]))?;
+    queue_handle_lookup(&mut tx, integration, id, refl).await;
     let ev = AuditEvent::by(c, "user_link.create")
         .org(integ.org_id)
         .target("user_link", id)
@@ -222,15 +265,19 @@ pub async fn confirm(
     let link_id = match existing {
         Some(l) if l.user_id == c.user_id => l.id,
         Some(_) => return Err(already_linked()),
-        None => repo::insert(
-            &mut *tx,
-            lr.integration_id,
-            &lr.platform_user_ref,
-            c.user_id,
-            "sign_in_link",
-        )
-        .await
-        .map_err(|e| conflict_code(e, &[(LINK_CONSTRAINT, "already_linked")]))?,
+        None => {
+            let id = repo::insert(
+                &mut *tx,
+                lr.integration_id,
+                &lr.platform_user_ref,
+                c.user_id,
+                "sign_in_link",
+            )
+            .await
+            .map_err(|e| conflict_code(e, &[(LINK_CONSTRAINT, "already_linked")]))?;
+            queue_handle_lookup(&mut tx, lr.integration_id, id, &lr.platform_user_ref).await;
+            id
+        }
     };
     link_requests::mark_used(&mut *tx, lr.id, c.user_id).await?;
     let ev = AuditEvent::by(c, "user_link.create")

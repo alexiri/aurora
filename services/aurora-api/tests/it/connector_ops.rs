@@ -1303,3 +1303,69 @@ async fn file_put_is_refused_at_the_org_storage_quota() {
         .await;
     assert_eq!(s, 200);
 }
+
+/// (FIX-193) A new link queues one `user.lookup { user_ref }`; its answer sets the link's handle
+/// (a bot is never written); a failed lookup leaves the handle null and breaks nothing.
+#[tokio::test]
+async fn a_new_link_queues_one_lookup_and_the_answer_caches_the_handle() {
+    use aurora_api::domains::channels::queue_handle_lookup;
+    let w = world().await;
+    let r1 = w.replica().await;
+    let integ = w.integration("T1", r1).await;
+    let u = w.h.user("ann@x.io", false).await;
+    let mut conn = w.h.pool().acquire().await.unwrap();
+    let ids: Vec<Uuid> = {
+        let mut v = Vec::new();
+        for r in ["U1", "U2"] {
+            let id = aurora_db::repo::user_links::insert(&mut *conn, integ, r, u, "admin")
+                .await
+                .unwrap();
+            queue_handle_lookup(&mut conn, integ, id, r).await;
+            v.push(id);
+        }
+        v
+    };
+    // Queued again for the same link: deduplicated.
+    queue_handle_lookup(&mut conn, integ, ids[0], "U1").await;
+    drop(conn);
+    let ops_q = w.claim(r1, 10, 0).await;
+    assert_eq!(ops_q.len(), 2, "{ops_q:?}");
+    let op_for = |r: &str| {
+        ops_q
+            .iter()
+            .find(|o| o["payload"]["user_ref"] == r)
+            .unwrap_or_else(|| panic!("no lookup for {r}: {ops_q:?}"))["op_id"]
+            .clone()
+    };
+    assert!(ops_q.iter().all(|o| o["kind"] == "user.lookup"));
+    // U1 answered: the handle is cached (without the @).
+    let (s, v) = w
+        .result(
+            r1,
+            json!({"op_id": op_for("U1"), "outcome": "ok", "data": {"users": [
+                {"ref": "U1", "display_name": "Ann", "handle": "@annie", "is_bot": false}]}}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let handle = |id: Uuid| {
+        let pool = w.h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>("SELECT handle FROM user_links WHERE id=$1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(handle(ids[0]).await.as_deref(), Some("annie"));
+    // U2's lookup fails (unsupported): the handle stays null.
+    let e = json!({"code": "unsupported", "message": "no"});
+    let (s, v) = w
+        .result(
+            r1,
+            json!({"op_id": op_for("U2"), "outcome": "error", "error": e}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(handle(ids[1]).await, None);
+}

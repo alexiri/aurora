@@ -482,6 +482,22 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
                 crate::domains::channels::presences::on_provision_done(s, &mut tx, p, &data)
                     .await?;
             }
+            // (FIX-193, C-1053) A queued `user.lookup { user_ref }` (made when a link is created)
+            // caches the person's handle on their link; a bot is never written.
+            if op.kind == "user.lookup"
+                && let (Some(integ), Some(want)) = (
+                    op.integration_id,
+                    op.payload.get("user_ref").and_then(Value::as_str),
+                )
+                && let Ok(res) =
+                    serde_json::from_value::<aurora_protocol::connector::UsersResult>(data.clone())
+                && let Some(u) = res.users.iter().find(|u| u.reference == want && !u.is_bot)
+            {
+                let handle = aurora_core::sanitize::one_line(u.handle.trim_start_matches('@'), 80);
+                if !handle.is_empty() {
+                    aurora_db::repo::user_links::set_handle(&mut *tx, integ, want, &handle).await?;
+                }
+            }
             notify(&mut tx, Channel::OpResult, &json!({"op_id": op.id})).await?;
         }
         (Outcome::Error, None) => return Err(invalid("error required when outcome is error")),

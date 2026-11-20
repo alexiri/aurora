@@ -3005,6 +3005,11 @@ async fn my_spaces_need_a_link_and_probe_errors_do_not_echo_credentials() {
         )
         .await;
     assert_eq!(s, 201, "{v}");
+    // (FIX-193) Creating a link queues a handle lookup; this test's `serve` answers the next op.
+    sqlx::query("UPDATE channel_ops SET status='dropped' WHERE kind='user.lookup'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
     assert_eq!(w.call(&w.wsmember, Method::GET, &mine, None).await.0, 403);
     let path = format!("/v1/orgs/{}/channel-integrations:probe", w.org);
     let body = w.create_body(&w.fake);
@@ -3082,6 +3087,11 @@ async fn dashboard_binding_requires_membership_and_the_bot() {
         )
         .await;
     assert_eq!(s, 201, "{v}");
+    // (FIX-193) Creating a link queues a handle lookup; this test's `serve` answers the next op.
+    sqlx::query("UPDATE channel_ops SET status='dropped' WHERE kind='user.lookup'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
 
     // A workspace member without can_own.
     assert_eq!(
