@@ -17,6 +17,9 @@ pub struct WebhookRow {
     pub verification: Option<Value>,
     pub enabled: bool,
     pub disabled_reason: Option<String>,
+    /// (C-1096) The person whose own pause this is (`disabled_reason = 'user'`); else null.
+    pub disabled_by: Option<Uuid>,
+    pub disabled_by_name: Option<String>,
     pub consecutive_failures: i32,
     pub creator_user_id: Option<Uuid>,
     pub creator_name: Option<String>,
@@ -30,7 +33,9 @@ pub struct WebhookRow {
 }
 
 const COLS: &str = "w.id, w.agent_id, w.name, w.instructions, w.display_prefix, w.verification, \
-    w.enabled, w.disabled_reason, w.consecutive_failures, w.creator_user_id, \
+    w.enabled, w.disabled_reason, w.disabled_by, \
+    (SELECT d.display_name FROM users d WHERE d.id = w.disabled_by) AS disabled_by_name, \
+    w.consecutive_failures, w.creator_user_id, \
     (SELECT u.display_name FROM users u WHERE u.id = w.creator_user_id) AS creator_name, w.anchor, \
     w.origin_conversation_id, w.run_conversation_id, \
     (SELECT max(d.created_at) FROM webhook_deliveries d WHERE d.webhook_id = w.id) \
@@ -149,6 +154,7 @@ pub async fn set_authority(
     sqlx::query(
         "UPDATE webhooks SET creator_user_id = $2, anchor = $3, updated_at = now(),
             enabled = enabled OR $4, disabled_reason = CASE WHEN $4 THEN NULL ELSE disabled_reason END,
+            disabled_by = CASE WHEN $4 THEN NULL ELSE disabled_by END,
             consecutive_failures = CASE WHEN $4 THEN 0 ELSE consecutive_failures END
          WHERE id = $1",
     )
@@ -206,7 +212,7 @@ pub async fn get_for_update(
 pub async fn update(conn: &mut PgConnection, r: &WebhookRow) -> Result<WebhookRow, DbError> {
     sqlx::query(
         "UPDATE webhooks SET name=$2, instructions=$3, verification=$4, enabled=$5,
-            disabled_reason=$6, consecutive_failures=$7, updated_at=now()
+            disabled_reason=$6, consecutive_failures=$7, disabled_by=$8, updated_at=now()
          WHERE id=$1",
     )
     .bind(r.id)
@@ -216,6 +222,7 @@ pub async fn update(conn: &mut PgConnection, r: &WebhookRow) -> Result<WebhookRo
     .bind(r.enabled)
     .bind(&r.disabled_reason)
     .bind(r.consecutive_failures)
+    .bind(r.disabled_by)
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, r.id).await?.ok_or(DbError::NotFound)
@@ -264,7 +271,8 @@ pub async fn set_run_conversation(
 /// Disable with a reason (`authorization` | `failures` | `user`).
 pub async fn disable(conn: &mut PgConnection, id: Uuid, reason: &str) -> Result<(), DbError> {
     sqlx::query(
-        "UPDATE webhooks SET enabled = false, disabled_reason = $2, updated_at = now()
+        "UPDATE webhooks SET enabled = false, disabled_reason = $2, disabled_by = NULL,
+            updated_at = now()
          WHERE id = $1",
     )
     .bind(id)

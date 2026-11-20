@@ -6,6 +6,7 @@ import { Altitude } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
+import { MenuSwitchItem } from "@/components/ui/menu";
 import { ErrorNotice } from "@/components/ui/notice";
 import { useAccess } from "@/lib/api/account";
 import { useReassignCreator, type Offboarding, type ReassignTarget } from "@/lib/api/automations";
@@ -28,8 +29,12 @@ export function OwnerLabel({ anchor, creator }: { anchor: string; creator: Creat
   );
 }
 
-/** Workspace owners only: anchoring makes the item outlive any single member. */
-export function AnchorSwitch({
+/**
+ * (P5-REFINE-14) Workspace owners only, in the row's "…" menu: **Keep running without you** (a switch row). Anchoring makes
+ * the automation outlive any single member: it keeps running as long as the workspace has an active owner. Expert
+ * (P5-REFINE-3): without the person's "Show more controls" the item is not in the menu.
+ */
+export function AnchorMenuItem({
   name,
   anchor,
   busy,
@@ -41,26 +46,10 @@ export function AnchorSwitch({
   onChange: (anchor: "creator" | "workspace") => void;
 }) {
   return (
-    // (P5-REFINE-3) Expert: "Keep running if I leave".
     <Altitude id="auto.anchor" level="expert">
-      <div className="text-sm">
-        <label className="flex min-h-9 items-center gap-2.5 font-medium text-ink">
-          <input
-            type="checkbox"
-            className="size-4 shrink-0 accent-accent"
-            aria-label={`Keep ${name} running if its owner leaves`}
-            checked={anchor === "workspace"}
-            disabled={busy}
-            onChange={(e) => onChange(e.target.checked ? "workspace" : "creator")}
-          />
-          Keep running if I leave
-        </label>
-        {anchor !== "workspace" ? (
-          <p className="ml-label-offset text-xs text-muted">
-            The item will outlive any single member: it keeps running as long as the workspace has an active owner.
-          </p>
-        ) : null}
-      </div>
+      <MenuSwitchItem checked={anchor === "workspace"} disabled={busy} onCheckedChange={(on) => onChange(on ? "workspace" : "creator")}>
+        <span className="sr-only">{name}: </span>Keep running without you
+      </MenuSwitchItem>
     </Altitude>
   );
 }

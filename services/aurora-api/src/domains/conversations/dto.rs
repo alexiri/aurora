@@ -126,6 +126,9 @@ pub struct ConversationAutomation {
     pub name: String,
     /// The schedule or webhook was deleted; the thread and its transcript stay.
     pub deleted: bool,
+    /// (C-1098) The automation's name before its last rename, as this thread had it; null when
+    /// the thread was never renamed.
+    pub previous_name: Option<String>,
 }
 
 /// (P5-REFINE-7, C-1073) `PATCH /conversations/{id}` body.
@@ -331,6 +334,7 @@ impl Conversation {
                 id,
                 name: c.title.clone().unwrap_or_default(),
                 deleted: c.automation_deleted_at.is_some(),
+                previous_name: c.previous_title.clone(),
             }),
             _ => None,
         };

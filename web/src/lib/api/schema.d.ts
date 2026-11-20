@@ -8735,6 +8735,11 @@ export interface components {
             kind: string;
             /** @description The automation's current name (the stored title when it is gone). */
             name: string;
+            /**
+             * @description (C-1098) The automation's name before its last rename, as this thread had it; null when
+             *     the thread was never renamed.
+             */
+            previous_name?: string | null;
         };
         /** @description (P5-REFINE-7, C-1074) One automation folder of the conversation list. */
         ConversationFolder: {
@@ -12517,6 +12522,7 @@ export interface components {
                  * @description Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
                  */
                 origin_conversation_id?: string | null;
+                paused_by?: components["schemas"]["ScheduleCreator"] | null;
                 prompt: string;
                 /**
                  * @description (C-1092) A one-time schedule's local wall time in `timezone`, `YYYY-MM-DDTHH:MM[:SS]`
@@ -12713,6 +12719,7 @@ export interface components {
                 /** Format: date-time */
                 last_delivery_at?: string | null;
                 name: string;
+                paused_by?: components["schemas"]["WebhookCreator"] | null;
                 /** Format: date-time */
                 updated_at: string;
                 /** @description Display prefix of the capability token (the full URL is shown once). */
@@ -14373,6 +14380,7 @@ export interface components {
              * @description Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
              */
             origin_conversation_id?: string | null;
+            paused_by?: components["schemas"]["ScheduleCreator"] | null;
             prompt: string;
             /**
              * @description (C-1092) A one-time schedule's local wall time in `timezone`, `YYYY-MM-DDTHH:MM[:SS]`
@@ -16151,6 +16159,7 @@ export interface components {
             /** Format: date-time */
             last_delivery_at?: string | null;
             name: string;
+            paused_by?: components["schemas"]["WebhookCreator"] | null;
             /** Format: date-time */
             updated_at: string;
             /** @description Display prefix of the capability token (the full URL is shown once). */

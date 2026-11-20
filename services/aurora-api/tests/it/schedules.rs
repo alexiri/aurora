@@ -757,6 +757,16 @@ async fn each_run_gets_its_own_thread_and_the_busy_rule_is_the_latest_run() {
         )
         .await;
     assert_eq!(paused["next_runs"], json!([]));
+    // (C-1096) The person's own pause names them.
+    let who: String = sqlx::query_scalar(
+        "SELECT u.display_name FROM schedules s JOIN users u ON u.id = s.disabled_by
+         WHERE s.id = $1::uuid",
+    )
+    .bind(&id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(paused["paused_by"]["display_name"], who);
 
     // A rename follows into the threads; a delete marks them and keeps the transcripts.
     let (s, _) = r
@@ -780,6 +790,8 @@ async fn each_run_gets_its_own_thread_and_the_busy_rule_is_the_latest_run() {
         assert_eq!(c["title"], "Evening digest");
         assert_eq!(c["automation"]["name"], "Evening digest");
         assert_eq!(c["automation"]["deleted"], false);
+        // (C-1098) The note the thread header shows.
+        assert_eq!(c["automation"]["previous_name"], "Morning digest");
     }
     let (_, main) = r
         .user_call(

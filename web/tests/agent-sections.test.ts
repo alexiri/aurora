@@ -6,6 +6,7 @@ import {
   defaultPage,
   hiddenPageCount,
   isPageAvailable,
+  LEGACY_AUTOMATION_TAB,
   resolvePage,
   sectionLanding,
   SECTION_OF,
@@ -25,6 +26,7 @@ describe("agent sections", () => {
       memory: "settings",
       skills: "settings",
       evals: "settings",
+      automations: "triggers",
       schedules: "triggers",
       webhooks: "triggers",
       channels: "triggers",
@@ -45,7 +47,7 @@ describe("agent sections", () => {
     expect(s.map((x) => x.id)).toEqual(["chat", "triggers", "computer", "settings"]);
     expect(s.filter((x) => x.id !== "settings").map((x) => x.label)).toEqual(["Chat", "Automations", "Computer"]);
     expect(s.find((x) => x.id === "settings")!.pages.map((p) => p.label)).toEqual(["Instructions", "Apps & access", "Memory", "Skills", "Tests", "Other agents"]);
-    expect(s.find((x) => x.id === "triggers")!.pages.map((p) => p.label)).toEqual(["Schedules", "Webhooks", "Channels"]);
+    expect(s.find((x) => x.id === "triggers")!.pages.map((p) => p.label)).toEqual(["Automations"]);
     // (P5-REFINE-15) No Files: the one page is the state card, named Overview.
     expect(s.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Overview"]);
     const all = availableSections({ byo: false, previews: true, terminal: true });
@@ -84,6 +86,12 @@ describe("agent sections", () => {
     expect(resolvePage("terminal", { ...hosted, terminal: true })).toBe("terminal");
     expect(resolvePage("bogus", hosted)).toBe("chat");
   });
+
+  it("the old Schedules, Webhooks and Channels ids open the one Automations page (P5-REFINE-14)", () => {
+    for (const id of ["automations", "schedules", "webhooks", "channels"]) expect(resolvePage(id, hosted), id).toBe("automations");
+    for (const id of ["automations", "schedules", "webhooks", "channels"]) expect(resolvePage(id, byo), id).toBe("instructions");
+    expect(LEGACY_AUTOMATION_TAB).toEqual({ schedules: "schedules", webhooks: "webhooks", channels: "chats" });
+  });
 });
 
 describe("agent sections by altitude (D-406)", () => {
@@ -91,10 +99,10 @@ describe("agent sections by altitude (D-406)", () => {
   const at = (floor: "use" | "setup" | "expert") => (level: "setup" | "expert") => level === "setup" ? floor !== "use" : floor === "expert";
   const labels = (s: ReturnType<typeof availableSections>, id: string) => s.find((x) => x.id === id)!.pages.map((p) => p.label);
 
-  it("at Use lists Instructions, Apps & access, Schedules, Webhooks, Channels, and the Computer's Files and Details only", () => {
+  it("at Use lists Instructions, Apps & access, Automations, and the Computer's Files and Details only", () => {
     const s = availableSections(all, at("use"));
     expect(labels(s, "settings")).toEqual(["Instructions", "Apps & access"]);
-    expect(labels(s, "triggers")).toEqual(["Schedules", "Webhooks", "Channels"]);
+    expect(labels(s, "triggers")).toEqual(["Automations"]);
     expect(labels(s, "computer")).toEqual(["Files", "Details"]);
   });
   it("opens the Computer on Files when there are Files, else on Overview (D-408)", () => {

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { MembersView } from "@/components/org/members-view";
-import { SchedulesTab } from "@/components/schedules/schedules-tab";
+import { AutomationsTab } from "@/components/automations/automations-tab";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
 
@@ -58,20 +58,38 @@ describe("owner label", () => {
   });
 });
 
-describe("schedules tab", () => {
-  const list = () => json(200, { items: [sched({ disabled_reason: "authorization", enabled: false })], next_cursor: null });
+/** (P5-REFINE-14) Reassign and Keep running without you are in the row's "…" menu. */
+async function pickRowMenu(name: string, item: string | RegExp) {
+  const trigger = await screen.findByRole("button", { name: `More for ${name}` });
+  fireEvent.keyDown(trigger, { key: "Enter" });
+  // A switch row (Keep running without you) is a menuitemcheckbox, the others menuitems.
+  const find = () => [...screen.queryAllByRole("menuitem", { name: item }), ...screen.queryAllByRole("menuitemcheckbox", { name: item })];
+  await waitFor(() => expect(find().length).toBeGreaterThan(0));
+  fireEvent.click(find()[0]!);
+}
 
-  it("members cannot reassign or anchor", async () => {
-    mockFetch({ "GET /v1/agents/a1/schedules": list });
-    wrap(<SchedulesTab agentId="a1" wsId="w1" canOwn={false} />);
+const automationsTab = (canOwn: boolean) => (
+  <AutomationsTab agentId="a1" agentName="Daneel" agentBase="/o/acme/w/main/agents/daneel" wsId="w1" canOwn={canOwn} />
+);
+
+describe("schedules in Automations", () => {
+  const list = () => json(200, { items: [sched({ disabled_reason: "authorization", enabled: false })], next_cursor: null });
+  const none = () => json(200, { items: [], next_cursor: null });
+
+  it("members cannot reassign or keep it running without them", async () => {
+    mockFetch({ "GET /v1/agents/a1/schedules": list, "GET /v1/agents/a1/webhooks": none });
+    wrap(automationsTab(false));
     await screen.findByText("Daily digest");
-    expect(screen.queryByRole("button", { name: /Reassign/ })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/Keep .* running if its owner leaves/)).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("button", { name: "More for Daily digest" }), { key: "Enter" });
+    await screen.findByRole("menuitem", { name: "Resume" });
+    expect(screen.queryByRole("menuitem", { name: /Reassign/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Keep running without you")).not.toBeInTheDocument();
   });
 
-  it("owners reassign with re-enable and can anchor", async () => {
+  it("owners reassign with re-enable and can keep it running without them", async () => {
     const calls = mockFetch({
       "GET /v1/agents/a1/schedules": list,
+      "GET /v1/agents/a1/webhooks": none,
       "GET /v1/workspaces/w1/access": () =>
         json(200, {
           items: [
@@ -83,14 +101,19 @@ describe("schedules tab", () => {
       "PUT /v1/schedules/s1/creator": () => json(200, sched({ created_by: { id: "u2", display_name: "Bob" } })),
       "PATCH /v1/schedules/s1": () => json(200, sched({ anchor: "workspace" })),
     });
-    wrap(<SchedulesTab agentId="a1" wsId="w1" canOwn />);
+    wrap(automationsTab(true));
     await screen.findByText("Daily digest");
     expect(screen.getByText(/Paused because its owner lost access/)).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Keep Daily digest running if its owner leaves"));
+    await pickRowMenu("Daily digest", /Keep running without you/);
     await waitFor(() =>
       expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ anchor: "workspace" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Reassign…" }));
+    // The switch row keeps the menu open: close it, then open Reassign.
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await pickRowMenu("Daily digest", "Reassign…");
+    // Reassign is a dialog.
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Reassign Daily digest");
     const select = await screen.findByLabelText("New owner");
     // The current owner is not offered.
     await screen.findByRole("option", { name: /Bob/ });

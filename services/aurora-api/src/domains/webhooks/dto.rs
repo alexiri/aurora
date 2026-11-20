@@ -53,6 +53,8 @@ pub struct Webhook {
     pub enabled: bool,
     /// `user` | `authorization` | `failures` when disabled.
     pub disabled_reason: Option<String>,
+    /// (C-1096) The person whose own pause stands (`disabled_reason = user`); null otherwise.
+    pub paused_by: Option<WebhookCreator>,
     /// Display prefix of the capability token (the full URL is shown once).
     pub url_prefix: String,
     /// Provenance when `anchor = workspace`; the fire-time authority when `anchor = creator`.
@@ -81,6 +83,13 @@ impl From<WebhookRow> for Webhook {
             format: verification_format(&kind).map(str::to_owned),
             kind,
         };
+        let paused_by = match (&r.disabled_reason, r.disabled_by, r.enabled) {
+            (Some(reason), Some(id), false) if reason == "user" => Some(WebhookCreator {
+                id,
+                display_name: r.disabled_by_name.clone().unwrap_or_default(),
+            }),
+            _ => None,
+        };
         Self {
             id: r.id,
             agent_id: r.agent_id,
@@ -89,6 +98,7 @@ impl From<WebhookRow> for Webhook {
             verification,
             enabled: r.enabled,
             disabled_reason: r.disabled_reason,
+            paused_by,
             url_prefix: r.display_prefix,
             created_by: r.creator_user_id.map(|id| WebhookCreator {
                 id,

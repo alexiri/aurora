@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { CheckIcon } from "@/components/ui/icons";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, type DialogSize } from "@/components/ui/dialog";
 
 /**
  * (P5-REFINE-2) The copy state of a one-time secret: `used` becomes true with the first successful copy and stays true,
@@ -123,6 +123,10 @@ export function SecretOnce({
   onClose: () => void;
   copyLabel?: string;
   doneLabel?: string;
+  /** The dialog's width (`lg` = 640 px for a value and a panel beside it). */
+  size?: DialogSize;
+  /** A heading above the box ("Your address", "Your secret"). */
+  label?: string;
 }) {
   // Mounted only while there is a secret, so copy and ask state start over with every new one.
   return secret === null ? null : <OpenSecret secret={secret} {...rest} />;
@@ -136,6 +140,8 @@ function OpenSecret({
   onClose,
   copyLabel,
   doneLabel = "I have saved it",
+  size,
+  label,
 }: {
   secret: string;
   title: string;
@@ -144,14 +150,17 @@ function OpenSecret({
   onClose: () => void;
   copyLabel?: string;
   doneLabel?: string;
+  size?: DialogSize;
+  label?: string;
 }) {
   const { used, state, copy } = useSecretCopy(secret);
   const [asking, setAsking] = useState(false);
   const tryClose = () => (used ? onClose() : setAsking(true));
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : tryClose())}>
-      <DialogContent title={title} description={description}>
+      <DialogContent title={title} description={description} size={size}>
         <div className="space-y-4">
+          {label ? <p className="text-sm font-medium text-ink">{label}</p> : null}
           <SecretBox secret={secret} used={used} state={state} onCopy={copy} copyLabel={copyLabel} />
           {children}
           {asking && !used ? <CloseAnywayConfirm onCopy={copy} onClose={onClose} /> : null}
