@@ -385,3 +385,101 @@ export function activitySentence(e: ActivityRow, agent: string, appName?: string
       ? { title: `${agent} tried to reach ${e.host}`, meta: "It didn't work" }
       : { title: `${agent} reached ${e.host}`, meta: "Allowed" };
 }
+
+/** How much an audit entry matters to a workspace owner; `critical` rows are Critical whatever the table says. */
+export type AuditWeight = "important" | "routine";
+
+interface AuditWords {
+  /** "revoked the API key <name>" / "revoked an API key"; the person's name leads. */
+  sentence: (actor: string, target: string | null, meta: Record<string, unknown>) => string;
+  weight: AuditWeight;
+}
+
+/** `verb` + the thing named, or `verb` + an unnamed thing when the target is unknown or gone. */
+const named = (verb: string, noun: string, gone: string, weight: AuditWeight = "routine"): AuditWords => ({
+  sentence: (actor, t) => (t ? `${actor} ${verb} ${noun} ${t}` : `${actor} ${verb} ${gone}`),
+  weight,
+});
+const role = (m: Record<string, unknown>) => {
+  const r = typeof m.role === "string" ? m.role : null;
+  return r && r in WORKSPACE_ROLE ? WORKSPACE_ROLE[r as keyof typeof WORKSPACE_ROLE].label : null;
+};
+
+/**
+ * One sentence template per audit action the workspace Audit page shows (workspace-3): "Bob revoked the API key ci-script".
+ * An action with no template renders "<Person> did something (“<action>”)" and fails `labels.test.ts`, so it gets noticed.
+ */
+export const AUDIT_SENTENCE: Record<string, AuditWords> = {
+  "api_key.create": named("created", "the API key", "an API key"),
+  "api_key.revoke": named("revoked", "the API key", "a deleted API key", "important"),
+  "agent.create": named("created", "the agent", "an agent"),
+  "agent.delete": named("deleted", "the agent", "an agent", "important"),
+  "agent.update": named("changed", "the agent", "an agent"),
+  "agent.freeze": named("paused", "the agent", "an agent", "important"),
+  "agent.unfreeze": named("resumed", "the agent", "an agent"),
+  "agent.token_regenerate": named("made a new token for", "the agent", "an agent", "important"),
+  "workspace.create": named("created", "the workspace", "a workspace"),
+  "workspace.delete": named("deleted", "the workspace", "a workspace", "important"),
+  "workspace.freeze": named("paused", "the workspace", "the workspace", "important"),
+  "workspace.unfreeze": named("resumed", "the workspace", "the workspace"),
+  "workspace_access.set": {
+    sentence: (actor, t, m) => (role(m) ? `${actor} changed ${t ?? "a person"} to ${role(m)}` : `${actor} changed the role of ${t ?? "a person"}`),
+    weight: "important",
+  },
+  "workspace_access.remove": { sentence: (actor, t) => `${actor} removed ${t ?? "a person"} from the workspace`, weight: "important" },
+  "workspace_access.suspend": { sentence: (actor, t) => `${actor} suspended ${t ?? "a person"}`, weight: "important" },
+  "workspace_access.restore": { sentence: (actor, t) => `${actor} restored ${t ?? "a person"}`, weight: "routine" },
+  "workspace.access.grant": {
+    sentence: (actor, t, m) => `${actor} added ${t ?? "a person"}${role(m) ? ` as ${role(m)}` : ""}`,
+    weight: "routine",
+  },
+  "workspace.access.pending_create": { sentence: (actor, t) => `${actor} added ${t ?? "a person"}, who has not signed in yet`, weight: "routine" },
+  "workspace.access.pending_apply": { sentence: (_a, t) => `${t ?? "A person"} signed in for the first time`, weight: "routine" },
+  "workspace.access.pending_delete": { sentence: (actor, t) => `${actor} withdrew the invitation of ${t ?? "a person"}`, weight: "routine" },
+  "member.add": { sentence: (actor, t, m) => `${actor} added ${t ?? "a person"}${role(m) ? ` as ${role(m)}` : ""}`, weight: "routine" },
+  "member.remove": { sentence: (actor, t) => `${actor} removed ${t ?? "a person"}`, weight: "important" },
+  "member.update": { sentence: (actor, t) => `${actor} changed ${t ?? "a person"}`, weight: "important" },
+  "member.invite": { sentence: (actor, t) => `${actor} invited ${t ?? "a person"}`, weight: "routine" },
+  "member.role_change": { sentence: (actor, t, m) => `${actor} changed ${t ?? "a person"}${role(m) ? ` to ${role(m)}` : "'s role"}`, weight: "important" },
+  "invitation.create": { sentence: (actor, t) => `${actor} invited ${t ?? "a person"}`, weight: "routine" },
+  "invitation.accept": { sentence: (_a, t) => `${t ?? "A person"} accepted an invitation`, weight: "routine" },
+  "invitation.cancel": { sentence: (actor, t) => `${actor} cancelled the invitation of ${t ?? "a person"}`, weight: "routine" },
+  "webhook.create": named("created", "the webhook", "a webhook"),
+  "webhook.delete": named("deleted", "the webhook", "a webhook", "important"),
+  "webhook.rotate": named("made a new address for", "the webhook", "a webhook", "important"),
+  "connect.exchange": named("connected", "the app", "an app"),
+  "connection.create": named("connected", "the account", "an account"),
+  "connection.delete": named("removed", "the account", "an account", "important"),
+  "connection.update": named("changed", "the account", "an account"),
+  "connection.disable": named("turned off", "the account", "an account", "important"),
+  "connection.enable": named("turned on", "the account", "an account"),
+  "connection.reconnect": named("signed in again to", "the account", "an account"),
+  "secret.create": named("added", "the secret", "a secret"),
+  "secret.update": named("changed", "the secret", "a secret"),
+  "secret.value_update": named("changed the value of", "the secret", "a secret", "important"),
+  "secret.delete": named("deleted", "the secret", "a secret", "important"),
+  "grant.create": named("gave access to", "the account", "an account", "important"),
+  "grant.delete": named("took back access to", "the account", "an account"),
+  "policy.publish": { sentence: (actor) => `${actor} published a new set of internet rules`, weight: "important" },
+  "policy.rollback": { sentence: (actor) => `${actor} went back to earlier internet rules`, weight: "important" },
+  "ssh_key.create": { sentence: (actor, t) => `${actor} added ${t ? `the SSH key ${t}` : "an SSH key"}`, weight: "routine" },
+  "ssh_key.delete": { sentence: (actor, t) => `${actor} removed ${t ? `the SSH key ${t}` : "an SSH key"}`, weight: "important" },
+  "approval.decide": { sentence: (actor) => `${actor} answered an approval`, weight: "routine" },
+  "action_approval.decide": { sentence: (actor) => `${actor} answered an approval`, weight: "routine" },
+  "skill.library.add": { sentence: (actor, t) => `${actor} added ${t ? `the skill library ${t}` : "a skill library"}`, weight: "routine" },
+};
+
+/** The words of one audit entry: the sentence and how much it matters. An action with no template says so, plainly. */
+export function auditWords(
+  e: { action: string; actor_label: string; critical?: boolean; metadata?: unknown },
+  target: string | null,
+): { sentence: string; weight: "critical" | AuditWeight; known: boolean } {
+  const meta = e.metadata && typeof e.metadata === "object" && !Array.isArray(e.metadata) ? (e.metadata as Record<string, unknown>) : {};
+  const t = target ?? (typeof meta.name === "string" ? meta.name : typeof meta.email === "string" ? meta.email : null);
+  const tpl = AUDIT_SENTENCE[e.action];
+  if (!tpl) {
+    const readable = (AUDIT_ACTION as Record<string, { label: string } | undefined>)[e.action]?.label ?? e.action.replace(/[._]/g, " ");
+    return { sentence: `${e.actor_label} did something (“${readable}”)`, weight: e.critical ? "critical" : "routine", known: false };
+  }
+  return { sentence: tpl.sentence(e.actor_label, t, meta), weight: e.critical ? "critical" : tpl.weight, known: true };
+}
