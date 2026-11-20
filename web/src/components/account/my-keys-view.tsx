@@ -92,7 +92,15 @@ export function MyKeysView() {
         <>
           {/* (P5-REFINE-3) Set up: what the keys are for. The list itself stays for everyone who has keys. */}
           <Altitude id="apikeys" level="setup">
-            <p className="text-sm text-ink-2">A key acts as you in the workspace you chose, through the Aurora API.</p>
+            <p className="text-sm text-ink-2">
+              Acts as you in the workspace you chose through the Aurora API.
+              <Altitude id="copy.curl" level="expert">
+                {" "}
+                <a className="text-link underline" href="/v1/openapi.json" target="_blank" rel="noreferrer">
+                  OpenAPI description
+                </a>
+              </Altitude>
+            </p>
           </Altitude>
           <KeyTable
             keys={keys.data.items}

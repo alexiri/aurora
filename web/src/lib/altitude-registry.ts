@@ -66,7 +66,7 @@ export const ALTITUDE_REGISTRY = {
   "export.yaml": { altitude: "expert", area: "Settings" },
   "export.agent": { altitude: "expert", area: "Agent export and import (Settings)", later: "P5-REFINE-19" },
   // (P5-REFINE-19) Copy as curl on a webhook card and on an API key's menu.
-  "copy.curl": { altitude: "expert", area: "Webhook cards, API keys", later: "P5-REFINE-19" },
+  "copy.curl": { altitude: "expert", area: "Webhook cards, API keys" },
   "ws.memlang": { altitude: "expert", area: "New workspace, Settings" },
   "chat.redact": { altitude: "expert", area: "Chat" },
   "org.byo": { altitude: "expert", area: "Agents (organization)" },

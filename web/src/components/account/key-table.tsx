@@ -7,7 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
+import { CopyCurlMenu } from "@/components/ui/copy-curl";
 import { ErrorNotice } from "@/components/ui/notice";
+import { apiKeyCurl } from "@/lib/copy-as-curl";
 import type { ApiKey } from "@/lib/api/account";
 import { fmtDate } from "@/lib/utils";
 
@@ -72,11 +74,15 @@ export function KeyTable({
                   <Badge tone={statusTone[status as keyof typeof statusTone]}>{status}</Badge>
                 </Td>
                 <Td className="text-right">
-                  {canRevoke && !k.revoked_at ? (
-                    <Button variant="outline" size="sm" aria-label={`Revoke ${k.name}`} onClick={() => setTarget(k)}>
-                      Revoke
-                    </Button>
-                  ) : null}
+                  <span className="inline-flex items-center gap-2">
+                    {/* (P5-REFINE-19, Expert) The call the key's own row makes: placeholders only, never the key. */}
+                    {!k.revoked_at ? <CopyCurlMenu subject={k.name} command={() => apiKeyCurl(window.location.origin)} /> : null}
+                    {canRevoke && !k.revoked_at ? (
+                      <Button variant="outline" size="sm" aria-label={`Revoke ${k.name}`} onClick={() => setTarget(k)}>
+                        Revoke
+                      </Button>
+                    ) : null}
+                  </span>
                 </Td>
               </tr>
             );
