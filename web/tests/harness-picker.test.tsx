@@ -47,18 +47,18 @@ describe("Instructions harness picker", () => {
     expect(screen.queryByRole("textbox", { name: "Agent program" })).toBeNull();
     expect(screen.getByText(/Your administrator chooses which programs agents can run\./)).toBeInTheDocument();
     // Not an instance admin: no link to the administration page.
-    expect(screen.queryByRole("link", { name: /Administration › Agents › Defaults/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Administration › What agents may do › Defaults/ })).toBeNull();
   });
 
-  it("links an instance admin to Administration › Agents › Defaults, and shows the id while the list loads", async () => {
+  it("links an instance admin to Administration › What agents may do › Defaults, and shows the id while the list loads", async () => {
     mockFetch({
       "GET /v1/me": () => json(200, { user: { id: "u1", is_instance_admin: true } }),
       "GET /v1/harnesses": () => json(200, { items: [claude], default: "claude-code" }),
     });
     wrap(<InstructionsTab agent={agent("hosted")} wsId="w1" />);
     expect(document.getElementById("a-harness")).toHaveTextContent("claude-code");
-    const link = await screen.findByRole("link", { name: /Administration › Agents › Defaults/ });
-    expect(link.getAttribute("href")).toBe("/admin/agents?tab=defaults");
+    const link = await screen.findByRole("link", { name: /Administration › What agents may do › Defaults/ });
+    expect(link.getAttribute("href")).toBe("/admin/internet-access?tab=defaults");
   });
 
   it("is never shown for a BYO agent", () => {

@@ -44,7 +44,11 @@ describe("route helper (C-960)", () => {
   it("maps a settings section to the topic tab that renders it (C-971)", () => {
     expect(adminRoutes.sectionPage("sign_in")).toBe("/admin/people?tab=sign-in");
     expect(adminRoutes.sectionPage("sign-in")).toBe("/admin/people?tab=sign-in");
-    expect(adminRoutes.sectionPage("governance", "default_x")).toBe("/admin/ai-models?tab=rules#default_x");
+    expect(adminRoutes.sectionPage("governance", "default_x")).toBe("/admin/internet-access?tab=ai-keys#default_x");
+    expect(adminRoutes.sectionPage("agents")).toBe("/admin/internet-access?tab=defaults");
+    expect(adminRoutes.sectionPage("terminal")).toBe("/admin/platform?tab=computers");
+    expect(adminRoutes.governanceSetting("byo.enabled")).toBe("/admin/internet-access?tab=byo#byo.enabled");
+    expect(adminRoutes.governanceSetting("governance.egress.minimum_posture")).toBe("/admin/internet-access?tab=internet-access#governance.egress.minimum_posture");
     expect(adminRoutes.sectionPage("nope")).toBe("/admin/settings");
   });
 });

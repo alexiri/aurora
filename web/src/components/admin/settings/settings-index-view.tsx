@@ -25,7 +25,7 @@ function when(iso: string | null | undefined): string {
 type SectionRow = NonNullable<ReturnType<typeof useSettingsIndex>["data"]>["sections"][number];
 
 /** The order the topics appear in the sidebar (`14` topics per level); sections without a topic come last. */
-const TOPIC_ORDER = ["Agents", "Apps & accounts", "AI models", "Internet access", "People", "Data", "Platform", "Other"];
+const TOPIC_ORDER = ["What agents may do", "Apps", "AI endpoints", "People & sign-in", "Data", "Health & runners", "Other"];
 
 /** The fields of a section whose label or help contains `search` (case-insensitive; C-972). */
 export function matchingFields(s: SectionRow, search: string): SectionRow["fields"] {

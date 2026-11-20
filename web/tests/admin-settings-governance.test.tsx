@@ -212,7 +212,7 @@ describe("Org governance pages: the instance link (SET-2, C-783)", () => {
     mockFetch(me(true));
     wrap(<Locked setting="governance.llm.minimum_posture" />);
     const link = await screen.findByRole("link");
-    expect(link.getAttribute("href")).toBe("/admin/ai-models?tab=rules#governance.llm.minimum_posture");
+    expect(link.getAttribute("href")).toBe("/admin/internet-access?tab=ai-keys#governance.llm.minimum_posture");
   });
 
   it("is plain text for everyone else", async () => {

@@ -119,31 +119,42 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeClean(page)).toEqual([]);
       });
 
-      test("Administration › Agents has four tabs, each a coherent page", async ({ page }) => {
-        await open(page, "/admin/agents", scheme);
-        await expect(page.getByRole("tab")).toHaveText(["Defaults", "BYO", "Computers", "Skills"]);
+      // (P5-REFINE-18 #1) The old Agents topic is now What agents may do (Internet access, AI keys and rules, Bring your
+      // own, Defaults); Computers moved under Health & runners.
+      test("Administration › What agents may do has four tabs, each a coherent page", async ({ page }) => {
+        await open(page, "/admin/internet-access", scheme);
+        await expect(page.getByRole("tab")).toHaveText(["Internet access", "AI keys and rules", "Bring your own", "Defaults"]);
         // One heading for the page: the tabs' sections do not repeat it as another title.
-        await expect(page.getByRole("heading", { name: "Agent defaults", level: 1 })).toHaveCount(1);
-        // The agents section's groups and its runners table are one run on the tab, not a page of their own.
-        // (P5-POLISH-2) Settings groups are SettingsCards: a section titled by its heading, no longer a named group.
-        await expect(page.getByRole("heading", { name: "Defaults for new agents" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Runners and sandbox sizes" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "What agents may do", level: 1 })).toHaveCount(1);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
-        for (const tab of ["BYO", "Computers", "Skills"]) {
+        for (const tab of ["AI keys and rules", "Bring your own", "Defaults"]) {
           await page.getByRole("tab", { name: tab }).click();
           await expect(page.getByRole("tab", { name: tab })).toHaveAttribute("aria-selected", "true");
           expect(await overflow(page)).toBeLessThanOrEqual(0);
           expect(await axeClean(page)).toEqual([]);
         }
+        // The agents section's groups, its runners table and the skills library refresh are one run on Defaults.
+        // (P5-POLISH-2) Settings groups are SettingsCards: a section titled by its heading, no longer a named group.
+        await expect(page.getByRole("heading", { name: "Defaults for new agents" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Runners and sandbox sizes" })).toBeVisible();
       });
 
-      test("Administration › AI models has Endpoints and Rules, with the organizations beneath the rules", async ({ page }) => {
+      test("Administration › Health & runners lists Health, Runners and Computers", async ({ page }) => {
+        await open(page, "/admin/platform", scheme);
+        await expect(page.getByRole("tab").filter({ hasText: /^(Health|Runners|Computers)$/ })).toHaveText(["Health", "Runners", "Computers"]);
+        await page.getByRole("tab", { name: "Computers" }).click();
+        await expect(page.getByRole("tab", { name: "Computers" })).toHaveAttribute("aria-selected", "true");
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+      });
+
+      test("Administration › AI endpoints is the endpoints alone; the AI key rules are under What agents may do", async ({ page }) => {
         await open(page, "/admin/ai-models", scheme);
-        await expect(page.getByRole("tab")).toHaveText(["Endpoints", "Rules"]);
+        await expect(page.getByRole("tab")).toHaveCount(0);
         await expect(page.getByRole("heading", { name: "AI endpoints", level: 1 })).toHaveCount(1);
         expect(await axeClean(page)).toEqual([]);
-        await page.getByRole("tab", { name: "Rules" }).click();
+        await open(page, "/admin/internet-access?tab=ai-keys", scheme);
         await expect(page.getByRole("heading", { name: "AI keys" })).toBeVisible();
         await expect(page.getByRole("region", { name: "Where organizations stand" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);

@@ -21,12 +21,13 @@ const seg = encodeURIComponent;
 
 /** The tab ids of each topic page (`14 §Topics per level`). Order is the order of the tab bar. */
 export const TABS = {
-  adminAgents: ["defaults", "byo", "computers", "skills"],
+  // (P5-REFINE-18 #1) What agents may do: Internet access · AI keys and rules · Bring your own · Defaults.
+  adminAgentPolicy: ["internet-access", "ai-keys", "byo", "defaults"],
   adminApps: ["apps", "oauth-clients", "self-hosted", "advanced"],
-  adminAiModels: ["endpoints", "rules"],
   adminPeople: ["users", "organizations", "sign-in", "new-users"],
   adminData: ["retention", "storage", "audit", "usage"],
-  adminPlatform: ["runners", "secret-stores", "email", "limits"],
+  // Health & runners: Health · Runners · Computers, then the installation's own settings pages.
+  adminPlatform: ["health", "runners", "computers", "secret-stores", "email", "limits"],
   // (P5-REFINE-17, org-6) Agents · Bring your own · Skills; Previews is a second section of Bring your own.
   orgAgents: ["agents", "byo", "skills"],
   orgApps: ["accounts", "apps", "oauth-clients", "self-hosted"],
@@ -43,14 +44,16 @@ type TabOf<K extends keyof typeof TABS> = (typeof TABS)[K][number];
 /** Administration (`/admin/…`). */
 export const adminRoutes = {
   home: () => "/admin",
-  agents: (tab?: TabOf<"adminAgents">) => url("/admin/agents", { tab }),
+  /** (P5-REFINE-18 #1) What agents may do (`/admin/internet-access`), one page with four tabs. */
+  agentPolicy: (tab?: TabOf<"adminAgentPolicy">, hash?: string) => url("/admin/internet-access", { tab }, hash),
   apps: (tab?: TabOf<"adminApps">, query?: Query, hash?: string) => url("/admin/apps", { tab, ...query }, hash),
   oauthClients: (query?: Query) => url("/admin/apps", { tab: "oauth-clients", ...query }),
   selfHosted: (query?: Query) => url("/admin/apps", { tab: "self-hosted", ...query }),
   /** The Advanced tab: `package-sources`, `publishers` or `host-conflicts`, or one package source by its id. */
   advanced: (anchor?: string) => url("/admin/apps", { tab: "advanced" }, anchor),
   package: (id: string) => `/admin/apps/packages/${seg(id)}`,
-  aiModels: (tab?: TabOf<"adminAiModels">) => url("/admin/ai-models", { tab }),
+  /** AI endpoints: the endpoints only; the AI key rules moved to What agents may do › AI keys and rules. */
+  aiModels: () => "/admin/ai-models",
   internetAccess: () => "/admin/internet-access",
   people: (tab?: TabOf<"adminPeople">, hash?: string) => url("/admin/people", { tab }, hash),
   organizations: (hash?: string) => url("/admin/people", { tab: "organizations" }, hash),
@@ -65,9 +68,9 @@ export const adminRoutes = {
   setInHelm: (key?: string) => url("/admin/set-in-helm", undefined, key),
   /** The page of one `governance` key: AI key rules, egress and BYO/agent tokens each live in their own topic. */
   governanceSetting: (key: string) => {
-    if (key.startsWith("governance.egress.")) return url("/admin/internet-access", { tab: "limits" }, key);
-    if (key.startsWith("byo.") || key.startsWith("governance.agent_tokens.")) return url("/admin/agents", { tab: "byo" }, key);
-    return url("/admin/ai-models", { tab: "rules" }, key);
+    if (key.startsWith("governance.egress.")) return url("/admin/internet-access", { tab: "internet-access" }, key);
+    if (key.startsWith("byo.") || key.startsWith("governance.agent_tokens.")) return url("/admin/internet-access", { tab: "byo" }, key);
+    return url("/admin/internet-access", { tab: "ai-keys" }, key);
   },
   /** The topic page and tab that holds a settings section (C-971); All settings when the section has no topic yet. */
   sectionPage: (section: string, hash?: string) => {
@@ -78,17 +81,17 @@ export const adminRoutes = {
 
 /** Settings sections → the topic page that renders them (`14` "Settings live in their topics"). */
 const SETTINGS_SECTION_PAGE: Record<string, { path: string; tab?: string }> = {
-  governance: { path: "/admin/ai-models", tab: "rules" },
-  llm: { path: "/admin/ai-models", tab: "endpoints" },
+  governance: { path: "/admin/internet-access", tab: "ai-keys" },
+  llm: { path: "/admin/ai-models" },
   sign_in: { path: "/admin/people", tab: "sign-in" },
   scim: { path: "/admin/people", tab: "sign-in" },
   email: { path: "/admin/platform", tab: "email" },
   secrets: { path: "/admin/platform", tab: "secret-stores" },
-  agents: { path: "/admin/agents", tab: "defaults" },
-  approvals: { path: "/admin/agents", tab: "defaults" },
-  terminal: { path: "/admin/agents", tab: "computers" },
-  previews: { path: "/admin/agents", tab: "computers" },
-  skills: { path: "/admin/agents", tab: "skills" },
+  agents: { path: "/admin/internet-access", tab: "defaults" },
+  approvals: { path: "/admin/internet-access", tab: "defaults" },
+  terminal: { path: "/admin/platform", tab: "computers" },
+  previews: { path: "/admin/platform", tab: "computers" },
+  skills: { path: "/admin/internet-access", tab: "defaults" },
   retention: { path: "/admin/data", tab: "retention" },
   limits: { path: "/admin/platform", tab: "limits" },
   outgoing_webhooks: { path: "/admin/apps", tab: "advanced" },
@@ -97,8 +100,8 @@ const SETTINGS_SECTION_PAGE: Record<string, { path: string; tab?: string }> = {
 /** Where else a section's keys are shown (`governance` splits three ways): the topic and the page of each part. */
 const SETTINGS_SECTION_ALSO: Record<string, { topic: string; label: string; href: string }[]> = {
   governance: [
-    { topic: "Internet access", label: "Internet access", href: "/admin/internet-access?tab=limits" },
-    { topic: "Agents", label: "Agents › BYO", href: "/admin/agents?tab=byo" },
+    { topic: "What agents may do", label: "Internet access", href: "/admin/internet-access?tab=internet-access" },
+    { topic: "What agents may do", label: "Bring your own", href: "/admin/internet-access?tab=byo" },
   ],
 };
 
@@ -106,7 +109,7 @@ const SETTINGS_SECTION_ALSO: Record<string, { topic: string; label: string; href
 export function sectionTopic(section: string): { topic: string; label: string } {
   const key = section.replace(/-/g, "_");
   const path = SETTINGS_SECTION_PAGE[key]?.path ?? "";
-  const topic = Object.entries(TOPIC_LABEL).find(([id]) => path === `/admin/${id}`);
+  const topic = Object.entries(ADMIN_RAIL_LABEL).find(([id]) => path === `/admin/${id}`);
   return { topic: topic?.[1] ?? "Other", label: topic?.[1] ?? "Other" };
 }
 
@@ -182,7 +185,6 @@ export const accountRoutes = {
 /** Topic ids per level, in the order of `14 §Topics per level`. */
 export type AdminTopic =
   | "overview"
-  | "agents"
   | "apps"
   | "ai-models"
   | "internet-access"
@@ -227,14 +229,13 @@ export const ADMIN_RAIL_LABEL: Record<AdminTopic, string> = {
   data: "Data",
   platform: "Health & runners",
   "ai-models": "AI endpoints",
-  agents: "Agent defaults",
   "set-in-helm": "Set in Helm",
   settings: "All settings",
 };
 
 export const ADMIN_RAIL_GROUPS: { label: string | null; topics: AdminTopic[] }[] = [
   { label: null, topics: ["overview"] },
-  { label: "Policy for everyone", topics: ["internet-access", "agents", "apps", "chat-platforms", "people", "data"] },
+  { label: "Policy for everyone", topics: ["internet-access", "apps", "chat-platforms", "people", "data"] },
   { label: "This installation", topics: ["platform", "ai-models", "set-in-helm", "settings"] },
 ];
 

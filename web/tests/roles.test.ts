@@ -71,7 +71,7 @@ describe("visibleTopics by altitude", () => {
     expect(visibleTopics("org", m, { floor: "use", more: true })).toEqual(["overview", "ai-models", "internet-access"]);
   });
   it("lists every Administration topic to an instance admin, and none to others", () => {
-    expect(visibleTopics("admin", { instanceAdmin: true }, { floor: "expert", more: false })).toHaveLength(11);
+    expect(visibleTopics("admin", { instanceAdmin: true }, { floor: "expert", more: false })).toHaveLength(10);
     expect(visibleTopics("admin", member)).toEqual([]);
   });
   it("without an altitude lists what the role may see (unchanged)", () => {
