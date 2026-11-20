@@ -31,9 +31,11 @@ for (const scheme of ["light", "dark"] as const) {
 
         // Two ways work for people here: the choice sits at the top of the step (D-388), each with what it does; the
         // GitHub App needs an administrator and is not offered.
-        const methods = dialog.getByRole("radiogroup", { name: "Sign in with:" });
-        for (const method of ["Personal access token", "OAuth"]) await expect(methods.getByText(method, { exact: true })).toBeVisible();
-        await expect(methods.getByText("Suggested")).toBeVisible();
+        // (P5-REFINE-13, access-6) "Sign in with": the way that works now, in plain words, each tagged Works now.
+        const methods = dialog.getByRole("radiogroup", { name: "Sign in with", exact: true });
+        for (const method of ["A personal access token", "OAuth app"]) await expect(methods.getByText(method, { exact: true })).toBeVisible();
+        await expect(methods.getByText("Works now")).toHaveCount(2);
+        await expect(dialog.getByText("Get a token in 3 steps")).toBeVisible();
 
         await dialog.getByLabel("Personal access token", { exact: true }).fill("not-a-real-token");
         expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);

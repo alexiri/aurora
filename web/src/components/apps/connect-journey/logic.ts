@@ -11,7 +11,7 @@ import { safeHref } from "@/components/ui/markdown";
  * of the Done step and of a failure, and the body of the one request that makes the account and the access.
  */
 
-export type StepId = "app" | "agent" | "account" | "access" | "signin" | "done";
+export type StepId = "app" | "agent" | "account" | "access" | "signin" | "address" | "message" | "done";
 
 export const STEP_LABEL: Record<StepId, string> = {
   app: "App",
@@ -19,6 +19,9 @@ export const STEP_LABEL: Record<StepId, string> = {
   account: "Account",
   access: "Access",
   signin: "Sign in",
+  // (P5-REFINE-13, access-4) The Outgoing webhook's two connect steps replace Sign in.
+  address: "Address",
+  message: "Message",
   done: "Done",
 };
 
@@ -40,6 +43,8 @@ export interface JourneyShape {
   hasChoice: boolean;
   /** No agent will be given access (the Agent step was left empty): the Access step is skipped. */
   noAgentChosen: boolean;
+  /** The Outgoing webhook: Address and Message instead of Sign in (P5-REFINE-13). */
+  webhook?: boolean;
 }
 
 /** The steps that apply, in order; the Done step is always last. */
@@ -49,7 +54,10 @@ export function stepsOf(s: JourneyShape): StepId[] {
   if (!s.agentFixed && !s.noAgents) out.push("agent");
   if (!s.website && s.hasExisting) out.push("account");
   if (!s.website && s.hasChoice && !s.noAgentChosen) out.push("access");
-  if (!(s.hasExisting && s.useExisting && !s.website)) out.push("signin");
+  if (!(s.hasExisting && s.useExisting && !s.website)) {
+    if (s.webhook && !s.website) out.push("address", "message");
+    else out.push("signin");
+  }
   out.push("done");
   return out;
 }
@@ -67,14 +75,19 @@ export function prevStep(s: JourneyShape, from: StepId): StepId | null {
 }
 
 /** The three choices an app account offers a new access (`14 §2`): none for an app that cannot change anything. */
-export function levelsForApp(app: Pick<AppDetail, "tools" | "app_restrictions">): Level[] {
+export function levelsForApp(app: Pick<AppDetail, "tools" | "app_restrictions"> & { send_only?: boolean }): Level[] {
+  // (P5-REFINE-13, D-419, C-1067) A send-only app (no read tool: the Outgoing webhook) offers "ask" and "act", never "read".
+  if (app.send_only) return appIsCustomOnly(app) ? ["ask"] : ["ask", "act"];
   if (!app.tools.some((t) => t.group === "write")) return [];
   return appIsCustomOnly(app) ? ["read", "ask"] : [...LEVEL_ORDER];
 }
 
 /** The Done sentences of `14 §3`, one per access. `level` is null for a website or an app with no choice. */
-export function doneSentence({ agent, app, level, agentChosen }: { agent: string; app: string; level: Level | null; agentChosen: boolean }): string {
+export function doneSentence({ agent, app, level, agentChosen, sendOnly = false }: { agent: string; app: string; level: Level | null; agentChosen: boolean; sendOnly?: boolean }): string {
   if (!agentChosen) return `${app} is connected. No agent can use it yet.`;
+  // A send-only app names the account: "Dani can now send to Ops alerts, and asks you first."
+  if (sendOnly && level === "ask") return `${agent} can now send to ${app}, and asks you first.`;
+  if (sendOnly && level === "act") return `${agent} can now send to ${app}, and sends without asking.`;
   switch (level) {
     case "read":
       return `${agent} can now read ${app}.`;

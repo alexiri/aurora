@@ -8,6 +8,7 @@ import { AiKeyTile } from "@/components/ui/ai-key-tile";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StatusLine } from "@/components/ui/status-line";
 import { Avatar } from "@/components/agent-avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ErrorState } from "@/components/states";
@@ -160,7 +161,8 @@ export function AccountRow({
         ) : account.kind === "ai_key" ? (
           <AiKeyTile />
         ) : null}
-        <div className="min-w-0 flex-1 space-y-1">
+        {/* (P5-REFINE-13, access-2) On a phone (below sm) the title takes three quarters of the line, so the level and the menu wrap to their own line. */}
+        <div className="min-w-0 flex-1 space-y-1 max-sm:basis-3/4">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="min-w-0 break-words font-display text-base font-semibold text-ink">
               {account.app ? (
@@ -197,6 +199,29 @@ export function AccountRow({
             outcome={test.isPending ? null : outcome}
             onFix={account.can.manage ? (k) => (canFix(k) ? fix(k) : undefined) : undefined}
           />
+          {/* (P5-REFINE-13, access-8) An AI key shows its check in place: Checking… then Works, or Failed with the reason and Try again. */}
+          {account.kind === "ai_key" && account.verification && account.verification.state !== "not_checked" ? (
+            <StatusLine
+              tone={account.verification.state === "works" ? "ok" : account.verification.state === "checking" ? "idle" : "fail"}
+              action={
+                account.verification.state === "rejected" || account.verification.state === "unreachable" ? (
+                  <Button type="button" variant="outline" size="sm" disabled={test.isPending} onClick={runTest}>
+                    Try again
+                  </Button>
+                ) : undefined
+              }
+            >
+              <span data-testid="key-check">
+                {account.verification.state === "works"
+                  ? "Works"
+                  : account.verification.state === "checking"
+                    ? "Checking…"
+                    : account.verification.state === "rejected"
+                      ? "Failed: the provider rejected the key"
+                      : "Failed: the provider could not be reached"}
+              </span>
+            </StatusLine>
+          ) : null}
           {account.status_reason === "instance_deleted" && account.health.state === "disabled" ? <InstanceRemoved orgId={orgId} /> : null}
           {test.isPending ? <p className="text-sm text-muted" role="status">Testing…</p> : null}
           {/* (P5-WEBHOOK-4, C-913) An Outgoing webhook: its host and limit, Edit and Send test, for those who manage it. */}

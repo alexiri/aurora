@@ -47,6 +47,15 @@ describe("useTabParam", () => {
     expect(result.current[0]).toBe("instructions");
   });
 
+  it("follows the router from one valid tab to another while window.location still shows the old one (Try it in chat from Access)", () => {
+    const { result, rerender } = renderHook(() => useTabParam(PAGES, "chat"));
+    expect(result.current[0]).toBe("access");
+    // The link's navigation renders before the location is updated: the router says chat, window.location still says access.
+    search = "tab=chat&draft=hi";
+    rerender();
+    expect(result.current[0]).toBe("chat");
+  });
+
   it("adopts a new ?tab= from the router", () => {
     const { result, rerender } = renderHook(() => useTabParam(PAGES, "chat"));
     search = "tab=chat";

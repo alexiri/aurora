@@ -12,10 +12,15 @@ import { errorMessage } from "@/lib/api/errors";
 import { isSent, useWebhookTest, useWebhookView, type WebhookPreview, type WebhookTestResult, type WebhookView } from "@/lib/api/webhook";
 import { initialInputs, invalidSlot, valuesFromInputs } from "@/lib/webhook/logic";
 
-import { SlotValues } from "./slot-values";
+import { webhookTestErrorSentence } from "@/lib/labels";
 
-/** The refusal sentences of a test: the rate limit with its wait, the org switch, the others in the standard words. */
+import { SlotValues } from "./slot-values";
+import { TestResult } from "./test-result";
+
+/** The refusal sentences of a test: the rate limit with its wait, the org switch, a delivery problem in a plain sentence, the others in the standard words. */
 export function testFailure(err: unknown): string {
+  const delivery = err instanceof ApiError ? webhookTestErrorSentence(err.code) : null;
+  if (delivery) return delivery;
   if (err instanceof ApiError && err.code === "webhook_rate_limited") {
     const wait = (err.details as { retry_after_secs?: unknown } | null)?.retry_after_secs;
     return typeof wait === "number" ? `This webhook's limit was reached. Try again in ${wait} second${wait === 1 ? "" : "s"}.` : "This webhook's limit was reached. Try again in a little while.";
@@ -25,28 +30,7 @@ export function testFailure(err: unknown): string {
 }
 
 function Result({ r }: { r: WebhookTestResult | WebhookPreview }) {
-  if (isSent(r)) {
-    return (
-      <div className="space-y-2" role="status" data-testid="test-result">
-        <p className="text-sm font-medium text-ink">The receiver answered {r.status}.</p>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-          <dt className="text-muted">Delivery id</dt>
-          <dd className="break-all font-mono text-xs text-ink">{r.delivery_id}</dd>
-          {r.content_type ? (
-            <>
-              <dt className="text-muted">Content type</dt>
-              <dd className="break-all text-ink">{r.content_type}</dd>
-            </>
-          ) : null}
-        </dl>
-        {/* The answer is text: shown inside <pre> as a string, never as HTML. */}
-        <pre data-testid="test-body" className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-control border border-line bg-canvas p-3 font-mono text-xs text-ink">
-          {r.body || "(empty answer)"}
-        </pre>
-        {r.truncated ? <p className="text-xs text-muted">The answer was longer than 4 KiB; the rest is not shown.</p> : null}
-      </div>
-    );
-  }
+  if (isSent(r)) return <TestResult r={r} />;
   return (
     <div className="space-y-2" role="status" data-testid="test-result">
       <p className="text-sm font-medium text-ink">Dry run: nothing was sent.</p>

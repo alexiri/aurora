@@ -36,6 +36,8 @@ export function useAccounts(scope: AccountsScope, enabled = true) {
             }),
           )
         : unwrap(api.GET("/v1/orgs/{org}/accounts", { params: { path: { org: scope.id } } })),
+    // (P5-REFINE-13, access-8) An AI key being checked turns into Works or Failed without a reload: look again until it settles.
+    refetchInterval: (q) => ((q.state.data?.items ?? []).some((a) => a.verification?.state === "checking") ? 3000 : false),
     retry: false,
   });
 }

@@ -19,6 +19,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }));
 
+import { JourneyFrame } from "@/components/apps/connect-journey/frame";
 import { SendTestDialog } from "@/components/webhook/send-test-dialog";
 import { WebhookEditDialog } from "@/components/webhook/webhook-edit-dialog";
 import { WebhookSignInStep } from "@/components/webhook/webhook-connect-step";
@@ -40,6 +41,11 @@ let routes: Record<string, (body: Record<string, unknown> | null) => Response> =
 beforeEach(() => {
   calls = [];
   routes = {};
+  // jsdom has no `matchMedia`; the journey frame's `fixedHeight` asks whether the viewport is wide.
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("min-width"), media: query, onchange: null, addEventListener: () => undefined, removeEventListener: () => undefined,
+    addListener: () => undefined, removeListener: () => undefined, dispatchEvent: () => false,
+  }));
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string | Request, init?: RequestInit) => {
@@ -85,7 +91,12 @@ const app = {
 
 function connectStep(onResult = vi.fn()) {
   routes["GET /v1/apps/webhook/webhook-presets"] = () => json(200, presets);
-  wrap(<WebhookSignInStep app={app} workspaceId="ws1" orgId="org1" level="read" agentIds={["a1"]} hasWriteTools onResult={onResult} />);
+  // (P5-REFINE-13) Back and Next are the journey's footer: the steps are rendered in the frame that carries it.
+  wrap(
+    <JourneyFrame title="Outgoing webhook for Daneel" testId="wh-journey" stepper={null} footer onClose={() => undefined}>
+      <WebhookSignInStep app={app} workspaceId="ws1" orgId="org1" level="read" agentIds={["a1"]} hasWriteTools onResult={onResult} />
+    </JourneyFrame>,
+  );
   return onResult;
 }
 
@@ -94,21 +105,21 @@ const connected = (extra: Record<string, unknown> = {}) => json(200, { kind: "co
 
 async function stepOne(url = URL_CANARY) {
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "alerts" } });
-  fireEvent.change(screen.getByLabelText("Webhook address (URL)"), { target: { value: url } });
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByText(/Step 2 of 3/);
+  fireEvent.change(screen.getByLabelText("Address to send to"), { target: { value: url } });
+  fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+  await screen.findByLabelText(/^Preset/);
 }
 
 describe("connect steps", () => {
-  it("step 1 asks for a name and an https address, and keeps the address a password field", () => {
+  it("the Address step asks for an https address and a name, and keeps the address a password field", async () => {
     connectStep();
-    expect(screen.getByText(/Step 1 of 3/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Webhook address (URL)")).toHaveAttribute("type", "password");
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByLabelText("Address to send to")).toHaveAttribute("type", "password");
+    expect(screen.getByText("The agent sends a POST request here.")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
     expect(screen.getByText("Enter a name.")).toBeInTheDocument();
-    expect(screen.getByText("Paste the webhook address.")).toBeInTheDocument();
+    expect(screen.getByText("Paste the address to send to.")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "alerts" } });
-    fireEvent.change(screen.getByLabelText("Webhook address (URL)"), { target: { value: "http://example.org/x" } });
+    fireEvent.change(screen.getByLabelText("Address to send to"), { target: { value: "http://example.org/x" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("The address must start with https://.")).toBeInTheDocument();
   });
@@ -137,10 +148,9 @@ describe("connect steps", () => {
     const onResult = connectStep();
     await stepOne();
     fireEvent.change(await screen.findByLabelText(/^Preset/), { target: { value: "ntfy-json" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByText(/Step 3 of 3/);
-    // The preset's secret value name is asked for in the extras.
-    expect(screen.getByLabelText("Name")).toHaveValue("topic");
+    // The preset's secret value name is asked for in the extras, which open on their own: they are needed.
+    expect(screen.getByLabelText("Name", { selector: "#wh-sn-0" })).toHaveValue("topic");
+    expect(screen.getByText("Secret values, headers, signing and limits").closest("details")).toHaveAttribute("open");
     fireEvent.change(screen.getByLabelText("Value"), { target: { value: SECRET_CANARY } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(onResult).toHaveBeenCalled());
@@ -161,8 +171,6 @@ describe("connect steps", () => {
     fireEvent.change(await screen.findByLabelText(/^Preset/), { target: { value: "ntfy-json" } });
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     await screen.findByTestId("preview-body");
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByText(/Step 3 of 3/);
     fireEvent.change(screen.getByLabelText("Value"), { target: { value: SECRET_CANARY } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(onResult).toHaveBeenCalled());
@@ -181,8 +189,6 @@ describe("connect steps", () => {
     const onResult = connectStep();
     await stepOne();
     fireEvent.change(await screen.findByLabelText(/^Preset/), { target: { value: "generic-json" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByText(/Step 3 of 3/);
     fireEvent.click(screen.getByLabelText("Make one"));
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     const once = await screen.findByTestId("signing-secret-once");
@@ -198,42 +204,36 @@ describe("connect steps", () => {
     expect(document.body.innerHTML).not.toContain(SIGNING);
   });
 
-  it("maps a webhook_config_invalid path onto the template and goes back to that step", async () => {
+  it("maps a webhook_config_invalid path onto the template on the Message step", async () => {
     routes["POST /v1/apps/webhook/connect"] = () => err(422, "webhook_config_invalid", { fields: [{ path: "/template", code: "template_json" }] });
     connectStep();
     await stepOne();
     fireEvent.change(await screen.findByLabelText(/^Preset/), { target: { value: "slack" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByText(/Step 3 of 3/);
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await screen.findByText(/Step 2 of 3/);
     expect(await screen.findByText(/not valid JSON once the blanks are filled in/)).toBeInTheDocument();
   });
 
-  it("maps a header path onto the Extras step, and a rate refusal onto its field", async () => {
+  it("maps a header path and a rate refusal onto their fields in the extras, which open", async () => {
     routes["POST /v1/apps/webhook/connect"] = () =>
       err(422, "webhook_config_invalid", { fields: [{ path: "/headers/0/name", code: "header_name_denied" }, { path: "/rate/per_minute", code: "rate_above_ceiling" }] });
     connectStep();
     await stepOne();
     fireEvent.change(await screen.findByLabelText(/^Preset/), { target: { value: "slack" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByText(/Step 3 of 3/);
     fireEvent.click(screen.getByRole("button", { name: "Add a header" }));
     fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "Host" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(await screen.findByText("Aurora sets this header itself. Choose another name.")).toBeInTheDocument();
+    expect(screen.getByText("Secret values, headers, signing and limits").closest("details")).toHaveAttribute("open");
     expect(screen.getByText("This is above the limit your organization or administrator allows.")).toBeInTheDocument();
   });
 
-  it("maps link_not_https and a refused destination onto the address field on step 1", async () => {
+  it("maps link_not_https and a refused destination onto the address field on the Address step", async () => {
     routes["POST /v1/apps/webhook/connect"] = () => err(422, "link_destination_refused");
     connectStep();
     await stepOne();
     fireEvent.change(await screen.findByLabelText(/^Preset/), { target: { value: "slack" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByText(/Step 3 of 3/);
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await screen.findByText(/Step 1 of 3/);
+    await screen.findByLabelText("Address to send to");
     expect(screen.getByText(/Aurora may not send to that address/)).toBeInTheDocument();
   });
 
@@ -403,24 +403,43 @@ describe("Send test", () => {
     // Nothing was sent by pressing Send.
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     fireEvent.click(within(confirm).getByRole("button", { name: "Send" }));
-    await screen.findByText("The receiver answered 200.");
+    await screen.findByText("The test went through.");
     expect(calls.filter((c) => c.method === "POST")[1]!.body).toEqual({ values: { text: "Deploy 42 failed" } });
   });
 
-  it("shows the status, the delivery id and truncated; the body is text, never HTML", async () => {
+  it("a 405 is one plain sentence; the receiver's page is only in Details, cut to 200 characters, as text and never as HTML", async () => {
+    const page = { ...sent, status: 405, body: `<script>window.hacked = 1</script>${"x".repeat(400)}` };
     routes["GET /v1/connections/c1/webhook"] = () => json(200, view());
-    routes["POST /v1/connections/c1/webhook/test"] = () => json(200, sent);
+    routes["POST /v1/connections/c1/webhook/test"] = () => json(200, page);
     wrap(<SendTestDialog connectionId="c1" name="alerts" open onOpenChange={vi.fn()} />);
     await screen.findByLabelText("text");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     const confirm = await screen.findByRole("dialog", { name: /Send a test to alerts/ });
     fireEvent.click(within(confirm).getByRole("button", { name: "Send" }));
-    await screen.findByText("The receiver answered 200.");
-    expect(screen.getByText(sent.delivery_id)).toBeInTheDocument();
-    expect(screen.getByText(/longer than 4 KiB/)).toBeInTheDocument();
-    expect(screen.getByTestId("test-body").textContent).toBe(sent.body);
+    await screen.findByText("The test did not go through");
+    expect(screen.getByText("The address doesn't accept POST. Check the URL and try again.")).toBeInTheDocument();
+    // Details is collapsed; the answer code and delivery id are Expert items that a failed test promotes.
+    const body = screen.getByTestId("test-body");
+    expect(body.closest("details")).not.toHaveAttribute("open");
+    expect(body.textContent).toContain("Answer 405 Method Not Allowed · delivery 7d2c…");
+    expect(body.textContent).toContain("(first 200 characters)");
+    expect(body.textContent).toContain(page.body.slice(0, 200));
+    expect(body.textContent).not.toContain(page.body.slice(0, 201));
+    expect(screen.queryByText(/receiver answered/)).toBeNull();
     expect(document.querySelector("script")).toBeNull();
     expect((window as unknown as { hacked?: number }).hacked).toBeUndefined();
+  });
+
+  it("says in words when the address could not be reached or took too long", async () => {
+    routes["GET /v1/connections/c1/webhook"] = () => json(200, view());
+    let n = 0;
+    routes["POST /v1/connections/c1/webhook/test"] = () => (n++ === 0 ? err(502, "link_unreachable") : err(504, "webhook_timeout"));
+    wrap(<SendTestDialog connectionId="c1" name="alerts" open onOpenChange={vi.fn()} />);
+    await screen.findByLabelText("text");
+    fireEvent.click(screen.getByRole("button", { name: "Dry run" }));
+    expect(await screen.findByText("Couldn't reach the address.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dry run" }));
+    expect(await screen.findByText("It took too long to answer.")).toBeInTheDocument();
   });
 
   it("names the wait of a rate limit and marks a value the server refuses", async () => {

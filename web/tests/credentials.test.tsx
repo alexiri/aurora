@@ -66,10 +66,12 @@ describe("llm form", () => {
     await screen.findByText(/OpenAI API/);
     expect(screen.queryByText(/Forbidden/)).toBeNull();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "k" } });
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "ok" } });
+    fireEvent.change(screen.getByLabelText("Which service is this key for?"), { target: { value: "ok" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     expect(await screen.findByText(ERROR_MESSAGES.llm_key_wrong_organization!)).toBeTruthy();
-    expect((screen.getByLabelText("API key") as HTMLInputElement).value).toBe("");
+    // (P5-REFINE-13, access-8) A refused key stays in the field (masked) so a typo is fixed, not retyped; it was not saved.
+    expect((screen.getByLabelText("API key") as HTMLInputElement).value).toBe("sk-1");
+    expect((screen.getByLabelText("API key") as HTMLInputElement).type).toBe("password");
   });
 });

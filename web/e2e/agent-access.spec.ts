@@ -14,6 +14,20 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
+      // P5-REFINE-13 (access-2): under 600 px the title keeps its line; the level and the menu sit on their own line below.
+      if (width === 390) test("an Access row keeps its title on one line and puts the level and menu under it below 600 px", async ({ page }) => {
+        await openAccess(page, "table", scheme);
+        const row = page.getByRole("listitem", { name: "acme-bot" });
+        const title = await row.getByRole("heading", { level: 3 }).boundingBox();
+        const level = await row.getByRole("combobox", { name: /Daneel's access to/ }).boundingBox();
+        const menu = await row.getByRole("button", { name: /^More for/ }).boundingBox();
+        expect(title!.width).toBeGreaterThan(150);
+        expect(title!.height).toBeLessThan(60);
+        expect(level!.y).toBeGreaterThanOrEqual(title!.y + title!.height);
+        expect(Math.abs(menu!.y - level!.y)).toBeLessThan(12);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+      });
+
       // P5-TOOLASK (C-1042, C-1043): an action its app asks about first by default says so, and Allowed is the override.
       test("an action the app asks about first by default says so and can be overridden with Allowed", async ({ page }) => {
         await openAccess(page, "table", scheme);
