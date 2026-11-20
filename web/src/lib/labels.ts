@@ -186,6 +186,43 @@ export const RUN_OUTCOME = {
   duplicate: { label: "Already handled" },
 } satisfies LabelTable;
 
+/** (P5-REFINE-14, C-1077) A schedule run's `result`, in words. "Running" is the in-flight state; the others are outcomes. */
+export const RUN_RESULT = {
+  running: { label: "Running" },
+  answered: { label: "Answered" },
+  skipped_by_gate: { label: "Skipped by the gate" },
+  failed: { label: "Failed" },
+  skipped: { label: "Skipped" },
+} satisfies LabelTable;
+
+/** (C-1077) A run's `reason`, in words, by the result it belongs to. Unknown reasons (a turn's error code) say nothing technical. */
+export function runReason(result: string, reason?: string | null): string | null {
+  if (result === "skipped_by_gate") return "nothing to report";
+  if (!reason) return null;
+  const words: Record<string, string> = {
+    gate_failed: "the check could not run",
+    unauthorized: "its owner can no longer run it",
+    frozen: "the agent was paused",
+    missed: "it was already running",
+    paused: "the schedule was paused",
+  };
+  if (words[reason]) return words[reason];
+  return result === "failed" ? "something went wrong" : null;
+}
+
+/** (P5-REFINE-14, C-1079) A webhook delivery's `result`, in words. Refusals say why; a repeat is "Duplicate, ignored". */
+export const DELIVERY_RESULT = {
+  answered: { label: "Accepted" },
+  running: { label: "Accepted" },
+  failed: { label: "Accepted, the run failed" },
+  refused_signature: { label: "Refused: wrong signature" },
+  refused_too_large: { label: "Refused: too large" },
+  refused_paused: { label: "Refused: paused" },
+  refused_frozen: { label: "Refused: the agent is paused" },
+  refused_unauthorized: { label: "Refused: not allowed" },
+  duplicate: { label: "Duplicate, ignored" },
+} satisfies LabelTable;
+
 /** Why a webhook or schedule is turned off (`disabled_reason`), after "Disabled". */
 export const DISABLED_REASON = {
   user: { label: "turned off by you" },

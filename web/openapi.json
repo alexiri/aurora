@@ -47389,6 +47389,13 @@
           "name": {
             "type": "string",
             "description": "The automation's current name (the stored title when it is gone)."
+          },
+          "previous_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1098) The automation's name before its last rename, as this thread had it; null when\nthe thread was never renamed."
           }
         }
       },
@@ -59400,6 +59407,17 @@
                   "format": "uuid",
                   "description": "Null when the caller cannot see that (direct) conversation; see `conversation_hidden`."
                 },
+                "paused_by": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ScheduleCreator",
+                      "description": "(C-1096) The person whose own pause stands (`disabled_reason = user`); null otherwise."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "prompt": {
                   "type": "string"
                 },
@@ -60080,6 +60098,17 @@
                 },
                 "name": {
                   "type": "string"
+                },
+                "paused_by": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WebhookCreator",
+                      "description": "(C-1096) The person whose own pause stands (`disabled_reason = user`); null otherwise."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "updated_at": {
                   "type": "string",
@@ -65213,6 +65242,17 @@
             ],
             "format": "uuid",
             "description": "Null when the caller cannot see that (direct) conversation; see `conversation_hidden`."
+          },
+          "paused_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ScheduleCreator",
+                "description": "(C-1096) The person whose own pause stands (`disabled_reason = user`); null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "prompt": {
             "type": "string"
@@ -70596,6 +70636,17 @@
           },
           "name": {
             "type": "string"
+          },
+          "paused_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WebhookCreator",
+                "description": "(C-1096) The person whose own pause stands (`disabled_reason = user`); null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "updated_at": {
             "type": "string",

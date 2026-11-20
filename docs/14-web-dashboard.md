@@ -175,7 +175,8 @@ to do its own way. A page uses these; a new page never invents its own. (Mock-up
   Escape, the overlay or the button) before it was copied asks "You haven't copied it. Close anyway?" with
   **Copy** and **Close anyway**. The value lives only in the opener's state.
 - **Confirm ladder.** Undoable actions (pause, remove from a list, turn off) do not ask: a toast with
-  **Undo** (`useUndoToast`, six seconds). Reversible but disruptive actions (rotate, promote, pause an
+  **Undo** (`useUndoToast`, six seconds; it can carry a check mark and one link, as Run now's "Started · Open the
+  conversation"). Reversible but disruptive actions (rotate, promote, pause an
   agent, workspace or organization) open a `ConfirmDialog` whose **consequence sentence is required** and
   whose button is the verb ("Rotate URL", "Promote to Owner"). Permanent actions (delete) open
   `TypeToConfirm`: a red consequence line, then "Type the workspace name to confirm: **<visible name>**",
@@ -369,7 +370,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   reads every page through the shared `fetchAllPages` (`lib/api/paging.ts`, ceiling
   10 pages) and shows `MoreNotShown` if the ceiling was hit; lists that can be
   longer use an infinite query with "Load more". A picker with more than eight
-  options gets a text filter (`PickerFilter`: "add by name or e-mail"). A
+  options gets a text filter (`PickerFilter`: "add by name or e-mail"); a list too long to scan
+  (the time zones) is a `Combobox` (P5-REFINE-14: a searchable select, type to narrow, Up/Down/Enter/Escape). A
   conversation deep link outside the loaded pages is fetched by id.
 
 **Components** (`web/src/components/ui/`):
@@ -1206,10 +1208,13 @@ unified by D-407 (P5-REFINE-1).
 | **Try a request**, with "Check what would happen" as the sentence under it | Check what would happen (button), Simulate | try a request against access, rules and limits | Set up |
 | **Pause**, **Resume**, **Paused** ("Pausing…"; "Paused by <name> on <date>: <reason>") | Freeze, Unfreeze, Frozen | for agents, workspaces and organizations alike; the API (`frozen`, 423 `frozen`, `/freeze`) does not change | Use |
 | **On**, **Paused** (schedules, webhooks) | Enabled, Disabled (user) | the state of an automation | Use |
-| **Signed (recommended)**, **Password in the header**, **Anyone with the address** | none, hmac_sha256, bearer | how a webhook is verified | Set up |
-| **Received**, **Refused: wrong signature**, **Refused: paused**, **Duplicate, ignored** | accepted, rejected_signature, disabled | a webhook delivery's outcome | Set up |
+| **Signed (recommended)**, **Bearer token**, **Anyone with the URL** ("Who may call this webhook?") | none, hmac_sha256, bearer, Verification | how a webhook is verified | Set up |
+| **Accepted**, **Refused: wrong signature**, **Refused: paused**, **Duplicate, ignored** | accepted (as a word), rejected_signature, disabled | a webhook delivery's outcome | Set up |
 | **Answered**, **Skipped by the gate**, **Failed**, **Running** | fired, gated_quiet, gate_failed | a schedule run's outcome | Set up |
-| **Only run when… (a check command)**, **Keep running if I leave** | Gate command, Anchor to workspace | a schedule's condition and who it belongs to | Expert |
+| **Only wake when a check finds something**, **Keep running without you** | Gate command, Anchor to workspace, Keep running if I leave | a schedule's condition and who it belongs to | Set up (the check, in Advanced); Expert (the menu item) |
+| **Every 5 minutes**, **Hourly**, **Every day**, **Weekdays**, **Weekly**, **Custom** | Cron, cron expression (outside Custom) | how often a schedule runs | Use (Custom: Expert) |
+| **How to call it** | curl command, webhook docs | what a sender must send to a webhook | Set up |
+| **New automation** | New schedule, New webhook (as header buttons) | the one button of the Automations page | Use |
 | **Which service is this key for?** | Provider endpoint | the choice in the AI key dialog | Set up |
 | **Sign-in app** | OAuth client, Google sign-in as a thing to set up | what lets people sign in to an app (the Administration tab id stays `oauth-clients`) | Set up |
 | **Chat platform**; **Chat platform host** on the Administration machinery page | Connector, connector host, integration, Channels | the platform a person connects (Mattermost and similar) | Use |
@@ -2406,6 +2411,56 @@ the test failed: …" from the settings response's `test` (C-863 amendment).
 starter key the agent was not given. Other agents (Link another agent) and the header action wait for P5-REFINE-10
 and -11.
 
+
+## Automations (phase 5, P5-REFINE-14, D-405, D-407, D-409, D-417)
+
+**One page, "when does Dani run".** Schedules, Webhooks and Channels (four tabs with four shapes) are the one **Automations**
+tab of the agent page (`?tab=automations`; `schedules`, `webhooks` and `channels` still open it, filtered to their kind;
+`peers` is not part of it, its home is Settings › Other agents). Frame: title "Automations", subtitle "When <Agent> runs:
+on a schedule, when something calls its address, or in a chat.", one header button **New automation**, a filter **All ·
+Schedules · Webhooks · Chats** with counts, and one list. Empty: "No automations yet" with the same button.
+
+- **New automation** asks the kind first, one sentence each (On a schedule · When something calls it · In a chat; the
+  last only when the organization has a chat platform, else "Only organization owners and admins can connect a chat
+  platform"), then opens the form in the page.
+- **A row**: kind icon, name, state (**On** / **Paused**, nothing else), the *when* in words ("Every weekday at 08:30 ·
+  Zurich · next at 08:30 (Zurich time)", "When something arrives at its address", "In chats on Mattermost"), the prompt or
+  instructions, the last run or delivery with its outcome, the owner, then the primary action by kind (**Run now** and **Edit**
+  for a schedule, **How to call it** for a webhook, **Open channel** for a chat) and a "…" menu. Schedule menu: Runs · Pause/Resume ·
+  Reassign… · Keep running without you (Expert) · Delete…; webhook menu: Edit · How to call it · Deliveries · Rotate URL… · New
+  secret… · Pause/Resume · Reassign… · Keep running without you (Expert) · Delete…. Below 640 px **Runs** (**Deliveries**) stays on the
+  row. **Pause** / **Resume** has no confirmation: a toast "Paused <name> · Undo" (the first rung of the stop ladder). Edit opens in
+  place; Reassign is a dialog; Delete, Rotate URL and New secret are `ConfirmDialog`s that say what changes.
+- **The schedule form** (`lib/cron.ts`): Name, Prompt, **When** as presets **Every 5 minutes · Hourly · Every day · Weekdays · Weekly ·
+  Custom** (none shorter than 5 minutes), a time picker (24 h, quarter hours), a day select for Weekly, and a time zone select that
+  defaults to the workspace's (its name in the option). The summary under it ("Every day at 09:00 · next: tomorrow 09:00 (Zurich
+  time). Schedules run at most every 5 minutes.") takes the next run times from the API preview (`POST …/schedules/preview`,
+  rate class `check`: the input is debounced for 1 s and an answer is cached for 60 s). **Custom** keeps the 5-field cron in a
+  monospace field (**Expert**; without the person's switch it is disabled with "Custom needs more controls · Show") and flags a cron that
+  runs more often than every 5 minutes as you type ("Too often: a schedule can run at most every 5 minutes. Try */5 * * * *.");
+  the API stays the authority. **Advanced** (Set up, collapsed): "Only wake when a check finds something" with the command, and
+  "Keep running without you". A cron the presets do not cover reads "Custom schedule", with the raw cron under Technical details.
+- **Runs** is a table **When · Outcome · Conversation** (Answered, Skipped by the gate, Failed, Running, Skipped; the reason in
+  words). **Run now** shows "Started · Open the conversation" under the row, a link to the run's own thread
+  (`?tab=chat&c=<id>`, `lib/automation-thread.ts`). Every run and every accepted delivery has its **own conversation** (C-1074).
+- **The webhook form**: **Who may call this webhook?** as three cards (**Signed (recommended)** is the default; **Bearer token**;
+  **Anyone with the URL**, last, with a note), a **Secret** with **Generate** (32 random characters, `crypto.getRandomValues`; left
+  empty on Signed or Bearer the server makes one, C-1078), Advanced (the header, with its default stated; Keep running without you).
+  After creating, one dialog shows the address and the secret each in a box that fits the whole value on one line, **Copy → Copied**,
+  and **How to call it** below. **How to call it** (`lib/webhook-snippets.ts`) is the sentence for the kind plus a curl, Python and
+  Node snippet with the real address and header; the secret is never in a snippet. On the card it uses the address prefix and says
+  "The full address was shown once. Rotate it to get a new one."
+- **Deliveries** is a table **When · Result · Size · Conversation**: Accepted, Refused: wrong signature (and the other refusals,
+  in red text), Duplicate, ignored (quiet). Its link opens the delivery's thread. In that thread the first message reads "Webhook
+  <name> · delivery" with the time and the payload in a code block (the API's `display`, C-1079); the safety wrapper and the delivery
+  id are not shown.
+- **Threads**: a run's thread follows its automation's name; once the schedule or webhook is deleted the thread says "Schedule
+  deleted" / "Webhook deleted" and "It was started by a schedule that no longer exists. No new runs."
+- **Chats**: the empty state "<Agent> isn't in any chat yet / Only organization owners and admins can connect a chat platform." has
+  **Ask an admin** to connect the platforms the instance has connectors for, an optional **Why do you need it?** (500 characters)
+  and **Send request**; afterwards "Asked an admin · Undo". The request goes to every admin who can do it, so no admin's name is in
+  the control. With a chat platform the page has a **Chats** group under the list: presences, progress in chat (Set up), space bindings
+  and reach requests (Expert).
 
 ## Onboarding (phase 4, P4-ONB-2, D-141)
 

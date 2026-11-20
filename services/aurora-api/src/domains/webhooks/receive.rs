@@ -429,6 +429,18 @@ fn cleaned_ctype(ctype: &str) -> String {
 /// and the same cleaned, clamped payload the turn carries, **without** the safety wrapper or the
 /// owner's instructions (those are for the agent only; the turn's `text` is unchanged).
 fn display_of(w: &WebhookRow, delivery: Uuid, ctype: &str, body: &[u8]) -> serde_json::Value {
+    // (C-1097) How it was checked: only an accepted delivery gets here, so the configured kind
+    // is also what matched.
+    let verification = match w
+        .verification
+        .as_ref()
+        .and_then(|v| v.get("kind"))
+        .and_then(|k| k.as_str())
+    {
+        Some("hmac_sha256") => "signed",
+        Some("bearer") => "token",
+        _ => "none",
+    };
     let cleaned = cleaned_payload(body);
     let (shown, truncated) = clip(&cleaned, TEXT_PAYLOAD_MAX);
     json!({
@@ -439,6 +451,7 @@ fn display_of(w: &WebhookRow, delivery: Uuid, ctype: &str, body: &[u8]) -> serde
         "size": body.len(),
         "truncated": truncated,
         "body": shown,
+        "verification": verification,
     })
 }
 

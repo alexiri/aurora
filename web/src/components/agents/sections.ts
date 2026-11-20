@@ -12,6 +12,7 @@ export type AgentPageId =
   | "memory"
   | "skills"
   | "evals"
+  | "automations"
   | "schedules"
   | "webhooks"
   | "channels"
@@ -34,6 +35,7 @@ export const AGENT_PAGE_IDS: readonly AgentPageId[] = [
   "memory",
   "skills",
   "evals",
+  "automations",
   "schedules",
   "webhooks",
   "channels",
@@ -47,12 +49,20 @@ export const AGENT_PAGE_IDS: readonly AgentPageId[] = [
   "access",
 ];
 
+/**
+ * (P5-REFINE-14, D-405) Schedules, Webhooks and Channels are one page, **Automations** (`?tab=automations`). The old ids keep
+ * working: each opens Automations with its kind as the filter, so every deep link opens what it opened before.
+ */
+export type AutomationFilter = "all" | "schedules" | "webhooks" | "chats";
+export const LEGACY_AUTOMATION_TAB: Partial<Record<AgentPageId, AutomationFilter>> = { schedules: "schedules", webhooks: "webhooks", channels: "chats" };
+
 export const PAGE_LABEL: Record<AgentPageId, string> = {
   chat: "Chat",
   instructions: "Instructions",
   memory: "Memory",
   skills: "Skills",
   evals: "Tests",
+  automations: "Automations",
   schedules: "Schedules",
   webhooks: "Webhooks",
   channels: "Channels",
@@ -70,7 +80,7 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
 /** Sections in order, each with its pages in order. */
 export const SECTIONS: readonly { id: SectionId; label: string; pages: readonly AgentPageId[] }[] = [
   { id: "chat", label: "Chat", pages: ["chat"] },
-  { id: "triggers", label: "Automations", pages: ["schedules", "webhooks", "channels"] },
+  { id: "triggers", label: "Automations", pages: ["automations"] },
   // (P5-REFINE-15) Files first, then the Expert pages, then Details (the old Overview body); a BYO agent's `connect` stays alone.
   { id: "computer", label: "Computer", pages: ["files", "terminal", "ssh", "previews", "computer", "connect"] },
   // (D-408) One page with a sub-nav; Pause and Delete sit in its danger zone. `peers` (Other agents) moved here from Automations
@@ -89,9 +99,13 @@ export const SETTINGS_LEAD: Partial<Record<AgentPageId, string>> = {
 };
 
 /** Page id → its section (the one mapping). */
-export const SECTION_OF: Record<AgentPageId, SectionId> = Object.fromEntries(
-  SECTIONS.flatMap((s) => s.pages.map((p) => [p, s.id] as const)),
-) as Record<AgentPageId, SectionId>;
+export const SECTION_OF: Record<AgentPageId, SectionId> = {
+  ...(Object.fromEntries(SECTIONS.flatMap((s) => s.pages.map((p) => [p, s.id] as const))) as Record<AgentPageId, SectionId>),
+  // The old ids open Automations (see `resolvePage`).
+  schedules: "triggers",
+  webhooks: "triggers",
+  channels: "triggers",
+};
 
 export interface PageAvailability {
   /** A BYO agent has only Instructions, Computer: Connect and Access, and no Chat. */
@@ -180,6 +194,8 @@ export const defaultPage = (av: PageAvailability): AgentPageId => (av.byo ? "ins
 
 /** The page to show for a requested one: itself when available, otherwise the default. */
 export function resolvePage(requested: string | null | undefined, av: PageAvailability): AgentPageId {
-  const id = AGENT_PAGE_IDS.find((p) => p === requested);
+  const found = AGENT_PAGE_IDS.find((p) => p === requested);
+  // (P5-REFINE-14) The old Schedules / Webhooks / Channels ids open the one Automations page.
+  const id = found && LEGACY_AUTOMATION_TAB[found] ? "automations" : found;
   return id && isPageAvailable(id, av) ? id : defaultPage(av);
 }

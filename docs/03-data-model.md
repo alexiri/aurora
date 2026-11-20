@@ -923,6 +923,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | automation_kind | text null CHECK in (`schedule`,`webhook`) | (phase 5, P5-REFINE-7, C-1074) the automation a run thread belongs to; set together with `automation_id` (both null or both set) |
 | automation_id | uuid null | (phase 5, P5-REFINE-7, C-1074) the schedule or webhook id; no FK (the thread outlives it); index `conversations_automation_idx` (automation_kind, automation_id, last_activity_at desc) WHERE automation_id IS NOT NULL |
 | automation_deleted_at | timestamptz null | (phase 5, P5-REFINE-7, C-1074) set when the schedule or webhook is deleted; the transcript stays |
+| previous_title | text null | (phase 5, P5-REFINE-14, C-1098) the title before the automation's last rename (set by the title sync); null if never renamed |
 | origin_conversation_id | uuid null FK→conversations (set null) | where reports go (schedule/webhook/peer) |
 | harness_session_ref | text null | opaque, adapter-owned |
 | harness_session_epoch | bigint not null default 0 | bumped to force a fresh session (phase 4, P4-HAR: on every conversation of an agent when its harness changes; `harness_session_ref` is also cleared and a `session_purges` row is queued per old session, `12`) |
@@ -1210,6 +1211,7 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | gate_description | text null | ≤200 |
 | enabled | bool not null default true | |
 | disabled_reason | text null CHECK in (`user`,`authorization`,`failures`) | |
+| disabled_by | uuid null FK→users (set null) | (phase 5, P5-REFINE-14, C-1096) the person whose own pause this is; cleared on resume |
 | consecutive_failures | int not null default 0 | |
 | creator_user_id | uuid null FK→users (set null) | fire-time authority anchor |
 | origin_conversation_id | uuid null FK→conversations (set null) | |
@@ -1244,6 +1246,7 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | verification | jsonb null | `{ "kind": "hmac_sha256", "header": "X-Signature", "secret_ref": SecretRef, "prefix"?: "sha256=" }` |
 | enabled | bool not null default true | |
 | disabled_reason | text null CHECK in (`user`,`authorization`,`failures`) | |
+| disabled_by | uuid null FK→users (set null) | (phase 5, P5-REFINE-14, C-1096) the person whose own pause this is; cleared on resume |
 | consecutive_failures | int not null default 0 | |
 | creator_user_id | uuid null FK→users (set null) | |
 | origin_conversation_id | uuid null FK→conversations (set null) | |

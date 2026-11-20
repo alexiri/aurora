@@ -9,7 +9,7 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme" }),
 }));
 
-import { AskAdmin } from "@/components/ask-admin";
+import { AskAdmin, AskAdminForm } from "@/components/ask-admin";
 import { AgentChannelsTab } from "@/components/channels/agent-channels-tab";
 import { OrgChatPlatformsPage } from "@/components/org/org-topics";
 import { SetupRequestItem } from "@/components/overview/setup-request-row";
@@ -99,10 +99,25 @@ describe("Ask <Name> for a chat platform or an AI key (P5-APIGAP-2, C-1047)", ()
     expect(await screen.findByText(/already set up/i)).toBeTruthy();
   });
 
-  it("an agent's Channels tab with no chat platform offers Ask an admin (never a person's name, D-407)", async () => {
+  it("an agent's Chats with no chat platform: Ask an admin to connect the platforms, a reason, Send request, then Asked an admin · Undo (never a person's name, D-407)", async () => {
     const calls = mockApi();
     wrap(<AgentChannelsTab agentId="a1" agentName="Bot" orgId="org1" canOwn={false} wsId="ws1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Ask an admin for a chat platform" }));
+    expect(await screen.findByText("Only organization owners and admins can connect a chat platform.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Ask / })).toBeNull();
+    fireEvent.change(await screen.findByLabelText(/Why do you need it\?/), { target: { value: "So Bot can answer in #ops" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ subject: "chat_platform", reason: "So Bot can answer in #ops" }));
+    expect(await screen.findByText("Asked an admin")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
+  });
+
+  it("the reason is optional and longer than 500 characters cannot be typed", async () => {
+    const calls = mockApi();
+    wrap(<AskAdminForm workspaceId="ws1" subject="chat_platform" platforms="Slack, Teams or Mattermost" />);
+    expect(await screen.findByText(/to connect Slack, Teams or Mattermost/)).toBeTruthy();
+    expect(screen.getByLabelText(/Why do you need it\?/)).toHaveAttribute("maxlength", "500");
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
     await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ subject: "chat_platform" }));
   });
 

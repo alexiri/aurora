@@ -26,17 +26,15 @@ import { ConnectTab } from "./connect-tab";
 import { DeleteAgentDialog } from "./delete-zone";
 import { MemoryTab } from "@/components/memory/memory-tab";
 import { SkillsTab } from "@/components/skills/skills-tab";
-import { AgentChannelsTab } from "@/components/channels/agent-channels-tab";
+import { AutomationsTab } from "@/components/automations/automations-tab";
 import { PeersTab } from "@/components/peers/peers-tab";
-import { SchedulesTab } from "@/components/schedules/schedules-tab";
-import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
 
 import { EvalsTab } from "./evals/evals-tab";
 import { FilesTab } from "./files-tab";
 import { useLeaveGate } from "./files/leave-gate";
 import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
-import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, resolvePage, sectionLanding, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
+import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, LEGACY_AUTOMATION_TAB, resolvePage, sectionLanding, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
 import { AgentState } from "./agent-state";
 import { SettingsFrame } from "./settings-shell";
 import { SshPage } from "./ssh-page";
@@ -281,20 +279,24 @@ export function AgentPage() {
           {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} agentName={agent.name} memoryLanguage={workspace.data?.memory_language} /> : null}
           {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
           {tab === "evals" && !byo ? <EvalsTab agentId={agent.id} frozen={agent.frozen !== null} canOwn={canOwn} defaultTimezone={workspace.data?.timezone} /> : null}
-          {tab === "schedules" && !byo ?<SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} wsId={workspace.data?.id} canOwn={canOwn} /> : null}
-          {tab === "webhooks" && !byo ? <WebhooksTab agentId={agent.id} wsId={workspace.data?.id} canOwn={canOwn} /> : null}
-          {tab === "peers" && !byo ? <PeersTab agentId={agent.id} agentName={agent.name} agentsHref={`${base}/agents`} wsId={wsId} frozen={agent.frozen !== null} /> : null}
-          {tab === "channels" && !byo && workspace.data ? (
-            <AgentChannelsTab
+          {/* (P5-REFINE-14) Schedules, Webhooks and Channels are one page; the old ids open it filtered to their kind. */}
+          {tab === "automations" && !byo && workspace.data ? (
+            <AutomationsTab
+              key={requestedTab ?? "automations"}
               agentId={agent.id}
               agentName={agent.name}
+              agentBase={`${base}/agents/${agent.handle}`}
               orgId={workspace.data.org_id}
-              canOwn={workspace.data.my_role === "owner"}
               wsId={workspace.data.id}
+              canOwn={canOwn}
+              defaultTimezone={workspace.data.timezone}
+              workspaceName={workspace.data.name}
               narrationCards={agent.narration_cards}
+              initialFilter={(requestedTab && LEGACY_AUTOMATION_TAB[requestedTab]) || "all"}
             />
           ) : null}
-          {tab === "channels" && !byo && workspace.isPending ? <Loading /> : null}
+          {tab === "automations" && !byo && workspace.isPending ? <Loading /> : null}
+          {tab === "peers" && !byo ? <PeersTab agentId={agent.id} agentName={agent.name} agentsHref={`${base}/agents`} wsId={wsId} frozen={agent.frozen !== null} /> : null}
           {tab === "computer" && !byo ? (
             <ComputerTab agentId={agent.id} agentName={agent.name} workspaceId={workspace.data?.id} frozen={agent.frozen !== null} terminal={terminalEnabled} />
           ) : null}

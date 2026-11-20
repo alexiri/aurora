@@ -2324,6 +2324,16 @@ Data (add to `docs/03-data-model.md` `user_onboarding`): row `| more_controls | 
   - The service worker shows "Aurora — a scheduled task has an answer for you" / "Open the conversation to read it." (with `title`: "Aurora — <title>"), tag `aurora-schedule`, and opens exactly the given conversation path.
   - Recurring runs and run-thread runs are never pushed.
 
+- C-1096 **Who paused a schedule or webhook** (P5-REFINE-14 send-back, D-407; migration `20261201000268_automation_pause_actor.sql`; UX review 5 schedules-4; amends the `05` schedule and webhook rows).
+  - New columns `schedules.disabled_by uuid NULL REFERENCES users(id) ON DELETE SET NULL` and `webhooks.disabled_by uuid NULL REFERENCES users(id) ON DELETE SET NULL`. Written only by a person's own pause (`PATCH { enabled: false }` by a caller: `disabled_reason = 'user'`, `disabled_by` = the caller); cleared whenever the row is re-enabled (any path, including a reassignment that re-enables). A pause by an agent tool, by the authorization pass (`authorization`), by the failure counter (`failures`) or by anything else leaves it null.
+  - `Schedule` and `Webhook` gain `paused_by: { id: uuid, display_name: string } | null` (the shape of `created_by`): non-null only while `enabled = false` and `disabled_reason = 'user'` and the actor still exists. Whoever can read the row reads the field; nothing else is added (no e-mail, no role). The dashboard writes "Paused by <display_name>"; with null it keeps the notices for `authorization` and `failures`, and "Paused" alone for a pause without a name.
+- C-1097 **How a delivery was verified** (P5-REFINE-14 send-back, D-409; UX review 5 webhooks-4; amends C-1079). No column.
+  - The `display` object of a webhook turn's `turn.queued` event (C-1079) gains `verification: "signed" | "token" | "none"`, set by the receiver at delivery time from the webhook's configuration then: `signed` (kind `hmac_sha256`, and the signature matched), `token` (kind `bearer`, and the token matched), `none` (kind `none`: nothing was checked). Only an accepted delivery has a thread, so a refused one never carries it. Old events have none; the dashboard then writes only "accepted".
+  - The dashboard's first line reads "<time> · signed and accepted" (`signed`), "<time> · accepted with its token" (`token`), "<time> · accepted, not signed" (`none`).
+- C-1098 **A renamed automation's threads remember the old name** (P5-REFINE-14 send-back, D-409; migration `20261201000268`; UX review 5 schedules-7; amends C-1074).
+  - New column `conversations.previous_title text NULL`. The title-sync `UPDATE` of C-1074 (renaming a schedule or webhook) sets `previous_title` to the thread's title as it was, only for the threads whose title actually changes; a thread never renamed has null. A second rename replaces it with the name before that rename. A person's own rename of a direct chat does not touch it.
+  - `Conversation.automation` gains `previous_name: string | null` (the stored `previous_title`; null unless the automation was renamed). Whoever may read the conversation reads it (it is the automation's former name, already visible on the schedule or webhook row at that time). The dashboard shows "was "<previous_name>", renamed with it" as the first rename note of the thread.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._

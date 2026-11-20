@@ -10,7 +10,7 @@ import { DropZone } from "@/components/ui/drop-zone";
 import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import { chatApi, type Conversation } from "@/lib/api/conversations";
-import { conversationTitle, kindLabel } from "@/lib/chat/layout";
+import { automationNotes, conversationTitle, kindLabel } from "@/lib/chat/layout";
 import { buildPermalink, permalinkSeq, withoutMessageParam } from "@/lib/chat/permalink";
 import { markStopped } from "@/lib/chat/stopped";
 import { activeTurnId } from "@/lib/chat/transcript";
@@ -132,6 +132,8 @@ export function ChatThread({
     : undefined;
   const segments = [
     ...(isDirect || !conversation ? [] : [kindLabel(conversation.kind)]),
+    // (schedules-7) "Schedule · was "Every minute ping", renamed with it", then "Schedule deleted" / "Webhook deleted".
+    ...(conversation ? automationNotes(conversation) : []),
     // (chat-1) "Archived 19 Nov 2026 · read only"
     ...(conversation?.archived_at ? [`Archived ${DATE.format(new Date(conversation.archived_at))}`, "read only"] : archived ? ["Archived", "read only"] : []),
     ...(retentionDays ? [`Deleted after ${retentionDays} days without activity`] : []),
@@ -163,6 +165,13 @@ export function ChatThread({
             ) : null
           }
         />
+        {conversation?.automation?.deleted ? (
+          <Notice tone="neutral" role="status" className="m-3 shrink-0" data-testid="automation-deleted">
+            {conversation.automation.kind === "webhook"
+              ? "It was started by a webhook that no longer exists. No new deliveries."
+              : "It was started by a schedule that no longer exists. No new runs."}
+          </Notice>
+        ) : null}
         {actionErr ? (
           <Notice tone="danger" role="alert" className="m-3 shrink-0">
             {actionErr}
