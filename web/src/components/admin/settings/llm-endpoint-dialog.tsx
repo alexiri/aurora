@@ -206,7 +206,7 @@ function toEntry(d: Draft, base: Entry | null): Entry {
 
 const REASON: Record<string, string> = {
   destination_refused:
-    "This address is private, loopback or a metadata address. An operator can open it with gateway.allowed_private.",
+    "Aurora can't reach private addresses. Ask whoever installed Aurora to allow it.",
   dns: "The name could not be found from the API.",
   timeout: "It did not answer within 10 seconds.",
   connect: "The connection was refused.",

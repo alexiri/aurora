@@ -26,7 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import { ApiError } from "@/lib/api/client";
 import { errorDetail, errorMessage, fieldErrors } from "@/lib/api/errors";
 import { TechnicalDetails } from "@/components/ui/technical-details";
-import { defaultInWords, describeChange, valueWords } from "@/lib/settings-words";
+import { defaultInWords, describeChange, fieldErrorWords, settingKeyOfPath, technicalNames, valueWords } from "@/lib/settings-words";
 import {
   useSettingsSaver,
   type FieldInfo,
@@ -173,6 +173,18 @@ export function SettingsSectionForm(props: {
       footer={props.footer}
     />
   );
+}
+
+/** (P5-REFINE-18 #5, admin-2) What a save says changed, for the sections that have a sentence of their own. */
+const SAVED_WORDS: Record<string, string> = {
+  agents: "Saved. New agents use these defaults.",
+  approvals: "Saved. New agents use these defaults.",
+};
+const SAVED_DEFAULT = "Saved. Applied to every replica within seconds.";
+
+function savedWords(saved: { section: string }[] | null): string {
+  const words = (saved ?? []).map((s) => SAVED_WORDS[s.section]);
+  return words.length > 0 && words.every((w) => w !== undefined) ? words[0]! : SAVED_DEFAULT;
 }
 
 /** One section of a stacked page: its settings laid out in titled groups, and whatever sits beneath them. */
@@ -340,6 +352,18 @@ export function SettingsStackForm({
     }
   }
 
+  // (P5-REFINE-18 #4) After a refused save, bring the first bad field into view (the bar says how many need fixing).
+  const firstBad = states
+    .flatMap(({ part }) => {
+      const err = errors[part.section.section];
+      const known = new Set(part.section.settings.map((s) => s.key));
+      return err ? Object.keys(fieldErrors(err)).map(settingKeyOfPath).filter((k) => known.has(k)) : [];
+    })
+    .find(Boolean);
+  useEffect(() => {
+    if (firstBad) document.getElementById(firstBad)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  }, [errors, firstBad]);
+
   // The bar's words: how many fields need fixing, or the one failure that is not a field's (stale revision, locked key).
   let fieldErrorCount = 0;
   let otherError: ReactNode = undefined;
@@ -348,7 +372,7 @@ export function SettingsStackForm({
     if (!err || (err instanceof ApiError && err.code === "key_origin_required")) continue;
     const known = new Set(part.section.settings.map((s) => s.key));
     const fe = fieldErrors(err);
-    const mine = Object.keys(fe).filter((k) => known.has(k.split("/")[0] ?? k));
+    const mine = Object.keys(fe).filter((k) => known.has(settingKeyOfPath(k)));
     fieldErrorCount += mine.length;
     if (mine.length === 0) otherError ??= errorMessage(err);
   }
@@ -358,9 +382,20 @@ export function SettingsStackForm({
       {states.map(({ part, draft }) => {
         const section = part.section;
         const error = errors[section.section];
-        const errs = error ? fieldErrors(error) : {};
         const fieldsByKey = new Map((section.fields ?? []).map((f) => [f.key, f]));
         const knownKeys = new Set(section.settings.map((s) => s.key));
+        // (P5-REFINE-18 #4, admin-4) Each message under its field, in the field's own unit; the names go to Technical details.
+        const rawErrs = error ? fieldErrors(error) : {};
+        const errs: Record<string, string> = {};
+        const names = new Set<string>();
+        for (const [path, message] of Object.entries(rawErrs)) {
+          const key = settingKeyOfPath(path);
+          for (const n of technicalNames(path, message)) names.add(n);
+          const words = fieldErrorWords(path, message, fieldsByKey.get(key));
+          // A keyed list's entry errors keep their `<key>/<entry>/…` path; a list item's error sits on the list's key.
+          const slot = path.includes("/") ? path : key;
+          if (!(slot in errs)) errs[slot] = words;
+        }
         const otherErrs = Object.entries(errs).filter(([k]) => !knownKeys.has(k.split("/")[0] ?? k));
         const code = error instanceof ApiError ? error.code : null;
         const setValue = (key: string, v: unknown) => edit(part, (d) => ({ ...d, values: { ...d.values, [key]: v } }));
@@ -400,16 +435,15 @@ export function SettingsStackForm({
             ) : null}
             {code === "settings_invalid" ? (
               <Notice tone="danger" role="alert">
-                <p>{errorMessage(error)}</p>
+                <p>{Object.keys(rawErrs).length > 0 ? "Some settings aren't valid yet. Fix the marked fields, then save again." : errorMessage(error)}</p>
                 {otherErrs.length > 0 ? (
                   <ul className="mt-1 list-disc pl-5">
                     {otherErrs.map(([k, m]) => (
-                      <li key={k}>
-                        <code className="font-mono">{k}</code>: {m}
-                      </li>
+                      <li key={k}>{m}</li>
                     ))}
                   </ul>
                 ) : null}
+                {names.size > 0 ? <TechnicalDetails title="Technical details">{[...names].join(", ")}</TechnicalDetails> : null}
               </Notice>
             ) : null}
 
@@ -455,7 +489,7 @@ export function SettingsStackForm({
         saved={saved}
         errorCount={fieldErrorCount}
         error={otherError}
-        savedMessage="Saved. Applied to every replica within seconds."
+        savedMessage={savedWords(before)}
         onUndo={undoable ? () => void undo() : undefined}
         onDiscard={() => {
           setDrafts({});

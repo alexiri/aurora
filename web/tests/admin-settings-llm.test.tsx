@@ -311,7 +311,7 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     expect(JSON.stringify(bodies[0])).toContain("team.example.test");
     expect(JSON.stringify(bodies[0])).not.toMatch(/api_key|secret|token/);
     fireEvent.click(within(dialog).getByRole("button", { name: "Test connection" }));
-    await waitFor(() => expect(within(dialog).getByRole("status", { name: "Connection test result" }).textContent).toContain("gateway.allowed_private"));
+    await waitFor(() => expect(within(dialog).getByRole("status", { name: "Connection test result" }).textContent).toContain("Aurora can't reach private addresses. Ask whoever installed Aurora to allow it."));
   });
 
   it("asks for confirmation naming the organizations whose keys stop working", async () => {
@@ -396,13 +396,13 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "OpenAI" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const row = (await screen.findByText("Needs attention")).closest("li")!;
-    expect(within(row).getByText(/plain http is only allowed to a private address/)).toBeTruthy();
+    expect(within(row).getByText(/Aurora can't reach private addresses\. Ask whoever installed Aurora to allow it\./)).toBeTruthy();
     // The dialog puts the message on the base URL field itself.
     fireEvent.click(within(row).getByRole("button", { name: "Edit team" }));
     const dialog = await screen.findByRole("dialog");
     const base = within(dialog).getByLabelText("Base URL");
     expect(base.getAttribute("aria-invalid")).toBe("true");
-    expect(within(dialog).getByText(/plain http is only allowed to a private address/)).toBeTruthy();
+    expect(within(dialog).getByText(/Aurora can't reach private addresses\. Ask whoever installed Aurora to allow it\./)).toBeTruthy();
   });
 
   it("shows the endpoint_resolves_private warning in the save confirmation (C-813)", async () => {
