@@ -164,6 +164,6 @@ describe("Terminal tab gating (C-622)", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Computer" }));
     await waitFor(() => expect(screen.getByRole("tab", { name: "Terminal" })).toBeInTheDocument());
     screen.getByRole("tab", { name: "Terminal" }).click();
-    await waitFor(() => expect(screen.getByText(/paused/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("terminal-tab")).toHaveTextContent("paused"));
   });
 });

@@ -91,7 +91,7 @@ describe("FilesTab listing", () => {
     const seen = mockApi((r) => (r.path === "/v1/agents/a1/files" ? listing("/workspace", ROOT) : undefined));
     renderTab();
     expect(await screen.findByRole("link", { name: "src" })).toBeInTheDocument();
-    expect(seen[0]!.query.get("path")).toBe("/workspace");
+    expect(seen.find((s) => s.path === "/v1/agents/a1/files")!.query.get("path")).toBe("/workspace");
     // Hidden names are filtered by default; `.aurora` is a dot-name too.
     expect(screen.queryByText(".env")).toBeNull();
     expect(screen.getByText("1.2 KiB")).toBeInTheDocument();
@@ -151,16 +151,16 @@ describe("path in the URL", () => {
     });
     renderTab();
     const crumbs = await screen.findByRole("navigation", { name: "Folder path" });
-    expect(within(crumbs).getByRole("link", { name: "workspace" })).toBeInTheDocument();
+    expect(within(crumbs).getByRole("link", { name: "Your files with Scout" })).toBeInTheDocument();
     expect(within(crumbs).getByText("src")).toHaveAttribute("aria-current", "page");
-    expect(seen[0]!.query.get("path")).toBe("/workspace/src");
+    expect(seen.find((s) => s.path === "/v1/agents/a1/files")!.query.get("path")).toBe("/workspace/src");
 
     fireEvent.click(await screen.findByRole("link", { name: "app" }));
     expect(await screen.findByText("page.tsx")).toBeInTheDocument();
     expect(new URLSearchParams(window.location.search).get("path")).toBe("/workspace/src/app");
     expect(new URLSearchParams(window.location.search).get("tab")).toBe("files");
 
-    fireEvent.click(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("link", { name: "workspace" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("link", { name: "Your files with Scout" }));
     expect(await screen.findByRole("link", { name: "src" })).toBeInTheDocument();
     expect(new URLSearchParams(window.location.search).has("path")).toBe(false);
   });
@@ -323,6 +323,7 @@ describe("row actions", () => {
       return undefined;
     });
     renderTab();
+    await screen.findByText("This folder is empty");
     fireEvent.click(await screen.findByRole("button", { name: /New folder/ }));
     fireEvent.change(await screen.findByLabelText("Folder name"), { target: { value: "docs" } });
     fireEvent.click(screen.getByRole("button", { name: "Create folder" }));

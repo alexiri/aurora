@@ -368,6 +368,6 @@ describe("the SSH page's availability", () => {
     expect(isPageAvailable("ssh", { ...on, byo: true })).toBe(false);
     expect(resolvePage("ssh", { ...on, ssh: false })).toBe("chat");
     const computer = availableSections({ ...on, terminal: true, previews: true }).find((s) => s.id === "computer")!;
-    expect(computer.pages.map((p) => p.label)).toEqual(["Computer", "Terminal", "Files", "Previews", "SSH"]);
+    expect(computer.pages.map((p) => p.label)).toEqual(["Files", "Terminal", "Connect", "Previews", "Details"]);
   });
 });

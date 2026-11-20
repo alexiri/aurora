@@ -211,7 +211,7 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
       </div>
       <TerminalPane agentId={agentId} frozen={frozen} exitFocusRef={exitRef} />
       {/* Where Esc, then Tab lands (the pop-out button is Expert and not on a phone): visible only while focused. */}
-      <button ref={exitRef} type="button" className="sr-only focus:not-sr-only focus:text-xs focus:underline">
+      <button ref={exitRef} type="button" className="sr-only focus-visible:not-sr-only focus-visible:text-xs focus-visible:underline">
         Leave the terminal (Esc, then Tab)
       </button>
     </div>
