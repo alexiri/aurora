@@ -1057,6 +1057,66 @@ fn the_goose_wrapper_without_a_model_explains_instead_of_opening_the_wizard() {
     }
 }
 
+/// (FIX-191) `opencode` writes the turn's plugin files (so its start never asks the npm registry), each
+/// only when missing.
+#[test]
+fn the_opencode_wrapper_writes_the_turns_plugin_files_when_missing() {
+    let file = terminal_file("opencode", GOLDEN_MODEL, "anthropic_messages");
+    assert!(file.contains("AURORA_OPENCODE_PLUGIN_VERSION='"), "{file}");
+    let (rig, _) = Rig::started("opencode", &file, &[], &[]);
+    for (rel, content) in aurora_supervisor::adapters::opencode::config::plugin_files() {
+        // The turn's paths are relative to its root, whose `config` is XDG_CONFIG_HOME.
+        let path = rig.state.join(rel);
+        let want: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json_file(&path), want, "{rel}");
+    }
+    assert!(
+        !rig.seen_env()
+            .unwrap()
+            .keys()
+            .any(|k| k.starts_with("AURORA_OPENCODE_")),
+    );
+    // A package.json the person (or OpenCode, for their plugins) changed is kept.
+    let pkg = rig.state.join("config/opencode/package.json");
+    let theirs =
+        "{\"dependencies\":{\"@opencode-ai/plugin\":\"1.19.6\",\"my-plugin\":\"1.0.0\"}}\n";
+    std::fs::write(&pkg, theirs).unwrap();
+    assert!(rig.run_as(&[], &[]).status.success());
+    assert_eq!(std::fs::read_to_string(&pkg).unwrap(), theirs);
+    // A version that is not a plain version string writes nothing.
+    let rig = Rig::new("opencode");
+    rig.write_env(&file.replace(
+        "AURORA_OPENCODE_PLUGIN_VERSION='1.19.6'",
+        "AURORA_OPENCODE_PLUGIN_VERSION='1\"}x'",
+    ));
+    assert!(rig.run_as(&[], &[]).status.success());
+    assert!(!rig.state.join("config/opencode/package.json").exists());
+}
+
+/// (FIX-191) OpenCode's errors go to its log, behind its full-screen interface: after a non-zero exit
+/// the wrapper says where that log is, and keeps the status; a clean exit says nothing.
+#[test]
+fn the_opencode_wrapper_names_the_log_after_a_failed_start() {
+    let file = terminal_file("opencode", GOLDEN_MODEL, "anthropic_messages");
+    for (code, says) in [(0, false), (3, true)] {
+        let rig = Rig::new("opencode");
+        rig.write_env(&file);
+        exe(
+            &rig.dir.path().join("fake-bin"),
+            &format!("/usr/bin/mkdir -p \"$XDG_DATA_HOME/opencode/log\"\nexit {code}"),
+        );
+        let out = rig.run_as(&[], &[]);
+        assert_eq!(out.status.code(), Some(code));
+        let err = String::from_utf8_lossy(&out.stderr);
+        let log = rig.state.join("data/opencode/log");
+        assert_eq!(
+            err.contains(&format!("see {} for details", log.display())),
+            says,
+            "{code}: {err}"
+        );
+    }
+}
+
 /// `opencode` already behaves like a turn: its terminal config allows every tool.
 #[test]
 fn the_opencode_terminal_config_allows_every_tool() {

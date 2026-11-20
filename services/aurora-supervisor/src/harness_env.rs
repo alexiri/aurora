@@ -258,6 +258,9 @@ fn terminal_values(
                 "KEY_VAR",
                 opencode::config::provider_of(&m.dialect)?.1.to_owned(),
             ),
+            // (FIX-191) The version of the turn's `plugin_files`, which the wrapper writes when
+            // missing: without them OpenCode's start asks the npm registry for its plugin package.
+            ("PLUGIN_VERSION", opencode::PINNED_VERSION.to_owned()),
         ],
     })
 }

@@ -8,7 +8,7 @@
 # `runner_plane/boot.rs`) and the supervisor's `TERM`/`COLORTERM` (pty.rs). No model is reachable
 # (`--network none`): the check is the harness's FIRST SCREEN, not a turn.
 #
-#   scripts/images/sandbox-harness-smoke.sh <image> [harness...]     (default: pi)
+#   scripts/images/sandbox-harness-smoke.sh <image> [harness...]     (default: pi opencode)
 #
 # Per harness it fails when the program dies of a signal (FIX-190: Pi's Node segfaulted at start)
 # or when its first screen does not show the expected prompt (a setup wizard, a question, a blank
@@ -19,7 +19,7 @@ cd "$(dirname "$0")/../.."
 image="${1:?usage: sandbox-harness-smoke.sh <image> [harness...]}"
 shift
 harnesses=("$@")
-[ "${#harnesses[@]}" -gt 0 ] || harnesses=(pi)
+[ "${#harnesses[@]}" -gt 0 ] || harnesses=(pi opencode)
 seccomp="$PWD/deploy/helm/aurora/files/sandbox-seccomp.json"
 [ -r "$seccomp" ] || { echo "FAIL: $seccomp is missing" >&2; exit 1; }
 podman image exists "$image" || { echo "FAIL: no image $image" >&2; exit 1; }
@@ -32,6 +32,10 @@ host=http://llm.invalid
 # Messages endpoint. Nothing here is secret: the gateway adds the real key.
 models_json='{"providers":{"aurora":{"baseUrl":"'"$host"'","api":"anthropic-messages","apiKey":"$ANTHROPIC_API_KEY","models":[{"id":"'"$model"'","name":"'"$model"'"}]}}}'
 pi_settings='{"retry":{"enabled":true,"maxRetries":2,"baseDelayMs":2000},"defaultProjectTrust":"never","enableInstallTelemetry":false,"quietStartup":true,"collapseChangelog":true}'
+# `opencode::config::terminal_config` for the same model (Anthropic Messages, no roles, no effort).
+oc_variants='{"low":{"thinking":{"type":"enabled","budgetTokens":4000}},"medium":{"thinking":{"type":"enabled","budgetTokens":10000}},"high":{"thinking":{"type":"enabled","budgetTokens":16000}},"max":{"thinking":{"type":"enabled","budgetTokens":32000}}}'
+oc_config='{"$schema":"https://opencode.ai/config.json","autoupdate":false,"share":"disabled","permission":{"*":"allow"},"model":"aurora/'"$model"'","small_model":"aurora/'"$model"'","agent":{"title":{"disable":true}},"instructions":["/workspace/AGENTS.md"],"provider":{"aurora":{"npm":"@ai-sdk/anthropic","name":"Aurora","options":{"baseURL":"'"$host"'/v1","apiKey":"{env:ANTHROPIC_API_KEY}"},"models":{"'"$model"'":{"name":"'"$model"'","variants":'"$oc_variants"'}}}}}'
+oc_version=$(sed -n 's/^ARG OPENCODE_VERSION=//p' images/sandbox/Containerfile | head -1)
 cat >"$work/harness.env" <<EOF
 # Written by sandbox-harness-smoke.sh in the shape of aurora-supervisor's harness.env.
 HARNESSES_ENABLED='claude-code codex pi goose opencode'
@@ -50,6 +54,10 @@ AURORA_PI_MODEL='$model'
 AURORA_PI_MODELS_JSON='$models_json'
 AURORA_PI_KEY_VAR='ANTHROPIC_API_KEY'
 AURORA_PI_SETTINGS_JSON='$pi_settings'
+AURORA_OPENCODE_MODEL='aurora/$model'
+AURORA_OPENCODE_CONFIG='$oc_config'
+AURORA_OPENCODE_KEY_VAR='ANTHROPIC_API_KEY'
+AURORA_OPENCODE_PLUGIN_VERSION='$oc_version'
 EOF
 
 # Inside the container: start `$1` in a PTY (`script`), type the quit keys after a few seconds, and
@@ -67,7 +75,8 @@ fail=0
 for h in "${harnesses[@]}"; do
   # What the harness's own prompt shows on its first screen (a setup wizard or a question has none).
   case $h in
-    pi) want='claude-sonnet\|smoke-model' ;;
+    # Pi's footer and OpenCode's prompt box both name the model.
+    pi | opencode) want="$model" ;;
     *) echo "FAIL: no first-screen check for $h" >&2; exit 2 ;;
   esac
   out=$(podman run --rm --network none --user 1000:1000 \

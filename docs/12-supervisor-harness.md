@@ -1066,7 +1066,13 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   **OpenCode** gets `AURORA_OPENCODE_CONFIG` (the rendered
   `opencode.json` without the platform tools, passed as `OPENCODE_CONFIG_CONTENT`), with its XDG
   directories under `/workspace/.aurora/terminal/opencode` and the vendor switches of `§Adapters`
-  set. A model the harness cannot use (an id or role that fails the supervisor's re-check, or a
+  set. **(FIX-191)** It also gets `AURORA_OPENCODE_PLUGIN_VERSION` (the pinned version), from which
+  the wrapper writes a turn's `plugin_files` under `$XDG_CONFIG_HOME/opencode` when they are missing,
+  so the start does not ask the npm registry for OpenCode's plugin package (a file already there is
+  kept: OpenCode updates them for the person's own plugins). OpenCode runs as the wrapper's child, not
+  `exec`ed, and after a non-zero exit the wrapper prints "opencode: exited with status N; see
+  `<XDG_DATA_HOME>/opencode/log` for details", because its errors go to that log, behind its
+  full-screen interface. A model the harness cannot use (an id or role that fails the supervisor's re-check, or a
   dialect it does not speak, for example goose on a Responses-only endpoint) becomes
   `AURORA_<HARNESS>_UNAVAILABLE` ("this agent's model endpoint cannot be used with …"), never a
   half-configured CLI. The wrappers name the placeholder only through the variable the CLI's config

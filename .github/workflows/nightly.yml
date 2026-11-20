@@ -164,7 +164,7 @@ jobs:
       - name: Build the full sandbox image
         run: podman build -f images/sandbox/Containerfile --target sandbox -t localhost/aurora-sandbox:harness-smoke .
       - name: Terminal harness smoke
-        run: bash scripts/images/sandbox-harness-smoke.sh localhost/aurora-sandbox:harness-smoke pi
+        run: bash scripts/images/sandbox-harness-smoke.sh localhost/aurora-sandbox:harness-smoke pi opencode
 
   # FIX-101: the hosted scenarios the PR job skips because they need the FULL sandbox image (Chromium, the pinned
   # Claude Code CLI; ~10 min cold): SEC-41 (the browser path, hosted.rs s8d and its sibling). With CI=true a
