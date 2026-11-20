@@ -105,7 +105,7 @@ describe("conversation actions", () => {
     const calls = mock({ "DELETE /v1/conversations/c1": () => json(204, null) });
     const gone = vi.fn();
     wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} onGone={gone} />);
-    pick("Conversation actions", "Delete conversation…");
+    pick("Conversation actions", "Delete this conversation…");
     expect(await screen.findByText(/not deleted/)).toBeTruthy();
     const submit = screen.getByRole("button", { name: "Delete conversation" }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
@@ -119,7 +119,7 @@ describe("conversation actions", () => {
   it("delete refused while a turn runs shows the reason", async () => {
     mock({ "DELETE /v1/conversations/c1": () => json(409, { error: { code: "conversation_active", message: "active" } }) });
     wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} onGone={vi.fn()} />);
-    pick("Conversation actions", "Delete conversation…");
+    pick("Conversation actions", "Delete this conversation…");
     fireEvent.change(await screen.findByLabelText(/Type "delete"/), { target: { value: "delete" } });
     fireEvent.click(screen.getByRole("button", { name: "Delete conversation" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/Stop it first/);

@@ -518,12 +518,10 @@ Fill in when done; P5-REFINE-20 reads it.
   approvals counted, screen-reader words, hidden at zero and for people who cannot decide.
 - **Items waiting for a backend brief** (which, what is missing, when picked up):
   - 2 part B (live per-agent timeline, in-progress rows in place, "n new · Show"): brief 9 not merged.
-  - 4 "Not signed in yet" **data**: the row, chip, "added …" and Copy link are built and tested against `signed_in === false`; the field
-    `AccessBinding.signed_in` (C-1086, built by brief 6) is not in the schema yet, so nothing shows it until -6 merges. Scope 6 (Rust) was not built here, as the
-    brief says.
+  - ~~4 "Not signed in yet" data~~ **done in the second pass** (master 7337fa1f, -6 merged): `access-tab.tsx` now reads the typed `AccessBinding.signed_in` (C-1086; the cast is gone); the existing `people-table` test covers it.
   - 11 / 19 Overview: Needs you rows in brief 8's feed shape, the attention count next to Overview and in the Needs you heading, and the Approvals
     badge read from C-1082: brief 8 not merged.
-  - 16 (account-3, chat platforms naming the platform and the bot): C-1089 (brief 6) not merged; the page is unchanged.
+  - ~~16 (account-3)~~ **done in the second pass** (-6 merged): `account-channels-view.tsx` gets a **Chat platforms** section from `GET /v1/me/chat-platforms` (C-1089, `useMyChatPlatforms`): "Mattermost · Message @aurora-bot in Mattermost and send `link`." with **Link account** (a "Linked" badge instead when `linked`; without a bot handle "Message the bot in …"); none connected says "No chat platform is connected yet. An admin can connect one." Deviations: the description says "your agents" (the account page has no agent name; the mockup's "Daneel" is an example); **Link account** opens a one-line how-to (the bot replies with a sign-in link) because there is no other link action to trigger (the mockup shows none); the section never blocks the page (a failed read shows one quiet line, no alert). Tests: `web/tests/channels.test.tsx` (two new tests, the route added to the existing one), `web/e2e/support/mock-api.ts` serves `/v1/me/chat-platforms`; `e2e/send-as-me.spec.ts` opens the same page and needs no change. Not run: Playwright. Commands: typecheck, eslint on touched files, vitest `channels`, `user-tokens`, `people-table` passed.
   - 2 "Automations" filter option: no field on a request-log row says a schedule or automation made it, so the option is not offered until part B.
 - **Deviations from the mockup or this brief and why:**
   - Check a request: the rule name is bold, not a link: there is no rule-editor deep link in the codebase. The dialog keeps its title "Try a request".

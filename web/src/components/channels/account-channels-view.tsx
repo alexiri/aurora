@@ -1,15 +1,17 @@
 "use client";
 
 import { useQueries } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { SendAsMeSection } from "@/components/account/send-as-me";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { Section } from "@/components/ui/section";
 import { api } from "@/lib/api/client";
 import { unwrap } from "@/lib/api/unwrap";
-import { useDmDefaults, useMyChannelLinks, useSetDmDefault, useUnlinkMine } from "@/lib/api/channels";
+import { useDmDefaults, useMyChannelLinks, useMyChatPlatforms, useSetDmDefault, useUnlinkMine } from "@/lib/api/channels";
 import { useSession } from "@/lib/api/queries";
 
 import { MutationError } from "./shared";
@@ -29,6 +31,58 @@ function useCandidateAgents() {
     (r.data?.items ?? []).map((a) => ({ id: a.id, label: `${a.name} (@${a.handle}) · ${workspaces[i].name}` })),
   );
   return { agents, pending: session.isPending || results.some((r) => r.isPending) };
+}
+
+/**
+ * (P5-REFINE-16, account-3, C-1089) One row per connected chat platform, naming the platform and the bot to message.
+ * It never blocks the page: while it loads or fails, the linked accounts below still show.
+ */
+function PlatformsSection() {
+  const q = useMyChatPlatforms();
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <Section id="chat-platforms" title="Chat platforms" description="Link your chat account so your agents recognise you there.">
+      {q.isPending ? <Loading /> : null}
+      {q.isError ? <p className="text-sm text-ink-2">The chat platforms could not be loaded. Reload the page to try again.</p> : null}
+      {q.data && q.data.platforms.length === 0 ? (
+        <p className="text-sm text-ink-2">No chat platform is connected yet. An admin can connect one.</p>
+      ) : null}
+      {q.data && q.data.platforms.length > 0 ? (
+        <ul aria-label="Chat platforms" className="divide-y divide-line rounded-card border border-line bg-surface shadow-card">
+          {q.data.platforms.map((p) => (
+            <li key={p.kind} className="space-y-2 p-3 sm:px-4">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <p className="min-w-0 flex-1 text-sm text-ink-2">
+                  <span className="font-medium text-ink">{p.display_name}</span> ·{" "}
+                  {p.bot_handle ? (
+                    <>
+                      Message <span className="font-mono text-ink">{p.bot_handle}</span> in {p.display_name} and send <code className="font-mono text-ink">link</code>.
+                    </>
+                  ) : (
+                    <>
+                      Message the bot in {p.display_name} and send <code className="font-mono text-ink">link</code>.
+                    </>
+                  )}
+                </p>
+                {p.linked ? (
+                  <Badge tone="accent">Linked</Badge>
+                ) : (
+                  <Button variant="outline" size="sm" aria-expanded={open === p.kind} onClick={() => setOpen(open === p.kind ? null : p.kind)}>
+                    Link account
+                  </Button>
+                )}
+              </div>
+              {open === p.kind && !p.linked ? (
+                <p className="text-sm text-ink-2">
+                  The bot replies with a sign-in link. Open it and confirm, and this account appears under Linked chat accounts.
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </Section>
+  );
 }
 
 export function AccountChannelsView() {
@@ -112,6 +166,7 @@ export function AccountChannelsView() {
 
   return (
     <div className="space-y-8">
+      <PlatformsSection />
       {linked}
       <SendAsMeSection links={links.data.items} agents={agents} />
     </div>

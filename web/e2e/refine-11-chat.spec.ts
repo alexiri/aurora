@@ -47,7 +47,7 @@ for (const scheme of ["light", "dark"] as const) {
     test("an archived conversation is read-only: its header says so, Restore is there, the composer is gone", async ({ page }) => {
       await openChat(page, scheme, DEFAULT);
       await page.getByRole("tab", { name: "Archived" }).click();
-      await page.getByRole("button", { name: /Notion handbook review/ }).click();
+      await page.getByRole("button", { name: /^Notion handbook review/ }).click();
       await expect(page.getByText("read only")).toBeVisible();
       await expect(page.getByRole("button", { name: "Restore" })).toBeVisible();
       await expect(page.getByText("This conversation is archived. Restore it to write again.")).toBeVisible();

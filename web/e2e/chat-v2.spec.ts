@@ -62,7 +62,7 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
       // (chat-11) A phone opens the conversation itself; the list with Active/Archived is one tap back.
       if (phone) await page.getByRole("button", { name: "Back to conversations" }).click();
       await page.getByRole("tab", { name: "Archived" }).click();
-      await page.getByRole("button", { name: /Notion handbook review/ }).click();
+      await page.getByRole("button", { name: /^Notion handbook review/ }).click();
       await page.getByRole("button", { name: "Conversation actions" }).click();
       await expect(page.getByRole("menuitem", { name: "Unarchive" })).toBeVisible();
     },
@@ -275,11 +275,14 @@ test.describe("layout, 1280 px", () => {
     const actions = page.getByRole("button", { name: "Conversation actions" });
     await actions.focus();
     await page.keyboard.press("Enter");
+    // (D-409) The person's own chat can be renamed: Rename is first.
+    await expect(page.getByRole("menuitem", { name: "Rename" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
     await expect(page.getByRole("menuitem", { name: "Archive" })).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(page.getByRole("menuitem", { name: "Export JSON" })).toBeFocused();
     await expect(page.getByRole("menuitem", { name: "Export with files (zip)" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Delete conversation…" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Delete this conversation…" })).toBeVisible();
   });
 
   test("tabbing into a message reveals the toolbar with its first button focused; no focused control is ever invisible", async ({ page }) => {
@@ -322,7 +325,7 @@ test.describe("layout, 1280 px", () => {
   test("a deep link opens the conversation and the selection is in the URL", async ({ page }) => {
     await openChat(page, "light", DEFAULT, `?c=${SENTRY.id}`);
     await expect(page.getByRole("heading", { name: "Sentry alerts", level: 2 })).toBeVisible();
-    await page.getByRole("button", { name: /Weekly Linear digest/ }).click();
+    await page.getByRole("button", { name: /^Weekly Linear digest/ }).click();
     await expect(page).toHaveURL(new RegExp(`c=${NIGHTLY.id}`));
     await page.goBack();
     await expect(page.getByRole("heading", { name: "Sentry alerts", level: 2 })).toBeVisible();
@@ -330,7 +333,7 @@ test.describe("layout, 1280 px", () => {
     // lets the focus move mid-fill and the text lands in the composer. Wait for the hand-over, then type.
     await expect(page.getByLabel("Message", { exact: true })).toBeFocused();
     await page.getByRole("combobox", { name: "Search conversations and messages" }).fill("handbook");
-    await expect(page.getByRole("button", { name: /Sentry alerts/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Sentry alerts/ })).toHaveCount(0);
   });
 });
 
@@ -349,7 +352,7 @@ test.describe("layout, 390 px", () => {
     await expect(page.getByRole("log")).toBeHidden();
     expect(await overflow(page)).toBeLessThanOrEqual(0);
 
-    await page.getByRole("button", { name: /Weekly Linear digest/ }).click();
+    await page.getByRole("button", { name: /^Weekly Linear digest/ }).click();
     await expect(page.getByRole("log")).toBeVisible();
     await expect(list).toBeHidden();
     expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -358,7 +361,7 @@ test.describe("layout, 390 px", () => {
     await expect(list).toBeVisible();
     expect(new URL(page.url()).searchParams.has("c")).toBe(false);
 
-    await page.getByRole("button", { name: /Weekly Linear digest/ }).click();
+    await page.getByRole("button", { name: /^Weekly Linear digest/ }).click();
     await expect(page.getByRole("log")).toBeVisible();
     await page.goBack();
     await expect(list).toBeVisible();

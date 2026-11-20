@@ -460,12 +460,12 @@ describe("conversation list and the URL (RFE-009)", () => {
   });
 
   // (P5-REFINE-11, chat-1) The API returns the person's direct chat archived or not: an archived one is never injected into Active.
-  it("an archived direct conversation is not in the Active groups; the thread is read-only with Restore and no composer; New chat restores it", async () => {
+  it("an archived direct conversation is not in the Active groups; the thread is read-only with Restore and no composer; New chat starts a fresh one", async () => {
     const direct = conv("d1", "direct", { archived_at: "2026-11-19T10:00:00Z" });
     const calls = mock({
       "POST /v1/agents/a1/conversations/direct": () => json(200, direct),
       "GET /v1/agents/a1/conversations": () => json(200, { items: [], next_cursor: null }),
-      "POST /v1/conversations/d1/unarchive": () => json(200, { ...direct, archived_at: null }),
+      "POST /v1/agents/a1/conversations/direct/new": () => json(201, conv("d2", "direct")),
     });
     wrap(<ChatTab agentId="a1" wsId="w" base="/o/x/w/y" agent={{ id: "a1", name: "Daneel", handle: "daneel" }} />);
     const nav = await screen.findByRole("navigation", { name: "Conversations" });
@@ -479,8 +479,11 @@ describe("conversation list and the URL (RFE-009)", () => {
     expect(within(header).getByRole("button", { name: "Restore" })).toBeTruthy();
     expect(screen.getByText("This conversation is archived. Restore it to write again.")).toBeTruthy();
     expect(screen.queryByLabelText("Message")).toBeNull();
-    fireEvent.click(within(nav).getByRole("button", { name: "New chat" }));
-    await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.path === "/v1/conversations/d1/unarchive")).toBe(true));
+    // The header's button and the empty list's button both start a fresh chat (D-409): nothing is restored behind the person's back.
+    fireEvent.click(within(nav).getAllByRole("button", { name: "New chat" })[1]);
+    await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.path === "/v1/agents/a1/conversations/direct/new")).toBe(true));
+    expect(calls.some((c) => c.path === "/v1/conversations/d1/unarchive")).toBe(false);
+    await waitFor(() => expect(window.location.search).toBe("?c=d2"));
   });
 
   it("an empty archive says so", async () => {

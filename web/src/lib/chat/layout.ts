@@ -72,8 +72,18 @@ export const KIND_LABEL: Record<string, string> = {
 };
 export const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? kind;
 
-/** The row title: `title`, else "Direct chat" for a direct conversation, else the external reference. */
-export function conversationTitle(c: Pick<Conversation, "title" | "kind" | "external_ref" | "direct_user">): string {
+/**
+ * The row title: a run thread of an automation is "Morning summary · 19 Nov 09:00" (D-409, C-1074); otherwise `title`,
+ * else "Direct chat" for a direct conversation, else the external reference.
+ */
+export function conversationTitle(
+  c: Pick<Conversation, "title" | "kind" | "external_ref" | "direct_user"> & Partial<Pick<Conversation, "automation" | "run_at">>,
+  now: Date = new Date(),
+): string {
+  if (c.automation && c.run_at) {
+    const when = searchTime(c.run_at, now);
+    if (when) return `${c.automation.name} · ${when}`;
+  }
   if (c.title) return c.title;
   if (c.kind === "direct") return c.direct_user?.display_name || "Direct chat";
   return c.external_ref;
@@ -92,26 +102,30 @@ export function sortByActivity(convs: Conversation[]): Conversation[] {
   return [...convs].sort((a, b) => activity(b) - activity(a));
 }
 
+/** The caller's own direct chat: a direct conversation the API does not mark with another person (`direct_user`, C-1073). */
+export const isOwnDirect = (c: Pick<Conversation, "kind" | "direct_user">): boolean => c.kind === "direct" && !c.direct_user;
+
 export interface ListGroups {
-  /** The caller's own direct conversation, always first. */
-  mine: Conversation | null;
+  /** (D-409) The caller's own direct chats, newest activity first: the person can have several. */
+  mine: Conversation[];
   /** Everything else visible to the caller, newest activity first. */
   others: Conversation[];
   /** Other members' direct conversations (owners only), newest activity first. */
   memberDirects: Conversation[];
 }
 
-/** Own direct chat first, then `last_activity_at` desc; other members' direct chats are a separate group. */
-export function groupConversations(convs: Conversation[], directId: string | null): ListGroups {
+/** Own direct chats first (newest first), then `last_activity_at` desc; other members' direct chats are a separate group. */
+export function groupConversations(convs: Conversation[]): ListGroups {
   const byActivity = (a: Conversation, b: Conversation) => activity(b) - activity(a);
-  const mine = convs.find((c) => c.id === directId) ?? null;
-  const rest = convs.filter((c) => c.id !== directId);
   return {
-    mine,
-    others: rest.filter((c) => !(c.kind === "direct" && c.direct_user)).sort(byActivity),
-    memberDirects: rest.filter((c) => c.kind === "direct" && c.direct_user).sort(byActivity),
+    mine: convs.filter(isOwnDirect).sort(byActivity),
+    others: convs.filter((c) => c.kind !== "direct").sort(byActivity),
+    memberDirects: convs.filter((c) => c.kind === "direct" && c.direct_user).sort(byActivity),
   };
 }
+
+/** (C-1074) The folder's line: "Morning summary · 3 runs". */
+export const folderRunsLabel = (name: string, count: number): string => `${name} · ${count} ${count === 1 ? "run" : "runs"}`;
 
 /** Client-side title filter (there is no search API). */
 export function filterConversations(convs: Conversation[], query: string): Conversation[] {

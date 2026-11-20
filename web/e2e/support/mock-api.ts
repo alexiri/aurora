@@ -263,6 +263,7 @@ export async function mockApi(
     }
     // P4-ONB-2: onboarding progress (seen, so `/` stays on the workspace), the guide's readiness and the setup wizard.
     if (p === "/v1/me/user-tokens") return json({ tokens: [] });
+    if (p === "/v1/me/chat-platforms") return json({ platforms: [{ kind: "mattermost", display_name: "Mattermost", bot_handle: "@aurora-bot", linked: false }] });
     // (P5-REFINE-3, C-1056) "Show more controls" is on in the mock so every spec sees the whole control surface; the
     // altitude spec overrides this route to test it off.
     if (p === "/v1/me/onboarding") return json({ welcome_seen: true, guide_dismissed: [], tour_completed_at: null, notices_seen: ["renames-2026-11"], more_controls: true });

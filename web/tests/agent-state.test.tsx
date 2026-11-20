@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AgentState, agentStateOf, CANT_ANSWER_REASON } from "@/components/agents/agent-state";
+import { markStopped, resetStopped } from "@/lib/chat/stopped";
 import { json } from "./support/api";
 
 // P5-REFINE-11 item 2 (D-408): one header state, most urgent first: Can't answer → Needs you → Working → Starting its
@@ -68,5 +69,42 @@ describe("AgentState (header)", () => {
     renderState({ can_answer: true, reason: null, usable_keys: 1, fix: null });
     await waitFor(() => expect(screen.getByTestId("agent-state")).toHaveTextContent("Ready"));
     expect(screen.queryByRole("button", { name: "Fix it" })).toBeNull();
+  });
+});
+
+// (chat-4, C-1075) Stop: the header is Ready at once, before the turn's `turn.finished` reaches the list.
+describe("AgentState after Stop", () => {
+  const turn = { id: "t1", abort_requested: false };
+  const busy = { word: "on", ready: true, working: true, asleep: false };
+  function renderBusy() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Request | string | URL) => {
+        const url = new URL(input instanceof Request ? input.url : String(input), "http://localhost");
+        if (url.pathname === "/v1/agents/a1/answer-readiness") return json(200, { can_answer: true, reason: null, usable_keys: 1, fix: null });
+        if (url.pathname === "/v1/agents/a1/sandbox") return json(200, { computer: busy });
+        if (url.pathname === "/v1/agents/a1/conversations") return json(200, { items: [{ id: "c1", active_turn: turn }], next_cursor: null });
+        return json(200, { items: [], next_cursor: null });
+      }),
+    );
+    return render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AgentState agentId="a1" wsId="w1" canApprove={false} hosted />
+      </QueryClientProvider>,
+    );
+  }
+  afterEach(() => resetStopped());
+
+  it("says Working while a turn runs, Ready once the person pressed Stop", async () => {
+    renderBusy();
+    await waitFor(() => expect(screen.getByTestId("agent-state")).toHaveTextContent("Working"));
+    act(() => markStopped("t1"));
+    await waitFor(() => expect(screen.getByTestId("agent-state")).toHaveTextContent("Ready"));
+  });
+  it("treats a turn with abort_requested as stopped (another tab, a reload)", async () => {
+    turn.abort_requested = true;
+    renderBusy();
+    await waitFor(() => expect(screen.getByTestId("agent-state")).toHaveTextContent("Ready"));
+    turn.abort_requested = false;
   });
 });

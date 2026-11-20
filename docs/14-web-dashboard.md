@@ -581,8 +581,22 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     the person's conversation** with the composer ready, "Conversations" one tap back. **First successes** (first answer, first
     app, first approval, first schedule run) are `Notice` cards with **Got it**, shown once per person (server-side
     `notices_seen` keys `first-answer`, `first-app`, `first-approval`, `first-run`).
-  - *Waiting for other briefs:* several chats, Rename, auto-titles, run threads and the stopped-answer marker (P5-REFINE-7),
-    "can't answer" fix button (P5-REFINE-12), the timeline feed (P5-REFINE-9), the Needs-you badge on the Agents list (C-1082, P5-REFINE-8).
+  - **Several chats, run threads, Stop** (P5-REFINE-11 after P5-REFINE-7, D-409, C-1073..C-1075; chat-3, chat-4). The list's header is
+    **Conversations** with a **New chat** button (plus icon): it calls `POST …/conversations/direct/new` and opens the fresh chat at
+    once with the composer focused (200 returns the latest chat while it is still empty; 422 `conversation_limit` is said in words).
+    The Chat tab opens the person's **latest active chat** (`POST …/direct`, never an archived one) or creates the first. The Active
+    list asks `automation=none`: the person's own chats come first, newest first, then group and API conversations, then **Automations**
+    (`GET …/conversation-folders`): one row per schedule or webhook, **"Morning summary · 3 runs"**, opening (the threads load then,
+    `automation=only&automation_id=`) to its run threads, each titled **"Morning summary · 19 Nov 09:00"** (a deleted automation is marked
+    "Schedule deleted" / "Webhook deleted"); other members' direct chats (owners) stay in their own group. A row is the title, a line
+    ("You and Daneel · 23:50" today, "Yesterday", "17 Nov") and the row's **"…" menu**: **Rename**, **Archive**, a separator, **Delete this
+    conversation…** (danger ink, the typed confirmation). **Rename** edits the title in the row (Enter saves with "Saved", Esc cancels;
+    `PATCH /v1/conversations/{id}`; an empty title goes back to the first message); only the person's own chats can be renamed (a run
+    thread's title follows its automation, 409 `title_managed`). The thread header's menu has the same Rename (a small dialog) and the exports.
+    **Stop** keeps the partial answer: the button reads **Stopping…** (disabled) while the call runs and until the turn finishes, the
+    header returns to **Ready** at once (`abort_requested` or a Stop pressed here is not "Working"), and the durable `turn_stopped`
+    notice shows as **"You stopped this answer"**, muted between two rules, under the partial text.
+  - *Waiting for other briefs:* "can't answer" fix button (P5-REFINE-12), the timeline feed (P5-REFINE-9), the Needs-you badge on the Agents list (C-1082, P5-REFINE-8).
   - **Computer** (phase 5, **P5-REFINE-15, D-405, D-406, D-408, D-412, D-416**). The sub-nav is **Files · Terminal · Connect · Previews ·
     Details** (`?tab=files|terminal|ssh|previews|computer`; the ids are unchanged). The tab opens on **Files**; with the terminal off
     on the instance it has no Files and opens on **Overview** (the Details page under its old name, with the "isn't set up" sentence).
@@ -2871,6 +2885,25 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 
   The ownerless-organization banner (FIX-050) stays. Built from the shared `Card`-less panel pattern,
   tokens only: both themes, no horizontal scroll at 390 px, axe clean.
+- **One feed per level** (P5-REFINE-8, D-417, D-407, C-1080..C-1082; the screens are P5-REFINE-16, -17
+  and -18's). The workspace (`GET /v1/workspaces/{ws}/attention`), the organization
+  (`GET /v1/orgs/{org}/attention`) and Administration (`GET /v1/admin/attention`) serve the same item: kind,
+  title, detail, since, the askers, the first asker's reason, one action, and a done state kept 30 days.
+  A request appears at the one level that can resolve it, and the rail of whoever can act shows
+  `GET /v1/attention/counts`. The API's sentences (`domains/attention/text.rs`):
+  | Kind | Title | Detail | Action |
+  |---|---|---|---|
+  | `app_request` | "Bob Builder wants Jira" ("… and Carol Member want …", "…, Carol Member and 2 others want …") | by need, naming the **role**: "Needs a sign-in app for Jira that only an organization admin can register.", "Needs a Jira server that only an organization admin can register.", "Needs set-up that only an organization admin can do.", "Jira is switched off for the organization; only an organization admin can switch it on." ("an instance admin" at Administration) | **Set up** |
+  | `chat_platform_request` | "Carol Member wants a chat platform" | "Your organization has no chat platform connected." | **Connect a chat platform** (a row may say **Connect**) |
+  | `ai_key_request` | "… wants an AI key" | "Your organization has no AI key its agents can use." | **Add an AI key** |
+  | `approval` | "<Agent> is waiting for your approval" | "It wants to use <App>." / "It wants to reach <host>." | **Review** |
+  | `access_request` | "<Agent> asks for <App>" / "… for a token for <host>" | "Give it access from the agent's Apps & access tab." | **Review** |
+  | `broken_account` | "<Account>: the sign-in expired" / "<Account> stopped working" | the reason; for people who cannot fix it, "Ask a workspace owner." / "Ask an organization admin." | **Sign in again** / **Fix**, or none |
+  | `my_request` (own, never counted) | "You asked for Jira" | "Waiting for an organization admin." (the web adds "since Tuesday"); done: "An admin isn't setting up Jira now" / "Jira is ready" | none |
+
+  Text that points to an administrator names the **role**, never a person (D-407): the asker of a declined
+  request reads "An admin isn't setting up <thing> now" and the decliner's optional message as "They
+  wrote: …"; the request's optional reason is shown to the admins who can resolve it.
 - **Administration › Overview** is the setup checklist until setup is complete, then a health page built
   from the same facts:
   - runners, the gateway and AI endpoints;
