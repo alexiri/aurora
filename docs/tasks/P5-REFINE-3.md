@@ -401,3 +401,20 @@ cross-cutting UI primitive; the classification must follow the table exactly.
   wrapper after P5-REFINE-2 merges (whichever merges second makes the one-line change); the "Later" rows above.
   (3) Playwright `altitude.spec.ts` needs a first run in CI; other specs that use their own onboarding fixture
   (not the shared mock) may need `more_controls: true`.
+
+### Merge with master (P5-REFINE-1, ee7bfa0d) and the whole-suite run
+
+- Conflicts resolved keeping both sides: `onboarding.rs` and `service.rs` (the `renames-2026-11` seed stays removed, `more_controls` stays),
+  `create-agent-dialog`, `owner-controls`, `message-group`, `create-workspace-form`, `internet-level`, `schedules-tab`, `general-tab`,
+  `webhooks-tab`, `scope-ladder.test.tsx` (brief 1's words inside the `<Altitude>` wrappers). Generated files did not conflict;
+  `extract-schema --check` and `openapi_matches_checked_in` pass. The switch row sits right above Show me around (What moved is gone).
+- Tests changed for the merge (same commit): `ask-admin.test.tsx` (role wording, D-407: "Ask an admin for …", "Asked the admins…"),
+  `ssh-sessions.test.tsx` ("This agent is paused", brief 1's wording), `agent-sections.test.ts` (Tests, Other agents),
+  `scope-ladder.test.tsx`, `model-usage.test.tsx` (seeds the switch), `onboarding.test.tsx` (does not seed it). None removed or skipped.
+- Earlier test files in this brief: `roles`, `altitude`, `altitude-pages`, `altitude-registry` (new); `agents`, `context-switcher`,
+  `agent-page-header`, `fix-099`, `ssh`, `internet-pages`, `model-roles-instructions`, `terminal-tab-shell`, `support/render.tsx`;
+  `e2e/support/mock-api.ts` (default `more_controls: true`) and the new `e2e/altitude.spec.ts` (not run).
+- Production specs (`*.prod.spec.ts`) read by hand: they use `mockApi`, whose default keeps every control visible; no change needed.
+- Commands: `heavy.sh p5-lane6 cargo test -p aurora-api --test it onboarding` 5 passed; `… openapi_matches_checked_in` passed; whole web
+  `pnpm exec vitest run` once after the merge: 2643 passed, 7 failed (the ones listed above, all fixed), then the four fixed files 43 passed;
+  `pnpm typecheck` clean; eslint 0 errors.
