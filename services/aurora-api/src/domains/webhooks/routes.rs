@@ -26,6 +26,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_webhooks, create_webhook))
         .routes(routes!(get_webhook, update_webhook, delete_webhook))
         .routes(routes!(rotate_webhook))
+        .routes(routes!(rotate_webhook_secret))
         .routes(routes!(reassign_creator))
         .routes(routes!(list_deliveries))
         .routes(routes!(receive::receive))
@@ -101,7 +102,7 @@ async fn create_webhook(
     if anchor == "workspace" {
         require_own(&c.workspace(&s, a.workspace_id).await?)?;
     }
-    let (row, url) = service::create(
+    let created = service::create(
         &s,
         &a,
         service::Create {
@@ -114,15 +115,36 @@ async fn create_webhook(
         None,
     )
     .await?;
-    record(&c, &s, &a, &row, "webhook.create");
-    let row = service::get(&s, row.id).await?;
+    record(&c, &s, &a, &created.row, "webhook.create");
+    let row = service::get(&s, created.row.id).await?;
     Ok((
         StatusCode::CREATED,
         Json(WebhookWithUrl {
             webhook: row.into(),
-            url,
+            url: created.url,
+            secret: created.secret,
         }),
     ))
+}
+
+/// A new secret for a signed webhook (C-1078); the old one stops working at once. Shown once.
+#[utoipa::path(post, path = "/webhooks/{id}/rotate-secret", operation_id = "rotateWebhookSecret",
+    tag = "webhooks", params(("id" = Uuid, Path, description = "Webhook id")),
+    responses((status = 200, body = WebhookSecret), (status = 404, body = ErrorEnvelope),
+        (status = 422, description = "verification_not_signed", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn rotate_webhook_secret(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<WebhookSecret>, ApiError> {
+    let (_, a) = authorized(&c, &s, id).await?;
+    let (row, secret) = service::rotate_secret(&s, &a, id).await?;
+    record(&c, &s, &a, &row, "webhook.rotate_secret");
+    Ok(Json(WebhookSecret {
+        webhook: row.into(),
+        secret,
+    }))
 }
 
 /// Get one webhook (never includes the URL token or the verification secret).
@@ -231,6 +253,7 @@ async fn rotate_webhook(
     Ok(Json(WebhookWithUrl {
         webhook: row.into(),
         url,
+        secret: None,
     }))
 }
 
@@ -256,7 +279,8 @@ async fn list_deliveries(
     authorized(&c, &s, id).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows =
-        aurora_db::repo::webhooks::list_deliveries(&s.pool, id, p.after_key(), p.fetch()).await?;
+        aurora_db::repo::webhooks::deliveries_with_results(&s.pool, id, p.after_key(), p.fetch())
+            .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Json(page.map(WebhookDelivery::from)))
 }

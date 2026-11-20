@@ -32,7 +32,10 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_conversations, create_api_conversation))
         .routes(routes!(direct_conversation))
+        .routes(routes!(new_direct_conversation))
+        .routes(routes!(list_conversation_folders))
         .routes(routes!(get_conversation))
+        .routes(routes!(update_conversation))
         .routes(routes!(list_events))
         .routes(routes!(stream))
         .routes(routes!(post_message))
@@ -226,6 +229,26 @@ async fn list_conversations(
             "unknown conversation kind",
         ));
     }
+    // (P5-REFINE-7, C-1074) `automation=all|none|only`, `automation_id` only with `only`.
+    let automation = match (q.automation.as_deref(), q.automation_id) {
+        (None | Some("all"), None) => convs::AutomationFilter::All,
+        (Some("none"), None) => convs::AutomationFilter::None,
+        (Some("only"), id) => convs::AutomationFilter::Only(id),
+        (Some("all" | "none") | None, Some(_)) => {
+            return Err(ApiError::invalid_field(
+                "Invalid request.",
+                "/automation_id",
+                "only with automation=only",
+            ));
+        }
+        (Some(_), _) => {
+            return Err(ApiError::invalid_field(
+                "Invalid request.",
+                "/automation",
+                "one of all, none, only",
+            ));
+        }
+    };
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     // RFE-009: owners see every direct conversation of the agent; others only their own.
     let owns = c.workspace(&s, agent_row.workspace_id).await?.can_own();
@@ -237,6 +260,7 @@ async fn list_conversations(
             viewer: c.user_id,
             viewer_owns: owns,
             archived: q.archived.unwrap_or(false),
+            automation,
         },
         p.after_key(),
         p.fetch(),
@@ -269,16 +293,19 @@ async fn list_conversations(
         }
         items.push(conv);
     }
+    service::with_automation(&s.pool, &mut items).await?;
     Ok(Json(Page {
         items,
         next_cursor: page.next_cursor,
     }))
 }
 
-/// Get-or-create the caller's direct conversation with the agent.
+/// The caller's most recently active non-archived direct conversation with the agent, created
+/// when there is none (C-1073).
 #[utoipa::path(post, path = "/agents/{agent}/conversations/direct", operation_id = "getOrCreateDirectConversation", tag = "conversations",
     params(("agent" = Uuid, Path, description = "Agent id")),
-    responses((status = 200, body = Conversation), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Conversation), (status = 404, body = ErrorEnvelope),
+        (status = 422, description = "conversation_limit", body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn direct_conversation(
     c: crate::http::auth::SessionCaller,
@@ -286,6 +313,112 @@ async fn direct_conversation(
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Conversation>, ApiError> {
     Ok(Json(service::direct(&s, &c, agent).await?))
+}
+
+/// A fresh direct conversation with empty history (C-1073): 200 with the latest one while it is
+/// still empty, 201 with a new one otherwise.
+#[utoipa::path(post, path = "/agents/{agent}/conversations/direct/new", operation_id = "createDirectConversation", tag = "conversations",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, description = "The latest, still empty", body = Conversation),
+        (status = 201, description = "Created", body = Conversation),
+        (status = 404, body = ErrorEnvelope),
+        (status = 422, description = "conversation_limit", body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn new_direct_conversation(
+    c: crate::http::auth::SessionCaller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    let (conv, created) = service::new_direct(&s, &c, agent).await?;
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(conv)).into_response())
+}
+
+/// Rename a conversation, or (`title: null`) go back to the automatic title (C-1073).
+#[utoipa::path(patch, path = "/conversations/{id}", operation_id = "updateConversation", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Conversation id")),
+    request_body = UpdateConversation,
+    responses((status = 200, body = Conversation), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope),
+        (status = 409, description = "title_managed", body = ErrorEnvelope),
+        (status = 422, description = "invalid_title", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn update_conversation(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(b): Json<UpdateConversation>,
+) -> Result<Json<Conversation>, ApiError> {
+    Ok(Json(service::rename(&s, &c, id, b.title.as_deref()).await?))
+}
+
+/// The agent's automation folders: one per schedule or webhook that has run threads (C-1074).
+#[utoipa::path(get, path = "/agents/{agent}/conversation-folders", operation_id = "listConversationFolders", tag = "conversations",
+    params(("agent" = Uuid, Path, description = "Agent id"), FoldersQuery),
+    responses((status = 200, body = Page<ConversationFolder>), (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn list_conversation_folders(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+    Query(q): Query<FoldersQuery>,
+) -> Result<Json<Page<ConversationFolder>>, ApiError> {
+    service::load_agent(&s, &c, agent).await?;
+    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
+    let rows = convs::list_folders(&s.pool, agent, p.after_key(), p.fetch()).await?;
+    let page = Page::from_rows(rows, p.limit, |r| (r.last_activity_at, r.automation_id));
+    let ids_of = |k: &str| -> Vec<Uuid> {
+        page.items
+            .iter()
+            .filter(|f| f.automation_kind == k)
+            .map(|f| f.automation_id)
+            .collect()
+    };
+    let runs = aurora_db::repo::schedules::latest_runs(&s.pool, &ids_of("schedule")).await?;
+    let deliveries =
+        aurora_db::repo::webhooks::latest_deliveries(&s.pool, &ids_of("webhook")).await?;
+    use crate::domains::schedules::results;
+    Ok(Json(page.map(|f| {
+        let last_result = if f.automation_kind == "schedule" {
+            runs.iter()
+                .find(|r| r.schedule_id == f.automation_id)
+                .map(|r| {
+                    results::run_result(
+                        &r.outcome,
+                        r.turn_status.as_deref(),
+                        r.turn_error_code.as_deref(),
+                    )
+                    .0
+                    .to_owned()
+                })
+        } else {
+            deliveries
+                .iter()
+                .find(|d| d.webhook_id == f.automation_id)
+                .map(|d| {
+                    results::delivery_result(
+                        &d.status,
+                        d.reason.as_deref(),
+                        d.turn_status.as_deref(),
+                        d.turn_error_code.as_deref(),
+                    )
+                    .to_owned()
+                })
+        };
+        ConversationFolder {
+            kind: f.automation_kind,
+            id: f.automation_id,
+            name: f.name.unwrap_or_default(),
+            deleted: f.deleted,
+            thread_count: f.thread_count,
+            last_activity_at: f.last_activity_at,
+            last_result,
+        }
+    })))
 }
 
 /// Get-or-create an `api` conversation by caller-supplied reference (API key).

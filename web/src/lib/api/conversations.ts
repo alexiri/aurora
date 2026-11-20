@@ -15,6 +15,29 @@ import { unwrap } from "./unwrap";
 export type Turn = components["schemas"]["Turn"];
 export type Followup = components["schemas"]["Followup"];
 export type Conversation = components["schemas"]["Conversation"];
+/** (P5-REFINE-7, C-1074) The schedule or webhook a run thread belongs to. */
+export type ConversationAutomation = components["schemas"]["ConversationAutomation"];
+/** (P5-REFINE-7, C-1074) One automation folder of the conversation list. */
+export type ConversationFolder = components["schemas"]["ConversationFolder"];
+/** (P5-REFINE-7, C-1077) What a run or delivery came to. */
+export type RunResult = "running" | "answered" | "skipped_by_gate" | "failed" | "skipped";
+/**
+ * (P5-REFINE-7, C-1079) `turn.queued.payload.display`: what people read for a schedule or webhook
+ * turn (the turn's `text` is what the agent receives; old events have no `display`).
+ */
+export type TurnQueuedDisplay =
+  | { kind: "schedule"; name: string; schedule_id: string; run_id: string }
+  | {
+      kind: "webhook";
+      name: string;
+      delivery_id: string;
+      content_type: string;
+      size: number;
+      truncated: boolean;
+      body: string;
+    };
+/** (P5-REFINE-7, C-1074) Which run threads a conversation list includes. */
+export type AutomationFilter = "all" | "none" | "only";
 // The schema types `payload` as `Record<string, never>`; transcript code reads arbitrary keys.
 export type TranscriptEvent = Omit<components["schemas"]["TranscriptEvent"], "payload"> & {
   payload: Record<string, unknown>;
@@ -98,8 +121,36 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const chatApi = {
   direct: (agent: string) => unwrap(api.POST("/v1/agents/{agent}/conversations/direct", { params: { path: { agent } } })),
-  list: (agent: string, archived = false) =>
-    unwrap(api.GET("/v1/agents/{agent}/conversations", { params: { path: { agent }, query: { limit: 50, archived } } })),
+  /** (P5-REFINE-7, C-1073) A fresh direct chat: 201 a new one, 200 the latest while it is still empty. */
+  newDirect: (agent: string) => unwrap(api.POST("/v1/agents/{agent}/conversations/direct/new", { params: { path: { agent } } })),
+  /** (P5-REFINE-7, C-1073) Rename; `null` goes back to the automatic title. 409 `title_managed` for run threads. */
+  rename: (id: string, title: string | null) => unwrap(api.PATCH("/v1/conversations/{id}", { params: { path: { id } }, body: { title } })),
+  list: (
+    agent: string,
+    archived = false,
+    opts: { automation?: AutomationFilter; automationId?: string; cursor?: string } = {},
+  ) =>
+    unwrap(
+      api.GET("/v1/agents/{agent}/conversations", {
+        params: {
+          path: { agent },
+          query: {
+            limit: 50,
+            archived,
+            ...(opts.automation ? { automation: opts.automation } : {}),
+            ...(opts.automationId ? { automation_id: opts.automationId } : {}),
+            ...(opts.cursor ? { cursor: opts.cursor } : {}),
+          },
+        },
+      }),
+    ),
+  /** (P5-REFINE-7, C-1074) The agent's automation folders, newest activity first. */
+  listFolders: (agent: string, cursor?: string) =>
+    unwrap(
+      api.GET("/v1/agents/{agent}/conversation-folders", {
+        params: { path: { agent }, query: { limit: PAGE_LIMIT, ...(cursor ? { cursor } : {}) } },
+      }),
+    ),
   archive: (id: string) => unwrap(api.POST("/v1/conversations/{id}/archive", { params: { path: { id } } })),
   unarchive: (id: string) => unwrap(api.POST("/v1/conversations/{id}/unarchive", { params: { path: { id } } })),
   remove: async (id: string) => {
@@ -156,6 +207,16 @@ export function useConversations(agentId: string, archived = false) {
           }),
         ),
       ),
+    retry: false,
+  });
+}
+
+/** (P5-REFINE-7, C-1074) Every automation folder of the agent (all pages). */
+export function useConversationFolders(agentId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["agents", agentId, "conversation-folders"] as const,
+    queryFn: () => fetchAllPages((cursor) => chatApi.listFolders(agentId, cursor)),
+    enabled,
     retry: false,
   });
 }

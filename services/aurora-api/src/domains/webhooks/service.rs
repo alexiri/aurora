@@ -77,9 +77,59 @@ struct Checked {
     kind: &'static str,
     header: Option<String>,
     secret: Option<String>,
+    /// (C-1078) The secret was made here and is returned once.
+    generated: bool,
 }
 
-fn check_verification(v: VerificationInput) -> Result<Checked, ApiError> {
+fn invalid_verification(path: &str, msg: &str) -> ApiError {
+    ApiError::unprocessable("invalid_verification", "Invalid webhook verification.")
+        .with_details(json!({"fields": [{"path": path, "message": msg}]}))
+}
+
+/// (P5-REFINE-7, C-1078) A secret Aurora makes: 32 random bytes from the system RNG as 64 hex
+/// characters.
+pub fn generate_secret() -> Result<String, ApiError> {
+    let mut b = [0u8; 32];
+    aws_lc_rs::rand::fill(&mut b)
+        .map_err(|_| ApiError::internal("Random generator unavailable."))?;
+    Ok(::hex::encode(b))
+}
+
+/// The verification a create without one gets (C-1078): signed, with a generated secret.
+fn default_verification() -> VerificationInput {
+    VerificationInput {
+        kind: "hmac_sha256".into(),
+        header: None,
+        secret: None,
+        generate_secret: true,
+    }
+}
+
+fn check_verification(mut v: VerificationInput) -> Result<Checked, ApiError> {
+    if v.generate_secret {
+        if v.secret.is_some() {
+            return Err(invalid_verification(
+                "/verification/generate_secret",
+                "give a secret or generate one, not both",
+            ));
+        }
+        if v.kind == "none" {
+            return Err(invalid_verification(
+                "/verification/generate_secret",
+                "kind none takes no secret",
+            ));
+        }
+    }
+    let generated = v.generate_secret && matches!(v.kind.as_str(), "hmac_sha256" | "bearer");
+    if generated {
+        v.secret = Some(generate_secret()?);
+    }
+    let mut ch = check_verification_fields(v)?;
+    ch.generated = generated;
+    Ok(ch)
+}
+
+fn check_verification_fields(v: VerificationInput) -> Result<Checked, ApiError> {
     let (kind, default_header) = match v.kind.as_str() {
         "none" => ("none", None),
         "hmac_sha256" => ("hmac_sha256", Some("X-Signature")),
@@ -99,6 +149,7 @@ fn check_verification(v: VerificationInput) -> Result<Checked, ApiError> {
             kind,
             header: None,
             secret: None,
+            generated: false,
         });
     }
     let header = match v.header {
@@ -119,6 +170,7 @@ fn check_verification(v: VerificationInput) -> Result<Checked, ApiError> {
         kind,
         header: Some(header),
         secret: v.secret,
+        generated: false,
     })
 }
 
@@ -172,27 +224,39 @@ fn stored_ref(v: &Option<Value>) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Create a webhook; returns the row and the one-time capability URL.
+/// What [`create`] returns: the row, the one-time capability URL and (C-1078) the secret Aurora
+/// generated on this call, if any (shown once).
+pub struct Created {
+    pub row: WebhookRow,
+    pub url: String,
+    pub secret: Option<String>,
+}
+
+/// Create a webhook; returns the row and the one-time capability URL. (P5-REFINE-7, C-1078) No
+/// `verification` means signed (`hmac_sha256`) with a secret Aurora generates.
 pub async fn create(
     state: &AppState,
     agent: &AgentRow,
     c: Create,
     creator: Option<Uuid>,
     origin: Option<Uuid>,
-) -> Result<(WebhookRow, String), ApiError> {
+) -> Result<Created, ApiError> {
     check_name(&c.name)?;
     check_instructions(&c.instructions)?;
-    let checked = c.verification.map(check_verification).transpose()?;
+    let ch = check_verification(c.verification.unwrap_or_else(default_verification))?;
     let id = Uuid::now_v7();
-    let verification = match checked {
-        Some(ch) if ch.kind != "none" => {
-            let secret = ch
-                .secret
-                .ok_or_else(|| bad("/verification/secret", "required for this kind"))?;
-            let r = seal(state, agent, id, secret).await?;
-            Some(json!({"kind": ch.kind, "header": ch.header, "secret_ref": r.to_column()}))
+    let mut shown: Option<String> = None;
+    let verification = if ch.kind == "none" {
+        None
+    } else {
+        let secret = ch
+            .secret
+            .ok_or_else(|| bad("/verification/secret", "required for this kind"))?;
+        if ch.generated {
+            shown = Some(secret.clone());
         }
-        _ => None,
+        let r = seal(state, agent, id, secret).await?;
+        Some(json!({"kind": ch.kind, "header": ch.header, "secret_ref": r.to_column()}))
     };
     let tok = token::generate(TokenPrefix::Webhook);
     let hash = token::hash(tok.expose());
@@ -214,7 +278,11 @@ pub async fn create(
     match res {
         Ok(row) => {
             let url = url_for(state, tok.expose());
-            Ok((row, url))
+            Ok(Created {
+                row,
+                url,
+                secret: shown,
+            })
         }
         Err(e) => {
             if let Some(r) = stored_ref(&verification) {
@@ -318,7 +386,19 @@ pub async fn patch_with(
     between.await;
     // (FIX-110) Edit the locked current row: a stale `verification.secret_ref` must not undo a
     // rotation that happened after the caller read the webhook.
+    if p.verification.as_ref().is_some_and(|v| v.generate_secret) {
+        return Err(invalid_verification(
+            "/verification/generate_secret",
+            "use POST /v1/webhooks/{id}/rotate-secret",
+        ));
+    }
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    // (P5-REFINE-7, C-1074) The delivery threads follow the name; written before the webhook row
+    // is locked (lock order: conversation, then webhook, as a finishing delivery turn).
+    if let Some(v) = &p.name {
+        check_name(v)?;
+        convs::rename_automation_threads(&mut tx, "webhook", seen.id, v).await?;
+    }
     let mut r = repo::get_for_update(&mut tx, seen.id)
         .await?
         .ok_or_else(not_found)?;
@@ -397,11 +477,60 @@ pub async fn rotate(state: &AppState, id: Uuid) -> Result<String, ApiError> {
     Ok(url_for(state, tok.expose()))
 }
 
+/// (P5-REFINE-7, C-1078) A new generated secret for a signed webhook; the old one stops working
+/// at once (sealed like any secret, the old sealed value discarded). Returns the row and the
+/// secret, shown once.
+pub async fn rotate_secret(
+    state: &AppState,
+    agent: &AgentRow,
+    id: Uuid,
+) -> Result<(WebhookRow, String), ApiError> {
+    let secret = generate_secret()?;
+    let new_ref = seal(state, agent, id, secret.clone()).await?.to_column();
+    let res = async {
+        let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+        let mut r = repo::get_for_update(&mut tx, id)
+            .await?
+            .ok_or_else(not_found)?;
+        let v = r.verification.clone().unwrap_or(Value::Null);
+        let kind = v.get("kind").and_then(Value::as_str).unwrap_or("none");
+        if !matches!(kind, "hmac_sha256" | "bearer") {
+            return Err(ApiError::unprocessable(
+                "verification_not_signed",
+                "This webhook is not signed; choose a signing method first.",
+            ));
+        }
+        let old = stored_ref(&r.verification);
+        r.verification = Some(json!({"kind": kind, "header": v.get("header"),
+            "secret_ref": new_ref}));
+        let row = repo::update(&mut tx, &r).await?;
+        tx.commit().await.map_err(DbError::from)?;
+        Ok((row, old))
+    }
+    .await;
+    match res {
+        Ok((row, old)) => {
+            if let Some(old) = old {
+                discard(state, agent, id, &old).await;
+            }
+            Ok((row, secret))
+        }
+        Err(e) => {
+            discard(state, agent, id, &new_ref).await;
+            Err(e)
+        }
+    }
+}
+
+/// Delete a webhook and its delivery log; (P5-REFINE-7, C-1074) its delivery threads stay,
+/// marked deleted in the same transaction.
 pub async fn delete(state: &AppState, agent: &AgentRow, r: &WebhookRow) -> Result<(), ApiError> {
-    let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
-    if !repo::delete(&mut conn, r.id).await? {
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    convs::mark_automation_deleted(&mut tx, "webhook", r.id).await?;
+    if !repo::delete(&mut tx, r.id).await? {
         return Err(not_found());
     }
+    tx.commit().await.map_err(DbError::from)?;
     if let Some(old) = stored_ref(&r.verification) {
         discard(state, agent, r.id, &old).await;
     }
@@ -471,4 +600,52 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
         _ => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_generated_secret_is_64_hex_characters_and_never_repeats() {
+        let a = generate_secret().unwrap();
+        let b = generate_secret().unwrap();
+        assert_eq!(a.len(), 64);
+        assert!(
+            a.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+        assert_ne!(a, b);
+    }
+
+    fn input(kind: &str, secret: Option<&str>, generate: bool) -> VerificationInput {
+        VerificationInput {
+            kind: kind.into(),
+            header: None,
+            secret: secret.map(str::to_owned),
+            generate_secret: generate,
+        }
+    }
+
+    #[test]
+    fn generation_is_exclusive_with_a_secret_and_needs_a_signed_kind() {
+        let ch = check_verification(input("hmac_sha256", None, true)).unwrap();
+        assert!(ch.generated);
+        assert_eq!(ch.header.as_deref(), Some("X-Signature"));
+        assert_eq!(ch.secret.as_deref().map(str::len), Some(64));
+        let ch = check_verification(input("bearer", None, true)).unwrap();
+        assert_eq!(ch.header.as_deref(), Some("Authorization"));
+        assert_eq!(
+            check_verification(input("hmac_sha256", Some("chosen-123"), true))
+                .err()
+                .map(|e| e.code().to_owned()),
+            Some("invalid_verification".to_owned())
+        );
+        assert!(check_verification(input("none", None, true)).is_err());
+        let ch = check_verification(input("hmac_sha256", Some("chosen-123"), false)).unwrap();
+        assert!(!ch.generated);
+        // The create default is signed with a generated secret.
+        let d = default_verification();
+        assert_eq!((d.kind.as_str(), d.generate_secret), ("hmac_sha256", true));
+    }
 }

@@ -155,7 +155,7 @@ matrix:
     | `export` | `GET /v1/conversations/{id}/export`, `POST /v1/admin/storage/refresh`, `POST /v1/orgs/{org}/storage/refresh` (FIX-126: the Storage *pages* are cached snapshots read in the ordinary buckets; only the deliberate Refresh buttons are strict); (phase 5, SET-1, SET-4) `GET /v1/admin/settings/export`, `POST /v1/admin/settings/email/test` | 6 / hour, burst 2 |
     | `files` | (phase 5, P5-FILES-1, D-316) every `/v1/agents/{agent}/files*` route, reads included (instead of `write`/`upload`) | 300 / min, burst 60 |
     | `telemetry` | (phase 5, FIX-146, D-232) `POST /v1/telemetry/traces` (instead of `write`, so browser telemetry never spends the budget of real writes) | 60 / min, burst 20 |
-    | `check` | (phase 5, P5-UX-14, C-943, SEC-129) `POST /v1/accounts/{type}/{id}/test` | 10 / min, burst 3 |
+    | `check` | (phase 5, P5-UX-14, C-943, SEC-129) `POST /v1/accounts/{type}/{id}/test`; (P5-REFINE-7, C-1077) `POST /v1/agents/{agent}/schedules/preview` | 10 / min, burst 3 |
     | `invite` | (phase 5, P5-UX-5, C-919, SEC-128) `POST /v1/workspaces/{ws}/access/by-email` (per principal; the route also keeps a per-workspace cap of 30 / hour) | 10 / min, burst 5 |
     | `setup_request` | (phase 5, P5-POLISH-4, C-1030, SEC-135) `POST /v1/workspaces/{ws}/apps/{app}/setup-request` and (P5-APIGAP-2, C-1047) `POST /v1/workspaces/{ws}/requests` (the 21st ask in an hour, both together, is 429 `rate_limited`) | 20 / hour, burst 20 |
     | `org` | every authenticated request touching an org's resources (all principals together) | 3 000 / min, burst 600 |

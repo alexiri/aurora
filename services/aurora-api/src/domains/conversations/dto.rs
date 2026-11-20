@@ -107,6 +107,55 @@ pub struct Conversation {
     /// (phase 2, RFE-010) set while the conversation is archived (hidden from default lists).
     pub archived_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// (P5-REFINE-7, C-1073) Who set `title`: `auto` | `person` | `automation`.
+    pub title_source: String,
+    /// (P5-REFINE-7, C-1074) The schedule or webhook this run thread belongs to; null otherwise.
+    pub automation: Option<ConversationAutomation>,
+    /// (P5-REFINE-7, C-1074) When the run or delivery started (the thread's `created_at`) for
+    /// automation threads; null otherwise.
+    pub run_at: Option<DateTime<Utc>>,
+}
+
+/// (P5-REFINE-7, C-1074) The automation of a run thread.
+#[derive(Serialize, ToSchema, Clone)]
+pub struct ConversationAutomation {
+    /// `schedule` | `webhook`
+    pub kind: String,
+    pub id: Uuid,
+    /// The automation's current name (the stored title when it is gone).
+    pub name: String,
+    /// The schedule or webhook was deleted; the thread and its transcript stay.
+    pub deleted: bool,
+}
+
+/// (P5-REFINE-7, C-1073) `PATCH /conversations/{id}` body.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateConversation {
+    /// 1–200 characters after trimming; `null` goes back to the automatic title.
+    pub title: Option<String>,
+}
+
+/// (P5-REFINE-7, C-1074) One automation folder of the conversation list.
+#[derive(Serialize, ToSchema)]
+pub struct ConversationFolder {
+    /// `schedule` | `webhook`
+    pub kind: String,
+    pub id: Uuid,
+    pub name: String,
+    pub deleted: bool,
+    pub thread_count: i64,
+    pub last_activity_at: DateTime<Utc>,
+    /// The newest run's (or delivery's) result: `running` | `answered` | `skipped_by_gate` |
+    /// `failed` | `skipped` for a schedule, the delivery `result` words for a webhook.
+    pub last_result: Option<String>,
+}
+
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct FoldersQuery {
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
 }
 
 /// `seq` is null for ephemeral events (`text.delta`, `thinking.delta`, `activity`).
@@ -168,6 +217,10 @@ pub struct ListQuery {
     pub kind: Option<String>,
     /// (phase 2, RFE-010) `true` lists archived conversations; default `false` hides them.
     pub archived: Option<bool>,
+    /// (P5-REFINE-7, C-1074) `all` (default) | `none` (no run threads) | `only` (run threads).
+    pub automation: Option<String>,
+    /// (P5-REFINE-7, C-1074) With `automation=only`: the threads of this schedule or webhook.
+    pub automation_id: Option<Uuid>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,
 }
@@ -272,7 +325,20 @@ impl From<TurnRow> for Followup {
 
 impl Conversation {
     pub fn from_row(c: ConversationRow, active: Option<TurnRow>) -> Self {
+        let automation = match (c.automation_kind, c.automation_id) {
+            (Some(kind), Some(id)) => Some(ConversationAutomation {
+                kind,
+                id,
+                name: c.title.clone().unwrap_or_default(),
+                deleted: c.automation_deleted_at.is_some(),
+            }),
+            _ => None,
+        };
+        let run_at = automation.as_ref().map(|_| c.created_at);
         Conversation {
+            title_source: c.title_source,
+            automation,
+            run_at,
             id: c.id,
             agent_id: c.agent_id,
             kind: c.kind,

@@ -2,6 +2,7 @@
 
 use super::cron;
 use aurora_core::ApiError;
+use aurora_db::repo::conversations as convs;
 use aurora_db::repo::schedules::{self as repo, NewSchedule, ScheduleRow};
 use aurora_db::repo::{agents::AgentRow, workspaces};
 use chrono::Utc;
@@ -146,6 +147,13 @@ pub async fn patch_with(
     between.await;
     // (FIX-110) Start from the locked current row, not the caller's possibly stale read.
     let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
+    // (P5-REFINE-7, C-1074) The run threads follow the name. Written before the schedule row is
+    // locked: the lock order is conversation, then schedule (a finishing run turn holds its
+    // thread and then touches the schedule).
+    if let Some(v) = &p.name {
+        check_name(v)?;
+        convs::rename_automation_threads(&mut tx, "schedule", seen.id, v).await?;
+    }
     let mut r = repo::get_for_update(&mut tx, seen.id)
         .await?
         .ok_or_else(not_found)?;
@@ -200,11 +208,14 @@ pub async fn patch_with(
     Ok(row)
 }
 
+/// Delete a schedule and its run log; (P5-REFINE-7, C-1074) its run threads stay, marked
+/// deleted in the same transaction.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), ApiError> {
-    let mut conn = pool.acquire().await.map_err(aurora_db::DbError::from)?;
-    if repo::delete(&mut conn, id).await? {
-        Ok(())
-    } else {
-        Err(not_found())
+    let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
+    convs::mark_automation_deleted(&mut tx, "schedule", id).await?;
+    if !repo::delete(&mut tx, id).await? {
+        return Err(not_found());
     }
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    Ok(())
 }

@@ -466,6 +466,9 @@
       "app_turn_streak",
       "archived_at",
       "archived_by_user_id",
+      "automation_deleted_at",
+      "automation_id",
+      "automation_kind",
       "direct_user_id",
       "external_ref",
       "harness_session_epoch",
@@ -476,6 +479,7 @@
       "last_seq",
       "origin_conversation_id",
       "title",
+      "title_source",
       "workspace_id"
     ],
     "derived_rules": [
@@ -2051,6 +2055,9 @@
       "app_turn_streak": "int not null",
       "archived_at": "timestamptz null",
       "archived_by_user_id": "uuid null",
+      "automation_deleted_at": "timestamptz null",
+      "automation_id": "uuid null",
+      "automation_kind": "text null",
       "direct_user_id": "uuid null",
       "external_ref": "text not null",
       "harness_session_epoch": "bigint not null",
@@ -2061,6 +2068,7 @@
       "last_seq": "bigint not null",
       "origin_conversation_id": "uuid null",
       "title": "text null",
+      "title_source": "text not null",
       "workspace_id": "uuid"
     },
     "derived_rules": {

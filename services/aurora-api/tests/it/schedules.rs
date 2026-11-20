@@ -574,3 +574,460 @@ async fn run_history_pages_by_cursor() {
     let unique: std::collections::HashSet<_> = seen.iter().collect();
     assert_eq!(unique.len(), 450, "each run exactly once");
 }
+
+// ------------------------------------------------------------------ P5-REFINE-7
+
+/// Mark a turn `done` (as its result would) without a runner.
+async fn finish_turn(r: &Rig, turn: &str) {
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    aurora_api::domains::hosted::lifecycle::finish(
+        &mut conn,
+        turn.parse().unwrap(),
+        "done",
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+}
+
+/// (P5-REFINE-7, C-1074, C-1077) Every run gets its own thread with the schedule's origin; the
+/// busy rule is the latest run's turn; Run now answers `running` with its thread; a rename
+/// follows and a delete marks the threads.
+#[tokio::test]
+async fn each_run_gets_its_own_thread_and_the_busy_rule_is_the_latest_run() {
+    let r = rig().await;
+    let agent = r.agent("threads", true).await;
+    let origin = r.direct(agent).await;
+    let v = r
+        .sched(
+            agent,
+            json!({"name": "Morning digest", "prompt": "p", "cron": "0 9 * * *"}),
+        )
+        .await;
+    let id = v["id"].as_str().unwrap().to_owned();
+    sqlx::query("UPDATE schedules SET origin_conversation_id = $2 WHERE id = $1::uuid")
+        .bind(&id)
+        .bind(origin)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    // C-1077: three next instants while enabled, no last result yet.
+    assert_eq!(v["next_runs"].as_array().unwrap().len(), 3);
+    assert!(v["last_result"].is_null());
+
+    // Run now: 201 `running` with its own thread.
+    let (s, run1) = r
+        .user_call(Method::POST, &format!("/v1/schedules/{id}/run-now"), None)
+        .await;
+    assert_eq!(s, 201, "{run1}");
+    assert_eq!(run1["result"], "running");
+    assert!(run1["reason"].is_null());
+    let c1: Uuid = run1["conversation_id"].as_str().unwrap().parse().unwrap();
+    let (ext, kind, origin_of, title, source): (
+        String,
+        String,
+        Option<Uuid>,
+        Option<String>,
+        String,
+    ) = sqlx::query_as(
+        "SELECT external_ref, kind, origin_conversation_id, title, title_source
+             FROM conversations WHERE id = $1",
+    )
+    .bind(c1)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        ext,
+        format!("schedule:{id}:{}", run1["id"].as_str().unwrap())
+    );
+    assert_eq!(kind, "schedule");
+    assert_eq!(
+        origin_of,
+        Some(origin),
+        "FIX-192 finds the origin through the thread"
+    );
+    assert_eq!(title.as_deref(), Some("Morning digest"));
+    assert_eq!(source, "automation");
+    // The people's view of the run turn (C-1079); the agent's text is unchanged.
+    let queued = r
+        .events(c1)
+        .await
+        .into_iter()
+        .find(|e| e.0 == "turn.queued")
+        .unwrap()
+        .1;
+    assert_eq!(
+        queued["display"],
+        json!({"kind": "schedule", "name": "Morning digest", "schedule_id": id,
+               "run_id": run1["id"]})
+    );
+    assert!(
+        queued["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Scheduled task: Morning digest")
+    );
+
+    // Busy while the latest run's turn is active: Run now 409, a due fire `skipped_busy`.
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/schedules/{id}/run-now"), None)
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("schedule_busy"))
+    );
+    r.due(&id).await;
+    r.work().await;
+    let last: Option<String> =
+        sqlx::query_scalar("SELECT last_outcome FROM schedules WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(last.as_deref(), Some("skipped_busy"));
+    assert_eq!(
+        r.runs(&id).await.iter().filter(|x| x.0 == "fired").count(),
+        1
+    );
+
+    // Once it is done, Run now starts a second thread.
+    finish_turn(&r, run1["turn_id"].as_str().unwrap()).await;
+    let (s, run2) = r
+        .user_call(Method::POST, &format!("/v1/schedules/{id}/run-now"), None)
+        .await;
+    assert_eq!(s, 201, "{run2}");
+    let c2: Uuid = run2["conversation_id"].as_str().unwrap().parse().unwrap();
+    assert_ne!(c1, c2);
+    let origins: Vec<Option<Uuid>> = sqlx::query_scalar(
+        "SELECT origin_conversation_id FROM conversations
+         WHERE automation_kind = 'schedule' AND automation_id = $1::uuid",
+    )
+    .bind(&id)
+    .fetch_all(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(origins, vec![Some(origin), Some(origin)]);
+    let run_conv: Option<Uuid> =
+        sqlx::query_scalar("SELECT run_conversation_id FROM schedules WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(run_conv, Some(c2), "points at the latest thread");
+
+    // Runs in words, with their threads.
+    let (_, runs) = r
+        .user_call(Method::GET, &format!("/v1/schedules/{id}/runs"), None)
+        .await;
+    let fired: Vec<&Value> = runs["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|x| x["outcome"] == "fired")
+        .collect();
+    assert_eq!(fired.len(), 2);
+    assert_eq!(
+        (
+            fired[0]["result"].as_str(),
+            fired[0]["conversation_id"].as_str()
+        ),
+        (Some("running"), Some(c2.to_string().as_str()))
+    );
+    assert_eq!(
+        (
+            fired[1]["result"].as_str(),
+            fired[1]["conversation_id"].as_str()
+        ),
+        (Some("answered"), Some(c1.to_string().as_str()))
+    );
+    let (_, sv) = r
+        .user_call(Method::GET, &format!("/v1/schedules/{id}"), None)
+        .await;
+    assert_eq!(sv["last_result"], "running");
+
+    // Paused: no next runs.
+    let (_, paused) = r
+        .user_call(
+            Method::PATCH,
+            &format!("/v1/schedules/{id}"),
+            Some(json!({"enabled": false})),
+        )
+        .await;
+    assert_eq!(paused["next_runs"], json!([]));
+
+    // A rename follows into the threads; a delete marks them and keeps the transcripts.
+    let (s, _) = r
+        .user_call(
+            Method::PATCH,
+            &format!("/v1/schedules/{id}"),
+            Some(json!({"name": "Evening digest"})),
+        )
+        .await;
+    assert_eq!(s, 200);
+    let (_, list) = r
+        .user_call(
+            Method::GET,
+            &format!("/v1/agents/{agent}/conversations?automation=only&automation_id={id}"),
+            None,
+        )
+        .await;
+    let items = list["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    for c in items {
+        assert_eq!(c["title"], "Evening digest");
+        assert_eq!(c["automation"]["name"], "Evening digest");
+        assert_eq!(c["automation"]["deleted"], false);
+    }
+    let (_, main) = r
+        .user_call(
+            Method::GET,
+            &format!("/v1/agents/{agent}/conversations?automation=none"),
+            None,
+        )
+        .await;
+    assert!(
+        main["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["automation"].is_null())
+    );
+    let (_, folders) = r
+        .user_call(
+            Method::GET,
+            &format!("/v1/agents/{agent}/conversation-folders"),
+            None,
+        )
+        .await;
+    assert_eq!(folders["items"][0]["name"], "Evening digest");
+    assert_eq!(folders["items"][0]["thread_count"], 2);
+    assert_eq!(folders["items"][0]["last_result"], "running");
+    finish_turn(&r, run2["turn_id"].as_str().unwrap()).await;
+    let (s, _) = r
+        .user_call(Method::DELETE, &format!("/v1/schedules/{id}"), None)
+        .await;
+    assert_eq!(s, 204);
+    let (_, c) = r
+        .user_call(Method::GET, &format!("/v1/conversations/{c1}"), None)
+        .await;
+    assert_eq!(c["automation"]["deleted"], true);
+    assert_eq!(c["automation"]["name"], "Evening digest");
+    let marked: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conversations WHERE automation_id = $1::uuid
+           AND automation_deleted_at IS NOT NULL",
+    )
+    .bind(&id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(marked, 2);
+    assert!(!r.events(c1).await.is_empty(), "the transcript stays");
+}
+
+/// (C-1077) Runs in words for a gate-quiet run, a failed run and a frozen skip.
+#[tokio::test]
+async fn runs_say_what_happened_quiet_failed_and_frozen() {
+    let r = rig().await;
+    let lv = r.boot("words").await;
+    r.finish_hello(&lv).await;
+    let v = r
+        .sched(
+            lv.agent,
+            json!({"name": "g", "prompt": "check", "cron": "0 * * * *", "gate_command": "./c.sh"}),
+        )
+        .await;
+    let id = v["id"].as_str().unwrap().to_owned();
+    let d = r.fire_and_deliver(&id).await;
+    let t1 = d["turn_id"].as_str().unwrap().to_owned();
+    assert_eq!(r.gate(&lv, &t1, "quiet", "").await, "applied");
+    let d = r.fire_and_deliver(&id).await;
+    let t2 = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": t2}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": t2, "status": "failed",
+               "error_code": "provider_overloaded", "error_message": "overloaded"}),
+    )
+    .await;
+    sqlx::query("UPDATE agents SET frozen_at = now() WHERE id = $1")
+        .bind(lv.agent)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    r.due(&id).await;
+    r.work().await;
+    let (_, runs) = r
+        .user_call(Method::GET, &format!("/v1/schedules/{id}/runs"), None)
+        .await;
+    let words: Vec<(String, Option<String>, String)> = runs["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            (
+                x["outcome"].as_str().unwrap().to_owned(),
+                x["reason"].as_str().map(str::to_owned),
+                x["result"].as_str().unwrap().to_owned(),
+            )
+        })
+        .filter(|x| x.0 != "coalesced")
+        .collect();
+    assert_eq!(
+        words,
+        vec![
+            (
+                "skipped_frozen".into(),
+                Some("frozen".into()),
+                "skipped".into()
+            ),
+            (
+                "fired".into(),
+                Some("provider_overloaded".into()),
+                "failed".into()
+            ),
+            ("gated_quiet".into(), None, "skipped_by_gate".into()),
+        ]
+    );
+    for x in runs["items"].as_array().unwrap() {
+        if x["outcome"] == "coalesced" {
+            assert_eq!(
+                (x["result"].as_str(), x["reason"].as_str()),
+                (Some("skipped"), Some("missed"))
+            );
+        }
+    }
+    let (_, sv) = r
+        .user_call(Method::GET, &format!("/v1/schedules/{id}"), None)
+        .await;
+    assert_eq!(sv["last_result"], "skipped");
+}
+
+/// (C-1077) The preview: three instants, the 5-minute minimum as a flag, field errors.
+#[tokio::test]
+async fn preview_says_the_next_runs_and_the_five_minute_minimum() {
+    let r = rig().await;
+    let agent = r.agent("preview", true).await;
+    let uri = format!("/v1/agents/{agent}/schedules/preview");
+    let (s, v) = r
+        .user_call(
+            Method::POST,
+            &uri,
+            Some(json!({"cron": "*/5 * * * *", "timezone": "Europe/Zurich"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["next"].as_array().unwrap().len(), 3);
+    assert_eq!(v["interval_secs"], 300);
+    assert_eq!(v["too_frequent"], false);
+    assert_eq!(v["min_interval_secs"], 300);
+    for cron in ["* * * * *", "*/4 * * * *"] {
+        let (s, v) = r
+            .user_call(Method::POST, &uri, Some(json!({"cron": cron})))
+            .await;
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(v["too_frequent"], true, "{cron}");
+    }
+    let (s, v) = r
+        .user_call(Method::POST, &uri, Some(json!({"cron": "0 9 * *"})))
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("invalid_cron"))
+    );
+    let (s, v) = r
+        .user_call(
+            Method::POST,
+            &uri,
+            Some(json!({"cron": "0 9 * * *", "timezone": "Mars/Base"})),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("invalid_timezone"))
+    );
+    // Nothing was saved.
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM schedules WHERE agent_id = $1")
+        .bind(agent)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+/// (C-1074) The volume guard keeps an automation's newest threads (lowered here) and deletes
+/// the rest through the ordinary delete path; their runs then answer `conversation_id: null`.
+#[tokio::test]
+async fn the_volume_guard_keeps_the_newest_threads() {
+    let r = rig().await;
+    let agent = r.agent("volume", true).await;
+    let v = r
+        .sched(
+            agent,
+            json!({"name": "v", "prompt": "p", "cron": "0 9 * * *"}),
+        )
+        .await;
+    let id = v["id"].as_str().unwrap().to_owned();
+    let mut threads = Vec::new();
+    for _ in 0..4 {
+        let (s, run) = r
+            .user_call(Method::POST, &format!("/v1/schedules/{id}/run-now"), None)
+            .await;
+        assert_eq!(s, 201, "{run}");
+        finish_turn(&r, run["turn_id"].as_str().unwrap()).await;
+        threads.push(run["conversation_id"].as_str().unwrap().to_owned());
+    }
+    let n = aurora_api::domains::conversations::lifecycle::sweep_automation_overflow(r.h.pool(), 2)
+        .await
+        .unwrap();
+    assert_eq!(n, 2);
+    let left: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM conversations WHERE automation_id = $1::uuid ORDER BY created_at",
+    )
+    .bind(&id)
+    .fetch_all(r.h.pool())
+    .await
+    .unwrap();
+    let left: Vec<String> = left.iter().map(Uuid::to_string).collect();
+    assert_eq!(left, threads[2..].to_vec(), "the newest two stay");
+    let (_, runs) = r
+        .user_call(Method::GET, &format!("/v1/schedules/{id}/runs"), None)
+        .await;
+    let convs: Vec<Option<&str>> = runs["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["conversation_id"].as_str())
+        .collect();
+    assert_eq!(
+        convs,
+        vec![
+            Some(threads[3].as_str()),
+            Some(threads[2].as_str()),
+            None,
+            None
+        ]
+    );
+    // An audit row names the reason (written in the delete's transaction).
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'conversation.delete'
+           AND metadata->>'reason' = 'automation_threads' AND (metadata->>'kept')::int = 2
+           AND metadata->'conversation_ids' @> to_jsonb(ARRAY[$1::text, $2::text])",
+    )
+    .bind(&threads[0])
+    .bind(&threads[1])
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(audited, 1);
+    // Again: nothing more to do.
+    assert_eq!(
+        aurora_api::domains::conversations::lifecycle::sweep_automation_overflow(r.h.pool(), 2)
+            .await
+            .unwrap(),
+        0
+    );
+}

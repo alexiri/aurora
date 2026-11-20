@@ -908,8 +908,12 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | workspace_id | uuid FK→workspaces (cascade) | |
 | kind | text CHECK in (`direct`,`group`,`schedule`,`webhook`,`watch`,`peer`,`api`, and (phase 5, P4-EVAL-2, C-860) `eval`) | |
 | external_ref | text not null | source-specific stable key; unique (agent_id, kind, external_ref) |
-| direct_user_id | uuid null FK→users (cascade) | kind=direct; partial unique (agent_id, direct_user_id) WHERE kind=`direct` |
+| direct_user_id | uuid null FK→users (cascade) | kind=direct; (phase 5, P5-REFINE-7, C-1073, D-409) several per (agent, person): the partial unique index `conversations_direct_user_uq` is dropped (`20261201000262`), replaced by the plain index `conversations_direct_person_idx` (agent_id, direct_user_id, last_activity_at desc) WHERE kind=`direct`; the first one's `external_ref` is `user:<uid>`, later ones `user:<uid>:<uuid>` |
 | title | text null | |
+| title_source | text not null default 'auto' CHECK in (`auto`,`person`,`automation`) | (phase 5, P5-REFINE-7, C-1073) who set `title`: `auto` (the first person message's first line, or none yet), `person` (a rename), `automation` (the schedule's or webhook's name, kept in sync) |
+| automation_kind | text null CHECK in (`schedule`,`webhook`) | (phase 5, P5-REFINE-7, C-1074) the automation a run thread belongs to; set together with `automation_id` (both null or both set) |
+| automation_id | uuid null | (phase 5, P5-REFINE-7, C-1074) the schedule or webhook id; no FK (the thread outlives it); index `conversations_automation_idx` (automation_kind, automation_id, last_activity_at desc) WHERE automation_id IS NOT NULL |
+| automation_deleted_at | timestamptz null | (phase 5, P5-REFINE-7, C-1074) set when the schedule or webhook is deleted; the transcript stays |
 | origin_conversation_id | uuid null FK→conversations (set null) | where reports go (schedule/webhook/peer) |
 | harness_session_ref | text null | opaque, adapter-owned |
 | harness_session_epoch | bigint not null default 0 | bumped to force a fresh session (phase 4, P4-HAR: on every conversation of an agent when its harness changes; `harness_session_ref` is also cleared and a `session_purges` row is queued per old session, `12`) |
@@ -1238,9 +1242,9 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | id | uuid pk | |
 | webhook_id | uuid FK→webhooks (cascade) | |
 | turn_id | uuid null | |
-| status | text CHECK in (`accepted`,`rejected`,`paused`) | |
+| status | text CHECK in (`accepted`,`rejected`,`paused`, and (phase 5, P5-REFINE-7, C-1079) `duplicate`) | a `duplicate` row records a repeated delivery (same idempotency key inside the window) with the original's `turn_id` |
 | size_bytes | int not null | |
-| reason | text null | |
+| reason | text null | `accepted`: the idempotency key (`key:<hex>` / `body:<hex>`); `rejected`/`paused`: why; `duplicate`: the original delivery's id |
 
 ### `processes`
 | Column | Type | Notes |

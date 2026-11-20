@@ -357,6 +357,65 @@ pub async fn count_recent(
     .await?)
 }
 
+/// (P5-REFINE-7, C-1079) A delivery with what its turn says.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct DeliveryResultRow {
+    pub id: Uuid,
+    pub webhook_id: Uuid,
+    pub turn_id: Option<Uuid>,
+    pub status: String,
+    pub size_bytes: i32,
+    pub reason: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub conversation_id: Option<Uuid>,
+    pub turn_status: Option<String>,
+    pub turn_error_code: Option<String>,
+}
+
+const DELIVERY_RESULT_SELECT: &str = "SELECT d.id, d.webhook_id, d.turn_id, d.status, d.size_bytes,
+        d.reason, d.created_at, t.conversation_id, t.status AS turn_status,
+        t.error_code AS turn_error_code
+     FROM webhook_deliveries d LEFT JOIN turns t ON t.id = d.turn_id";
+
+/// (C-1079) Keyset page of a webhook's deliveries with their results, newest first.
+pub async fn deliveries_with_results<'e, E: PgExecutor<'e>>(
+    exec: E,
+    webhook: Uuid,
+    after: Option<(DateTime<Utc>, Uuid)>,
+    limit: i64,
+) -> Result<Vec<DeliveryResultRow>, DbError> {
+    let (t, id) = after.unzip();
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{DELIVERY_RESULT_SELECT} WHERE d.webhook_id = $1
+           AND ($2::timestamptz IS NULL OR (d.created_at, d.id) < ($2, $3))
+         ORDER BY d.created_at DESC, d.id DESC LIMIT $4"
+    )))
+    .bind(webhook)
+    .bind(t)
+    .bind(id)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (C-1074) The newest delivery of each of `webhooks`, with its result.
+pub async fn latest_deliveries<'e, E: PgExecutor<'e>>(
+    exec: E,
+    webhooks: &[Uuid],
+) -> Result<Vec<DeliveryResultRow>, DbError> {
+    if webhooks.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{DELIVERY_RESULT_SELECT} WHERE d.id IN (
+            SELECT DISTINCT ON (webhook_id) id FROM webhook_deliveries WHERE webhook_id = ANY($1)
+            ORDER BY webhook_id, created_at DESC, id DESC)"
+    )))
+    .bind(webhooks)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Keyset page of a webhook's deliveries, newest first (`created_at`, `id`; FIX-111).
 pub async fn list_deliveries<'e, E: PgExecutor<'e>>(
     exec: E,

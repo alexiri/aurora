@@ -163,29 +163,255 @@ pub async fn load_conversation_for_write(
 
 // ---------------------------------------------------------------- conversations
 
+/// (P5-REFINE-7, C-1073) Serialize the direct-conversation decisions of one person and agent
+/// (get-or-create, new) for the rest of the transaction.
+async fn lock_direct(conn: &mut PgConnection, agent: Uuid, user: Uuid) -> Result<(), ApiError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("direct:{agent}:{user}"))
+        .execute(&mut *conn)
+        .await
+        .map_err(DbError::from)?;
+    Ok(())
+}
+
+fn conversation_limit() -> ApiError {
+    ApiError::unprocessable(
+        "conversation_limit",
+        "You have reached the limit of chats with this agent. Delete some to start a new one.",
+    )
+}
+
+/// Create a fresh direct conversation: the first is `user:<uid>`, every later one
+/// `user:<uid>:<uuid>` (C-1073). Caller holds [`lock_direct`].
+async fn create_direct(
+    conn: &mut PgConnection,
+    agent: &AgentRow,
+    user: Uuid,
+) -> Result<ConversationRow, ApiError> {
+    let n = convs::count_direct(&mut *conn, agent.id, user).await?;
+    if n >= aurora_core::limits::DIRECT_CONVERSATIONS_PER_PERSON_AGENT {
+        return Err(conversation_limit());
+    }
+    let first = format!("user:{user}");
+    fn new<'a>(agent: &AgentRow, user: Uuid, ext: &'a str) -> NewConversation<'a> {
+        NewConversation {
+            agent_id: agent.id,
+            workspace_id: agent.workspace_id,
+            kind: "direct",
+            external_ref: ext,
+            direct_user_id: Some(user),
+            title: None,
+            origin_conversation_id: None,
+        }
+    }
+    let (row, created) = convs::get_or_create(&mut *conn, &new(agent, user, &first)).await?;
+    if created {
+        return Ok(row);
+    }
+    let ext = format!("user:{user}:{}", Uuid::now_v7());
+    Ok(convs::get_or_create(&mut *conn, &new(agent, user, &ext))
+        .await?
+        .0)
+}
+
+/// `POST …/conversations/direct`: the caller's most recently active non-archived direct
+/// conversation with the agent, creating the first when there is none (C-1073; never an archived
+/// one, UX review 5 chat-1).
 pub async fn direct(
     state: &AppState,
     c: &Caller,
     agent_id: Uuid,
 ) -> Result<Conversation, ApiError> {
     let agent = load_agent(state, c, agent_id).await?;
-    let ext = format!("user:{}", c.user_id);
-    let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
-    let (row, _) = convs::get_or_create(
-        &mut conn,
-        &NewConversation {
-            agent_id,
-            workspace_id: agent.workspace_id,
-            kind: "direct",
-            external_ref: &ext,
-            direct_user_id: Some(c.user_id),
-            title: None,
-            origin_conversation_id: None,
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    lock_direct(&mut tx, agent_id, c.user_id).await?;
+    let row = match convs::latest_direct(&mut *tx, agent_id, c.user_id).await? {
+        Some(r) => r,
+        None => create_direct(&mut tx, &agent, c.user_id).await?,
+    };
+    let active = turns::active_turn(&mut *tx, row.id).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(Conversation::from_row(row, active))
+}
+
+/// `POST …/conversations/direct/new` (C-1073): a fresh direct conversation. `(conversation,
+/// created)`: the latest one is returned (not created) while it has no events yet.
+pub async fn new_direct(
+    state: &AppState,
+    c: &Caller,
+    agent_id: Uuid,
+) -> Result<(Conversation, bool), ApiError> {
+    let agent = load_agent(state, c, agent_id).await?;
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    lock_direct(&mut tx, agent_id, c.user_id).await?;
+    if let Some(latest) = convs::latest_direct(&mut *tx, agent_id, c.user_id).await?
+        && latest.last_seq == 0
+    {
+        let active = turns::active_turn(&mut *tx, latest.id).await?;
+        tx.commit().await.map_err(DbError::from)?;
+        return Ok((Conversation::from_row(latest, active), false));
+    }
+    let row = create_direct(&mut tx, &agent, c.user_id).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok((Conversation::from_row(row, None), true))
+}
+
+// ---------------------------------------------------------------- titles (C-1073)
+
+/// Longest auto title, in characters (the "…" included).
+const AUTO_TITLE_MAX: usize = 60;
+
+/// (C-1073) The auto title of a message: its first line with text (code-fence lines skipped),
+/// markup and mentions removed, whitespace collapsed, cut at 60 characters with "…". `None` when
+/// nothing is left (an attachment-only message, a fence alone). No model call.
+pub fn auto_title(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("```") || t.starts_with("~~~") {
+            continue;
+        }
+        let t = t.trim_start_matches(['#', '>', '-', '+', ' ', '\t']);
+        let cleaned: String = t
+            .chars()
+            .filter(|ch| {
+                !matches!(ch, '*' | '_' | '`' | '~' | '@')
+                    && (!ch.is_control() || ch.is_whitespace())
+            })
+            .collect();
+        let words: Vec<&str> = cleaned.split_whitespace().collect();
+        if words.is_empty() {
+            continue;
+        }
+        let one = words.join(" ");
+        if one.chars().count() <= AUTO_TITLE_MAX {
+            return Some(one);
+        }
+        let cut: String = one.chars().take(AUTO_TITLE_MAX - 1).collect();
+        return Some(format!("{}…", cut.trim_end()));
+    }
+    None
+}
+
+/// The auto title from the conversation's first person message that yields one.
+async fn derive_auto_title(conn: &mut PgConnection, id: Uuid) -> Result<Option<String>, ApiError> {
+    let texts: Vec<String> = sqlx::query_scalar(
+        "SELECT text FROM turns WHERE conversation_id = $1 AND speaker_kind = 'person'
+         ORDER BY created_at, id LIMIT 20",
+    )
+    .bind(id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(DbError::from)?;
+    Ok(texts.iter().find_map(|t| auto_title(t)))
+}
+
+fn invalid_title(msg: &str) -> ApiError {
+    ApiError::unprocessable("invalid_title", "That name can't be used.")
+        .with_details(json!({"fields": [{"path": "/title", "message": msg}]}))
+}
+
+/// `PATCH /conversations/{id}` (C-1073): rename, or (`None`) go back to the auto title.
+pub async fn rename(
+    state: &AppState,
+    c: &Caller,
+    id: Uuid,
+    title: Option<&str>,
+) -> Result<Conversation, ApiError> {
+    let (row, auth) = load_conversation_auth(state, c, id).await?;
+    if row.automation_id.is_some() || matches!(row.kind.as_str(), "schedule" | "webhook") {
+        return Err(ApiError::conflict(
+            "title_managed",
+            "This conversation is named after its automation; rename the automation instead.",
+        ));
+    }
+    if row.kind == "direct" {
+        if row.direct_user_id != Some(c.user_id) {
+            return Err(ApiError::new(
+                axum::http::StatusCode::FORBIDDEN,
+                "direct_conversation_forbidden",
+                "Only the person in a direct conversation can rename it.",
+            ));
+        }
+    } else {
+        crate::http::auth::require_own(&auth)?;
+    }
+    let title = match title.map(str::trim) {
+        Some("") => return Err(invalid_title("must not be empty")),
+        Some(t) if t.chars().count() > TITLE_MAX => {
+            return Err(invalid_title("must be at most 200 characters"));
+        }
+        Some(t) if t.chars().any(char::is_control) => {
+            return Err(invalid_title("must not contain control characters"));
+        }
+        other => other,
+    };
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    if !convs::lock(&mut tx, id).await? {
+        return Err(conv_404());
+    }
+    let updated = match title {
+        Some(t) => convs::set_title(&mut tx, id, Some(t), "person").await?,
+        None => {
+            let auto = derive_auto_title(&mut tx, id).await?;
+            convs::set_title(&mut tx, id, auto.as_deref(), "auto").await?
+        }
+    }
+    .ok_or_else(conv_404)?;
+    let org = workspaces::get(&mut *tx, row.workspace_id)
+        .await?
+        .map(|w| w.org_id);
+    let actor = AuditActor::from_caller(c);
+    audit_repo::insert(
+        &mut *tx,
+        &NewAudit {
+            org_id: org,
+            workspace_id: Some(row.workspace_id),
+            actor_kind: actor.kind,
+            actor_id: actor.id,
+            actor_label: &actor.label,
+            action: "conversation.rename",
+            target_kind: Some("conversation"),
+            target_id: Some(&id.to_string()),
+            outcome: Outcome::Success.as_str(),
+            source: actor.source,
+            ip: actor.ip,
+            // Ids only: never the title (C-1073).
+            metadata: &json!({"agent_id": row.agent_id, "cleared": title.is_none()}),
         },
     )
     .await?;
-    let active = turns::active_turn(&mut *conn, row.id).await?;
-    Ok(Conversation::from_row(row, active))
+    let active = turns::active_turn(&mut *tx, id).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    let mut out = [Conversation::from_row(updated, active)];
+    with_automation(&state.pool, &mut out).await?;
+    let [conv] = out;
+    Ok(conv)
+}
+
+/// (C-1074) Fill `automation.name` / `deleted` from the live schedules and webhooks (one query
+/// for the page): a rename shows at once, a missing row means deleted.
+pub async fn with_automation(
+    pool: &sqlx::PgPool,
+    items: &mut [Conversation],
+) -> Result<(), ApiError> {
+    let (mut sched, mut hooks) = (Vec::new(), Vec::new());
+    for a in items.iter().filter_map(|i| i.automation.as_ref()) {
+        match a.kind.as_str() {
+            "schedule" => sched.push(a.id),
+            _ => hooks.push(a.id),
+        }
+    }
+    if sched.is_empty() && hooks.is_empty() {
+        return Ok(());
+    }
+    let names = convs::automation_names(pool, &sched, &hooks).await?;
+    for a in items.iter_mut().filter_map(|i| i.automation.as_mut()) {
+        match names.iter().find(|(id, _)| *id == a.id) {
+            Some((_, name)) => a.name.clone_from(name),
+            None => a.deleted = true,
+        }
+    }
+    Ok(())
 }
 
 pub async fn api_conversation(
@@ -231,7 +457,10 @@ pub async fn api_conversation(
 pub async fn get(state: &AppState, c: &Caller, id: Uuid) -> Result<Conversation, ApiError> {
     let row = read_conversation(state, c, id).await?;
     let active = turns::active_turn(&state.pool, row.id).await?;
-    Ok(Conversation::from_row(row, active))
+    let mut out = [Conversation::from_row(row, active)];
+    with_automation(&state.pool, &mut out).await?;
+    let [conv] = out;
+    Ok(conv)
 }
 
 pub async fn events(
@@ -320,6 +549,25 @@ fn clip(s: &str, max_bytes: usize) -> &str {
     &s[..s.floor_char_boundary(max_bytes)]
 }
 
+/// (C-1079) Keep a `turn.queued` payload with `display` inside the event bound: the display
+/// body is halved (and marked `truncated`) until the serialized payload fits.
+fn fit_display(payload: &mut Value) {
+    let max = transcript::MAX_PAYLOAD_BYTES;
+    while payload.to_string().len() > max {
+        let Some(body) = payload["display"]["body"].as_str() else {
+            payload["display"] = Value::Null;
+            return;
+        };
+        if body.is_empty() {
+            payload["display"] = Value::Null;
+            return;
+        }
+        let cut = clip(body, body.len() / 2).to_owned();
+        payload["display"]["body"] = json!(cut);
+        payload["display"]["truncated"] = json!(true);
+    }
+}
+
 /// `text` bound; empty text is allowed only when files are attached (C-726).
 pub fn check_text(text: &str, has_files: bool) -> Result<(), ApiError> {
     if text.trim().is_empty() && !has_files {
@@ -343,12 +591,26 @@ pub async fn create_turn_tx(
     conv: &ConversationRow,
     m: &NewMessage<'_>,
 ) -> Result<Created, ApiError> {
-    create_turn_capped(conn, conv, m).await?.ok_or_else(|| {
-        ApiError::conflict(
-            "app_turn_cap_reached",
-            "Too many consecutive automated turns; a person must continue the conversation.",
-        )
-    })
+    create_turn_tx_with(conn, conv, m, None).await
+}
+
+/// [`create_turn_tx`] with the `display` object of the `turn.queued` event (P5-REFINE-7,
+/// C-1079): what the transcript shows people for a schedule or webhook turn, while the turn's
+/// `text` (what the agent receives) is unchanged.
+pub async fn create_turn_tx_with(
+    conn: &mut PgConnection,
+    conv: &ConversationRow,
+    m: &NewMessage<'_>,
+    display: Option<&Value>,
+) -> Result<Created, ApiError> {
+    create_turn_capped_with(conn, conv, m, display)
+        .await?
+        .ok_or_else(|| {
+            ApiError::conflict(
+                "app_turn_cap_reached",
+                "Too many consecutive automated turns; a person must continue the conversation.",
+            )
+        })
 }
 
 /// As [`create_turn_tx`], applying the app-turn cap (docs/07): a bot/agent turn increments
@@ -359,6 +621,16 @@ pub async fn create_turn_capped(
     conn: &mut PgConnection,
     conv: &ConversationRow,
     m: &NewMessage<'_>,
+) -> Result<Option<Created>, ApiError> {
+    create_turn_capped_with(conn, conv, m, None).await
+}
+
+/// [`create_turn_capped`] with the `turn.queued` event's `display` (C-1079).
+pub async fn create_turn_capped_with(
+    conn: &mut PgConnection,
+    conv: &ConversationRow,
+    m: &NewMessage<'_>,
+    display: Option<&Value>,
 ) -> Result<Option<Created>, ApiError> {
     if !convs::lock(&mut *conn, conv.id).await? {
         return Err(conv_404());
@@ -437,8 +709,19 @@ pub async fn create_turn_capped(
     if let Some(q) = &quote {
         payload["reply_to"] = q.payload();
     }
+    if let Some(d) = display {
+        payload["display"] = d.clone();
+        fit_display(&mut payload);
+    }
     transcript::append_durable_event(&mut *conn, conv.id, Some(row.id), "turn.queued", &payload)
         .await?;
+    // (P5-REFINE-7, C-1073) The first person message names an untitled conversation; a title a
+    // person chose (or an automation's) is never replaced. Attachment-only messages name nothing.
+    if m.speaker_kind == "person"
+        && let Some(t) = auto_title(m.text)
+    {
+        convs::set_auto_title(&mut *conn, conv.id, &t).await?;
+    }
     notify_work(&mut *conn).await?;
     Ok(Some(created))
 }
@@ -518,6 +801,22 @@ pub async fn finish_turn(
     // (P5-USAGE-1, C-1001) The ledger grows in the transaction of the fenced transition; a replay returned
     // above and writes nothing. The stored usage was reduced by the trust rule when it was stored.
     aurora_db::repo::usage::record_turn(&mut *conn, turn_id).await?;
+    // (P5-REFINE-7, C-1075) A person's Stop leaves a mark, after the partial answer the answer
+    // rule already wrote. Endings with their own notice (freeze, deprovision: an error code) and
+    // turns nobody asked to stop get none.
+    if status == "aborted"
+        && row.abort_requested_at.is_some()
+        && matches!(row.error_code.as_deref(), None | Some("aborted"))
+    {
+        transcript::append_durable_event(
+            &mut *conn,
+            row.conversation_id,
+            Some(turn_id),
+            "notice",
+            &json!({"code": "turn_stopped", "text": "You stopped this answer.", "turn_id": turn_id}),
+        )
+        .await?;
+    }
     let mut payload = json!({"turn_id": turn_id, "status": status});
     if let Some(code) = &row.error_code {
         payload["error_code"] = json!(code);
@@ -859,4 +1158,69 @@ pub async fn continue_conversation(
     let active = turns::active_turn(&mut *tx, id).await?;
     tx.commit().await.map_err(DbError::from)?;
     Ok(Conversation::from_row(row, active))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_title_is_the_first_line_in_plain_words() {
+        assert_eq!(auto_title(""), None);
+        assert_eq!(auto_title("   \n\t\n"), None);
+        assert_eq!(
+            auto_title("  Deploy   the\tstaging  box  \nsecond line").as_deref(),
+            Some("Deploy the staging box")
+        );
+        assert_eq!(
+            auto_title("# **Plan** the `release` for @team").as_deref(),
+            Some("Plan the release for team")
+        );
+        assert_eq!(
+            auto_title("> - quoted item").as_deref(),
+            Some("quoted item")
+        );
+        // Emoji are kept whole.
+        assert_eq!(
+            auto_title("🚀 Launch day 🎉").as_deref(),
+            Some("🚀 Launch day 🎉")
+        );
+        // A fence line is skipped; a fence alone names nothing.
+        assert_eq!(
+            auto_title("```rust\nfn main() {}\n```").as_deref(),
+            Some("fn main() {}")
+        );
+        assert_eq!(auto_title("```\n```"), None);
+        assert_eq!(auto_title("**__``@@**"), None);
+    }
+
+    #[test]
+    fn auto_title_cuts_at_sixty_characters_with_an_ellipsis() {
+        let word = "a".repeat(200);
+        let t = auto_title(&word).unwrap();
+        assert_eq!(t.chars().count(), 60);
+        assert!(t.ends_with('…'));
+        assert_eq!(t.trim_end_matches('…'), "a".repeat(59));
+        let exact = "b".repeat(60);
+        assert_eq!(auto_title(&exact).as_deref(), Some(exact.as_str()));
+        let emoji = "😀".repeat(70);
+        let t = auto_title(&emoji).unwrap();
+        assert_eq!(t.chars().count(), 60);
+        // A cut right after a space does not leave it before the ellipsis.
+        let spaced = format!("{} tail", "c".repeat(58));
+        assert_eq!(auto_title(&spaced).unwrap(), format!("{}…", "c".repeat(58)));
+    }
+
+    #[test]
+    fn a_display_body_is_halved_until_the_event_fits() {
+        let mut p = json!({"text": "x".repeat(40 * 1024),
+            "display": {"kind": "webhook", "body": "y".repeat(40 * 1024), "truncated": false}});
+        fit_display(&mut p);
+        assert!(p.to_string().len() <= transcript::MAX_PAYLOAD_BYTES);
+        assert_eq!(p["display"]["truncated"], true);
+        assert!(!p["display"]["body"].as_str().unwrap().is_empty());
+        let mut small = json!({"text": "x", "display": {"body": "y", "truncated": false}});
+        fit_display(&mut small);
+        assert_eq!(small["display"]["truncated"], false);
+    }
 }

@@ -586,7 +586,15 @@ no behaviour in phase 0.
   so `proactive_messaging` does not gate it (the mirror applies no such gate to
   any conversation's own thread). A failed or aborted run posts only the
   `schedule_run` notice in the origin, never a failure line; an origin with no
-  link (a dashboard conversation) gets no post.
+  link (a dashboard conversation) gets no post. (phase 5, P5-REFINE-7, D-409,
+  C-1074) Every run now has its **own** thread (`schedule:<id>:<run_id>`), each
+  carrying the schedule's `origin_conversation_id`, so each run's answer is
+  mirrored once to the origin's thread exactly as before.
+- **A chat-platform direct message continues the person's first dashboard chat**
+  (phase 5, P5-REFINE-7, D-409, C-1073). A linked person's DM maps to their
+  `user:<uid>` direct conversation with the agent (the first one), not to a newer
+  dashboard chat they started with New chat; moving a DM into a newer chat is not
+  offered.
 - **Web- and API-originated turns are not mirrored** into platforms.
 - Failed turns post a short platform-voice failure line with the error code's
   copy and a dashboard link.

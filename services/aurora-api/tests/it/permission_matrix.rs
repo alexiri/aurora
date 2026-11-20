@@ -940,6 +940,27 @@ const ROWS: &[Row] = &[
         G::WsUse,
         true,
     ),
+    // (P5-REFINE-7, C-1073) a fresh direct chat: session only, like `direct`.
+    r(
+        "POST",
+        "/v1/agents/{agent}/conversations/direct/new",
+        G::WsUse,
+        true,
+    ),
+    // (P5-REFINE-7, C-1074) the automation folders of the conversation list.
+    r(
+        "GET",
+        "/v1/agents/{agent}/conversation-folders",
+        G::WsUse,
+        false,
+    ),
+    // (P5-REFINE-7, C-1077) the schedule preview saves nothing.
+    r(
+        "POST",
+        "/v1/agents/{agent}/schedules/preview",
+        G::WsUse,
+        false,
+    ),
     r("GET", "/v1/agents/{agent}/effective", G::WsUse, false),
     // (P5-UX-10, C-934) what exactly an agent can do in an app
     r(
@@ -964,6 +985,8 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/webhooks/{id}/deliveries", G::WsUse, false),
     r("PUT", "/v1/webhooks/{id}/creator", G::WsOwn, false),
     r("POST", "/v1/webhooks/{id}/rotate", G::WsUse, false),
+    // (P5-REFINE-7, C-1078) same callers as `rotate`.
+    r("POST", "/v1/webhooks/{id}/rotate-secret", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/memories", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/memories", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/memories/search", G::WsUse, false),
@@ -1107,6 +1130,10 @@ const ROWS: &[Row] = &[
     ),
     // ---- resources addressed by their own id (not seeded: denial side only) ----
     r("GET", "/v1/conversations/{id}", G::WsUse, false),
+    // (P5-REFINE-7, C-1073) rename: the per-conversation decision (the direct user, `can_own`
+    // for other kinds, 409 for run threads) is it/conversations.rs; the matrix asserts the
+    // visibility floor.
+    r("PATCH", "/v1/conversations/{id}", G::WsUse, false),
     r("GET", "/v1/conversations/{id}/events", G::WsUse, false),
     r("GET", "/v1/conversations/{id}/stream", G::WsUse, false),
     r("POST", "/v1/conversations/{id}/messages", G::WsUse, false),
@@ -1701,6 +1728,7 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"content_sha256": "0".repeat(64)})
         }
         ("POST", "/v1/agents/{agent}/webhooks") => json!({"name": "w", "instructions": "i"}),
+        ("POST", "/v1/agents/{agent}/schedules/preview") => json!({"cron": "*/5 * * * *"}),
         ("PUT", "/v1/agents/{agent}/byo") => {
             json!({"source_cidrs": null, "require_context": false})
         }

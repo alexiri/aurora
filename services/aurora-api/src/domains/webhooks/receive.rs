@@ -8,8 +8,10 @@
 //! `Webhook-Id` (24 h window; no sender-specific headers in core, SEC-33), else the SHA-256 of
 //! the raw body (60 s window). It is stored in
 //! the accepted delivery's `reason` as `key:<hex>` / `body:<hex>`. A duplicate is answered with
-//! 202 and the original `delivery_id`; no new delivery row or turn is created. The webhook row
-//! is locked for the whole decision, so concurrent duplicates serialize.
+//! 202 and the original `delivery_id`; no turn is created, and (P5-REFINE-7, C-1079) a
+//! `duplicate` delivery row records it (`reason` = the original's id, `turn_id` = its turn). The
+//! webhook row is locked for the whole decision, so concurrent duplicates serialize. Every
+//! accepted delivery gets its own thread `webhook:<id>:<delivery>` (C-1074).
 
 use super::dto::HookAccepted;
 use super::service;
@@ -228,6 +230,19 @@ async fn decide(
     }
     let (key, window) = idempotency_key(headers, body);
     if let Some(d) = repo::find_duplicate(conn, id, &key, window).await? {
+        // (P5-REFINE-7, C-1079) A repeat is recorded (it counts in the rate limit) with the
+        // original's turn; `reason` holds the original delivery's id. Answered as before.
+        let dup = d.id.to_string();
+        repo::insert_delivery(
+            conn,
+            Uuid::now_v7(),
+            id,
+            d.turn_id,
+            "duplicate",
+            size,
+            Some(&dup),
+        )
+        .await?;
         return Ok(Outcome::Duplicate(d.id));
     }
     let delivery = Uuid::now_v7();
@@ -236,8 +251,10 @@ async fn decide(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown");
     let text = turn_text(&w, delivery, ctype, body);
-    let ref_ = format!("webhook:{id}");
-    let (c, _) = convs::get_or_create(
+    let display = display_of(&w, delivery, ctype, body);
+    // (P5-REFINE-7, C-1074) Every accepted delivery gets its own thread under the webhook.
+    let ref_ = format!("webhook:{id}:{delivery}");
+    let (c, _) = convs::get_or_create_in(
         conn,
         &NewConversation {
             agent_id: agent.id,
@@ -248,9 +265,13 @@ async fn decide(
             title: Some(&w.name),
             origin_conversation_id: w.origin_conversation_id,
         },
+        Some(convs::Automation {
+            kind: "webhook",
+            id,
+        }),
     )
     .await?;
-    let created = conv::create_turn_tx(
+    let created = conv::create_turn_tx_with(
         conn,
         &c,
         &NewMessage {
@@ -263,6 +284,7 @@ async fn decide(
             attachment_ids: &[],
             reply_to_seq: None,
         },
+        Some(&display),
     )
     .await?;
     let turn = match created {
@@ -380,11 +402,9 @@ fn clip(s: &str, max: usize) -> (&str, bool) {
     (&s[..s.floor_char_boundary(max)], true)
 }
 
-/// The turn text: owner instructions, then the payload in a fenced, clamped block labelled as
-/// untrusted external data (SEC-31). The payload is never placed in the instructions part.
-fn turn_text(w: &WebhookRow, delivery: Uuid, ctype: &str, body: &[u8]) -> String {
-    let lossy = String::from_utf8_lossy(body);
-    let cleaned: String = lossy
+/// The payload as text: lossy UTF-8, control characters (but newline and tab) replaced.
+fn cleaned_payload(body: &[u8]) -> String {
+    String::from_utf8_lossy(body)
         .chars()
         .map(|c| {
             if c.is_control() && c != '\n' && c != '\t' {
@@ -393,13 +413,41 @@ fn turn_text(w: &WebhookRow, delivery: Uuid, ctype: &str, body: &[u8]) -> String
                 c
             }
         })
-        .collect();
-    let (shown, truncated) = clip(&cleaned, TEXT_PAYLOAD_MAX);
-    let ctype: String = ctype
+        .collect()
+}
+
+/// The sender's Content-Type, control characters removed, at most 100 characters.
+fn cleaned_ctype(ctype: &str) -> String {
+    ctype
         .chars()
         .filter(|c| !c.is_control())
         .take(100)
-        .collect();
+        .collect()
+}
+
+/// (P5-REFINE-7, C-1079) What people read in the transcript for a delivery: the webhook's name
+/// and the same cleaned, clamped payload the turn carries, **without** the safety wrapper or the
+/// owner's instructions (those are for the agent only; the turn's `text` is unchanged).
+fn display_of(w: &WebhookRow, delivery: Uuid, ctype: &str, body: &[u8]) -> serde_json::Value {
+    let cleaned = cleaned_payload(body);
+    let (shown, truncated) = clip(&cleaned, TEXT_PAYLOAD_MAX);
+    json!({
+        "kind": "webhook",
+        "name": w.name,
+        "delivery_id": delivery,
+        "content_type": cleaned_ctype(ctype),
+        "size": body.len(),
+        "truncated": truncated,
+        "body": shown,
+    })
+}
+
+/// The turn text: owner instructions, then the payload in a fenced, clamped block labelled as
+/// untrusted external data (SEC-31). The payload is never placed in the instructions part.
+fn turn_text(w: &WebhookRow, delivery: Uuid, ctype: &str, body: &[u8]) -> String {
+    let cleaned = cleaned_payload(body);
+    let (shown, truncated) = clip(&cleaned, TEXT_PAYLOAD_MAX);
+    let ctype = cleaned_ctype(ctype);
     // (FIX-110, SEC-31) The sender's Content-Type is part of the untrusted data: it goes inside
     // the fence, never into the trusted preamble.
     let inner = format!("content-type: {ctype}\n{shown}");
