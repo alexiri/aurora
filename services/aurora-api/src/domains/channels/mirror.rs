@@ -86,19 +86,7 @@ async fn mirror(
     door: &str,
 ) -> Result<(), ApiError> {
     let proactive = door != "thread";
-    let link = if proactive {
-        thread_links::latest_for_conversation(&mut *conn, t.conversation_id).await?
-    } else {
-        match t
-            .door
-            .get("thread_link_id")
-            .and_then(Value::as_str)
-            .and_then(|s| s.parse().ok())
-        {
-            Some(id) => thread_links::get(&mut *conn, id).await?,
-            None => None,
-        }
-    };
+    let link = link_of(conn, t, proactive).await?;
     let Some(link) = link else {
         return Ok(());
     };
@@ -122,6 +110,12 @@ async fn mirror(
 
     // The working indicator goes first, so the platform never shows "typing" under the answer.
     clear_working(conn, t.id).await?;
+
+    // (FIX-192) A schedule run reports into its origin's thread only with its answer: a failed
+    // or aborted run leaves the thread the `schedule_run` notice alone.
+    if door == "schedule" && t.status != "done" && link.conversation_id != t.conversation_id {
+        return Ok(());
+    }
 
     // (FIX-158, D-319) The receipt stays until this thread link gets the answer or the failure
     // line; aborted turns only clear their own.
@@ -330,14 +324,20 @@ pub async fn on_turn_started(conn: &mut PgConnection, t: &TurnRow) -> Result<(),
 }
 
 /// The thread link a turn's mirror goes to: its own (door `thread`), else the conversation's
-/// latest.
-pub(super) async fn link_of(
+/// latest, else (FIX-192, a schedule run, whose own conversation has no link) the latest link
+/// of the schedule's origin conversation, where the person asked for it.
+pub async fn link_of(
     conn: &mut PgConnection,
     t: &TurnRow,
     proactive: bool,
 ) -> Result<Option<thread_links::ThreadLinkRow>, ApiError> {
     if proactive {
-        return Ok(thread_links::latest_for_conversation(&mut *conn, t.conversation_id).await?);
+        if let Some(l) =
+            thread_links::latest_for_conversation(&mut *conn, t.conversation_id).await?
+        {
+            return Ok(Some(l));
+        }
+        return Ok(schedule_origin_link(conn, t).await?);
     }
     match t
         .door
@@ -348,6 +348,24 @@ pub(super) async fn link_of(
         Some(id) => Ok(thread_links::get(&mut *conn, id).await?),
         None => Ok(None),
     }
+}
+
+/// (FIX-192) For a schedule run turn, the latest thread link of the schedule's origin
+/// conversation; `None` for any other turn or an origin without a link.
+pub async fn schedule_origin_link(
+    conn: &mut PgConnection,
+    t: &TurnRow,
+) -> Result<Option<thread_links::ThreadLinkRow>, aurora_db::DbError> {
+    if t.door.get("kind").and_then(Value::as_str) != Some("schedule") {
+        return Ok(None);
+    }
+    let Some(origin) = aurora_db::repo::conversations::get(&mut *conn, t.conversation_id)
+        .await?
+        .and_then(|c| c.origin_conversation_id)
+    else {
+        return Ok(None);
+    };
+    thread_links::latest_for_conversation(&mut *conn, origin).await
 }
 
 /// `integration` with its manifest, when active.

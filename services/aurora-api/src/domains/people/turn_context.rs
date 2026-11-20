@@ -47,7 +47,7 @@ pub(crate) async fn platform_name(
 }
 
 /// The thread link the turn came in through, else the conversation's latest link (the one the
-/// doorless-turn mirror posts to, docs/13 §5.2).
+/// doorless-turn mirror posts to, docs/13 §5.2; for a schedule run, its origin's link).
 async fn link_of(
     conn: &mut PgConnection,
     turn: &TurnRow,
@@ -62,7 +62,12 @@ async fn link_of(
     {
         return Ok(Some(l));
     }
-    thread_links::latest_for_conversation(&mut *conn, turn.conversation_id).await
+    if let Some(l) = thread_links::latest_for_conversation(&mut *conn, turn.conversation_id).await?
+    {
+        return Ok(Some(l));
+    }
+    // (FIX-192) A schedule run's answer also goes to its origin conversation's thread.
+    crate::domains::channels::mirror::schedule_origin_link(conn, turn).await
 }
 
 /// The turn's platform for the handle: the link's integration when the agent is present there,
