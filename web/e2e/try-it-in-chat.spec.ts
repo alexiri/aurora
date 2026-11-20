@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 
 import { FAKE_EVENT_SOURCE, mockChat } from "./support/chat-mock";
 import { openJourney } from "./support/journey";
+import { noFirstPrompt } from "./support/mock-api";
 import { overflow } from "./support/open";
 
 // P5-REFINE-13 item 1 (owner's bug report, 2026-11-20; C-1035): the Done step's "Try it in chat" must work from every
@@ -27,15 +28,10 @@ type Entry = keyof typeof ENTRIES;
 /** Opens the journey from `entry` and brings it to Done for GitHub. */
 async function giveGithub(page: Page, entry: Entry, scheme: "light" | "dark", opts: { firstPrompt?: string | null } = {}) {
   await page.addInitScript(FAKE_EVENT_SOURCE);
+  // (set before the page opens: with `?connect=` the journey fetches the app's detail on load)
+  noFirstPrompt.on = opts.firstPrompt === null;
   const saved = await openJourney(page, ENTRIES[entry], scheme);
   await mockChat(page);
-  if (opts.firstPrompt === null) {
-    await page.route("**/v1/apps/github", async (route) => {
-      if (route.request().method() !== "GET") return route.fallback();
-      const res = await route.fetch();
-      await route.fulfill({ response: res, json: { ...(await res.json()), first_prompt: null } });
-    });
-  }
   const dialog = page.getByTestId("ws-connect-journey");
   switch (entry) {
     case "the agent's Access tab":
@@ -66,6 +62,10 @@ async function giveGithub(page: Page, entry: Entry, scheme: "light" | "dark", op
   return saved;
 }
 
+test.afterEach(() => {
+  noFirstPrompt.on = false;
+});
+
 for (const scheme of ["light", "dark"] as const) {
   for (const width of [1280, 390]) {
     test.describe(`${scheme} theme, ${width} px`, () => {
@@ -82,7 +82,8 @@ for (const scheme of ["light", "dark"] as const) {
 
           await expect(page.getByTestId("ws-connect-journey")).toHaveCount(0);
           await expect(page.getByRole("heading", { name: "Direct chat" })).toBeVisible();
-          const box = page.getByRole("textbox", { name: /message/i });
+          // (the composer's field is a combobox for the emoji suggestions; it is labelled "Message")
+          const box = page.getByLabel("Message", { exact: true });
           await expect(box).toHaveValue(PROMPT);
           await expect(box).toBeFocused();
           await expect.poll(() => new URL(page.url()).pathname).toBe("/o/acme/w/main/agents/daneel");
@@ -103,7 +104,7 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByTestId("ws-connect-journey").getByRole("link", { name: "Open chat" }).click();
         await expect(page.getByTestId("ws-connect-journey")).toHaveCount(0);
         await expect(page.getByRole("heading", { name: "Direct chat" })).toBeVisible();
-        await expect(page.getByRole("textbox", { name: /message/i })).toHaveValue("");
+        await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
         expect(sent).toEqual([]);
       });
     });

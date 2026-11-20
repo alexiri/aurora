@@ -508,7 +508,7 @@ export function ConnectJourney({
                 </Button>
               )}
               {chat ? (
-                <Link className={cn(buttonVariants({ size: "lg" }), "max-sm:order-first max-sm:w-full")} href={chat} onClick={onClose}>
+                <Link className={cn(buttonVariants({ size: "lg" }), "max-sm:order-first max-sm:w-full")} href={chat}>
                   {prompt ? "Try it in chat" : "Open chat"}
                 </Link>
               ) : null}
