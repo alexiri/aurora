@@ -432,16 +432,9 @@ so no item waited.
     three new registry rows.
   - **New automation** is shown to everyone (members could create webhooks before); only the schedule choice is disabled for a person
     who cannot (with the who-can line), as before.
-  - **Run now** shows the status line under the row at every width (no separate toast on a phone).
-  - **Pause by name**: "Paused by Carol Member" needs an actor the API does not send; the row says "paused, won't run until resumed" and
-    the notices for `authorization` and `failures`.
-  - **Thread rename note** ("Schedule · was 'Every minute ping', renamed with it") is not built: the API has no old title.
-  - **First line of a delivery** reads "<time> · accepted" (not "signed and accepted"): the display payload does not say how the
-    webhook is verified.
-  - **Runs table's Conversation cell** reads "Open the conversation" (the run row has no thread title); "Open details" for a failed run is
-    not built (Technical details is Expert and the run has nothing more to show).
-  - **Time zone select** is a native `<select>` (type-ahead search by the browser) with the workspace's zone first, then the browser's,
-    then every IANA zone; no custom combobox.
+  - (Send-back items 1–6 are fixed, see "Send-back" below; their deviations are removed from this list.) A pause by an agent's tool, the
+    authorization pass or the failure counter has no name (`paused_by` null): the row keeps its own notices for `authorization` and
+    `failures`.
   - The schedule form's summary ends "Schedules run at most every 5 minutes." (the brief's sentence), not the mockup's "The shortest
     interval is 5 minutes".
   - Registry: `auto.gate` is replaced by `auto.advanced` (Set up); `auto.cron` and `auto.verification` lose `later`; `auto.howto` is new.
@@ -470,6 +463,40 @@ so no item waited.
     in a lane); CI runs them.
 - Screenshots compared (Before / After / mine, per finding key, both themes, 1256 and 390 px): not taken in this lane (no browser here);
   `e2e/automations.spec.ts` writes its screenshots to `/tmp/aurora-screens/p5-refine-14/` when it runs.
-- Open questions: (1) Should the Chats group get a real "Open channel" once presences or bindings carry a channel address? (2) Does the
-  owner want the schedule's last-run line to name who paused it (needs an actor in `disabled_reason`)? (3) The delivery message's
-  "signed and accepted" needs the verification kind in `display`.
+- Open questions: (1) Should the Chats group get a real "Open channel" once presences or bindings carry a channel address? (The former
+  questions 2 and 3, who paused it and "signed and accepted", are answered by the send-back below.)
+
+### Send-back (Orchestrator's review of 059bec27..d95c1713; master 264ca8d4 merged first, 8b600d30)
+
+All six items done. Contract first (docs/05, docs/03, API_CONTRACTS C-1096, C-1097, C-1098; migration `20261201000268_automation_pause_actor.sql`:
+`schedules.disabled_by`, `webhooks.disabled_by`, `conversations.previous_title`).
+
+- Commits: `1d335e2d` (API for items 4, 5, 6: contracts, migration, repos, DTOs, three ITs, openapi/schema.d.ts/spec_schema regenerated),
+  `d90fa404` (items 5, 6 web), `46506dc8` (items 1, 2, 3, 4 web).
+- 1 **Run now toast**: `useUndoToast` takes `{ success, link }`; "✓ Started · Open the conversation" at every width, the link opens the run's
+  thread (`?tab=chat&c=<id>`) and closes the toast; a gate skip says "Skipped by the gate · nothing to report" without a link. The row's
+  status line stays too (`data-testid="run-started"`).
+- 2 **Runs table Conversation cell**: the link text is `runThreadName(schedule name, fired_at)` ("Morning summary · 2 Jan 09:00", the same
+  time format as the thread's title in the list); a failed run without a thread shows **Open details** (a dialog: when, the outcome
+  sentence, and the raw outcome, result, reason, turn and run ids under a collapsed Technical details); other runs without a thread say None.
+- 3 **Time zone**: new `components/ui/combobox.tsx` (a searchable select: input with `role="combobox"`, `SuggestionList` below, tokens only,
+  Up/Down/Enter/Escape, pointer without losing focus, "No match"; `tests/combobox.test.tsx`, 4 cases) used by the schedule form
+  (`aria-label="Time zone"`, workspace zone first). It is 18 rem wide in a row and full width on a phone (`max-w-full`).
+- 4 **Paused by <name>**: C-1096 `paused_by: { id, display_name } | null` on `Schedule` and `Webhook`, written by a person's own pause
+  (the schedule `Patch` carries `paused_by`; an agent tool's pause and the authorization/failure passes leave it null) and cleared on
+  resume; the row's small line starts "Paused by Carol Member · …". IT: `schedules::api_validation_crud_and_run_now` (name),
+  `webhooks::a_pause_names_the_person_and_a_resume_clears_it`.
+- 5 **"signed and accepted"**: C-1097 `display.verification` (`signed` | `token` | `none`) written by the receiver; first line
+  "<time> · signed and accepted" / "accepted with its token" / "accepted, not signed"; an old event shows "accepted". ITs:
+  `webhooks::the_first_line_records_how_a_delivery_was_verified`, `each_delivery_gets_its_own_thread_…`.
+- 6 **Rename note**: C-1098 `conversations.previous_title` (the title-sync UPDATE keeps the old one) and `Conversation.automation.previous_name`;
+  the run thread's header reads `Schedule · was "Every minute ping", renamed with it` (`automationNotes` in `lib/chat/layout.ts`). ITs:
+  the schedule and webhook rename assertions.
+- Tests changed: `tests/automations-page.test.tsx` (Run now toast, gate toast, Paused by, Runs link names and Open details, time zone
+  combobox; the toast slot is dismissed after each test), `tests/automation-message.test.tsx`, `tests/chat-layout.test.ts`,
+  `tests/combobox.test.tsx` (new), `e2e/automations.spec.ts` (toast link, run link name). Nothing removed or skipped.
+- Commands (all through `heavy.sh p5-polish-b`): `cargo test -p aurora-api --test it -- webhooks:: schedules:: openapi_matches_checked_in`
+  (42 passed; the snapshot after `UPDATE_OPENAPI=1`), `cargo test -p aurora-db --test it` (49 passed), `cargo fmt --check`, `cargo clippy -p
+  aurora-db -p aurora-api --tests -- -D warnings` clean, `python3 scripts/extract-schema.py --check` up to date, `bash
+  scripts/guards/run-all.sh` passed, `pnpm exec tsc --noEmit` clean, eslint on touched files clean, whole web `pnpm exec vitest run`
+  (shared primitive changed): 223 files, 3113 tests passed. Playwright not run (nightly/CI): `e2e/automations.spec.ts`.

@@ -175,7 +175,8 @@ to do its own way. A page uses these; a new page never invents its own. (Mock-up
   Escape, the overlay or the button) before it was copied asks "You haven't copied it. Close anyway?" with
   **Copy** and **Close anyway**. The value lives only in the opener's state.
 - **Confirm ladder.** Undoable actions (pause, remove from a list, turn off) do not ask: a toast with
-  **Undo** (`useUndoToast`, six seconds). Reversible but disruptive actions (rotate, promote, pause an
+  **Undo** (`useUndoToast`, six seconds; it can carry a check mark and one link, as Run now's "Started · Open the
+  conversation"). Reversible but disruptive actions (rotate, promote, pause an
   agent, workspace or organization) open a `ConfirmDialog` whose **consequence sentence is required** and
   whose button is the verb ("Rotate URL", "Promote to Owner"). Permanent actions (delete) open
   `TypeToConfirm`: a red consequence line, then "Type the workspace name to confirm: **<visible name>**",
@@ -369,7 +370,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   reads every page through the shared `fetchAllPages` (`lib/api/paging.ts`, ceiling
   10 pages) and shows `MoreNotShown` if the ceiling was hit; lists that can be
   longer use an infinite query with "Load more". A picker with more than eight
-  options gets a text filter (`PickerFilter`: "add by name or e-mail"). A
+  options gets a text filter (`PickerFilter`: "add by name or e-mail"); a list too long to scan
+  (the time zones) is a `Combobox` (P5-REFINE-14: a searchable select, type to narrow, Up/Down/Enter/Escape). A
   conversation deep link outside the loaded pages is fetched by id.
 
 **Components** (`web/src/components/ui/`):
