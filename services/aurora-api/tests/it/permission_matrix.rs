@@ -1179,6 +1179,13 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/access-requests/{id}/dismiss", G::WsOwn, false),
     r("GET", "/v1/agents/{agent}/links", G::WsUse, false),
     r("PUT", "/v1/agent-links/{id}/policy", G::WsUse, false),
+    // P5-REFINE-10 (C-1085, SEC-142): people link agents. `{agent}` needs `can_use` (the body
+    // links it to itself: 409 `link_self` for everyone allowed); the other side's rules are in
+    // `agent_links_people.rs`.
+    r("GET", "/v1/agents/{agent}/linkable", G::WsUse, false),
+    r("POST", "/v1/agents/{agent}/links", G::WsUse, false),
+    r("PUT", "/v1/agent-links/{id}/direction", G::WsUse, false),
+    r("DELETE", "/v1/agent-links/{id}", G::WsUse, false),
     // P4-EVAL-1 (C-861, C-863, C-866): `can_use` everywhere (a judge change needs `can_own`
     // inside the service; the matrix body leaves the judge alone); no one else learns the agent exists.
     r("GET", "/v1/agents/{agent}/eval-questions", G::WsUse, false),
@@ -1764,6 +1771,12 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/action-approvals/{id}/decision") => json!({"decision": "deny"}),
         ("PUT", "/v1/agent-links/{id}/policy") => {
             json!({"agent_id": fx.agent, "policy": "ask", "revision": 0})
+        }
+        ("POST", "/v1/agents/{agent}/links") => {
+            json!({"peer_agent_id": fx.agent, "direction": "both"})
+        }
+        ("PUT", "/v1/agent-links/{id}/direction") => {
+            json!({"agent_id": fx.agent, "direction": "both", "revision": 0})
         }
         ("POST", "/v1/agents/{agent}/eval-questions") => {
             json!({"question": "q", "expected_kind": "judged", "criteria": "c"})

@@ -909,7 +909,49 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   approval decided by someone with `can_use` on that side's workspace — phase 2, RFE-012: `can_approve`; approving
   sets that side to `allow`). The first `message_agent` creates the link with
   both sides `ask` (or `allow` for agents in the same workspace — same
-  operators).
+  operators), `direction: both`, `created_by: agent`.
+- **People create links** (phase 5, P5-REFINE-10, D-411, C-1085, SEC-142). An
+  agent cannot know which other agents exist, so a person links two agents
+  (`POST /v1/agents/{agent}/links`, picker `GET /v1/agents/{agent}/linkable`):
+  - **Who may link:** `can_use` on **both** agents' workspaces. The picker
+    lists only the same-organization agents of workspaces the caller can use
+    (an organization owner or admin: every workspace; a workspace API key: its
+    workspace), with a name, a handle and a workspace name; any other agent is
+    a 404, whether it does not exist, belongs to another organization or sits
+    in a workspace the caller cannot use. A person who cannot use one side asks
+    someone who can.
+  - **Hosted and not frozen only:** a BYO agent is 409 `not_hosted`; a frozen
+    agent (either) is 423 `frozen`. An agent cannot be linked to itself (409
+    `link_self`).
+  - **Consent follows approval rights (FIX-110):** each side of the new link
+    starts `allow` when the creator `can_approve` that side's workspace (the
+    creator's act is that side's consent), else `ask` (the first task still
+    needs an approver of that side). The creator never sets `blocked`; a side's
+    policy changes afterwards only through `PUT …/policy` (C-29).
+  - **Direction** (who may hand tasks to whom): `both`, or one way, stored on the
+    pair (`a_to_b` / `b_to_a`) and shown from each agent's side (`outgoing`,
+    `incoming`). A task is **opened** only in the link's direction: an opening
+    against it is refused with "This link is one-way: <Sender> only works on
+    tasks that <Target> sends it, so you cannot hand <Target> a task." before
+    any approval is created, and an approval decided after the direction
+    narrowed fails with the same text. Messages inside an open task, the task's
+    report and its cancellation are not directional; tasks already open or
+    queued when the direction changes run on. **Widening** (any new flow) needs
+    `can_approve` on both sides' workspaces; **narrowing** needs `can_use` on
+    the side the change is read from.
+  - **Removing** a link needs `can_use` on either side (it only restricts): the
+    pair's queued, then open, tasks are cancelled with the platform's line
+    ("…cancelled: the link between these agents was removed."), its pending
+    `message_agent` approvals end `expired` with a line to their origin, and the
+    row goes, in one transaction. A later `message_agent` from an agent creates
+    the link again (agent path unchanged).
+  - What a linked agent can reach: only `message_agent` to its peer within the
+    direction and the side policies above; a link grants no access to the
+    peer's workspace, conversations, tools, files or credentials (the peer task
+    runs in the peer's own conversation, under the peer's own grants and
+    policy).
+  - `agent_link.create`, `agent_link.direction` and `agent_link.delete` are
+    security-critical audit rows written in the change's transaction.
 - **Peer task**: opened by `message_agent` when the sending turn has a person as
   speaker; creates a `peer` conversation on the receiving agent and a turn.
   One open task per ordered pair (later ones `queued`); `PEER_TASK_BUDGET`

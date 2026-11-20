@@ -7346,6 +7346,177 @@
         ]
       }
     },
+    "/v1/agent-links/{id}": {
+      "delete": {
+        "tags": [
+          "agent-links"
+        ],
+        "summary": "Remove a link (C-1085): cancels the pair's open and queued tasks and expires its pending\napprovals.",
+        "operationId": "deleteAgentLink",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Link id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agent-links/{id}/direction": {
+      "put": {
+        "tags": [
+          "agent-links"
+        ],
+        "summary": "Change who may hand tasks to whom (C-1085): widening needs an approver of both sides.",
+        "operationId": "setAgentLinkDirection",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Link id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDirectionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "approver_required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "stale_revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agent-links/{id}/policy": {
       "put": {
         "tags": [
@@ -10974,6 +11145,75 @@
         ]
       }
     },
+    "/v1/agents/{agent}/linkable": {
+      "get": {
+        "tags": [
+          "agent-links"
+        ],
+        "summary": "Agents a person may link this agent to (C-1085): same organization, workspaces the caller\ncan use; name, handle and workspace only.",
+        "operationId": "listLinkableAgents",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkableAgentList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/links": {
       "get": {
         "tags": [
@@ -11014,6 +11254,122 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "agent-links"
+        ],
+        "summary": "Link this agent to another (C-1085, SEC-142). 201 when created; 200 with the existing link\nwhen the pair is linked already with the same direction.",
+        "operationId": "createAgentLink",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Already linked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentLink"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "link_self | not_hosted | link_exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "frozen",
             "content": {
               "application/json": {
                 "schema": {
@@ -40743,6 +41099,8 @@
           "revision",
           "self",
           "peer",
+          "direction",
+          "created_by",
           "created_at",
           "updated_at"
         ],
@@ -40750,6 +41108,13 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/LinkCreator"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LinkDirection",
+            "description": "(C-1085) Who may hand tasks to whom, from this agent's side."
           },
           "id": {
             "type": "string",
@@ -45554,6 +45919,25 @@
             "description": "1-80 characters."
           }
         }
+      },
+      "CreateLinkBody": {
+        "type": "object",
+        "description": "`POST /v1/agents/{agent}/links` (C-1085).",
+        "required": [
+          "peer_agent_id",
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/LinkDirectionRequest",
+            "description": "Read from `{agent}`'s side."
+          },
+          "peer_agent_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
       },
       "CreateMemoryRequest": {
         "type": "object",
@@ -50719,6 +51103,50 @@
           }
         }
       },
+      "LinkCreator": {
+        "type": "object",
+        "description": "(C-1085) Who created the link.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The person's display name; null for an agent, or once the person is deleted."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LinkCreatorKind"
+          }
+        }
+      },
+      "LinkCreatorKind": {
+        "type": "string",
+        "enum": [
+          "person",
+          "agent"
+        ]
+      },
+      "LinkDirection": {
+        "type": "string",
+        "description": "(C-1085) Who may hand tasks to whom, read from the asked agent's side.",
+        "enum": [
+          "both",
+          "outgoing",
+          "incoming"
+        ]
+      },
+      "LinkDirectionRequest": {
+        "type": "string",
+        "description": "(C-1085) The direction a person asks for, read from the agent named by the route or body.",
+        "enum": [
+          "both",
+          "to_peer",
+          "from_peer"
+        ]
+      },
       "LinkMethod": {
         "type": "string",
         "enum": [
@@ -50734,6 +51162,7 @@
           "handle",
           "name",
           "workspace_id",
+          "workspace_name",
           "policy"
         ],
         "properties": {
@@ -50753,6 +51182,10 @@
           "workspace_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "workspace_name": {
+            "type": "string",
+            "description": "(C-1085) The peer's workspace name."
           }
         }
       },
@@ -50822,6 +51255,65 @@
           },
           "policy": {
             "$ref": "#/components/schemas/LinkPolicy"
+          }
+        }
+      },
+      "LinkableAgent": {
+        "type": "object",
+        "description": "A candidate of `GET /v1/agents/{agent}/linkable` (C-1085): nothing else about the agent.",
+        "required": [
+          "agent_id",
+          "name",
+          "handle",
+          "workspace_id",
+          "workspace_name",
+          "linked",
+          "hosted",
+          "frozen"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "frozen": {
+            "type": "boolean",
+            "description": "The agent is paused by an administrator (not linkable)."
+          },
+          "handle": {
+            "type": "string"
+          },
+          "hosted": {
+            "type": "boolean",
+            "description": "False for a BYO agent (not linkable)."
+          },
+          "linked": {
+            "type": "boolean",
+            "description": "A link with this agent exists already."
+          },
+          "name": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workspace_name": {
+            "type": "string"
+          }
+        }
+      },
+      "LinkableAgentList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkableAgent"
+            }
           }
         }
       },
@@ -63167,6 +63659,31 @@
             "type": "string"
           }
         }
+      },
+      "SetDirectionBody": {
+        "type": "object",
+        "description": "`PUT /v1/agent-links/{id}/direction` (C-1085).",
+        "required": [
+          "agent_id",
+          "direction",
+          "revision"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The agent whose side `direction` is read from (one of the link's two agents)."
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LinkDirectionRequest"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `revision` the caller last saw (409 `stale_revision` on mismatch)."
+          }
+        },
+        "additionalProperties": false
       },
       "SetDmDefaultRequest": {
         "type": "object",

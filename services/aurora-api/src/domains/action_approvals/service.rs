@@ -280,13 +280,30 @@ pub async fn decide(
 
 /// Expire one locked pending row and tell the origin conversation.
 async fn expire_one(conn: &mut PgConnection, row: &ActionApprovalRow) -> Result<bool, ApiError> {
-    let Some(done) = repo::expire(&mut *conn, row.id).await? else {
+    expire_with_reason(conn, row.id, None).await
+}
+
+/// Expire the locked pending row `id` (no-op when it is no longer pending) and tell the origin
+/// conversation, with `reason` after "ended without a decision" when the platform ended it early
+/// (P5-REFINE-10: a removed agent link).
+pub async fn expire_with_reason(
+    conn: &mut PgConnection,
+    id: Uuid,
+    reason: Option<&str>,
+) -> Result<bool, ApiError> {
+    let Some(done) = repo::expire(&mut *conn, id).await? else {
         return Ok(false);
     };
-    let line = format!(
-        "The request \"{}\" expired without a decision.",
-        done.summary
-    );
+    let line = match reason {
+        None => format!(
+            "The request \"{}\" expired without a decision.",
+            done.summary
+        ),
+        Some(why) => format!(
+            "The request \"{}\" ended without a decision: {why}.",
+            done.summary
+        ),
+    };
     report_outcome(conn, &done, "action_approval_expired", &line, true).await?;
     Ok(true)
 }
