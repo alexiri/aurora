@@ -350,9 +350,11 @@ describe("navigation entries", () => {
     expect(screen.queryByRole("link", { name: "Members" })).toBeNull();
   });
 
-  it("shows the account navigation on account pages, with a switcher that asks for a workspace", async () => {
+  it("shows the account navigation on account pages, with a switcher that is busy until the session loads and then keeps the last scope", async () => {
     render("/account", {});
+    // (firstday-2) Loading first, never a live-looking empty card; then the last scope kept for Account pages (P5-REFINE-2).
+    expect(within(switcher()).getByText("Loading workspaces…")).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "Profile" })).toBeInTheDocument();
-    expect(within(switcher()).getByText("Choose a workspace")).toBeInTheDocument();
+    expect(await within(switcher()).findByText("Users")).toBeInTheDocument();
   });
 });
