@@ -46,7 +46,7 @@ export const ALTITUDE_REGISTRY = {
   "agent.handle": { altitude: "expert", area: "agent header" },
   "policy.restrict": { altitude: "setup", area: "Internet access" },
   "policy.try": { altitude: "setup", area: "Internet access" },
-  "policy.presets": { altitude: "setup", area: "Internet access", later: "P5-REFINE-18" },
+  "policy.presets": { altitude: "setup", area: "Internet access" },
   "auto.cron": { altitude: "expert", area: "Schedules", later: "P5-REFINE-14" },
   "auto.gate": { altitude: "expert", area: "Schedules" },
   "auto.anchor": { altitude: "expert", area: "Schedules" },

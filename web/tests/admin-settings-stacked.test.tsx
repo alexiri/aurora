@@ -153,7 +153,7 @@ describe("Administration › Agents: stacked settings sections have one Save (P5
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain("more shares per agent");
     expect(puts).toEqual([]);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Yes, save" }));
     await waitFor(() => expect(puts).toEqual(["terminal", "previews"]));
   });
 

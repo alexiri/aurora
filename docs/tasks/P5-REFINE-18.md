@@ -496,9 +496,27 @@ risk: review them closely.
 
 Fill in when done; P5-REFINE-20 reads it.
 
-- **Items done** (number, finding keys, commit):
-- **Items waiting for a backend brief** (which, what is missing, when picked up):
+**This is a partial report (first pass, one worker session). Most of the brief is NOT done; the Orchestrator places the rest.**
+
+- **Items done** (commit: the one that carries this report, on `alexiri/p5-apps`):
+  - **18 (badge, G4):** the Administration count was already on the sidebar-foot link and in the account menu (FIX-167); added it to **Overview in the Administration rail**, and made it live: `useRefreshAttentionOnMutation` (`lib/api/attention.ts`, mounted in the shell for instance admins) refetches after any successful mutation, on top of focus and 5 minutes. It still counts `GET /v1/admin/attention` only; the per-entry counts and request counts of C-1080/C-1082 wait for brief 8.
+  - **2 (presets), instance level only:** `lib/policy-presets.ts` (`PRESETS`, `detectPreset`, `applyPreset`), `components/policy/policy-presets.tsx` (card, preview, confirm, Customise fold, "Custom · based on Open", "Open (n settings set in Helm)" with lock pill) mounted first on Administration › Internet access. Mapping table in `docs/15`. **Open equals the registry defaults for all six keys** (a test reads them from `settings.rs`): no difference to report.
+  - **3 (admin-3):** `describeChange` in `lib/settings-words.ts`; the confirm is "Allow more than before?", a sentence per change, a heading per section, keys and reasons under Technical details, **Go back** / **Yes, save** (`ConfirmDialog` gained `cancelLabel`). A vitest walks the registry's loosening keys (parsed from `settings.rs`): every one reads as a sentence with no key and no snake_case.
+  - **6 (admin-1):** a `key_origin_required` refusal springs the switch back to its saved value and shows "Not turned on. 2 AI endpoints have no key origin … Nothing changed" with **Dismiss**, endpoints by display name, server message under Technical details. The endpoint names do not link to Set in Helm (that page is not built).
+  - **12 (admin-11), partly:** Apps are A to Z in every list and have a "Search N apps" field (placeholder carries the count). The Waiting / From Aurora / Other layout of P5-POLISH-10 is kept (not the mockup's tile grid); the light plate behind logos is brief 2's `AppIcon`, already in place.
+  - **16, partly:** setup-6: a single-line string setting is an `<input>` (threshold for a text area is now 2000 characters, was 500: the mail server address is 512). setup-7: option text is the display name only (no "(litellm)") and the "Allowed key scopes" line is gone.
+  - **D-426 (owner message):** `ROLE_LABEL` is now `ROLE_NAME` (Strongest / Everyday / Fastest model) on the endpoint dialog, the endpoint role line and the agent readiness notes; `droppedRoleWarning` no longer says "model model".
+- **Items waiting for a backend brief:** 5's items (admin-1 endpoint names link, setup-1/2/4 Try it, starter key, "Given to…", no-key path, real-call health) have merged but are **not done** for lack of time (see below). Waiting on **6**: admin-5 status from the host and Next line (item 7 second half), admin-12 package errors (item 17), admin-14 storage categories and the Rate limits text (item 17), audit server filter (item 11, C-1088). Waiting on **8**: item 13 (requests in Administration, Decline with message), the per-entry counts of item 18.
+- **Not done, no dependency (for a second pass):** 1 (rail in two halves, Set in Helm page, area header), 2's organization pages and the checklist line, 4 (field errors in the field's unit), 5 (saved sentences/Undo check), 7 first half (chat platforms first), 8 (app review summary), 9 (two-step endpoint dialog), 10 (terminal-off notice), 11 (audit stacked, system events), 14 (checklist Try it/no-key/Open chat), 15 (health lines), 16 (the "Provider" label, dialog title and description of the add-key dialog; the "Which service is this key for?" label is used by about 15 tests and specs, so it is a batch of its own), 17 admin-13 (users).
 - **Deviations from the mockup or this brief and why:**
-- **Screenshots compared** (key, theme, width, path of the new screenshot):
-- **Tests run** (commands and counts):
-- **Open questions:**
+  - Balanced: "ask before changing data on sites they have no account for" has no instance key (it is a workspace policy default); Balanced therefore differs from Open only in key scopes and outside agents. **Question for the owner/Orchestrator.**
+  - Customise is a plain toggle in an `Altitude id="policy.presets"` wrapper (registry row existed, `later` removed).
+  - The loosening sentence for a keyed list entry (sign-in provider) is generic ("Sign-in providers: corp now allows more than before."); the server's warning sentence still shows under it.
+  - No screenshots were taken (no stack in the lane).
+- **Screenshots compared:** none.
+- **Tests** (all through `heavy.sh p5-apps`):
+  - Full web vitest once (shared UI changed): 198 files, 2808 passed, 3 failed; the 3 failures were mine (an old "(bedrock)" option name in `llm-key-form.test.tsx`, the preset card's legend word in `ui-text.test.ts`, my own preset test's static mock) and were fixed; the re-run of those files plus the touched ones: 7 files, 48 passed.
+  - `pnpm typecheck`: clean. eslint on touched files: clean after removing one unused variable. `scripts/guards/run-all.sh`: all passed. No Rust changed, so no fmt/clippy/extract-schema run.
+  - **Test files changed:** `context-switcher` (badge on the rail), `admin-attention` (count follows a mutation), `admin-settings`, `-governance`, `-operational`, `-stacked`, `-sign-in`, `-llm` (new confirm wording and button, role names), `credential-access` (role names), `llm-key-form` (option text), `admin-apps-list` (A to Z, search). **New:** `describe-change.test.ts`, `policy-presets.test.tsx`. Specs: `e2e/admin-attention.spec.ts` (new count-drops-without-reload test), `e2e/admin-settings.spec.ts` (preset card, Customise before the locked egress value). **Not run** (Playwright rule): those two specs and the mocked specs that visit Administration › Internet access (`internet-access`, `stage4-axe`); **production specs** that look at the confirm button ("Save") or the add-key label: none found by search.
+  - No test removed.
+- **Open questions:** Balanced (above). Should the preset card also set `governance.llm.require_key_origin`? Left untouched.

@@ -1995,6 +1995,7 @@ table view; durations "3 h 20 min", "45 min", "under 1 min"; dates as the dashbo
 "UTC" in the opening sentence only.
 
 ### Instance administration (`/admin/*`, instance admins only)
+(phase 5, P5-REFINE-18, first part) **Policy presets** (D-410): Administration › Internet access opens with "How much may agents do here?" (`components/policy/policy-presets.tsx`, mapping `lib/policy-presets.ts`): **Open** (default; equals a fresh install's registry defaults, a test pins it), **Balanced**, **Locked down**, each with a sentence of consequences. Choosing one previews, then writes the mapped `governance` keys through the section's PUT; a loosening asks in sentences. A value edited by hand reads "Custom · based on Open"; a Helm-locked value that keeps a preset from applying shows "Open (2 settings set in Helm)" with a lock pill, never an error. Today's fields are behind **Customise ▸** (open when custom). The organization AI models / Internet access pages and the "What agents may do · Open · Change" checklist line are not built yet. **Confirm in sentences** (admin-3): a save that loosens opens "Allow more than before?" with a heading per section and one sentence per change (`describeChange` in `lib/settings-words.ts`), **Go back** / **Yes, save**; keys and reasons only under Technical details. **A refused key-origin save** (admin-1, C-1066) leaves "Check where AI keys come from" Off and shows "Not turned on. … Nothing changed" with the endpoints by display name until dismissed. **Apps** (admin-11) are A to Z with a search ("Search 14 apps"). A single-line string setting (the mail server address) is an input, not a text area. **The Administration count** (P5-REFINE-18 item 18) is on every entry: the sidebar-foot link, the account menu and Overview in the Administration rail, refetched on focus, every 5 minutes and after any successful mutation.
 (phase 5, P5-ADMDEL, D-234) **Organizations** (`/admin/orgs`): a `DataTable` of every
 organization — name, slug, members, workspaces, agents, created, state badges ("Paused",
 "No owner") — with a row **Actions** menu: Pause / Resume (D-407), **Workspaces**
@@ -2065,7 +2066,7 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   compatible base URL, auth header and models path) and hides `allowed_paths` for Bedrock and
   Vertex. Each row shows the harnesses the endpoint serves as `Badge`s and, when it serves none,
   a `Notice` ("No enabled harness speaks this API. Put a LiteLLM endpoint in front to translate.").
-  (phase 5, P5-MODELS-3, C-875) The dialog also has **Model roles** (Large, Medium, Small: the
+  (phase 5, P5-MODELS-3, C-875) The dialog also has **Model roles** (Strongest model, Everyday model, Fastest model, D-426: one vocabulary on the agent's pages and here; the stored roles stay `large`/`medium`/`small`; the
   endpoint's models or free text checked against `MODEL_ID_PATTERN`) and **Model details**, a keyed
   list of model id → context window and capability checkboxes. Its help text reads "For models the
   harness does not recognise, such as non-Claude models behind LiteLLM". A `Notice` on an endpoint

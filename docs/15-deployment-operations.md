@@ -96,6 +96,19 @@ one new entry without activating it.
 
 ### Instance settings (phase 5, SPEC-SETTINGS, D-236..D-238, SEC-89, SEC-90)
 
+**Policy presets (P5-REFINE-18, D-410).** The dashboard's three presets write these `governance` keys (the token age and the baseline allow-list are never touched):
+
+| Key | Open (default = registry default) | Balanced | Locked down |
+|---|---|---|---|
+| `governance.egress.minimum_posture` | `open` | `open` | `credentialed_only` |
+| `governance.egress.open_lane_minimum` | `enabled` | `enabled` | `allowlist_only` |
+| `governance.llm.minimum_posture` | `open` | `open` | `sanctioned_only` |
+| `governance.llm.allowed_key_scopes` | `["organization","workspace"]` | `["organization"]` | `["organization"]` |
+| `byo.enabled` | `true` | `true` | `false` |
+| `byo.minimum_posture` | `owners_only` | `disabled` | `disabled` |
+
+"Asks before changing data on sites they have no account for" (Balanced) has no instance-level key: it is a workspace policy default, so Balanced differs from Open only in key scopes and outside agents.
+
 Not built yet: SET-1 builds the framework, SET-2..SET-5 and FIX-124 the sections. Until then
 every key below is read from the configuration at start, as the reference table says.
 
