@@ -425,6 +425,24 @@
       "maxLength": 64,
       "type": "string"
     },
+    "StreamsConfig": {
+      "description": "(phase 5, P5-REFINE-4, C-1057) The three flags of `RunnerConfig` that decide the :4108\nstream listener, answered again at every `POST /work`.",
+      "properties": {
+        "previews": {
+          "default": false,
+          "type": "boolean"
+        },
+        "ssh_enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "terminal": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "TurnDeliver": {
       "properties": {
         "attachments": {
@@ -814,6 +832,17 @@
       "default": false,
       "description": "True only for the oldest live replica of the runner, computed at poll time (S-08).",
       "type": "boolean"
+    },
+    "streams": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StreamsConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "(phase 5, P5-REFINE-4, C-1057, D-416) The stream listener's flags, re-decided at every\npoll from the live configuration with the same rules as `RunnerConfig` at registration.\nAbsent from an older API: the runner then keeps what its registration said."
     }
   },
   "required": [

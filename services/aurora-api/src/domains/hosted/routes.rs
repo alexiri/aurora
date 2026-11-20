@@ -2,9 +2,9 @@
 //! (contract M4).
 
 use super::dto::{
-    AgentStartFailure, AgentStartFailures, DefaultModel, HarnessList, HarnessView, KeyReadiness,
-    ModelOption, ModelOptions, ModelReadiness, SandboxPort, SandboxProcess, SandboxStartAttempt,
-    SandboxView, StartLogEntry,
+    AgentStartFailure, AgentStartFailures, ComputerFacts, ComputerView, DefaultModel, HarnessList,
+    HarnessView, KeyReadiness, ModelOption, ModelOptions, ModelReadiness, SandboxPort,
+    SandboxProcess, SandboxStartAttempt, SandboxView, StartLogEntry,
 };
 use super::{lifecycle, model, readiness};
 use crate::app::AppState;
@@ -30,6 +30,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(restart))
         .routes(routes!(retry_sandbox))
         .routes(routes!(wake_sandbox))
+        .routes(routes!(sleep_sandbox))
         .routes(routes!(start_failures))
         .routes(routes!(list_models))
         .routes(routes!(model_readiness))
@@ -91,17 +92,26 @@ async fn hosted_agent(
     Ok(a)
 }
 
-/// (D-178 Q-R5-5, FIX-093) Pod/volume warning events, the image reference, runner endpoints and
-/// start-attempt detail go to instance admins and the agent's workspace owners; other members who
-/// can use the agent see a start failure's class and a hint only.
-async fn can_see_start_detail(s: &AppState, c: &Caller, a: &AgentRow) -> Result<bool, ApiError> {
+/// (P5-REFINE-4, D-412, SEC-141; amends D-178 Q-R5-5) Where the computer runs — the image
+/// reference, the runner, the pod/volume warning events and the start detail of
+/// `GET …/sandbox` — is for instance admins only. Workspace owners and members get the
+/// computer in words (`computer`), the phases and times, and a failure's member hint.
+fn can_see_engine(c: &Caller) -> bool {
+    c.is_instance_admin
+}
+
+/// (D-178 Q-R5-5, FIX-093) `GET …/start-failures` (C-613, unchanged by C-1059): instance admins and
+/// the agent's workspace owners see the runner's wording and the events; other members who can use
+/// the agent see a start failure's class and a hint only.
+async fn can_see_failure_detail(s: &AppState, c: &Caller, a: &AgentRow) -> Result<bool, ApiError> {
     if c.is_instance_admin {
         return Ok(true);
     }
     Ok(c.workspace(s, a.workspace_id).await?.can_own())
 }
 
-/// The reduced (member) shape of a sandbox view: class + hint, no events, detail, image or runner.
+/// The reduced shape of a sandbox view (everyone but instance admins, SEC-141): class + hint, no
+/// events, detail, image or runner. `computer`, `boot_id`, the phases and the times stay.
 fn reduce_view(v: &mut SandboxView) {
     v.image = None;
     v.runner_id = None;
@@ -122,9 +132,10 @@ fn idle_stop_after_secs(s: &AppState) -> Option<u64> {
     Some(s.ops().hosted.idle_stop_secs).filter(|n| *n > 0)
 }
 
+/// The caller's view of the agent's computer: every sandbox route answers through this.
 async fn view(s: &AppState, c: &Caller, a: &AgentRow) -> Result<SandboxView, ApiError> {
     let mut v = view_full(s, a).await?;
-    if !can_see_start_detail(s, c, a).await? {
+    if !can_see_engine(c) {
         reduce_view(&mut v);
     }
     Ok(v)
@@ -134,7 +145,17 @@ async fn view_full(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> 
     let agent = a.id;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let Some(r) = hosted::sandbox_view(&mut conn, agent).await? else {
+        let idle = idle_stop_after_secs(s);
         return Ok(SandboxView {
+            computer: ComputerView::build(&ComputerFacts {
+                state: "unprovisioned",
+                start_phase: None,
+                failure_code: None,
+                reasons: &[],
+                quiet_secs: 0,
+                idle_stop_after_secs: idle,
+                started_at: None,
+            }),
             agent_id: agent,
             state: "unprovisioned".into(),
             boot_id: None,
@@ -152,7 +173,7 @@ async fn view_full(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> 
             preview_in_use: false,
             terminal_in_use: false,
             restart_to_update: false,
-            idle_stop_after_secs: idle_stop_after_secs(s),
+            idle_stop_after_secs: idle,
         });
     };
     let running = matches!(r.state.as_str(), "starting" | "running");
@@ -223,7 +244,23 @@ async fn view_full(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> 
     } else {
         false
     };
+    let idle = idle_stop_after_secs(s);
+    // (C-1059) The idle countdown stops for every live reason, an active preview included.
+    let mut live_reasons = reasons.clone();
+    if r.preview_in_use {
+        live_reasons.push("preview".to_owned());
+    }
+    let computer = ComputerView::build(&ComputerFacts {
+        state: &r.state,
+        start_phase: r.start_phase.as_deref(),
+        failure_code: r.failure_code.as_deref(),
+        reasons: &live_reasons,
+        quiet_secs: r.quiet_secs,
+        idle_stop_after_secs: idle,
+        started_at: r.started_at,
+    });
     Ok(SandboxView {
+        computer,
         agent_id: agent,
         state: r.state.clone(),
         boot_id: r.boot_id,
@@ -278,7 +315,7 @@ async fn view_full(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> 
         preview_in_use: r.preview_in_use,
         terminal_in_use: r.terminal_in_use,
         restart_to_update,
-        idle_stop_after_secs: idle_stop_after_secs(s),
+        idle_stop_after_secs: idle,
     })
 }
 
@@ -362,7 +399,7 @@ async fn start_failures(
     Path(agent): Path<Uuid>,
 ) -> Result<Json<AgentStartFailures>, ApiError> {
     let a = hosted_agent(&s, &c, agent).await?;
-    let detailed = can_see_start_detail(&s, &c, &a).await?;
+    let detailed = can_see_failure_detail(&s, &c, &a).await?;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let rows = aurora_db::repo::sandboxes::agent_start_failures(&mut conn, a.id, 20).await?;
     drop(conn);
@@ -458,6 +495,88 @@ async fn wake_sandbox(
             .metadata(serde_json::json!({ "previous_state": state })),
     );
     Ok((StatusCode::ACCEPTED, Json(view(&s, &c, &a).await?)))
+}
+
+/// (P5-REFINE-4, C-1060, D-408) Sleep now: ask a computer that no work holds awake to stop (the
+/// due-work stop arm stops it, reason `idle`). 202 when requested; 200 when it is already
+/// stopping, stopped, unprovisioned or a stop is already ordered (nothing written); 409
+/// `sandbox_busy` with `details.reasons` while a turn, a busy process or an armed watch holds it;
+/// 409 `sandbox_failed`; 409 `not_hosted`; 429 past the shared wake budget. Open terminal, SSH,
+/// Files and preview sessions do not block it (they end: the person chose Sleep now). A message
+/// that arrives after the request makes the start arm bring the computer back.
+#[utoipa::path(post, path = "/agents/{agent}/sandbox/sleep", operation_id = "sleepAgentSandbox", tag = "agents",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = SandboxView), (status = 202, body = SandboxView),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
+        (status = 429, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn sleep_sandbox(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<(StatusCode, Json<SandboxView>), ApiError> {
+    let a = load_agent(&s, &c, agent).await?;
+    if a.kind != "hosted" {
+        return Err(ApiError::conflict(
+            "not_hosted",
+            "This agent runs elsewhere; it has no computer to put to sleep.",
+        ));
+    }
+    let state: Option<String> =
+        sqlx::query_scalar("SELECT state FROM sandboxes WHERE agent_id = $1")
+            .bind(agent)
+            .fetch_optional(&s.pool)
+            .await
+            .map_err(DbError::from)?;
+    // The wake budget is shared (C-1060): only a computer that is awake spends it.
+    if matches!(state.as_deref(), Some("starting" | "running"))
+        && s.rate_limiter
+            .check_quota(
+                "terminal_wake",
+                &agent.to_string(),
+                crate::http::ratelimit::Quota {
+                    capacity: aurora_core::limits::TERMINAL_WAKES_PER_AGENT_HOUR,
+                    per: std::time::Duration::from_secs(3600),
+                },
+            )
+            .is_err()
+    {
+        return Err(ApiError::rate_limited(
+            60,
+            "The computer was woken or put to sleep too often; try again later.",
+        ));
+    }
+    let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    let outcome = hosted::request_sleep(&mut tx, agent).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    match outcome {
+        hosted::SleepOutcome::Requested => {
+            crate::domains::runner_plane::service::notify_work(&s, "sandbox_sleep").await;
+            let v = view(&s, &c, &a).await?;
+            crate::audit::record(
+                &s,
+                AuditEvent::by(&c, "agent.sandbox_sleep")
+                    .org(a.org_id)
+                    .workspace(a.workspace_id)
+                    .target("agent", a.id)
+                    .metadata(serde_json::json!({
+                        "previous_state": state,
+                        "reasons": v.keep_awake_reasons,
+                    })),
+            );
+            Ok((StatusCode::ACCEPTED, Json(v)))
+        }
+        hosted::SleepOutcome::AlreadyStopped => Ok((StatusCode::OK, Json(view(&s, &c, &a).await?))),
+        hosted::SleepOutcome::Busy(reasons) => Err(ApiError::conflict(
+            "sandbox_busy",
+            "The agent is working on its computer; stop the work first.",
+        )
+        .with_details(serde_json::json!({ "reasons": reasons }))),
+        hosted::SleepOutcome::Failed => Err(ApiError::conflict(
+            "sandbox_failed",
+            "The computer's last start failed; use retry.",
+        )),
+    }
 }
 
 /// (FIX-029, C-610, FIX-049, C-626) The one recovery path from `failed`, shared by

@@ -76,6 +76,188 @@ pub struct SandboxView {
     /// (P5-APIGAP-1, C-1046) The idle timeout after which this computer is stopped
     /// (`hosted.idle_stop_secs`); `null` when idle stop is off (0).
     pub idle_stop_after_secs: Option<u64>,
+    /// (P5-REFINE-4, C-1059, D-408, D-412) The computer in words, for everyone who can use the
+    /// agent: a state, flags, a fixed-vocabulary phase and times; never an address or an image.
+    pub computer: ComputerView,
+}
+
+/// (P5-REFINE-4, C-1059) What a person sees of the computer (the header and the Computer page).
+#[derive(Serialize, ToSchema, Debug, Clone, PartialEq, Eq)]
+pub struct ComputerView {
+    /// `off` | `starting` | `on` | `stopping` | `failed` (D-412).
+    pub word: String,
+    /// The computer answers: running, the supervisor connected and the harness reported ready
+    /// (D-408: the header says Ready only then).
+    pub ready: bool,
+    /// `keep_awake_reasons` contains `turn` or `process`.
+    pub working: bool,
+    /// `stopped` or `unprovisioned` with no failure (the header's "Asleep").
+    pub asleep: bool,
+    /// The raw start phase (`claimed`, `provisioning`, `waiting_capacity`, `creating`,
+    /// `booting`, `waiting_supervisor`, `ready`, …; a fixed vocabulary), shown at Expert.
+    pub phase: Option<String>,
+    /// Seconds until the idle stop while the computer is `on` with no keep-awake reason and idle
+    /// stop is on; otherwise null. A hint: the stop arm decides.
+    pub sleeps_in_secs: Option<u64>,
+    /// `SandboxView.started_at` ("Started 23:55 · on").
+    pub started_at: Option<DateTime<Utc>>,
+}
+
+/// The inputs of [`ComputerView::build`] (the sandbox row's facts).
+pub struct ComputerFacts<'a> {
+    pub state: &'a str,
+    pub start_phase: Option<&'a str>,
+    pub failure_code: Option<&'a str>,
+    /// Every live keep-awake reason (`preview` included).
+    pub reasons: &'a [String],
+    pub quiet_secs: i64,
+    pub idle_stop_after_secs: Option<u64>,
+    pub started_at: Option<DateTime<Utc>>,
+}
+
+/// `(word, ready)` of a state and start phase (D-408, D-412).
+pub fn computer_word(state: &str, start_phase: Option<&str>) -> (&'static str, bool) {
+    match state {
+        "starting" => ("starting", false),
+        "running" if start_phase == Some("ready") => ("on", true),
+        "running" => ("starting", false),
+        "stopping" => ("stopping", false),
+        "failed" => ("failed", false),
+        // `unprovisioned`, `stopped` (and anything unknown) read as off.
+        _ => ("off", false),
+    }
+}
+
+impl ComputerView {
+    pub fn build(f: &ComputerFacts<'_>) -> Self {
+        let (word, ready) = computer_word(f.state, f.start_phase);
+        let has = |r: &str| f.reasons.iter().any(|x| x == r);
+        let sleeps_in_secs = match f.idle_stop_after_secs {
+            Some(idle) if word == "on" && f.reasons.is_empty() => {
+                Some(idle.saturating_sub(u64::try_from(f.quiet_secs.max(0)).unwrap_or(0)))
+            }
+            _ => None,
+        };
+        Self {
+            word: word.to_owned(),
+            ready,
+            working: has("turn") || has("process"),
+            asleep: matches!(f.state, "stopped" | "unprovisioned") && f.failure_code.is_none(),
+            phase: f.start_phase.map(str::to_owned),
+            sleeps_in_secs,
+            started_at: f.started_at,
+        }
+    }
+}
+
+#[cfg(test)]
+mod computer_tests {
+    use super::*;
+
+    const STATES: [&str; 6] = [
+        "unprovisioned",
+        "starting",
+        "running",
+        "stopping",
+        "stopped",
+        "failed",
+    ];
+    const PHASES: [Option<&str>; 6] = [
+        None,
+        Some("claimed"),
+        Some("creating"),
+        Some("waiting_supervisor"),
+        Some("booting"),
+        Some("ready"),
+    ];
+
+    fn facts<'a>(
+        state: &'a str,
+        phase: Option<&'a str>,
+        failure: Option<&'a str>,
+        reasons: &'a [String],
+    ) -> ComputerFacts<'a> {
+        ComputerFacts {
+            state,
+            start_phase: phase,
+            failure_code: failure,
+            reasons,
+            quiet_secs: 10,
+            idle_stop_after_secs: Some(900),
+            started_at: None,
+        }
+    }
+
+    /// Every state × start phase × failure: the word, `ready` and `asleep`.
+    #[test]
+    fn word_ready_asleep_table() {
+        for state in STATES {
+            for phase in PHASES {
+                for failure in [None, Some("sandbox_start_failed")] {
+                    let v = ComputerView::build(&facts(state, phase, failure, &[]));
+                    let want_word = match (state, phase) {
+                        ("unprovisioned" | "stopped", _) => "off",
+                        ("starting", _) => "starting",
+                        ("running", Some("ready")) => "on",
+                        ("running", _) => "starting",
+                        ("stopping", _) => "stopping",
+                        ("failed", _) => "failed",
+                        _ => unreachable!(),
+                    };
+                    let ctx = format!("{state} {phase:?} {failure:?}");
+                    assert_eq!(v.word, want_word, "{ctx}");
+                    assert_eq!(
+                        v.ready,
+                        state == "running" && phase == Some("ready"),
+                        "{ctx}"
+                    );
+                    assert_eq!(
+                        v.asleep,
+                        matches!(state, "stopped" | "unprovisioned") && failure.is_none(),
+                        "{ctx}"
+                    );
+                    assert_eq!(v.phase.as_deref(), phase, "{ctx}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn working_is_a_turn_or_a_process() {
+        for (reasons, working) in [
+            (vec!["turn"], true),
+            (vec!["process"], true),
+            (vec!["watch", "terminal"], false),
+            (vec![], false),
+        ] {
+            let reasons: Vec<String> = reasons.into_iter().map(str::to_owned).collect();
+            let v = ComputerView::build(&facts("running", Some("ready"), None, &reasons));
+            assert_eq!(v.working, working, "{reasons:?}");
+        }
+    }
+
+    #[test]
+    fn sleeps_in_counts_down_only_when_on_and_idle() {
+        let on = |quiet: i64, idle: Option<u64>, reasons: &[String]| {
+            ComputerView::build(&ComputerFacts {
+                quiet_secs: quiet,
+                idle_stop_after_secs: idle,
+                ..facts("running", Some("ready"), None, reasons)
+            })
+            .sleeps_in_secs
+        };
+        assert_eq!(on(10, Some(900), &[]), Some(890));
+        assert_eq!(on(1000, Some(900), &[]), Some(0), "never below 0");
+        assert_eq!(on(-5, Some(900), &[]), Some(900), "clock skew reads as 0");
+        assert_eq!(on(10, None, &[]), None, "idle stop off");
+        assert_eq!(on(10, Some(900), &["terminal".to_owned()]), None);
+        assert_eq!(on(10, Some(900), &["preview".to_owned()]), None);
+        // Not on: no countdown.
+        let starting = ComputerView::build(&facts("running", Some("booting"), None, &[]));
+        assert_eq!(starting.sleeps_in_secs, None);
+        let off = ComputerView::build(&facts("stopped", None, None, &[]));
+        assert_eq!(off.sleeps_in_secs, None);
+    }
 }
 
 /// (FIX-029, C-611) One entry of the boot's start log (`sandboxes.start_log`, C-612).

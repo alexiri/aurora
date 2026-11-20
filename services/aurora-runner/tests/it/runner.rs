@@ -7,18 +7,20 @@ use aurora_config::OrphanReap;
 use aurora_protocol::runner::{
     DesiredState, RegisterResponse, ReportBody, ReportStatus, ReportsRequest, RunnerConfig,
     SandboxAssignment, SandboxResources, SandboxSpec, SandboxStart, SandboxState, SandboxStop,
-    SandboxesResponse, StopReason, WorkItem, WorkItemBody, WorkResponse,
+    SandboxesResponse, StopReason, StreamsConfig, WorkItem, WorkItemBody, WorkResponse,
 };
 use aurora_runner::api::{ApiClient, RetryPolicy};
 use aurora_runner::backend::{
     Backend, BackendError, LABEL_INSTALLATION, LABEL_RUNNER, ManagedObject, ObjectKind,
 };
 use aurora_runner::backends::fake::FakeBackend;
+use aurora_runner::channel::{ChannelServer, ChannelSettings};
 use aurora_runner::executor::{Executor, ExecutorSettings};
 use aurora_runner::hub::{Frame, HubEvent, StubHub};
 use aurora_runner::reconcile::{ReconcileCtx, reconcile_once};
 use aurora_runner::reporter;
 use aurora_runner::runner::installation_fingerprint;
+use aurora_runner::stream_listener::StreamListener;
 use aurora_runner::{Runner, RunnerSettings};
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -165,6 +167,7 @@ async fn mount_full(
             .respond_with(ResponseTemplate::new(200).set_body_json(WorkResponse {
                 items: batch,
                 reconciler,
+                streams: None,
             }))
             .up_to_n_times(1)
             .mount(server)
@@ -175,6 +178,7 @@ async fn mount_full(
         .respond_with(ResponseTemplate::new(200).set_body_json(WorkResponse {
             items: vec![],
             reconciler,
+            streams: None,
         }))
         .mount(server)
         .await;
@@ -1135,4 +1139,199 @@ async fn final_flush_retries_a_503_after_shutdown_began() {
         1,
         "the stopped report was delivered after the 503s"
     );
+}
+
+// ------------------------------------------- P5-REFINE-4, C-1057: the runner re-decides streams
+
+type StreamsSwitch = Arc<std::sync::Mutex<Option<StreamsConfig>>>;
+
+/// Answers every `/work` with no items and the `streams` the test has set (None = an older API).
+struct StreamsAnswer(StreamsSwitch);
+impl Respond for StreamsAnswer {
+    fn respond(&self, _: &Request) -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(WorkResponse {
+            items: vec![],
+            reconciler: false,
+            streams: *self.0.lock().unwrap(),
+        })
+    }
+}
+
+/// A full runner (real `ChannelServer` hub, real :4108 accept loop on a private port) against a
+/// mocked API that registers it with `reg` and answers polls with the switch.
+struct StreamsRig {
+    api: MockServer,
+    switch: StreamsSwitch,
+    hub: ChannelServer,
+    stream_addr: std::net::SocketAddr,
+    shutdown: watch::Sender<bool>,
+    task: tokio::task::JoinHandle<Result<(), aurora_runner::runner::RunnerError>>,
+    _listener_stop: watch::Sender<bool>,
+}
+
+async fn streams_rig(reg: StreamsConfig, first: Option<StreamsConfig>) -> StreamsRig {
+    let api = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/runner/register"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(RegisterResponse {
+            runner_id: Uuid::new_v4(),
+            replica_id: Uuid::new_v4(),
+            protocol: 1,
+            config: RunnerConfig {
+                poll_wait_secs: 1,
+                reconcile_interval_secs: 3600,
+                orphan_grace_secs: 3600,
+                idle_stop_secs: 900,
+                previews: reg.previews,
+                terminal: reg.terminal,
+                ssh_enabled: reg.ssh_enabled,
+            },
+        }))
+        .mount(&api)
+        .await;
+    let switch: StreamsSwitch = Arc::new(std::sync::Mutex::new(first));
+    Mock::given(method("POST"))
+        .and(path("/v1/runner/work"))
+        .respond_with(StreamsAnswer(switch.clone()))
+        .mount(&api)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/runner/retire"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "ok": true })))
+        .mount(&api)
+        .await;
+    let hub = ChannelServer::new(ChannelSettings::new([7; 32]));
+    let streams = StreamListener::new(hub.clone());
+    hub.set_streams(streams.clone());
+    let st = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stream_addr = st.local_addr().unwrap();
+    let (listener_stop, stop_rx) = watch::channel(false);
+    let api_w = hub.api_watch();
+    tokio::spawn(async move {
+        aurora_runner::stream_listener::serve(st, streams, api_w, None, stop_rx).await;
+    });
+    let (shutdown, rx) = watch::channel(false);
+    let mut st = settings(&api.uri());
+    st.terminal = true;
+    let task =
+        tokio::spawn(Runner::new(st, Arc::new(FakeBackend::new(4)), Arc::new(hub.clone())).run(rx));
+    StreamsRig {
+        api,
+        switch,
+        hub,
+        stream_addr,
+        shutdown,
+        task,
+        _listener_stop: listener_stop,
+    }
+}
+
+impl StreamsRig {
+    async fn polls(&self) -> usize {
+        self.api
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == "/v1/runner/work")
+            .count()
+    }
+
+    /// Waits until the runner has finished `n` more polls than now: the answer of the first of
+    /// them has been applied once the second was sent.
+    async fn after_polls(&self, n: usize) {
+        let start = self.polls().await;
+        for _ in 0..500 {
+            if self.polls().await >= start + n {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the runner stopped polling");
+    }
+
+    /// Whether :4108 accepts: a dial with no bearer is answered at once (401) by an open
+    /// listener; a closed one leaves the handshake hanging in the backlog.
+    async fn listener_answers(&self) -> bool {
+        let url = format!("ws://{}/v1/preview-stream", self.stream_addr);
+        tokio::time::timeout(
+            Duration::from_millis(500),
+            tokio_tungstenite::connect_async(url),
+        )
+        .await
+        .is_ok()
+    }
+
+    async fn stop(self) {
+        self.shutdown.send(true).unwrap();
+        self.task.await.unwrap().unwrap();
+    }
+}
+
+const ALL_OFF: StreamsConfig = StreamsConfig {
+    previews: false,
+    terminal: false,
+    ssh_enabled: false,
+};
+
+/// UX review 5's bug (D-416): the runner registered with an API pod that said "off"; a later
+/// poll says the terminal is on, and :4108 opens within one poll with no runner restart.
+#[tokio::test]
+async fn a_poll_that_turns_the_terminal_on_opens_the_stream_port() {
+    let rig = streams_rig(ALL_OFF, Some(ALL_OFF)).await;
+    rig.after_polls(2).await;
+    assert!(!rig.listener_answers().await, "registered off: port dark");
+    *rig.switch.lock().unwrap() = Some(StreamsConfig {
+        terminal: true,
+        ..ALL_OFF
+    });
+    rig.after_polls(2).await;
+    assert!(rig.listener_answers().await, "the poll opened :4108");
+    assert!(!rig.hub.ssh_enabled());
+    rig.stop().await;
+}
+
+/// SSH follows the poll both ways: a poll with `ssh_enabled: false` stops `auz_` redemption (the
+/// listener refuses SSH grants while `ssh_enabled()` is false, `ssh_streams.rs`).
+#[tokio::test]
+async fn a_poll_turns_ssh_on_and_off_again() {
+    let on = StreamsConfig {
+        terminal: true,
+        ssh_enabled: true,
+        ..ALL_OFF
+    };
+    let rig = streams_rig(on, Some(on)).await;
+    rig.after_polls(2).await;
+    assert!(rig.hub.ssh_enabled());
+    *rig.switch.lock().unwrap() = Some(StreamsConfig {
+        ssh_enabled: false,
+        ..on
+    });
+    rig.after_polls(2).await;
+    assert!(!rig.hub.ssh_enabled(), "ssh turned off by the poll");
+    assert!(rig.listener_answers().await, "the open listener stays open");
+    *rig.switch.lock().unwrap() = Some(on);
+    rig.after_polls(2).await;
+    assert!(rig.hub.ssh_enabled(), "and on again");
+    rig.stop().await;
+}
+
+/// An older API omits `streams`: the registration's answer stands, both "off" and "on".
+#[tokio::test]
+async fn an_api_without_streams_leaves_the_registration_answer() {
+    let rig = streams_rig(ALL_OFF, None).await;
+    rig.after_polls(3).await;
+    assert!(!rig.listener_answers().await, "off stays off");
+    rig.stop().await;
+
+    let on = StreamsConfig {
+        terminal: true,
+        ssh_enabled: true,
+        ..ALL_OFF
+    };
+    let rig = streams_rig(on, None).await;
+    rig.after_polls(3).await;
+    assert!(rig.listener_answers().await, "on stays on");
+    assert!(rig.hub.ssh_enabled());
+    rig.stop().await;
 }

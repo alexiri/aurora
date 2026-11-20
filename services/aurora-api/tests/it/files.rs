@@ -1214,6 +1214,101 @@ async fn text_reads_and_refusals() {
         assert_eq!((s, code(&v)), (422, "file_not_editable"), "{v}");
         assert_eq!(v["error"]["details"]["reason"], reason);
     }
+    // The whole file: an etag and `truncated: false`.
+    let (_, v) = t.get("/text?path=%2Fworkspace%2Fcrlf.txt").await;
+    assert!(v["etag"].as_str().unwrap().starts_with("sha256:"), "{v}");
+    assert_eq!(v["truncated"], false);
+}
+
+/// (P5-REFINE-4, C-1060; UX review 5 computer-11) `preview=1` on a 2 MiB text file answers its
+/// first 256 KiB cut at a line end, `truncated`, with the real size and no etag (never saveable),
+/// audited `via: "preview"`; a binary file stays `422 file_not_editable`; without `preview` the
+/// big file is still `too_large`; a small file under `preview=1` is the whole file.
+#[tokio::test]
+async fn preview_answers_the_start_of_a_big_text_file() {
+    let t = env().await;
+    let line = "id,name,value,comment\n";
+    let mut big = String::new();
+    while big.len() < 2 * 1024 * 1024 {
+        big.push_str(line);
+    }
+    std::fs::write(t.ws("big.csv"), &big).unwrap();
+    let mut bin = vec![b'a'; 2 * 1024 * 1024];
+    bin[10] = 0;
+    std::fs::write(t.ws("big.bin"), &bin).unwrap();
+    std::fs::write(t.ws("small.txt"), "one\ntwo\n").unwrap();
+
+    let (s, v) = t.get("/text?path=%2Fworkspace%2Fbig.csv&preview=1").await;
+    assert_eq!(s, 200, "{v}");
+    let content = v["content"].as_str().unwrap();
+    assert!(
+        content.len() <= 256 * 1024 && content.len() > 255 * 1024,
+        "{}",
+        content.len()
+    );
+    assert!(content.ends_with('\n') && big.starts_with(content));
+    assert_eq!(v["truncated"], true);
+    assert!(v["etag"].is_null(), "{v}");
+    assert_eq!(v["size"], big.len() as u64);
+    assert_eq!(v["line_ending"], "lf");
+
+    let (s, v) = t.get("/text?path=%2Fworkspace%2Fbig.bin&preview=1").await;
+    assert_eq!((s, code(&v)), (422, "file_not_editable"), "{v}");
+    assert_eq!(v["error"]["details"]["reason"], "binary");
+
+    let (s, v) = t.get("/text?path=%2Fworkspace%2Fbig.csv").await;
+    assert_eq!((s, code(&v)), (422, "file_not_editable"), "{v}");
+    assert_eq!(v["error"]["details"]["reason"], "too_large");
+
+    let (s, v) = t.get("/text?path=%2Fworkspace%2Fsmall.txt&preview=1").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        (v["content"].as_str(), v["truncated"].as_bool()),
+        (Some("one\ntwo\n"), Some(false))
+    );
+    assert!(v["etag"].is_string());
+
+    let (s, _) = t
+        .get("/text?path=%2Fworkspace%2Fbig.csv&preview=maybe")
+        .await;
+    assert_eq!(s, 400);
+
+    // Audited like any read, with its own `via`.
+    let mut via = Vec::new();
+    for _ in 0..100 {
+        via = sqlx::query_scalar::<_, String>(
+            "SELECT metadata->>'via' FROM audit_log WHERE action = 'agent.files.download'
+               AND metadata->>'path' = '/workspace/big.csv'",
+        )
+        .fetch_all(t.r.h.pool())
+        .await
+        .unwrap();
+        if !via.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(via, vec!["preview".to_owned()]);
+}
+
+/// (P5-REFINE-4, C-1060; UX review 5 computer-3) Move to… is `rename` with a full destination:
+/// a file moves across folders; a folder cannot move into itself.
+#[tokio::test]
+async fn rename_moves_across_folders() {
+    let t = env().await;
+    std::fs::write(t.ws("a.csv"), "x").unwrap();
+    std::fs::create_dir_all(t.ws("docs/inner")).unwrap();
+    let (s, v) = t
+        .op(json!({"op": "rename", "path": "/workspace/a.csv", "to": "/workspace/docs/a.csv"}))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["entry"]["path"], "/workspace/docs/a.csv");
+    assert!(t.ws("docs/a.csv").exists() && !t.ws("a.csv").exists());
+    let (s, v) = t
+        .op(json!({"op": "rename", "path": "/workspace/docs", "to": "/workspace/docs/inner/docs"}))
+        .await;
+    assert_eq!((s, code(&v)), (422, "invalid_path"), "{v}");
+    assert!(t.ws("docs/a.csv").exists());
 }
 
 /// C-903: whatever the name or content, the download is an octet-stream attachment with the

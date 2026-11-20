@@ -305,17 +305,110 @@ listener); Scopes 5–6 are mechanical. Not Haiku.
 
 ## Completion report
 
-(Fill in; P5-REFINE-20 reads it.)
+Lane E `p5-platform` (branch `alexiri/p5-platform`), 2026-11-20. All seven scopes in one change: code, tests, docs
+and tracking rows in `9dfd0b40` (titled "WIP" only because master had to be merged mid-gate; it is the whole, gated change), master
+merged in `2aff7718` and `22abbe76` (PROGRESS conflict resolved to master's rows plus this brief's status), this report in the
+following commit.
 
-- **Items done** (Scope 1–7, each with its commit):
-- **Contracts C-1057..C-1060** (the commit that added them to `docs/API_CONTRACTS.md`), **SEC-141** (docs/17 and the coverage row):
-- **The bug:** the regression test names and the proof it fails without the fix:
-- **Keep-awake:** how the heartbeat is tied to the leg's life, the test that proves a quiet terminal stays awake, any cap behaviour found:
-- **Computer view:** the `word`/`ready` table, the stale-phase fix and its test; the role matrix result (member / owner / instance admin):
-- **Sleep now:** outcomes tested; the race noted:
-- **Files:** rename-as-move test; preview shape chosen (`FileText.truncated` or a separate schema) and why:
-- **SSH check (Scope 7):** what was verified; the open question for the owner (handle as the SSH user):
-- **Deviations and why:**
-- **Screenshots compared:** none for this brief (no UI); say so. The UI briefs compare `computer-1`, `computer-7`, `computer-13`.
-- **Tests run** (commands, counts, anything not run and why):
+- **Items done:** Scope 1 (stream flags at every poll), 2 (open-leg heartbeat, `boot_id` restart test), 3 (`SandboxView.computer`,
+  stale-phase fix), 4 (engine instance-admin only), 5 (`POST …/sandbox/sleep`), 6 (rename-as-move test, `preview=1`), 7 (verified,
+  nothing changed). Nothing waits (the brief has no dependencies).
+- **Contracts C-1057..C-1060, SEC-141:** the four entries were already on master with the briefs (`84339a53`, merged `1e1fef73`); the code
+  follows them; nothing in them needed correcting. Two clarifications written into `05` (not shape changes): Sleep now also requests the stop
+  of a `starting` computer, and a second Sleep now while a stop is already ordered is 200 with nothing written (so "repeated is 200 and writes
+  one audit row" holds before the runner acts). SEC-141 was already in `docs/17`; its coverage row is new in `docs/tests/security-coverage.md`.
+- **The bug:** `services/aurora-runner/tests/it/runner.rs::a_poll_that_turns_the_terminal_on_opens_the_stream_port` (a real
+  `ChannelServer` hub and :4108 accept loop; registration answers all off, a later poll `streams { terminal: true }`, a dial is answered within
+  two polls, no restart), `::a_poll_turns_ssh_on_and_off_again`, `::an_api_without_streams_leaves_the_registration_answer` (off stays off, on
+  stays on); unit `runner.rs::apply_streams_tests`. **Proof it fails without the fix:** with the poll's `apply_streams` disabled the first two
+  fail (`runner.rs:1290` "the poll opened :4108", `:1312` "ssh turned off by the poll"); restored, they pass. API:
+  `it/runner_plane.rs::every_poll_answers_the_stream_flags_registration_would` (the live `terminal.enabled`/`previews.enabled` switched through
+  `ops_live` between two polls; registration and poll give equal flags for equal inputs; a runner without the `terminal` capability is never
+  told to serve it) and unit `runner_plane/service.rs::stream_flags_tests`. `register` and `poll` both call `service::stream_flags` (which now
+  reads `previews.enabled` from the live settings too, as SET-5 asks, instead of the boot config). A runner whose stored capabilities do not
+  parse gets no `streams` (keeps its registration's answer, so SSH is never turned off by accident). **4502/4503/4504:** the API's dial to a dark
+  :4108 (TCP accepted into the backlog, no handshake) ends in its dial timeout → **4504**; a refused TCP connect → **4502**; so the dashboard can
+  say "Couldn't reach the computer" on 4502/4504 after its last retry with no new code (4503 stays "the computer restarted / channel lost").
+- **Keep-awake:** `stream_listener.rs` gains a `Stamper` (shared by the byte path and the heartbeats: one `last` map, so they never
+  double-post). `register_route` starts a heartbeat for terminal and SSH legs only (never files or port legs); its `AbortOnDrop` guard lives
+  in the leg's `RouteEnd`, so **every** way a route leaves the map (release, supervisor `pty.close`, channel loss `channel_epoch`, a full queue,
+  the listener dropped) aborts it. First beat one half-grace after the open (the session's first bytes stamp at once); a beat is skipped when
+  any stamp of that kind is younger than 9/10 of the period, so the gap between two stamps stays under the grace (worst case ~114 s of 120 s);
+  the byte path keeps its one-per-grace limit. Graces are `Bounds::terminal_awake_grace`/`ssh_awake_grace` (production = the limits) so tests
+  can shorten them. Tests: unit (paused clock) `stream_listener::tests::an_open_terminal_leg_stamps_every_half_grace_without_bytes`,
+  `::only_terminal_and_ssh_legs_beat`, `::bytes_and_heartbeat_never_double_post`; runner IT `keep_awake_heartbeat.rs` (a real terminal leg and
+  a real SSH leg, 600 ms grace, no bytes: ≥ 2 stamps of the right kind, none after close); API IT
+  `computer_view.rs::heartbeat_stamps_keep_an_idle_computer_awake` (idle 1 h past a 60 s idle stop, three stamps each expired in the database:
+  never stopped, `keep_awake_reasons` has `terminal`; no more stamps → stopped `idle`) and `::a_restart_gives_a_new_boot_id`. Cap: unchanged and
+  API-side; no runner cap added; nothing unexpected found.
+- **Computer view:** `hosted/dto.rs::computer_word` + `ComputerView::build`: `unprovisioned`/`stopped` → `off`; `starting` → `starting`;
+  `running` + phase `ready` → `on`, `ready: true`; `running` otherwise → `starting`; `stopping` → `stopping`; `failed` → `failed`; `asleep` =
+  stopped/unprovisioned without failure; `working` = `turn` or `process`; `sleeps_in_secs` = `idle − quiet` (≥ 0) only when `on`, idle stop on
+  and no live reason (`preview` counts as one). `quiet_secs` comes from the stop arm's own `ENGAGED_AGE` expression (now `pub(crate)`). Unit
+  table `computer_tests` (6 states × 6 phases × 2 failures, working, countdown). Stale phase: the `running` report writes `waiting_supervisor`
+  only when the phase is not `booting`/`ready`; `computer_view.rs::the_running_report_never_moves_the_phase_backwards` drives the real channel
+  claim/hold and `supervisor.ready` before and after the report (ordinary order → `waiting_supervisor` → `booting` → `ready`; supervisor first →
+  `booting` stays; harness first → `ready` stays and the view says `on`). **Role matrix** (`::the_engine_is_for_instance_admins_only`, a running
+  computer whose progress report carried an address and an image in its detail and events): member — `computer`, phases, times, `boot_id`, no
+  image/runner/detail/events/log detail; **workspace owner — the same as the member** (this is the change, SEC-141); instance admin (bound as a
+  member so it can use the agent) — everything. No field of `computer` contains the address, the image or the host.
+- **Why members and owners no longer see the image or runner address (for the security review):** `can_see_start_detail` (admin or
+  workspace owner) became `can_see_engine` (instance admin only) for `GET …/sandbox` and every route answering through `view()` (wake, retry,
+  restart, sleep). The image reference and the runner's id are infrastructure facts the instance admin owns: a workspace owner cannot act on
+  them, and they disclose the deployment's registry, image tags and the runner's identity (and, through start detail and pod events, cluster
+  addresses such as `10.x:4105 svc.ns`) to anyone who can create a workspace. D-412 gives people the computer's state in words instead, which
+  carries no deployment detail. `GET …/start-failures` (C-613) is **unchanged** as the contract says (owners still get the runner's wording and
+  events there, via `can_see_failure_detail`) — see the open question below.
+- **Sleep now:** `repo/hosted.rs::request_sleep`: one statement under the row lock (`FOR UPDATE` CTE), the work reasons from SQL fragments shared
+  with `sandbox_view` (`ACTIVE_TURN_SQL`, `BUSY_PROCESS_SQL`, `ARMED_WATCH_SQL`: one definition, not a copy). Tested
+  (`computer_view.rs::sleep_now_outcomes`): 409 `sandbox_busy` with `reasons` `["turn"]`, `["process"]`, `["watch"]`; 404 for a user without
+  access; an open terminal does not block; 202 → repeated 200 → the stop arm stops it with reason `idle` → 200 `stopped`, `computer.asleep`;
+  exactly one `agent.sandbox_sleep` row (polled); 409 `sandbox_failed`; 409 `not_hosted` (BYO); unit `sleep_tests`; permission matrix row
+  (`WsUse`). The wake budget is spent only when the computer is awake. Race noted in `05` and `11 §Stop`: a message after the request brings the
+  computer back through the start arm.
+- **Files:** `files.rs::rename_moves_across_folders` (file into a folder; a folder into its own child → 422 `invalid_path`);
+  `::preview_answers_the_start_of_a_big_text_file` (2 MiB CSV → ≤ 256 KiB ending at a line end, `truncated: true`, `etag: null`, real size,
+  audited `via: "preview"`; 2 MiB binary → 422 `binary`; no `preview` → 422 `too_large`; a small file with `preview=1` is whole; `preview=maybe`
+  → 400); `::text_reads_and_refusals` also checks `truncated: false` and the etag. Shape: **`FileText.truncated: bool` and `etag: string | null`**
+  — the generated type becomes `etag?: string | null`, which the one consumer (`file-viewer.tsx`, `data?.etag ?? null`) already handles, so
+  typecheck stays green and no second schema is needed. `preview` is a `1`/`0` (`true`/`false` accepted) query enum on a new `TextQuery`
+  (the other Files routes keep `PathQuery`). Unit `preview_tests` (cut at line end, split UTF-8 character, NUL, invalid UTF-8).
+- **SSH check (Scope 7):** verified by reading: `SshCertificate` (`ssh/dto.rs`) returns `valid_before` and `username` (plus `host`, `port`,
+  `known_hosts`); `aurora ssh <handle>` resolves a handle to the id (`aurora-cli/src/ssh.rs::resolve_agent`); the terminator refuses a principal
+  that is not a UUID (`aurora-terminator/src/cert.rs` `Uuid::parse_str(username)`). Nothing changed. Open for the owner: map handles in the
+  terminator (a terminator and CA change) so the SSH user can be the handle.
+- **Deviations and why:** (1) Sleep now accepts `starting` (stop once running) besides `running`, and treats an already-ordered stop as 200;
+  both written into `05`. (2) `register` now reads `previews.enabled` from the live settings (SET-5 rule) since it shares the poll's function.
+  (3) The runner dev-dependency `tokio` gains `test-util` (paused-clock heartbeat tests); no lockfile change.
+- **Screenshots compared:** none — this brief has no UI. P5-REFINE-11 and -15 compare `computer-1`, `computer-7`, `computer-13`.
+- **Tests moved with the change (owner rule):** changed — `it/fix_029.rs` (owner's sandbox view now reduced; history still detailed; admin
+  sees detail; the start-log detail now via an instance admin), `it/hosted.rs::sandbox_restart_and_models_routes` (image for an instance admin,
+  not the owner), `it/sandbox_env.rs::a_new_runner_image_flags_restart_to_update` (same), `it/permission_matrix.rs` (sleep row),
+  `it/runner_plane.rs`, `it/files.rs` (new tests), runner `tests/it/runner.rs` (`WorkResponse.streams: None` in the mocks + new tests),
+  `tests/it/terminal_streams.rs` (`rig_with`, so a test can shorten the listener's bounds); new — `it/computer_view.rs`,
+  runner `tests/it/keep_awake_heartbeat.rs`. Removed: none. Searched `web/tests`, `web/e2e` (mocked and production), `scripts/e2e`,
+  `tests/e2e-hosted` for `image`, `runner_id`, `start_attempt`, `start_log`, `etag`, `files/text`, `/sandbox`: the mocked Playwright specs use
+  fixed JSON (unaffected), `tests/e2e-hosted` reads only `boot_id`, no production spec asserts the image or the owner's detail. Production specs
+  for the nightly: none touched by this change.
+- **Tests run** (all through `heavy.sh`, throwaway Postgres `pg-p5-platform` on :55570, never aurora-dev-pg):
+  - `cargo test -p aurora-api --test it -- runner_plane computer_view sandbox_wake terminal ssh files hosted fix_029 sandbox_env permission_matrix openapi`: **185 passed, 0 failed**; after the second master merge `-- openapi_matches_checked_in computer_view`: 7 passed.
+  - `cargo test -p aurora-api --lib -- computer_tests preview_tests stream_flags_tests`: 7 passed; `cargo test -p aurora-db --lib sleep_tests`: 1 passed.
+  - `cargo test -p aurora-runner` (whole crate): lib 36 passed, it 103 passed; `cargo test -p aurora-protocol`: 4 + 34 passed (schema `runner_work_response.json` regenerated with `UPDATE_SCHEMAS=1`).
+  - `cargo fmt --all --check` ok; `cargo clippy -p aurora-runner -p aurora-api -p aurora-db -p aurora-protocol --all-targets -- -D warnings` ok.
+  - `UPDATE_OPENAPI=1 … openapi_matches_checked_in` then `pnpm gen:api` (`web/openapi.json`, `schema.d.ts` regenerated; re-run after the merge: no diff); `pnpm typecheck` ok; `eslint src/lib/api/conversations.ts` ok.
+  - vitest (every file referencing `lib/api/conversations`, `SandboxView`, `FileText`/Files text, the computer tab, the status rail or `useSandbox`): 18 files / 219 tests passed, and 9 files / 95 tests where `ssh-sessions.test.tsx` failed on master's own Pause wording before master's fix `602dd7d5`; after merging it, 12/12 passed. The whole vitest suite was not run (no shared UI changed).
+  - `python3 scripts/extract-schema.py --check` ok; `scripts/guards/run-all.sh` all passed.
+  - **Upgrade scenario on a throwaway kind cluster** (`AURORA_DEV_CLUSTER=p5e AURORA_DEV_PORT=4630`, `kind-dev.sh up --ssh --no-sandbox`
+    through `heavy.sh`, deleted afterwards with `kind-dev.sh down`, volumes kept). `helm --wait` timed out only on the sandbox seccomp
+    DaemonSet (it needs the sandbox image `--no-sandbox` skips); API, runner, terminator and the rest ran this branch. The bug made
+    deterministic: the API was pointed at a copy of the config with `terminal.available = false` and `ssh.enabled = false` (the runner
+    kept the real config) and the runner restarted, so it registered with an "off" API: no "stream listener open" line, a request to
+    :4108 through a port-forward timed out (curl exit 28). Then the API alone went back to the real config (API-only rollout, 13:11:47):
+    **the same runner pod, 0 restarts, logged "previews enabled: stream listener open on 4108" at 13:12:27** and :4108 answered 401 (the
+    unauthenticated dial). Not exercised: a real Terminal/Files/SSH session (no sandbox image in this run); the session paths themselves
+    are unchanged and covered by the ITs above.
 - **Open questions** (for the owner or the Orchestrator):
+  - Orchestrator: record in `docs/90-decisions.md` that D-178 Q-R5-5 is amended by D-412 (owners no longer see the engine on `GET …/sandbox`).
+  - Owner: `GET …/start-failures` still gives workspace owners the runner's wording and pod events (C-1059 says unchanged). Should it follow
+    SEC-141 and become instance-admin-only too? It is a one-line change (`can_see_failure_detail` → `can_see_engine`).
+  - Owner: map SSH handles in the terminator (Scope 7).

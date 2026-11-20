@@ -281,9 +281,10 @@ impl ApiClient {
             .await;
     }
 
-    /// (P4-TERM, C-620) The keep-awake stamp of a byte-carrying terminal session: refreshes
+    /// (P4-TERM, C-620) The keep-awake stamp of an open terminal session: refreshes
     /// `sandboxes.terminal_active_until` (`now() + TERMINAL_AWAKE_GRACE`, cap clock intact).
-    /// Best effort; the runner sends at most one per grace per sandbox.
+    /// Best effort; bytes stamp at most once per grace and an open leg's heartbeat once per half
+    /// grace per sandbox (P5-REFINE-4, C-1058).
     ///
     /// (P4-SSH-2, C-796) `ssh` stamps `ssh_active_until` instead (`kind: "ssh"`; an older API
     /// ignores the field and stamps the terminal column, which is harmless).

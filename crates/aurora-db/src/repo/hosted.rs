@@ -769,6 +769,136 @@ pub struct SandboxViewRow {
     pub shared_ports: Vec<i32>,
     /// (P4-PRV-1) Share ids for `shared_ports` (same order; empty when none).
     pub shared_share_ids: Vec<Uuid>,
+    /// (P5-REFINE-4, C-1059) Seconds since the last engagement: the idle stop's clock
+    /// (`now − coalesce(last_engaged_at, last_active_at, created_at)`, the stop arm's own
+    /// expression). `computer.sleeps_in_secs` is derived from it.
+    pub quiet_secs: i64,
+}
+
+/// (P5-REFINE-4) The keep-awake reasons that are work (`turn`, `process`, `watch`) over a sandbox
+/// row aliased `s`: one definition read by the sandbox view and by Sleep now.
+const ACTIVE_TURN_SQL: &str = "EXISTS (SELECT 1 FROM turns t WHERE t.agent_id = s.agent_id AND (
+                (t.role = 'turn' AND t.status IN ('queued','dispatched','running'))
+                OR (t.role = 'followup' AND t.status = 'joining')))";
+const BUSY_PROCESS_SQL: &str = "EXISTS (SELECT 1 FROM processes p WHERE p.sandbox_id = s.id
+                AND p.boot_id = s.boot_id AND p.status = 'running' AND p.busy)";
+const ARMED_WATCH_SQL: &str =
+    "EXISTS (SELECT 1 FROM watches w JOIN processes p ON p.id = w.process_id
+                WHERE p.sandbox_id = s.id AND p.boot_id = s.boot_id AND w.status = 'armed')";
+
+/// (P5-REFINE-4, C-1060) What `POST …/sandbox/sleep` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SleepOutcome {
+    /// The stop was requested (`stop_requested_at`, reason `idle`); the stop arm stops it.
+    Requested,
+    /// Already `stopping`, `stopped` or `unprovisioned` (or no row): nothing written.
+    AlreadyStopped,
+    /// Work holds it awake: the reasons among `turn`, `process`, `watch`.
+    Busy(Vec<String>),
+    /// The last start failed (retry is the way out).
+    Failed,
+}
+
+/// (P5-REFINE-4, C-1060) Sleep now: under the sandbox row lock, in one statement, request the stop
+/// (`stop_requested_at = now()`, `stop_reason = 'idle'`) of a `starting` or `running` sandbox that
+/// no work holds awake. A message that arrives after this makes the start arm bring the computer
+/// back (acceptable: the person asked for sleep before it).
+pub async fn request_sleep(conn: &mut PgConnection, agent: Uuid) -> Result<SleepOutcome, DbError> {
+    let sql = format!(
+        "WITH s AS (
+           SELECT id, agent_id, boot_id, state, stop_requested_at FROM sandboxes
+           WHERE agent_id = $1 FOR UPDATE
+         ), r AS (
+           SELECT s.id, s.state, s.stop_requested_at IS NOT NULL AS pending,
+                  {ACTIVE_TURN_SQL} AS active_turn,
+                  {BUSY_PROCESS_SQL} AS busy_process, {ARMED_WATCH_SQL} AS armed_watch
+           FROM s
+         ), u AS (
+           UPDATE sandboxes x SET stop_requested_at = now(), stop_reason = 'idle', updated_at = now()
+           FROM r WHERE x.id = r.id AND r.state IN ('starting', 'running') AND NOT r.pending
+             AND NOT (r.active_turn OR r.busy_process OR r.armed_watch)
+           RETURNING x.id
+         )
+         SELECT r.state, r.pending, r.active_turn, r.busy_process, r.armed_watch,
+                EXISTS (SELECT 1 FROM u) AS requested
+         FROM r"
+    );
+    let row: Option<(String, bool, bool, bool, bool, bool)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
+            .bind(agent)
+            .fetch_optional(conn)
+            .await?;
+    let Some((state, pending, turn, process, watch, requested)) = row else {
+        return Ok(SleepOutcome::AlreadyStopped);
+    };
+    Ok(sleep_outcome(
+        &state, pending, turn, process, watch, requested,
+    ))
+}
+
+/// The outcome of [`request_sleep`] from what the statement read (unit-tested).
+fn sleep_outcome(
+    state: &str,
+    pending: bool,
+    turn: bool,
+    process: bool,
+    watch: bool,
+    requested: bool,
+) -> SleepOutcome {
+    match state {
+        "failed" => SleepOutcome::Failed,
+        // A stop is already ordered (an earlier Sleep now): idempotent, nothing written.
+        "starting" | "running" if pending => SleepOutcome::AlreadyStopped,
+        "starting" | "running" if requested => SleepOutcome::Requested,
+        "starting" | "running" => SleepOutcome::Busy(
+            [("turn", turn), ("process", process), ("watch", watch)]
+                .into_iter()
+                .filter(|(_, on)| *on)
+                .map(|(n, _)| n.to_owned())
+                .collect(),
+        ),
+        _ => SleepOutcome::AlreadyStopped,
+    }
+}
+
+#[cfg(test)]
+mod sleep_tests {
+    use super::*;
+
+    #[test]
+    fn outcomes() {
+        assert_eq!(
+            sleep_outcome("running", false, false, false, false, true),
+            SleepOutcome::Requested
+        );
+        assert_eq!(
+            sleep_outcome("starting", false, false, false, false, true),
+            SleepOutcome::Requested
+        );
+        assert_eq!(
+            sleep_outcome("running", false, true, false, true, false),
+            SleepOutcome::Busy(vec!["turn".into(), "watch".into()])
+        );
+        assert_eq!(
+            sleep_outcome("running", false, false, true, false, false),
+            SleepOutcome::Busy(vec!["process".into()])
+        );
+        assert_eq!(
+            sleep_outcome("running", true, true, false, false, false),
+            SleepOutcome::AlreadyStopped,
+            "a stop already ordered"
+        );
+        for s in ["stopping", "stopped", "unprovisioned"] {
+            assert_eq!(
+                sleep_outcome(s, false, false, false, false, false),
+                SleepOutcome::AlreadyStopped
+            );
+        }
+        assert_eq!(
+            sleep_outcome("failed", false, false, false, false, false),
+            SleepOutcome::Failed
+        );
+    }
 }
 
 /// The env/files hash recorded when the agent's current boot started (`resource_profile`).
@@ -839,19 +969,17 @@ pub async fn sandbox_view(
     conn: &mut PgConnection,
     agent: Uuid,
 ) -> Result<Option<SandboxViewRow>, DbError> {
-    Ok(sqlx::query_as(
+    let sql = format!(
         "SELECT s.id, s.state, s.boot_id, s.runner_id,
             (SELECT ri.started_at FROM runtime_intervals ri WHERE ri.boot_id = s.boot_id) AS started_at,
             s.failure_code, s.failure_message, s.listening_ports,
             s.start_attempt_at, s.start_phase, s.start_detail, s.start_events, s.start_progress_at,
             coalesce(s.start_log, '[]'::jsonb) AS start_log,
-            EXISTS (SELECT 1 FROM turns t WHERE t.agent_id = s.agent_id AND (
-                (t.role = 'turn' AND t.status IN ('queued','dispatched','running'))
-                OR (t.role = 'followup' AND t.status = 'joining'))) AS active_turn,
-            EXISTS (SELECT 1 FROM processes p WHERE p.sandbox_id = s.id AND p.boot_id = s.boot_id
-                AND p.status = 'running' AND p.busy) AS busy_process,
-            EXISTS (SELECT 1 FROM watches w JOIN processes p ON p.id = w.process_id
-                WHERE p.sandbox_id = s.id AND p.boot_id = s.boot_id AND w.status = 'armed') AS armed_watch,
+            {ACTIVE_TURN_SQL} AS active_turn,
+            {BUSY_PROCESS_SQL} AS busy_process,
+            {ARMED_WATCH_SQL} AS armed_watch,
+            -- (P5-REFINE-4, C-1059) the idle stop's clock, for `computer.sleeps_in_secs`
+            floor({engaged_age})::bigint AS quiet_secs,
             -- (P4-PRV-1) keep-awake reason `preview` is live now (NULL when never awake).
             coalesce(s.preview_active_until > now(), false) AS preview_in_use,
             -- (P4-TERM, C-621) keep-awake reason `terminal` is live now (NULL when never awake).
@@ -864,16 +992,18 @@ pub async fn sandbox_view(
             coalesce((SELECT array_agg(x.port ORDER BY x.port) FROM preview_shares x
                 WHERE x.agent_id = s.agent_id AND x.state = 'active'
                   AND s.listening_ports @> ARRAY[x.port]
-                  AND x.port BETWEEN 1024 AND 65535), '{}') AS shared_ports,
+                  AND x.port BETWEEN 1024 AND 65535), '{{}}') AS shared_ports,
             coalesce((SELECT array_agg(x.id ORDER BY x.port) FROM preview_shares x
                 WHERE x.agent_id = s.agent_id AND x.state = 'active'
                   AND s.listening_ports @> ARRAY[x.port]
-                  AND x.port BETWEEN 1024 AND 65535), '{}') AS shared_share_ids
+                  AND x.port BETWEEN 1024 AND 65535), '{{}}') AS shared_share_ids
          FROM sandboxes s WHERE s.agent_id = $1",
-    )
-    .bind(agent)
-    .fetch_optional(conn)
-    .await?)
+        engaged_age = super::sandboxes::ENGAGED_AGE,
+    );
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
+        .bind(agent)
+        .fetch_optional(conn)
+        .await?)
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

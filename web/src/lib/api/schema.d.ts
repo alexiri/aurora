@@ -1740,7 +1740,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** A text file for the editor (C-898): ≤ 1 MiB of UTF-8 without NUL, with its `etag`. */
+        /**
+         * A text file for the editor (C-898): ≤ 1 MiB of UTF-8 without NUL, with its `etag`. With
+         *     `preview=1` (C-1060) a bigger text file answers its first 256 KiB, `truncated`, without `etag`.
+         */
         get: operations["getAgentFileText"];
         put?: never;
         post?: never;
@@ -2141,6 +2144,31 @@ export interface paths {
          *     log and notifies due work — the next start is the ordinary due-work start arm.
          */
         post: operations["retryAgentSandbox"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/sandbox/sleep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * (P5-REFINE-4, C-1060, D-408) Sleep now: ask a computer that no work holds awake to stop (the
+         *     due-work stop arm stops it, reason `idle`). 202 when requested; 200 when it is already
+         *     stopping, stopped, unprovisioned or a stop is already ordered (nothing written); 409
+         *     `sandbox_busy` with `details.reasons` while a turn, a busy process or an armed watch holds it;
+         *     409 `sandbox_failed`; 409 `not_hosted`; 429 past the shared wake budget. Open terminal, SSH,
+         *     Files and preview sessions do not block it (they end: the person chose Sleep now). A message
+         *     that arrives after the request makes the start arm bring the computer back.
+         */
+        post: operations["sleepAgentSandbox"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7634,6 +7662,36 @@ export interface components {
             id: string;
             used_by_methods: components["schemas"]["MethodRef"][];
         };
+        /** @description (P5-REFINE-4, C-1059) What a person sees of the computer (the header and the Computer page). */
+        ComputerView: {
+            /** @description `stopped` or `unprovisioned` with no failure (the header's "Asleep"). */
+            asleep: boolean;
+            /**
+             * @description The raw start phase (`claimed`, `provisioning`, `waiting_capacity`, `creating`,
+             *     `booting`, `waiting_supervisor`, `ready`, …; a fixed vocabulary), shown at Expert.
+             */
+            phase?: string | null;
+            /**
+             * @description The computer answers: running, the supervisor connected and the harness reported ready
+             *     (D-408: the header says Ready only then).
+             */
+            ready: boolean;
+            /**
+             * Format: int64
+             * @description Seconds until the idle stop while the computer is `on` with no keep-awake reason and idle
+             *     stop is on; otherwise null. A hint: the stop arm decides.
+             */
+            sleeps_in_secs?: number | null;
+            /**
+             * Format: date-time
+             * @description `SandboxView.started_at` ("Started 23:55 · on").
+             */
+            started_at?: string | null;
+            /** @description `off` | `starting` | `on` | `stopping` | `failed` (D-412). */
+            word: string;
+            /** @description `keep_awake_reasons` contains `turn` or `process`. */
+            working: boolean;
+        };
         Condition: {
             json_pointer?: string | null;
             on: components["schemas"]["ConditionOn"];
@@ -9061,15 +9119,26 @@ export interface components {
         };
         FileText: {
             content: string;
-            /** @description `"sha256:" + hex(SHA-256 of the bytes)`. */
-            etag: string;
+            /**
+             * @description `"sha256:" + hex(SHA-256 of the bytes)`. Null only for a preview of a file over the editor
+             *     limit (`truncated: true`, P5-REFINE-4, C-1060): such a preview can never be saved.
+             */
+            etag?: string | null;
             /** @description `lf` | `crlf`. */
             line_ending: string;
             /** Format: date-time */
             modified_at?: string | null;
             path: string;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The whole file's size (also when `content` is a preview of its start).
+             */
             size: number;
+            /**
+             * @description (P5-REFINE-4, C-1060) `content` is the file's first 256 KiB cut at a line end
+             *     (`preview=1` on a file over 1 MiB); false for the whole file.
+             */
+            truncated: boolean;
         };
         FileWriteResult: {
             entry: components["schemas"]["FileEntry"];
@@ -13320,6 +13389,11 @@ export interface components {
             agent_id: string;
             /** Format: uuid */
             boot_id?: string | null;
+            /**
+             * @description (P5-REFINE-4, C-1059, D-408, D-412) The computer in words, for everyone who can use the
+             *     agent: a state, flags, a fixed-vocabulary phase and times; never an address or an image.
+             */
+            computer: components["schemas"]["ComputerView"];
             failure_code?: string | null;
             failure_message?: string | null;
             /**
@@ -22653,8 +22727,13 @@ export interface operations {
     getAgentFileText: {
         parameters: {
             query?: {
-                /** @description Absolute path under `/workspace` (absent on a listing = `/workspace`). */
+                /** @description Absolute path under `/workspace`. */
                 path?: string | null;
+                /**
+                 * @description (P5-REFINE-4, C-1060) `1`/`true`: a text file over the editor limit (1 MiB) answers its
+                 *     first 256 KiB (`truncated: true`, no `etag`) instead of `422 file_not_editable`.
+                 */
+                preview?: ("1" | "0") | null;
             };
             header?: never;
             path: {
@@ -24446,6 +24525,69 @@ export interface operations {
                 };
             };
             /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    sleepAgentSandbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxView"];
+                };
+            };
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxView"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             429: {
                 headers: {
                     [name: string]: unknown;

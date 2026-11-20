@@ -53,9 +53,10 @@ async fn list_files(
     Ok(Json(service::list(&s, &c, agent, &p).await?))
 }
 
-/// A text file for the editor (C-898): ≤ 1 MiB of UTF-8 without NUL, with its `etag`.
+/// A text file for the editor (C-898): ≤ 1 MiB of UTF-8 without NUL, with its `etag`. With
+/// `preview=1` (C-1060) a bigger text file answers its first 256 KiB, `truncated`, without `etag`.
 #[utoipa::path(get, path = "/agents/{agent}/files/text", operation_id = "getAgentFileText", tag = "files",
-    params(("agent" = Uuid, Path, description = "Agent id"), PathQuery),
+    params(("agent" = Uuid, Path, description = "Agent id"), TextQuery),
     responses((status = 200, body = FileText), (status = 400, body = ErrorEnvelope),
         (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
         (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
@@ -66,10 +67,16 @@ async fn file_text(
     c: Caller,
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
-    Query(q): Query<PathQuery>,
+    Query(q): Query<TextQuery>,
 ) -> Result<Json<FileText>, ApiError> {
-    let p = path_of(&q, false)?;
-    Ok(Json(service::text(&s, &c, agent, &p).await?))
+    let preview = matches!(q.preview, Some(PreviewFlag::On));
+    let p = path_of(
+        &PathQuery {
+            path: q.path.clone(),
+        },
+        false,
+    )?;
+    Ok(Json(service::text(&s, &c, agent, &p, preview).await?))
 }
 
 /// RFC 5987 `attr-char`: ALPHA / DIGIT / `!#$&+-.^_`|~`.

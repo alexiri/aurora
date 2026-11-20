@@ -10156,7 +10156,7 @@
         "tags": [
           "files"
         ],
-        "summary": "A text file for the editor (C-898): ≤ 1 MiB of UTF-8 without NUL, with its `etag`.",
+        "summary": "A text file for the editor (C-898): ≤ 1 MiB of UTF-8 without NUL, with its `etag`. With\n`preview=1` (C-1060) a bigger text file answers its first 256 KiB, `truncated`, without `etag`.",
         "operationId": "getAgentFileText",
         "parameters": [
           {
@@ -10172,12 +10172,33 @@
           {
             "name": "path",
             "in": "query",
-            "description": "Absolute path under `/workspace` (absent on a listing = `/workspace`).",
+            "description": "Absolute path under `/workspace`.",
             "required": false,
             "schema": {
               "type": [
                 "string",
                 "null"
+              ]
+            }
+          },
+          {
+            "name": "preview",
+            "in": "query",
+            "description": "(P5-REFINE-4, C-1060) `1`/`true`: a text file over the editor limit (1 MiB) answers its\nfirst 256 KiB (`truncated: true`, no `etag`) instead of `422 file_not_editable`.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "description": "`preview=1` / `preview=true` (and `0` / `false`).",
+                  "enum": [
+                    "1",
+                    "0"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
               ]
             }
           }
@@ -12755,6 +12776,92 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/sandbox/sleep": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "(P5-REFINE-4, C-1060, D-408) Sleep now: ask a computer that no work holds awake to stop (the\ndue-work stop arm stops it, reason `idle`). 202 when requested; 200 when it is already\nstopping, stopped, unprovisioned or a stop is already ordered (nothing written); 409\n`sandbox_busy` with `details.reasons` while a turn, a busy process or an armed watch holds it;\n409 `sandbox_failed`; 409 `not_hosted`; 429 past the shared wake budget. Open terminal, SSH,\nFiles and preview sessions do not block it (they end: the person chose Sleep now). A message\nthat arrives after the request makes the start arm bring the computer back.",
+        "operationId": "sleepAgentSandbox",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxView"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
             "content": {
               "application/json": {
                 "schema": {
@@ -43436,6 +43543,58 @@
           }
         }
       },
+      "ComputerView": {
+        "type": "object",
+        "description": "(P5-REFINE-4, C-1059) What a person sees of the computer (the header and the Computer page).",
+        "required": [
+          "word",
+          "ready",
+          "working",
+          "asleep"
+        ],
+        "properties": {
+          "asleep": {
+            "type": "boolean",
+            "description": "`stopped` or `unprovisioned` with no failure (the header's \"Asleep\")."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The raw start phase (`claimed`, `provisioning`, `waiting_capacity`, `creating`,\n`booting`, `waiting_supervisor`, `ready`, …; a fixed vocabulary), shown at Expert."
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "The computer answers: running, the supervisor connected and the harness reported ready\n(D-408: the header says Ready only then)."
+          },
+          "sleeps_in_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds until the idle stop while the computer is `on` with no keep-awake reason and idle\nstop is on; otherwise null. A hint: the stop arm decides.",
+            "minimum": 0
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`SandboxView.started_at` (\"Started 23:55 · on\")."
+          },
+          "word": {
+            "type": "string",
+            "description": "`off` | `starting` | `on` | `stopping` | `failed` (D-412)."
+          },
+          "working": {
+            "type": "boolean",
+            "description": "`keep_awake_reasons` contains `turn` or `process`."
+          }
+        }
+      },
       "Condition": {
         "type": "object",
         "required": [
@@ -47964,17 +48123,20 @@
         "required": [
           "path",
           "content",
-          "etag",
           "size",
-          "line_ending"
+          "line_ending",
+          "truncated"
         ],
         "properties": {
           "content": {
             "type": "string"
           },
           "etag": {
-            "type": "string",
-            "description": "`\"sha256:\" + hex(SHA-256 of the bytes)`."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`\"sha256:\" + hex(SHA-256 of the bytes)`. Null only for a preview of a file over the editor\nlimit (`truncated: true`, P5-REFINE-4, C-1060): such a preview can never be saved."
           },
           "line_ending": {
             "type": "string",
@@ -47993,7 +48155,12 @@
           "size": {
             "type": "integer",
             "format": "int64",
+            "description": "The whole file's size (also when `content` is a preview of its start).",
             "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "(P5-REFINE-4, C-1060) `content` is the file's first 256 KiB cut at a line end\n(`preview=1` on a file over 1 MiB); false for the whole file."
           }
         }
       },
@@ -61779,7 +61946,8 @@
           "ports",
           "preview_in_use",
           "terminal_in_use",
-          "restart_to_update"
+          "restart_to_update",
+          "computer"
         ],
         "properties": {
           "agent_id": {
@@ -61792,6 +61960,10 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "computer": {
+            "$ref": "#/components/schemas/ComputerView",
+            "description": "(P5-REFINE-4, C-1059, D-408, D-412) The computer in words, for everyone who can use the\nagent: a state, flags, a fixed-vocabulary phase and times; never an address or an image."
           },
           "failure_code": {
             "type": [
