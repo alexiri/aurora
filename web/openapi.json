@@ -8579,6 +8579,93 @@
         ]
       }
     },
+    "/v1/agents/{agent}/conversation-folders": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "The agent's automation folders: one per schedule or webhook that has run threads (C-1074).",
+        "operationId": "listConversationFolders",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ConversationFolder"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/conversations": {
       "get": {
         "tags": [
@@ -8612,6 +8699,25 @@
             "required": false,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "automation",
+            "in": "query",
+            "description": "(P5-REFINE-7, C-1074) `all` (default) | `none` (no run threads) | `only` (run threads).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "automation_id",
+            "in": "query",
+            "description": "(P5-REFINE-7, C-1074) With `automation=only`: the threads of this schedule or webhook.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           {
@@ -8791,7 +8897,7 @@
         "tags": [
           "conversations"
         ],
-        "summary": "Get-or-create the caller's direct conversation with the agent.",
+        "summary": "The caller's most recently active non-archived direct conversation with the agent, created\nwhen there is none (C-1073).",
         "operationId": "getOrCreateDirectConversation",
         "parameters": [
           {
@@ -8826,6 +8932,103 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "conversation_limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/conversations/direct/new": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "A fresh direct conversation with empty history (C-1073): 200 with the latest one while it is\nstill empty, 201 with a new one otherwise.",
+        "operationId": "createDirectConversation",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The latest, still empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "conversation_limit",
             "content": {
               "application/json": {
                 "schema": {
@@ -13493,6 +13696,95 @@
             }
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/schedules/preview": {
+      "post": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "What a cadence would do: the next three instants and whether it fires more often than every\nfive minutes (C-1077). Saves nothing.",
+        "operationId": "previewSchedule",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulePreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePreview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid_cron | invalid_timezone",
             "content": {
               "application/json": {
                 "schema": {
@@ -18356,6 +18648,112 @@
           },
           "409": {
             "description": "conversation_active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Rename a conversation, or (`title: null`) go back to the automatic title (C-1073).",
+        "operationId": "updateConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConversation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "title_managed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid_title",
             "content": {
               "application/json": {
                 "schema": {
@@ -34827,6 +35225,85 @@
         ]
       }
     },
+    "/v1/webhooks/{id}/rotate-secret": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "A new secret for a signed webhook (C-1078); the old one stops working at once. Shown once.",
+        "operationId": "rotateWebhookSecret",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSecret"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "verification_not_signed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}": {
       "get": {
         "tags": [
@@ -45943,7 +46420,8 @@
           "last_seq",
           "app_turn_streak",
           "app_turn_capped",
-          "created_at"
+          "created_at",
+          "title_source"
         ],
         "properties": {
           "active_turn": {
@@ -45976,6 +46454,17 @@
             ],
             "format": "date-time",
             "description": "(phase 2, RFE-010) set while the conversation is archived (hidden from default lists)."
+          },
+          "automation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConversationAutomation",
+                "description": "(P5-REFINE-7, C-1074) The schedule or webhook this run thread belongs to; null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "created_at": {
             "type": "string",
@@ -46028,11 +46517,94 @@
             ],
             "format": "uuid"
           },
+          "run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(P5-REFINE-7, C-1074) When the run or delivery started (the thread's `created_at`) for\nautomation threads; null otherwise."
+          },
           "title": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "title_source": {
+            "type": "string",
+            "description": "(P5-REFINE-7, C-1073) Who set `title`: `auto` | `person` | `automation`."
+          }
+        }
+      },
+      "ConversationAutomation": {
+        "type": "object",
+        "description": "(P5-REFINE-7, C-1074) The automation of a run thread.",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "description": "The schedule or webhook was deleted; the thread and its transcript stay."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`schedule` | `webhook`"
+          },
+          "name": {
+            "type": "string",
+            "description": "The automation's current name (the stored title when it is gone)."
+          }
+        }
+      },
+      "ConversationFolder": {
+        "type": "object",
+        "description": "(P5-REFINE-7, C-1074) One automation folder of the conversation list.",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "deleted",
+          "thread_count",
+          "last_activity_at"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`schedule` | `webhook`"
+          },
+          "last_activity_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_result": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The newest run's (or delivery's) result: `running` | `answered` | `skipped_by_gate` |\n`failed` | `skipped` for a schedule, the delivery `result` words for a webhook."
+          },
+          "name": {
+            "type": "string"
+          },
+          "thread_count": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -55887,7 +56459,8 @@
                 "last_seq",
                 "app_turn_streak",
                 "app_turn_capped",
-                "created_at"
+                "created_at",
+                "title_source"
               ],
               "properties": {
                 "active_turn": {
@@ -55920,6 +56493,17 @@
                   ],
                   "format": "date-time",
                   "description": "(phase 2, RFE-010) set while the conversation is archived (hidden from default lists)."
+                },
+                "automation": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ConversationAutomation",
+                      "description": "(P5-REFINE-7, C-1074) The schedule or webhook this run thread belongs to; null otherwise."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "created_at": {
                   "type": "string",
@@ -55972,11 +56556,83 @@
                   ],
                   "format": "uuid"
                 },
+                "run_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time",
+                  "description": "(P5-REFINE-7, C-1074) When the run or delivery started (the thread's `created_at`) for\nautomation threads; null otherwise."
+                },
                 "title": {
                   "type": [
                     "string",
                     "null"
                   ]
+                },
+                "title_source": {
+                  "type": "string",
+                  "description": "(P5-REFINE-7, C-1073) Who set `title`: `auto` | `person` | `automation`."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_ConversationFolder": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "(P5-REFINE-7, C-1074) One automation folder of the conversation list.",
+              "required": [
+                "kind",
+                "id",
+                "name",
+                "deleted",
+                "thread_count",
+                "last_activity_at"
+              ],
+              "properties": {
+                "deleted": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "`schedule` | `webhook`"
+                },
+                "last_activity_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "last_result": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The newest run's (or delivery's) result: `running` | `answered` | `skipped_by_gate` |\n`failed` | `skipped` for a schedule, the delivery `result` words for a webhook."
+                },
+                "name": {
+                  "type": "string"
+                },
+                "thread_count": {
+                  "type": "integer",
+                  "format": "int64"
                 }
               }
             }
@@ -57718,7 +58374,8 @@
                 "anchor",
                 "conversation_hidden",
                 "created_at",
-                "updated_at"
+                "updated_at",
+                "next_runs"
               ],
               "properties": {
                 "agent_id": {
@@ -57789,6 +58446,13 @@
                   ],
                   "format": "date-time"
                 },
+                "last_result": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(P5-REFINE-7, C-1077) The newest run's result (`RunResult`); null before the first run."
+                },
                 "name": {
                   "type": "string"
                 },
@@ -57798,6 +58462,14 @@
                     "null"
                   ],
                   "format": "date-time"
+                },
+                "next_runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "description": "(P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused."
                 },
                 "origin_conversation_id": {
                   "type": [
@@ -57845,9 +58517,18 @@
                 "scheduled_for",
                 "fired_at",
                 "outcome",
-                "created_at"
+                "created_at",
+                "result"
               ],
               "properties": {
+                "conversation_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "(P5-REFINE-7, C-1077) The run's thread; null when it never had one or it was deleted."
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -57862,7 +58543,18 @@
                 },
                 "outcome": {
                   "type": "string",
-                  "description": "`fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced`."
+                  "description": "`fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |\n`skipped_frozen` (stored; unchanged for compatibility)."
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,\n`unauthorized`, `frozen`, `missed`; null otherwise."
+                },
+                "result": {
+                  "type": "string",
+                  "description": "(C-1077) `running` | `answered` | `skipped_by_gate` | `failed` | `skipped`."
                 },
                 "schedule_id": {
                   "type": "string",
@@ -58497,9 +59189,26 @@
                 "id",
                 "received_at",
                 "status",
-                "size"
+                "size",
+                "result"
               ],
               "properties": {
+                "conversation_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "(C-1079) The delivery's own thread (a duplicate: the original's); null when none."
+                },
+                "duplicate_of": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "(C-1079) For a `duplicate`: the delivery it repeated."
+                },
                 "id": {
                   "type": "string",
                   "format": "uuid",
@@ -58509,13 +59218,17 @@
                   "type": "string",
                   "format": "date-time"
                 },
+                "result": {
+                  "type": "string",
+                  "description": "(C-1079) `answered` | `running` | `failed` | `refused_signature` | `refused_too_large` |\n`refused_paused` | `refused_frozen` | `refused_unauthorized` | `duplicate`."
+                },
                 "size": {
                   "type": "integer",
                   "format": "int32"
                 },
                 "status": {
                   "type": "string",
-                  "description": "`accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized`\n(`duplicate` deliveries are answered with the original id and not logged)."
+                  "description": "`accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized` |\n(P5-REFINE-7, C-1079) `duplicate`."
                 },
                 "turn_id": {
                   "type": [
@@ -63450,7 +64163,8 @@
           "anchor",
           "conversation_hidden",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "next_runs"
         ],
         "properties": {
           "agent_id": {
@@ -63521,6 +64235,13 @@
             ],
             "format": "date-time"
           },
+          "last_result": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-REFINE-7, C-1077) The newest run's result (`RunResult`); null before the first run."
+          },
           "name": {
             "type": "string"
           },
@@ -63530,6 +64251,14 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "next_runs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "(P5-REFINE-7, C-1077) The next three instants after now (RFC 3339 UTC); empty when paused."
           },
           "origin_conversation_id": {
             "type": [
@@ -63568,6 +64297,62 @@
           }
         }
       },
+      "SchedulePreview": {
+        "type": "object",
+        "description": "(C-1077) What a cadence would do, saved nowhere.",
+        "required": [
+          "next",
+          "too_frequent",
+          "min_interval_secs"
+        ],
+        "properties": {
+          "interval_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The smallest gap among the next 12 instants, in seconds; null when fewer than two."
+          },
+          "min_interval_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "next": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "The next three instants after now (RFC 3339 UTC)."
+          },
+          "too_frequent": {
+            "type": "boolean",
+            "description": "The smallest gap is below `min_interval_secs` (create and update refuse it)."
+          }
+        }
+      },
+      "SchedulePreviewRequest": {
+        "type": "object",
+        "description": "(P5-REFINE-7, C-1077) `POST /agents/{agent}/schedules/preview` body.",
+        "required": [
+          "cron"
+        ],
+        "properties": {
+          "cron": {
+            "type": "string",
+            "description": "5-field cron expression."
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "IANA timezone; defaults to the workspace timezone."
+          }
+        },
+        "additionalProperties": false
+      },
       "ScheduleRun": {
         "type": "object",
         "required": [
@@ -63576,9 +64361,18 @@
           "scheduled_for",
           "fired_at",
           "outcome",
-          "created_at"
+          "created_at",
+          "result"
         ],
         "properties": {
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "(P5-REFINE-7, C-1077) The run's thread; null when it never had one or it was deleted."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -63593,7 +64387,18 @@
           },
           "outcome": {
             "type": "string",
-            "description": "`fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced`."
+            "description": "`fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced` |\n`skipped_frozen` (stored; unchanged for compatibility)."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1077) Why it failed or was skipped: the turn's error code, `gate_failed`,\n`unauthorized`, `frozen`, `missed`; null otherwise."
+          },
+          "result": {
+            "type": "string",
+            "description": "(C-1077) `running` | `answered` | `skipped_by_gate` | `failed` | `skipped`."
           },
           "schedule_id": {
             "type": "string",
@@ -67919,6 +68724,20 @@
         },
         "additionalProperties": false
       },
+      "UpdateConversation": {
+        "type": "object",
+        "description": "(P5-REFINE-7, C-1073) `PATCH /conversations/{id}` body.",
+        "properties": {
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "1–200 characters after trimming; `null` goes back to the automatic title."
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdatePushSubscription": {
         "type": "object",
         "properties": {
@@ -68655,6 +69474,10 @@
           "kind"
         ],
         "properties": {
+          "generate_secret": {
+            "type": "boolean",
+            "description": "(P5-REFINE-7, C-1078) Create only: Aurora makes the secret (32 random bytes, 64 hex\ncharacters) and returns it once. Not with `secret`; on update use `rotate-secret`."
+          },
           "header": {
             "type": [
               "string",
@@ -68671,7 +69494,7 @@
               "string",
               "null"
             ],
-            "description": "Shared secret; required when choosing a kind (or switching to one). Never returned."
+            "description": "Shared secret; required when choosing a kind (or switching to one) unless\n`generate_secret`. Never returned."
           }
         },
         "additionalProperties": false
@@ -68694,11 +69517,19 @@
           "kind"
         ],
         "properties": {
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1078) How the sender fills the header: `sha256=<hex of the HMAC-SHA256 of the raw body,\nkeyed with the secret>` or `Bearer <secret>`; null for `none`."
+          },
           "header": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "(P5-REFINE-7, C-1078) The effective header (`X-Signature` / `Authorization` by default);\nnull for `none`."
           },
           "kind": {
             "type": "string",
@@ -68922,9 +69753,26 @@
           "id",
           "received_at",
           "status",
-          "size"
+          "size",
+          "result"
         ],
         "properties": {
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "(C-1079) The delivery's own thread (a duplicate: the original's); null when none."
+          },
+          "duplicate_of": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "(C-1079) For a `duplicate`: the delivery it repeated."
+          },
           "id": {
             "type": "string",
             "format": "uuid",
@@ -68934,13 +69782,17 @@
             "type": "string",
             "format": "date-time"
           },
+          "result": {
+            "type": "string",
+            "description": "(C-1079) `answered` | `running` | `failed` | `refused_signature` | `refused_too_large` |\n`refused_paused` | `refused_frozen` | `refused_unauthorized` | `duplicate`."
+          },
           "size": {
             "type": "integer",
             "format": "int32"
           },
           "status": {
             "type": "string",
-            "description": "`accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized`\n(`duplicate` deliveries are answered with the original id and not logged)."
+            "description": "`accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized` |\n(P5-REFINE-7, C-1079) `duplicate`."
           },
           "turn_id": {
             "type": [
@@ -68984,6 +69836,22 @@
         },
         "additionalProperties": false
       },
+      "WebhookSecret": {
+        "type": "object",
+        "description": "(C-1078) `POST /webhooks/{id}/rotate-secret`: the new secret, shown once.",
+        "required": [
+          "webhook",
+          "secret"
+        ],
+        "properties": {
+          "secret": {
+            "type": "string"
+          },
+          "webhook": {
+            "$ref": "#/components/schemas/Webhook"
+          }
+        }
+      },
       "WebhookView": {
         "allOf": [
           {
@@ -69022,6 +69890,13 @@
           "url"
         ],
         "properties": {
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-REFINE-7, C-1078) The secret Aurora generated on this call (`generate_secret`, or a\ncreate without `verification`); shown once, never again."
+          },
           "url": {
             "type": "string"
           },

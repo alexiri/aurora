@@ -91,7 +91,9 @@ impl Rig {
     }
 
     async fn webhook(&self, who: Uuid, name: &str, extra: Value) -> (String, String) {
-        let mut b = json!({"name": name, "instructions": "i"});
+        // Unsigned (P5-REFINE-7, C-1078: a create without `verification` is signed): these
+        // tests deliver unsigned bodies to exercise the authority checks.
+        let mut b = json!({"name": name, "instructions": "i", "verification": {"kind": "none"}});
         for (k, v) in extra.as_object().unwrap() {
             b[k] = v.clone();
         }

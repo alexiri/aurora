@@ -62,14 +62,21 @@ struct Started {
     run: RunRow,
 }
 
-/// Create the run conversation's turn and the run row. `None` when the conversation is busy.
+/// Start a run in its own thread (P5-REFINE-7, C-1074): `schedule:<schedule>:<run>`, with the
+/// schedule's origin so the FIX-192 mirror still finds the origin's thread link. `None` when the
+/// schedule is busy: its latest run's turn is still active (the busy rule, decided under the
+/// schedule row lock so a fire and Run now decide one at a time).
 async fn start_run(
     conn: &mut PgConnection,
     s: &ScheduleRow,
     agent: &agents::AgentRow,
 ) -> Result<Option<Started>, ApiError> {
-    let ref_ = format!("schedule:{}", s.id);
-    let (c, _) = convs::get_or_create(
+    if !repo::lock(&mut *conn, s.id).await? || repo::latest_run_active(&mut *conn, s.id).await? {
+        return Ok(None);
+    }
+    let run_id = Uuid::now_v7();
+    let ref_ = format!("schedule:{}:{run_id}", s.id);
+    let (c, _) = convs::get_or_create_in(
         conn,
         &NewConversation {
             agent_id: agent.id,
@@ -80,17 +87,18 @@ async fn start_run(
             title: Some(&s.name),
             origin_conversation_id: s.origin_conversation_id,
         },
+        Some(convs::Automation {
+            kind: "schedule",
+            id: s.id,
+        }),
     )
     .await?;
-    if !convs::lock(&mut *conn, c.id).await? {
-        return Ok(None);
-    }
-    if turns::active_turn(&mut *conn, c.id).await?.is_some() {
-        return Ok(None);
-    }
     let text = turn_text(s);
     let door = json!({"kind": "schedule", "ref": s.id.to_string()});
-    let created = conv::create_turn_tx(
+    // (C-1079) What people read: the schedule's name, not the prompt header.
+    let display =
+        json!({"kind": "schedule", "name": s.name, "schedule_id": s.id, "run_id": run_id});
+    let created = conv::create_turn_tx_with(
         conn,
         &c,
         &NewMessage {
@@ -103,12 +111,13 @@ async fn start_run(
             attachment_ids: &[],
             reply_to_seq: None,
         },
+        Some(&display),
     )
     .await?;
     let turn = match created {
         Created::Turn(t) | Created::Followup(t) => t,
     };
-    let run = repo::insert_run(conn, s.id, Some(turn.id), "fired").await?;
+    let run = repo::insert_run_with_id(conn, run_id, s.id, Some(turn.id), "fired").await?;
     Ok(Some(Started {
         conversation: c.id,
         run,
@@ -200,12 +209,12 @@ async fn fire_due(
     Ok(())
 }
 
-/// `run-now`: fire immediately without moving the schedule. `None` when the run conversation is
-/// busy (409 at the route).
+/// `run-now`: fire immediately without moving the schedule. `None` when the schedule is busy
+/// (its latest run's turn is active; 409 at the route). Returns the run and its new thread.
 pub async fn run_now(
     conn: &mut PgConnection,
     row: &ScheduleRow,
-) -> Result<Option<RunRow>, ApiError> {
+) -> Result<Option<(RunRow, Uuid)>, ApiError> {
     let agent = agents::get(&mut *conn, row.agent_id)
         .await?
         .ok_or_else(super::service::not_found)?;
@@ -215,7 +224,7 @@ pub async fn run_now(
         return Ok(None);
     };
     repo::record_manual(conn, row.id, st.conversation).await?;
-    Ok(Some(st.run))
+    Ok(Some((st.run, st.conversation)))
 }
 
 /// Gate command to hand to the supervisor with `turn.deliver` (if the turn is a pending run).

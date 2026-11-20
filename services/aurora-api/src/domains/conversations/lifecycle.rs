@@ -468,12 +468,65 @@ pub async fn sweep_retention(pool: &PgPool, ceiling: Option<u32>) -> Result<usiz
             left -= i64::try_from(n).unwrap_or(left);
         }
     }
+    total += sweep_automation_overflow(pool, aurora_core::limits::AUTOMATION_THREADS_KEPT).await?;
+    Ok(total)
+}
+
+/// (P5-REFINE-7, C-1074) The volume guard: an automation keeps its newest `keep` run threads;
+/// older ones are deleted through the ordinary delete path (sessions purged, search rows,
+/// attachments and blobs with them), audited per org as `conversation.delete` with reason
+/// `automation_threads`. Bounded per pass like the retention sweep.
+pub async fn sweep_automation_overflow(pool: &PgPool, keep: i64) -> Result<usize, ApiError> {
+    let mut total = 0;
+    let mut left = RETENTION_SWEEP_PER_ORG;
+    while left > 0 {
+        let cands = {
+            let mut conn = pool.acquire().await.map_err(db)?;
+            convs::automation_overflow(&mut conn, keep, left.min(RETENTION_SWEEP_BATCH)).await?
+        };
+        if cands.is_empty() {
+            break;
+        }
+        let mut n_pass = 0;
+        let mut i = 0;
+        while i < cands.len() {
+            let org = cands[i].1;
+            let ids: Vec<Uuid> = cands[i..]
+                .iter()
+                .take_while(|(_, o)| *o == org)
+                .map(|(id, _)| *id)
+                .collect();
+            i += ids.len();
+            n_pass +=
+                delete_batch(pool, org, ids, "automation_threads", json!({"kept": keep})).await?;
+        }
+        if n_pass == 0 {
+            break;
+        }
+        total += n_pass;
+        left -= i64::try_from(n_pass).unwrap_or(left);
+    }
     Ok(total)
 }
 
 async fn sweep_batch(pool: &PgPool, org: Uuid, days: i64, limit: i64) -> Result<usize, ApiError> {
+    let ids = {
+        let mut conn = pool.acquire().await.map_err(db)?;
+        lifecycle::retention_candidates(&mut conn, org, days, limit).await?
+    };
+    delete_batch(pool, org, ids, "retention", json!({"retention_days": days})).await
+}
+
+/// Delete `ids` (conversations of `org`) in one transaction, re-checked under each lock, with
+/// one `conversation.delete` audit row (`reason`, plus `extra` merged into the metadata).
+async fn delete_batch(
+    pool: &PgPool,
+    org: Uuid,
+    ids: Vec<Uuid>,
+    reason: &str,
+    extra: Value,
+) -> Result<usize, ApiError> {
     let mut tx = pool.begin().await.map_err(db)?;
-    let ids = lifecycle::retention_candidates(&mut tx, org, days, limit).await?;
     let mut done: Vec<(Uuid, String)> = Vec::new();
     let mut agg = Deleted::default();
     let mut agents: Vec<Uuid> = Vec::new();
@@ -510,10 +563,12 @@ async fn sweep_batch(pool: &PgPool, org: Uuid, days: i64, limit: i64) -> Result<
         return Ok(0);
     }
     let kinds: Vec<(Uuid, &str)> = done.iter().map(|(i, k)| (*i, k.as_str())).collect();
-    let mut meta = delete_meta(&kinds, Uuid::nil(), &agg, Some("retention"));
+    let mut meta = delete_meta(&kinds, Uuid::nil(), &agg, Some(reason));
     meta["agent_ids"] = json!(agents);
-    meta["retention_days"] = json!(days);
-    meta.as_object_mut().map(|o| o.remove("agent_id"));
+    if let (Some(m), Value::Object(x)) = (meta.as_object_mut(), extra) {
+        m.extend(x);
+        m.remove("agent_id");
+    }
     let ev = AuditEvent::new(
         AuditActor::system("retention"),
         "conversation.delete",

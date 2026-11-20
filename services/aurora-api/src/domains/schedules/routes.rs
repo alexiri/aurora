@@ -27,6 +27,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_schedule, update_schedule, delete_schedule))
         .routes(routes!(list_runs))
         .routes(routes!(run_now))
+        .routes(routes!(preview_schedule))
         .routes(routes!(reassign_creator))
 }
 
@@ -63,8 +64,24 @@ fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, r: &ScheduleRow, actio
 }
 
 /// RFE-009: a reference to a direct conversation the caller cannot see is returned as `null`
-/// with `conversation_hidden: true`.
+/// with `conversation_hidden: true`. (P5-REFINE-7, C-1077) Also fills `next_runs` and
+/// `last_result` (one query for the page).
 async fn redact_all(c: &Caller, s: &AppState, items: &mut [Schedule]) -> Result<(), ApiError> {
+    let now = chrono::Utc::now();
+    for i in items.iter_mut().filter(|i| i.enabled) {
+        i.next_runs = super::cron::next_n(&i.cron, &i.timezone, now, 3).unwrap_or_default();
+    }
+    let ids: Vec<Uuid> = items.iter().map(|i| i.id).collect();
+    let latest = aurora_db::repo::schedules::latest_runs(&s.pool, &ids).await?;
+    for r in latest {
+        if let Some(i) = items.iter_mut().find(|i| i.id == r.schedule_id) {
+            i.last_result = Some(ScheduleRun::from(r).result);
+        }
+    }
+    redact_origins(c, s, items).await
+}
+
+async fn redact_origins(c: &Caller, s: &AppState, items: &mut [Schedule]) -> Result<(), ApiError> {
     let ids: Vec<Uuid> = items
         .iter()
         .filter_map(|i| i.origin_conversation_id)
@@ -250,9 +267,46 @@ async fn list_runs(
 ) -> Result<Json<Page<ScheduleRun>>, ApiError> {
     authorized(&c, &s, id).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    let rows = aurora_db::repo::schedules::list_runs(&s.pool, id, p.after_key(), p.fetch()).await?;
+    let rows = aurora_db::repo::schedules::runs_with_results(&s.pool, id, p.after_key(), p.fetch())
+        .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Json(page.map(ScheduleRun::from)))
+}
+
+/// What a cadence would do: the next three instants and whether it fires more often than every
+/// five minutes (C-1077). Saves nothing.
+#[utoipa::path(post, path = "/agents/{agent}/schedules/preview", operation_id = "previewSchedule",
+    tag = "schedules", params(("agent" = Uuid, Path, description = "Agent id")),
+    request_body = SchedulePreviewRequest,
+    responses((status = 200, body = SchedulePreview), (status = 404, body = ErrorEnvelope),
+        (status = 422, description = "invalid_cron | invalid_timezone", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn preview_schedule(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+    Json(req): Json<SchedulePreviewRequest>,
+) -> Result<Json<SchedulePreview>, ApiError> {
+    let a = visible_agent(&c, &s, agent).await?;
+    let tz = match req.timezone {
+        Some(t) => t,
+        None => aurora_db::repo::workspaces::get(&s.pool, a.workspace_id)
+            .await?
+            .map_or_else(|| "UTC".to_owned(), |w| w.timezone),
+    };
+    let field = |code: &str, path: &str, e: ApiError| {
+        ApiError::unprocessable(code, e.message().to_owned())
+            .with_details(json!({"fields": [{"path": path, "message": e.message()}]}))
+    };
+    super::cron::parse_tz(&tz).map_err(|e| field("invalid_timezone", "/timezone", e))?;
+    let p = super::cron::preview(&req.cron, &tz, chrono::Utc::now())
+        .map_err(|e| field("invalid_cron", "/cron", e))?;
+    Ok(Json(SchedulePreview {
+        next: p.next,
+        interval_secs: p.interval_secs,
+        too_frequent: p.too_frequent,
+        min_interval_secs: super::cron::MIN_INTERVAL.num_seconds(),
+    }))
 }
 
 /// Fire the schedule now, outside its cadence; 409 `schedule_busy` while a run is active.
@@ -268,12 +322,15 @@ async fn run_now(
 ) -> Result<(StatusCode, Json<ScheduleRun>), ApiError> {
     let (row, a) = authorized(&c, &s, id).await?;
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
-    let run = fire::run_now(&mut tx, &row).await?.ok_or_else(|| {
+    let (run, conversation) = fire::run_now(&mut tx, &row).await?.ok_or_else(|| {
         ApiError::conflict("schedule_busy", "A run of this schedule is still active.")
     })?;
     tx.commit().await.map_err(DbError::from)?;
     record(&c, &s, &a, &row, "schedule.run_now");
-    Ok((StatusCode::CREATED, Json(run.into())))
+    Ok((
+        StatusCode::CREATED,
+        Json(ScheduleRun::started(run, conversation)),
+    ))
 }
 
 /// Reassign the schedule's creator (fire-time authority) to an active member who can use the

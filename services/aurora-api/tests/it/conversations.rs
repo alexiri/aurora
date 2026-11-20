@@ -418,10 +418,18 @@ async fn abort_queued_send_now_and_finish_fencing() {
         None,
     )
     .await;
-    let last = ev["items"].as_array().unwrap().last().unwrap().clone();
+    let items = ev["items"].as_array().unwrap();
+    let last = items.last().unwrap().clone();
     assert_eq!(last["type"], "turn.finished");
     assert_eq!(last["payload"]["status"], "aborted");
     assert_eq!(last["payload"]["turn_id"], turn);
+    // (P5-REFINE-7, C-1075) Stop leaves a mark, in the transaction of `turn.finished`.
+    let mark = &items[items.len() - 2];
+    assert_eq!(mark["type"], "notice");
+    assert_eq!(
+        mark["payload"],
+        json!({"code": "turn_stopped", "text": "You stopped this answer.", "turn_id": turn})
+    );
 
     let (s, e) = call(
         &h,
@@ -701,4 +709,279 @@ async fn hosted_agent_disabled_is_422() {
             (422, Some("hosted_disabled"))
         );
     }
+}
+
+// ------------------------------------------------------------------ P5-REFINE-7 (C-1073)
+
+async fn new_direct(h: &Harness, f: &Fx) -> (u16, Value) {
+    call(
+        h,
+        Method::POST,
+        &format!("/v1/agents/{}/conversations/direct/new", f.agent),
+        ("cookie", &f.cookie),
+        None,
+    )
+    .await
+}
+
+/// Several direct chats per person: `direct` is the most recently active non-archived one,
+/// `direct/new` is 201 a fresh one and 200 (the same) while that one is still empty; an
+/// archived chat is never "the person's chat"; the limit is 500 (active and archived).
+#[tokio::test]
+async fn several_direct_chats_new_chat_archive_and_the_limit() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let first = direct(&h, &f).await;
+    assert_eq!(direct(&h, &f).await, first, "get-or-create is stable");
+    let ext: String = sqlx::query_scalar("SELECT external_ref FROM conversations WHERE id = $1")
+        .bind(first)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(ext, format!("user:{}", f.user));
+    // The first chat is still empty: New chat hands it back (no pile of empty chats).
+    let (s, v) = new_direct(&h, &f).await;
+    assert_eq!(
+        (s, v["id"].as_str()),
+        (200, Some(first.to_string().as_str()))
+    );
+    let (s, _) = msg(&h, &f, first, "hello").await;
+    assert_eq!(s, 202);
+    let (s, v) = new_direct(&h, &f).await;
+    assert_eq!(s, 201, "{v}");
+    let second: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    assert_ne!(second, first);
+    assert_eq!(v["kind"], "direct");
+    assert_eq!(v["direct_user_id"], f.user.to_string());
+    assert_eq!(v["last_seq"], 0, "fresh history");
+    assert!(
+        v["external_ref"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("user:{}:", f.user))
+    );
+    let (s, v) = new_direct(&h, &f).await;
+    assert_eq!(
+        (s, v["id"].as_str()),
+        (200, Some(second.to_string().as_str()))
+    );
+    // `direct` follows the most recent activity.
+    assert_eq!(direct(&h, &f).await, second);
+    let (s, _) = msg(&h, &f, first, "back to the first").await;
+    assert_eq!(s, 202);
+    assert_eq!(direct(&h, &f).await, first);
+    // Archive the active one: `direct` returns the other, the archived one stays listed there.
+    let (s, _) = call(
+        &h,
+        Method::POST,
+        &format!("/v1/conversations/{first}/archive"),
+        ("cookie", &f.cookie),
+        None,
+    )
+    .await;
+    assert_eq!(s, 200);
+    assert_eq!(direct(&h, &f).await, second);
+    let (_, l) = call(
+        &h,
+        Method::GET,
+        &format!("/v1/agents/{}/conversations?archived=true", f.agent),
+        ("cookie", &f.cookie),
+        None,
+    )
+    .await;
+    let archived: Vec<&str> = l["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(archived, [first.to_string().as_str()]);
+    // Every chat archived: `direct` starts a new one rather than reopening an archived one.
+    let (s, _) = call(
+        &h,
+        Method::POST,
+        &format!("/v1/conversations/{second}/archive"),
+        ("cookie", &f.cookie),
+        None,
+    )
+    .await;
+    assert_eq!(s, 200);
+    let third = direct(&h, &f).await;
+    assert!(third != first && third != second);
+    // The limit counts active and archived chats: at 500, a new one is 422.
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, direct_user_id,
+            last_activity_at, archived_at)
+         SELECT gen_random_uuid(), $1, $2, 'direct', 'user:' || $3::text || ':' || g, $3,
+                now() - interval '1 day', now()
+         FROM generate_series(1, 497) g",
+    )
+    .bind(f.agent)
+    .bind(f.ws)
+    .bind(f.user)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    let (s, _) = msg(&h, &f, third, "not empty").await;
+    assert_eq!(s, 202);
+    let (s, e) = new_direct(&h, &f).await;
+    assert_eq!(
+        (s, e["error"]["code"].as_str()),
+        (422, Some("conversation_limit")),
+        "{e}"
+    );
+    // Session only, like `direct`.
+    let (s, _) = call(
+        &h,
+        Method::POST,
+        &format!("/v1/agents/{}/conversations/direct/new", f.agent),
+        ("authorization", &f.key),
+        None,
+    )
+    .await;
+    assert_eq!(s, 403);
+}
+
+/// Rename: the person renames their own direct chat; a workspace owner cannot rename someone
+/// else's; group/api need `can_own`; the first person message titles an untitled chat (60
+/// characters), a chosen title is kept, `null` re-derives; ids-only audit.
+#[tokio::test]
+async fn rename_rules_and_the_auto_title() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let owner = h.user("owner@x.io", false).await;
+    h.member(f.org, owner, "member", "active").await;
+    h.bind_ws(f.ws, owner, "owner").await;
+    let (_, otok) = h.good_session(owner).await;
+    let ocookie = cookie(&otok);
+    let conv = direct(&h, &f).await;
+    let long = format!("  **Plan** the `release` for @team\n{}", "x".repeat(10));
+    let (s, _) = msg(
+        &h,
+        &f,
+        conv,
+        &format!("```\ncode only\n```\n{}", "word ".repeat(30)),
+    )
+    .await;
+    assert_eq!(s, 202);
+    let get = |c: Uuid, ck: String| {
+        let h = &h;
+        async move {
+            call(
+                h,
+                Method::GET,
+                &format!("/v1/conversations/{c}"),
+                ("cookie", &ck),
+                None,
+            )
+            .await
+            .1
+        }
+    };
+    let v = get(conv, f.cookie.clone()).await;
+    // The first line after the fence: "code only".
+    assert_eq!(v["title"], "code only");
+    assert_eq!(v["title_source"], "auto");
+    // A later message does not retitle.
+    let (s, _) = msg(&h, &f, conv, &long).await;
+    assert_eq!(s, 202);
+    assert_eq!(get(conv, f.cookie.clone()).await["title"], "code only");
+
+    // The person renames; an owner of someone else's direct chat cannot.
+    let patch = |c: Uuid, ck: String, body: Value| {
+        let h = &h;
+        async move {
+            call(
+                h,
+                Method::PATCH,
+                &format!("/v1/conversations/{c}"),
+                ("cookie", &ck),
+                Some(body),
+            )
+            .await
+        }
+    };
+    let (s, v) = patch(conv, f.cookie.clone(), json!({"title": "  Release plan "})).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        (v["title"].as_str(), v["title_source"].as_str()),
+        (Some("Release plan"), Some("person"))
+    );
+    let (s, e) = patch(conv, ocookie.clone(), json!({"title": "mine"})).await;
+    assert_eq!(
+        (s, e["error"]["code"].as_str()),
+        (403, Some("direct_conversation_forbidden"))
+    );
+    for bad in [
+        json!({"title": ""}),
+        json!({"title": "a\u{7}b"}),
+        json!({"title": "x".repeat(201)}),
+    ] {
+        let (s, e) = patch(conv, f.cookie.clone(), bad).await;
+        assert_eq!(
+            (s, e["error"]["code"].as_str()),
+            (422, Some("invalid_title"))
+        );
+    }
+    // `null` goes back to the auto title (the first person message).
+    let (s, v) = patch(conv, f.cookie.clone(), json!({"title": null})).await;
+    assert_eq!(s, 200);
+    assert_eq!(
+        (v["title"].as_str(), v["title_source"].as_str()),
+        (Some("code only"), Some("auto"))
+    );
+
+    // A fresh chat titled by a long first line: 60 characters with the ellipsis.
+    let (_, n) = new_direct(&h, &f).await;
+    let n: Uuid = n["id"].as_str().unwrap().parse().unwrap();
+    let (s, _) = msg(&h, &f, n, &long).await;
+    assert_eq!(s, 202);
+    let t = get(n, f.cookie.clone()).await["title"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        t, "Plan the release for team",
+        "first line, markup and mention removed"
+    );
+    let (_, n2) = new_direct(&h, &f).await;
+    let n2: Uuid = n2["id"].as_str().unwrap().parse().unwrap();
+    let (s, _) = msg(&h, &f, n2, &"z".repeat(100)).await;
+    assert_eq!(s, 202);
+    let t2 = get(n2, f.cookie.clone()).await["title"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(t2.chars().count(), 60);
+    assert!(t2.ends_with('…'));
+
+    // A group conversation: owners rename, members cannot.
+    let g = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1, $2, $3, 'group', 'thread:x', now())",
+    )
+    .bind(g)
+    .bind(f.agent)
+    .bind(f.ws)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    let (s, e) = patch(g, f.cookie.clone(), json!({"title": "Ops"})).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (403, Some("forbidden")));
+    let (s, v) = patch(g, ocookie.clone(), json!({"title": "Ops"})).await;
+    assert_eq!((s, v["title"].as_str()), (200, Some("Ops")));
+
+    // Audited with ids only.
+    let meta: Vec<Value> = sqlx::query_scalar(
+        "SELECT metadata FROM audit_log WHERE action = 'conversation.rename' ORDER BY created_at",
+    )
+    .fetch_all(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(meta.len(), 3);
+    assert!(
+        meta.iter()
+            .all(|m| !m.to_string().contains("Release") && !m.to_string().contains("Ops"))
+    );
 }

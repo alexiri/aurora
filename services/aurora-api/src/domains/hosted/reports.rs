@@ -486,15 +486,23 @@ async fn result(
         return Ok(res(r, ReportStatus::Duplicate, None));
     }
     s.conversation_bus.flush_turn(&s.pool, cid, turn).await;
-    // The answer rule: the text buffered since the last tool call becomes durable `text` events
-    // (also on every API-side failure path, `lifecycle::fail`; FIX-115).
-    lifecycle::drain_answer(tx, cid, turn).await?;
     let status = tr.status.as_str();
     let code = tr.error_code.as_ref().map(|c| c.as_str().to_owned());
     let message = tr.error_message.as_deref().map(|m| clip(m, 2000));
+    // The answer rule: the text buffered since the last tool call becomes durable `text` events
+    // (also on every API-side failure path, `lifecycle::fail`; FIX-115). (P5-REFINE-7) A stopped
+    // turn's text is `partial` (C-1075); a failed turn's harness error line becomes the error's
+    // `detail` instead of an answer (C-1076).
+    let dropped = lifecycle::drain_answer(
+        tx,
+        cid,
+        turn,
+        lifecycle::Ending::of(status, Some(message.unwrap_or(""))),
+    )
+    .await?;
     if status == "failed" {
         let code = code.as_deref().unwrap_or("harness_failed");
-        let p = json!({"turn_id": turn, "code": code, "message": message.unwrap_or("")});
+        let p = lifecycle::error_payload(turn, code, message.unwrap_or(""), dropped.as_deref());
         conv::append_event(tx, cid, Some(turn), "error", &p).await?;
     }
     // (P5-MODELS-2, D-304) The harness's claim, reduced by the trust rule and stamped from the turn's basis.

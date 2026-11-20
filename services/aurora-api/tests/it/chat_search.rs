@@ -697,3 +697,107 @@ async fn agent_tools_scope_matrix_wrapper_and_access_change() {
     .unwrap_err();
     assert_eq!(e, unknown);
 }
+
+/// (P5-REFINE-7, D-409 amends D-230, C-1073) Several direct chats per person stay inside D-230's
+/// scope: the person's search finds words in **all** of their own direct chats and never in
+/// another member's (owners see every one, as before); the agent's search and read cover all of
+/// the speaker's own direct chats and never another member's, even for an owner speaker.
+#[tokio::test]
+async fn several_direct_chats_per_person_stay_in_the_d230_scope() {
+    let f = fx().await;
+    let ca1 = f.conv(f.agent, "direct", Some(f.a.id)).await;
+    let ca2 = f.conv(f.agent, "direct", Some(f.a.id)).await;
+    let cb1 = f.conv(f.agent, "direct", Some(f.b.id)).await;
+    let cb2 = f.conv(f.agent, "direct", Some(f.b.id)).await;
+    let co1 = f.conv(f.agent, "direct", Some(f.o.id)).await;
+    let co2 = f.conv(f.agent, "direct", Some(f.o.id)).await;
+    let (_, a1seq) = f
+        .say(ca1, Some(&f.a), "A", "haystack first chat of A")
+        .await;
+    let (ta2, _) = f
+        .say(ca2, Some(&f.a), "A", "haystack second chat of A")
+        .await;
+    let (_, b1seq) = f
+        .say(cb1, Some(&f.b), "B", "haystack first chat of B")
+        .await;
+    f.say(cb2, Some(&f.b), "B", "haystack second chat of B")
+        .await;
+    f.say(co1, Some(&f.o), "O", "haystack first chat of O")
+        .await;
+    let (to2, _) = f
+        .say(co2, Some(&f.o), "O", "haystack second chat of O")
+        .await;
+    f.complete_index().await;
+
+    // The dashboard route: each member's own chats, all of them; owners every direct chat.
+    assert_eq!(
+        convs(&f.hits(&f.a, "q=haystack").await),
+        HashSet::from([ca1, ca2])
+    );
+    assert_eq!(
+        convs(&f.hits(&f.b, "q=haystack").await),
+        HashSet::from([cb1, cb2])
+    );
+    assert_eq!(
+        convs(&f.hits(&f.o, "q=haystack").await),
+        HashSet::from([ca1, ca2, cb1, cb2, co1, co2])
+    );
+    // A `conversation_id` filter on another member's chat is 404 for a member.
+    let (s, _) = f
+        .search(&f.a, &format!("q=haystack&conversation_id={cb1}"))
+        .await;
+    assert_eq!(s, 404);
+
+    // The agent tools: speaker A, in the second chat, finds and reads the first; never B's.
+    let c = ctx(&f, ca2, ta2, f.agent);
+    let v = call(&c, "conversation_search", json!({"query": "haystack"}))
+        .await
+        .unwrap();
+    assert_eq!(hit_convs(&v), HashSet::from([ca1, ca2]));
+    let v = call(
+        &c,
+        "conversation_read",
+        json!({"conversation_id": ca1, "seq": a1seq}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        v["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "haystack first chat of A")
+    );
+    let unknown = call(
+        &c,
+        "conversation_read",
+        json!({"conversation_id": Uuid::now_v7(), "seq": 1}),
+    )
+    .await
+    .unwrap_err();
+    let other = call(
+        &c,
+        "conversation_read",
+        json!({"conversation_id": cb1, "seq": b1seq}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(other, unknown);
+    // An owner speaker: their own two chats only, never a member's.
+    let v = call(
+        &ctx(&f, co2, to2, f.agent),
+        "conversation_search",
+        json!({"query": "haystack"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(hit_convs(&v), HashSet::from([co1, co2]));
+    let e = call(
+        &ctx(&f, co2, to2, f.agent),
+        "conversation_read",
+        json!({"conversation_id": ca1, "seq": a1seq}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(e, unknown);
+}
