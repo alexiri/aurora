@@ -182,6 +182,9 @@ test.describe("1280×800", () => {
       const a = await sizeOf(actions);
       expect(Math.round(a.width)).toBe(36);
       expect(Math.round(a.height)).toBe(36);
+      // FIX-186: the track ends where the last tab ends.
+      const lastTab = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab").last());
+      expect(Math.abs(switcher.x + switcher.width - (lastTab.x + lastTab.width)), "no empty track after the last tab").toBeLessThanOrEqual(4);
       expect(a.x, "actions at the right of the switcher").toBeGreaterThan(switcher.x + switcher.width);
       const rowMid = (b: { y: number; height: number }) => b.y + b.height / 2;
       expect(Math.abs(rowMid(a) - rowMid(switcher)), "switcher and actions share a row").toBeLessThanOrEqual(4);
@@ -270,6 +273,10 @@ test.describe("phone, 390 px", () => {
       expect(name.y).toBeLessThan(back.y + back.height);
       const tabs = page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab");
       for (let i = 0; i < (await tabs.count()); i += 1) expect((await sizeOf(tabs.nth(i))).height, `section tab ${i}`).toBeGreaterThanOrEqual(44);
+      // FIX-186: the tabs share the row, no empty track after the last one.
+      const strip = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }));
+      const last = await sizeOf(tabs.last());
+      expect(Math.abs(strip.x + strip.width - (last.x + last.width)), "no empty track after the last tab").toBeLessThanOrEqual(4);
       expect(await fits(page), "the page scrolls").toBeLessThanOrEqual(0);
       expect(await overflow(page)).toBeLessThanOrEqual(0);
       await page.screenshot({ path: `${SHOTS}/phone-header-${scheme}.png` });

@@ -453,7 +453,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     agent the sandbox state as a `StatusDot` (labels and failure tooltip as in
     the FIX-025 rule above); on the right the **section switcher** (segmented
     `Tabs`, label "Agent sections") and the **Agent actions** menu (`MoreIcon`,
-    accessible name "Agent actions"): Freeze / Unfreeze (same confirm dialog and
+    accessible name "Agent actions"; (phase 5, FIX-186, D-403) the switcher is as
+    wide as its tabs, with no empty track after the last one, and on a phone its
+    tabs share the row equally): Freeze / Unfreeze (same confirm dialog and
     permission as before) and "Delete agent…" (the existing delete flow and
     typed confirmation, `can_own`). The kind and Default badges move to the
     rail's About part; a BYO agent (no rail) keeps them in the header. A frozen
