@@ -396,9 +396,10 @@ describe("tour (D-141)", () => {
     );
     act(() => startTour());
     expect(await screen.findByText("Step 1 of 5", undefined)).toBeInTheDocument();
-    // The Agents stop says an agent gets apps on its Access tab (C-975).
+    // The Agents stop says an agent gets apps on its Settings › Apps & access page (C-975), with no "<Agent>" placeholder.
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText(/Give <Agent> an app/)).toBeInTheDocument();
+    expect(await screen.findByText("Settings › Apps & access")).toBeInTheDocument();
+    expect(screen.queryByText(/<Agent>/)).not.toBeInTheDocument();
     for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByText("Step 5 of 5")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
