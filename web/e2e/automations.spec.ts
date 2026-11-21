@@ -221,7 +221,7 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
         await page.getByRole("button", { name: /When something calls it/ }).click();
         const form = page.getByRole("form", { name: "New webhook" });
         await expect(form.getByRole("radio", { name: /Signed/ })).toBeChecked();
-        await expect(form.getByText("Only senders that know the secret can wake Dani.")).toBeVisible();
+        await expect(form.getByText("Only senders that know the secret can wake Daneel.")).toBeVisible();
         await form.getByLabel("Name").fill("Deploy notice");
         await form.getByLabel("Instructions").fill("Say what was deployed.");
         await form.getByRole("button", { name: "Generate" }).click();

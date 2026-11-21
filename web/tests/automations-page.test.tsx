@@ -434,7 +434,10 @@ describe("a webhook row", () => {
     expect(within(form).getByRole("radio", { name: /Signed/ })).toBeChecked();
     expect(within(form).getByRole("radio", { name: /Bearer token/ })).toBeInTheDocument();
     expect(within(form).getByRole("radio", { name: /Anyone with the URL/ })).toBeInTheDocument();
-    expect(within(form).getByText("Only senders that know the secret can wake Dani.")).toBeInTheDocument();
+    expect(within(form).getByText("Only senders that know the secret can wake Daneel.")).toBeInTheDocument();
+    // (webhooks-2) The agent's own name, never a sample one.
+    expect(within(form).getByText("Tells Daneel what to do with each delivery.")).toBeInTheDocument();
+    expect(form.textContent).not.toContain("Dani");
     expect(form.textContent).not.toContain("hmac_sha256");
     fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Deploy notice" } });
     fireEvent.change(within(form).getByLabelText("Instructions"), { target: { value: "Handle it" } });

@@ -55,6 +55,7 @@ export function generateSecret(length = 32): string {
  */
 export function WebhookForm({
   agentId,
+  agentName,
   initial,
   canOwn,
   embedded = false,
@@ -62,6 +63,8 @@ export function WebhookForm({
   onReveal,
 }: {
   agentId: string;
+  /** The agent's display name, as the people of the workspace see it. */
+  agentName: string;
   initial?: Webhook;
   /** Workspace owners may anchor a new webhook to the workspace. */
   canOwn?: boolean;
@@ -128,7 +131,7 @@ export function WebhookForm({
       <Field id="wh-name" label="Name" error={fe.name}>
         <input id="wh-name" className={inputClass} value={name} required placeholder="Deploy notice" onChange={(e) => setName(e.target.value)} />
       </Field>
-      <Field id="wh-instr" label="Instructions" error={fe.instructions} hint="Tells Dani what to do with each delivery.">
+      <Field id="wh-instr" label="Instructions" error={fe.instructions} hint={`Tells ${agentName} what to do with each delivery.`}>
         <textarea id="wh-instr" className={inputClass} rows={3} value={instructions} required onChange={(e) => setInstructions(e.target.value)} />
       </Field>
 
@@ -140,14 +143,14 @@ export function WebhookForm({
             value={kind}
             onChange={setKind}
             options={[
-              { value: "hmac_sha256", label: "Signed", badge: "Recommended", description: "Only senders that know the secret can wake Dani." },
+              { value: "hmac_sha256", label: "Signed", badge: "Recommended", description: `Only senders that know the secret can wake ${agentName}.` },
               { value: "bearer", label: "Bearer token", description: "The sender puts a token in the Authorization header." },
               { value: "none", label: "Anyone with the URL", description: "No check. Use only for testing." },
             ]}
           />
           {kind === "none" ? (
             <Notice tone="pending" role="status">
-              Anyone who has the address can wake Dani. Use this only for testing.
+              Anyone who has the address can wake {agentName}. Use this only for testing.
             </Notice>
           ) : null}
           {fe.verification ? (

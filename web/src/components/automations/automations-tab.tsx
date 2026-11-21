@@ -187,7 +187,7 @@ export function AutomationsTab({
       {creating === "schedule" ? (
         <ScheduleForm agentId={agentId} defaultTimezone={defaultTimezone} workspaceName={workspaceName} canOwn={canOwn} onDone={() => setCreating(null)} />
       ) : null}
-      {creating === "webhook" ? <WebhookForm agentId={agentId} canOwn={canOwn} onDone={() => setCreating(null)} onReveal={setReveal} /> : null}
+      {creating === "webhook" ? <WebhookForm agentId={agentId} agentName={agentName} canOwn={canOwn} onDone={() => setCreating(null)} onReveal={setReveal} /> : null}
 
       {total === 0 && !creating ? (
         <EmptyState title="No automations yet" when={`${agentName} can run on a schedule, when something calls it, or in a chat.`} action={newButton} />
@@ -215,7 +215,7 @@ export function AutomationsTab({
                   ))
                 : null}
               {show("webhooks")
-                ? hooks.map((w) => <WebhookRow key={w.id} agentId={agentId} w={w} agentBase={agentBase} wsId={wsId} canOwn={canOwn} onReveal={setReveal} select={pick(w.id)} />)
+                ? hooks.map((w) => <WebhookRow key={w.id} agentId={agentId} agentName={agentName} w={w} agentBase={agentBase} wsId={wsId} canOwn={canOwn} onReveal={setReveal} select={pick(w.id)} />)
                 : null}
               {show("chats") ? chats.map((p) => <ChatRow key={p.id} agentId={agentId} agentName={agentName} p={p} platform={platformOf(p)} />) : null}
             </ItemList>
