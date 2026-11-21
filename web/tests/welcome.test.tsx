@@ -54,7 +54,7 @@ function world(o: { role?: string; personal?: boolean; name?: string; accounts?:
   routes["GET /v1/workspaces/w1"] = () => json(200, { id: "w1", org_id: "o1", slug: "ops", name: o.name ?? "Ops", my_role: o.role ?? "owner" });
   routes["GET /v1/workspaces/w1/agents"] = () => json(200, { items: [AGENT], next_cursor: null });
   routes["GET /v1/me"] = () =>
-    json(200, { user: { display_name: "Bob", email: "bob@x" }, memberships: [{ org: { id: "o1", slug: "acme", name: "Acme" }, status: "active", workspaces: [{ id: "w1", slug: "ops", name: "Ops", personal: o.personal === true }] }] });
+    json(200, { user: { display_name: "Bob Builder", email: "bob@x" }, memberships: [{ org: { id: "o1", slug: "acme", name: "Acme" }, status: "active", workspaces: [{ id: "w1", slug: "ops", name: "Ops", personal: o.personal === true }] }] });
   routes["GET /v1/me/onboarding"] = () => json(200, { welcome_seen: false, guide_dismissed: [], tour_completed_at: null });
   routes["GET /v1/workspaces/w1/accounts"] = () => json(200, { items: o.accounts ?? [], next_cursor: null });
   routes["GET /v1/orgs/o1/governance/effective"] = () =>
@@ -93,9 +93,10 @@ describe("Welcome (C-927)", () => {
   });
 
   it("a person's own personal workspace: 'Welcome, <name>'", async () => {
-    world({ personal: true, name: "Bob" });
+    world({ personal: true, name: "Bob's workspace" });
     wrap(<WelcomeView />);
-    expect(await screen.findByRole("heading", { name: "Welcome, Bob" })).toBeInTheDocument();
+    // The person's display name, not the workspace's name (firstday-1).
+    expect(await screen.findByRole("heading", { name: "Welcome, Bob Builder" })).toBeInTheDocument();
     // D-389: the sentence reads from the person's side, not with their own name.
     expect(screen.getByRole("region", { name: "Where you are" }).textContent).toContain("This is your workspace in Acme.");
   });
