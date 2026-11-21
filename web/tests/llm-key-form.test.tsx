@@ -186,6 +186,9 @@ describe("LLM key form per auth mode (C-811)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add AI key" }));
     expect(await screen.findByText("The provider rejected this key. Check it and try again; what you typed is still here.")).toBeTruthy();
     expect(screen.getByLabelText("API key")).toHaveValue("sk-typed-key");
+    // Said once, under the field: no second line at the bottom.
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.queryByText(/rejected this key as invalid/)).toBeNull();
   });
 
   it("shows the Entra fields for Azure, the harness hint and the no-harness notice", async () => {

@@ -399,7 +399,8 @@ export function LlmKeyForm({
         ) : null}
           </>
         )}
-        {shownErr || create.error ? (
+        {/* A refused key is said once, under the key field; the bottom line is for the other failures. */}
+        {shownErr || (create.error && !(rejected && shape === "string")) ? (
           <Notice tone="danger" role="alert">
             {shownErr || keyReasonMessage(create.error) || errorMessage(create.error)}
           </Notice>

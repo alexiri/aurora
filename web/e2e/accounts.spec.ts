@@ -107,6 +107,11 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(used.getByRole("listitem", { name: "acme-bot" }).getByRole("combobox", { name: /Daneel's access to/ })).toHaveValue("read");
         await expect(used.getByText(/Daneel thinks with claude-sonnet through this key/)).toBeVisible();
         await expect(page.getByText("Not given to Daneel (1)")).toBeVisible();
+        // (P5-REFINE-20, access-2) The level and the … menu share one line, at every width.
+        const row = used.getByRole("listitem", { name: "acme-bot" });
+        const level = await row.getByRole("combobox", { name: /Daneel's access to/ }).boundingBox();
+        const more = await row.getByRole("button", { name: /^More for/ }).boundingBox();
+        expect(level && more && Math.abs(level.y + level.height / 2 - (more.y + more.height / 2)) < 8).toBe(true);
         await check(page, "agent-access", scheme, width);
       });
 
@@ -158,7 +163,8 @@ for (const scheme of ["light", "dark"] as const) {
         // (P5-POLISH-11, A1) The buttons are the dialog's footer row, not inside the form.
         await expect(form.getByRole("button", { name: "Add key", exact: true })).toHaveCount(0);
         await page.getByRole("dialog", { name: "Add an AI key" }).getByRole("button", { name: "Add key", exact: true }).click();
-        await expect(page.getByText("Saved Team key")).toBeVisible();
+        // (P5-REFINE-20, access-8) A saved workspace key closes the dialog: the row shows its check.
+        await expect(page.getByRole("dialog", { name: "Add an AI key" })).toHaveCount(0);
         // No "Give agents access" second step.
         await expect(page.getByRole("region", { name: "Give agents access" })).toHaveCount(0);
         expect(posted).toHaveLength(1);

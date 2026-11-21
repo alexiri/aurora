@@ -51,7 +51,7 @@ import { WebhookSignInStep } from "@/components/webhook/webhook-connect-step";
 import { DynamicForm } from "../dynamic-form";
 import { InstanceField, OAuthClientField, RequestedScopes, TokenScopes } from "./advanced-fields";
 import { BackNext, StepFooter } from "./frame";
-import { buildJourneyConnect, connectFailure, hostOf, permissionHints, suggestedMethod, tokenPage } from "./logic";
+import { buildJourneyConnect, connectFailure, hostOf, permissionHints, suggestedMethod, tokenPage, tokenSite } from "./logic";
 import { useSignInWindow } from "./use-sign-in-window";
 
 /** What the step reports when the account exists. `granted` are the agents the access was saved for. */
@@ -285,7 +285,7 @@ function GenericSignInStep({
   const mainOptions = [
     ...(oauthReady ? [{ value: oauthReady.id, label: "OAuth app", description: "Sign in with one click.", badge: "Works now" }] : []),
     ...(tokenMethod
-      ? [{ value: tokenMethod.id, label: "A personal access token", description: `Paste a token from ${hostOf(tokenPage(app, tokenMethod) ?? "") || app.name}; ${agentLabel} acts as you.`, badge: "Works now" }]
+      ? [{ value: tokenMethod.id, label: "A personal access token", description: `Paste a token from ${tokenSite(app, tokenMethod) || app.name}; ${agentLabel} acts as you.`, badge: "Works now" }]
       : []),
   ];
   const otherMethods = readyApps.filter((m) => m.id !== oauthReady?.id && m.id !== tokenMethod?.id);

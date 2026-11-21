@@ -100,7 +100,7 @@ for (const scheme of ["light", "dark"] as const) {
         await check(page, "add-ai-key", scheme, width);
         // (P5-POLISH-11, A1) The buttons are the dialog's footer row.
         await page.getByRole("dialog", { name: "Add an AI key" }).getByRole("button", { name: "Add key", exact: true }).click();
-        await expect(page.getByText("Saved Team key")).toBeVisible();
+        await expect(page.getByRole("dialog", { name: "Add an AI key" })).toHaveCount(0);
         expect(posted).toHaveLength(1);
         expect(posted[0].grant).toEqual({ agent_ids: [second.id] });
         await check(page, "add-ai-key-done", scheme, width);

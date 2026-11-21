@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { automationDisplay } from "@/components/chat/automation-message";
 import { ChatActionsContext } from "@/components/chat/chat-actions";
 import { MessageGroup } from "@/components/chat/message-group";
+import { setWorkspaceTimeZone } from "@/lib/format-date";
 import type { Row } from "@/lib/chat/layout";
 import type { TranscriptState } from "@/lib/chat/transcript";
 import { json } from "./support/api";
@@ -25,7 +26,7 @@ function group(payload: Record<string, unknown>): Row & { kind: "group" } {
     side: "person",
     name: "Webhook",
     ts: "2026-11-20T22:58:00Z",
-    door: "webhook",
+    door: "",
     blocks: [{ kind: "bubble", ev: { seq: 1, ts: "2026-11-20T22:58:00Z", type: "turn.queued", payload } }],
   } as unknown as Row & { kind: "group" };
 }
@@ -85,6 +86,17 @@ describe("a webhook delivery's first message", () => {
     expect(screen.getByText(/ · accepted$/)).toBeInTheDocument();
     expect(automationDisplay(withV("signed"))).toMatchObject({ verification: "signed" });
     expect(automationDisplay(withV("bogus"))).toMatchObject({ verification: null });
+  });
+
+  it("the time is 24-hour in the workspace's zone, not the browser's (webhooks-4)", () => {
+    setWorkspaceTimeZone("Asia/Tokyo");
+    try {
+      show(webhookPayload);
+      // 22:58 UTC is 07:58 the next morning in Tokyo; never "07:58 AM".
+      expect(screen.getByText(/^07:58 · accepted$/)).toBeInTheDocument();
+    } finally {
+      setWorkspaceTimeZone(null);
+    }
   });
 
   it("the ids are in a collapsed Technical details for Expert only", () => {

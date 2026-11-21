@@ -6,6 +6,7 @@ import { ErrorNotice } from "@/components/ui/notice";
 import { showUndoToast } from "@/components/ui/undo-toast";
 import { useAccounts } from "@/lib/api/accounts";
 import { useAddCredentialGrants, useModelReadiness } from "@/lib/api/credential-grants";
+import { useOrg } from "@/lib/api/queries";
 
 /**
  * (P5-REFINE-12, access-3, priority 10) The organization's starter AI key, when it is what this agent is missing: the
@@ -16,7 +17,10 @@ import { useAddCredentialGrants, useModelReadiness } from "@/lib/api/credential-
  */
 export function useStarterKeyOffer(agentId: string, orgId: string, enabled: boolean) {
   const readiness = useModelReadiness(agentId, enabled);
-  const accounts = useAccounts({ kind: "organization", id: orgId }, enabled);
+  // `GET /v1/orgs/{org}/accounts` is for owners and admins (403 for anyone else): a member is never asked (no console error).
+  const org = useOrg(enabled ? orgId : undefined);
+  const isAdmin = org.data?.my_role === "owner" || org.data?.my_role === "admin";
+  const accounts = useAccounts({ kind: "organization", id: orgId }, enabled && isAdmin);
   const add = useAddCredentialGrants({ kind: "secret", id: accounts.data?.items.find((a) => a.kind === "ai_key" && a.starter)?.ref.id ?? "" });
   const d = readiness.data;
   const starter = accounts.data?.items.find((a) => a.kind === "ai_key" && a.starter === true);

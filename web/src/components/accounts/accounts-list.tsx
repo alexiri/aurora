@@ -52,7 +52,16 @@ function AddKeyDialog({ scope, orgId, agentId, onClose }: { scope: SecretScope; 
   return (
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
       <DialogContent size="lg" title="Add an AI key" footer={footer}>
-        <LlmKeyForm scope={scope} orgId={orgId} preselect={agentId ? [agentId] : undefined} submitLabel="Add key" onCancel={onClose} footerTarget={target} />
+        {/* A workspace's key is saved with its access: the dialog closes and the row shows the key's check. An organization's key goes on to Give access. */}
+        <LlmKeyForm
+          scope={scope}
+          orgId={orgId}
+          preselect={agentId ? [agentId] : undefined}
+          submitLabel="Add key"
+          onCancel={onClose}
+          onSaved={scope.kind === "workspace" ? onClose : undefined}
+          footerTarget={target}
+        />
       </DialogContent>
     </Dialog>
   );

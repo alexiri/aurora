@@ -17,6 +17,7 @@ import {
   scopesFor,
   stepsOf,
   tickList,
+  tokenSite,
   type JourneyShape,
 } from "@/components/apps/connect-journey/logic";
 import { ApiError } from "@/lib/api/client";
@@ -76,6 +77,11 @@ describe("the step machine and its skips", () => {
 });
 
 describe("words and payloads", () => {
+  it("a token is pasted from the site that makes it, not the connect note's docs page (access-6)", () => {
+    const note = { connect_note: { text: "t", url: "https://docs.github.com/en/apps/oauth-apps" } };
+    expect(tokenSite(note, { fields: [field] } as never)).toBe("github.com");
+    expect(tokenSite(note, { fields: [] } as never)).toBe("docs.github.com");
+  });
   it("each Done sentence", () => {
     const d = (level: "read" | "ask" | "act" | null, agentChosen = true) => doneSentence({ agent: "Daneel", app: "GitHub", level, agentChosen });
     expect(d("read")).toBe("Daneel can now read GitHub.");
