@@ -113,10 +113,12 @@ pub async fn reason_of_cached(
     let listing_unknown = r.keys.iter().any(|k| {
         k.reason.is_none() && k.listing.is_none() && k.ep.is_some_and(|ep| ep.provider == "litellm")
     });
-    Ok(match decide_reason(r.keys.len(), usable, r.default.is_some()) {
-        Some(AnswerReason::NoModel) if listing_unknown => None,
-        other => other,
-    })
+    Ok(
+        match decide_reason(r.keys.len(), usable, r.default.is_some()) {
+            Some(AnswerReason::NoModel) if listing_unknown => None,
+            other => other,
+        },
+    )
 }
 
 /// What the caller can do and what exists (the inputs of [`choose_fix`]).
