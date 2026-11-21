@@ -14,6 +14,8 @@ use uuid::Uuid;
 
 use crate::common::*;
 
+mod git;
+
 /// The https origin every library URL uses; the test override maps it to the git server.
 pub(crate) const GIT_ORIGIN: &str = "https://git.example";
 
