@@ -60,15 +60,12 @@ export function AddPeople({
   wsId,
   orgId,
   workspacePath,
-  hasApprover,
   initiallyOpen = false,
 }: {
   wsId: string;
   orgId: string;
   /** `/o/<org>/w/<ws>`: the address to send. */
   workspacePath: string;
-  /** Approver is offered only in a workspace that already has one (D-352). */
-  hasApprover: boolean;
   /** Opened by `?add=1` (Welcome's link). */
   initiallyOpen?: boolean;
 }) {
@@ -88,7 +85,8 @@ export function AddPeople({
 
   const options: { value: Role; label: string }[] = [
     { value: "member", label: "Member" },
-    ...(hasApprover ? [{ value: "approver" as const, label: "Approver" }] : []),
+    // (workspace-4, batch 6) Approver is always offered: the API accepts it, and the first owner would never learn it exists otherwise.
+    { value: "approver", label: "Approver" },
     { value: "owner", label: "Owner" },
   ];
   const roleHelp =
@@ -172,8 +170,6 @@ export function AddPeople({
                   {(["owner", "approver", "member"] as const).map((r) => (
                     <li key={r}>
                       <strong className="text-ink">{ROLE_CAN.workspace[r].label}:</strong> {ROLE_CAN.workspace[r].summary}
-                      {/* (workspace-4) The choice above has no Approver until the workspace has one: say where it is set, so the fold never promises what the choice lacks. */}
-                      {r === "approver" && !hasApprover ? " Not offered here yet: change a person's role in the list once they are added." : null}
                     </li>
                   ))}
                 </ul>

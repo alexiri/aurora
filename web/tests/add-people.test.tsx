@@ -36,7 +36,7 @@ beforeEach(() => {
 const wrap = (ui: React.ReactElement) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
 
 const dialog = (props: Partial<React.ComponentProps<typeof AddPeople>> = {}) =>
-  wrap(<AddPeople wsId="w1" orgId="o1" workspacePath="/o/acme/w/bob" hasApprover={false} initiallyOpen {...props} />);
+  wrap(<AddPeople wsId="w1" orgId="o1" workspacePath="/o/acme/w/bob" initiallyOpen {...props} />);
 const fill = (email: string) => fireEvent.change(screen.getByLabelText("Who"), { target: { value: email } });
 
 describe("the words", () => {
@@ -73,26 +73,18 @@ describe("the Add people dialog", () => {
     expect(screen.getByText("Give one person access to this workspace.")).toBeInTheDocument();
   });
 
-  it("(workspace-4) the fold never explains a role the choice lacks without saying where it is set", async () => {
-    const { unmount } = dialog();
+  it("(workspace-4) the fold explains every role the choice offers, with nothing 'not offered'", async () => {
+    dialog();
     await screen.findByRole("radiogroup", { name: "Role" });
     const fold = screen.getByTestId("role-fold");
     expect(within(fold).getByText(/Approver:/)).toBeInTheDocument();
-    expect(fold).toHaveTextContent("Not offered here yet: change a person's role in the list once they are added.");
-    unmount();
-    dialog({ hasApprover: true });
-    await screen.findByRole("radiogroup", { name: "Role" });
-    expect(screen.getByTestId("role-fold")).not.toHaveTextContent("Not offered here yet");
+    expect(fold).not.toHaveTextContent("Not offered here yet");
   });
 
-  it("offers Member and Owner, and Approver only in a workspace that already has one", async () => {
-    const { unmount } = dialog();
+  it("offers Member, Approver and Owner in every workspace", async () => {
+    dialog();
     const group = await screen.findByRole("radiogroup", { name: "Role" });
-    expect(within(group).getAllByRole("radio").map((r) => r.getAttribute("value"))).toEqual(["member", "owner"]);
-    unmount();
-    dialog({ hasApprover: true });
-    const group2 = await screen.findByRole("radiogroup", { name: "Role" });
-    expect(within(group2).getAllByRole("radio").map((r) => r.getAttribute("value"))).toEqual(["member", "approver", "owner"]);
+    expect(within(group).getAllByRole("radio").map((r) => r.getAttribute("value"))).toEqual(["member", "approver", "owner"]);
   });
 
   it("someone not in the organization yet: waiting, the link to send, and who to ask for an invitation", async () => {

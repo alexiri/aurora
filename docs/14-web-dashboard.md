@@ -3172,8 +3172,9 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 ### 10. People (P5-UX-5, D-325, D-328, C-919, C-920)
 
 - A workspace's **People** page has **Add people** for workspace owners: an e-mail and a role. The roles
-  offered are **Member** and **Owner** (Owner only for someone already in the organization). **Approver**
-  is offered only in a workspace that already has one.
+  offered are **Member**, **Approver** and **Owner** (Owner only for someone already in the organization;
+  Approver is always offered, P5-REFINE-20 batch 6, which amends D-352's "only in a workspace that already
+  has one").
 - Someone already in the organization gets access at once: "<name> can now use this workspace." Anyone
   else is listed under "Waiting for first sign-in": access starts at their first sign-in into this
   organization with a verified matching e-mail, and the entry expires after 30 days.

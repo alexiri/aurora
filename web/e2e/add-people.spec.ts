@@ -58,7 +58,8 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByRole("button", { name: "Add people" }).click();
         const dialog = page.getByRole("dialog", { name: "Add people" });
         await expect(dialog.getByRole("radio", { name: "Member" })).toBeChecked();
-        await expect(dialog.getByRole("radio", { name: "Approver" })).toHaveCount(0);
+        // Approver is always offered (batch 6, workspace-4).
+        await expect(dialog.getByRole("radio", { name: "Approver" })).toHaveCount(1);
         await check(page);
         await dialog.getByLabel("Who").fill("Carol@Example.org");
         await dialog.getByRole("button", { name: "Add", exact: true }).click();
