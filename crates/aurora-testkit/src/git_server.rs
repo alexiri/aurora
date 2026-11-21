@@ -37,6 +37,8 @@ pub enum Change {
     DeleteDir(String),
     /// Rename a path (same blob).
     Rename(String, String),
+    /// `count` files `<dir>/f00000.txt`.. of the same content (one blob; a very large tree cheaply).
+    Fill(String, usize, Vec<u8>),
 }
 
 /// A recorded request.
@@ -309,6 +311,18 @@ impl GitServer {
                     let pre = format!("{}/", d.trim_end_matches('/'));
                     files.retain(|k, _| !k.starts_with(&pre));
                 }
+                Change::Fill(dir, count, b) => {
+                    let id = self.blob(repo, b);
+                    for i in 0..*count {
+                        files.insert(
+                            format!("{dir}/f{i:05}.txt"),
+                            Entry {
+                                mode: "100644",
+                                id: id.clone(),
+                            },
+                        );
+                    }
+                }
                 Change::Rename(a, b) => {
                     if let Some(e) = files.remove(a) {
                         files.insert(b.clone(), e);
@@ -455,6 +469,20 @@ impl GitServer {
             .log
             .iter()
             .filter(|r| r.target.contains(needle))
+            .count()
+    }
+
+    /// Protocol v2 `ls-refs` requests (a ref resolution).
+    pub fn ls_refs(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap()
+            .log
+            .iter()
+            .filter(|r| {
+                let n: &[u8] = b"command=ls-refs";
+                r.body.windows(n.len()).any(|w| w == n)
+            })
             .count()
     }
 
