@@ -61,6 +61,8 @@ export function AgentsView() {
           base={`/o/${org}/w/${ws}/agents`}
           showTokenBadges={workspace.data?.my_role === "owner"}
           needs={needs.counts}
+          wsId={wsId}
+          orgId={resolved.data?.org.id}
         />
       ) : null}
       {needs.canDecide && wsId ? (
