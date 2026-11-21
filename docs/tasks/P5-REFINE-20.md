@@ -521,6 +521,30 @@ Fill in per pass (the owner reads this):
   - UX review 4 regressions: none found.
   - Exit not reached (two Needs changes and one Minor outside the 119); the cluster stays up for pass 8.
 
+- **Pass 8** (2026-11-21, master `05999572` (all of batch 11, FIX-201/202/203); cluster `aurora-r20` on :4720, lane
+  `p5-platform`; rebuilt `dev api web`, 467 s):
+  - Counts (119 findings): Match 119 / Minor 0 / Needs changes 0 / Not checked 0 / Accepted 0.
+  - Batch 11: the list view keeps the rail inside the card at 768–1023, `scrollLeft` 0 after focusing and expanding it
+    (Match); the give-key dot beside the sentence's first line at 390–1280 (Match); the thread header: "Conversations" is
+    phones-only and ordinary threads fit their 64 px header, but the meta line cut at two lines hides the end of the
+    visibility note at 768 ("Only Alice Admin and workspace owners can see this") and an archived chat's "Archived <date> ·
+    read only" at 768–960, reachable only by a `title` tooltip (no hover on tablets; the note exists nowhere else in the UI),
+    and an archived chat's header overflows at 1024–~1200 (title cut above the card, the meta line over the thread): Needs
+    changes.
+  - FIX-201: Self-hosted apps' app names open the package page (`sentry` → its version), a package id typed directly
+    redirects, an unknown one shows the shared empty state (Match). FIX-202: with Jira Data Center registered instance-wide
+    for the check (`its.cern.ch/jira`, deleted afterwards), Jira is Ready, its tile goes straight to the Data Center access
+    and token steps, and the workspace card's Connect opens Jira · Data Center (Match). FIX-203 has no UI.
+  - Smoke, both themes: Chat and Apps & access at 390/768/900/1024/1280 (three agents); 202 captures, no horizontal scroll,
+    no axe violation, no console error, no `/v1` error.
+  - Report path: `docs/audit/ux-review-5-verify/REPORT-pass8.md` (screenshots in `docs/audit/ux-review-5-verify/pass8/`, not in git).
+  - Change list sent: batch 12 (1 item, lane A, with the worker_done message): the thread header's meta line readable
+    without hover and inside the header at every width (768–960 cut, 1024–~1200 archived overflow, 390 archived column).
+    Further idea, not sent: the Jira family card keeps the Cloud description when only Data Center is usable.
+  - Fixed in this lane (Scope 7): none (the difference is in a file lane A owns).
+  - UX review 4 regressions: none found.
+  - Exit not reached (one Needs changes outside the 119); the cluster stays up for pass 9.
+
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
   - Report path: `UXR5/verify/REPORT-pass<N>.md`
