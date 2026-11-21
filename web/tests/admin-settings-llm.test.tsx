@@ -629,7 +629,12 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
       const rows = within(screen.getByRole("list", { name: "Endpoints" })).getAllByRole("listitem");
       // Helm: neutral, says where, no button, no chip beyond "Set in Helm".
       const helm = await within(rows[0]!).findByTestId("endpoint-role-warning");
-      expect(helm.textContent).toContain("Set the Strongest model, Everyday model and Fastest model roles in the Helm values under llm.endpoints.central.roles");
+      // (P5-REFINE-20 #16) The sentence says where in words; the key is under Technical details.
+      const sentence = within(helm).getByText(/Agents may ask for a model/);
+      expect(sentence.textContent).toContain("Set the Strongest model, Everyday model and Fastest model roles in your Helm values.");
+      expect(sentence.textContent).not.toContain("llm.endpoints");
+      const fold = within(helm).getByText("Technical details").closest("details")!;
+      expect(fold.textContent).toContain("Helm key: llm.endpoints.central.roles");
       expect(within(helm).queryByRole("button")).toBeNull();
       expect(within(rows[0]!).getByText("LiteLLM gateway")).toBeTruthy();
       // Dashboard: one line with Set roles, which opens the editor.
