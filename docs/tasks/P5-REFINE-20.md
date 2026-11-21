@@ -416,6 +416,25 @@ Fill in per pass (the owner reads this):
   - Not checked yet: firstday-3, computer-2, admin-3, admin-12, the runner bug live (needs a stack with Helm SSH off), batch 4 #1/#3
     (blocked by b6#1). The cluster stays up for pass 3.
 
+- **Pass 3** (2026-11-21, master `b4401a1e`: every send-back of passes 1 and 2; cluster `aurora-r20` on :4720, lane
+  `p5-platform`; rebuilt `dev api web runner`, and migration 000269 needed `helm upgrade --reuse-values` because
+  `kind-dev.sh dev` runs no migrations):
+  - Counts (119 findings): Match 111 / Minor 3 (access-3, computer-2, admin-3) / Needs changes 5 (computer-1, firstday-3, org-7,
+    schedules-7, admin-12) / Not checked 0 / Accepted 0. Runner bug Match: Helm `terminal.enabled` and `ssh.enabled` were
+    turned on after the runner registered with :4108 closed, and the runner opened the port on a work poll 21 s later.
+    Terminal, Files and SSH worked with no manual restart. Badges G1, G2 (also with a key-less agent), G4, G5, G6 Match.
+  - Live keep-awake (D-416): web terminal `sleep 300` and SSH `sleep 590` finished on the same computer; an approval asked
+    over SSH stayed pending to its 5-min deadline (`expired`, not `abandoned`). `sleep 600` hit the documented SSH idle
+    timeout (C-794, 600 s without a channel byte); keepalives counting is an owner question.
+  - Report path: `docs/audit/ux-review-5-verify/REPORT-pass3.md` (screenshots in `docs/audit/ux-review-5-verify/pass3/`, not in git).
+  - Change list sent: batch 7 (8 items, `msg_d398087dfa54`). The coordinator routed 1, 6, 7, 8a and 8b to lane A (plus the
+    dev-stack fixes: API egress to the in-cluster LiteLLM in the kind values, `kind-dev.sh dev` running migrations) and 2, 3, 4,
+    5 and 8c to lane B.
+  - Fixed in this lane (Scope 7): none (every difference is in a file a lane owns).
+  - UX review 4 regressions: none found.
+  - Data and Helm state on `aurora-r20`: see the report's Environment; the Helm values are back to the starting ones, and
+    `terminal.enabled` now reads source helm. The cluster stays up for pass 4.
+
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
   - Report path: `UXR5/verify/REPORT-pass<N>.md`
