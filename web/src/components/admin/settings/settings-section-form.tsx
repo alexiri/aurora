@@ -740,7 +740,10 @@ function SettingRow({
 
   const locked = s.locked;
   const has = s.key in draft.values;
-  const current = has ? draft.values[s.key] : (s.default as unknown);
+  // Untouched and not stored, the control shows the effective value (a default that follows the deployment, C-782:
+  // the terminal switch is on when Helm provides the terminal, admin-9); after "Reset to default" on a stored
+  // value, the default it returns to.
+  const current = has ? draft.values[s.key] : s.source === "dashboard" ? (s.default as unknown) : (s.value as unknown);
   const source = locked ? "helm" : has ? "dashboard" : "default";
   const kind = field?.kind;
   let control: ReactNode;

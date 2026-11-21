@@ -364,13 +364,17 @@ gets no resume turn at all (`07 §Park and resume`).
 
 `last_engaged_at` is stamped by person/turn engagement (a turn created by a
 person, schedule, webhook or watch); it is distinct from `last_active_at`
-(stamped also by every boot). The same predicate feeds the stop arm, eviction
+(stamped also by every boot, when it reports `running`). The same predicate feeds the stop arm, eviction
 and the dashboard's "awake because…" badge.
 
 ### Stop (park)
 
-- **Idle**: no keep-awake reason and `now − last_engaged_at ≥ IDLE_STOP` →
-`stop_reason = idle`.
+- **Idle**: no keep-awake reason and `now − max(last_engaged_at, last_active_at) ≥ IDLE_STOP` →
+`stop_reason = idle`. (P5-REFINE-20 batch 5, D-416) The idle clock starts again at every boot's
+`running`, so a computer woken for a session (a terminal open, an SSH channel or a preview: a wake
+demand, never an engagement) has the whole `IDLE_STOP` for the session to connect and stamp its
+keep-awake reason; before, an old engagement parked it at the first stop arm after `running`.
+Eviction's "longest idle" reads the same clock. `computer.sleeps_in_secs` counts down from it.
 - **Frozen** (phase 2, RFE-006): the agent is effectively frozen (`04 §Freeze`) →
 `stop_reason = frozen`, regardless of keep-awake reasons; the home volume is kept
 and a frozen agent is never started or reconciled away.
@@ -669,7 +673,8 @@ peer to the runner's existing listener and nothing to the sandboxes namespace.
   `terminal_wake_at`, `TERMINAL_WAKE_WINDOW`, and the terminal's per-agent wake budget, shared);
   a channel opened while the sandbox wakes waits up to `SSH_WAKE_WAIT` (90 s) — the terminator writes
   one line `Waking the agent's sandbox…` to the channel's stderr — then fails with a notice
-  (`wake_timeout`). While a channel carries bytes the runner stamps `ssh_active_until`
+  (`wake_timeout`). The woken computer is not parked before the channel arrives: the idle clock
+  starts again at its `running` (`§Stop`, P5-REFINE-20 batch 5). While a channel carries bytes the runner stamps `ssh_active_until`
   (`SSH_AWAKE_GRACE` 120 s after the last byte, `POST /v1/runner/terminal/keep-awake` with
   `kind: "ssh"`, at most one stamp per grace per sandbox) and the sandbox is kept awake with the
   reason **`ssh`**, capped at `SSH_AWAKE_CAP` (4 h per boot). An idle connection (client keepalives

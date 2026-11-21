@@ -19,7 +19,7 @@ use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 use wiremock::MockServer;
 
-use crate::stream_support::{dial, frame, next_leg, next_msg};
+use crate::stream_support::{KEEP_AWAKE, dial, frame, next_leg, next_msg};
 use crate::terminal_streams::{WINDOW, connect_supervisor, mount_runner_api, next_text, rig_with};
 
 const GRACE: Duration = Duration::from_millis(600);
@@ -43,7 +43,7 @@ async fn stamps(api: &MockServer, kind: &str) -> usize {
         .await
         .unwrap()
         .iter()
-        .filter(|r| r.url.path().ends_with("/runner/terminal/keep-awake"))
+        .filter(|r| r.url.path() == KEEP_AWAKE)
         .map(|r| serde_json::from_slice::<Value>(&r.body).unwrap())
         .filter(|b| b["kind"].as_str().unwrap_or("terminal") == kind)
         .count()

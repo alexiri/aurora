@@ -772,9 +772,9 @@ pub struct SandboxViewRow {
     pub shared_ports: Vec<i32>,
     /// (P4-PRV-1) Share ids for `shared_ports` (same order; empty when none).
     pub shared_share_ids: Vec<Uuid>,
-    /// (P5-REFINE-4, C-1059) Seconds since the last engagement: the idle stop's clock
-    /// (`now − coalesce(last_engaged_at, last_active_at, created_at)`, the stop arm's own
-    /// expression). `computer.sleeps_in_secs` is derived from it.
+    /// (P5-REFINE-4, C-1059) Seconds since the last engagement or the boot's `running`, whichever
+    /// is later: the idle stop's clock (`now − coalesce(greatest(last_engaged_at, last_active_at),
+    /// created_at)`, the stop arm's own expression). `computer.sleeps_in_secs` is derived from it.
     pub quiet_secs: i64,
 }
 

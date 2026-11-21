@@ -20,10 +20,17 @@ const BACKGROUND: &str = "(EXISTS (SELECT 1 FROM processes p WHERE p.sandbox_id 
         AND p.boot_id = s.boot_id AND p.status = 'running' AND p.busy)
     OR EXISTS (SELECT 1 FROM watches w JOIN processes p ON p.id = w.process_id
         WHERE p.sandbox_id = s.id AND p.boot_id = s.boot_id AND w.status = 'armed'))";
-/// Seconds since the sandbox last saw engagement (the idle stop's clock); `SandboxView`'s
-/// `computer.sleeps_in_secs` reads the same expression (P5-REFINE-4, C-1059).
-pub(crate) const ENGAGED_AGE: &str =
-    "extract(epoch from now() - coalesce(s.last_engaged_at, s.last_active_at, s.created_at))";
+/// Seconds since the sandbox last saw engagement or became running, whichever is later (the idle
+/// stop's clock); `SandboxView`'s `computer.sleeps_in_secs` reads the same expression
+/// (P5-REFINE-4, C-1059).
+///
+/// (P5-REFINE-20 batch 5, D-416) `greatest`, not `coalesce`: `last_active_at` is stamped when a
+/// boot reports `running`, so a computer woken for a session (a terminal open, an SSH channel, a
+/// preview: no turn, no engagement) gets the whole idle window to be used. With `coalesce` an old
+/// engagement won and the first stop arm after `running` parked the computer again before the
+/// session could connect (SSH failed with "did not start in time", the terminal looped). The
+/// eviction order (`claim_evict`, longest idle first) reads the same `greatest`.
+pub(crate) const ENGAGED_AGE: &str = "extract(epoch from now() - coalesce(greatest(s.last_engaged_at, s.last_active_at), s.created_at))";
 const DUE_SCHEDULE: &str = "EXISTS (SELECT 1 FROM schedules sc WHERE sc.agent_id = s.agent_id
         AND sc.enabled AND sc.next_fire_at <= now()
         AND (sc.fire_lease_until IS NULL OR sc.fire_lease_until < now()))";
@@ -233,7 +240,7 @@ pub async fn claim_evict(
          WHERE id = (SELECT s.id FROM sandboxes s
              WHERE s.runner_id = $1 AND s.owner_replica_id = $2 AND s.state = 'running'
                AND NOT {ACTIVE_TURN}
-             ORDER BY coalesce(s.last_engaged_at, s.last_active_at, s.created_at)
+             ORDER BY coalesce(greatest(s.last_engaged_at, s.last_active_at), s.created_at)
              LIMIT 1 FOR UPDATE SKIP LOCKED)
          RETURNING id AS sandbox_id, boot_id, 'evict'::text AS reason"
     )))

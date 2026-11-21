@@ -324,6 +324,17 @@ async fn sandbox_of(
     )
 }
 
+/// The sandbox's supervisor holds its channel on some runner replica (the leg can be dialled).
+async fn channel_held(s: &AppState, sandbox: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT channel_replica_id IS NOT NULL FROM sandboxes WHERE id = $1 AND state = 'running'",
+    )
+    .bind(sandbox)
+    .fetch_optional(&s.pool)
+    .await?
+    .unwrap_or(false))
+}
+
 // ------------------------------------------------------------------------------- closing
 
 /// Write the one `agent.ssh.close` row for a transition this caller won.
@@ -632,7 +643,15 @@ pub async fn channel_grant(
     let mut woke = false;
     let (sandbox, boot) = loop {
         match sandbox_of(s, row.agent_id).await? {
-            Some((sb, st, Some(boot))) if st == "running" => break (sb, boot),
+            // (P5-REFINE-20 batch 5) `running` is dialable only once the supervisor holds its
+            // channel (`channel_replica_id`, the replica the leg must land on): a woken computer
+            // reports `running` before its supervisor connects, and a grant minted then failed
+            // the dial ("the service is unavailable") instead of waiting a few seconds more.
+            Some((sb, st, Some(boot))) if st == "running" => {
+                if channel_held(s, sb).await? {
+                    break (sb, boot);
+                }
+            }
             Some((sb, st, _)) if !woke && st != "starting" => {
                 if !crate::domains::terminal::service::wake_demand(s, &agent, sb).await? {
                     return Err(ApiError::new(

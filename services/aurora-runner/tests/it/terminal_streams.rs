@@ -335,7 +335,7 @@ async fn terminal_leg_round_trip_tags_0x02_and_stamps_awake() {
         let reqs = api.received_requests().await.unwrap_or_default();
         if reqs
             .iter()
-            .any(|r| r.url.path().ends_with("/runner/terminal/keep-awake"))
+            .any(|r| r.url.path() == crate::stream_support::KEEP_AWAKE)
         {
             stamped = true;
             break;

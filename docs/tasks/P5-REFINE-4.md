@@ -412,3 +412,45 @@ following commit.
   - Owner: `GET …/start-failures` still gives workspace owners the runner's wording and pod events (C-1059 says unchanged). Should it follow
     SEC-141 and become instance-admin-only too? It is a one-line change (`can_see_failure_detail` → `can_see_engine`).
   - Owner: map SSH handles in the terminator (Scope 7).
+
+## P5-REFINE-20 send-back, batch 5 (lane A, 2026-11-21): keep-awake and SSH wake
+
+- **#1 computer-1, D-416 (`78ebde89`). Cause:** the runner's `ApiClient` base is `{api}/v1/runner`, and `keep_awake` posted
+  `/runner/terminal/keep-awake`, so every keep-awake stamp (the byte path since P4-TERM and this brief's heartbeat) went to
+  `/v1/runner/runner/terminal/keep-awake`, a 404 swallowed by `let _ =`. No stamp ever reached `terminal_active_until` /
+  `ssh_active_until`, so an open terminal or SSH session never held the computer awake. The runner ITs matched the path with
+  `ends_with("/runner/terminal/keep-awake")` (true for the doubled path) and counted posts, and the API ITs posted the right path by
+  hand: neither saw the gap. **Fix:** the path is `/terminal/keep-awake` (`KEEP_AWAKE_PATH`); a refused stamp is logged (warn, at
+  most one per half grace per sandbox and kind). **Proof:** the runner ITs now compare the whole path (`stream_support::KEEP_AWAKE`);
+  with the old path, 4 fail (`keep_awake_heartbeat::a_quiet_terminal_keeps_stamping_until_it_closes`,
+  `::a_quiet_ssh_session_keeps_stamping_kind_ssh_until_it_closes`, `terminal_streams::terminal_leg_round_trip_tags_0x02_and_stamps_awake`,
+  `ssh_streams::ssh_leg_round_trip_stamps_ssh_keep_awake_once`); with the fix, 39/39 of the stream ITs pass. The gateway approval
+  turning "abandoned" follows: a held approval's client lives in the sandbox, and the sandbox now stays up while the session is open.
+- **#2 SSH to a sleeping computer (`422cd80d`). Cause (independent of #1, and the reason the SSH `sleep 600` was cut after 51 s
+  even after a chat turn woke it):** the idle clock was `now − coalesce(last_engaged_at, last_active_at, created_at)`.
+  `last_active_at` is stamped at every boot's `running`, but an old `last_engaged_at` won the `coalesce`. A computer woken only by a
+  terminal or SSH wake demand (no turn, no engagement, and `begin_boot` clears the session stamps) therefore looked idle for hours
+  and was parked at the first stop arm after `running`, before the session could connect. The terminator then failed
+  "the sandbox did not start in time" after 90 s, and the terminal looped. **Fix:** `ENGAGED_AGE` is
+  `coalesce(greatest(last_engaged_at, last_active_at), created_at)`, and eviction's "longest idle" uses the same expression: a
+  woken computer gets the whole `hosted.idle_stop_secs` before its first stamp. A second gap is fixed too: the SSH channel grant
+  waits until the supervisor holds its channel (`channel_replica_id`). Before, a grant minted between `running` and the
+  supervisor's connect failed the dial with "the service is unavailable", and a running computer no longer spends a wake demand.
+  **Contracts/docs:** C-1058 note in `API_CONTRACTS.md` (no shape change); `11 §Stop` (the idle rule) and `§SSH access` (the woken
+  computer waits for the channel). **Tests:** new `it/computer_view.rs::a_computer_woken_for_a_session_waits_for_it` (idle stop,
+  wake demand, new boot `running`, no stop, then idle stop one window later); **it failed before the fix**
+  (`computer_view.rs:523`, the woken computer was stopped at once). New `it/ssh_sessions.rs::ssh_sessions_grant_waits_for_the_supervisor_channel`
+  (not run against the old code; by reading, the old loop broke on `running` and `dial_endpoint` answered 404 with no channel
+  replica). Changed: `it/runner_plane.rs::background_process_holds_awake_until_the_cap` ages `last_active_at` with
+  `last_engaged_at` (the eviction order reads both). None removed.
+- **Not done / not run:** no throwaway kind cluster (the Orchestrator asked to prefer tests, and disk was tight). The cause of #1 is
+  a wrong URL that the exact-path runner ITs show, and the cause of #2 is the stop arm the API IT drives. The verification
+  cluster should show it on the next deploy: a terminal running `sleep 150 && echo DONE`, SSH `sleep 600`, and SSH to a sleeping
+  computer. Production Playwright: none touched.
+- **Commands run** (all through `heavy.sh p5-polish-a`, throwaway Postgres `pg-p5-polish-a` :55591):
+  `cargo test -p aurora-runner --test it -- keep_awake_heartbeat ssh_streams terminal_streams` (old path: 13 passed, 4 failed; fixed:
+  `… files_streams leg_limits preview_streams_flow` 39 passed); `cargo test -p aurora-api --test it -- computer_view runner_plane sandbox_wake
+  terminal ssh_sessions hosted:: previews` 138 passed; `-- freeze web_push usage_ledger relay processes approvals_resume park` 59 passed;
+  `-- ssh computer_view runner_plane` 83 passed; `cargo test -p aurora-db --lib` 13 passed; `cargo fmt --all --check`;
+  `cargo clippy -p aurora-runner -p aurora-api -p aurora-db --all-targets -D warnings` ok; `extract-schema.py --check` ok;
+  `scripts/guards/run-all.sh` all passed.

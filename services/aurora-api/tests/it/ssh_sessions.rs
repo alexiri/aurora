@@ -709,6 +709,40 @@ async fn ssh_sessions_grant_waits_for_a_parked_sandbox() {
     assert_eq!((st, code(&v)), (403, "session_closed"), "{v}");
 }
 
+/// (P5-REFINE-20 batch 5) A woken computer reports `running` before its supervisor holds the
+/// channel: the grant waits for the channel (409 `not_running` within the wait, no wake demand
+/// spent on a running computer), then answers once the supervisor is connected.
+#[tokio::test]
+async fn ssh_sessions_grant_waits_for_the_supervisor_channel() {
+    let s = setup("running").await;
+    let id = open_ok(&s).await;
+    sqlx::query(
+        "UPDATE sandboxes SET channel_replica_id = NULL, terminal_wake_at = NULL WHERE id = $1",
+    )
+    .bind(s.sb)
+    .execute(s.r.h.pool())
+    .await
+    .unwrap();
+    let (st, v) = grant(&s, id, "shell").await;
+    assert_eq!((st, code(&v)), (409, "not_running"), "{v}");
+    let wake: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT terminal_wake_at FROM sandboxes WHERE id = $1")
+            .bind(s.sb)
+            .fetch_one(s.r.h.pool())
+            .await
+            .unwrap();
+    assert!(wake.is_none(), "no wake demand for a running computer");
+    sqlx::query("UPDATE sandboxes SET channel_replica_id = $2 WHERE id = $1")
+        .bind(s.sb)
+        .bind(s.r.rep)
+        .execute(s.r.h.pool())
+        .await
+        .unwrap();
+    let (st, v) = grant(&s, id, "shell").await;
+    assert_eq!(st, 200, "{v}");
+    assert!(v["grant"].as_str().unwrap().starts_with("auz_"), "{v}");
+}
+
 // ---- heartbeat revocation and close-exactly-once ----------------------------------------
 
 /// Each cause closes the row at detection with its reason, answers it revoked, and writes exactly

@@ -1745,15 +1745,18 @@ async fn eviction_stops_the_longest_idle_when_a_start_is_waiting() {
     r.finish_turns(a1).await;
     r.finish_turns(a2).await;
     // Both are idle but younger than IDLE_STOP; s1 has been idle longer. Nothing is waiting yet.
+    // (The idle clock is the later of the engagement and the boot's `running`: both move.)
     sqlx::query(
-        "UPDATE sandboxes SET last_engaged_at = now() - interval '10 minutes' WHERE id = $1::uuid",
+        "UPDATE sandboxes SET last_engaged_at = now() - interval '10 minutes',
+             last_active_at = now() - interval '10 minutes' WHERE id = $1::uuid",
     )
     .bind(&s1)
     .execute(r.h.pool())
     .await
     .unwrap();
     sqlx::query(
-        "UPDATE sandboxes SET last_engaged_at = now() - interval '1 minute' WHERE id = $1::uuid",
+        "UPDATE sandboxes SET last_engaged_at = now() - interval '1 minute',
+             last_active_at = now() - interval '1 minute' WHERE id = $1::uuid",
     )
     .bind(&s2)
     .execute(r.h.pool())

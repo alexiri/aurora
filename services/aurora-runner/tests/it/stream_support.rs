@@ -13,6 +13,11 @@ use tokio_tungstenite::tungstenite::{Error as WsError, Message, handshake::clien
 
 use crate::terminal_streams::Client;
 
+/// The API's keep-awake route, exactly (C-620, C-796, C-1058). The tests compare the whole
+/// path: matching on its tail let the runner post `/v1/runner/runner/terminal/keep-awake` (a
+/// 404) for a whole phase without a test noticing (P5-REFINE-20 batch 5).
+pub(crate) const KEEP_AWAKE: &str = "/v1/runner/terminal/keep-awake";
+
 pub(crate) async fn dial(st_addr: std::net::SocketAddr, token: &str) -> Result<Client, WsError> {
     let mut req: Request = format!("ws://{st_addr}/v1/preview-stream")
         .into_client_request()
