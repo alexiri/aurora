@@ -158,7 +158,8 @@ for (const scheme of ["light", "dark"] as const) {
         // (P5-POLISH-11, A1) The buttons are the dialog's footer row, not inside the form.
         await expect(form.getByRole("button", { name: "Add key", exact: true })).toHaveCount(0);
         await page.getByRole("dialog", { name: "Add an AI key" }).getByRole("button", { name: "Add key", exact: true }).click();
-        await expect(page.getByText("Saved Team key")).toBeVisible();
+        // (P5-REFINE-20, access-8) A saved workspace key closes the dialog: the row shows its check.
+        await expect(page.getByRole("dialog", { name: "Add an AI key" })).toHaveCount(0);
         // No "Give agents access" second step.
         await expect(page.getByRole("region", { name: "Give agents access" })).toHaveCount(0);
         expect(posted).toHaveLength(1);
