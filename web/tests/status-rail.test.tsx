@@ -200,7 +200,7 @@ describe("collapsed strip", () => {
     const names = within(strip).getAllByRole("button").map((b) => b.getAttribute("aria-label"));
     expect(names).toEqual([
       "Expand status panel",
-      "Needs you: 2 approvals waiting",
+      "Need: 2 approvals waiting for you",
       "Doing now: working",
       "What Scout did: some requests were denied or failed",
     ]);
@@ -216,23 +216,23 @@ describe("collapsed strip", () => {
     expect(within(strip).getByText("Now")).toBeInTheDocument();
     expect(within(strip).getByText("Did")).toBeInTheDocument();
     // The count on the Needs you icon.
-    expect(within(screen.getByRole("button", { name: /Needs you/ })).getByText("2")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: /^Need: / })).getByText("2")).toBeInTheDocument();
   });
   it("says idle / nothing waiting / none failed when quiet", () => {
     mock();
     const labels = stripLabels(ctxOf());
     expect(labels).toEqual({
-      needs: "Needs you: nothing waiting",
+      needs: "Need: nothing waiting for you",
       doing: "Doing now: idle",
       did: "What Scout did: none denied or failed",
     });
-    expect(stripLabels(ctxOf({}, { needs: needs(gw("g1", FAR)) })).needs).toBe("Needs you: 1 approval waiting");
+    expect(stripLabels(ctxOf({}, { needs: needs(gw("g1", FAR)) })).needs).toBe("Need: 1 approval waiting for you");
     expect(stripLabels(ctxOf({ open: { active: true, line: "Reading the repo" } })).doing).toBe("Doing now: working");
   });
   it("non-approvers get no Needs you icon and no Needs you part", () => {
     mock();
     wrap(<Harness ctx={ctxOf({}, { canApprove: false })} />);
-    expect(screen.queryByRole("button", { name: /Needs you/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Need: / })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Expand status panel" }));
     expect(screen.getByRole("heading", { name: "Doing now" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /Needs you/ })).toBeNull();
@@ -252,7 +252,7 @@ describe("Needs you pop-over", () => {
   it("opens from the icon with the pending items, closes on Esc and returns focus", async () => {
     mock();
     wrap(<Harness ctx={ctxOf({}, { needs: needs(gw("g1", FAR)) })} />);
-    const icon = screen.getByRole("button", { name: "Needs you: 1 approval waiting" });
+    const icon = screen.getByRole("button", { name: "Need: 1 approval waiting for you" });
     icon.focus();
     fireEvent.click(icon);
     const pop = await screen.findByRole("dialog", { name: "Needs you" });
@@ -266,7 +266,7 @@ describe("Needs you pop-over", () => {
   it("Open the status panel expands the rail", async () => {
     mock();
     wrap(<Harness ctx={ctxOf({}, { needs: needs(gw("g1", FAR)) })} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Needs you/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Need: / }));
     fireEvent.click(await screen.findByRole("button", { name: "Open the status panel" }));
     expect(await screen.findByRole("heading", { name: "Status" })).toBeInTheDocument();
   });

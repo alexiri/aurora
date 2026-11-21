@@ -20,6 +20,12 @@ function nameFromEmail(email: string): string {
   return email.includes("@") && local ? `${local.charAt(0).toUpperCase()}${local.slice(1)}` : "They";
 }
 
+/** "Dana gets their own personal workspace automatically." (a name from the address), "They get …" before one is typed. */
+export function personalWorkspaceSentence(email: string): string {
+  const who = nameFromEmail(email);
+  return `${who} ${who === "They" ? "get" : "gets"} their own personal workspace automatically.`;
+}
+
 export function InviteForm({ orgId, onDone, onCancel }: { orgId: string; onDone: (created: { email: string; link?: string | null }) => void; onCancel?: () => void }) {
   const create = useCreateInvitation(orgId);
   const workspaces = useWorkspaces(orgId);
@@ -81,7 +87,8 @@ export function InviteForm({ orgId, onDone, onCancel }: { orgId: string; onDone:
           })}
         </fieldset>
       ) : null}
-      <p className="text-sm text-muted">{nameFromEmail(email)} gets their own personal workspace automatically.</p>
+      {/* (P5-REFINE-20, org-11) "They get", never "They gets". */}
+      <p className="text-sm text-muted">{personalWorkspaceSentence(email)}</p>
       {create.error && Object.keys(fe).length === 0 ? (
         <ErrorNotice error={create.error} />
       ) : null}

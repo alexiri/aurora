@@ -26,6 +26,7 @@ import { matchesFilter, PickerFilter } from "@/components/ui/picker-filter";
 import { Section } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { WORKSPACE_ROLE_OPTIONS } from "@/lib/labels";
 import {
   useAccess,
   useDeleteAccess,
@@ -107,7 +108,7 @@ function AddBinding({
           </select>
         </Field>
         <Field id="acc-add-role" label="Role">
-          <Select id="acc-add-role" value={role} className="w-40 max-w-full" onChange={(v) => setRole(v as Role)} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
+          <Select id="acc-add-role" value={role} className="w-40 max-w-full" onChange={(v) => setRole(v as Role)} options={WORKSPACE_ROLE_OPTIONS} />
         </Field>
         <Button type="submit" disabled={!user || put.isPending} className="sm:mt-label-offset">
           Add

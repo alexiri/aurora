@@ -18,8 +18,14 @@ export function DataTable({
   className,
   children,
   stackBelow,
+  fit,
   ...props
-}: { caption: string; stackBelow?: 900 } & HTMLAttributes<HTMLTableElement>) {
+}: {
+  caption: string;
+  stackBelow?: 900;
+  /** (P5-REFINE-20) The table is as wide as its card, never wider: its cells wrap instead of the card scrolling (the last column is never cut). */
+  fit?: boolean;
+} & HTMLAttributes<HTMLTableElement>) {
   return (
     <div
       role="region"
@@ -32,7 +38,7 @@ export function DataTable({
     >
       <table
         data-stack={stackBelow}
-        className={cn("w-full text-left text-sm text-ink", stackBelow ? "stack:min-w-max" : "min-w-max", className)}
+        className={cn("w-full text-left text-sm text-ink", fit ? "" : stackBelow ? "stack:min-w-max" : "min-w-max", className)}
         {...props}
       >
         <caption className="sr-only">{caption}</caption>

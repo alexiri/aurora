@@ -68,7 +68,11 @@ export function WelcomeView() {
   const isOwner = workspace.my_role === "owner";
   const orgName = orgQ.data?.name ?? resolved.data.org.name;
   const agent = agents.data?.items.find((a) => a.is_default) ?? agents.data?.items[0];
-  const personal = session.data?.memberships.some((m) => m.workspaces.some((x) => x.id === workspace.id && x.personal)) === true;
+  const viewer = session.data?.user;
+  // (P5-REFINE-20, workspace-7) Your personal workspace is yours from either list: /v1/me's flag or the workspace's owner.
+  const personal =
+    session.data?.memberships.some((m) => m.workspaces.some((x) => x.id === workspace.id && x.personal)) === true ||
+    (viewer?.id !== undefined && workspace.personal_of?.id === viewer.id);
   const stepParam = search.get("step");
   // `step=model` links (a chat's "no model" row) land on the AI key step, which now holds the model picker.
   const focus = STEPS.find((s) => s === (stepParam === "model" ? "key" : stepParam)) ?? null;
@@ -78,7 +82,7 @@ export function WelcomeView() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title={personal ? `Welcome, ${session.data?.user.display_name || workspace.name}` : `Welcome to ${workspace.name}`}
+        title={personal ? `Welcome, ${session.data?.user.display_name || workspace.name}` : `Welcome to ${workspaceDisplayName(workspace, viewer)}`}
         description={role ?? "A few minutes from here to your agent's first answer."}
         className="mb-0"
       />

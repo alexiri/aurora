@@ -318,7 +318,9 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
   const first = onWorkspace
     ? currentWs
       ? label(currentWs)
-      : (resolved.data?.workspace?.name ?? wsSlug)
+      : resolved.data?.workspace
+        ? workspaceDisplayName(resolved.data.workspace, viewer)
+        : wsSlug
     : orgSlug
       ? (current?.name ?? resolved.data?.org.name ?? orgSlug)
       : last

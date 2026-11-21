@@ -175,9 +175,14 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     expect(rows.some((r) => /Who may add Anthropic keys/.test(r) && /keys for the whole organization/.test(r))).toBe(true);
     expect(rows.every((r) => /Set for you by an Aurora administrator/.test(r) && /An Aurora administrator can set this up|administrator/.test(r))).toBe(true);
     expect(rows.some((r) => /Which AI keys agents may use/.test(r))).toBe(false);
-    // Above the rules: the ladder's list comes first in the document.
-    const rules = screen.getByLabelText("Which AI keys agents may use");
-    expect(above.compareDocumentPosition(rules) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // (P5-REFINE-20, org-7) The page opens with the summary; what is set above comes last, in a collapsed disclosure.
+    const summary = screen.getByTestId("models-summary");
+    expect(summary.compareDocumentPosition(above) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const disclosure = screen.getByTestId("models-above") as HTMLDetailsElement;
+    expect(disclosure.open).toBe(false);
+    expect(disclosure.textContent).toContain("Set above you (");
+    expect(disclosure.contains(above)).toBe(true);
+    expect(screen.queryByText("Rules for Acme")).toBeNull();
   });
 
   it("(org-7) opens with the summary sentence and plain rows, endpoints and Advanced collapsed, origin as names", async () => {
@@ -279,7 +284,9 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     cleanup();
     mockFetch(routes({ "GET /v1/orgs/o1/governance/effective": () => json(200, eff({ non_compliant_secrets: [] })) }));
     wrap(<OrgAiModels org={ORG} />);
-    expect(await screen.findByText("All AI keys follow these rules.")).toBeTruthy();
+    // (org-7) No green box that explains nothing: the notice is said only when a key does not follow.
+    await screen.findByTestId("models-summary");
+    expect(screen.queryByText("All AI keys follow these rules.")).toBeNull();
     expect(screen.queryByTestId("keys-notice")).toBeNull();
   });
 });

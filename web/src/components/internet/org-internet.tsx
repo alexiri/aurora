@@ -119,6 +119,7 @@ function OrgInternetBody({ org, slug, eff, revision: initialRevision, initial }:
       orgId={org.id}
       orgSlug={slug}
       orgName={org.name}
+      hideHeader
       canEdit
       eff={eff}
       whoCanHere={whoCanFromContacts("org_admin", org.contacts, "change_this")}
@@ -168,6 +169,8 @@ export function OrgInternet({ org, slug }: { org: Org; slug: string }) {
   // (P5-REFINE-18 #2) The preset card writes the document too: the page starts again from the new revision.
   return (
     <div className="max-w-page space-y-6">
+      {/* (P5-REFINE-20, org-8) The page heading first, then the preset card. */}
+      <PageHeader title="Internet access" description={<span data-testid="internet-summary">What agents in {org.name} may reach.</span>} className="mb-2" />
       <OrgPolicyPresets org={org} part="internet" />
       <OrgInternetBody key={doc.data?.revision ?? 0} org={org} slug={slug} eff={eff.data} revision={doc.data?.revision ?? 0} initial={formFromDocument(doc.data?.document, eff.data, instance.data)} />
     </div>

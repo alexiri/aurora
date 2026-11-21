@@ -101,6 +101,21 @@ describe("Welcome (C-927)", () => {
     expect(screen.getByRole("region", { name: "Where you are" }).textContent).toContain("This is your workspace in Acme.");
   });
 
+  it("(workspace-7) one name for a personal workspace: yours is yours even when /v1/me lacks the flag, someone else's is '<First>'s workspace'", async () => {
+    world({ name: "Bob's workspace" });
+    routes["GET /v1/me"] = () =>
+      json(200, { user: { id: "u-bob", display_name: "Bob Builder", email: "bob@x" }, memberships: [{ org: { id: "o1", slug: "acme", name: "Acme" }, status: "active", workspaces: [{ id: "w1", slug: "ops", name: "Bob's workspace", personal: false }] }] });
+    routes["GET /v1/workspaces/w1"] = () => json(200, { id: "w1", org_id: "o1", slug: "ops", name: "Bob's workspace", my_role: "owner", personal_of: { id: "u-bob", name: "Bob Builder" } });
+    const mine = wrap(<WelcomeView />);
+    expect(await screen.findByRole("heading", { name: "Welcome, Bob Builder" })).toBeInTheDocument();
+    mine.unmount();
+    // An administrator opening Alice's workspace reads "Alice's workspace", the name every list gives it.
+    routes["GET /v1/workspaces/w1"] = () => json(200, { id: "w1", org_id: "o1", slug: "ops", name: "Alice Admin", my_role: "owner", personal_of: { id: "u-alice", name: "Alice Admin" } });
+    wrap(<WelcomeView />);
+    expect(await screen.findByRole("heading", { name: "Welcome to Alice's workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Where you are" }).textContent).toContain("This is Alice's workspace in Acme.");
+  });
+
   it("a member reads their role in one sentence and the same summary, websites included, without the owner's policy", async () => {
     world({ role: "member", accounts: [account({ levels: ["read"], agents: [{ agent: { id: "a1", name: "Daneel", handle: "daneel" }, workspace: { id: "w1", name: "Ops" }, level: "use" }] })] });
     let policyRead = false;

@@ -63,6 +63,12 @@ export function timeZones(): string[] {
   return zones.includes("UTC") ? zones : ["UTC", ...zones];
 }
 
+/** A memory language as a person reads it ("english" → "English"; the search config "simple" is any other language). */
+export function memoryLanguageName(language: string): string {
+  if (language === "simple") return "Any other language";
+  return language.charAt(0).toUpperCase() + language.slice(1);
+}
+
 export const MEMORY_LANGUAGES = [
   "english",
   "german",
