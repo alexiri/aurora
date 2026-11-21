@@ -81,7 +81,7 @@ export function AuditPanel({
   // A value from the address that is not one of the choices (an older link) still shows, in words.
   const offered = actions.some((g) => g.options.some((o) => o.value === filters.action));
   return (
-    <div className="max-w-page space-y-4">
+    <div className="space-y-4">
       {headed ? <PageHeader title={title} description={description} className="mb-2" /> : null}
       <form role="search" className="flex flex-wrap items-center gap-x-4 gap-y-2" onSubmit={(e) => e.preventDefault()}>
         <Select aria-label="Action" value={filters.action} className="w-64 max-w-full" onChange={(v) => onFilters({ ...filters, action: v })}>

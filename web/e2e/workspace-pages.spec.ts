@@ -9,7 +9,7 @@ import { openRoute, overflow } from "./support/open";
 const BASE = "/o/acme/w/main";
 
 for (const scheme of ["light", "dark"] as const) {
-  for (const width of [1280, 390]) {
+  for (const width of [1280, 768, 390]) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
@@ -56,4 +56,40 @@ for (const scheme of ["light", "dark"] as const) {
       });
     });
   }
+}
+
+// P5-LAYOUT-1 (D-439): no page caps its own width. At 1920 px the page content reaches the shell's right padding, and
+// Apps lays its cards out four to a row.
+for (const scheme of ["light", "dark"] as const) {
+  test.describe(`${scheme} theme, 1920 px`, () => {
+    test.use({ viewport: { width: 1920, height: 1080 } });
+
+    async function contentRight(page: import("@playwright/test").Page): Promise<number> {
+      return page.evaluate(() => {
+        const main = document.querySelector("main");
+        const kids = Array.from(main?.children ?? []).filter((el) => el.getBoundingClientRect().width > 0);
+        return Math.max(...kids.map((el) => el.getBoundingClientRect().right));
+      });
+    }
+
+    test("Apps & accounts spans the content area; Apps shows four cards per row", async ({ page }) => {
+      await openRoute(page, `${BASE}/apps?tab=apps`, scheme);
+      await expect(page.getByTestId("app-status").first()).toBeVisible();
+      expect(await contentRight(page)).toBeGreaterThan(1920 - 48);
+      const tops = await page.getByTestId("app-status").evaluateAll((els) =>
+        els.map((el) => Math.round(el.closest("li")!.getBoundingClientRect().top)),
+      );
+      // The mock's ten apps that are ready to connect fill a row of four; no row holds more.
+      const perRow = tops.map((t) => tops.filter((u) => u === t).length);
+      expect(Math.max(...perRow)).toBe(4);
+      expect(await overflow(page)).toBeLessThanOrEqual(0);
+    });
+
+    test("Internet access spans the content area", async ({ page }) => {
+      await openRoute(page, `${BASE}/internet-access`, scheme);
+      await expect(page.getByRole("heading", { name: "History of internet rules" })).toBeVisible();
+      expect(await contentRight(page)).toBeGreaterThan(1920 - 48);
+      expect(await overflow(page)).toBeLessThanOrEqual(0);
+    });
+  });
 }

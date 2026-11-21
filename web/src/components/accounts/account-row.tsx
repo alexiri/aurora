@@ -159,8 +159,12 @@ export function AccountRow({
   const canFix = (kind: HealthFix) => account.can.manage && (kind === "test" || kind === "turn_on" || kind === "replace" && account.ref.type === "secret" || !!onReconnect);
   return (
     // On an agent's page the rows share one Card with dividers (the list owns the frame); elsewhere each is a card.
-    <li className={agent ? "space-y-3 p-4" : "space-y-3 rounded-card border border-line bg-surface p-4"} aria-label={account.name}>
-      <div className="flex flex-wrap items-start gap-3">
+    // (P5-LAYOUT-2, D-440) Elsewhere each account is a card in the shared CardGrid, in the Apps card frame.
+    <li
+      className={agent ? "space-y-3 p-4" : "flex h-full flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5"}
+      aria-label={account.name}
+    >
+      <div className={agent ? "flex flex-wrap items-start gap-3" : "flex items-start gap-3"}>
         {select && bulkOn ? (
           <span className="mt-1.5 inline-flex">
             <BulkCheckbox name={account.name} checked={select.checked} disabled={select.disabled} title={select.title} onChange={select.onChange} />
@@ -171,8 +175,8 @@ export function AccountRow({
         ) : account.kind === "ai_key" ? (
           <AiKeyTile className="self-center" />
         ) : null}
-        {/* (P5-REFINE-13, access-2) On a phone (below sm) the title keeps the line beside the icon; a full-width, zero-height
-            break after it puts the level and the menu on a line of their own below. */}
+        {/* (P5-REFINE-13, access-2) On an agent's page, on a phone (below sm), the title keeps the line beside the icon; a full-width,
+            zero-height break after it puts the level and the menu on a line of their own below. A card (D-440) keeps the menu top-right. */}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="min-w-0 break-words font-display text-base font-semibold text-ink">
@@ -237,7 +241,7 @@ export function AccountRow({
           {scope.kind === "organization" && account.scope === "organization" && account.can.manage ? <LimitControl account={account} orgId={orgId} /> : null}
         </div>
         {/* (C1) The agent's level sits in the right cluster just before the … button; its details wrap below. */}
-        {(agent && mine) || account.can.manage ? <div aria-hidden="true" className="hidden max-sm:block max-sm:h-0 max-sm:basis-full" /> : null}
+        {agent && (mine || account.can.manage) ? <div aria-hidden="true" className="hidden max-sm:block max-sm:h-0 max-sm:basis-full" /> : null}
         {agent && mine ? (
           <AccessControl account={account} entry={mine} workspaceId={ws} canChange={account.can.change_access} startOpen={false} orgName={org.data?.name} inRow />
         ) : null}
@@ -311,9 +315,11 @@ export function AccountRow({
       )}
       {account.ref.type === "connection" ? (
         <Altitude id="tech.details" level="setup">
-          <TechnicalDetails bodyClassName="">
-            <ConnectionDetails scope={own} id={account.ref.id} canManage={account.can.manage} />
-          </TechnicalDetails>
+          <div className={agent ? undefined : "mt-auto"}>
+            <TechnicalDetails bodyClassName="">
+              <ConnectionDetails scope={own} id={account.ref.id} canManage={account.can.manage} />
+            </TechnicalDetails>
+          </div>
         </Altitude>
       ) : null}
     </li>

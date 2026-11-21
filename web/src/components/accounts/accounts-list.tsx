@@ -14,6 +14,7 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Card } from "@/components/ui/card";
+import { CardGrid, CardGridSkeleton } from "@/components/ui/card-grid";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { accountKeys, useAccounts, type Account } from "@/lib/api/accounts";
 import type { SecretScope } from "@/lib/api/secrets";
@@ -126,7 +127,7 @@ export function AccountsList({
       ? (accounts.data?.items ?? []).filter((a) => (!kind || a.kind === kind) && (a.can.manage || a.can.give_access)).map((a) => a.ref.id)
       : [],
   );
-  if (accounts.isPending) return <Loading variant="rows" label="Loading your accounts…" />;
+  if (accounts.isPending) return agent ? <Loading variant="rows" label="Loading your accounts…" /> : <CardGridSkeleton label="Loading your accounts…" />;
   if (accounts.isError) return <ErrorState error={accounts.error} onRetry={() => accounts.refetch()} />;
   const items = accounts.data.items.filter((a) => (!kind || a.kind === kind) && (!appId || a.app?.app_id === appId));
   // A workspace owner reconnects the workspace's own accounts; an organization owner or admin the organization's (C-937).
@@ -270,9 +271,7 @@ export function AccountsList({
                 </ul>
               </Card>
             ) : (
-              <ul className="space-y-3" aria-label="Accounts">
-                {given.map(row)}
-              </ul>
+              <CardGrid aria-label="Accounts">{given.map(row)}</CardGrid>
             )
           ) : null}
           {agent && notGiven.length > 0 ? (

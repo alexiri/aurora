@@ -24,7 +24,7 @@ export function GroupsView({ orgId, orgSlug }: { orgId: string; orgSlug: string 
   const groups = useGroups(orgId, q.trim());
   const items = groups.data?.items ?? [];
   return (
-    <div className="max-w-page space-y-8">
+    <div className="space-y-8">
       <PageHeader
         title="Groups"
         description="Named sets of people that can hold workspace access and an organization role."

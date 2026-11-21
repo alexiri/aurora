@@ -432,7 +432,7 @@ export function GroupDetail({ orgId, orgSlug, id }: { orgId: string; orgSlug: st
   if (group.isError) return <ErrorState error={group.error} onRetry={() => group.refetch()} />;
   const g = group.data;
   return (
-    <div className="max-w-page space-y-8">
+    <div className="space-y-8">
       <PageHeader
         breadcrumb={[{ label: "People", href: orgRoutes(orgSlug).people("groups") },{ label: g.name }]}
         title={

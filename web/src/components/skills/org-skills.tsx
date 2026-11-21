@@ -17,7 +17,7 @@ export function OrgSkills() {
   return (
     <OrgGate slug={slug} allow={["owner", "admin"]}>
       {(org) => (
-        <div className="max-w-page">
+        <div>
           <PageHeader
             title="Organization skills"
             description="Skills every agent in this organization can use."

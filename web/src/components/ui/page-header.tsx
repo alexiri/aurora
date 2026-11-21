@@ -68,7 +68,7 @@ export function PageHeader({
       <div className={cn("mb-3 flex flex-wrap items-start justify-between gap-x-4 gap-y-2", className)}>
         <div className="min-w-0">
           {headed ? <h2 className="font-display text-xl font-semibold leading-7 text-ink">{title}</h2> : null}
-          {description ? <div className="text-sm text-ink-2">{description}</div> : null}
+          {description ? <div className="max-w-prose text-sm text-ink-2">{description}</div> : null}
         </div>
         {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
       </div>
@@ -116,7 +116,7 @@ export function PageHeader({
         <div className="min-w-0">
           {badge}
           <h1 className="font-display text-3xl font-semibold leading-9 text-ink">{title}</h1>
-          {description ? <p className="mt-1 text-sm text-ink-2">{description}</p> : null}
+          {description ? <p className="mt-1 max-w-prose text-sm text-ink-2">{description}</p> : null}
         </div>
         {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
       </div>

@@ -185,7 +185,7 @@ function OperationalView({
   const section = q.data;
   const missing = unavailable ? unavailable(section) : null;
   return (
-    <div className={bare ? "space-y-6" : "max-w-page space-y-6"}>
+    <div className="space-y-6">
       {bare ? null : (
         <PageHeader
           breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: section.title }]}

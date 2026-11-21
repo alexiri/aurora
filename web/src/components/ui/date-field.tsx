@@ -152,7 +152,7 @@ export function DateField({
         aria-invalid={invalid || ariaInvalid === true || ariaInvalid === "true" || undefined}
         aria-describedby={ariaDescribedBy}
         placeholder={placeholder}
-        className={`${inputClass} w-40 pr-10`}
+        className={cn(inputClass, "w-40 pr-10")}
         value={text}
         onChange={(e) => commit(e.target.value)}
         onBlur={() => {

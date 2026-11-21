@@ -94,7 +94,7 @@ export default function OrgPage() {
   );
 
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader title="Overview" description={`What is going on in ${resolved.data.org.name}.`} className="mb-2" />
       {admin ? <NeedsYouOrg orgId={orgId} orgSlug={org} /> : null}
       {admin ? <PeopleCard orgId={orgId} orgSlug={org} /> : null}

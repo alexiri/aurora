@@ -103,8 +103,8 @@ export function EmptyState({
         {icon ?? <ScrollIcon />}
       </span>
       <h2 className="mt-4 font-display text-base font-semibold text-ink">{title}</h2>
-      {children ? <div className="mt-2 text-sm text-ink-2">{children}</div> : null}
-      {when ? <div className="mt-1 text-sm text-ink-2">{when}</div> : null}
+      {children ? <div className="mt-2 max-w-prose text-sm text-ink-2">{children}</div> : null}
+      {when ? <div className="mt-1 max-w-prose text-sm text-ink-2">{when}</div> : null}
       {ask && !ask.canAct ? (
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-control bg-subtle px-3 py-2">
           <WhoCan value={ask.whoCan} lead />

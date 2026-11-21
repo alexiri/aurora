@@ -734,7 +734,7 @@ export function SetupView() {
   }
 
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title={shown === "health" ? "Overview" : "Set up Aurora"}
         description={shown === "health" ? "What needs you, and whether Aurora is healthy." : undefined}
