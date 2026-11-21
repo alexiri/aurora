@@ -43,9 +43,14 @@ describe("zip", () => {
 
   it("refuses something that is not a zip, a damaged one, and one that is too big", async () => {
     await expect(readZip(enc("not a zip at all, really not"))).rejects.toThrow(/not a zip/);
-    const good = writeZip([{ name: "a/x.md", data: enc("hello") }]);
+    // A fixed time: the headers carry the DOS date and time, and on some days one of those bytes was 104 (the "h" the
+    // old flip looked for), so the flip hit a timestamp, the CRC still matched and the zip read fine.
+    const good = writeZip([{ name: "a/x.md", data: enc("hello") }], new Date(2026, 0, 2, 3, 4, 6));
     const damaged = new Uint8Array(good);
-    damaged[good.indexOf(104) /* the "h" of hello */] ^= 0xff;
+    // Flip a byte inside the stored data: the first "hello" after the local header's file name.
+    const at = good.findIndex((_, i) => new TextDecoder().decode(good.subarray(i, i + 5)) === "hello");
+    expect(at).toBeGreaterThan(30);
+    damaged[at] ^= 0xff;
     await expect(readZip(damaged)).rejects.toThrow(/damaged/);
     await expect(readZip(new Uint8Array(MAX_ZIP_BYTES + 1))).rejects.toThrow(/larger than 5 MB/);
   });
