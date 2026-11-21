@@ -239,3 +239,107 @@ Files changed, test commands and results, and anything left undecided. Always na
 - what the migration did on the dev database (counts per app);
 - every test removed with the gateway route;
 - the supersede audit metadata key that disappeared.
+
+### Handover (lane A, Opus → Sonnet, 2026-11-21, WIP commit 8bbb909a)
+
+**State of the tree.** `cargo check -p aurora-api --lib` and `cargo check -p aurora-testkit` passed
+just before the last edits; `aurora-core` `git_url` unit tests passed (2/2). The API unit tests
+(`cargo test -p aurora-api --lib skill_libraries`) were **never run to the end** (stopped on
+handover). Nothing else was built or run. The workspace as a whole does **not** compile yet: the
+gateway still imports `aurora_testkit::git_host` (module unexported, file still on disk) and the
+`skill_library.rs` IT is half moved.
+
+**Done (in 8bbb909a).**
+- Contract: `docs/05` §Skill libraries rows for C-1122/C-1124/C-1128 (org, check, admin, `?org=`),
+  the refresh and retention job rows; SEC-148/SEC-149 rows in `docs/tests/security-coverage.md`
+  as `pending` with planned test names (fill in the real ones).
+- `aurora_core::git_url` (C-1123) with a ≥30-case table; `limits`: `LIBRARY_PACK_MAX`,
+  `LIBRARY_INFLATE_MAX`, `LIBRARY_WANTS_MAX`, `LIBRARIES_PER_INSTANCE`.
+- Reader `services/aurora-api/src/domains/skill_libraries/git/`: `pktline.rs`, `discover.rs` (v2 caps,
+  v0 advertisement, `ls-refs`, fetch requests, side-band demux), `pack.rs` (in-memory pack parser:
+  caps on objects/inflate/delta depth 50, ids recomputed, tree/commit parsing, proptests),
+  `mod.rs` (`GitRepo` on `connect.http_instance`: discovery redirects ≤3 https+guarded, token as
+  Basic only to the library origin, fixed reasons in `git::reason`, blob-wants-refused → whole
+  depth-1 pack, streaming body cap). **Our own parser, no gitoxide; no new crate** (flate2 is a
+  workspace dep, SHA-1 from aws-lc-rs; `proptest` added as API dev-dep) → no `cargo deny` change.
+- Seam: `content.rs` `RepoSource` trait + `Reader::new(src, path)` with `prefetch`/`blob` cache,
+  own `TreeEntry`/`Resolved`/`RefKind`; `assemble(path, entries)` (no manifest block); an in-memory
+  `MemRepo` unit test.
+- Migration `20261201000270_skill_library_git_url.sql` (url/token_ref/token_updated_at, backfill,
+  `error` rows, `skill_libraries_url_uq`). `Purpose::SkillLibraryToken` (`skill_library.token`) in
+  `Purpose::ALL` + secrets-migrate `SOURCES` + `tests/it/secrets_migrate.rs` seed/REF_SQL.
+- `repo/skill_libraries.rs` (new columns, `NewLibrary.id`, `url_taken`, patch url/token, retention
+  no longer marks `connection_deleted`, `connection_brief` removed, redacted `Debug`);
+  `service.rs` (address/token input, seal-first create with discard on failure, `check`, patch with
+  token set/replace/remove + `library_url_fixed`, delete discards the token, reads open the token per
+  read, cache fingerprint has url + `token_updated_at`); `dto.rs` (C-1122/C-1124 shapes);
+  `routes.rs` (`POST /orgs/{org}/skill-libraries/check`, 10/min/person via `rate_limiter`);
+  `refresh.rs` (reader, one blob prefetch per pass); `mod.rs` (`LibraryEnv::new()`,
+  `fetch_timeout`); `app.rs` (`with_library_gateway` → `with_library_fetch_timeout`);
+  `domains/skill_libraries/gateway.rs` deleted; supersede `libraries` count and
+  `repo::plugins::move_skill_libraries` removed (**the supersede audit key `skill_libraries` is
+  gone**).
+- Testkit `crates/aurora-testkit/src/git_server.rs` (`GitServer::start()`, bare repos via git
+  plumbing, `git http-backend` CGI, switches: v2, allowFilter, allowAnySHA1InWant, `require_token`,
+  `override_status`, `redirect`, `slow`, `oversize`, `wrong_pack`, `add_repo_sha256`, `tag`,
+  request log with Authorization/Git-Protocol/body). Needs `git` ≥ 2.31 (uses `GIT_CONFIG_COUNT`);
+  panics with a message if git is missing.
+- IT `services/aurora-api/tests/it/skill_library.rs`: header and `world_with` replaced (GitServer +
+  `with_connect_override` + 5 s fetch timeout; `url()`/`ORIGIN` helpers, `W` fields `pub(crate)`
+  for reuse by an instance-library IT); `library_at`, `create_list_patch_delete_…` and
+  `create_refusals_address_reach_and_limit` rewritten.
+
+**Left, in order.**
+1. Finish moving `skill_library.rs`: every remaining test still uses `w.conn`/`w.lab`/`connection(…)`
+   or GitHub-REST request counts (`/commits/`, `/trees/`, `/git/blobs/`, `set_page_size`,
+   `set_truncated`, `expect_authorization`, `override_status(needle, status)` now takes a third
+   `Retry-After` arg). Map REST counts to git ones (`count("/info/refs")`, `fetches()`), replace
+   pagination/truncation with a tree over `LIBRARY_TREE_MAX` and the 3-redirect rules, the
+   connection-revoked block in `refresh_errors_back_off…` with token/404 cases, and
+   `refresh_reads_the_host_with_the_host_credential_only_through_the_stand_in` with a token test
+   (Authorization only to the library origin, never in responses/`last_error`/audit).
+   Kill-switch test body still sends `connection_id` (harmless but update). Also
+   `skills_library.rs`, `permission_matrix.rs` (:1055, add the check route), `plugins_supersede.rs`
+   (:214, :354), `groups.rs` (:1360).
+2. New IT (planned name `skill_library_git.rs`, register in `tests/it/main.rs`) for C-1125/SEC-148
+   acceptance 2 and 5: v2+filter, v2 no filter, v0, v0 with allowAnySHA1InWant off (fallback),
+   branch/annotated tag/commit/default, subfolder, private repo none/wrong/right token,
+   3 redirects ok / 4th / `http:` / IP literal, cross-origin without Authorization, 429
+   `Retry-After: 120` → `Throttled(120)`, `oversize(Some(LIBRARY_PACK_MAX+1))`, a 65 MiB zero file
+   with filter off for the inflate cap, `wrong_pack`, `add_repo_sha256`; check route shape, stores
+   nothing, 429 after 10; patch token set/replace/remove (old kept on failed read), `url` patch
+   refused unless null; token absent from responses/audit/`last_error`; blob ids pinned before the
+   switch compare equal (seed a skill row with `git.blob_id(...)` and refresh: no proposal);
+   a static scan that `Purpose::SkillLibraryToken` is opened only in `skill_libraries/service.rs`
+   `open_token`.
+3. Migration IT on a database with a GitHub, a GitLab-with-instance and a third-app library
+   (`schema_matches_spec` too); docs/03 live sections for the new columns; `extract-schema --check`.
+4. Removals: gateway `library_fetch.rs`, `main.rs` :398–440 wiring, `lib.rs`, `tests/it/library_fetch.rs`
+   + `tests/it/main.rs` entry, `repo/gateway.rs` :1066 lookup if unused; delete
+   `crates/aurora-testkit/src/git_host.rs`; registry linter warning `library_ignored`; drop the
+   `library` blocks of `plugins/builtin/github` (2.4.1 → 2.4.2) and `gitlab` (**take the next patch
+   after FIX-216's 1.4.2 on master, i.e. 1.4.3; keep FIX-216's numeric-id tools and ambiguous_path
+   fixtures**); `raw.rs:624` comment; registry builtin tests that assert the blocks.
+5. Docs: 10, 02 §Limits, 06 (§Library fetch removed), 09 §3.4, 15, 18, `docs/operator/skill-libraries.md`,
+   `docs/operator/upgrades.md`, SEC-84 coverage row marked replaced; openapi + `schema.d.ts` regenerated.
+6. Part C web, then P5-SKLIB-2 (nothing started).
+
+**Decisions not in the brief (review them).**
+- Backfill host: a GitHub/GitLab connection with a registered instance uses `app_instances.host` +
+  `base_path` (GitHub Enterprise too); without one, github.com / gitlab.com; a GitLab library whose
+  connection is gone stays null. Duplicate url+ref+path after backfill: only the oldest gets the url,
+  the others stay null/`error` (else the unique index would fail the migration).
+- `repo` CHECK widened to 1..500 (the display form `host/path` exceeds the old 200).
+- Field errors (`token`, `token_username` without `token`, ref, path) answer **400**
+  `invalid_request` like every `invalid_request` in this API, not 422 as C-1122 says; docs/05 row I
+  wrote also says 422 — align one of them.
+- An IP-literal host refused by the guard answers 422 `library_unreachable` ("The repository's
+  address is not allowed"), not a new `library_url_invalid` reason.
+- A successful re-read on PATCH (token added, ref/path changed) sets `status` back to `active` unless
+  paused.
+- 403 without a token is "The repository needs an access token" (C-1125 only names 401).
+- Check route `found` counts every skill directory; `valid` counts those of the first
+  `LIBRARY_BROWSE_MAX` whose `SKILL.md` parses.
+
+**Known failing.** The whole workspace build (see State); every not-yet-moved test in
+`skill_library.rs`; gateway ITs (`git_host` import). No test was observed failing on its own merits.
