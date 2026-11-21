@@ -511,6 +511,20 @@ pub async fn heartbeat(
             .map(|t| t.with_timezone(&Utc))
             // Never a time in the future (a hostile terminator keeps no session "active").
             .map(|t| t.min(Utc::now()));
+        // (FIX-199, D-434) A client that is still talking (channel bytes, keepalives, anything)
+        // keeps its computer awake: `SSH_AWAKE_GRACE` restarts, at most once per half grace.
+        // Best effort, like the runner's stamp; the cap clock is the repo predicate's.
+        let grace = aurora_core::limits::SSH_AWAKE_GRACE;
+        if at.is_some_and(|t| (Utc::now() - t).to_std().is_ok_and(|ago| ago < grace))
+            && let Err(e) = aurora_db::repo::sandboxes::keep_ssh_awake_for_agent(
+                &s.pool,
+                row.agent_id,
+                i64::try_from(grace.as_secs()).unwrap_or(120),
+            )
+            .await
+        {
+            tracing::warn!(session_id = %row.id, error = %e, "ssh keep-awake stamp from the heartbeat failed");
+        }
         if repo::renew_session(
             &s.pool,
             row.id,

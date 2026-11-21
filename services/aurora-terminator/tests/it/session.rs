@@ -325,6 +325,75 @@ async fn an_idle_session_is_closed_with_a_notice() {
     assert_eq!(r.stub.closes.lock().unwrap()[0].1["reason"], "idle");
 }
 
+/// (FIX-199, D-434) A client that only sends `keepalive@openssh.com` is a live client: it keeps
+/// a session open for several idle timeouts, and the idle timeout runs again once it stops.
+#[tokio::test(flavor = "multi_thread")]
+async fn keepalives_alone_keep_a_session_open_and_silence_ends_it() {
+    let mut o = RigOpts::default();
+    o.settings.idle = Some(Duration::from_millis(1500));
+    o.settings.notice_wait = Duration::from_millis(300);
+    let r = rig(o).await;
+    let c = login(&r).await;
+    let mut ch = c.channel_open_session().await.unwrap();
+    ch.request_shell(true).await.unwrap();
+    assert!(reply(&mut ch).await);
+    // Three idle timeouts of keepalives and nothing else.
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_millis(4500) {
+        c.send_keepalive(true).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(
+            r.stub.closes.lock().unwrap().is_empty(),
+            "closed after {:?} although the client sent keepalives",
+            start.elapsed()
+        );
+    }
+    // Silence: closed as idle, notice first.
+    let (_, err, status) = drain(&mut ch).await;
+    assert!(String::from_utf8_lossy(&err).contains("no activity"));
+    assert_eq!(status, Some(255));
+    wait_for(
+        || !r.stub.closes.lock().unwrap().is_empty(),
+        "the close report",
+    )
+    .await;
+    assert_eq!(r.stub.closes.lock().unwrap()[0].1["reason"], "idle");
+}
+
+/// (FIX-199, D-434) Keepalives restart the idle clock only: the lifetime still ends them.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_lifetime_still_ends_a_keepalive_only_session() {
+    let mut o = RigOpts::default();
+    o.settings.idle = Some(Duration::from_millis(1500));
+    o.settings.lifetime = Some(Duration::from_millis(2500));
+    o.settings.notice_wait = Duration::from_millis(300);
+    let r = rig(o).await;
+    let c = login(&r).await;
+    let mut ch = c.channel_open_session().await.unwrap();
+    ch.request_shell(true).await.unwrap();
+    assert!(reply(&mut ch).await);
+    let pump = async {
+        loop {
+            if c.send_keepalive(true).await.is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    };
+    let (_, err, status) = tokio::select! {
+        out = drain(&mut ch) => out,
+        () = pump => unreachable!("the keepalive pump ends only when the connection does"),
+    };
+    assert!(String::from_utf8_lossy(&err).contains("maximum session time"));
+    assert_eq!(status, Some(255));
+    wait_for(
+        || !r.stub.closes.lock().unwrap().is_empty(),
+        "the close report",
+    )
+    .await;
+    assert_eq!(r.stub.closes.lock().unwrap()[0].1["reason"], "lifetime");
+}
+
 /// A graceful shutdown says goodbye to every session (`terminator_shutdown`).
 #[tokio::test(flavor = "multi_thread")]
 async fn shutdown_says_goodbye_to_every_session() {

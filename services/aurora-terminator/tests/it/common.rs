@@ -249,7 +249,6 @@ impl Default for RigOpts {
                 auth_failure_delay: Duration::from_millis(150),
                 auth_timeout: Duration::from_secs(20),
                 heartbeat_period: Some(Duration::from_secs(3600)),
-                keepalive: Duration::from_secs(30),
                 notice_wait: Duration::from_millis(500),
                 idle: None,
                 lifetime: None,

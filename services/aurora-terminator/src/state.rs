@@ -27,8 +27,6 @@ pub struct Settings {
     pub auth_timeout: Duration,
     /// Overrides the registration's heartbeat period.
     pub heartbeat_period: Option<Duration>,
-    /// Server keepalive on the SSH transport (every 30 s).
-    pub keepalive: Duration,
     /// How long a notice may wait for the client's `CHANNEL_CLOSE` before `DISCONNECT`.
     pub notice_wait: Duration,
     /// Overrides the registration's idle timeout / maximum lifetime.
@@ -42,7 +40,6 @@ impl Default for Settings {
             auth_failure_delay: aurora_core::limits::SSH_AUTH_FAILURE_DELAY,
             auth_timeout: aurora_core::limits::SSH_AUTH_TIMEOUT,
             heartbeat_period: None,
-            keepalive: Duration::from_secs(30),
             notice_wait: Duration::from_secs(2),
             idle: None,
             lifetime: None,
@@ -60,7 +57,8 @@ pub struct Stats {
     pub shell: AtomicU32,
     pub exec: AtomicU32,
     pub sftp: AtomicU32,
-    /// Unix seconds of the last channel byte (0 = none yet).
+    /// Unix seconds of the last client traffic: a channel byte or any other byte read from the
+    /// client's connection, keepalives included (0 = none yet; D-434).
     pub last_activity: AtomicI64,
 }
 
@@ -68,6 +66,14 @@ impl Stats {
     fn touch(&self) {
         self.last_activity
             .store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
+    }
+    /// (FIX-199, D-434) The client sent something on its connection (an OpenSSH keepalive, a
+    /// window adjust, any packet): restarts the idle clock without counting a byte. A no-op
+    /// within the same second, so a client keepalive every second costs one atomic load.
+    pub fn touch_client(&self) {
+        if self.last_activity.load(Ordering::Relaxed) != chrono::Utc::now().timestamp() {
+            self.touch();
+        }
     }
     pub fn add_in(&self, n: usize) {
         self.bytes_in.fetch_add(n as u64, Ordering::Relaxed);
