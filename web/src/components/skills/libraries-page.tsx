@@ -6,6 +6,7 @@ import { useState, type FormEvent } from "react";
 
 import { OrgGate } from "@/components/org/org-gate";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -107,7 +108,15 @@ function LibraryTable({ orgId, items }: { orgId: string; items: SkillLibrary[] }
             const st = STATUS[l.status] ?? STATUS.error;
             return (
               <tr key={l.id}>
-                <Td className="font-medium">{l.label}</Td>
+                <Td className="font-medium">
+                  {l.label}
+                  {l.scope === "instance" ? (
+                    // (P5-SKLIB-2, D-449) A library of the whole installation: listed here, managed by instance admins.
+                    <p className="mt-1">
+                      <Badge tone="neutral">Shared with every organization</Badge>
+                    </p>
+                  ) : null}
+                </Td>
                 <Td className="font-mono text-xs">{l.repo}</Td>
                 <Td className="font-mono text-xs">{l.ref ?? "default branch"}</Td>
                 <Td className="font-mono text-xs">{l.path ? l.path : "/"}</Td>
@@ -122,23 +131,25 @@ function LibraryTable({ orgId, items }: { orgId: string; items: SkillLibrary[] }
                 </Td>
                 <Td>{l.pending_updates ?? 0}</Td>
                 <Td className="text-right">
-                  <div className="flex flex-wrap justify-end gap-1">
-                    <Button size="sm" variant="outline" disabled={check.isPending || l.status === "paused"} onClick={() => check.mutate(l.id)} aria-label={`Check now ${l.label}`}>
-                      Check now
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={patch.isPending}
-                      onClick={() => patch.mutate({ id: l.id, body: { status: l.status === "paused" ? "active" : "paused" } })}
-                      aria-label={`${l.status === "paused" ? "Resume" : "Pause"} ${l.label}`}
-                    >
-                      {l.status === "paused" ? "Resume" : "Pause"}
-                    </Button>
-                    <Button size="sm" variant="danger" onClick={() => setRemoving(l)} aria-label={`Delete ${l.label}`}>
-                      Delete
-                    </Button>
-                  </div>
+                  {l.scope === "instance" ? null : (
+                    <div className="flex flex-wrap justify-end gap-1">
+                      <Button size="sm" variant="outline" disabled={check.isPending || l.status === "paused"} onClick={() => check.mutate(l.id)} aria-label={`Check now ${l.label}`}>
+                        Check now
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={patch.isPending}
+                        onClick={() => patch.mutate({ id: l.id, body: { status: l.status === "paused" ? "active" : "paused" } })}
+                        aria-label={`${l.status === "paused" ? "Resume" : "Pause"} ${l.label}`}
+                      >
+                        {l.status === "paused" ? "Resume" : "Pause"}
+                      </Button>
+                      <Button size="sm" variant="danger" onClick={() => setRemoving(l)} aria-label={`Delete ${l.label}`}>
+                        Delete
+                      </Button>
+                    </div>
+                  )}
                 </Td>
               </tr>
             );

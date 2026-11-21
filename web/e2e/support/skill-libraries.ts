@@ -23,6 +23,15 @@ const library = {
   skill_counts: { agent: 1, workspace: 0, org: 1 }, pending_updates: 1, created_at: now,
 };
 
+// (P5-SKLIB-2, D-449) A library of the whole installation: listed in the organization's table with its badge and no
+// actions; its numbers are this organization's only.
+const instanceLibrary = {
+  id: id(701), scope: "instance", org_id: null, label: "Company skills", url: "https://git.example.org/it/skills.git",
+  repo: "git.example.org/it/skills", ref: null, path: "", status: "active", token_set: true, token_updated_at: null,
+  last_head_sha: SHA_B, last_refresh_at: now, last_error: null,
+  skill_counts: { agent: 0, workspace: 0, org: 0 }, pending_updates: 0, created_at: now,
+};
+
 const orgSkill = {
   id: id(710), tier: "org", scope: "organization", agent_id: null, workspace_id: null, org_id: id(1), name: "code-review",
   description: HOSTILE, body: "Review pull requests carefully.\n", enabled: true, files: [{ path: "checklist.md", size: 20, executable: false }],
@@ -64,7 +73,7 @@ export async function mockLibraries(page: Page) {
   await page.route("**/v1/**", async (route) => {
     const p = new URL(route.request().url()).pathname;
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
-    if (p === `/v1/orgs/${org.id}/skill-libraries`) return json({ items: [library], next_cursor: null });
+    if (p === `/v1/orgs/${org.id}/skill-libraries`) return json({ items: [library, instanceLibrary], next_cursor: null });
     if (p === `/v1/orgs/${org.id}/skills`) return json({ items: [orgSkill], next_cursor: null });
     if (p === `/v1/orgs/${org.id}/skill-library-updates`) {
       return json({ items: [{ id: id(720), kind: "changed", created_at: now, skill: { id: id(710), name: "code-review", tier: "org" }, library: { id: id(700), label: "Team skills" } }] });

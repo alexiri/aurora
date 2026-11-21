@@ -1013,6 +1013,35 @@ deleted, the **pinned skills keep working unchanged**: the library shows `error`
 library **detaches** its skills (they keep their content and a read-only "was from <repo>@<sha>"
 note) rather than deleting instructions agents rely on.
 
+**Instance libraries (P5-SKLIB-2, D-449, C-1128, SEC-149).** An **instance admin** can set up a library for
+the whole installation (`/v1/admin/skill-libraries`, session only): `org_id` is null and every organization
+sees it beside its own libraries. The instance admin curates the **catalogue** (address, branch, folder, the
+token, pause, delete); each **organization still decides skill by skill** what its agents are told and approves
+its own updates, with exactly the authority of the tier it adds at (agent `can_use`, workspace `can_own`, org
+owner/admin, SEC-56 unchanged).
+- **Who manages, who sees.** Only an instance admin's session manages an instance library (an API key never;
+  everyone else, org owners included, gets 404 for its id). An organization's owners/admins see it in their list
+  (every status: a paused one shows as Paused, an organization's own libraries first, then the instance's, each by
+  label); members who can use a workspace see the active ones in their picker. The token is the instance admin's:
+  organizations see only that one is set. There is no per-organization opt-out (open question Q-SKLIB-1).
+- **Browse as an organization.** Browse and content take `?org=<organization>` (required for an instance library:
+  400 without it; 404 when the caller cannot use a workspace of it). The catalogue is the same for every
+  organization and is cached once per library; the "already added" chips are computed per request from **that
+  organization's** skills the caller can see, never cached. Adding works at any tier of any organization.
+- **Numbers are per organization.** An organization's view of an instance library counts only its own skills
+  and pending updates; the instance admin's view has totals and `orgs_using` (how many organizations use it,
+  never which skills).
+- **One refresh for everyone.** The job reads the repository once per pass and writes proposals **per skill**;
+  the open-proposal budget (`LIBRARY_PENDING_BYTES_PER_ORG`) is the **skill's organization's**, taken under that
+  organization's lock. An organization over budget gets a `skill_library_org_state` row and no proposal (its view
+  says "Pending updates over budget"; other organizations still get theirs); freeing space clears it at the
+  next pass. The library's own status (`active`, `paused`, `error`) and its backoff stay library-wide, and a
+  library with any state row is compared again even at an unchanged head.
+- **Deleting** an instance library detaches its skills in **every** organization (their content is unchanged) and
+  deletes the sealed token; the audit trail is one instance row and one `skill_library.delete` row in each
+  organization whose skills were detached, in one transaction. At most `LIBRARIES_PER_INSTANCE` (20) exist.
+- `skills.library.enabled: false` hides instance libraries too.
+
 **Untrusted text.** Everything that comes from the repository (names, descriptions, bodies,
 commit messages, paths, error text) is untrusted: sanitized on load, shown in the dashboard as data
 never as markup, never interpolated into platform-voiced text (cards, notices, e-mails), and the body is

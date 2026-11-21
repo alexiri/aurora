@@ -21,6 +21,28 @@ An organization can add a git repository as a **skill library**: a catalogue of 
 
 Enter the user name in the "User name" field only when the host needs a particular one. The token is sealed in the instance's secret store, shown nowhere again (the library says only that one is saved and when), sent only to the repository's own address, and never put in a log, audit row or error. To change it, paste a new one (the repository is read with it first; if that fails the old one stays); to remove it, clear it (the repository is read without it first).
 
+## Libraries for the whole installation (instance libraries)
+
+(P5-SKLIB-2, D-449, SEC-149.) An **instance admin** can add a library that **every organization** sees beside its own
+(`POST /v1/admin/skill-libraries`, `POST /v1/admin/skill-libraries/check`; at most 20). It is for a catalogue
+the company wants everyone to draw from.
+
+- **Who does what.** Only an instance admin's session manages it: the address, branch, folder, the access token,
+  Pause, Check now, Delete (an API key never does, and an organization's owner or admin gets "not found" for its id).
+  The token is the instance admin's: organizations are told only that one is saved.
+- **What organizations see.** Their owners and admins see it in their libraries list (marked as shared with every
+  organization; a paused one shows as Paused); people who can use a workspace see it in the **Add from library**
+  picker (only while active). They browse it as their organization and add skills at any tier with the authority
+  that tier needs. Nothing from it reaches an agent until someone in an organization adds a skill and approves its updates.
+- **Numbers.** An organization's page counts only its own skills and pending updates. The instance admin's list has totals and
+  how many organizations use each library (never which skills).
+- **One refresh for everyone.** The library is read once per pass; each skill gets its own proposed update, and each
+  organization's open-proposal budget (4 MiB) is its own: an organization over budget gets no new proposals and its page says
+  "Pending updates over budget", while the others are unaffected. Freeing space clears it at the next pass.
+- **Deleting** detaches its skills in every organization (they keep their content) and deletes the token; the audit log
+  has one instance entry and one `skill_library.delete` entry in each affected organization.
+- An organization cannot hide an instance library (open question Q-SKLIB-1, built without it).
+
 ## Configuration
 
 (Phase 5, SET-5.) The three keys below are edited on **Administration › Agents › Skills** and read at each refresh and fetch;

@@ -1254,6 +1254,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/skill-libraries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (P5-SKLIB-2, C-1128) The instance's libraries with their totals over every organization and
+         *     `orgs_using` (instance admins, session only).
+         */
+        get: operations["listInstanceSkillLibraries"];
+        put?: never;
+        /**
+         * (P5-SKLIB-2, C-1128) Add an instance library: every organization sees it (instance admins,
+         *     session only).
+         */
+        post: operations["createInstanceSkillLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/skill-libraries/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** (P5-SKLIB-2, C-1124, C-1128) The check before saving an instance library; stores nothing. */
+        post: operations["checkInstanceSkillLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/storage": {
         parameters: {
             query?: never;
@@ -4950,8 +4991,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List the organization's libraries: owners/admins get everything; other people who can use a
-         *     workspace get `id`, `label` and `status` of the active ones (the browse picker).
+         * List the organization's libraries, then the instance libraries (D-449): owners/admins get
+         *     everything (an instance library with this organization's numbers); other people who can use a
+         *     workspace get `id`, `label`, `status` and `scope` of the active ones (the browse picker).
          */
         get: operations["listSkillLibraries"];
         put?: never;
@@ -5543,11 +5585,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read one library (org owner/admin). */
+        /**
+         * Read one library. An organization library: its owner/admin. An instance library: an instance
+         *     admin (totals), or an owner/admin of an organization with `?org=` (that organization's view);
+         *     anyone else 404.
+         */
         get: operations["getSkillLibrary"];
         put?: never;
         post?: never;
-        /** Delete the library; every skill added from it is detached and keeps its content. */
+        /**
+         * Delete the library; every skill added from it is detached and keeps its content (an instance
+         *     library: in every organization, with an audit row in each).
+         */
         delete: operations["deleteSkillLibrary"];
         options?: never;
         head?: never;
@@ -12728,6 +12777,12 @@ export interface components {
                  * @description Null for an instance library (and for members).
                  */
                 org_id?: string | null;
+                /**
+                 * Format: int64
+                 * @description An instance library, in its manager's view only: how many organizations have a skill
+                 *     added from it (never which skills).
+                 */
+                orgs_using?: number | null;
                 path?: string | null;
                 /** Format: int64 */
                 pending_updates?: number | null;
@@ -15238,6 +15293,12 @@ export interface components {
              * @description Null for an instance library (and for members).
              */
             org_id?: string | null;
+            /**
+             * Format: int64
+             * @description An instance library, in its manager's view only: how many organizations have a skill
+             *     added from it (never which skills).
+             */
+            orgs_using?: number | null;
             path?: string | null;
             /** Format: int64 */
             pending_updates?: number | null;
@@ -21590,6 +21651,185 @@ export interface operations {
                 };
             };
             /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listInstanceSkillLibraries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_SkillLibrary"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createInstanceSkillLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSkillLibraryRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLibrary"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    checkInstanceSkillLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckSkillLibraryRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryCheck"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -40560,7 +40800,13 @@ export interface operations {
     };
     getSkillLibrary: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description The organization to read the library as: required for an instance library, optional (and
+                 *     equal to the library's organization) for an organization library.
+                 */
+                org?: string;
+            };
             header?: never;
             path: {
                 /** @description Library id */
@@ -40821,6 +41067,11 @@ export interface operations {
                 /** @description Case-insensitive filter on name and description. */
                 q?: string;
                 cursor?: string;
+                /**
+                 * @description The organization to browse as: required for an instance library (`added` then lists only
+                 *     that organization's skills the caller can see), optional for an organization library.
+                 */
+                org?: string;
             };
             header?: never;
             path: {
@@ -40837,6 +41088,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryCatalogue"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
@@ -40896,6 +41155,8 @@ export interface operations {
             query?: {
                 /** @description The commit to read; default the current head. */
                 commit_sha?: string;
+                /** @description The organization to read the skill as (required for an instance library). */
+                org?: string;
             };
             header?: never;
             path: {
@@ -40914,6 +41175,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibrarySkillContent"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */

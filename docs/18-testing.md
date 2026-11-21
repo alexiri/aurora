@@ -774,7 +774,14 @@ done when its tests exist, pass in CI, and the security invariants it touches
   `LIBRARY_INFLATE_MAX`, SHA-256, a slow host, more than `LIBRARY_BROWSE_MAX` skills, the check route (shape,
   stores nothing, org admins only, 10 a minute), the token's life (sealed, replaced, kept on a failed re-read,
   removed, never in a response, `last_error` or audit row), `url` patch only while null, blob ids equal git's own
-  ids, and a source scan that only the library service opens the token. Migration test (`db/it`
+  ids, and a source scan that only the library service opens the token. **Instance libraries**
+  (`api/it/skill_library/instance.rs`, P5-SKLIB-2, SEC-149): two organizations on one instance library (their own
+  numbers, `?org=` browse and chips, 400/404 rules), the authority per tier of caller (instance admin session; org
+  owner/admin/member, stranger and API key all 404), one refresh writing one proposal per skill with per-organization
+  budgets (an organization over budget gets a state row and no proposal while the other gets its own), deletion with
+  an audit row in each organization, paused libraries, the kill switch and `LIBRARIES_PER_INSTANCE`; the migration
+  test `skill_library_instance_migration` (an `over_budget` row moves to its organization's state, null `org_id` is
+  one scope for the unique indexes). Migration test (`db/it`
   `skill_library_git_url_migration`): a database with GitHub, GitHub Enterprise, GitLab with an instance and
   without, a duplicate and a third-app library.
 - **API** (`api/it/skill_library.rs`, real Postgres, the git server of the test kit):

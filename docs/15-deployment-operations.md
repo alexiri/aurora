@@ -1353,6 +1353,11 @@ job stops).
   `aurora_skill_library_pending_updates`, `aurora_skill_library_refresh_duration_seconds`. Alert on sustained
   `result="error"` and on pending updates older than a week. The gateway metric
   `aurora_gateway_library_fetch_total` is gone with the route.
+- **Instance libraries** (P5-SKLIB-2, D-449): an instance admin can add libraries for every organization
+  (Administration › Skill libraries, `/v1/admin/skill-libraries`); at most `LIBRARIES_PER_INSTANCE` (20). The
+  API pods need egress to their hosts like any library. The refresh costs one read per library per pass whatever
+  the number of organizations using it; the open-proposal budget is per organization. Migration
+  `20261201000271` makes `org_id` nullable and moves "over budget" to a per-organization state table.
 - **Tokens**: sealed with the instance's secret store (purpose `skill_library.token`: `secrets migrate`
   and key rotation cover it), never logged or returned.
 - **Upgrade and rollback**: migration `20261201000270` adds `url`, `token_ref`, `token_updated_at` and backfills

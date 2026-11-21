@@ -102,6 +102,29 @@ describe("skill libraries page", () => {
     expect(within(table).queryByRole("link", { name: "Reconnect" })).toBeNull();
   });
 
+  it("shows an instance library read-only with its badge, and no action on it (P5-SKLIB-2)", async () => {
+    mockFetch(
+      base({
+        "GET /v1/orgs/o1/skill-libraries": () =>
+          json(200, {
+            items: [
+              library(),
+              library({ id: "l9", scope: "instance", org_id: null, label: "Company skills", repo: "git.example.org/it/skills", token_updated_at: null, skill_counts: { agent: 0, workspace: 0, org: 1 }, pending_updates: 0 }),
+            ],
+          }),
+      }),
+    );
+    wrap(<SkillLibrariesPage />);
+    const table = await screen.findByRole("table", { name: "Skill libraries" });
+    const rows = within(table).getAllByRole("row");
+    expect(within(rows[1]).queryByText("Shared with every organization")).toBeNull();
+    expect(within(rows[1]).getByRole("button", { name: "Delete Team skills" })).toBeTruthy();
+    expect(within(rows[2]).getByText("Company skills")).toBeTruthy();
+    expect(within(rows[2]).getByText("Shared with every organization")).toBeTruthy();
+    expect(within(rows[2]).getByText("0 agent · 0 workspace · 1 org")).toBeTruthy();
+    expect(within(rows[2]).queryByRole("button")).toBeNull();
+  });
+
   it("connect dialog: the repository address, branch, folder and a secret access token; the reader's reason in words", async () => {
     let posts = 0;
     let body: Record<string, unknown> = {};
@@ -408,9 +431,13 @@ describe("Add from library", () => {
     const mk = (from: number, n: number) =>
       Array.from({ length: n }, (_, i) => ({ path: `s-${from + i}`, name: `s-${from + i}`, description: "d", valid: true, reason: null, size: 10, files: 1, added: [] }));
     const cursors: (string | null)[] = [];
+    const orgs = new Set<string | null>();
     mockFetch(routes({
       "GET /v1/skill-libraries/l1/skills": (r) => {
-        const cursor = new URL(r.url, "http://localhost").searchParams.get("cursor");
+        const params = new URL(r.url, "http://localhost").searchParams;
+        const cursor = params.get("cursor");
+        // (P5-SKLIB-2, C-1128) the library is browsed as the organization (required for an instance library)
+        orgs.add(params.get("org"));
         cursors.push(cursor);
         return cursor
           ? json(200, { commit_sha: SHA_B, truncated: false, next_cursor: null, items: mk(50, 5) })
@@ -424,6 +451,7 @@ describe("Add from library", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(55));
     expect(cursors).toEqual([null, "c2"]);
+    expect([...orgs]).toEqual(["o1"]);
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
