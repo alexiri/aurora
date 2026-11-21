@@ -545,6 +545,31 @@ Fill in per pass (the owner reads this):
   - UX review 4 regressions: none found.
   - Exit not reached (one Needs changes outside the 119); the cluster stays up for pass 9.
 
+- **Pass 9** (2026-11-21, master `9fe25317` (batch 12, FIX-204, FIX-206); cluster `aurora-r20` on :4720, lane
+  `p5-platform`; rebuilt `dev api web`, 1121 s under load):
+  - Counts (119 findings): Match 119 / Minor 0 / Needs changes 0 / Not checked 0 / Accepted 0.
+  - Batch 12 (an archived direct chat, another member's chat and three neighbours at 390–1280, both themes, 90 captures):
+    below 1280 the meta line is its own row. The whole privacy note and "Archived … · read only" are visible, there is no
+    `title`, every line is inside the header and the card, and the title row's border is level with the rail's (217/217,
+    153/153). But the row's top and bottom borders end 24 px (390) / 40 px (768–1100) short of the card's right edge
+    (`w-full` with negative margins): Needs changes.
+  - FIX-204: account Rename and Replace, app upload and bulk role at 390 and 1280: `Field` everywhere, the form dialogs'
+    buttons in the footer (bulk role is a `ConfirmDialog`, buttons in its body like every confirmation): Match. FIX-206:
+    workspace members and approvers see the summary, who to ask and "Your rules", with no Limits; owners keep the ladder
+    with Restrict further… (Match). An organization member sees only who to ask, with nothing about what is in force, which
+    `docs/14` §Scope ladder (D-444) requires: Needs changes.
+  - 148 captures: no horizontal scroll, no axe violation, no console error, no `/v1` error, no CSP report.
+  - Report path: `docs/audit/ux-review-5-verify/REPORT-pass9.md` (screenshots in `docs/audit/ux-review-5-verify/pass9/`, not in git).
+  - Change list sent: batch 13 (2 items, with the worker_done message): lane A, the thread header's meta row borders edge to
+    edge below 1280; FIX-206's lane, an organization member's Internet access says what is in force in one sentence, and
+    the description stops repeating the notice.
+  - Fixed in this lane (Scope 7): `web/src/components/internet/internet-level.tsx` → a member's empty "Your rules" no longer
+    points at "the limits and defaults below" that FIX-206 removed ("No rules yet. The sentence at the top says what agents
+    here may reach."); test `web/tests/internet-pages.test.tsx` (new case). Ran: vitest `internet-pages` + `policy` (36
+    passed), eslint on both files, `pnpm typecheck`, `scripts/guards/run-all.sh` (all passed). No other test sees the text.
+  - UX review 4 regressions: none found.
+  - Exit not reached (two Needs changes outside the 119); the cluster stays up for pass 10.
+
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
   - Report path: `UXR5/verify/REPORT-pass<N>.md`
