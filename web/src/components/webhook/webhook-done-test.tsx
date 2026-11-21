@@ -4,9 +4,10 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
-import { useWebhookTest, useWebhookView, isSent, type WebhookTestResult } from "@/lib/api/webhook";
+import { useWebhookTest, useWebhookView, isSent, type Slot, type WebhookTestResult } from "@/lib/api/webhook";
 import { initialInputs, valuesFromInputs } from "@/lib/webhook/logic";
 
+import { SlotValues } from "./slot-values";
 import { testFailure } from "./send-test-dialog";
 import { TestResult } from "./test-result";
 
@@ -20,6 +21,24 @@ export function WebhookDoneTest({ connectionId, onEditAddress }: { connectionId:
   const test = useWebhookTest(connectionId);
   const [result, setResult] = useState<WebhookTestResult | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [slots, setSlots] = useState<Slot[] | null>(null);
+  const [inputs, setInputs] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function post(values: Record<string, unknown>) {
+    test.mutate(
+      { values, dry_run: false },
+      {
+        onSuccess: (r) => {
+          if (isSent(r)) {
+            setSlots(null);
+            setResult(r);
+          }
+        },
+        onError: (err) => setFailure(testFailure(err)),
+      },
+    );
+  }
 
   function send() {
     setResult(null);
@@ -31,25 +50,39 @@ export function WebhookDoneTest({ connectionId, onEditAddress }: { connectionId:
         setFailure("Couldn't read the webhook. Try again.");
         return;
       }
-      const { values, errors } = valuesFromInputs(q.data.slots, initialInputs(q.data.slots));
-      if (Object.keys(errors).length > 0) {
-        setFailure("This webhook needs values for its message. Open it from the account's menu and use Send a test there.");
+      const start = initialInputs(q.data.slots);
+      const { values, errors: local } = valuesFromInputs(q.data.slots, start);
+      if (Object.keys(local).length > 0) {
+        // Some value has no example: ask for the values here, in place.
+        setSlots(q.data.slots);
+        setInputs(start);
+        setErrors({});
         return;
       }
-      test.mutate(
-        { values, dry_run: false },
-        {
-          onSuccess: (r) => (isSent(r) ? setResult(r) : null),
-          onError: (err) => setFailure(testFailure(err)),
-        },
-      );
+      post(values);
     });
+  }
+
+  function sendTyped() {
+    if (!slots) return;
+    const { values, errors: local } = valuesFromInputs(slots, inputs);
+    setErrors(local);
+    setFailure(null);
+    if (Object.keys(local).length === 0) post(values);
   }
 
   return (
     <div className="space-y-3 rounded-card bg-subtle p-4 text-left" data-testid="webhook-done-test" aria-live="polite">
       {result ? (
         <TestResult r={result} onAgain={send} onEdit={onEditAddress} />
+      ) : slots ? (
+        <>
+          <p className="text-ink-2">This webhook needs a few values for its message. Fill them in and send the test.</p>
+          <SlotValues slots={slots} inputs={inputs} errors={errors} onChange={(n, v) => setInputs((t) => ({ ...t, [n]: v }))} idp="done-test" />
+          <Button type="button" disabled={test.isPending} onClick={sendTyped}>
+            {test.isPending ? "Sending…" : "Send a test"}
+          </Button>
+        </>
       ) : (
         <>
           <p className="text-ink-2">Not sure the address works?</p>
