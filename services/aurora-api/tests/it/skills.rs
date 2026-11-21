@@ -335,6 +335,190 @@ async fn org_permissions_and_generation_bump() {
     );
 }
 
+impl Rig {
+    /// GET that keeps the bytes and the executable header: `(status, executable header, bytes)`.
+    async fn raw_get(&self, cookie: &str, uri: &str) -> (u16, Option<String>, Vec<u8>) {
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+        let req = http::Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header("cookie", cookie)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = self.h.app.clone().oneshot(req).await.unwrap();
+        let status = res.status().as_u16();
+        let exec = res
+            .headers()
+            .get("x-skill-file-executable")
+            .map(|v| v.to_str().unwrap().to_owned());
+        if status == 200 {
+            // Bytes people wrote answer like attachments, whatever the stored file is (C-1099).
+            let h = res.headers();
+            assert_eq!(h["content-type"], "application/octet-stream");
+            assert_eq!(h["x-content-type-options"], "nosniff");
+            let cd = h["content-disposition"].to_str().unwrap();
+            assert!(cd.starts_with("attachment"), "{cd}");
+            let last = uri.rsplit('/').next().unwrap();
+            assert_eq!(cd, format!("attachment; filename=\"{last}\""));
+        }
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        (status, exec, bytes.to_vec())
+    }
+}
+
+/// C-1099: `GET /v1/skills/{id}/files/{path}` returns the stored bytes, with the item route's authority.
+#[tokio::test]
+async fn skill_file_read_authority_paths_and_isolation() {
+    let r = rig().await;
+    let a = r.agent("a1").await;
+    let mk = |name: &'static str| {
+        let r = &r;
+        async move {
+            let (s, v) = r
+                .user(
+                    Method::POST,
+                    &format!("/v1/agents/{a}/skills"),
+                    Some(json!({"name": name, "description": "d", "body": "b"})),
+                )
+                .await;
+            assert_eq!(s, 201, "{v}");
+            v["id"].as_str().unwrap().to_owned()
+        }
+    };
+    let (one, two) = (mk("one").await, mk("two").await);
+    let put = |id: &str, p: &str, body: &[u8]| {
+        let uri = format!("/v1/skills/{id}/files/{p}");
+        let r = &r;
+        let body = body.to_vec();
+        async move { assert_eq!(r.raw_put(&r.cookie, &uri, &body).await.0, 200) }
+    };
+    put(&one, "notes/a.txt", b"hello").await;
+    put(&one, "bin/run.sh?executable=true", b"#!/bin/sh\n").await;
+    put(&one, "blob.bin", &[0xff, 0xfe, 0xfd, 0x00]).await;
+    put(&two, "only-two.txt", b"secret of two").await;
+
+    // Allowed: the bytes as stored, text and binary, with the executable bit.
+    let (s, exec, b) = r
+        .raw_get(&r.cookie, &format!("/v1/skills/{one}/files/notes/a.txt"))
+        .await;
+    assert_eq!(
+        (s, exec.as_deref(), b.as_slice()),
+        (200, Some("false"), &b"hello"[..])
+    );
+    let (s, exec, b) = r
+        .raw_get(&r.cookie, &format!("/v1/skills/{one}/files/bin/run.sh"))
+        .await;
+    assert_eq!(
+        (s, exec.as_deref(), b.as_slice()),
+        (200, Some("true"), &b"#!/bin/sh\n"[..])
+    );
+    let (s, _, b) = r
+        .raw_get(&r.cookie, &format!("/v1/skills/{one}/files/blob.bin"))
+        .await;
+    assert_eq!((s, b.as_slice()), (200, &[0xff, 0xfe, 0xfd, 0x00][..]));
+    // The skill lists its file paths (what the export iterates).
+    let (_, v) = r
+        .user(Method::GET, &format!("/v1/skills/{one}"), None)
+        .await;
+    let mut paths: Vec<&str> = v["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    paths.sort_unstable();
+    assert_eq!(paths, ["bin/run.sh", "blob.bin", "notes/a.txt"]);
+
+    // A missing file is 404; so is another skill's file through this skill's id.
+    let (s, _, _) = r
+        .raw_get(&r.cookie, &format!("/v1/skills/{one}/files/missing.txt"))
+        .await;
+    assert_eq!(s, 404);
+    let (s, _, b) = r
+        .raw_get(&r.cookie, &format!("/v1/skills/{one}/files/only-two.txt"))
+        .await;
+    assert_eq!(s, 404, "{}", String::from_utf8_lossy(&b));
+    // The same path under its own skill still reads.
+    let (s, _, b) = r
+        .raw_get(&r.cookie, &format!("/v1/skills/{two}/files/only-two.txt"))
+        .await;
+    assert_eq!((s, b.as_slice()), (200, &b"secret of two"[..]));
+
+    // Path traversal and the other bad paths are refused as for PUT: never 200.
+    for bad in [
+        "..%2Fx",
+        "a/../b",
+        "a/./b",
+        "a//b",
+        "a/b/c/d/e",
+        "sp%20ace",
+        "SKILL.md",
+        "skill.md/x",
+        "..%2F..%2Fetc%2Fpasswd",
+        "caf%C3%A9",
+    ] {
+        let (s, _, _) = r
+            .raw_get(&r.cookie, &format!("/v1/skills/{one}/files/{bad}"))
+            .await;
+        assert!(matches!(s, 400 | 404), "{bad}: {s}");
+    }
+    let (s, _, _) = r
+        .raw_get(&r.cookie, &format!("/v1/skills/{one}/files/a/b/c/d/e"))
+        .await;
+    assert_eq!(s, 400);
+
+    // Forbidden: someone who cannot see the agent gets what the item route gives them (never the bytes).
+    let u = r.h.user("out2@x.io", false).await;
+    let (_, st) = r.h.good_session(u).await;
+    let outsider = cookie(&st);
+    let (item, _) = r
+        .call(&outsider, Method::GET, &format!("/v1/skills/{one}"), None)
+        .await;
+    assert_ne!(item, 200);
+    let (s, _, b) = r
+        .raw_get(&outsider, &format!("/v1/skills/{one}/files/notes/a.txt"))
+        .await;
+    assert_eq!(s, item);
+    assert_ne!(b.as_slice(), b"hello");
+    // No cookie at all: 401.
+    let (s, _, _) = r
+        .raw_get("", &format!("/v1/skills/{one}/files/notes/a.txt"))
+        .await;
+    assert_eq!(s, 401);
+
+    // An organization skill: a member reads (as the item route), an outsider does not; the admin's file is the bytes stored.
+    let admin = r.as_user("adm2@x.io", "admin").await;
+    let (s, v) = r
+        .call(
+            &admin,
+            Method::POST,
+            &format!("/v1/orgs/{}/skills", r.org),
+            Some(json!({"name": "policy2", "description": "d", "body": "b"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let org_skill = v["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        r.raw_put(
+            &admin,
+            &format!("/v1/skills/{org_skill}/files/p.txt"),
+            b"org bytes"
+        )
+        .await
+        .0,
+        200
+    );
+    let (s, _, b) = r
+        .raw_get(&r.cookie, &format!("/v1/skills/{org_skill}/files/p.txt"))
+        .await;
+    assert_eq!((s, b.as_slice()), (200, &b"org bytes"[..]));
+    let (s, _, _) = r
+        .raw_get(&outsider, &format!("/v1/skills/{org_skill}/files/p.txt"))
+        .await;
+    assert_eq!(s, 404);
+}
+
 #[tokio::test]
 async fn skill_tools_via_tool_calls() {
     let r = rig().await;

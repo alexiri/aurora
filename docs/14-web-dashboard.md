@@ -2364,19 +2364,143 @@ which wraps it with the id given.
 | `log.requests` | the request-log table | Expert | Now |
 | `tech.details` | every "Technical details" fold | Set up and above; never for plain members | Now |
 | `export.yaml` | YAML/JSON export and Import of settings | Expert (Administration: visible) | Now |
-| `export.agent` | Export / Import an agent | Expert | Later: P5-REFINE-19 |
+| `export.agent` | Export / Import an agent | Expert | Now (P5-REFINE-19) |
+| `copy.curl` | Copy as curl (webhook cards, API key rows), the OpenAPI link | Expert | Now (P5-REFINE-19) |
 | `ws.memlang` | Memory language | Expert | Now |
 | `chat.redact` | "Remove this message's content…" (Redact) | Expert | Now |
 | `org.groups`, `org.directory` | Groups, Directory sync tabs | Expert unless a directory provider is configured (then Set up) | Now |
 | `apikeys` | Account › API keys explained | Set up | Now |
-| `palette.verbs`, `kbd`, `bulk` | palette verbs, keyboard shortcuts, bulk actions | Expert | Later: P5-REFINE-19 |
-| `fold.cli` | "From your terminal" CLI/API snippets | Expert | Now (SSH snippet); later 14, 15, 19 |
+| `palette.verbs`, `kbd` | palette verbs, keyboard shortcuts (and their sheet) | Expert | Now (P5-REFINE-19; `palette.verbs` is a list the registry builds, not a wrapper) |
+| `bulk` | bulk actions on lists (People, Accounts, Schedules, Webhooks) | Expert | Now (P5-REFINE-19) |
+| `fold.cli` | "From your terminal" CLI/API snippets | Expert | Now (SSH, Computer, Webhooks, API keys) |
 
 A control not in the table is a gap in the classification: add the row (and the registry row) first.
 
 **The lint** (`tests/altitude-registry.test.ts`): every `<Altitude id level>` names a registry id at its level;
 every row not marked later or rule-only is used in the code; rendered at Use with the switch off, the Expert
 strings are absent.
+
+## Expert speed (phase 5, P5-REFINE-19, D-405, D-406, D-413)
+
+Speed for the people who want it, with nothing added for the people who don't: everything below is behind **Show more
+controls**, except the *nouns* in the palette. Each verb and each key does what its button does, shows the same dialog
+(the confirm ladder) and never acts on its own.
+
+**Command palette (⌘K / Ctrl K).** One dialog (`components/palette/command-palette.tsx`, mounted once in the app shell),
+opened with `⌘K` (macOS) or `Ctrl K`, and from **Search · ⌘K** in the rail's footer. Top-anchored, a search field
+(`role="combobox"`), a `role="listbox"` of results under group headings (Actions, Workspaces, Organizations, Agents,
+Pages, Agent pages, Account), arrow keys, Enter to choose, Escape to close, a hint line, full width at 390 px. Matching is
+case-insensitive, by whole-label start, word start or substring; ties go by recency (`readRecent`, the switcher's list).
+No match: "Nothing matches “text”."; a skeleton row while the session loads.
+- **Nouns, for everyone:** workspaces and organizations (the switcher's index, D-389), the agents of the current
+  workspace, the topics the viewer's `visibleTopics` lists, the open agent's pages the navigation lists, and the person's
+  account pages.
+- **Verbs, altitude Expert (`palette.verbs`):** *New chat with <Agent>*, *Give <Agent> an app* (goes to Apps & access),
+  *New schedule for…*, *New webhook for…*, *Pause <Agent>* (opens the Pause confirm) / *Resume <Agent>* (goes to the danger
+  zone where the button is), *Export <Agent>*, *Open Approvals*, *Add people*, *New agent*, *Keyboard shortcuts*. A verb the
+  viewer's role lacks is not listed (owners: all; approvers: *Open Approvals*; members: *New chat*). A verb navigates to the
+  page that owns the button and leaves a pending verb (`lib/palette-verb.ts`); the control registers `useVerb(id, open)` and
+  opens its own dialog. A verb nobody picks up in five seconds is dropped.
+- The palette never opens (and no letter fires) inside the terminal, an editor (`code-field`, the file viewer) or anything
+  marked `data-no-shortcuts`. `⌘K` itself works in a plain text field, not in the terminal.
+
+**Keyboard shortcuts (`kbd`, Expert).** `lib/shortcuts.ts` is the one registry, one matcher (`ChordMatcher`, chords with a
+one-second window) and one `keydown` listener on `document`. The sheet (`?`, the palette verb *Keyboard shortcuts*, or the
+account menu entry **Keyboard shortcuts**, shown only with the switch on) lists them:
+
+| Keys | Does |
+|---|---|
+| `⌘K` / `Ctrl K` | the palette (always on) |
+| `/` | focus the conversation search (always on; exists) |
+| `?` | the shortcut sheet |
+| `g` then `a` / `p` / `o` / `s` | Agents · Approvals · Overview · Settings of the current workspace (only those the role lists) |
+| `n` | New chat with the open agent (on an agent page) |
+| `a` / `b` | **Allow once** / **Block** on the approval card that has the focus (the same buttons; a parked approval still asks) |
+
+**Never fires** when focus is in an `input`, `textarea`, `select`, a `contenteditable` or any `[data-no-shortcuts]` (the
+terminal, the file editor, the code field); with a modifier other than the chord's; while a dialog other than the sheet and
+the palette is open; on a touch-only device (no `hover: hover`). With the switch off only `⌘K` and `/` work.
+
+**Bulk actions (`bulk`, Expert).** A checkbox per row (a select-all in the header or above the cards) and a bar **<n>
+selected** with the list's actions; none of it exists with the switch off, and the lists look as before. There is no bulk
+route: each action calls the per-item route in turn with a progress line (*2 of 3*, then *3 of 3 done*); a failure is
+listed by name with **Retry** (only the failed ones go again); what succeeded is not rolled back.
+- **People** (organization Members, workspace People): **Change role…** and **Remove…**, each one confirm dialog with the
+  count and the consequence (*Remove 3 people from Acme? They lose access now.*; a promotion says what that role can do).
+  You cannot tick yourself, the last owner, someone whose role your identity provider gives, or (as an admin) an owner; the
+  checkbox says why in its tooltip.
+- **Accounts** (the main list of a workspace or organization): **Give to an agent…** (a picker: the workspace's agents; for an
+  organization's accounts those of the workspaces you own; apps at the lowest level that exists, websites and AI keys as they
+  are) and **Turn off…** (only an app account has a switch; the dialog names those that have none).
+- **Automations** (the one list on an agent's Automations page, `components/automations/automations-bulk.tsx`): a checkbox on each
+  schedule and webhook row (a chat row has none) and **Select all** for what the filter shows; **Pause** and **Resume** (for the
+  ones that are on or paused; a Done one-time schedule has neither; undoable: they act at once and a toast offers **Undo**) and
+  **Delete…** (permanent: type the number). A mixed selection says "automations", a single kind says "schedules" or "webhooks".
+
+**Export and import an agent (`export.agent`, Expert; D-413).** On the agent's Settings page, for workspace owners of a
+hosted agent: a section **Export and import** with **Export <Agent>…** and **Import into <Agent>…** (also palette verbs).
+The zip is built and read in the browser (`lib/export/zip.ts`, a store-only writer and a reader that also inflates;
+`lib/export/yaml.ts`, a restricted YAML that refuses anchors, aliases, tags, block scalars, flow collections, tabs,
+documents and duplicate keys); no dependency was added. **A purpose template *is* an export with `purpose` set**
+(`templateAsExport`; a test reads every template back from a zip).
+
+```
+<handle>/
+  agent.yaml                 format, name, purpose?, model (default or a name), may_message_first
+  instructions.md            the instructions text
+  memory/<key>.md            front matter `key`, `updated`; then the text
+  skills/<name>/SKILL.md     front matter `name`, `use-it-when`; then the body
+  automations/<name>.yaml    a schedule or a webhook
+  README.md                  "Exported from Aurora on <date>. Secrets, accounts and conversations are not included."
+```
+
+```yaml
+# agent.yaml
+format: 1
+name: Daneel
+purpose: research
+model: default
+may_message_first: false
+```
+
+```yaml
+# automations/morning-check.yaml            # automations/deploy-notice.yaml
+kind: schedule                              kind: webhook
+name: Morning check                         name: Deploy notice
+prompt: Check the news.                     instructions: Say what shipped.
+cadence:                                    verification: signed
+  cron: 0 8 * * 1-5                         enabled: false
+time_zone: Europe/Zurich
+enabled: true
+```
+
+A pending one-time schedule has `cadence: { preset: once, run_at: "2026-12-01T09:00" }` instead of `cron` (the local time, read in `time_zone`).
+
+Never in an export: ids, secrets, webhook addresses, accounts, channels, conversations, the AI key. A skill's other files
+are written beside its `SKILL.md` as stored (read one by one with `GET /v1/skills/{id}/files/{path}`, C-1099; the list is the
+`files` of the skill). A **pending one-time schedule** is exported as `cadence: { preset: once, run_at: "2026-12-01T09:00" }`
+(its local time) with its `time_zone`; one that already ran (Done) is left out, and the dialog says so. An import creates a
+one-time schedule through the same route and pauses it like the others ("Check the schedule, then turn it on"); the dialog
+says to check the time first.
+**Import** opens a dialog: pick or drop a `.zip` (at most 5 MB and 200 files; absolute, hidden and `..` names refused with one
+sentence), a checklist (*Instructions · 3 memories · 2 skills · 1 schedule · 1 webhook*, a checkbox per group) and **Keep mine**
+(default) or **Replace instructions**. **Import** creates through the existing routes; a name that already exists is skipped and
+listed (*Skipped: skill “release-notes” already exists*); schedules and webhooks are created **paused** (a webhook with a new
+signing secret shown once in `SecretOnce`; its address is on the card, *Rotate URL*); a failure is listed and the rest go on.
+Import never changes access, accounts or the AI key.
+
+**Copy as curl (`copy.curl`, Expert).** A webhook row's **Copy as curl** copies the command the *How to call it* panel shows
+for its verification (signed: the `X-Signature: sha256=<hex>` recipe; password: the header; none: a plain POST), built by the
+same function (`lib/webhook-snippets.ts`: one recipe source) with `$SECRET`; a row holds only the address's prefix, so the
+command says the full address was shown once. Each API key's row menu has **Copy as curl** (`curl -H
+"Authorization: Bearer $AURORA_API_KEY" <origin>/v1/me`). Neither ever holds a secret or a key value. The API key pages say
+what a key acts as ("Acts as you in this workspace through the Aurora API."; organization keys: "Acts for this
+organization …") and link the **OpenAPI description** (`/v1/openapi.json`, Expert).
+
+**From your terminal (`fold.cli`, Expert).** `components/ui/from-your-terminal.tsx`: a closed `<details>` of copyable
+commands with a one-line note each, on Computer (`aurora ssh <handle>` where SSH is on, `aurora run --agent <handle> --
+<command>`), Webhooks (the signed curl) and the API key pages (`aurora login`, the curl call). Only commands the CLI has
+(`services/aurora-cli/src/main.rs`; a test reads the subcommands there).
 
 ## Agent settings pages (phase 5, P5-REFINE-12, D-406, D-407, D-411, D-413, D-414)
 

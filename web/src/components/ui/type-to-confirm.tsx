@@ -22,6 +22,8 @@ interface TypeToConfirmProps {
   noun: string;
   /** The visible name the person types. */
   name: string;
+  /** (P5-REFINE-19) The sentence before the name when it is not "Type the <noun> name to confirm" (a bulk delete types the count). */
+  typeLabel?: string;
   confirmLabel: string;
   run: () => Promise<unknown>;
   onDone: () => void;
@@ -49,6 +51,7 @@ function ConfirmForm({
   consequence,
   noun,
   name,
+  typeLabel,
   confirmLabel,
   run,
   onDone,
@@ -76,7 +79,7 @@ function ConfirmForm({
       <Notice tone="danger">{consequence}</Notice>
       <div className="space-y-1.5">
         <label htmlFor={id} className="block text-sm font-medium text-ink">
-          Type the {noun} name to confirm: <span className="font-mono">{name}</span>
+          {typeLabel ?? `Type the ${noun} name to confirm`}: <span className="font-mono">{name}</span>
         </label>
         <input
           id={id}

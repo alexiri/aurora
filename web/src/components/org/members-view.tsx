@@ -35,6 +35,9 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useInstance, useMe, useOrg } from "@/lib/api/queries";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 
+import { BulkBar, BulkCheckbox, BulkSelectAll, useBulkOn, useSelection } from "@/components/ui/bulk-bar";
+import { Select } from "@/components/ui/select";
+import { useBulk } from "@/lib/bulk";
 import { Avatar } from "@/components/ui/avatar";
 import { CheckIcon } from "@/components/ui/icons";
 import { ROLE_CAN } from "@/lib/roles-explain";
@@ -58,7 +61,10 @@ export function MemberRow({
   mine = false,
   lastOwner = false,
   orgName,
+  select,
 }: {
+  /** (P5-REFINE-19, Expert) The row's bulk checkbox; `disabled` says why it cannot be ticked (yourself, the last owner, a role the IdP gives). */
+  select?: { checked: boolean; onChange: (on: boolean) => void; disabled: boolean; title?: string };
   m: OrgMember;
   viewer: OrgRole;
   busy?: boolean;
@@ -71,6 +77,7 @@ export function MemberRow({
   lastOwner?: boolean;
   orgName?: string;
 }) {
+  const bulkOn = useBulkOn();
   const fromIdp = m.idp_value ?? null;
   // A role the IdP gives is read-only here (409 managed_by_idp on the API); nobody changes their own, and the last owner stays owner.
   const options = fromIdp || mine ? [] : lastOwner ? roleOptions(viewer, m.role).filter((r) => r === "owner") : roleOptions(viewer, m.role);
@@ -78,11 +85,16 @@ export function MemberRow({
   return (
     <tr>
       <Td cell="title">
-        <div className="font-medium">
-          {m.display_name}
-          {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
+        <div className={select && bulkOn ? "flex items-start gap-3" : undefined}>
+          {select ? <BulkCheckbox name={m.display_name || m.email} checked={select.checked} disabled={select.disabled} title={select.title} onChange={select.onChange} /> : null}
+          <div className="min-w-0">
+            <div className="font-medium">
+              {m.display_name}
+              {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
+            </div>
+            <div className="break-all text-muted">{m.email}</div>
+          </div>
         </div>
-        <div className="break-all text-muted">{m.email}</div>
       </Td>
       <Td>
         {options.length > 0 ? (
@@ -225,24 +237,50 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   const [target, setTarget] = useState<{ m: OrgMember; mode: "remove" | "suspend" } | null>(null);
   const [dialogErr, setDialogErr] = useState<unknown>(null);
   const [promote, setPromote] = useState<{ m: OrgMember; role: OrgRole } | null>(null);
+  // (P5-REFINE-19, Expert) Bulk: a checkbox per person the viewer may change, a bar with Change role… and Remove….
+  const bulk = useBulk();
+  const bulkOn = useBulkOn();
+  const [bulkDialog, setBulkDialog] = useState<"role" | "remove" | null>(null);
+  const [bulkRole, setBulkRole] = useState<OrgRole>("member");
+  const list = members.data?.pages.flatMap((p) => p.items) ?? [];
+  const activeOwners = list.filter((m) => m.role === "owner" && m.status === "active").length;
+  // Never yourself, the last owner, or someone whose role your identity provider gives (the server refuses them too).
+  const whyNot = (m: OrgMember): string | undefined =>
+    m.user_id === meId ? "You cannot change yourself" : m.role === "owner" && activeOwners === 1 ? "The last owner stays an owner" : m.idp_value || m.directory ? "Managed by your identity provider" : !canManageMember(viewer, m.role) ? "You cannot change an owner" : undefined;
+  const sel = useSelection(list.filter((m) => whyNot(m) === undefined).map((m) => m.user_id));
 
   if (members.isPending) return <Loading />;
   if (members.isError) return <ErrorState error={members.error} onRetry={() => members.refetch()} />;
-  const items = members.data.pages.flatMap((p) => p.items);
-  const owners = items.filter((m) => m.role === "owner" && m.status === "active").length;
+  const items = list;
+  const owners = activeOwners;
+  const picked = items.filter((m) => sel.selected.has(m.user_id));
+  const targets = picked.map((m) => ({ id: m.user_id, name: m.display_name || m.email }));
+  const n = picked.length;
+  const people = `${n} ${n === 1 ? "person" : "people"}`;
   const busy = patch.isPending || remove.isPending;
   const onError = (e: unknown) => setErr(e);
 
   return (
     <div className="space-y-3">
       <ErrorNotice error={err} />
+      <BulkBar count={n} noun={n === 1 ? "person selected" : "people selected"} bulk={bulk} onClear={sel.clear}>
+        <Button type="button" size="sm" variant="outline" disabled={bulk.running || n === 0} onClick={() => { setBulkRole("member"); setBulkDialog("role"); }}>
+          Change role…
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled={bulk.running || n === 0} onClick={() => setBulkDialog("remove")}>
+          Remove…
+        </Button>
+      </BulkBar>
       {items.length === 0 ? (
         <EmptyState title="No members" />
       ) : (
         <DataTable caption="People" stackBelow={900}>
             <thead>
               <tr>
-                <Th>Person</Th>
+                <Th>
+                  {bulkOn ? <BulkSelectAll label="Select all people" all={sel.all} some={sel.some} disabled={bulk.running} onChange={sel.setAll} /> : null}
+                  Person
+                </Th>
                 <Th>Role</Th>
                 <Th>Status</Th>
                 <Th>Joined</Th>
@@ -261,6 +299,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
                   mine={m.user_id === meId}
                   lastOwner={m.role === "owner" && owners === 1}
                   orgName={orgName}
+                  select={{ checked: sel.selected.has(m.user_id), onChange: (on) => sel.toggle(m.user_id, on), disabled: whyNot(m) !== undefined || bulk.running, title: whyNot(m) }}
                   onRole={(role) => {
                     setErr(null);
                     // Second rung of the confirm ladder: a role that widens what the person can do asks first.
@@ -280,6 +319,49 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
         </DataTable>
       )}
       <LoadMore query={members} />
+      {/* (P5-REFINE-19) The second rung, once for all of them: the consequence and the count. The calls are the per-person routes. */}
+      <ConfirmDialog
+        open={bulkDialog === "role"}
+        onOpenChange={(o) => !o && setBulkDialog(null)}
+        title={`Change the role of ${people} in ${orgName ?? "the organization"}?`}
+        description={`${people} will become ${cap(bulkRole)}${bulkRole === "member" ? ". They keep their workspaces but lose what admins can do." : "."}`}
+        confirmLabel={`Change role of ${people}`}
+        onConfirm={() => {
+          const role = bulkRole;
+          setBulkDialog(null);
+          setErr(null);
+          void bulk.run(targets, (t) => patch.mutateAsync({ user: t.id, body: { role } }));
+        }}
+      >
+        <div className="space-y-3 text-sm">
+          <label className="block space-y-1">
+            <span className="font-medium text-ink">New role</span>
+            <Select value={bulkRole} onChange={(v) => setBulkRole(v as OrgRole)} options={roleOptions(viewer, "member").map((r) => ({ value: r, label: cap(r) }))} />
+          </label>
+          {bulkRole !== "member" ? (
+            <ul aria-label={`What ${cap(bulkRole)}s can do`} className="space-y-1">
+              {ROLE_CAN.org[bulkRole].can.map((c) => (
+                <li key={c} className="flex gap-2 text-ink">
+                  <CheckIcon className="mt-0.5 size-4 shrink-0 text-accent" />
+                  {c}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={bulkDialog === "remove"}
+        onOpenChange={(o) => !o && setBulkDialog(null)}
+        title={`Remove ${people} from ${orgName ?? "the organization"}?`}
+        description="They lose access now."
+        confirmLabel={`Remove ${people}`}
+        danger
+        onConfirm={() => {
+          setBulkDialog(null);
+          void bulk.run(targets, (t) => remove.mutateAsync({ user: t.id }));
+        }}
+      />
       {/* (P5-REFINE-17, org-9) The ask says what the role can do; the select keeps its old value until Make <Role>. */}
       <ConfirmDialog
         open={promote !== null}

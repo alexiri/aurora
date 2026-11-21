@@ -36,6 +36,7 @@ import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
 import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, LEGACY_AUTOMATION_TAB, resolvePage, sectionLanding, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
 import { AgentState } from "./agent-state";
+import { AgentExportImport } from "./export-import";
 import { AnswerFixAction } from "./answer-fix";
 import { SettingsFrame } from "./settings-shell";
 import { SshPage } from "./ssh-page";
@@ -247,6 +248,7 @@ export function AgentPage() {
                   canOwn,
                   frozen: agent.frozen,
                   onDelete: () => setDeleteOpen(true),
+                  extra: byo ? null : <AgentExportImport agent={agent} />,
                 }
               : null
           }>
@@ -310,7 +312,7 @@ export function AgentPage() {
           {tab === "automations" && !byo && workspace.isPending ? <Loading /> : null}
           {tab === "peers" && !byo ? <PeersTab agentId={agent.id} agentName={agent.name} agentsHref={`${base}/agents`} wsId={wsId} frozen={agent.frozen !== null} /> : null}
           {tab === "computer" && !byo ? (
-            <ComputerTab agentId={agent.id} agentName={agent.name} workspaceId={workspace.data?.id} frozen={agent.frozen !== null} terminal={terminalEnabled} />
+            <ComputerTab agentId={agent.id} agentName={agent.name} agentHandle={agent.handle} workspaceId={workspace.data?.id} frozen={agent.frozen !== null} terminal={terminalEnabled} />
           ) : null}
           {tab === "terminal" && !byo && terminalEnabled ? <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "files" && !byo && terminalEnabled ? (

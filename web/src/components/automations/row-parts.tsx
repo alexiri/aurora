@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { ReassignPanel } from "@/components/automations/owner-controls";
 import { Badge } from "@/components/ui/badge";
+import { BulkCheckbox } from "@/components/ui/bulk-bar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ClockIcon, LinkIcon, MessageIcon } from "@/components/ui/icons";
@@ -35,8 +36,11 @@ export function RowShell({
   meta,
   notices,
   actions,
+  select,
   children,
 }: {
+  /** (P5-REFINE-19, `bulk`, Expert) The row's checkbox; absent for a chat row and for someone who cannot own. */
+  select?: { checked: boolean; onChange: (on: boolean) => void };
   kind: AutomationKind;
   name: string;
   on: boolean;
@@ -53,6 +57,11 @@ export function RowShell({
   return (
     <li className="space-y-3 p-4" data-automation-kind={kind}>
       <div className="flex items-start gap-3">
+        {select ? (
+          <span className="mt-1.5 flex shrink-0 items-center">
+            <BulkCheckbox name={name} checked={select.checked} onChange={select.onChange} />
+          </span>
+        ) : null}
         <span aria-hidden="true" className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-control bg-subtle text-ink-2 [&_svg]:size-4">
           <Icon />
         </span>

@@ -14,7 +14,9 @@ import { formatWhen } from "@/lib/format-date";
 import { When } from "@/components/ui/when";
 import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
-import { useMe, useOrg } from "@/lib/api/queries";
+import { useMe, useOrg, useWorkspace } from "@/lib/api/queries";
+import { BulkBar, BulkCheckbox, BulkSelectAll, useBulkOn, useSelection } from "@/components/ui/bulk-bar";
+import { useBulk } from "@/lib/bulk";
 import { sourceText } from "@/lib/api/groups";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
@@ -168,7 +170,10 @@ function Row({
   lastOwner,
   orgName,
   address,
+  select,
 }: {
+  /** (P5-REFINE-19, Expert) The row's bulk checkbox; `disabled` says why it cannot be ticked. */
+  select?: { checked: boolean; onChange: (on: boolean) => void; disabled: boolean; title?: string };
   /** The workspace's full address to send, for a person who has not signed in yet. */
   address?: string;
   orgName?: string;
@@ -198,6 +203,7 @@ function Row({
     <tr data-testid={`access-row-${b.user_id}`}>
       <Td cell="title">
         <div className="flex items-center gap-3">
+          {select ? <BulkCheckbox name={who} checked={select.checked} disabled={select.disabled} title={select.title} onChange={select.onChange} /> : null}
           <Avatar name={who} tintKey={b.user_id} size={32} />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 font-medium">
@@ -391,6 +397,19 @@ export function AccessTab({
   );
   const address = people ? `${origin}${people.workspacePath}` : undefined;
   const [err, setErr] = useState<unknown>(null);
+  // (P5-REFINE-19, Expert) Bulk: a checkbox per person an owner may change, a bar with Change role… and Remove….
+  const bulk = useBulk();
+  const bulkOn = useBulkOn();
+  const [bulkDialog, setBulkDialog] = useState<"role" | "remove" | null>(null);
+  const [bulkRole, setBulkRole] = useState<Role>("member");
+  const bulkPut = usePutAccess(wsId);
+  const bulkDel = useDeleteAccess(wsId);
+  const wsName = useWorkspace(wsId).data?.name;
+  const rows = access.data?.items ?? [];
+  const soleOwner = rows.filter((b) => b.role === "owner" && !b.implicit && b.status !== "suspended").length === 1;
+  const whyNot = (b: AccessBinding): string | undefined =>
+    !canOwn ? "Only workspace owners can change who has access" : b.user_id === meId ? "You cannot change yourself" : b.implicit ? "Has access as an owner of the organization" : b.idp_value ? "Managed by your identity provider" : b.role === "owner" && soleOwner ? "The last owner stays an owner" : undefined;
+  const sel = useSelection(rows.filter((b) => whyNot(b) === undefined).map((b) => b.user_id));
   if (access.isPending) return <Loading />;
   if (access.isError) return <ErrorState error={access.error} onRetry={() => access.refetch()} />;
   // (P5-POLISH-11, D6) You first, then by name.
@@ -402,17 +421,76 @@ export function AccessTab({
   const bound = new Set(items.map((b) => b.user_id));
   const inherited = (access.data.derived_members?.items ?? []).filter((d) => !bound.has(d.user.id));
   const directOwners = items.filter((b) => b.role === "owner" && !b.implicit && b.status !== "suspended").length;
+  const picked = items.filter((b) => sel.selected.has(b.user_id));
+  const targets = picked.map((b) => ({ id: b.user_id, name: b.display_name || b.email }));
+  const n = picked.length;
+  const count = `${n} ${n === 1 ? "person" : "people"}`;
+  const workspace = wsName ?? "this workspace";
   return (
     <div className="space-y-6">
       {!canOwn ? <Notice role="status">Only workspace owners can change who has access.</Notice> : null}
       <ErrorNotice error={err} />
+      {canOwn ? (
+        <BulkBar count={n} noun={n === 1 ? "person selected" : "people selected"} bulk={bulk} onClear={sel.clear}>
+          <Button type="button" size="sm" variant="outline" disabled={bulk.running || n === 0} onClick={() => { setBulkRole("member"); setBulkDialog("role"); }}>
+            Change role…
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={bulk.running || n === 0} onClick={() => setBulkDialog("remove")}>
+            Remove…
+          </Button>
+        </BulkBar>
+      ) : null}
+      {/* (P5-REFINE-19) The second rung, once for all of them: the consequence and the count. The calls are the per-person routes. */}
+      <ConfirmDialog
+        open={bulkDialog === "role"}
+        onOpenChange={(o) => !o && setBulkDialog(null)}
+        title={`Change the role of ${count} in ${workspace}?`}
+        description={`${count} will become ${ROLE_LABEL[bulkRole]}.`}
+        confirmLabel={`Change role of ${count}`}
+        onConfirm={() => {
+          const role = bulkRole;
+          setBulkDialog(null);
+          setErr(null);
+          void bulk.run(targets, (t) => bulkPut.mutateAsync({ user: t.id, role }));
+        }}
+      >
+        <div className="space-y-3 text-sm">
+          <label className="block space-y-1">
+            <span className="font-medium text-ink">New role</span>
+            <Select value={bulkRole} onChange={(v) => setBulkRole(v as Role)} options={ROLE_ORDER.map((r) => ({ value: r, label: ROLE_LABEL[r] }))} />
+          </label>
+          <ul aria-label={`What ${ROLE_LABEL[bulkRole]}s can do`} className="space-y-1">
+            {ROLE_CAN.workspace[bulkRole].can.map((c) => (
+              <li key={c} className="text-ink">
+                {c}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={bulkDialog === "remove"}
+        onOpenChange={(o) => !o && setBulkDialog(null)}
+        title={`Remove ${count} from ${workspace}?`}
+        description="They lose access now."
+        confirmLabel={`Remove ${count}`}
+        danger
+        onConfirm={() => {
+          setBulkDialog(null);
+          setErr(null);
+          void bulk.run(targets, (t) => bulkDel.mutateAsync({ user: t.id }));
+        }}
+      />
       {items.length === 0 && inherited.length === 0 ? (
         <EmptyState title="No one has access yet" />
       ) : (
         <DataTable caption="People with access to this workspace" stackBelow={900}>
           <thead>
             <tr>
-              <Th>Person</Th>
+              <Th>
+                {bulkOn && canOwn ? <BulkSelectAll label="Select all people" all={sel.all} some={sel.some} disabled={bulk.running} onChange={sel.setAll} /> : null}
+                Person
+              </Th>
               <Th>Role</Th>
               <Th>Joined</Th>
               <Th>
@@ -429,6 +507,7 @@ export function AccessTab({
                 lastOwner={b.role === "owner" && !b.implicit && directOwners === 1}
                 orgName={org.data?.name}
                 address={address}
+                select={canOwn ? { checked: sel.selected.has(b.user_id), onChange: (on) => sel.toggle(b.user_id, on), disabled: whyNot(b) !== undefined || bulk.running, title: whyNot(b) } : undefined}
                 wsId={wsId}
                 canOwn={canOwn}
                 candidates={items

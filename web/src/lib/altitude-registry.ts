@@ -71,7 +71,9 @@ export const ALTITUDE_REGISTRY = {
   "terminal.window": { altitude: "expert", area: "Terminal (Open in new window)" },
   "ssh.sessions": { altitude: "expert", area: "Computer: Connect (sessions, known_hosts)" },
   "export.yaml": { altitude: "expert", area: "Settings" },
-  "export.agent": { altitude: "expert", area: "Agent export", later: "P5-REFINE-19" },
+  "export.agent": { altitude: "expert", area: "Agent export and import (Settings)" },
+  // (P5-REFINE-19) Copy as curl on a webhook card and on an API key's menu.
+  "copy.curl": { altitude: "expert", area: "Webhook cards, API keys" },
   "ws.memlang": { altitude: "expert", area: "New workspace, Settings" },
   "chat.redact": { altitude: "expert", area: "Chat" },
   "org.byo": { altitude: "expert", area: "Agents (organization)" },
@@ -79,9 +81,10 @@ export const ALTITUDE_REGISTRY = {
   "org.groups": { altitude: "expert", area: "People" },
   "org.directory": { altitude: "expert", area: "People" },
   "apikeys": { altitude: "setup", area: "Account" },
-  "palette.verbs": { altitude: "expert", area: "Command palette", later: "P5-REFINE-19" },
-  "kbd": { altitude: "expert", area: "Keyboard shortcuts", later: "P5-REFINE-19" },
-  "bulk": { altitude: "expert", area: "Lists", later: "P5-REFINE-19" },
+  // The palette's verbs are a list the registry builds, not a wrapped control: `paletteVerbs` is listed when the altitude allows Expert.
+  "palette.verbs": { altitude: "expert", area: "Command palette", mark: true },
+  "kbd": { altitude: "expert", area: "Keyboard shortcuts" },
+  "bulk": { altitude: "expert", area: "Lists" },
   "fold.cli": { altitude: "expert", area: "CLI and API snippets" },
 } as const satisfies Record<string, AltitudeEntry>;
 

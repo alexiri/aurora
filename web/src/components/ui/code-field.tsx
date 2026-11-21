@@ -54,6 +54,7 @@ export function CodeField({
       </p>
       <div
         data-testid="code-field"
+        data-no-shortcuts=""
         aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
         className={cn("h-56 min-h-40 overflow-hidden rounded-control border bg-surface", error ? "border-danger-ink" : "border-line-strong")}
         onKeyDownCapture={(e) => {

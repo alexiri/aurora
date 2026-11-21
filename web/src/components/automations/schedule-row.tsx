@@ -145,7 +145,9 @@ export function ScheduleRow({
   wsId,
   canOwn,
   initiallyShowRuns = false,
+  select,
 }: {
+  select?: { checked: boolean; onChange: (on: boolean) => void };
   agentId: string;
   s: Schedule;
   agentBase: string;
@@ -204,6 +206,7 @@ export function ScheduleRow({
       name={s.name}
       on={s.enabled}
       done={done}
+      select={select}
       when={whenLine(s)}
       body={s.prompt}
       meta={

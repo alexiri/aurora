@@ -13,6 +13,7 @@ import { useCreateAgent } from "@/lib/api/agents";
 import { fieldErrors } from "@/lib/api/errors";
 import { useInstance, useMe, useWorkspace } from "@/lib/api/queries";
 import { AGENT_TEMPLATES, BRIEF_MAX, DRAFT_MAX, fillTemplate, templateFor, type AgentTemplateId } from "@/lib/onboarding/templates";
+import { useVerb } from "@/lib/palette-verb";
 import { wsRoutes } from "@/lib/routes";
 
 import { AgentRevealDialog, type Revealed } from "./reveal";
@@ -51,6 +52,8 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
         ? "BYO agents are for workspace owners only"
         : null;
   const [open, setOpen] = useState(false);
+  // (P5-REFINE-19) The palette's "New agent" opens this dialog.
+  useVerb("new-agent", () => setOpen(true));
   const [name, setName] = useState("");
   const [handle, setHandle] = useState<string | null>(null); // null = follows the name
   const [kind, setKind] = useState<"byo" | "hosted">("hosted");

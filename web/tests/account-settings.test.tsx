@@ -83,8 +83,8 @@ describe("KeysTab", () => {
       "POST /v1/workspaces/w/api-keys": () => json(201, { api_key: apiKey, key: "auk_topsecret" }),
     });
     wrap(<KeysTab wsId="w" workspaceName="Bob's Lab" />);
-    expect(await screen.findByText(/A key acts as you in this workspace through the Aurora API/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "API documentation" })).toHaveAttribute("href", "/v1/openapi.json");
+    expect(await screen.findByText(/Acts as you in this workspace through the Aurora API/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "OpenAPI description" })).toHaveAttribute("href", "/v1/openapi.json");
     fireEvent.click(await screen.findByRole("button", { name: "New API key" }));
     fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "ci" } });
     fireEvent.click(screen.getByRole("button", { name: "Create key" }));

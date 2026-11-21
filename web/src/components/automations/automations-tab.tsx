@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 
+import { AutomationsBulkBar, type BulkAutomation } from "@/components/automations/automations-bulk";
 import { RowMenu, RowShell } from "@/components/automations/row-parts";
 import { ScheduleForm } from "@/components/automations/schedule-form";
 import { ScheduleRow } from "@/components/automations/schedule-row";
@@ -11,9 +12,11 @@ import { WebhookRow } from "@/components/automations/webhook-row";
 import { ChannelsBody, NoChatYet } from "@/components/channels/agent-channels-tab";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Altitude } from "@/components/ui/altitude";
+import { BulkSelectAll, useBulkOn, useSelection } from "@/components/ui/bulk-bar";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { FromYourTerminal } from "@/components/ui/from-your-terminal";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { ErrorNotice } from "@/components/ui/notice";
 import { ClockIcon, LinkIcon, MessageIcon, PlusIcon } from "@/components/ui/icons";
@@ -25,6 +28,8 @@ import { useConnectors } from "@/lib/api/connectors";
 import { useSchedules } from "@/lib/api/schedules";
 import { useWebhooks } from "@/lib/api/webhooks";
 import { useWhoCan } from "@/lib/api/who-can";
+import { webhookCurl } from "@/lib/copy-as-curl";
+import { useVerb } from "@/lib/palette-verb";
 import { WhoCan } from "@/components/ui/who-can";
 
 type NewKind = "schedule" | "webhook" | "chat";
@@ -118,6 +123,19 @@ export function AutomationsTab({
   const [creating, setCreating] = useState<"schedule" | "webhook" | null>(null);
   const [reveal, setReveal] = useState<WebhookReveal | null>(null);
   const chatsRef = useRef<HTMLDivElement>(null);
+  // (P5-REFINE-19) The palette's "New schedule for <Agent>" and "New webhook for <Agent>" open the form the New automation choice opens.
+  useVerb("new-schedule", () => setCreating("schedule"), canOwn);
+  useVerb("new-webhook", () => setCreating("webhook"), canOwn);
+  // (P5-REFINE-19, `bulk`, Expert) A checkbox per schedule and webhook for an owner (a chat row has none), a bar above the list.
+  const bulkOn = useBulkOn();
+  // The selection is of what the filter shows: changing the filter drops the ticks that are no longer in the list.
+  const selectable = canOwn
+    ? [
+        ...(filter === "all" || filter === "schedules" ? (schedules.data?.items ?? []).map((s) => s.id) : []),
+        ...(filter === "all" || filter === "webhooks" ? (webhooks.data?.items ?? []).map((w) => w.id) : []),
+      ]
+    : [];
+  const sel = useSelection(selectable);
 
   if (schedules.isPending || webhooks.isPending) return <Loading />;
   if (schedules.isError) return <ErrorState error={schedules.error} onRetry={() => void schedules.refetch()} />;
@@ -130,7 +148,12 @@ export function AutomationsTab({
   const hasPlatform = (options.data?.items.length ?? 0) > 0 || chats.length > 0;
   const total = sch.length + hooks.length + chats.length;
   const show = (k: Exclude<AutomationFilter, "all">) => filter === "all" || filter === k;
-  const anyRow = (show("schedules") && sch.length > 0) || (show("webhooks") && hooks.length > 0) || (show("chats") && chats.length > 0);
+  const picked: BulkAutomation[] = [
+    ...sch.filter((s) => sel.selected.has(s.id)).map((s) => ({ id: s.id, name: s.name, kind: "schedule" as const, enabled: s.enabled, done: !s.cron && !!s.completed_at })),
+    ...hooks.filter((w) => sel.selected.has(w.id)).map((w) => ({ id: w.id, name: w.name, kind: "webhook" as const, enabled: w.enabled })),
+  ];
+  const pick = (id: string) => (canOwn ? { checked: sel.selected.has(id), onChange: (on: boolean) => sel.toggle(id, on) } : undefined);
+  const anyRow =(show("schedules") && sch.length > 0) || (show("webhooks") && hooks.length > 0) || (show("chats") && chats.length > 0);
 
   const start = (k: NewKind) => {
     setChoosing(false);
@@ -173,19 +196,44 @@ export function AutomationsTab({
       {total > 0 ? (
         <>
           <Segmented<AutomationFilter> label="Show" className="flex-wrap" value={filter} onChange={setFilter} options={filters} />
+          {selectable.length > 0 ? (
+            <>
+              {bulkOn ? (
+                <label className="flex items-center text-sm text-ink-2">
+                  <BulkSelectAll label="Select all automations" all={sel.all} some={sel.some} onChange={sel.setAll} />
+                  Select all
+                </label>
+              ) : null}
+              <AutomationsBulkBar agentId={agentId} picked={picked} onClear={sel.clear} />
+            </>
+          ) : null}
           {anyRow ? (
             <ItemList aria-label="Automations">
               {show("schedules")
                 ? sch.map((s) => (
-                    <ScheduleRow key={s.id} agentId={agentId} s={s} agentBase={agentBase} agentName={agentName} agentFrozen={agentFrozen} defaultTimezone={defaultTimezone} workspaceName={workspaceName} wsId={wsId} canOwn={canOwn} />
+                    <ScheduleRow key={s.id} agentId={agentId} s={s} agentBase={agentBase} agentName={agentName} agentFrozen={agentFrozen} defaultTimezone={defaultTimezone} workspaceName={workspaceName} wsId={wsId} canOwn={canOwn} select={pick(s.id)} />
                   ))
                 : null}
-              {show("webhooks") ? hooks.map((w) => <WebhookRow key={w.id} agentId={agentId} w={w} agentBase={agentBase} wsId={wsId} canOwn={canOwn} onReveal={setReveal} />) : null}
+              {show("webhooks")
+                ? hooks.map((w) => <WebhookRow key={w.id} agentId={agentId} w={w} agentBase={agentBase} wsId={wsId} canOwn={canOwn} onReveal={setReveal} select={pick(w.id)} />)
+                : null}
               {show("chats") ? chats.map((p) => <ChatRow key={p.id} agentId={agentId} agentName={agentName} p={p} platform={platformOf(p)} />) : null}
             </ItemList>
           ) : (
             <p className="text-sm text-muted">Nothing of this kind yet.</p>
           )}
+          {/* (P5-REFINE-19, `fold.cli`, Expert) The signed call from a shell; a card's Copy as curl does the same for that webhook's own verification. */}
+          {show("webhooks") && hooks.length > 0 ? (
+            <FromYourTerminal
+              commands={[
+                {
+                  label: "the curl command",
+                  text: webhookCurl({ url: '"$WEBHOOK_URL"', kind: "hmac_sha256" }),
+                  note: "Call a signed webhook from a shell: put its address in WEBHOOK_URL and its secret in SECRET. A card's Copy as curl does the same for that webhook's own verification.",
+                },
+              ]}
+            />
+          ) : null}
         </>
       ) : null}
 

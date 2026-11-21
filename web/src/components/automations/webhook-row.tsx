@@ -11,6 +11,8 @@ import { ErrorState, Loading } from "@/components/states";
 import { Altitude } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { CopyCurlButton } from "@/components/ui/copy-curl";
+import { webhookCurl } from "@/lib/copy-as-curl";
 import { LoadMore } from "@/components/ui/load-more";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
@@ -73,7 +75,9 @@ export function WebhookRow({
   wsId,
   canOwn,
   onReveal,
+  select,
 }: {
+  select?: { checked: boolean; onChange: (on: boolean) => void };
   agentId: string;
   w: Webhook;
   agentBase: string;
@@ -116,6 +120,7 @@ export function WebhookRow({
       kind="webhook"
       name={w.name}
       on={w.enabled}
+      select={select}
       when={w.enabled ? "When something arrives at its address" : "When something arrives at its address · paused, won't run until resumed"}
       body={w.instructions}
       meta={
@@ -139,6 +144,8 @@ export function WebhookRow({
           <Button size="sm" variant="outline" aria-expanded={showHowTo} onClick={() => setShowHowTo((v) => !v)}>
             How to call it
           </Button>
+          {/* (P5-REFINE-19, Expert) The same command the panel shows, for the address as the card has it; $SECRET, never the secret. */}
+          <CopyCurlButton command={webhookCurl({ url: w.url_prefix, prefixOnly: true, kind, header: w.verification.header })} />
           {/* Below 640 px Deliveries stays on the row. */}
           <Button size="sm" variant="outline" className="sm:hidden" aria-expanded={showDeliveries} onClick={() => setShowDeliveries((v) => !v)}>
             Deliveries

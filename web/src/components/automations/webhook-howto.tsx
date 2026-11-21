@@ -5,12 +5,9 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { copyLabel, useCopy } from "@/lib/use-copy";
-import { callSentence, SNIPPET_LANGUAGES, webhookSnippet, type SnippetLanguage, type WebhookAuth } from "@/lib/webhook-snippets";
+import { authKind, callSentence, SNIPPET_LANGUAGES, webhookSnippet, type SnippetLanguage, type WebhookAuth } from "@/lib/webhook-snippets";
 
-/** A stored verification kind (`none`, `hmac_sha256`, `bearer`) as the snippets know it. */
-export function authKind(kind: string | null | undefined): WebhookAuth {
-  return kind === "bearer" ? "bearer" : kind === "none" ? "none" : "hmac_sha256";
-}
+export { authKind };
 
 /**
  * (P5-REFINE-14, webhooks-1) **How to call it**: what the sender must send, and a real snippet to copy (curl, Python, Node)

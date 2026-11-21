@@ -395,6 +395,16 @@ pub async fn get_org_named(pool: &PgPool, org: Uuid, name: &str) -> Result<Skill
     view(&mut c, r).await
 }
 
+/// One file of the skill, bytes as stored (C-1099): the path is validated as for a write, and the lookup is
+/// by (skill id, path), so another skill's file is never reachable.
+pub async fn file(pool: &PgPool, id: Uuid, path: &str) -> Result<repo::FileRow, ApiError> {
+    validate_path(path)?;
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    repo::file(&mut c, id, path)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Skill file not found."))
+}
+
 /// Text content of one file (UTF-8 only).
 pub async fn read_file(pool: &PgPool, id: Uuid, path: &str) -> Result<String, ApiError> {
     let mut c = pool.acquire().await.map_err(DbError::from)?;

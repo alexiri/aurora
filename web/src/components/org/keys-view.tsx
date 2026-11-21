@@ -5,6 +5,10 @@ import { useState, type FormEvent } from "react";
 import { KeyTable } from "@/components/account/key-table";
 import { SecretOnce } from "@/components/ui/secret-once";
 import { ErrorState, Loading } from "@/components/states";
+import { Altitude } from "@/components/ui/altitude";
+import { FromYourTerminal } from "@/components/ui/from-your-terminal";
+import { apiKeyCurl } from "@/lib/copy-as-curl";
+import { useOrigin } from "@/lib/use-origin";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
 import { Field, inputClass } from "@/components/ui/field";
@@ -18,6 +22,7 @@ import { orgKeys, useCreateOrgKey, useOrgKeys } from "@/lib/api/org";
 
 export function OrgKeysView({ orgId }: { orgId: string }) {
   const keys = useOrgKeys(orgId);
+  const origin = useOrigin();
   const create = useCreateOrgKey(orgId);
   const revoke = useRevokeApiKey(orgKeys.keys(orgId));
   const [name, setName] = useState("");
@@ -50,7 +55,21 @@ export function OrgKeysView({ orgId }: { orgId: string }) {
 
   return (
     <div className="max-w-page space-y-8">
-      <PageHeader title="Organization API keys" description="Keys that act for the whole organization, for scripts and integrations." className="mb-6" />
+      <PageHeader
+        title="Organization API keys"
+        description={
+          <>
+            Acts for this organization through the Aurora API, with the scope each key was given. For scripts and integrations.
+            <Altitude id="copy.curl" level="expert">
+              {" "}
+              <a className="text-link underline" href="/v1/openapi.json" target="_blank" rel="noreferrer">
+                OpenAPI description
+              </a>
+            </Altitude>
+          </>
+        }
+        className="mb-6"
+      />
       <Section id="okey-create" title="Create a key" description="The key is shown once, right after you create it." card>
         <form onSubmit={(e) => void submit(e)} noValidate className="flex flex-wrap items-start gap-x-4 gap-y-3">
           <Field id="okey-name" label="Key name" error={clientErr || fe.name}>
@@ -84,6 +103,7 @@ export function OrgKeysView({ orgId }: { orgId: string }) {
             error={revoke.error}
           />
         ) : null}
+        <FromYourTerminal commands={[{ label: "the curl command", text: apiKeyCurl(origin), note: "Call the API with an organization key you saved: it answers with who the key acts for." }]} />
       </Section>
       <SecretOnce
         secret={created?.secret ?? null}

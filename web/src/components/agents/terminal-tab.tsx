@@ -546,7 +546,8 @@ export function TerminalPane({
   };
 
   return (
-    <div className="space-y-3">
+    // (P5-REFINE-19) The terminal keeps every key, ⌘K included.
+    <div className="space-y-3" data-no-shortcuts="">
       {status ? (
         <Notice tone="neutral" role="status" aria-live="polite">
           {status}

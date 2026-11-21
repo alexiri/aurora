@@ -12,6 +12,7 @@ import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/compo
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import { authorityRank, type Frozen } from "@/lib/api/freeze";
+import { useVerb } from "@/lib/palette-verb";
 
 export type FreezeSubject = "agent" | "workspace" | "org";
 
@@ -104,6 +105,8 @@ export function FreezeControl({
   const label = SUBJECT_LABEL[subject];
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
+  // (P5-REFINE-19) The palette's "Pause <Agent>" opens the confirm the button opens; it never pauses by itself.
+  useVerb("pause-agent", () => setOpen(true), subject === "agent" && !frozen);
 
   async function submit(e: FormEvent) {
     e.preventDefault();

@@ -21,6 +21,7 @@ import { useApprovalsStream, useCanApprove } from "@/lib/api/approvals";
 import { chatApi, useConversationById, useConversationFolders, useConversations, useDirectConversation, type Conversation } from "@/lib/api/conversations";
 import { lifecycleError, refreshConversations } from "./conversation-actions";
 import { useRetention } from "@/lib/api/org";
+import { useVerb } from "@/lib/palette-verb";
 import { conversationTitle, filterConversations, groupConversations, isOwnDirect, sortByActivity, type ListGroups } from "@/lib/chat/layout";
 
 import type { AgentPageId } from "./sections";
@@ -75,6 +76,12 @@ function useSelectedConversation(): [string | null, (id: string | null, mode?: "
  * The agent's Chat tab (D-102): a thin composition of the messaging panel from `components/chat`: the conversation
  * list (title filter, Active/Archived) and the thread of the selected conversation.
  */
+/** (P5-REFINE-19) The palette's "New chat with <Agent>" and the `n` shortcut start the chat the New chat button starts. */
+function NewChatVerb({ run }: { run: () => void }) {
+  useVerb("new-chat", run);
+  return null;
+}
+
 export function ChatTab({
   agentId,
   wsId,
@@ -327,6 +334,7 @@ export function ChatTab({
         </button>
       ) : null}
       <StatusSheet ctx={ctx} open={statusSheetOpen} onOpenChange={(o) => onStatusSheetOpenChange?.(o)} />
+      <NewChatVerb run={newChat} />
     <ChatPanel
       threadOpen={threadOpen}
       listWide={!!submitted}

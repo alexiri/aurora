@@ -4,6 +4,11 @@
  */
 
 export type WebhookAuth = "hmac_sha256" | "bearer" | "none";
+/** A stored verification kind (`none`, `hmac_sha256`, `bearer`) as the snippets know it. */
+export function authKind(kind: string | null | undefined): WebhookAuth {
+  return kind === "bearer" ? "bearer" : kind === "none" ? "none" : "hmac_sha256";
+}
+
 export type SnippetLanguage = "curl" | "python" | "node";
 
 export const SNIPPET_LANGUAGES: readonly { value: SnippetLanguage; label: string }[] = [

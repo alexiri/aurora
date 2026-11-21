@@ -1049,6 +1049,7 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/skills/{id}", G::Auth, false),
     r("PATCH", "/v1/skills/{id}", G::Auth, false),
     r("DELETE", "/v1/skills/{id}", G::Auth, false),
+    r("GET", "/v1/skills/{id}/files/{path}", G::Auth, false),
     r("PUT", "/v1/skills/{id}/files/{path}", G::Auth, false),
     r("DELETE", "/v1/skills/{id}/files/{path}", G::Auth, false),
     // (phase 4, P4-GSL) git skill libraries: management by org owner/admin, browse by anyone who

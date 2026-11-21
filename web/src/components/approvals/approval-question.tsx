@@ -130,7 +130,7 @@ export function ApprovalQuestion({ approval: a, now, onDecide, pending, message,
       {canApprove ? (
         // At 390 px: Allow once and Block side by side, Always allow under them (44 px targets).
         <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
-          <Button className="min-h-11 sm:min-h-10" size={compact ? "default" : "lg"} variant="approve" disabled={pending} onClick={() => (a.parked ? setConfirming(true) : onDecide("approve"))}>
+          <Button data-approval-key="allow-once" className="min-h-11 sm:min-h-10" size={compact ? "default" : "lg"} variant="approve" disabled={pending} onClick={() => (a.parked ? setConfirming(true) : onDecide("approve"))}>
             Allow once
           </Button>
           {a.can_always_allow ? (
@@ -138,7 +138,7 @@ export function ApprovalQuestion({ approval: a, now, onDecide, pending, message,
               Always allow
             </Button>
           ) : null}
-          <Button className="min-h-11 sm:min-h-10" size={compact ? "default" : "lg"} variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
+          <Button data-approval-key="block" className="min-h-11 sm:min-h-10" size={compact ? "default" : "lg"} variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
             Block
           </Button>
           {a.asked_by?.kind === "rule" ? <span className="col-span-2 order-last text-xs text-muted sm:order-none sm:col-auto">Always allow is not offered for a rule&apos;s question.</span> : null}

@@ -5,6 +5,11 @@ import { useState, type FormEvent } from "react";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
+import { Altitude } from "@/components/ui/altitude";
+import { CopyCurlMenu } from "@/components/ui/copy-curl";
+import { FromYourTerminal } from "@/components/ui/from-your-terminal";
+import { apiKeyCurl } from "@/lib/copy-as-curl";
+import { useOrigin } from "@/lib/use-origin";
 import { DateField } from "@/components/ui/date-field";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/notice";
@@ -26,6 +31,7 @@ export function keyCanText(workspaceName: string): string {
  * first. The secret is shown once in `SecretOnce`.
  */
 export function KeysTab({ wsId, workspaceName = "this workspace" }: { wsId: string; workspaceName?: string }) {
+  const origin = useOrigin();
   const keys = useWorkspaceKeys(wsId);
   const create = useCreateWorkspaceKey(wsId);
   const revoke = useRevokeApiKey(accountKeys.wsKeys(wsId));
@@ -75,11 +81,14 @@ export function KeysTab({ wsId, workspaceName = "this workspace" }: { wsId: stri
         <Button onClick={() => setDialog(true)}>New API key</Button>
       </div>
       <p className="text-sm text-ink-2">
-        A key acts as you in this workspace through the Aurora API. Anyone who has it can do what you can, so keep it secret.{" "}
-        {/* The instance serves its API description at /v1/openapi.json. */}
-        <a className="text-link underline" href="/v1/openapi.json" target="_blank" rel="noreferrer">
-          API documentation
-        </a>
+        Acts as you in this workspace through the Aurora API. Anyone who has a key can do what you can, so keep it secret.
+        {/* The instance serves its API description at /v1/openapi.json (Expert: it is for people who write calls). */}
+        <Altitude id="copy.curl" level="expert">
+          {" "}
+          <a className="text-link underline" href="/v1/openapi.json" target="_blank" rel="noreferrer">
+            OpenAPI description
+          </a>
+        </Altitude>
       </p>
       {keys.isPending ? <SkeletonRows rows={2} label="Loading your keys…" /> : null}
       {keys.isError ? <ErrorState error={keys.error} onRetry={() => keys.refetch()} /> : null}
@@ -102,6 +111,8 @@ export function KeysTab({ wsId, workspaceName = "this workspace" }: { wsId: stri
                   )}
                 </p>
               </div>
+              {/* (P5-REFINE-19, Expert) The call the key's own row makes: placeholders only, never the key. */}
+              <CopyCurlMenu subject={k.name} command={() => apiKeyCurl(window.location.origin)} />
               <Button variant="danger" size="sm" aria-label={`Revoke ${k.name}`} onClick={() => setTarget(k)}>
                 Revoke
               </Button>
@@ -109,6 +120,12 @@ export function KeysTab({ wsId, workspaceName = "this workspace" }: { wsId: stri
           ))}
         </ul>
       ) : null}
+      <FromYourTerminal
+        commands={[
+          { label: "the aurora login command", text: "aurora login", note: "Sign in from your terminal once; the CLI stores a key of its own." },
+          { label: "the curl command", text: apiKeyCurl(origin), note: "Call the API with a key you saved: it answers with who the key acts as." },
+        ]}
+      />
 
       <FormDialog
         open={dialog}

@@ -407,12 +407,28 @@ describe("account menu", () => {
     expect(screen.getByText("bob@example.org")).toBeInTheDocument();
   });
 
+  it("lists Keyboard shortcuts only while the switch is on (P5-REFINE-19)", async () => {
+    onWorkspace();
+    await openMenu();
+    expect(await screen.findByRole("menuitem", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Show more controls" }));
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Keyboard shortcuts" })).toBeNull());
+  });
+
+  it("has Search with the palette shortcut in the rail's footer (P5-REFINE-19)", async () => {
+    onWorkspace();
+    const shell = screen.getByRole("complementary", { name: "Sidebar" });
+    const search = within(shell).getByRole("button", { name: /^Search/ });
+    expect(search).toHaveTextContent(/Ctrl K|⌘K/);
+  });
+
   it("is headed by the display name and e-mail, with Sign out apart", async () => {
     onWorkspace();
     await openMenu();
     expect(await screen.findByText("bob@example.org")).toBeInTheDocument();
     const items = (await screen.findAllByRole("menuitem")).map((i) => i.textContent);
-    expect(items).toEqual(["Your account", "Show me around", "Sign out"]);
+    // (P5-REFINE-19) "Keyboard shortcuts" is an Expert entry: it shows with Show more controls on.
+    expect(items).toEqual(["Your account", "Keyboard shortcuts", "Show me around", "Sign out"]);
     expect(screen.getAllByRole("separator")).toHaveLength(2);
   });
 
@@ -420,7 +436,7 @@ describe("account menu", () => {
     onWorkspace({ admin: true });
     await openMenu();
     const items = (await screen.findAllByRole("menuitem")).map((i) => i.textContent);
-    expect(items).toEqual(["Your account", "Administration", "Show me around", "Sign out"]);
+    expect(items).toEqual(["Your account", "Administration", "Keyboard shortcuts", "Show me around", "Sign out"]);
   });
 });
 
