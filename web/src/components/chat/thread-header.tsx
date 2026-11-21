@@ -6,8 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowLeftIcon, LockIcon } from "@/components/ui/icons";
 
 /**
- * The thread header: a 44 px back button on phones, the title with one muted meta line (visibility, kind,
- * archived date, retention window), the connection pill and the actions slot.
+ * The thread header: a 44 px back button on phones, the title, one muted meta line (visibility, kind, archived date,
+ * retention window), the connection pill and the actions slot.
+ *
+ * Below 1280 px the meta line has its own full-width row under the title row: the title row is 64 px, so the row's border
+ * stays level with the status panel's header (P5-POLISH-6), and the whole line (the privacy note, "Archived … · read only")
+ * wraps there in full, so nothing needs a hover. From 1280 px it sits under the title, inside the 64 px header.
  */
 export function ThreadHeader({
   title,
@@ -27,43 +31,54 @@ export function ThreadHeader({
   onBack?: () => void;
   actions?: ReactNode;
 }) {
+  const hasMeta = !!visibility || segments.length > 0;
   return (
-    // (P5-POLISH-6) 64 px, the same as the status panel's header, so their bottom borders form one line.
-    <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 md:h-16 md:px-5 md:py-0">
+    <header
+      className={
+        "flex shrink-0 flex-wrap items-center border-line px-3 py-2.5 md:px-5 md:py-0 xl:h-16 xl:flex-nowrap " +
+        (hasMeta ? "xl:border-b" : "border-b")
+      }>
       {onBack ? (
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label="Back to conversations"
-          className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink lg:hidden">
-          <ArrowLeftIcon aria-hidden="true" width={20} height={20} />
-        </button>
+        <div className="mr-2 flex items-center md:h-16 lg:mr-0 xl:h-auto">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Back to conversations"
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink lg:hidden">
+            <ArrowLeftIcon aria-hidden="true" width={20} height={20} />
+          </button>
+        </div>
       ) : null}
-      <div className="min-w-0 flex-1">
-        <h2 className="truncate font-display text-base font-semibold text-ink">{title}</h2>
-        {/* (chat-11) On a phone the list is one tap back: the arrow and its word, "Conversations", under the title. */}
-        {/* From 768 the 64 px header holds the title and the meta line (two lines at 768–900); the arrow alone goes back. */}
-        {onBack ? <p className="text-xs text-muted md:hidden">Conversations</p> : null}
-        {/* At 768–1023 the thread is ~390 px wide and the line can wrap to three lines: two fit the 64 px header, the rest is cut (the full text is the tooltip). */}
-        <p
-          title={[visibility, ...segments].filter(Boolean).join(" · ") || undefined}
-          className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted md:max-h-8 md:overflow-hidden lg:max-h-none">
-          {visibility ? (
-            <span className="inline-flex min-w-0 items-center gap-1">
-              <LockIcon aria-hidden="true" width={12} height={12} className="shrink-0" />
-              <span>{visibility}</span>
-            </span>
-          ) : null}
-          {segments.map((seg, i) => (
-            <span key={seg}>
-              {visibility || i > 0 ? <span aria-hidden="true">· </span> : null}
-              {seg}
-            </span>
-          ))}
-        </p>
+      {/* Below 1280 this wrapper melts away: the title is a flex item and the meta line a full-width row after the pill and actions. */}
+      <div className="contents xl:block xl:min-w-0 xl:flex-1">
+        <div className="min-w-0 flex-1 md:flex md:h-16 md:flex-col md:justify-center xl:block xl:h-auto xl:flex-none">
+          <h2 className="truncate font-display text-base font-semibold text-ink">{title}</h2>
+          {/* (chat-11) On a phone the list is one tap back: the arrow and its word, "Conversations", under the title. */}
+          {onBack ? <p className="text-xs text-muted md:hidden">Conversations</p> : null}
+        </div>
+        {hasMeta ? (
+          <p
+            data-testid="thread-meta"
+            className="order-2 -mx-3 mt-2 flex w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 border-y border-line px-3 py-2 text-xs text-muted md:-mx-5 md:-mt-px md:px-5 xl:m-0 xl:w-auto xl:border-0 xl:p-0">
+            {visibility ? (
+              <span className="inline-flex min-w-0 items-start gap-1">
+                <LockIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0" />
+                <span>{visibility}</span>
+              </span>
+            ) : null}
+            {segments.map((seg, i) => (
+              <span key={seg}>
+                {visibility || i > 0 ? <span aria-hidden="true">· </span> : null}
+                {seg}
+              </span>
+            ))}
+          </p>
+        ) : null}
       </div>
-      {live === null ? null : live ? <Badge tone="accent">Live</Badge> : <Badge>Reconnecting…</Badge>}
-      {actions}
+      <div className="order-1 ml-2 flex items-center gap-2 md:h-16 xl:order-none xl:h-auto">
+        {live === null ? null : live ? <Badge tone="accent">Live</Badge> : <Badge>Reconnecting…</Badge>}
+        {actions}
+      </div>
     </header>
   );
 }
