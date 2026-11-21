@@ -26,16 +26,20 @@ export function violationsOf(err: unknown): PluginViolation[] {
   return Array.isArray(v) ? (v as PluginViolation[]) : [];
 }
 
-export function ViolationList({ violations }: { violations: PluginViolation[] }) {
+export function ViolationList({ violations, said }: { violations: PluginViolation[]; said?: string }) {
   if (violations.length === 0) return null;
+  // (P5-REFINE-20 #15, admin-12) One problem whose sentence is already the error's message (C-1071) is said once, not twice.
+  const repeated = violations.length === 1 && !!said && violations[0]!.sentence?.trim() === said.trim();
   return (
     // (P5-REFINE-18 admin-12, C-1071) A sentence per problem; the codes, paths and the validator's words are under Technical details.
     <div className="space-y-1">
-      <ul aria-label="Violations" className="list-disc space-y-1 pl-5 text-sm text-danger-ink">
-        {violations.map((v, i) => (
-          <li key={`${v.code}-${v.path}-${i}`}>{v.sentence?.trim() || "The package has a problem. See Technical details."}</li>
-        ))}
-      </ul>
+      {repeated ? null : (
+        <ul aria-label="Violations" className="list-disc space-y-1 pl-5 text-sm text-danger-ink">
+          {violations.map((v, i) => (
+            <li key={`${v.code}-${v.path}-${i}`}>{v.sentence?.trim() || "The package has a problem. See Technical details."}</li>
+          ))}
+        </ul>
+      )}
       <TechnicalDetails title="Technical details">
         <ul className="space-y-1">
           {violations.map((v, i) => (
@@ -95,7 +99,7 @@ export function UploadForm({ onDone }: { onDone?: () => void }) {
       {upload.isError ? (
         <Notice tone="danger" role="alert" className="space-y-1">
           <p>{errorMessage(upload.error)}</p>
-          <ViolationList violations={violationsOf(upload.error)} />
+          <ViolationList violations={violationsOf(upload.error)} said={errorMessage(upload.error)} />
         </Notice>
       ) : null}
       {upload.data?.status === "invalid" ? (
