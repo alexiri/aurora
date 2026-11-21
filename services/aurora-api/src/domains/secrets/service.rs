@@ -453,7 +453,10 @@ pub async fn create(
             aurora_llm::AuthMode::parse(mode).unwrap_or(aurora_llm::AuthMode::ApiKey),
         )
         .await?;
-        let o = llm::check_key(
+        // (C-1065) Bounded: an endpoint that does not answer leaves the key pending and the
+        // background re-check goes on; the save does not wait for the HTTP timeout.
+        let o = llm::check_key_within(
+            INLINE_CHECK_BUDGET,
             &state.llm_http,
             lc.provider.as_ref(),
             &lc.ep,
@@ -753,7 +756,8 @@ pub async fn set_value(
             &key,
         )?;
         let check = llm::key_check(&state.pool, row.org_id, auth_mode_of(row)).await?;
-        let o = llm::check_key(
+        let o = llm::check_key_within(
+            INLINE_CHECK_BUDGET,
             &state.llm_http,
             lc.provider.as_ref(),
             &lc.ep,
@@ -860,6 +864,27 @@ fn recheck_schedule() -> [std::time::Duration; 3] {
     RECHECK_SCHEDULE.get().copied().unwrap_or(RECHECK_AT)
 }
 
+/// How long a save's own check of a key waits for an endpoint when no origin rule applies
+/// (C-1065, amended by P5-REFINE-20): past it the key is saved `pending` and re-checked in the
+/// background. With a rule the save needs the proof and waits for it (the HTTP timeout).
+pub const INLINE_CHECK_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
+
+static RECHECK_ATTEMPT_BUDGET: std::sync::OnceLock<std::time::Duration> =
+    std::sync::OnceLock::new();
+
+/// Tests only: shorten how long one background re-check waits for the endpoint (first caller
+/// wins; otherwise the HTTP client's own `LLM_ORIGIN_CHECK_TIMEOUT`).
+pub fn set_recheck_attempt_budget(d: std::time::Duration) {
+    let _ = RECHECK_ATTEMPT_BUDGET.set(d);
+}
+
+fn recheck_attempt_budget() -> std::time::Duration {
+    RECHECK_ATTEMPT_BUDGET
+        .get()
+        .copied()
+        .unwrap_or(aurora_core::limits::LLM_ORIGIN_CHECK_TIMEOUT)
+}
+
 fn is_pending(row: &SecretRow) -> bool {
     row.origin
         .as_ref()
@@ -895,7 +920,9 @@ fn spawn_recheck(state: &AppState, row: &SecretRow) {
             if row.status != "active" || !is_pending(&row) {
                 break;
             }
-            if let Ok(o) = verify(&state, &row).await
+            // Each attempt is bounded and rewrites the pending origin's `checked_at` and why, so
+            // once the last one is over the key's state is final (`not_checked`, C-1065).
+            if let Ok(o) = verify_within(&state, &row, Some(recheck_attempt_budget())).await
                 && o.status != "pending"
             {
                 break;
@@ -910,6 +937,16 @@ fn spawn_recheck(state: &AppState, row: &SecretRow) {
 
 /// Re-verify the stored key; persists mismatch/unverifiable results.
 pub async fn verify(state: &AppState, row: &SecretRow) -> Result<StoredOrigin, ApiError> {
+    verify_within(state, row, None).await
+}
+
+/// [`verify`], giving up after `budget` (when set and no origin rule applies) with the key left
+/// `pending` and `endpoint_unreachable` stored.
+async fn verify_within(
+    state: &AppState,
+    row: &SecretRow,
+    budget: Option<std::time::Duration>,
+) -> Result<StoredOrigin, ApiError> {
     if row.kind != "llm" || row.status != "active" {
         return Err(ApiError::unprocessable(
             "not_llm_secret",
@@ -927,16 +964,34 @@ pub async fn verify(state: &AppState, row: &SecretRow) -> Result<StoredOrigin, A
     )
     .await?;
     let check = llm::key_check(&state.pool, row.org_id, auth_mode_of(row)).await?;
-    let o = llm::check_key(
-        &state.llm_http,
-        lc.provider.as_ref(),
-        &lc.ep,
-        &check,
-        &lc.eff,
-        &key,
-        i64::from(row.value_version),
-    )
-    .await
+    let version = i64::from(row.value_version);
+    let o = match budget {
+        Some(b) => {
+            llm::check_key_within(
+                b,
+                &state.llm_http,
+                lc.provider.as_ref(),
+                &lc.ep,
+                &check,
+                &lc.eff,
+                &key,
+                version,
+            )
+            .await
+        }
+        None => {
+            llm::check_key(
+                &state.llm_http,
+                lc.provider.as_ref(),
+                &lc.ep,
+                &check,
+                &lc.eff,
+                &key,
+                version,
+            )
+            .await
+        }
+    }
     .map_err(llm::KeyFail::into_error)?;
     let _ = c;
     let j = serde_json::to_value(&o).map_err(|_| ApiError::internal("Internal error."))?;

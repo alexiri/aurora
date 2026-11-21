@@ -16103,7 +16103,8 @@ export interface components {
         Verification: {
             /**
              * Format: date-time
-             * @description When the evidence behind `state` was recorded; null for `checking` / `not_checked`.
+             * @description When the evidence behind `state` was recorded; null for `checking`. For `not_checked`, the
+             *     last check that got no answer (null when none ran).
              */
             checked_at?: string | null;
             state: components["schemas"]["VerificationState"];

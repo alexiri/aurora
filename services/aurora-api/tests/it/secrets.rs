@@ -26,6 +26,9 @@ struct World {
     _anthropic: MockServer,
     /// (FIX-105) answers 503 on `/v1/models`.
     _flaky: MockServer,
+    /// (P5-REFINE-20 b1#1) never answers in time: every request waits a minute (an API with no
+    /// egress to the endpoint, as the dev cluster's `litellm-mock`).
+    _silent: MockServer,
     /// (P4-LLM-1) answers as api.openai.com (reached through `llm.dev_upstream_overrides`).
     _openai: MockServer,
     /// (P4-LLM-2) Google's token endpoint (`llm.dev_upstream_overrides`) and the service-account key it accepts.
@@ -212,6 +215,12 @@ async fn world() -> World {
         sts.on_session(move |ak, sk, tok| b.accept_key(ak, sk, Some(tok)));
     }
     let (bu, su) = (bedrock.base().to_owned(), sts.base().to_owned());
+    let silent = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(60)))
+        .mount(&silent)
+        .await;
+    let silent_uri = silent.uri();
     let (lu, au, fu) = (litellm.uri(), anthropic.uri(), flaky.uri());
     let ou = openai.uri();
     let h = Harness::with_config(move |c| {
@@ -251,6 +260,7 @@ async fn world() -> World {
                 }),
             ),
             endpoint("dead", "http://127.0.0.1:1", None),
+            endpoint("silent", &silent_uri, None),
             // (FIX-105) a static model list must not turn an endpoint that answers 503 into a
             // verified key.
             LlmEndpoint {
@@ -391,7 +401,7 @@ async fn world() -> World {
         .bind(json!({"llm": {"endpoints": {
             "central": {"key_scopes": ["organization"]},
             "dead": {}, "dead_rule": {}, "anthropic": {}, "team": {}, "team_req": {},
-            "flaky": {}, "flaky_rule": {}, "oai": {}, "compat": {}, "vx": {}, "vx_other": {},
+            "flaky": {}, "flaky_rule": {}, "silent": {}, "oai": {}, "compat": {}, "vx": {}, "vx_other": {},
             "az": {}, "az_tenant": {}, "az_other": {},
             "bd": {}, "bd_static": {}, "bd_acct": {}, "bd_other": {}
         }}}))
@@ -420,6 +430,7 @@ async fn world() -> World {
         _litellm: litellm,
         _anthropic: anthropic,
         _flaky: flaky,
+        _silent: silent,
         _openai: openai,
         google,
         vkey,
@@ -2153,6 +2164,88 @@ async fn refine5_a_pending_key_is_rechecked_in_the_background_and_then_works() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(!svc::recheck_queued(id), "the task ends at the first pass");
+}
+
+/// P5-REFINE-20 b1#1 (C-1065): an endpoint that never answers Aurora (the dev cluster's
+/// `litellm-mock`: the API has no egress to it, only the gateway has) does not hold the save for
+/// the HTTP timeout, and its key does not say `checking` forever: once the re-checks are over the
+/// state is final (`not_checked`, with when it was last tried and why), and a real call makes it
+/// `works`.
+#[tokio::test]
+async fn refine20_a_key_on_a_silent_endpoint_saves_quickly_and_ends_in_a_final_state() {
+    use aurora_api::domains::secrets::service as svc;
+    use std::time::{Duration, Instant};
+    svc::set_recheck_schedule([
+        Duration::from_millis(1500),
+        Duration::from_millis(2500),
+        Duration::from_millis(3500),
+    ]);
+    // One background attempt waits 1 s here (the HTTP timeout, 10 s, in production).
+    svc::set_recheck_attempt_budget(Duration::from_secs(1));
+    let w = world().await;
+    let started = Instant::now();
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.owner,
+            Some(json!({
+                "name": "silent-key", "kind": "llm", "llm": {"endpoint_id": "silent"},
+                "value": "sk-silent"})),
+        )
+        .await;
+    let took = started.elapsed();
+    assert_eq!(s, 201, "{v}");
+    assert!(
+        took < Duration::from_secs(6),
+        "the save waited {took:?} for an endpoint that does not answer"
+    );
+    assert_eq!(v["origin"]["status"], "pending", "{v}");
+    assert_eq!(v["origin"]["detail"], "endpoint_unreachable", "{v}");
+    let id: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    async fn verification(w: &World) -> Value {
+        let uri = format!("/v1/orgs/{}/accounts?kind=ai_key", w.org);
+        let (s, v) = w.call(Method::GET, &uri, &w.owner, None).await;
+        assert_eq!(s, 200, "{v}");
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["name"] == "silent-key")
+            .cloned()
+            .unwrap()["verification"]
+            .clone()
+    }
+    assert_eq!(verification(&w).await["state"], "checking");
+
+    // The re-checks run and end (bounded), and the state is final: never `checking` again.
+    for _ in 0..200 {
+        if !svc::recheck_queued(id) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(!svc::recheck_queued(id), "the re-checks are over");
+    let ver = verification(&w).await;
+    assert_eq!(ver["state"], "not_checked", "{ver}");
+    assert!(
+        ver["checked_at"].is_string(),
+        "when it was last tried: {ver}"
+    );
+    let origin: Value = sqlx::query_scalar("SELECT origin FROM secrets WHERE id = $1")
+        .bind(id)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(origin["detail"], "endpoint_unreachable", "{origin}");
+
+    // A real call through the gateway succeeds: the key works (as the Company key does).
+    sqlx::query("UPDATE secrets SET last_ok_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(verification(&w).await["state"], "works");
 }
 
 /// C-1065: a key the provider rejects at save is `422 llm_key_invalid` and stores nothing.
