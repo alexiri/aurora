@@ -388,6 +388,8 @@ async fn put_skill_file(
     Ok(Json(service::dto(&s.pool, v).await?))
 }
 
+// Like attachments, always `application/octet-stream` with `Content-Disposition: attachment`
+// and `nosniff`, whatever the stored file is (kept out of the doc comment: it is the OpenAPI summary).
 /// Read one skill file: the stored bytes (C-1099).
 #[utoipa::path(get, path = "/skills/{id}/files/{*path}", operation_id = "getSkillFile",
     tag = "skills",
@@ -406,9 +408,14 @@ async fn get_skill_file(
     let cur = service::row(&s.pool, id).await?;
     authorize(&c, &s, &cur, false).await?;
     let f = service::file(&s.pool, id, &path).await?;
+    // The path is validated to `[A-Za-z0-9._/-]`, so its last segment is safe inside quotes.
+    let name = path.rsplit('/').next().unwrap_or("file");
+    let disposition = format!("attachment; filename=\"{name}\"");
     Ok((
         [
             (header::CONTENT_TYPE, "application/octet-stream"),
+            (header::CONTENT_DISPOSITION, disposition.as_str()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
             (
                 HeaderName::from_static("x-skill-file-executable"),
                 if f.executable { "true" } else { "false" },

@@ -352,6 +352,16 @@ impl Rig {
             .headers()
             .get("x-skill-file-executable")
             .map(|v| v.to_str().unwrap().to_owned());
+        if status == 200 {
+            // Bytes people wrote answer like attachments, whatever the stored file is (C-1099).
+            let h = res.headers();
+            assert_eq!(h["content-type"], "application/octet-stream");
+            assert_eq!(h["x-content-type-options"], "nosniff");
+            let cd = h["content-disposition"].to_str().unwrap();
+            assert!(cd.starts_with("attachment"), "{cd}");
+            let last = uri.rsplit('/').next().unwrap();
+            assert_eq!(cd, format!("attachment; filename=\"{last}\""));
+        }
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         (status, exec, bytes.to_vec())
     }
