@@ -48,9 +48,9 @@ export function usePaletteContext(): PaletteContext {
     const open = agentList.find((a) => a.handle === handle);
     const av = {
       byo: open?.byo === true,
-      previews: instance.data?.features.previews === true && org.data?.settings.previews_enabled === true,
-      terminal: instance.data?.features.terminal === true,
-      ssh: instance.data?.features.ssh === true,
+      previews: instance.data?.features?.previews === true && org.data?.settings?.previews_enabled === true,
+      terminal: instance.data?.features?.terminal === true,
+      ssh: instance.data?.features?.ssh === true,
     };
     const pages = open ? availableSections(av, altitude.allows).flatMap((s) => s.pages) : [];
     return {
@@ -69,7 +69,7 @@ export function usePaletteContext(): PaletteContext {
       agentPages: pages.map((p: { id: AgentPageId; label: string }) => ({ id: p.id, label: p.label })),
       role,
       instanceAdmin,
-      ssh: instance.data?.features.ssh === true,
+      ssh: instance.data?.features?.ssh === true,
     } satisfies PaletteContext;
   }, [orgSlug, wsSlug, handle, me.data, agents.data, instance.data, org.data, altitude, wsId, role, instanceAdmin]);
 }
