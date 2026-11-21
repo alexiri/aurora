@@ -79,7 +79,7 @@ export function UsersTable({
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 break-all text-sm text-muted" title={u.email}>
                       <span>
                         {/* A person stored by their address has no name of their own: the address is then shown once, as the address. */}
-                        {u.display_name.includes("@") ? u.email : u.email.split("@")[0]} ·{u.is_instance_admin ? "Instance admin" : "User"}
+                        {u.display_name.includes("@") ? u.email : u.email.split("@")[0]} · {u.is_instance_admin ? "Instance admin" : "User"}
                       </span>
                       {u.instance_admin_idp_value ? <IdpRoleBadge value={u.instance_admin_idp_value} /> : null}
                       {disabled ? <Badge tone="danger">disabled</Badge> : null}
@@ -102,7 +102,7 @@ export function UsersTable({
                 {canAdmin || canDisable || u.idp_roles ? (
                   <Menu>
                     <MenuTrigger asChild>
-                      <Button variant="outline" size="sm" aria-label={`Manage ${u.display_name}`}>
+                      <Button variant="outline" size="sm" aria-label={`Manage ${personName(u.display_name)}`}>
                         Manage
                       </Button>
                     </MenuTrigger>

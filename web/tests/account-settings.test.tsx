@@ -150,6 +150,14 @@ describe("UsersTable", () => {
   const admin = (id: string, over: Partial<AdminUser> = {}) =>
     ({ id, email: `${id}@x.io`, display_name: id, is_instance_admin: false, ...over }) as AdminUser;
 
+  it("(batch 8, b7#8c) a person stored by their address is named Erin, and the address is shown once, as the address", () => {
+    mockFetch({});
+    wrap(<UsersTable users={[admin("erin", { display_name: "erin@x.io" })]} selfId="me" />);
+    expect(screen.getByText("Erin")).toBeInTheDocument();
+    expect(screen.getByText("erin@x.io · User")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manage Erin" })).toBeInTheDocument();
+  });
+
   it("shows the display name, the e-mail's name and the role in words, a Manage button and 'Roles from sign-in: none' (admin-13)", () => {
     mockFetch({});
     wrap(<UsersTable users={[admin("alice", { display_name: "Alice Admin", is_instance_admin: true }), admin("bob", { display_name: "Bob Builder" })]} selfId="me" />);

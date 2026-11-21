@@ -95,8 +95,8 @@ describe("Welcome (C-927)", () => {
   it("(batch 8, b7#8c) a person whose display name is their address is welcomed by the address's first part", async () => {
     world({ personal: true, name: "Bob's workspace" });
     const base = routes["GET /v1/me"]!;
-    routes["GET /v1/me"] = async () => {
-      const r = await base();
+    routes["GET /v1/me"] = async (req) => {
+      const r = await base(req);
       const body = await r.json();
       return json(200, { ...body, user: { ...body.user, display_name: "erin@example.test", email: "erin@example.test" } });
     };
