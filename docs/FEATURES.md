@@ -158,3 +158,4 @@ Last reconciled with git history: 2026-11-15 at master a7998616 (phase-5 rows ch
 | P5/14§app-icons-64 | App icons are 64 px everywhere (tiles, cards, rows, tables), with the AI key tile to match | P5 | — | FIX-211 | FIX-210 | planned (brief written) | — |
 | P5/14§agent-settings-wide | An agent's Settings pages use the full width, with short fields sharing a line (picture and name, model and "may message you first", agent program and effort) and a taller Instructions box | P5 | — | FIX-212 | FIX-213 | built (in review) | — |
 | P5/14§agent-manage | An agent's Pause/Resume, Export and import, and Delete are on one Settings page, Manage, for owners, not under every page (D-447) | P5 | — | FIX-213 | — | built (in review) | — |
+| P5/14§new-chat-fits | The conversations list's New chat button always fits its pane: an icon with a tooltip in the narrow pane, labelled where there is room | P5 | — | FIX-214 | — | planned (brief written) | — |
