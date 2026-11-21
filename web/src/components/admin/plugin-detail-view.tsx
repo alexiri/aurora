@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { AppIcon } from "@/components/ui/app-icon";
@@ -14,13 +14,15 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
-import { ErrorState, Loading } from "@/components/states";
+import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { ApiError } from "@/lib/api/client";
 import { errorDetail, errorMessage } from "@/lib/api/errors";
 import { adminRoutes } from "@/lib/routes";
 import {
+  isVersionId,
   usePlugin,
   usePluginAction,
+  usePluginVersions,
   useUninstallPlugin,
   type PluginPackage,
 } from "@/lib/api/plugins";
@@ -495,7 +497,39 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
   );
 }
 
+/**
+ * (FIX-201, D-438, C-1120) `/admin/apps/packages/<package id>`: an app's name links by package id (stable across
+ * upgrades). The API's `{id}` is a version's UUID, so resolve the package id to its active version (else the newest)
+ * and replace the address, so Back and the page are as when opened from the package list.
+ */
+function ResolvePackage({ packageId }: { packageId: string }) {
+  const router = useRouter();
+  const q = usePluginVersions(packageId);
+  const items = q.data?.items;
+  const target = items ? (items.find((v) => v.status === "active") ?? items[0]) : undefined;
+  const targetId = target?.id;
+  useEffect(() => {
+    if (targetId) router.replace(adminRoutes.package(targetId));
+  }, [targetId, router]);
+  if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
+  if (items && items.length === 0) {
+    return (
+      <EmptyState title={`No app package called ${packageId} is installed.`}>
+        <Link className="text-link underline" href={adminRoutes.apps("apps")}>
+          Back to Administration › Apps
+        </Link>
+      </EmptyState>
+    );
+  }
+  return <Loading />;
+}
+
 export function PluginDetailView({ id }: { id: string }) {
+  if (!isVersionId(id)) return <ResolvePackage packageId={id} />;
+  return <PluginVersionView id={id} />;
+}
+
+function PluginVersionView({ id }: { id: string }) {
   const q = usePlugin(id);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;

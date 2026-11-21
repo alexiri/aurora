@@ -21,8 +21,9 @@ The package has two tiers:
 ## 1. Register your Indico server in Aurora (administrators)
 
 Open {{aurora.page:self_hosted}} (organization owners and admins for one organization, instance
-admins for everyone), choose Indico and enter the host name, for example `indico.example.org` (host name
-only: no `https://`, port or path). Aurora checks `GET /api/user/` first.
+admins for everyone), choose Indico and enter the host name, for example `indico.example.org` (no `https://` or
+port). If the server lives under a path, fill **Path** too; pasting the full address fills both. Aurora
+checks `GET /api/user/` first.
 
 - Registering decides where Indico credentials may be sent, so only register servers you trust.
 - An Indico served under a sub-path (`https://example.org/indico/`) cannot be registered. Serve

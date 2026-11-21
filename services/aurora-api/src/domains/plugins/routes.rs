@@ -51,7 +51,14 @@ async fn list_plugins(
     if let Some(st) = q.status.as_deref() {
         service::check_status(st)?;
     }
-    let rows = plugins::list(&s.pool, q.status.as_deref(), p.after_key(), p.fetch()).await?;
+    let rows = plugins::list(
+        &s.pool,
+        q.status.as_deref(),
+        q.package_id.as_deref(),
+        p.after_key(),
+        p.fetch(),
+    )
+    .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     let mut items = Vec::with_capacity(page.items.len());
     for r in page.items {

@@ -150,7 +150,8 @@ token connections, and *List repositories of the installation* only for GitHub A
 
 1. An administrator registers the server once: open {{aurora.page:self_hosted}} (organization owners
    and admins for one organization, instance admins for all), choose GitHub Enterprise Server and enter the
-   host name, for example `github.example.com` (no `https://`, port or path). Aurora checks
+   host name, for example `github.example.com` (no `https://` or port). If the server lives under a path,
+   fill **Path** too; pasting the full address fills both. Aurora checks
    `GET /api/v3/meta` first. Registering decides where the credentials may be sent, so only
    register hosts you trust.
 2. For OAuth, create an OAuth app **on that server** (as above) and add it under *Credentials,

@@ -38,6 +38,16 @@ export const PACKAGES: { id: string; name: string; description: string }[] = [
   { id: "sentry", name: "Sentry", description: "Issues and releases" },
 ];
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** (FIX-201) Each mock package's one version has a stable UUID, as the server's `{id}` is a version's id. */
+const packageUuid = (packageId: string) => id(1000 + PACKAGES.findIndex((x) => x.id === packageId));
+const packageVersion = (pkg: (typeof PACKAGES)[number]) => ({
+  id: packageUuid(pkg.id), package_id: pkg.id, version: "1.0.0", contract: 1, digest: "sha256:0000", publisher: "aurora", source: "builtin", status: "approved",
+  origin: "aurora", summary: null, reaches: ["api.github.com"], reaches_more: 0, created_at: now, signer: { kind: "builtin", name: "Aurora" },
+  apps: [{ app_id: pkg.id, name: pkg.name, ...(pkg.id === "github" ? { library_host: "api.github.com" } : {}) }], host_claims: [], violations: [], widenings: [], impact: null,
+  permissions: { hooks: [], context: [], egress: { "api.github.com": ["GET"] } },
+});
+
 const apps = PACKAGES.map((p) => ({
   app_id: p.id, available: true, category: "developer", connection_count: p.id === "github" ? 1 : 0, description: p.description,
   has_dark_icon: true, name: p.name, package_id: p.id, package_version: "1.0.0",
@@ -576,14 +586,21 @@ export async function mockApi(
     // FIX-025 (C-586) + FIX-029 (C-614): the runners admin view and its per-runner failures.
     if (p === "/v1/admin/runners") return json({ items: [] });
     if (/^\/v1\/connectors\/[^/]+\/icon$/.test(p)) return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+    // (FIX-201, C-1120) Like the server: the list filters by `?package_id` and `?status`; `{id}` is a version's UUID.
+    if (p === "/v1/admin/plugins") {
+      const want = url.searchParams.get("package_id");
+      const status = url.searchParams.get("status");
+      const items = PACKAGES.filter((x) => x.id === want && (!status || status === "active")).map(packageVersion);
+      return json({ items, next_cursor: null });
+    }
     if (/^\/v1\/admin\/plugins\/[^/]+$/.test(p)) {
-      const pkg = PACKAGES.find((x) => x.id === p.split("/")[4]) ?? PACKAGES[3];
-      return json({
-        id: id(70), package_id: pkg.id, version: "1.0.0", contract: 1, digest: "sha256:0000", publisher: "aurora", source: "builtin", status: "approved",
-        origin: "aurora", summary: null, reaches: ["api.github.com"], reaches_more: 0, created_at: now, signer: { kind: "builtin", name: "Aurora" },
-        apps: [{ app_id: pkg.id, name: pkg.name, ...(pkg.id === "github" ? { library_host: "api.github.com" } : {}) }], host_claims: [], violations: [], widenings: [], impact: null,
-        permissions: { hooks: [], context: [], egress: { "api.github.com": ["GET"] } },
-      });
+      const wanted = p.split("/")[4];
+      if (!UUID_RE.test(wanted)) {
+        return json({ error: { code: "invalid_request", message: "id: invalid UUID", details: null } }, 400);
+      }
+      const pkg = PACKAGES.find((x) => packageUuid(x.id) === wanted);
+      if (!pkg) return json({ error: { code: "not_found", message: "No such package.", details: null } }, 404);
+      return json(packageVersion(pkg));
     }
     // P4-011B-4: Web Push is on (the Account card and its device list render) and parking is on (the limits route).
     if (p === "/v1/push/config") return json({ available: true, vapid_public_key: "B".repeat(87), allowed_hosts: ["fcm.googleapis.com"] });

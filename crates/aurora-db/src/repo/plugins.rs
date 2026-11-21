@@ -120,6 +120,7 @@ pub async fn find_identity<'e, E: PgExecutor<'e>>(
 pub async fn list<'e, E: PgExecutor<'e>>(
     exec: E,
     status: Option<&str>,
+    package_id: Option<&str>,
     after: After,
     fetch: i64,
 ) -> Result<Vec<PackageRow>, DbError> {
@@ -127,6 +128,7 @@ pub async fn list<'e, E: PgExecutor<'e>>(
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM {FROM}
          WHERE ($1::text IS NULL OR p.status = $1)
+           AND ($5::text IS NULL OR p.package_id = $5)
            AND ($2::timestamptz IS NULL OR (p.created_at, p.id) < ($2, $3))
          ORDER BY p.created_at DESC, p.id DESC LIMIT $4"
     )))
@@ -134,6 +136,7 @@ pub async fn list<'e, E: PgExecutor<'e>>(
     .bind(t)
     .bind(id)
     .bind(fetch)
+    .bind(package_id)
     .fetch_all(exec)
     .await?)
 }

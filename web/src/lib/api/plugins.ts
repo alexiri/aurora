@@ -42,6 +42,23 @@ export function usePlugin(id: string) {
   });
 }
 
+/** A package version's id is a UUID; a package id (`atlassian`) is not (FIX-201, D-438). */
+export const isVersionId = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+/**
+ * (FIX-201, C-1120) The versions of one package by its package id, newest first. Disabled for a UUID: `usePlugin`
+ * is never called with a package id, and this is never called with a version id.
+ */
+export function usePluginVersions(packageId: string) {
+  return useQuery({
+    queryKey: [...pluginKeys.all, "versions", packageId] as const,
+    queryFn: () =>
+      unwrap(api.GET("/v1/admin/plugins", { params: { query: { package_id: packageId, limit: 200 } } })),
+    enabled: !isVersionId(packageId),
+    retry: retryUnlessClientError,
+  });
+}
+
 export type PluginAgentGuide = components["schemas"]["PluginAgentGuide"];
 
 /**
