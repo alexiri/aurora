@@ -278,3 +278,42 @@ for (const scheme of ["light", "dark"] as const) {
     });
   }
 }
+
+// FIX-214: the conversations list's New chat button lies inside the list pane at every width, 768 (list only, full width)
+// and 1024–1920 (the 232 px pane beside the thread: an icon with a tooltip). The pane is a container: the label shows from 16 rem.
+for (const scheme of ["light", "dark"] as const) {
+  for (const width of [390, 768, 1024, 1100, 1280, 1440, 1920]) {
+    test.describe(`New chat in the list pane, ${scheme} theme, ${width} px`, () => {
+      test.use({ viewport: { width, height: 900 } });
+
+      test("the button and the heading lie inside the pane; icon with tooltip when the pane is narrow, labelled otherwise", async ({ page }) => {
+        await mockApi(page);
+        await mockChat(page, { ...DEFAULT, events: { [MINE.id]: ANSWERED } });
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.goto(`${AGENT_ROUTE}?c=${MINE.id}`);
+        await page.getByRole("tab", { name: "Chat" }).click();
+        if (width < 1024) await page.getByRole("button", { name: "Back to conversations" }).click();
+        const nav = page.getByRole("navigation", { name: "Conversations" });
+        const button = nav.getByRole("button", { name: "New chat" }).first();
+        await expect(button).toBeVisible();
+        const nb = await box(nav);
+        const bb = await box(button);
+        expect(within(bb, nb), "the button is inside the list pane").toBe(true);
+        const heading = nav.getByRole("heading", { name: "Conversations" });
+        const hb = await box(heading);
+        expect(within(hb, nb), "the heading is inside the pane").toBe(true);
+        expect(overlaps(hb, bb), "the heading and the button do not overlap").toBe(false);
+        expect(await heading.evaluate((e) => e.scrollWidth - e.clientWidth), "the heading shows in full").toBeLessThanOrEqual(0);
+        if (width >= 1024) {
+          expect(bb.width, "the narrow pane's button is the icon").toBeLessThan(48);
+          await button.hover();
+          await expect(page.getByText("New chat", { exact: true }).filter({ visible: true }).first()).toBeVisible();
+        } else {
+          expect(bb.width, "the full-width list's button has its label").toBeGreaterThan(80);
+          await expect(button).toContainText("New chat");
+        }
+        expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
+      });
+    });
+  }
+}

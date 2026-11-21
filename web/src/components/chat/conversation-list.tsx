@@ -11,6 +11,7 @@ import { BotIcon, CalendarIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, Link
 import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs } from "@/components/ui/tabs";
+import { Tooltip } from "@/components/ui/toolbar";
 import { chatApi, useConversations, type Conversation, type ConversationFolder } from "@/lib/api/conversations";
 import { useStoppedTurns } from "@/lib/chat/stopped";
 import { conversationTitle, folderRunsLabel, isOwnDirect, isWorking, kindLabel, listTime, type ListGroups } from "@/lib/chat/layout";
@@ -375,14 +376,26 @@ export function ConversationList({
     ));
   const empty = mine.length === 0 && others.length === 0 && memberDirects.length === 0 && shownFolders.length === 0;
   return (
-    <nav aria-label="Conversations" className={cn("flex min-h-0 flex-col gap-3 p-3", className)}>
+    <nav aria-label="Conversations" className={cn("@container flex min-h-0 flex-col gap-3 p-3", className)}>
       <div className="flex items-center justify-between gap-2">
-        <h2 className="font-display text-base font-semibold text-ink">Conversations</h2>
+        <h2 className="min-w-0 truncate font-display text-base font-semibold text-ink">Conversations</h2>
         {onNewChat ? (
-          <Button type="button" variant="primary" size="sm" className="min-h-11 shrink-0 md:min-h-9" disabled={newChatBusy} onClick={onNewChat}>
-            <PlusIcon aria-hidden="true" width={16} height={16} />
-            New chat
-          </Button>
+          // (FIX-214) By the pane's own width, not the window's: the 232 px pane (208 px inside) has no room for the heading
+          // and a labelled button, so there it is a square icon with a tooltip; from 16 rem (the 320 px search pane, the
+          // full-width list below 1024 px) it carries its label.
+          <Tooltip label="New chat" bubbleClassName="@2xs:hidden! bottom-auto top-full left-auto right-0 mb-0 mt-1 translate-x-0">
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              aria-label="New chat"
+              className="min-h-11 w-11 shrink-0 px-0 md:min-h-9 md:w-9 @2xs:w-auto @2xs:px-3 md:@2xs:w-auto"
+              disabled={newChatBusy}
+              onClick={onNewChat}>
+              <PlusIcon aria-hidden="true" width={16} height={16} />
+              <span className="hidden @2xs:inline">New chat</span>
+            </Button>
+          </Tooltip>
         ) : null}
       </div>
       {newChatError ? (
