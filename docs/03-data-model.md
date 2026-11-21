@@ -954,7 +954,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | error_code | text null | open vocabulary |
 | error_message | text null | |
 | usage | jsonb null | `{ input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, provider }`. (phase 5, P4-LLM) It also holds `endpoint_id`. (phase 5, P5-MODELS-2, D-304, C-879) It also holds `by_model: [{ model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens }]` and an optional `unverified_models: true`. The totals are the sum of `by_model`, and `model` is the default (`10 §Usage and metering`) |
-| model_basis | jsonb null | (phase 5, P5-MODELS-2, D-304) what the dispatcher chose: `{ provider, endpoint_id, model, roles? }` (`roles` = the resolved role model ids). The trust rule at turn end reads the default and the roles from here, never from the harness. Null before the migration and never read for a turn that is not `role = 'turn'` |
+| model_basis | jsonb null | (phase 5, P5-MODELS-2, D-304) what the dispatcher chose: `{ provider, endpoint_id, model, roles?, key_id? }` (`roles` = the resolved role model ids; (C-1100) `key_id` = the secret the selection chose, never returned by a route). The trust rule at turn end reads the default and the roles from here, never from the harness. Null before the migration and never read for a turn that is not `role = 'turn'` |
 | dispatched_at, started_at, finished_at | timestamptz null | |
 | last_progress_at | timestamptz null | churn column |
 | dispatch_lease_until | timestamptz null | claim clock (dispatch) |

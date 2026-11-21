@@ -8,7 +8,8 @@ import { useApp } from "@/lib/api/apps";
 import type { Conversation, TranscriptEvent } from "@/lib/api/conversations";
 import { useMeOnboarding, usePatchOnboarding } from "@/lib/api/onboarding";
 import { useSchedules, useScheduleRuns } from "@/lib/api/schedules";
-import { originRunCard, pendingFirstSuccesses, runSentence, type FirstSuccess } from "@/lib/chat/first-success";
+import { useSession } from "@/lib/api/queries";
+import { answerSentence, originRunCard, pendingFirstSuccesses, runSentence, type FirstSuccess } from "@/lib/chat/first-success";
 
 /**
  * (P5-REFINE-11 item 9, rec 10) The first successes, as `Notice` cards in the thread under what triggered them: the first
@@ -78,15 +79,17 @@ function Card({
   onTry?: (text: string) => void;
 }) {
   const patch = usePatchOnboarding();
-  const app = useApp(card.key === "first-app" ? card.appId || undefined : undefined, wsId);
+  const session = useSession();
+  const personalWorkspace = session.data?.memberships.some((m) => m.workspaces.some((x) => x.id === wsId && x.personal)) === true;
+  const app =useApp(card.key === "first-app" ? card.appId || undefined : undefined, wsId);
   const prompt = card.key === "first-app" ? (app.data?.first_prompt ?? null) : null;
   const dismiss = () => patch.mutate({ notice_seen: card.key });
   let text: string;
   let action: React.ReactNode = null;
   switch (card.key) {
     case "first-answer":
-      // "changed nothing outside this chat" is only said when the turn used no tools.
-      text = card.tools === 0 ? `${agentName} answered. It thought with the Company key and changed nothing outside this chat.` : `${agentName} answered and used ${card.tools} ${card.tools === 1 ? "tool" : "tools"}.`;
+      // (C-1100) The key is named only as the turn's own record says; "changed nothing" only when it used no tools.
+      text = answerSentence(agentName, card.tools, card.aiKey, personalWorkspace);
       action = onSeeWhatItDid ? (
         <Button type="button" variant="outline" size="sm" className="min-h-11 md:min-h-9" onClick={onSeeWhatItDid}>
           See what it did

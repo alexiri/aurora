@@ -1,8 +1,8 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { FirstSuccessCards } from "@/components/chat/first-success";
-import { pendingFirstSuccesses } from "@/lib/chat/first-success";
+import { answerSentence, pendingFirstSuccesses } from "@/lib/chat/first-success";
 import { json } from "./support/api";
 import { wrap } from "./support/render";
 
@@ -14,17 +14,22 @@ const ev = (seq: number, type: string, payload: Record<string, unknown>, ts?: st
   ts: ts ?? new Date(Date.now() - 5 * 60_000).toISOString(),
   payload,
 });
-const answered = () => [
+const answered = (aiKey?: string) => [
   ev(1, "turn.queued", { turn_id: "t1", text: "hi" }),
   ev(2, "text", { turn_id: "t1", text: "hello" }),
-  ev(3, "turn.finished", { turn_id: "t1", status: "done" }),
+  ev(3, "turn.finished", { turn_id: "t1", status: "done", ...(aiKey ? { ai_key: aiKey } : {}) }),
 ];
 
 describe("pendingFirstSuccesses", () => {
   it("first answer: a finished turn with the agent's words; counts the tools it used", () => {
-    expect(pendingFirstSuccesses(answered() as never, [], null, new Date())).toEqual([{ key: "first-answer", tools: 0 }]);
+    expect(pendingFirstSuccesses(answered() as never, [], null, new Date())).toEqual([{ key: "first-answer", tools: 0, aiKey: null }]);
     const withTool = [...answered(), ev(4, "tool.started", { turn_id: "t1" })];
-    expect(pendingFirstSuccesses(withTool as never, [], null, new Date())).toEqual([{ key: "first-answer", tools: 1 }]);
+    expect(pendingFirstSuccesses(withTool as never, [], null, new Date())).toEqual([{ key: "first-answer", tools: 1, aiKey: null }]);
+  });
+  it("first answer: carries the class of the key the turn ran on, and ignores one it does not know", () => {
+    expect(pendingFirstSuccesses(answered("starter") as never, [], null, new Date())).toEqual([{ key: "first-answer", tools: 0, aiKey: "starter" }]);
+    expect(pendingFirstSuccesses(answered("workspace") as never, [], null, new Date())).toEqual([{ key: "first-answer", tools: 0, aiKey: "workspace" }]);
+    expect(pendingFirstSuccesses(answered("mystery") as never, [], null, new Date())).toEqual([{ key: "first-answer", tools: 0, aiKey: null }]);
   });
   it("is not shown again once dismissed, and not for old history", () => {
     expect(pendingFirstSuccesses(answered() as never, ["first-answer"], null, new Date())).toEqual([]);
@@ -69,12 +74,31 @@ function renderCards(initialSeen: string[], over: Record<string, unknown> = {}) 
 
 describe("FirstSuccessCards", () => {
   it("shows the first-answer card with its words and remembers Got it on the server", async () => {
-    const patches = renderCards([]);
+    const patches = renderCards([], { events: answered("starter") });
     expect(await screen.findByText("Daneel answered. It thought with the Company key and changed nothing outside this chat.")).toBeInTheDocument();
     expect(screen.queryByText("Live")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Got it" }));
     await waitFor(() => expect(patches).toEqual([{ notice_seen: "first-answer" }]));
     await waitFor(() => expect(screen.queryByTestId("first-success-first-answer")).toBeNull());
+  });
+  it("says the Company key only when the turn ran on it: another key is named in words, an unknown one is dropped", async () => {
+    renderCards([], { events: answered("organization") });
+    expect(await screen.findByText("Daneel answered. It thought with an AI key your organization added and changed nothing outside this chat.")).toBeInTheDocument();
+    expect(screen.queryByText(/Company key/)).toBeNull();
+    cleanup();
+    renderCards([], { events: answered("workspace") });
+    expect(await screen.findByText("Daneel answered. It thought with this workspace's AI key and changed nothing outside this chat.")).toBeInTheDocument();
+    cleanup();
+    // The record does not say (an older turn, the scripted harness, a deleted key): no clause, and never "Company key".
+    renderCards([], { events: answered() });
+    expect(await screen.findByText("Daneel answered and changed nothing outside this chat.")).toBeInTheDocument();
+    expect(screen.queryByText(/Company key/)).toBeNull();
+  });
+  it("a key of the person's own workspace reads 'your own AI key'", () => {
+    expect(answerSentence("Daneel", 0, "workspace", true)).toBe("Daneel answered. It thought with your own AI key and changed nothing outside this chat.");
+    expect(answerSentence("Daneel", 0, "workspace", false)).toBe("Daneel answered. It thought with this workspace's AI key and changed nothing outside this chat.");
+    // a turn that used tools says so and claims nothing about the key
+    expect(answerSentence("Daneel", 2, "starter", false)).toBe("Daneel answered and used 2 tools.");
   });
   it("shows nothing for a person who already dismissed it", async () => {
     renderCards(["first-answer"]);

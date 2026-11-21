@@ -146,3 +146,86 @@ async fn a_harness_that_reports_no_breakdown_gets_one_entry_for_the_default() {
     assert_eq!(u["cache_read_tokens"], 4);
     assert_eq!(u.get("unverified_models"), None);
 }
+
+/// (C-1100) Boots an agent, lets `shape` change the key between dispatch and the end of the turn, finishes the turn,
+/// and returns the payload of its durable `turn.finished` event.
+async fn finished_payload(shape: impl AsyncFn(&crate::hosted::Rig, uuid::Uuid)) -> Value {
+    let r = rig().await;
+    let a = agent_on(&r, "keyed", "plain").await;
+    let lv = r.boot_agent(a).await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    let key: uuid::Uuid =
+        sqlx::query_scalar("SELECT (model_basis->>'key_id')::uuid FROM turns WHERE id = $1::uuid")
+            .bind(&turn)
+            .fetch_one(r.h.pool())
+            .await
+            .expect("the dispatcher records the key in the basis");
+    shape(&r, key).await;
+    let s = r
+        .report(
+            &lv,
+            json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+        )
+        .await;
+    assert_eq!(s, "applied");
+    sqlx::query_scalar(
+        "SELECT payload FROM transcript_events WHERE turn_id = $1::uuid AND type = 'turn.finished'",
+    )
+    .bind(&turn)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn turn_finished_names_the_class_of_the_key_it_ran_on() {
+    // An ordinary organization key.
+    let p = finished_payload(async |_, _| {}).await;
+    assert_eq!(p["ai_key"], "organization", "{p}");
+    // The instance's starter grant for that organization: the Company key.
+    let p = finished_payload(async |r, key| {
+        sqlx::query(
+            "INSERT INTO instance_placement (mode, default_org_id, personal_enabled, starter_grants)
+             VALUES ('shared_org', $1, true, $2)",
+        )
+        .bind(r.org)
+        .bind(json!([{"kind": "secret", "id": key}]))
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    })
+    .await;
+    assert_eq!(p["ai_key"], "starter", "{p}");
+    // A key of the workspace.
+    let p = finished_payload(async |r, key| {
+        sqlx::query("UPDATE secrets SET workspace_id = $2 WHERE id = $1")
+            .bind(key)
+            .bind(r.ws)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+    })
+    .await;
+    assert_eq!(p["ai_key"], "workspace", "{p}");
+    // Never a name or an id.
+    assert!(!p.to_string().contains("k-keyed"), "{p}");
+}
+
+#[tokio::test]
+async fn turn_finished_has_no_class_when_the_key_is_gone() {
+    let p = finished_payload(async |r, key| {
+        sqlx::query("DELETE FROM grants WHERE secret_id = $1")
+            .bind(key)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM secrets WHERE id = $1")
+            .bind(key)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+    })
+    .await;
+    assert_eq!(p.get("ai_key"), None, "{p}");
+}

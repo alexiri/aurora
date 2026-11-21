@@ -460,6 +460,11 @@ Work items and reports are defined in `16 §W5`.
 - One active turn per conversation is enforced by the partial unique index.
   Creating a turn when one is active creates a `followup` row instead
   (`10 §Turns`); the unique violation is the race arbiter.
+- (phase 5, P5-REFINE-20 item 14 follow-up, C-1100) `turn.finished` carries `ai_key: "starter" | "organization" | "workspace"`
+  when the dispatcher recorded the key the turn ran on (`turns.model_basis.key_id`): `starter` is an organization key the
+  instance's starter grants give every new agent, `organization` any other organization key, `workspace` a key of the agent's
+  workspace. A class, never a name or an id, so whoever may read the transcript may read it; absent for a turn dispatched
+  before this change, for the scripted `fake` harness and when the key is gone.
 
 ## Gateway cache invalidation
 
