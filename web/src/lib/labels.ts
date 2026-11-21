@@ -109,6 +109,13 @@ export const WORKSPACE_ROLE = {
   member: { label: "Member" },
 } satisfies LabelTable;
 
+/** A workspace role's choices for a select, least access first, in words ("Member", never "member"). */
+export const WORKSPACE_ROLE_OPTIONS = [
+  { value: "member", label: WORKSPACE_ROLE.member.label },
+  { value: "approver", label: WORKSPACE_ROLE.approver.label },
+  { value: "owner", label: WORKSPACE_ROLE.owner.label },
+];
+
 /** `MemberStatus` and `AccessStatus`. */
 export const MEMBER_STATUS = {
   active: { label: "Active" },

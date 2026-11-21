@@ -11,6 +11,7 @@ import { ErrorNotice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { WORKSPACE_ROLE_OPTIONS } from "@/lib/labels";
 import type { components } from "@/lib/api/schema";
 import {
   useDeleteGroupAccess,
@@ -40,7 +41,7 @@ function BoundGroup({ wsId, b, canOwn, onError }: { wsId: string; b: GroupAccess
       </Td>
       <Td>
         {canOwn ? (
-          <Select aria-label={`Role for group ${b.group.name}`} value={b.role} disabled={put.isPending} className="w-36" onChange={(v) => put.mutate({ group: b.group.id, role: v as WorkspaceRole }, { onError })} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
+          <Select aria-label={`Role for group ${b.group.name}`} value={b.role} disabled={put.isPending} className="w-36" onChange={(v) => put.mutate({ group: b.group.id, role: v as WorkspaceRole }, { onError })} options={WORKSPACE_ROLE_OPTIONS} />
         ) : (
           b.role
         )}
@@ -99,7 +100,7 @@ function AddGroup({ wsId, orgId, bound }: { wsId: string; orgId: string; bound: 
           </select>
         </Field>
         <Field id="acc-group-role" label="Role">
-          <Select id="acc-group-role" value={role} className="w-40 max-w-full" onChange={(v) => setRole(v as WorkspaceRole)} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
+          <Select id="acc-group-role" value={role} className="w-40 max-w-full" onChange={(v) => setRole(v as WorkspaceRole)} options={WORKSPACE_ROLE_OPTIONS} />
         </Field>
         <Button type="submit" disabled={!group || put.isPending} className="sm:mt-label-offset">
           Add
