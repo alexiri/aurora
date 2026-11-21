@@ -161,7 +161,8 @@ for (const scheme of ["light", "dark"] as const) {
         // The checklist stays, with its toast; the health view is not shown (the try-it step is still open).
         // (P5-REFINE-18 #14) The toast names the key ("<name> added."), then the count.
         await expect(page.getByTestId("setup-toast")).toContainText("AIGW key added.");
-        await expect(page.getByTestId("setup-toast")).toContainText("3 of 5 done.");
+        // (P5-REFINE-20, setup-2) The toast says who can use it, not a count; the count is the progress line.
+        await expect(page.getByText("3 of 5", { exact: true })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();
         await expect(steps.locator("#setup-key")).toHaveAttribute("data-done", "true");
         await expect(page.getByTestId("admin-health")).toHaveCount(0);

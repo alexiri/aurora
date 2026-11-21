@@ -190,4 +190,15 @@ describe("Admin: Web Push line", () => {
     const line = await screen.findByTestId("push-line");
     expect(within(line).getByText(word)).toBeInTheDocument();
   });
+
+  it("keeps the setting name and the command under Technical details, never in the sentence (setup-4)", async () => {
+    stub({ "/v1/instance": { features: { push: false } } });
+    wrap(<PushLine />);
+    const line = await screen.findByTestId("push-line");
+    expect(line).toHaveTextContent("Ask whoever installed Aurora to turn it on.");
+    const fold = line.querySelector("details")!;
+    expect(fold).toHaveTextContent("Technical details");
+    expect(fold).toHaveTextContent("push.enabled");
+    expect(line.querySelector("span.min-w-0")!.textContent).not.toContain("push.enabled");
+  });
 });

@@ -116,6 +116,9 @@ pub struct SetupCheck {
     pub last_ok_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error_at: Option<DateTime<Utc>>,
+    /// The code of the newest failed real call: `rejected`, `unreachable`, `unexpected` or `expired`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
 }
 
 /// (C-1063) The "Try it" card: whether it is offered and whether the admin has done it.
@@ -125,6 +128,8 @@ pub struct SetupTryIt {
     pub available: bool,
     /// The calling admin has one finished turn of their own in a hosted agent they own.
     pub done: bool,
+    /// When the newest such finished turn ended; null while `done` is false.
+    pub done_at: Option<DateTime<Utc>>,
     pub agent_id: Option<Uuid>,
     pub workspace_id: Option<Uuid>,
 }

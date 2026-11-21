@@ -158,6 +158,27 @@ mod listing_tests {
     }
 
     #[test]
+    fn forgetting_a_key_drops_its_failed_listing_and_only_its_own() {
+        let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+        listing_put((a, 1, "aigw".into()), None);
+        listing_put((b, 1, "aigw".into()), None);
+        assert!(
+            listing_cached(&(a, 1, "aigw".into())).is_some(),
+            "a failed read is remembered"
+        );
+        forget_listing(a);
+        assert!(
+            listing_cached(&(a, 1, "aigw".into())).is_none(),
+            "the re-check's pass drops it"
+        );
+        assert!(
+            listing_cached(&(b, 1, "aigw".into())).is_some(),
+            "other keys keep theirs"
+        );
+        forget_listing(b);
+    }
+
+    #[test]
     fn a_served_default_is_used() {
         let l = listing(&["a", "b"], &[]);
         let (p, warn) = pick(&ep(Some("b"), &[]), &[], Some(&l));
@@ -1023,6 +1044,17 @@ fn listing_put(k: ListingKey, v: Option<Arc<KeyListing>>) {
         m.retain(|_, (at, _)| at.elapsed() < crate::domains::secrets::service::MODEL_CACHE_TTL);
     }
     m.insert(k, (Instant::now(), v));
+}
+
+/// (P5-REFINE-20) Drop what is remembered about what a key serves, a failed read included: the
+/// background re-check of a key saved while its endpoint was down just reached the endpoint, so
+/// the next readiness (and Try it on the setup checklist) reads the listing again instead of
+/// waiting out `LISTING_FAILED_TTL`.
+pub fn forget_listing(secret: Uuid) {
+    listings()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .retain(|(id, _, _), _| *id != secret);
 }
 
 /// What the key serves: from the cache; with `fetch`, read from the endpoint with the key (on a miss) and

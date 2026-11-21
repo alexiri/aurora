@@ -17,6 +17,9 @@ import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusLine, type StatusTone } from "@/components/ui/status-line";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
+import { Avatar } from "@/components/agent-avatar";
+import { StatusDot } from "@/components/ui/status-dot";
+import { useAnswerReadiness } from "@/lib/api/answer-readiness";
 import { useAttentionFeed } from "@/lib/api/attention";
 import { onboardingKeys,useAdminSetup, type SetupCheck, type SetupStatus, type SetupStep } from "@/lib/api/onboarding";
 import { formatBytes } from "@/lib/api/attachments";
@@ -36,7 +39,8 @@ import { cn } from "@/lib/utils";
 
 import { AttentionSection } from "./attention-section";
 import { OwnerlessBanner } from "./ownerless-banner";
-import { SignInGaps, gapsFromChecks } from "./sign-in-gaps";
+import { NeedsYouRow, AttentionHistory } from "@/components/attention/needs-you-feed";
+import { SignInGaps, SignInGapRows, gapsFromChecks } from "./sign-in-gaps";
 import { PreviewsLine } from "./previews-line";
 import { PushLine } from "./push-line";
 import { SshLine } from "./ssh-line";
@@ -133,7 +137,9 @@ function useTryIt(server: SetupStatus["try_it"] | undefined, hasKey: boolean) {
   return {
     href,
     replied: server?.done === true,
+    repliedAt: server?.done_at ?? null,
     available: server ? server.available : hasKey,
+    agent: agent ? { id: agent.id, name: agent.name, handle: agent.handle, avatarUrl: agent.avatar_url ?? null } : null,
     agentName: agent?.name ?? null,
     person: me.data?.user.display_name ?? null,
     ready: !me.isPending,
@@ -213,17 +219,23 @@ function AiKeyDialog({
             onCancel={() => onOpenChange(false)}
             footerTarget={target}
             onSaved={(secret) => {
-              const p = placement.data;
-              if (p && startersAllowed(p)) {
-                const others = p.starter_grants.map((g) => ({ kind: g.kind, id: g.id }));
-                savePlacement.mutate(putWithStarters(p, [...others, { kind: "secret", id: secret.id }]), {
-                  onSuccess: (v) => {
+              // The saved key is the news: the dialog closes and the toast shows whatever the placement answers (awaited, not
+              // per-call callbacks, which are dropped when the component re-renders away: the toast was missing).
+              void (async () => {
+                const p = placement.data;
+                let applied: KeyGiven | null = null;
+                if (p && startersAllowed(p)) {
+                  const others = p.starter_grants.map((g) => ({ kind: g.kind, id: g.id }));
+                  try {
+                    const v = await savePlacement.mutateAsync(putWithStarters(p, [...others, { kind: "secret", id: secret.id }]));
                     const mine = (v.starter_applied ?? []).find((a) => a.id === secret.id);
-                    onSaved(secret.name, mine && mine.agents_granted > 0 ? { agents: mine.agents_granted, names: mine.agent_names } : null);
-                  },
-                  onError: () => onSaved(secret.name, null),
-                });
-              } else onSaved(secret.name, null);
+                    if (mine && mine.agents_granted > 0) applied = { agents: mine.agents_granted, names: mine.agent_names };
+                  } catch {
+                    applied = null;
+                  }
+                }
+                onSaved(secret.name, applied);
+              })();
             }}
           />
         ) : (
@@ -301,6 +313,8 @@ function Checklist({
   const secrets = useSecrets({ kind: "organization", id: org?.id ?? "" }, !!org);
   const orgKey = (secrets.data?.items ?? []).find((s) => s.kind === "llm" && s.status === "active");
   const [keyOpen, setKeyOpen] = useState(false);
+  const readiness = useAnswerReadiness(tryIt.agent?.id, keyDone(setup) && !!tryIt.agent);
+  const ready = readiness.data?.can_answer === true;
   const uploaded = usePlugins("pending_approval");
   const waiting = (uploaded.data?.items ?? []).filter((p) => p.origin !== "aurora").length;
   const you = setup.you;
@@ -336,16 +350,24 @@ function Checklist({
             </span>
           ) : null}
         </>
-      ) : org ? "Add an organization AI key" : "Choose where new people land first",
+      ) : org ? "Add an AI key so agents can answer" : "Choose where new people land first",
     },
     {
       id: "try",
       title: "Try it",
       done: tryIt.replied,
       // No starter key (D-414): Try it is not offered until an agent can answer.
-      summary: tryIt.replied
-        ? `${tryIt.agentName ?? "Your agent"} answered ${tryIt.person ?? "you"}`
-        : tryIt.available
+      summary: tryIt.replied ? (
+        <>
+          {tryIt.agentName ?? "Your agent"} answered {tryIt.person ?? "you"}
+          {tryIt.repliedAt ? (
+            <>
+              {" "}
+              <When value={tryIt.repliedAt} />
+            </>
+          ) : null}
+        </>
+      ) : tryIt.available
           ? "Say hello to your own agent"
           : "Comes after the AI key",
     },
@@ -378,7 +400,7 @@ function Checklist({
         Add key
       </Button>
     ),
-    try: tryIt.available ? (
+    try: tryIt.available || tryIt.replied ? (
       <Link href={tryIt.href} className={linkButton(3)}>
         Open chat
       </Link>
@@ -415,6 +437,22 @@ function Checklist({
           ))}
         </ol>
       </Card>
+      {tryIt.agent && ready ? (
+        // (P5-REFINE-20, setup-2) Once the key is there: the agent that will answer, and that nothing is left to set up for it.
+        <Card className="flex items-center gap-3 p-4 sm:p-4" data-testid="setup-agent-card">
+          <Avatar name={tryIt.agent.name} url={tryIt.agent.avatarUrl} tintKey={tryIt.agent.id} size={40} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate">
+              <span className="font-display text-base font-semibold text-ink">{tryIt.agent.name}</span>{" "}
+              <span className="font-mono text-xs text-muted">@{tryIt.agent.handle}</span>
+            </p>
+            <p className="text-sm text-ink-2">{`Uses ${orgKey?.name ?? "the organization's key"} · no setup left`}</p>
+          </div>
+          <StatusDot tone="accent" className="shrink-0">
+            Ready
+          </StatusDot>
+        </Card>
+      ) : null}
       <PresetLine />
       {waiting > 0 ? (
         <p className="text-sm text-ink-2" data-testid="uploaded-waiting">
@@ -474,6 +512,14 @@ function terminalOn(section: { settings: { key: string; value: unknown; default?
   return (s.value ?? s.default) === true;
 }
 
+/** Why a real call through an endpoint's key failed (`last_error`, C-1063), in words. */
+const CALL_ERROR_WORDS: Record<string, string> = {
+  unreachable: "the endpoint could not be reached",
+  rejected: "the key was rejected",
+  expired: "the sign-in expired",
+  unexpected: "the endpoint gave an unexpected answer",
+};
+
 /**
  * (P5-REFINE-18 #15, D-383) One endpoint in the AI models line, by its display name and only what a real call proved:
  * "Company AI gateway answered 2 min ago." or "Users AI gateway has not been asked yet." A failed real call says when.
@@ -487,17 +533,49 @@ function EndpointLine({ c }: { c: SetupCheck }) {
     <span className="mr-1">
       <strong className="font-semibold text-ink">{name}</strong>{" "}
       {failedLast ? (
-        <>did not answer at {formatTime(err)}.</>
+        <>
+          did not answer at {formatTime(err)}
+          {c.last_error ? `: ${CALL_ERROR_WORDS[c.last_error] ?? c.last_error.replace(/_/g, " ")}` : ""}.
+        </>
       ) : ok !== null && c.evidence === "call" ? (
         <>
           answered <When value={ok} />.
         </>
-      ) : c.status !== "ok" ? (
-        <>did not answer.</>
       ) : (
+        // (setup-4) The reachability probe alone never says "did not answer": no real call has failed, so it has not been asked.
         <>has not been asked yet.</>
       )}
     </span>
+  );
+}
+
+/**
+ * (P5-REFINE-20, setup-5) What the setup status says needs the admin, as rows of the one Needs you list (uncounted, after the
+ * feed's items): apps people cannot sign in to, and e-mail not being set up. `null` when there is none.
+ */
+function useNeedsExtra(setup: SetupStatus | undefined): ReactNode {
+  const placement = usePlacement();
+  if (!setup) return null;
+  const gaps = gapsFromChecks(stepOf(setup, "optional")?.checks ?? []);
+  const blocked = gaps.filter((g) => !g.tokenOnly);
+  const noMail = !emailDone(setup);
+  if (blocked.length === 0 && !noMail) return null;
+  return (
+    <>
+      <SignInGapRows gaps={blocked} where={{ level: "admin", orgSlug: placement.data?.default_org?.slug }} />
+      {noMail ? (
+        <NeedsYouRow
+          data-reason="email_not_configured"
+          title="E-mail isn't set up"
+          detail="Aurora can't send approval or invitation e-mails."
+          action={
+            <Link href={adminRoutes.platform("email")} className={rowButton}>
+              Set up e-mail
+            </Link>
+          }
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -511,10 +589,12 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
   const blocked = gaps.filter((g) => !g.tokenOnly);
   const noMail = !emailDone(setup);
   const orgSlug = placement.data?.default_org?.slug;
+  const extra = useNeedsExtra(setup);
   const roles = stepOf(setup, "roles");
   const llm = stepOf(setup, "llm");
   const endpoints = llm?.checks.filter((c) => c.id.startsWith("endpoint:")) ?? [];
-  const down = endpoints.filter((c) => c.status !== "ok");
+  // Only a real call that failed is a problem; an endpoint nobody has asked yet is not (setup-4).
+  const down = endpoints.filter((c) => c.status !== "ok" && c.evidence === "call");
   const gateway = checkOf(setup, "runners", "gateway");
   const runner = checkOf(setup, "runners", "runners");
   const needs = blocked.length + (noMail ? 1 : 0);
@@ -544,31 +624,8 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
           Run setup again
         </Button>
       </header>
-      {needs > 0 ? (
-        <section aria-labelledby="needs-you-h" className="space-y-4 rounded-card border border-line bg-surface p-4">
-          <div>
-            <h2 id="needs-you-h" className="font-display text-base font-semibold text-ink">
-              Needs you
-            </h2>
-            <p className="text-sm text-ink-2">Each item says what is missing and opens the page that fixes it.</p>
-          </div>
-          <SignInGaps gaps={blocked.length > 0 ? gaps : blocked} where={{ level: "admin", orgSlug }} />
-          {noMail ? (
-            <div data-reason="email_not_configured">
-              <StatusLine
-                tone="attention"
-                action={
-                  <Link href={adminRoutes.platform("email")} className={rowButton}>
-                    Set up e-mail
-                  </Link>
-                }
-              >
-                E-mail isn&apos;t set up. Aurora can&apos;t send approval or invitation e-mails.
-              </StatusLine>
-            </div>
-          ) : null}
-        </section>
-      ) : null}
+      {/* (setup-5) One Needs you list: the requests and the setup gaps in the same rows; History is under the page, never first. */}
+      <AttentionSection extra={extra} history={false} />
       {blocked.length === 0 && gaps.some((g) => g.tokenOnly) ? <SignInGaps gaps={gaps.filter((g) => g.tokenOnly)} where={{ level: "admin", orgSlug }} /> : null}
       <Card className="p-0">
         <h2 className="px-4 pt-4 font-display text-base font-semibold text-ink">Health</h2>
@@ -617,6 +674,7 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
         <SshLine />
         <PushLine />
       </div>
+      <AttentionHistory level="administration" />
     </div>
   );
 }
@@ -661,12 +719,15 @@ export function SetupView() {
   async function keyAdded(keyName: string, applied: KeyGiven | null) {
     setView("checklist");
     setGiven(applied);
+    // (P5-REFINE-18 #14, D-414) "Company key added. Daneel can use it now." The agents already there got it with the key.
+    // Shown at once; the checklist, Try it and the agent card are read again behind it (P5-REFINE-20: they stayed stale).
+    const who = applied?.names[0];
+    setToast({ text: who ? `${keyName} added. ${who} can use it now.` : `${keyName} added.`, waiting: 0 });
+    void qc.invalidateQueries({ queryKey: ["answer-readiness"] });
+    void qc.invalidateQueries({ queryKey: ["admin", "placement"] });
     await qc.invalidateQueries({ queryKey: onboardingKeys.setup });
     const fresh = qc.getQueryData<SetupStatus>(onboardingKeys.setup);
-    // (P5-REFINE-18 #14, D-414) "Company key added. Daneel can use it now." The agents already there got it with the key.
-    const who = applied?.names[0];
-    const lead = who ? `${keyName} added. ${who} can use it now.` : `${keyName} added.`;
-    setToast({ text: fresh ? `${lead} ${doneCount(fresh, tryIt.replied)} of ${SETUP_STEPS} done.` : lead, waiting: fresh?.personal_workspaces_without_starter ?? 0 });
+    setToast((t) => (t ? { ...t, waiting: fresh?.personal_workspaces_without_starter ?? 0 } : t));
   }
 
   return (
@@ -690,7 +751,7 @@ export function SetupView() {
       />
       {setup.isPending ? <Loading /> : null}
       {setup.isError ? <ErrorState error={setup.error} onRetry={() => setup.refetch()} /> : null}
-      <AttentionSection />
+      {shown === "checklist" ? <AttentionSection history={false} /> : null}
       <OwnerlessBanner />
       <ConnectorAvailableCallout />
       <div role="tabpanel" id={tabPanelId("overview", shown)} aria-labelledby={tabId("overview", shown)} className="space-y-6">
@@ -699,6 +760,7 @@ export function SetupView() {
           <Checklist setup={setup.data} tryIt={tryIt} toast={toast} given={given} onKeyAdded={(n, a) => void keyAdded(n, a)} onDismissToast={() => setToast(null)} />
         ) : null}
       </div>
+      {shown === "checklist" ? <AttentionHistory level="administration" /> : null}
     </div>
   );
 }

@@ -79,6 +79,23 @@ export function AttentionRow({
 }
 
 /**
+ * (P5-REFINE-20, setup-5) A row of the same shape as [`AttentionRow`] for something that is not a feed item: a fact read from
+ * the setup status (apps people cannot sign in to, e-mail not set up). It sits in the one Needs you list as an `extra`, not counted.
+ */
+export function NeedsYouRow({ icon, title, detail, action, ...rest }: { icon?: ReactNode; title: ReactNode; detail?: ReactNode; action: ReactNode } & Record<`data-${string}`, string | undefined>) {
+  return (
+    <li {...rest} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control bg-surface px-3 py-2.5 text-sm">
+      {icon}
+      <span className="min-w-0 flex-1 basis-56">
+        <span className="block font-semibold text-ink">{title}</span>
+        {detail ? <span className="block text-ink-2">{detail}</span> : null}
+      </span>
+      <span className="flex shrink-0 flex-wrap items-center gap-2">{action}</span>
+    </li>
+  );
+}
+
+/**
  * The **Needs you** card of an Overview at the organization or Administration level: the level's feed in one shape, with
  * the count (C-1080 `count`: open items that are not the viewer's own). `extra` rows (informational, not counted) follow
  * the feed. Nothing at all when nothing waits and there is no extra row.

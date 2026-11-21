@@ -14851,6 +14851,8 @@ export interface components {
             helm?: string | null;
             /** @description Stable id, e.g. `endpoint:litellm`, `default_model:litellm`, `gateway`. */
             id: string;
+            /** @description The code of the newest failed real call: `rejected`, `unreachable`, `unexpected` or `expired`. */
+            last_error?: string | null;
             /** Format: date-time */
             last_error_at?: string | null;
             /**
@@ -14953,6 +14955,11 @@ export interface components {
             available: boolean;
             /** @description The calling admin has one finished turn of their own in a hosted agent they own. */
             done: boolean;
+            /**
+             * Format: date-time
+             * @description When the newest such finished turn ended; null while `done` is false.
+             */
+            done_at?: string | null;
             /** Format: uuid */
             workspace_id?: string | null;
         };

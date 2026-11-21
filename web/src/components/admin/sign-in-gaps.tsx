@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useQueries } from "@tanstack/react-query";
 
+import { NeedsYouRow } from "@/components/attention/needs-you-feed";
 import { Notice } from "@/components/ui/notice";
 import { buttonVariants } from "@/components/ui/button";
 import { AppIcon } from "@/components/ui/app-icon";
@@ -135,6 +136,39 @@ export function SignInGaps({ gaps, where }: { gaps: SignInGap[]; where: Where })
         </Notice>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * (P5-REFINE-20, setup-5) The blocked gaps as rows of the one Needs you list (`NeedsYouRow`): one per package, with **Register a
+ * sign-in app**. The token-only ones stay informational and are not rows.
+ */
+export function SignInGapRows({ gaps, where }: { gaps: SignInGap[]; where: Where }) {
+  const register = (g: SignInGap) => {
+    const q = { ...(g.pkg ? { package: g.pkg } : {}), ...(g.clientKey ? { client_key: g.clientKey } : {}) };
+    return where.level === "admin" ? adminRoutes.oauthClients(q) : orgRoutes(where.orgSlug).apps("oauth-clients", q);
+  };
+  return (
+    <>
+      {groupGaps(gaps.filter((g) => !g.tokenOnly)).map((group) => {
+        const g = group[0]!;
+        return (
+          <NeedsYouRow
+            key={g.pkg ?? g.appId}
+            data-app={g.appId}
+            data-apps={group.map((x) => x.appId).join(" ")}
+            icon={<AppIcon appId={g.appId} name={g.name} size={32} />}
+            title={`People can't sign in to ${joinNames(group.map((x) => x.name))} yet`}
+            detail={`${group.length === 1 ? `${g.name} has no other way to connect.` : "They share one sign-in and have no other way to connect."} Register a sign-in app so people can sign in.`}
+            action={
+              <Link href={register(g)} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
+                Register a sign-in app
+              </Link>
+            }
+          />
+        );
+      })}
+    </>
   );
 }
 

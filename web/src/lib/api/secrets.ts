@@ -66,6 +66,9 @@ export function useCreateSecret(scope: SecretScope) {
       void qc.invalidateQueries({ queryKey: ["accounts"] });
       // A key saved with its access (C-988) changes what the agents can think with: the guide's "AI key" step reads it.
       void qc.invalidateQueries({ queryKey: ["model-readiness"] });
+      // (P5-REFINE-20) The setup checklist and the agents' "can answer" read the key too: not left stale until a reload.
+      void qc.invalidateQueries({ queryKey: ["admin", "setup"] });
+      void qc.invalidateQueries({ queryKey: ["answer-readiness"] });
       return qc.invalidateQueries({ queryKey: secretKeys.list(scope) });
     },
   });

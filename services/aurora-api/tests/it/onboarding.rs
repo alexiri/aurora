@@ -417,6 +417,10 @@ async fn refine5_health_reads_real_calls_and_try_it_completes_by_itself() {
         "{c}"
     );
     assert!(c["last_error_at"].is_string());
+    assert_eq!(
+        c["last_error"], "unreachable",
+        "the reason of the failed call: {c}"
+    );
 
     // Try it is done after one finished turn of the admin's own, in any conversation.
     assert_eq!(setup().await["try_it"]["done"], false);
@@ -450,6 +454,15 @@ async fn refine5_health_reads_real_calls_and_try_it_completes_by_itself() {
         false,
         "an unfinished turn is not it"
     );
+    assert!(
+        setup().await["try_it"]["done_at"].is_null(),
+        "no time without a finished turn"
+    );
     turn("done").await;
-    assert_eq!(setup().await["try_it"]["done"], true);
+    let v = setup().await;
+    assert_eq!(v["try_it"]["done"], true);
+    assert!(
+        v["try_it"]["done_at"].is_string(),
+        "when it was answered: {v}"
+    );
 }
