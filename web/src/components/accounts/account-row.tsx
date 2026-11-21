@@ -167,9 +167,9 @@ export function AccountRow({
           </span>
         ) : null}
         {account.app ? (
-          <AppIcon appId={account.app.app_id} name={account.app.name} size={32} />
+          <AppIcon appId={account.app.app_id} name={account.app.name} className="self-center" />
         ) : account.kind === "ai_key" ? (
-          <AiKeyTile />
+          <AiKeyTile className="self-center" />
         ) : null}
         {/* (P5-REFINE-13, access-2) On a phone (below sm) the title keeps the line beside the icon; a full-width, zero-height
             break after it puts the level and the menu on a line of their own below. */}

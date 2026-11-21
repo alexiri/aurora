@@ -128,7 +128,7 @@ export function ConnectorIcon({
   name,
   iconB64,
   hasIcon,
-  size = 40,
+  size = 64,
 }: {
   id: string;
   name: string;

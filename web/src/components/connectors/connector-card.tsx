@@ -30,7 +30,7 @@ export function ConnectorCard({
     <li>
       <Card className="space-y-3">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <ConnectorIcon id={c.id} name={c.display_name} hasIcon={c.has_icon} size={32} />
+          <ConnectorIcon id={c.id} name={c.display_name} hasIcon={c.has_icon} />
           <h3 className="font-display text-base font-semibold text-ink">{c.display_name}</h3>
           {/* (P5-POLISH-11, F2) One chip, the status; who runs it is plain text, and the raw id is not shown. */}
           <ConnectorStatusChip c={c} />
