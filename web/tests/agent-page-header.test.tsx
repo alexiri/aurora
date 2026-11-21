@@ -75,6 +75,34 @@ describe("agent page frame (D-200)", () => {
     expect(screen.queryByRole("button", { name: "Agent actions" })).toBeNull();
   });
 
+  it("(access-3) the give-key action is its own full-width row at every width, and the name and the state line stay in the DOM", async () => {
+    mockFetch(
+      routes({
+        "GET /v1/agents/a1/answer-readiness": () =>
+          json(200, {
+            can_answer: false,
+            reason: "no_ai_key",
+            usable_keys: 0,
+            fix: { action: "give_key", key: { secret_id: "s1", name: "Company key", scope: "organization" } },
+          }),
+        "GET /v1/agents/a1/sandbox": () => json(200, { computer: { word: "on", ready: true, working: false, asleep: false } }),
+      }),
+    );
+    renderPage();
+    const give = await screen.findByRole("button", { name: "Give Scout the Company key" });
+    // jsdom has no layout: the row's classes are the contract (basis-full + w-full below md too, never md-only), so it can never
+    // join the name's flex line and squeeze the h1 to 0 px (Playwright's no-model spec measures the boxes at 390 and 1280).
+    const row = give.closest("header > div")!;
+    expect(row.className).toMatch(/(^|\s)basis-full(\s|$)/);
+    expect(row.className).toMatch(/(^|\s)w-full(\s|$)/);
+    expect(row.className).not.toContain("md:basis-full");
+    const h1 = screen.getByRole("heading", { level: 1 });
+    expect(h1.textContent).toBe("Scout");
+    expect(await screen.findByTestId("agent-state")).toHaveTextContent("Can't answer: no AI key");
+    expect(row.contains(h1)).toBe(false);
+    expect(row.contains(screen.getByTestId("agent-state"))).toBe(false);
+  });
+
   it("opens Settings on Instructions: no tab selected, a back link, the page name and its lead, the sub-nav; the URL keeps the page id", async () => {
     mockFetch(routes());
     renderPage();
