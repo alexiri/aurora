@@ -771,6 +771,56 @@ fn escape_table_excess_makes_extra_cells_text_of_the_last_cell() {
     }
 }
 
+/// FIX-197/FIX-198 (D-270): the prose rules on a connector's converted text, read as it is now:
+/// prose is defanged, code stays as typed, raw HTML and the neutral tokens are left alone, and the
+/// core's own output is a fixed point.
+#[test]
+fn defang_prose_defangs_what_is_prose_now_and_keeps_code() {
+    let img = "![i](https://a.example/p.png)";
+    let url = "https://e.example/?d=S";
+    // Prose now (the core had read it as code): defanged.
+    let out = defang_prose(&format!("a {img} see {url} now"));
+    assert_eq!(
+        out,
+        format!("a [🖼 i (a.example)](<https://a.example/p.png>) see [{url}]({url}) now")
+    );
+    // A table cell beyond the header's width: text of the last cell, where the rules reach it.
+    let out = defang_prose(&format!(" |a|b|\n|-|-|\n|1|2|x| see {url} `{img}`"));
+    assert!(out.contains("2\\|x\\|"), "{out:?}");
+    assert!(out.contains(&format!("`{img}`")), "{out:?}");
+    assert!(!out.contains(&format!("see {url}")), "{out:?}");
+    // A cell split that cuts what the core read as one span: the halves are prose.
+    let out = defang_prose(&format!("|a|b|\n|-|-|\n|`x|{img}`|"));
+    assert!(!out.contains("!["), "{out:?}");
+    // Code as typed: spans, fences (also inline triple runs that pair), indented blocks.
+    for code in [
+        format!("a ` {img} {url} ` b"),
+        format!("a ``` {img} {url} ``` b"),
+        format!("```\n{img} {url}\n```"),
+        format!("    {img} {url}"),
+        format!("|a|\n|-|\n|` {img} {url} `|"),
+    ] {
+        assert_eq!(defang_prose(&code), code);
+    }
+    // Tokens, raw HTML and the core's own output stay as they are.
+    for kept in [
+        "ping <@here> and <@user:U1> in <#space:S1>",
+        "<div>x</div>",
+        "a <b>b</b> c",
+    ] {
+        assert_eq!(defang_prose(kept), kept);
+    }
+    for src in [
+        format!("see {url} and {img} | `{img}`"),
+        format!("|a|b|\n|-|-|\n|1|2|{img} {url}|"),
+        "[x](https://x.example/p) [https://cern.ch](https://e.example/l)".to_owned(),
+        "$![x](u)$ and [^1]\n\n[^1]: n".to_owned(),
+    ] {
+        let safe = markdown_safe(&src, 10_000);
+        assert_eq!(defang_prose(&safe), safe, "{src:?}");
+    }
+}
+
 /// Review 3 (2): a link joint (`](`) or a definition line that pulldown did not form is still a
 /// link on a platform whose dialect is looser (Mattermost 11.7.15: a destination may hold
 /// spaces; a definition may follow a paragraph line). The sanitizer breaks them in prose.

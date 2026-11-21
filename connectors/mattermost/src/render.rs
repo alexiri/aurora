@@ -164,7 +164,12 @@ pub fn render_text(neutral: &str, lk: &Lookups) -> String {
     // (FIX-142, docs/20 §Rendering) constructs Mattermost lacks are converted first; native
     // ones pass through byte for byte. Tokens and broadcast words are handled below, on the
     // converted text.
-    let cleaned = crate::convert::convert(&cleaned);
+    // FIX-197/FIX-198 (D-270): the conversion can change the block structure the core read (a
+    // dropped tag turns a paragraph into a table, a converted block tag ends a table row), so
+    // text the core read as code — and left as typed — can be prose now. The core's prose rules
+    // run again on the converted text, read the way the platform reads it: what is not code
+    // there is defanged, whatever the core saw.
+    let cleaned = aurora_core::sanitize::defang_prose(&crate::convert::convert(&cleaned));
     let neutral = cleaned.as_str();
     let mut out = String::with_capacity(neutral.len());
     let mut rest = neutral;

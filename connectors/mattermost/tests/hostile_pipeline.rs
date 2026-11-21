@@ -109,11 +109,9 @@ fn violation(post: &str) -> Option<String> {
     // An image opener anywhere outside code, even where the parser shows nothing (the cells of a
     // table row beyond the header are dropped by GFM but rendered by Mattermost 11.7.15).
     {
-        let code: Vec<std::ops::Range<usize>> = Parser::new_ext(post, opts())
-            .into_offset_iter()
-            .filter(|(e, _)| matches!(e, Event::Code(_) | Event::Start(Tag::CodeBlock(_))))
-            .map(|(_, r)| r)
-            .collect();
+        // (The one code reading the connector itself uses: CommonMark spans by run length,
+        // fences at a line start, GFM table cells.)
+        let code = aurora_connector_mattermost::convert::code_ranges(post);
         // (`\![x](u)`: an escaped `!` in front of an ordinary link)
         if post.match_indices("![").any(|(i, _)| {
             !code.iter().any(|r| r.contains(&i))
@@ -374,6 +372,97 @@ fn a_nested_url_attribute_leaves_no_bare_url() {
     assert_eq!(
         posts("see <a href=\"https://x.example/p\">docs</a> now"),
         vec!["see [docs](https://x.example/p) now".to_owned()]
+    );
+}
+
+/// FIX-197/FIX-198 (D-270): the connector's conversion can change the block structure the core
+/// read — a dropped `<b>` turns the core's paragraph into a table (whose cells beyond the header
+/// GFM drops), a `<details>` converted inside a table cell ends the table — so text the core read
+/// as code (and left as typed) can be prose to Mattermost. Whatever the final post's reading, no
+/// image opener and no bare URL is left outside its code.
+#[test]
+fn code_the_conversion_reshapes_leaves_no_image_or_bare_url() {
+    let img = "![i](https://a.example/p.png)";
+    let url = "https://e.example/?d=SECRET";
+    let mut cases = vec![
+        // FIX-197: the CI Watcher's minimal case (CI run 44835421666, seed `cc 88d0f684…`).
+        format!("<b> |a|b|\n|-|-|\n|1|2|![x](https://e.example/?d=S)| ` {img} `@here`"),
+        // FIX-198: the CI Watcher's minimal case (CI run 44819722564, seed `cc 0bd2ab2d…`).
+        format!(
+            "|a|b|\n|-|-|\n|1|![x](u)| <details><summary>s</summary>b</details> !<a href=\"https://a.example/p.png\">x</a> ```rs\nlet x = 1;\n``` see {url} now ```rs\nlet x = 1;\n```"
+        ),
+        // A code span the core read across the pipes of what becomes a table row.
+        format!("<b> |a|b|\n|-|-|\n|`x|{img}`|"),
+        format!("<b> |a|b|\n|-|-|\n|`x|see {url}`|"),
+        // A heading the conversion starts in the middle of a paragraph cuts a span in two.
+        format!("a <h1>h `x\n{img} see {url} ` b</h1>"),
+        format!("a <br>``` x\n{img} see {url} ``` b"),
+    ];
+    // Odd and paired runs of one, two, three and four backticks, with and without an info string,
+    // holding an image opener, a link opener and a URL.
+    let payloads = [
+        format!("` {img} `x`"),
+        format!("`` {img} `` x ``"),
+        format!("``` {img} ``` x ```"),
+        format!("```rs {img} ``` x ```rs"),
+        format!("` [l](https://e.example/l) see {url} `x`"),
+        format!("``x ` {url} `` `"),
+        format!("```` {url} ```` x ````"),
+        format!("```rs\nlet x = 1;\n``` see {url} now ```rs\nlet x = 1;\n```"),
+    ];
+    for p in &payloads {
+        for pos in [
+            p.clone(),
+            format!("- {p}"),
+            format!("> {p}"),
+            format!("# {p}"),
+            format!("|a|b|\n|-|-|\n|1|{p}|"),
+            format!("|a|b|\n|-|-|\n|1|`c`|{p}|"),
+            format!("|a|b|\n|-|-|\n|1|2|{p}|"),
+            format!("<b> |a|b|\n|-|-|\n|1|2|{p}"),
+            format!("<b> |a|b|\n|-|-|\n|1|`2|{p}"),
+            format!("|a|b|\n|-|-|\n|1|x <details><summary>s</summary>b</details> {p}"),
+            format!("|a|b|\n|-|-|\n|1|x <p>y</p> <br> {p}"),
+            format!("x <details><summary>s</summary>b</details> {p}"),
+            format!("para\n    {p}"),
+        ] {
+            cases.push(pos);
+        }
+    }
+    for src in &cases {
+        for p in posts(src) {
+            assert!(
+                violation(&p).is_none(),
+                "{src:?} -> {p:?}: {:?}",
+                violation(&p)
+            );
+            assert!(
+                !aurora_connector_mattermost::convert::has_bare_url(&p),
+                "{src:?} -> {p:?}"
+            );
+        }
+    }
+    // Real code stays as typed: an inline span, a fence at a line start (also of four
+    // backticks), an indented block.
+    for (src, kept) in [
+        (format!("a ` {img} ` b"), img.to_owned()),
+        (format!("a ``` {img} ``` b"), img.to_owned()),
+        (format!("```\n{url}\n```"), url.to_owned()),
+        (format!("```rs\n{img}\n```"), img.to_owned()),
+        (format!("````\n{url}\n````"), url.to_owned()),
+        (format!("   ```\n{url}\n   ```"), url.to_owned()),
+        (format!("    {url}"), url.to_owned()),
+        (format!("|a|\n|-|\n|` {img} `|"), format!("` {img} `")),
+    ] {
+        let out = posts(&src);
+        assert!(out.iter().any(|p| p.contains(&kept)), "{src:?} -> {out:?}");
+    }
+    // A `<details>` converted inside a table cell keeps the row on one line (the table stays one).
+    let out = posts("|a|b|\n|-|-|\n|1|<details><summary>s</summary>b</details> `x`|");
+    assert_eq!(out.len(), 1);
+    assert!(
+        out[0].starts_with("|a|b|\n|-|-|\n|1|") && out[0].lines().count() == 3,
+        "{out:?}"
     );
 }
 
