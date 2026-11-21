@@ -62,6 +62,12 @@ describe("sender grouping", () => {
     expect(g[2].door).toBe("schedule");
   });
 
+  it("a door that is the sender's own name is not a second chip: 'Webhook' by webhook says it once (webhooks-4)", () => {
+    const g = groups(rows([ev("turn.queued", at(2026, 11, 8, 12, 0), { turn_id: "t1", speaker_label: "Webhook", door: "webhook", text: "a" })]));
+    expect(g[0].name).toBe("Webhook");
+    expect(g[0].door).toBe("");
+  });
+
   it("keeps an agent's text, tool calls and approval in one group", () => {
     const g = groups(
       rows([

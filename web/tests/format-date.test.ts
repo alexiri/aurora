@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { displayTimeZone, formatCount, formatDay, formatExact, formatTime, formatWhen, setDisplayTimeZone } from "@/lib/format-date";
+import { automationTimeZone, displayTimeZone, formatCount, formatDay, formatExact, formatTime, formatWhen, setDisplayTimeZone, setWorkspaceTimeZone } from "@/lib/format-date";
 
 const now = new Date(2026, 10, 19, 12, 0, 0).getTime();
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -31,6 +31,23 @@ describe("formatWhen", () => {
     expect(formatWhen(null)).toBe("—");
     expect(formatWhen("nope")).toBe("—");
     expect(formatWhen(undefined, { empty: "Never" })).toBe("Never");
+  });
+
+  it("a clock time is always 24-hour, whatever the locale, and can name its zone (item 18)", () => {
+    const at = "2026-11-10T03:11:00Z";
+    setDisplayTimeZone("UTC");
+    expect(formatTime(at)).toBe("03:11");
+    expect(formatTime(at, "", "America/Los_Angeles")).toBe("19:11");
+    expect(formatExact(at)).not.toMatch(/AM|PM/i);
+  });
+
+  it("the automations' zone is the workspace's, else the person's", () => {
+    setDisplayTimeZone("Asia/Tokyo");
+    expect(automationTimeZone()).toBe("Asia/Tokyo");
+    setWorkspaceTimeZone("Europe/Zurich");
+    expect(automationTimeZone()).toBe("Europe/Zurich");
+    setWorkspaceTimeZone(null);
+    expect(automationTimeZone()).toBe("Asia/Tokyo");
   });
 
   it("shows times in the person's time zone", () => {

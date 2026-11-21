@@ -4,9 +4,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
 import { api } from "@/lib/api/client";
-import { useMe } from "@/lib/api/queries";
+import { useMe, useWorkspace } from "@/lib/api/queries";
 import { unwrap } from "@/lib/api/unwrap";
-import { setDisplayTimeZone } from "@/lib/format-date";
+import { setDisplayTimeZone, setWorkspaceTimeZone } from "@/lib/format-date";
+
+/** (P5-REFINE-20, item 18) The workspace's zone, for the times of its automations (see `automationTimeZone`). */
+export function useWorkspaceTimeZone(wsId: string | undefined): void {
+  const tz = useWorkspace(wsId).data?.timezone;
+  setWorkspaceTimeZone(wsId ? tz : null);
+}
 
 /** Per-browser-session marker: the auto-fill below runs at most once per session. */
 const SESSION_KEY = "aurora.timezone-autofill";
