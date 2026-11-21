@@ -326,7 +326,8 @@ pub async fn rig(o: RigOpts) -> Rig {
 pub struct CertSpec {
     pub ca: PrivateKey,
     pub key_id: Option<String>,
-    pub principal: Option<String>,
+    /// The principals (default: `[rig.agent]`, a certificate minted before D-445).
+    pub principals: Option<Vec<String>>,
     pub cert_type: CertType,
     pub valid_after: i64,
     pub valid_before: i64,
@@ -340,7 +341,7 @@ impl Rig {
         CertSpec {
             ca: self.ca.clone(),
             key_id: None,
-            principal: None,
+            principals: None,
             cert_type: CertType::User,
             valid_after: now - 60,
             valid_before: now + 600,
@@ -369,12 +370,13 @@ impl Rig {
             )
         }))
         .unwrap();
-        b.valid_principal(
-            s.principal
-                .clone()
-                .unwrap_or_else(|| self.agent.to_string()),
-        )
-        .unwrap();
+        for p in s
+            .principals
+            .clone()
+            .unwrap_or_else(|| vec![self.agent.to_string()])
+        {
+            b.valid_principal(p).unwrap();
+        }
         if s.permit_pty {
             b.extension("permit-pty", "").unwrap();
         }

@@ -190,14 +190,24 @@ fn verify_certificate(
     cert.validate_at(Utc::now().timestamp().max(0) as u64, cas.iter())
         .ok()?;
     if cert.cert_type() != CertType::User
-        || cert.valid_principals().len() != 1
-        || cert.valid_principals()[0] != username
+        || !principals_ok(cert.valid_principals(), username)
         || !cert.critical_options().is_empty()
     {
         return None;
     }
     let parts = parse_key_id(cert.key_id())?;
     (parts.agent.to_string() == username).then_some((cert, parts))
+}
+
+/// SEC-147: principals `[agent id]` or `[agent id, handle]`, and `username` (what the terminator
+/// sends: the agent id its own law returned, never the typed name) is the first. A handle here
+/// is refused: the API never resolves an agent from a name.
+fn principals_ok(principals: &[String], username: &str) -> bool {
+    match principals {
+        [first] => first == username,
+        [first, handle] => first == username && aurora_core::ids::is_valid_handle(handle),
+        _ => false,
+    }
 }
 
 /// `POST /v1/terminator/sessions`.

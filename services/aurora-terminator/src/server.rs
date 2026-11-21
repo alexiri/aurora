@@ -280,21 +280,24 @@ impl Handler for Conn {
         if !self.shared.is_healthy() {
             return self.refuse(Refusal::ApiError);
         }
-        if let Err(r) = cert::check(
+        // SEC-147: the law answers the key id's agent; the typed name (the id or the handle) only
+        // had to be one of the principals and is not used past this point.
+        let agent = match cert::check(
             certificate,
             user,
             &self.shared.cas(),
             std::time::SystemTime::now(),
         ) {
-            return self.refuse(r);
-        }
+            Ok(agent) => agent,
+            Err(r) => return self.refuse(r),
+        };
         let Ok(line) = certificate.to_openssh() else {
             return self.refuse(Refusal::KeyId);
         };
         let permit_pty = certificate.extensions().contains_key("permit-pty");
         let req = SessionOpenRequest {
             certificate: SecretString::new(line),
-            username: user.to_owned(),
+            username: agent.to_string(),
             client_address: self.peer.map(|p| p.to_string()),
         };
         match self.shared.plane.open_session(&req).await {

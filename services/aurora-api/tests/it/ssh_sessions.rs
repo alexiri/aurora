@@ -418,7 +418,7 @@ async fn ssh_sessions_open_refusals() {
     // A foreign CA: same fields, signed by another key.
     let user = member_id(&s.r).await;
     let key_id = format!("aurora:u={user}:k={}:a={}:w={}", s.key, s.agent, s.r.ws);
-    let build = |ca: u8, key_id: &str, principal: &str| -> String {
+    let build_with = |ca: u8, key_id: &str, principals: &[&str]| -> String {
         let subject = Certificate::from_openssh(&s.cert)
             .unwrap()
             .public_key()
@@ -428,10 +428,13 @@ async fn ssh_sessions_open_refusals() {
         b.serial(5).unwrap();
         b.cert_type(CertType::User).unwrap();
         b.key_id(key_id.to_owned()).unwrap();
-        b.valid_principal(principal.to_owned()).unwrap();
+        for p in principals {
+            b.valid_principal((*p).to_owned()).unwrap();
+        }
         b.extension("permit-pty", "").unwrap();
         b.sign(&ca_key(ca)).unwrap().to_openssh().unwrap()
     };
+    let build = |ca: u8, key_id: &str, principal: &str| build_with(ca, key_id, &[principal]);
     assert_eq!(
         refused(&s, &build(0x77, &key_id, &agent), &agent).await,
         (403, denied.clone())
@@ -457,9 +460,63 @@ async fn ssh_sessions_open_refusals() {
         refused(&s, &build(0x5a, &wrong_ws, &agent), &agent).await,
         (403, denied.clone())
     );
+    // SEC-147: the terminator sends the agent id its law returned, never the typed name. The
+    // minted certificate names the handle too, but a handle as `username` is refused (the API
+    // never resolves an agent from a name), and so are the other principal shapes.
+    let minted = Certificate::from_openssh(&s.cert).unwrap();
+    assert_eq!(
+        minted.valid_principals(),
+        [agent.clone(), "ssh-a".to_owned()]
+    );
+    assert_eq!(refused(&s, &s.cert, "ssh-a").await, (403, denied.clone()));
+    for (what, principals, user) in [
+        (
+            "handle first",
+            vec!["ssh-a", agent.as_str()],
+            agent.as_str(),
+        ),
+        (
+            "handle first, handle sent",
+            vec!["ssh-a", agent.as_str()],
+            "ssh-a",
+        ),
+        ("handle alone", vec!["ssh-a"], "ssh-a"),
+        (
+            "three principals",
+            vec![agent.as_str(), "ssh-a", "other"],
+            agent.as_str(),
+        ),
+        (
+            "not a handle shape",
+            vec![agent.as_str(), "SSH A"],
+            agent.as_str(),
+        ),
+    ] {
+        assert_eq!(
+            refused(&s, &build_with(0x5a, &key_id, &principals), user).await,
+            (403, denied.clone()),
+            "{what}"
+        );
+    }
+    // Another agent's id as `username` with this agent's certificate: refused.
+    let other_agent = s.r.agent("ssh-b", false).await;
+    assert_eq!(
+        refused(&s, &s.cert, &other_agent.to_string()).await,
+        (403, denied.clone())
+    );
     // And the right CA with the right key id is accepted (the builder is not what failed).
     let (st, v) = refused(&s, &build(0x5a, &key_id, &agent), &agent).await;
     assert_eq!(st, 201, "{v}");
+    assert_eq!(v["agent_id"], agent);
+    // The two-principal shape with the id sent opens for the key id's agent too.
+    let (st, v) = refused(
+        &s,
+        &build_with(0x5a, &key_id, &[agent.as_str(), "ssh-a"]),
+        &agent,
+    )
+    .await;
+    assert_eq!(st, 201, "{v}");
+    assert_eq!(v["agent_id"], agent);
 
     // The registered fingerprint changed under the key id (a different key): denied.
     sqlx::query("UPDATE ssh_keys SET fingerprint = 'SHA256:other' WHERE id = $1")

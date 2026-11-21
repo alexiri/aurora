@@ -536,7 +536,7 @@ async fn ssh_cert_refuses_byo_and_frozen() {
 }
 
 /// The minted certificate: parses, verifies against the CA public key, and has exactly the
-/// C-791 fields (principal = agent id, key id, non-zero serial, `permit-pty` only, no critical
+/// C-791 fields (principals = agent id then handle, C-1121; `username` the handle; key id, non-zero serial, `permit-pty` only, no critical
 /// options, validity `now − 60 s … now + ttl`). The key's `last_used_at` is stamped and the
 /// best-effort audit row names agent, workspace, fingerprint, serial and `valid_before`.
 #[tokio::test]
@@ -561,7 +561,11 @@ async fn ssh_cert_has_exactly_the_specified_fields() {
     assert!(cert.validate_at(t1, [&other]).is_err());
 
     assert_eq!(cert.cert_type(), CertType::User);
-    assert_eq!(cert.valid_principals(), [agent.to_string()]);
+    // C-1121, SEC-147: the agent id first, then the handle (the user name to connect as).
+    assert_eq!(
+        cert.valid_principals(),
+        [agent.to_string(), "cert-a".to_owned()]
+    );
     assert_eq!(
         cert.key_id(),
         format!("aurora:u={user}:k={key_id}:a={agent}:w={}", r.ws)
@@ -580,7 +584,7 @@ async fn ssh_cert_has_exactly_the_specified_fields() {
     assert_eq!(cert.public_key(), subject.key_data());
 
     assert_eq!(v["principal"], agent.to_string());
-    assert_eq!(v["username"], agent.to_string());
+    assert_eq!(v["username"], "cert-a");
     assert_eq!(v["key_id"], cert.key_id());
     assert_eq!(v["host"], "ssh.example.org");
     assert_eq!(v["port"], 22);
@@ -606,6 +610,15 @@ async fn ssh_cert_has_exactly_the_specified_fields() {
                 "{text}"
             );
             assert!(text.contains(&agent.to_string()), "{text}");
+            // OpenSSH lists both principals, one per line, the handle after the id.
+            let after = text.split("Principals:").nth(1).unwrap_or("");
+            let names: Vec<&str> = after
+                .lines()
+                .skip(1)
+                .map(str::trim)
+                .take_while(|l| !l.contains(':'))
+                .collect();
+            assert_eq!(names, [agent.to_string().as_str(), "cert-a"], "{text}");
             assert!(text.contains("permit-pty"), "{text}");
             assert!(!text.contains("permit-port-forwarding"), "{text}");
             assert!(

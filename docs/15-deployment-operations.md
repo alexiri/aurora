@@ -1319,7 +1319,7 @@ session ids, agent ids, coarse addresses and reasons; never certificates, comman
 
 **kind dev**: `deploy/dev/kind-dev.sh up --ssh` layers `deploy/kind/values-ssh.yaml` (the terminator as a
 NodePort 32222, one replica, `sshFrom` open) and, on a new cluster, maps it to host port 2222
-(`AURORA_DEV_SSH_PORT`; `ssh -p 2222 <agent id>@localhost`); `scripts/e2e/ssh.sh` is the end-to-end suite
+(`AURORA_DEV_SSH_PORT`; `ssh -p 2222 <handle>@localhost`, or the agent id); `scripts/e2e/ssh.sh` is the end-to-end suite
 (`18 §SSH access`) and reaches the same Service through a port-forward.
 
 **Upgrade and rollback.** All SSH state is additive (new tables and two `sandboxes` columns). An

@@ -58,7 +58,8 @@ pub struct RegisterResponse {
 pub struct SessionOpenRequest {
     /// The OpenSSH certificate line the client authenticated with.
     pub certificate: SecretString,
-    /// The SSH username (the agent id).
+    /// The agent id the certificate law returned (the first principal, the key id's agent;
+    /// SEC-147), never the user name the client typed.
     pub username: String,
     /// The client's address as the terminator saw it (coarsened by the API at insert).
     #[serde(default)]

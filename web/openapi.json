@@ -68596,7 +68596,7 @@
           },
           "principal": {
             "type": "string",
-            "description": "The agent id (the certificate's only principal)."
+            "description": "The agent id: the certificate's first principal (the second is the handle, C-1121)."
           },
           "serial": {
             "type": "string",
@@ -68604,7 +68604,7 @@
           },
           "username": {
             "type": "string",
-            "description": "The SSH user name to connect as: the agent id."
+            "description": "The SSH user name to connect as: the agent's handle (C-1121; the agent id also works)."
           },
           "valid_after": {
             "type": "string",

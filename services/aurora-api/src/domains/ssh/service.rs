@@ -262,6 +262,14 @@ pub async fn mint_certificate(
         "aurora:u={}:k={}:a={}:w={}",
         c.user_id, key.id, agent, workspace_id
     );
+    // D-445: the handle from the agents row this mint read (handles never change, C-12) is the
+    // second principal and the user name to connect as; the session still opens for the key id's
+    // agent whatever name is typed (SEC-147).
+    let principals = principals_for(agent, &a.handle);
+    let username = principals
+        .last()
+        .cloned()
+        .unwrap_or_else(|| agent.to_string());
     let subject = ssh_key::PublicKey::from_openssh(&key.public_key)
         .map_err(|_| ApiError::internal("A stored SSH key does not parse."))?;
     let built = (|| -> Result<Builder, ssh_key::Error> {
@@ -274,7 +282,9 @@ pub async fn mint_certificate(
         b.serial(serial)?;
         b.cert_type(CertType::User)?;
         b.key_id(key_id.clone())?;
-        b.valid_principal(agent.to_string())?;
+        for p in &principals {
+            b.valid_principal(p.clone())?;
+        }
         // No critical options; `permit-pty` is the only extension (a PTY, no forwarding).
         b.extension("permit-pty", "")?;
         b.comment(format!("aurora:{agent}"))?;
@@ -313,9 +323,39 @@ pub async fn mint_certificate(
         key_id,
         valid_after: to_utc(cert.valid_after()),
         valid_before: valid_before_dt,
-        username: agent.to_string(),
+        username,
         host: s.config.ssh.public_host.clone(),
         port: s.config.ssh.public_port,
         known_hosts: known_hosts(s, &host_keys),
     })
+}
+
+/// The certificate's principals (C-1121, SEC-147): the agent id first, then its handle, which is
+/// the SSH user name the answer offers. A stored handle outside the handle shape (never written by
+/// the API, which validates at create) is left out, so the terminator's law still accepts the id.
+fn principals_for(agent: Uuid, handle: &str) -> Vec<String> {
+    let mut p = vec![agent.to_string()];
+    if aurora_core::ids::is_valid_handle(handle) {
+        p.push(handle.to_owned());
+    }
+    p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn principals_are_the_id_then_the_handle() {
+        let a = Uuid::now_v7();
+        assert_eq!(
+            principals_for(a, "daneel"),
+            [a.to_string(), "daneel".into()]
+        );
+        // A handle spelling a UUID is still a handle, second.
+        let b = "abcdef01-2345-4678-89ab-cdef01234567";
+        assert_eq!(principals_for(a, b), [a.to_string(), b.to_owned()]);
+        assert_eq!(principals_for(a, "Not A Handle"), [a.to_string()]);
+        assert_eq!(principals_for(a, ""), [a.to_string()]);
+    }
 }

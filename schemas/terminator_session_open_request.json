@@ -21,7 +21,7 @@
       ]
     },
     "username": {
-      "description": "The SSH username (the agent id).",
+      "description": "The agent id the certificate law returned (the first principal, the key id's agent;\nSEC-147), never the user name the client typed.",
       "type": "string"
     }
   },

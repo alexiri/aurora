@@ -1185,7 +1185,8 @@ applies to the agent, its workspace or its org (423 `frozen`). It is implemented
    counter must allow it (429 `ssh_mint_rate_limited`);
 2. **at session open** (the terminator's `POST /v1/terminator/sessions`, after the client proved
    possession of the certified key): the API re-verifies the certificate against its own CA keys
-   (signature, `user` type, validity window, principal = the SSH username = the agent id, no
+   (signature, `user` type, validity window, principals `[agent id]` or `[agent id, handle]` with the
+   terminator's `username` = the first principal = the key id's agent (SEC-147), no
    critical options, key id naming this user, key and agent), requires the certified key to be
    **still registered** to that user with the same fingerprint, re-runs `can_ssh` and the session
    caps; any failure is a refusal the client sees as a plain authentication failure;
@@ -1204,7 +1205,8 @@ and cascades the rows.
 
 **Certificates.** A user certificate is the proof that the access law passed recently for one
 person, one key and one agent, not a standing credential: type `user`, key
-`ssh-ed25519` (the registered key), CA `ssh-ed25519` (the API's signer), `valid_principals = [<agent id>]`,
+`ssh-ed25519` (the registered key), CA `ssh-ed25519` (the API's signer), `valid_principals = [<agent id>, <handle>]`
+(D-445, C-1121: the person types `<handle>@host`, or the id; the session always opens the key id's agent),
 `key_id = "aurora:u=<user id>:k=<ssh key id>:a=<agent id>:w=<workspace id>"`, a random non-zero
 64-bit `serial`, `valid_after = now − 60 s`, `valid_before = now + ssh.cert_ttl_secs` (default 900 s),
 **no critical options**, and the single extension `permit-pty` (no `permit-port-forwarding`,
