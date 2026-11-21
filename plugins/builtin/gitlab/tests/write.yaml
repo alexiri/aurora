@@ -46,14 +46,22 @@
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request:
     method: POST
-    url: "https://gitlab.com/api/v4/projects/group%2Fdemo/merge_requests"
+    url: "https://gitlab.com/api/v4/projects/42/merge_requests"
     headers: { content-type: application/json }
     body: '{"source_branch":"fix-login","target_branch":"main","title":"Fix login"}'
   expect:
     tool: create_merge_request
     summary:
       title: "create a merge request"
-      fields: { Project: "group%2Fdemo", Title: "Fix login", From: "fix-login", Into: "main" }
+      fields: { Project: "42", Title: "Fix login", From: "fix-login", Into: "main" }
+- name: "create_merge_request: a project path with an encoded slash is refused by the gateway (FIX-216)"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gitlab.com/api/v4/projects/group%2Fdemo/merge_requests"
+    headers: { content-type: application/json }
+    body: '{"source_branch":"fix-login","target_branch":"main","title":"Fix login"}'
+  expect: { refused: ambiguous_path }
 - name: "negative create_merge_request: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests" }
@@ -168,15 +176,23 @@
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request:
     method: PUT
-    url: "https://gitlab.com/api/v4/projects/42/repository/files/docs%2Fsetup.md"
+    url: "https://gitlab.com/api/v4/projects/42/repository/files/setup.md"
     headers: { content-type: application/json }
     body: '{"branch":"feature-x","commit_message":"Update setup","content":"text"}'
   expect:
     tool: write_repository_file
-    summary: { title: "change a file in a repository", fields: { Project: "42", File: "docs%2Fsetup.md", Branch: "feature-x", Message: "Update setup" } }
+    summary: { title: "change a file in a repository", fields: { Project: "42", File: "setup.md", Branch: "feature-x", Message: "Update setup" } }
+- name: "write_repository_file: an encoded folder path is refused by the gateway (FIX-216)"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://gitlab.com/api/v4/projects/42/repository/files/docs%2Fsetup.md"
+    headers: { content-type: application/json }
+    body: '{"branch":"feature-x","commit_message":"Update setup","content":"text"}'
+  expect: { refused: ambiguous_path }
 - name: "negative write_repository_file: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/files/docs%2Fsetup.md" }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/files/setup.md" }
   expect: { app: gitlab }
 - name: "git_push: receive-pack is the write tool and uses basic auth"
   connection: { credentials: { access_token: "tok-fixture-1" } }

@@ -1503,6 +1503,11 @@ the network and the database are replaced by the recording.
       retried: { url: "https://gitlab.example.com/api/v4/user", headers: { authorization: "Bearer tok-new" } }
   expect: { app: gitlab, tool: get_current_user }
 ```
+(FIX-216) The runner applies the gateway's step-3 path hygiene (`06` step 3, the same function)
+before matching, so a fixture's request path is matched normalized (`//` collapsed, `%2e` decoded)
+and a fixture may expect `refused: ambiguous_path` (a `.`/`..` segment, `%2F`, `%5C`, NUL, a
+backslash) or `refused: method_override_refused`.
+
 `outcome` is `refreshed` (the retried request carries the new credentials), `reauth_required` (a 4xx
 `invalid_grant` or a declared `reauth_codes` error; nothing is retried) or `unavailable` (any other
 failure, a request that no cassette entry answers, or a refresh the gateway refuses to build, for

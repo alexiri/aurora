@@ -6,8 +6,9 @@ proxy with no credential and no `-k`. Several accounts: add the header
 
 ## Addressing
 
-- A project is `$P`: its numeric id, or its full path with every `/` encoded as `%2F`
-  (`group%2Fsubgroup%2Fproject`). A group is addressed the same way.
+- A project is `$P`: its numeric id (find it with `GET /api/v4/projects?search=<words>`). The
+  gateway refuses an encoded slash (`%2F`) in any path with `ambiguous_path`, so a project or group
+  cannot be addressed by its full path: use the id.
 - Git over HTTPS: `https://$H/<group>/<project>.git`.
 
 ## Pagination
@@ -34,9 +35,10 @@ pages with `page=<n>`; the response headers `x-next-page` (empty on the last pag
 | Merge requests | `GET /api/v4/projects/$P/merge_requests?state=opened` |
 | One merge request's diffs | `GET /api/v4/projects/$P/merge_requests/<iid>/diffs` |
 | Issues | `GET /api/v4/projects/$P/issues?state=opened&labels=<l>` |
-| A file | `GET /api/v4/projects/$P/repository/files/<url-encoded path>/raw?ref=<branch>` |
+| A file at the repository root | `GET /api/v4/projects/$P/repository/files/<name>/raw?ref=<branch>` |
 | Pipelines and jobs | see `pipeline-failed.md` |
 
-`iid` is the number shown in the web UI (per project); `id` is the global id. The path of a file must
-be URL-encoded (`src%2Fmain.rs`). `tools.md` lists the operations the catalogue covers and what you
+`iid` is the number shown in the web UI (per project); `id` is the global id. A file in a
+folder would need its path encoded (`src%2Fmain.rs`), which the gateway refuses: read it with git
+over HTTPS instead. `tools.md` lists the operations the catalogue covers and what you
 are allowed to do with each; a request that matches none is refused.

@@ -166,3 +166,43 @@ fn body_source_template_summary_passes() {
     assert!(!s.to_string().contains("leak"), "{s}");
     assert_eq!(s["link"], "https://mail.example.com/mail/#Hi");
 }
+
+#[test]
+fn path_hygiene_runs_before_matching_as_in_production() {
+    // (FIX-216) dot segments, encoded slashes and dot segments written `%2e%2e` are refused with
+    // `ambiguous_path`; `//` is normalized and then matches; a normal path is unchanged.
+    let mut y = String::new();
+    for (n, p) in [
+        ("dotdot", "/rest/v2/tasks/../tasks/1/close"),
+        ("encoded dots", "/rest/v2/tasks/%2e%2e/1/close"),
+        ("encoded slash", "/rest/v2/tasks/1%2F2/close"),
+        ("dot", "/rest/v2/tasks/./close"),
+    ] {
+        y.push_str(&format!(
+            "- name: {n}\n  request: {{ method: POST, url: \"https://api.todoist.com{p}\" }}\n  expect: {{ refused: ambiguous_path }}\n"
+        ));
+    }
+    y.push_str(
+        "- name: double slash\n  connection: { credentials: { api_token: tok } }\n  request: { method: POST, url: \"https://api.todoist.com//rest/v2//tasks/1/close\" }\n  expect: { tool: close_task }\n\
+- name: normal\n  connection: { credentials: { api_token: tok } }\n  request: { method: POST, url: \"https://api.todoist.com/rest/v2/tasks/1/close\" }\n  expect: { tool: close_task }\n",
+    );
+    let r = run(&snapshot(), &files(&y)).unwrap();
+    assert!(r.ok, "{}", r.json);
+    assert_eq!(r.json["passed"], 6);
+}
+
+#[test]
+fn ambiguous_path_expected_but_not_refused_fails() {
+    let y = r#"
+- name: wrong
+  connection: { credentials: { api_token: tok } }
+  request: { method: POST, url: "https://api.todoist.com/rest/v2/tasks/1/close" }
+  expect: { refused: ambiguous_path }
+- name: unexpected refusal
+  request: { method: POST, url: "https://api.todoist.com/rest/v2/tasks/../close" }
+  expect: { tool: close_task }
+"#;
+    let r = run(&snapshot(), &files(y)).unwrap();
+    assert!(!r.ok);
+    assert_eq!(r.json["failed"], 2);
+}
