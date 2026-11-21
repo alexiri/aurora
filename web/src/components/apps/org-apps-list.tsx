@@ -179,7 +179,7 @@ export function OrgAppsList({
               </>
             }
           >
-            <AppIcon appId={a.app_id} name={appDisplayName(a)} hasDarkIcon={a.has_dark_icon} size={32} />
+            <AppIcon appId={a.app_id} name={appDisplayName(a)} hasDarkIcon={a.has_dark_icon} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-ink">
                 <AppLink app={a}>{appDisplayName(a)}</AppLink>

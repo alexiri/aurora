@@ -14,6 +14,7 @@ import { useAppInstances, useApps, type AppSummary } from "@/lib/api/apps";
 import { cn } from "@/lib/utils";
 
 import { DeploymentStep } from "../connect-dialog";
+import { StepHeader } from "./frame";
 import { needsReason, signInProvider } from "./logic";
 
 export type AppChoice = { kind: "app"; appId: string; instanceId?: string } | { kind: "website" };
@@ -42,7 +43,7 @@ function Tile({ app, onClick }: { app: AppSummary; onClick: () => void }) {
         onClick={onClick}
         className="flex min-h-24 w-full flex-col items-center gap-1.5 rounded-control border border-line bg-surface p-3 text-center text-xs font-semibold text-ink hover:border-line-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       >
-        <AppIcon appId={app.app_id} name={productName(app)} hasDarkIcon={app.has_dark_icon} size={32} />
+        <AppIcon appId={app.app_id} name={productName(app)} hasDarkIcon={app.has_dark_icon} />
         <span className="break-words">{productName(app)}</span>
       </button>
     </li>
@@ -53,7 +54,7 @@ function Tile({ app, onClick }: { app: AppSummary; onClick: () => void }) {
 function Row({ app, title, line, children }: { app: AppSummary; title: string; line: React.ReactNode; children: React.ReactNode }) {
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-line bg-surface p-3">
-      <AppIcon appId={app.app_id} name={title} hasDarkIcon={app.has_dark_icon} size={32} />
+      <AppIcon appId={app.app_id} name={title} hasDarkIcon={app.has_dark_icon} />
       <div className="min-w-0 flex-1 basis-40 text-sm">
         <p className="font-semibold text-ink">{title}</p>
         <p className="text-ink-2">{line}</p>
@@ -139,17 +140,17 @@ export function AppStep({
 
   return (
     <div className="space-y-4">
-      <input
-        type="search"
-        aria-label="Search apps"
-        placeholder="Search apps"
-        autoComplete="off"
-        className={inputClass}
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-      />
-      {/* (P5-REFINE-13, access-7) Two tabs with counts from the catalogue (a search narrows both); the tabs never scroll away. */}
-      <div className="sticky top-0 z-10 -mx-1 bg-surface px-1 pb-1">
+      {/* (FIX-210) The search and the two tabs live in the dialog's fixed header, under the stepper: only the list scrolls, and nothing is sticky. (P5-REFINE-13, access-7) The counts come from the catalogue; a search narrows both. */}
+      <StepHeader>
+        <input
+          type="search"
+          aria-label="Search apps"
+          placeholder="Search apps"
+          autoComplete="off"
+          className={inputClass}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
         <Tabs
           label="Apps"
           idBase="app-step"
@@ -160,7 +161,7 @@ export function AppStep({
             { value: "needs", label: `Needs an admin · ${blocked.length}` },
           ]}
         />
-      </div>
+      </StepHeader>
       {/* (P5-POLISH-5, B1) While searching, a group with no match is hidden; "No app matches" only when every group is empty. */}
       {q && ready.length === 0 && !showWebsite && connected.length === 0 && blocked.length === 0 ? (
         <p className="text-sm text-ink-2">No app matches “{query.trim()}”.</p>

@@ -38,6 +38,27 @@ for (const scheme of ["light", "dark"] as const) {
         const dialog = page.getByTestId("ws-connect-journey");
         await expect(page.getByRole("dialog", { name: "Give Daneel an app" })).toBeVisible();
         await check(page, "app-step", scheme, width);
+        // (FIX-210) Scrolling the list to the bottom moves only the tiles: the search and the tabs stay in the fixed header, and no tile is behind them.
+        await dialog.getByRole("tabpanel").evaluate((panel) => {
+          for (let el: HTMLElement | null = panel as HTMLElement; el; el = el.parentElement) {
+            if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
+          }
+        });
+        const searchBox = dialog.getByRole("searchbox", { name: "Search apps" });
+        const tabsBox = dialog.getByRole("tablist", { name: "Apps" });
+        await expect(searchBox).toBeVisible();
+        await expect(tabsBox).toBeVisible();
+        const fixedBottom = ((await tabsBox.boundingBox())?.y ?? 0) + ((await tabsBox.boundingBox())?.height ?? 0);
+        expect((await searchBox.boundingBox())!.y).toBeLessThan((await tabsBox.boundingBox())!.y);
+        // The scrolling body starts below the tabs, so no tile can slide behind them.
+        const bodyTop = await dialog.getByRole("tabpanel").evaluate((panel) => {
+          for (let el: HTMLElement | null = panel as HTMLElement; el; el = el.parentElement) {
+            if (/(auto|scroll)/.test(getComputedStyle(el).overflowY)) return el.getBoundingClientRect().top;
+          }
+          return -1;
+        });
+        expect(bodyTop, "the scrolling list starts below the search and tabs").toBeGreaterThanOrEqual(fixedBottom - 1);
+        await check(page, "app-step-scrolled", scheme, width);
         const frame = async () => ({
           dialog: await dialog.boundingBox(),
           steps: await dialog.getByRole("list", { name: "Steps" }).boundingBox(),

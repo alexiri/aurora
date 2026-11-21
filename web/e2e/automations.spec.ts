@@ -20,7 +20,7 @@ const SCHEDULE = {
 };
 const HOOK = {
   id: "00000000-0000-4000-8000-0000000000b1", agent_id: "00000000-0000-4000-8000-0000000000c1", name: "Deploy notice", instructions: "Say what was deployed.", enabled: true, anchor: "creator",
-  created_at: "2026-11-20T10:00:00Z", updated_at: "2026-11-20T10:00:00Z", url_prefix: "https://aurora.example/hooks/whk_ab12", created_by: { id: "u1", display_name: "Ada" },
+  created_at: "2026-11-20T10:00:00Z", updated_at: "2026-11-20T10:00:00Z", url_prefix: "auw_9xLPEkbX", created_by: { id: "u1", display_name: "Ada" },
   verification: { kind: "hmac_sha256", header: "X-Signature", format: "sha256=<hex>" },
 };
 const RUN = (id: string, over: Record<string, unknown> = {}) => ({

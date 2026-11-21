@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AttachmentCard } from "@/components/chat/attachments";
 import { TranscriptView } from "@/components/chat/transcript-view";
+import { AiKeyTile } from "@/components/ui/ai-key-tile";
 import { AppIcon, appIconUrl } from "@/components/ui/app-icon";
 import { emptyTranscript, loadHistory, type TranscriptState } from "@/lib/chat/transcript";
 
@@ -21,6 +22,24 @@ afterEach(cleanup);
 const imgs = (c: HTMLElement) => Array.from(c.querySelectorAll("img"));
 
 describe("AppIcon", () => {
+  it("is 64 px (size-16) by default, image and monogram alike (FIX-211)", () => {
+    const { container } = render(<AppIcon appId="github" name="GitHub" hasDarkIcon />);
+    for (const img of imgs(container)) {
+      expect(img.className).toContain("size-16");
+      expect(img.getAttribute("width")).toBe("64");
+      expect(img.getAttribute("height")).toBe("64");
+    }
+    const mono = render(<AppIcon appId="x" name="Zed" hasIcon={false} />);
+    const tile = mono.getAllByTestId("app-icon-fallback")[0]!;
+    expect(tile.className).toContain("size-16");
+    expect(tile.className).toContain("text-2xl");
+  });
+
+  it("the AI key tile matches the app icon's size", () => {
+    const { container } = render(<AiKeyTile />);
+    expect(container.firstElementChild!.className).toContain("size-16");
+  });
+
   it("renders the app's icon route, and the dark variant too when the app has one", () => {
     const { container } = render(<AppIcon appId="github" name="GitHub" hasDarkIcon />);
     const [light, dark] = imgs(container);

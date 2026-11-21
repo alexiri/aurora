@@ -91,7 +91,7 @@ function AppCard({
   return (
     <li className="flex flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
       <div className="flex items-center gap-3">
-        <AppIcon appId={app.app_id} name={name} hasDarkIcon={app.has_dark_icon} size={36} />
+        <AppIcon appId={app.app_id} name={name} hasDarkIcon={app.has_dark_icon} />
         <p className="min-w-0 truncate font-display text-base font-semibold text-ink">
           {href ? (
             <Link href={href} className="hover:underline" aria-label={`Details of ${name}`}>

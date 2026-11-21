@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { copyLabel, useCopy } from "@/lib/use-copy";
+import { useOrigin } from "@/lib/use-origin";
 import { authKind, callSentence, SNIPPET_LANGUAGES, webhookSnippet, type SnippetLanguage, type WebhookAuth } from "@/lib/webhook-snippets";
 
 export { authKind };
@@ -12,16 +13,19 @@ export { authKind };
 /**
  * (P5-REFINE-14, webhooks-1) **How to call it**: what the sender must send, and a real snippet to copy (curl, Python, Node)
  * with the address and the header name. The secret is never in a snippet. On the card the full address was shown once, so
- * `url` is its prefix with `…` and `addressShownOnce` adds the line that says so.
+ * the snippet reads `$WEBHOOK_URL` and a comment names `<origin>/v1/hooks/<prefix>…`; with the real `url` (right after
+ * creating or rotating) it uses that.
  */
 export function HowToCall({
   url,
+  prefix,
   kind,
   header,
   addressShownOnce = false,
   idBase = "howto",
 }: {
-  url: string;
+  url?: string | null;
+  prefix?: string | null;
   kind: WebhookAuth;
   header?: string | null;
   addressShownOnce?: boolean;
@@ -29,7 +33,8 @@ export function HowToCall({
 }) {
   const [lang, setLang] = useState<SnippetLanguage>("curl");
   const { state, copy } = useCopy();
-  const snippet = webhookSnippet(lang, { url, kind, header });
+  const origin = useOrigin();
+  const snippet = webhookSnippet(lang, { url, prefix, origin, kind, header });
   return (
     <section aria-label="How to call it" className="space-y-3 rounded-card border border-line bg-surface p-4">
       <div className="flex items-center justify-between gap-3">

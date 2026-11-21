@@ -214,7 +214,7 @@ export function OrgAppsTable({ orgId, orgSlug, canEdit }: { orgId: string; orgSl
                 <tr key={r.key} data-app={r.app.app_id}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <AppIcon appId={r.app.app_id} name={r.name} hasDarkIcon={r.app.has_dark_icon} size={32} />
+                      <AppIcon appId={r.app.app_id} name={r.name} hasDarkIcon={r.app.has_dark_icon} />
                       <div className="min-w-0">
                         <p className="font-medium text-ink">{r.name}</p>
                         {r.hosts ? <p className="text-xs text-muted">{r.hosts}</p> : null}

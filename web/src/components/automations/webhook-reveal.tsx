@@ -37,7 +37,7 @@ export function WebhookRevealDialog({ reveal, onClose }: { reveal: WebhookReveal
     >
       <div className="space-y-4">
         {url && secret ? <ValueBox label="Your secret" value={secret} /> : null}
-        <HowToCall url={reveal.snippetUrl ?? url ?? ""} kind={kind} header={header} idBase="howto-reveal" />
+        <HowToCall url={url} prefix={reveal.prefix} kind={kind} header={header} idBase="howto-reveal" />
       </div>
     </SecretOnce>
   );

@@ -395,6 +395,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   was typed. It hides again when the dialog closes, when the form clears the value, or when the
   field is disabled. Every secret field uses it, and a test fails on any other password input.
 - **Avatar**: initial on a tinted tile when there is no image.
+- **AppIcon** (`ui/app-icon.tsx`) and **AiKeyTile**: App icons are 64 px (`size-16`) everywhere; the monogram tile (letter `text-2xl`) and the AI key tile follow the same size (owner 2026-11-21, FIX-211). Rows centre the icon against their text block; tiles and cards grow to fit. Agent avatars, the Aurora logo and chat-platform icons are not app icons.
 - **EmptyState**, **ErrorState**, **Loading**.
 - **Focus**: `:focus-visible` shows a 2 px `accent` ring with a 3 px
   `focus-halo`.
@@ -2385,7 +2386,7 @@ which wraps it with the id given.
 | `apikeys` | Account › API keys explained | Set up | Now |
 | `palette.verbs`, `kbd` | palette verbs, keyboard shortcuts (and their sheet) | Expert | Now (P5-REFINE-19; `palette.verbs` is a list the registry builds, not a wrapper) |
 | `bulk` | bulk actions on lists (People, Accounts, Schedules, Webhooks) | Expert | Now (P5-REFINE-19) |
-| `fold.cli` | "From your terminal" CLI/API snippets | Expert | Now (SSH, Computer, Webhooks, API keys) |
+| `fold.cli` | "From your terminal" CLI/API snippets | Expert | Now (SSH, Computer, API keys; webhooks have none: their command is on the card) |
 
 A control not in the table is a gap in the classification: add the row (and the registry row) first.
 
@@ -2504,15 +2505,15 @@ Import never changes access, accounts or the AI key.
 
 **Copy as curl (`copy.curl`, Expert).** A webhook row's **Copy as curl** copies the command the *How to call it* panel shows
 for its verification (signed: the `X-Signature: sha256=<hex>` recipe; password: the header; none: a plain POST), built by the
-same function (`lib/webhook-snippets.ts`: one recipe source) with `$SECRET`; a row holds only the address's prefix, so the
-command says the full address was shown once. Each API key's row menu has **Copy as curl** (`curl -H
+same function (`lib/webhook-snippets.ts`: the one generator, byte for byte) with `$SECRET` and `"$WEBHOOK_URL"`; a row holds only
+the token's prefix, so a comment above the command names `<origin>/v1/hooks/auw_…` as where `WEBHOOK_URL` comes from. Each API key's row menu has **Copy as curl** (`curl -H
 "Authorization: Bearer $AURORA_API_KEY" <origin>/v1/me`). Neither ever holds a secret or a key value. The API key pages say
 what a key acts as ("Acts as you in this workspace through the Aurora API."; organization keys: "Acts for this
 organization …") and link the **OpenAPI description** (`/v1/openapi.json`, Expert).
 
 **From your terminal (`fold.cli`, Expert).** `components/ui/from-your-terminal.tsx`: a closed `<details>` of copyable
 commands with a one-line note each, on Computer (`aurora ssh <handle>` where SSH is on, `aurora run --agent <handle> --
-<command>`), Webhooks (the signed curl) and the API key pages (`aurora login`, the curl call). Only commands the CLI has
+<command>`) and the API key pages (`aurora login`, the curl call). Only commands the CLI has
 (`services/aurora-cli/src/main.rs`; a test reads the subcommands there).
 
 ## Agent settings pages (phase 5, P5-REFINE-12, D-406, D-407, D-411, D-413, D-414)
@@ -2610,8 +2611,11 @@ Schedules · Webhooks · Chats** with counts, and one list. Empty: "No automatio
   empty on Signed or Bearer the server makes one, C-1078), Advanced (the header, with its default stated; Keep running without you).
   After creating, one dialog shows the address and the secret each in a box that fits the whole value on one line, **Copy → Copied**,
   and **How to call it** below. **How to call it** (`lib/webhook-snippets.ts`) is the sentence for the kind plus a curl, Python and
-  Node snippet with the real address and header; the secret is never in a snippet. On the card it uses the address prefix and says
-  "The full address was shown once. Rotate it to get a new one."
+  Node snippet with the header; the secret is never in a snippet. The address is `"$WEBHOOK_URL"` (Python and Node: the
+  `WEBHOOK_URL` environment variable) under a comment line `WEBHOOK_URL is the address shown when you created it:
+  <origin>/v1/hooks/auw_…` (the token prefix is never written as an address); in the dialog right after creating or rotating the
+  real address is used. The card says "The full address was shown once. Rotate it to get a new one." There is no list-level
+  "From your terminal" box for webhooks (FIX-207): the card's **How to call it** is the one place.
 - **Deliveries** is a table **When · Result · Size · Conversation**: Accepted, Refused: wrong signature (and the other refusals,
   in red text), Duplicate, ignored (quiet). Its link opens the delivery's thread. In that thread the first message reads "Webhook
   <name> · delivery" with the time and the payload in a code block (the API's `display`, C-1079); the safety wrapper and the delivery
@@ -2805,7 +2809,9 @@ panel above, so the title, the steps and the footer never move between steps; th
 the left (absent on the first step) and the step's one action on the right; Done is **Close** at the left
 edge, **Another app** and **Try it in chat**. The title is "Give <Agent> an app" on the App step and
 "<App> for <Agent>" after it (no host; the Sign in step shows the deployment of a family). The App step is
-built from `GET /v1/apps` alone (`readiness`, `accounts`, `summary`): a search field, **Ready to connect**
+built from `GET /v1/apps` alone (`readiness`, `accounts`, `summary`): a search field and the **Ready · n / Needs an admin · n** tabs in
+the dialog's fixed header under the stepper (`StepHeader` in `connect-journey/frame.tsx`; FIX-210: only the list scrolls, nothing is sticky; the
+same in the workspace and the organization journey), then **Ready to connect**
 (alphabetical, **Another website or API** last), **Already connected** ("<App> · connected, <Agent> can't
 use it yet", **Give access**) and **Needs an admin first** (the reason in one line, **Ask <Name>**, then
 "Asked just now…" with **Undo**). The Sign in step numbers a token's steps (create it, "Give it these

@@ -36,7 +36,7 @@ export function FreeApps({
       <ul className="space-y-3" aria-label="Apps that need no sign-in">
         {free.map((a) => (
           <li key={a.app_id} className="flex flex-wrap items-center gap-3 rounded-card border border-line bg-surface p-4">
-            <AppIcon appId={a.app_id} name={appDisplayName(a)} hasDarkIcon={a.has_dark_icon} size={32} />
+            <AppIcon appId={a.app_id} name={appDisplayName(a)} hasDarkIcon={a.has_dark_icon} />
             <div className="min-w-0 flex-1 space-y-0.5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="break-words font-display text-base font-semibold text-ink">{appDisplayName(a)}</span>
