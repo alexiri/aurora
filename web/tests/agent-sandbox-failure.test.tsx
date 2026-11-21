@@ -293,4 +293,19 @@ describe("Computer tab start log and retry (FIX-029)", () => {
     expect(details.open).toBe(false);
     expect(screen.getByTestId("missing-pages").textContent).toMatch(/Terminal, Files, Previews and SSH aren't set up on this Aurora\. An Aurora administrator can set this up\./);
   });
+
+  it("a member is told only that a page is not available here, never how this Aurora is set up (D-412)", async () => {
+    mockFetch({
+      ...routes({ state: "stopped" }),
+      "GET /v1/me": () => json(200, { user: { id: "u2", display_name: "Bob", email: "b@b.c", is_instance_admin: false }, memberships: [], groups: [], approval_email: true }),
+    });
+    render(
+      <QueryClientProvider client={client()}>
+        <ComputerTab agentId="a1" agentName="Scout" />
+      </QueryClientProvider>,
+    );
+    const note = await screen.findByTestId("missing-pages");
+    expect(note.textContent).toMatch(/aren't available here\.$/);
+    expect(note.textContent).not.toMatch(/set up on this Aurora|administrator/);
+  });
 });

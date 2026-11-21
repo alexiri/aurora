@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { NeedsYou, sinceWords } from "@/components/overview/needs-you";
+import { NeedsYou } from "@/components/overview/needs-you";
+import { whenInSentence } from "@/lib/format-date";
 import { json } from "./support/api";
 
 // P5-REFINE-16 item 11 (D-417, C-1080/C-1082): the Overview's Needs you card reads the workspace attention feed, and its
@@ -125,7 +126,7 @@ describe("Needs you reads the workspace feed", () => {
 
 describe("a time inside a sentence (batch 5 item 8)", () => {
   it("says 'Since just now.', never 'Since Just now.'", () => {
-    expect(sinceWords(new Date().toISOString())).toBe("just now");
-    expect(sinceWords(new Date(Date.now() - 11 * 60_000).toISOString())).toBe("11 min ago");
+    expect(whenInSentence(new Date().toISOString())).toBe("just now");
+    expect(whenInSentence(new Date(Date.now() - 11 * 60_000).toISOString())).toBe("11 min ago");
   });
 });

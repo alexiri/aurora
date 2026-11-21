@@ -1,7 +1,7 @@
 "use client";
 
 import { Card } from "@/components/ui/card";
-import { formatWhen } from "@/lib/format-date";
+import { whenInSentence } from "@/lib/format-date";
 import { StatusDot } from "@/components/ui/status-dot";
 import { useAdminOverview } from "@/lib/api/org";
 
@@ -24,7 +24,7 @@ export function PreviewsLine() {
           {n === 0
             ? "No relay replica has reported in the last 15 minutes."
             : `${n} relay ${n === 1 ? "replica" : "replicas"} seen` +
-              (previews.last_seen_at ? `, last ${formatWhen(previews.last_seen_at)}` : "")}
+              (previews.last_seen_at ? `, last ${whenInSentence(previews.last_seen_at)}` : "")}
         </span>
       </div>
     </Card>

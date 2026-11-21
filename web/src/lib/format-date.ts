@@ -73,6 +73,12 @@ export function formatWhen(
   return `${dayPart}, ${formatTime(d)}`;
 }
 
+/** `formatWhen` inside a sentence ("last just now", "Since just now"): the only word with a capital of its own is lower-cased. */
+export function whenInSentence(date: string | number | Date | null | undefined, opts?: { now?: number; empty?: string }): string {
+  const when = formatWhen(date, opts);
+  return when === "Just now" ? "just now" : when;
+}
+
 /** A 24-hour clock time ("23:50") in the person's zone, or in `timeZone` when given; `empty` when missing. */
 export function formatTime(date: string | number | Date | null | undefined, empty: string = EMPTY, timeZone: string | undefined = zone): string {
   const d = parse(date);

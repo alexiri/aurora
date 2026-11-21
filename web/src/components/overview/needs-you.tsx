@@ -8,14 +8,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { useOrgSetupRequests } from "@/lib/api/app-setup-requests";
 import { type AttentionItem, useAttentionFeed, useWorkspaceCounts } from "@/lib/api/attention";
 import { useOrg } from "@/lib/api/queries";
-import { formatWhen } from "@/lib/format-date";
+import { whenInSentence } from "@/lib/format-date";
 import { cn } from "@/lib/utils";
-
-/** `formatWhen` inside a sentence: "Since just now.", not "Since Just now.". */
-export function sinceWords(since: string | null | undefined): string {
-  const when = formatWhen(since);
-  return when === "Just now" ? "just now" : when;
-}
 
 /**
  * One row of the workspace attention feed (C-1080, D-417): the sentence, the detail, how long it has waited and the one
@@ -27,7 +21,7 @@ function AttentionRow({ item }: { item: AttentionItem }) {
       <span className="min-w-0 flex-1">
         <span className="block font-medium">{item.title}</span>
         <span className="block text-xs text-muted">
-          {item.detail} <span className="tabular-nums">Since {sinceWords(item.since)}.</span>
+          {item.detail} <span className="tabular-nums">Since {whenInSentence(item.since)}.</span>
         </span>
       </span>
       {item.action ? (

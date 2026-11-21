@@ -11,6 +11,7 @@ import { useAltitude } from "@/lib/altitude";
 import { visibleTopics } from "@/lib/api/roles";
 import { useMe, useOrg, useResolve } from "@/lib/api/queries";
 import { pickRailWorkspace, useRailWorkspace } from "@/lib/nav/manage-return";
+import { nameInSentence } from "@/lib/workspace-name";
 import { TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -60,7 +61,7 @@ export function ManageFrame({ children }: { children: ReactNode }) {
           className="inline-flex min-h-9 items-center gap-2 rounded-control text-sm text-ink-2 hover:text-ink"
         >
           <ArrowLeftIcon className="size-4 shrink-0 text-muted" />
-          Back to {back?.wsName ?? "Aurora"}
+          Back to {nameInSentence(back?.wsName ?? "Aurora")}
         </Link>
         <p className="font-display text-lg font-semibold text-ink">Manage {orgName}</p>
       </div>

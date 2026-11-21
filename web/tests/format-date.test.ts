@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { displayTimeZone, formatCount, formatDay, formatExact, formatTime, formatWhen, personTimeZone, setDisplayTimeZone } from "@/lib/format-date";
+import { displayTimeZone, formatCount, formatDay, formatExact, formatTime, formatWhen, personTimeZone, setDisplayTimeZone, whenInSentence } from "@/lib/format-date";
 
 const now = new Date(2026, 10, 19, 12, 0, 0).getTime();
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -39,6 +39,12 @@ describe("formatWhen", () => {
     expect(formatTime(at)).toBe("03:11");
     expect(formatTime(at, "", "America/Los_Angeles")).toBe("19:11");
     expect(formatExact(at)).not.toMatch(/AM|PM/i);
+  });
+
+  it("inside a sentence 'Just now' loses its capital ('last just now', 'Since just now'); other forms are unchanged", () => {
+    expect(whenInSentence(new Date().toISOString())).toBe("just now");
+    expect(whenInSentence(new Date(Date.now() - 5 * 60_000).toISOString())).toBe("5 min ago");
+    expect(whenInSentence(null)).toBe("—");
   });
 
   it("there is one zone: the person's, else the browser's (b2#18)", () => {

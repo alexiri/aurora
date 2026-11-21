@@ -239,7 +239,10 @@ export function ComputerTab({
     <div className="space-y-6">
       {missing.length > 0 ? (
         <p className="text-sm text-ink-2" data-testid="missing-pages">
-          {listWords(missing)} {missing.length === 1 ? "isn't" : "aren't"} set up on this Aurora. {askSentence({ role: "instance_admin" })}
+          {/* (D-412) How this Aurora is set up is for its administrators; a member only learns the page is not there. */}
+          {isAdmin
+            ? `${listWords(missing)} ${missing.length === 1 && missing[0] === "SSH" ? "isn't" : "aren't"} set up on this Aurora. ${askSentence({ role: "instance_admin" })}`
+            : `${listWords(missing)} ${missing.length === 1 && missing[0] === "SSH" ? "isn't" : "aren't"} available here.`}
         </p>
       ) : null}
       {/* (D-412) What a member reads: the phase in words and when it started; nothing else. */}
