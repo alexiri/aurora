@@ -226,8 +226,19 @@ def entry_matches(entry, host, path, instance_hosts=()):
             return False
     elif not fnmatch.fnmatchcase(host, m["host"].lower()):
         return False
-    pre = m.get("path_prefix")
-    return pre is None or path == pre or path.startswith(pre.rstrip("/") + "/")
+    return path_prefix_matches(m.get("path_prefix"), path)
+
+
+def path_prefix_matches(pre, path):
+    # Whole path segments (FIX-215, 09 §3.4), the rule of the core's
+    # `aurora_registry::index::path_prefix_matches`: the path equals the prefix or continues it
+    # with `/`; a prefix ending in `/` covers the paths below it. `/rest` matches `/rest/api`,
+    # not `/restricted`.
+    if pre is None or pre == "":
+        return True
+    if pre.endswith("/"):
+        return path.startswith(pre)
+    return path == pre or path.startswith(pre + "/")
 
 
 def check_app(app, paired, err):

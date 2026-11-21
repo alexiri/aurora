@@ -55,8 +55,9 @@ apps:
           url: "https://{instance}/api/user"
           expect_status: [200]
     hosts:
-      # `/api/` with the slash: the gateway compares the prefix as a string, so `/api` would also
-      # cover Grafana's newer `/apis/…` layer, which no tool here uses.
+      # `/api/`: the paths below `/api`, never Grafana's newer `/apis/…` layer, which no tool here
+      # uses (a prefix matches whole path segments since FIX-215, so `/api` would not cover it
+      # either; the slash keeps that true on a core before FIX-215).
       - match: { host: "{instance}", path_prefix: /api/ }
         inject:
           - bearer: "{credentials.access_token}"

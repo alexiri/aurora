@@ -3,6 +3,7 @@
 use regex::Regex;
 
 use crate::Violation;
+use crate::index::path_prefix_matches;
 use crate::library::JsonPath;
 use crate::manifest::{App, INSTANCE_HOST, Library, LibraryPaginate};
 
@@ -117,11 +118,6 @@ fn check_json(p: &str, at: &str, out: &mut Vec<Violation>) {
 fn literal_head(tpl: &str) -> &str {
     let end = tpl.find(['{', '?']).unwrap_or(tpl.len());
     &tpl[..end]
-}
-
-fn prefix_covers(prefix: &str, path: &str) -> bool {
-    let p = prefix.trim_end_matches('/');
-    path == p || path.starts_with(&format!("{p}/"))
 }
 
 pub fn app_rules(app: &App, base: &str, out: &mut Vec<Violation>) {
@@ -319,12 +315,7 @@ fn host_rules(app: &App, lib: &Library, at: &dyn Fn(&str) -> String, out: &mut V
         // The rule the gateway applies: the longest path prefix that covers the request.
         let best = rules
             .iter()
-            .filter(|r| {
-                r.matcher
-                    .path_prefix
-                    .as_deref()
-                    .is_none_or(|p| prefix_covers(p, head))
-            })
+            .filter(|r| path_prefix_matches(r.matcher.path_prefix.as_deref(), head))
             .max_by_key(|r| r.matcher.path_prefix.as_deref().map_or(0, str::len));
         match best {
             Some(r) if !r.inject.is_empty() => {}

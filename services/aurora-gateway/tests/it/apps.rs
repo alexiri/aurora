@@ -2191,6 +2191,33 @@ async fn grafana_full_grant_blocks_untooled_proxy_requests() {
     }
 }
 
+/// (FIX-215, SEC-04/SEC-59) A host entry's `path_prefix` covers whole path segments: the
+/// credential of a `/rest` entry is injected under `/rest/`, never on the sibling `/restricted`.
+#[tokio::test]
+async fn path_prefix_injects_on_whole_segments_only() {
+    let snap = snapshot(
+        vec![app_json("demo", json!(null), false)],
+        vec![host_json(
+            "demo",
+            Some("/rest"),
+            json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+        )],
+    );
+    let (env, ..) = start(snap, &[("c1", r#"{"tok":"RESTTOKEN"}"#)], |w| {
+        granted(conn(w, "demo", "c1", None))(w)
+    })
+    .await;
+    for p in ["/rest", "/rest/api/2/issue"] {
+        let r = get(&env, p, "").await;
+        assert_eq!(r.status, 200, "{p}: {}", r.body);
+        assert!(has_token(&r, "RESTTOKEN"), "{p}: {}", r.body);
+    }
+    for p in ["/restricted", "/restricted/api/2/issue", "/rest-x"] {
+        let r = get(&env, p, "").await;
+        assert!(!r.body.contains("RESTTOKEN"), "{p}: {}", r.body);
+    }
+}
+
 // ---- D-231 / SEC-59: a registration under a base path -----------------------------------------
 
 /// `GET http://{host}:{port}{path}` through the proxy with extra header lines.

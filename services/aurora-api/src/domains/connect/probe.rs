@@ -1,6 +1,7 @@
 //! Probe execution (09 §3.4), host/zone checks shared by hook and field flows.
 use super::env::Env;
 use aurora_policy::HostPattern;
+use aurora_registry::index::path_prefix_matches;
 use aurora_registry::instance::{InstanceBase, app_path, covers};
 use aurora_registry::manifest::{Inject, Probe, ProbeMethod};
 use aurora_registry::snapshot::{AppEntry, HostEntry, Snapshot};
@@ -233,10 +234,10 @@ fn host_entry<'a>(
         .iter()
         .filter(|e| e.app_id == app.app_id)
         .filter(|e| HostPattern::lenient(&e.host).matches(host, 443))
-        .filter(|e| path.starts_with(e.path_prefix.as_deref().unwrap_or("/")));
+        .filter(|e| path_prefix_matches(e.path_prefix.as_deref(), path));
     let instanced = on_instance.into_iter().flat_map(|ap| {
         snap.instance_entries(&app.app_id)
-            .filter(move |e| ap.starts_with(e.path_prefix.as_deref().unwrap_or("/")))
+            .filter(move |e| path_prefix_matches(e.path_prefix.as_deref(), ap))
     });
     statics
         .chain(instanced)
