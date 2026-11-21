@@ -483,6 +483,59 @@ async fn heartbeat_stamps_keep_an_idle_computer_awake() {
     assert_eq!(stop["reason"], "idle", "{stop}");
 }
 
+/// (P5-REFINE-20 batch 5, D-416) A computer woken for a session (the wake demand a terminal or an
+/// SSH channel writes on a parked computer, no turn) gets the idle stop's whole window from the
+/// moment it is running, so the session can connect and stamp. Before the fix the idle clock read
+/// the last engagement first (an hour old here), and the first stop arm after `running` parked it
+/// again: SSH to a sleeping computer failed with "did not start in time" and the terminal looped.
+#[tokio::test]
+async fn a_computer_woken_for_a_session_waits_for_it() {
+    let r = rig_idle(60).await;
+    let lv = r.boot("cv-woken").await;
+    finish_turns(&r, lv.agent).await;
+    quiet_for(&r, &lv, 3600).await;
+    let stop = stop_item(&r).await.expect("idle stop");
+    assert_eq!(stop["reason"], "idle", "{stop}");
+    assert_eq!(
+        r.report(&lv, json!({"kind": "sandbox.status", "state": "stopped"}))
+            .await,
+        "applied"
+    );
+    // The wake demand `terminal::service::wake_demand` writes (terminal open or SSH channel).
+    sqlx::query("UPDATE sandboxes SET terminal_wake_at = now() WHERE id = $1::uuid")
+        .bind(&lv.sb)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let items = r.work().await;
+    let start = items
+        .iter()
+        .find(|i| i["kind"] == "sandbox.start")
+        .expect("the wake demand starts the computer");
+    let woken = Live {
+        agent: lv.agent,
+        conv: lv.conv,
+        sb: lv.sb.clone(),
+        boot: start["boot_id"].as_str().unwrap().to_owned(),
+    };
+    assert_ne!(woken.boot, lv.boot);
+    running(&r, &woken).await;
+    assert!(
+        stop_item(&r).await.is_none(),
+        "a computer woken for a session is not parked before the session connects"
+    );
+    // No session came: one idle window after `running`, it parks again.
+    sqlx::query(
+        "UPDATE sandboxes SET last_active_at = now() - interval '61 seconds' WHERE id = $1::uuid",
+    )
+    .bind(&lv.sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let stop = stop_item(&r).await.expect("idle stop after the window");
+    assert_eq!(stop["reason"], "idle", "{stop}");
+}
+
 /// (C-1058) The restart notice's fact: a restarted computer has a new `boot_id`, visible to a
 /// member (never reduced).
 #[tokio::test]
