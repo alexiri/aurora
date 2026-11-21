@@ -229,8 +229,8 @@ pub const LIBRARY_SKILLS_PER_ORG: usize = 100;
 pub const LIBRARY_FILE_MAX: usize = 64 * KIB;
 pub const LIBRARY_TREE_MAX: usize = 20_000;
 /// (SEC-148, review send-back; docs/02 §Limits) Folder depth below the library's folder that a
-/// tree read follows: one more than a skill's own path depth (4); deeper is
-/// `library_tree_too_large`.
+/// tree read follows: one more than a skill's own path depth (4); deeper folders are not read
+/// (skipped: not listed, not counted).
 pub const LIBRARY_TREE_DEPTH_MAX: usize = 5;
 /// (SEC-148; docs/02 §Limits) Bytes of one tree entry's name; a longer name fails the read.
 pub const LIBRARY_TREE_NAME_MAX: usize = 255;

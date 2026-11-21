@@ -420,11 +420,13 @@ fn walk(
                 "160000" => "commit",
                 _ => "blob",
             };
+            // A folder deeper than the cap is skipped: not listed, not read, not counted. No skill
+            // path is that deep, so an ordinary repository with deep folders still reads.
+            if kind == "tree" && depth + 1 > limits::LIBRARY_TREE_DEPTH_MAX {
+                continue;
+            }
             path_bytes = path_bytes.saturating_add(full.len());
             if kind == "tree" {
-                if depth + 1 > limits::LIBRARY_TREE_DEPTH_MAX {
-                    return Err(ReadError::TreeTooLarge);
-                }
                 path_bytes = path_bytes.saturating_add(full.len());
                 stack.push((full.clone(), e.id, depth + 1));
             }
@@ -677,20 +679,60 @@ mod tests {
         (objects, commit_id)
     }
 
-    /// (SEC-148) Folders nested thousands deep with long names: refused at the depth cap, long
-    /// before the path bytes could add up (without the cap this holds ~250 MB of paths).
+    /// (SEC-148) Folders nested thousands deep with long names: read only to the depth cap, fast
+    /// (without the cap this holds ~250 MB of paths); deeper folders are skipped, not an error.
     #[test]
-    fn a_deeply_nested_tree_is_refused_fast() {
+    fn a_deeply_nested_tree_is_read_only_to_the_depth_cap_fast() {
         let name = "n".repeat(limits::LIBRARY_TREE_NAME_MAX);
         let (objects, commit) = nested(2_000, &name);
         let t = std::time::Instant::now();
-        assert_eq!(walk(&objects, &commit, ""), Err(ReadError::TreeTooLarge));
+        let out = walk(&objects, &commit, "").unwrap();
         assert!(t.elapsed() < Duration::from_secs(2));
-        // exactly at the depth cap is fine
+        assert_eq!(out.len(), limits::LIBRARY_TREE_DEPTH_MAX);
+        assert!(
+            out.iter()
+                .all(|e| e.path.split('/').count() <= limits::LIBRARY_TREE_DEPTH_MAX)
+        );
+        // a folder at the cap is listed with its file; one level deeper is skipped
         let (objects, commit) = nested(limits::LIBRARY_TREE_DEPTH_MAX, "d");
-        assert!(walk(&objects, &commit, "").is_ok());
+        let out = walk(&objects, &commit, "").unwrap();
+        assert_eq!(out.len(), limits::LIBRARY_TREE_DEPTH_MAX + 1);
+        assert!(out.iter().any(|e| e.kind == "blob"));
         let (objects, commit) = nested(limits::LIBRARY_TREE_DEPTH_MAX + 1, "d");
-        assert_eq!(walk(&objects, &commit, ""), Err(ReadError::TreeTooLarge));
+        let out = walk(&objects, &commit, "").unwrap();
+        assert_eq!(out.len(), limits::LIBRARY_TREE_DEPTH_MAX);
+        assert!(out.iter().all(|e| e.kind == "tree"));
+    }
+
+    /// (SEC-148) A skill at a valid depth is listed beside a 2,000-deep folder.
+    #[test]
+    fn a_skill_is_listed_beside_an_over_deep_folder() {
+        let b = pack::object_id(Kind::Blob, b"x");
+        let mut entries = Vec::new();
+        let mut child = tree(&[("100644", "f", b)]);
+        let mut id = pack::object_id(Kind::Tree, &child);
+        entries.push(E::Plain(Kind::Tree, child.clone()));
+        for _ in 0..2_000 {
+            child = tree(&[("40000", "d", id)]);
+            id = pack::object_id(Kind::Tree, &child);
+            entries.push(E::Plain(Kind::Tree, child.clone()));
+        }
+        let skill = tree(&[("100644", "SKILL.md", b)]);
+        let skill_id = pack::object_id(Kind::Tree, &skill);
+        entries.push(E::Plain(Kind::Tree, skill));
+        let root = tree(&[("40000", "alpha", skill_id), ("40000", "deep", id)]);
+        let root_id = pack::object_id(Kind::Tree, &root);
+        entries.push(E::Plain(Kind::Tree, root));
+        let commit = format!("tree {}\n\nm\n", pack::hex(&root_id)).into_bytes();
+        let commit_id = pack::object_id(Kind::Commit, &commit);
+        entries.push(E::Plain(Kind::Commit, commit));
+        let objects = pack::parse(&build(&entries), pack::Limits::standard()).unwrap();
+        let out = walk(&objects, &commit_id, "").unwrap();
+        assert!(out.iter().any(|e| e.path == "alpha/SKILL.md"));
+        assert!(
+            out.iter()
+                .all(|e| e.path.split('/').count() <= limits::LIBRARY_TREE_DEPTH_MAX)
+        );
     }
 
     /// (SEC-148) The total of the listed paths is capped (wide and not deep).

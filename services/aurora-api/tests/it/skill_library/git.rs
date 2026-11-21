@@ -570,9 +570,9 @@ async fn create_and_a_rereading_patch_share_the_checks_rate() {
     assert_eq!(s, 200, "a patch that reads nothing is not limited: {v}");
 }
 
-/// (SEC-148) Folders nested deeper than `LIBRARY_TREE_DEPTH_MAX` refuse the read, over the wire.
+/// (SEC-148) Folders nested deeper than `LIBRARY_TREE_DEPTH_MAX` are not read, over the wire.
 #[tokio::test]
-async fn a_repository_nested_too_deep_is_refused() {
+async fn a_repository_nested_too_deep_is_read_without_the_deep_part() {
     let w = world().await;
     w.git.add_repo("acme/deep");
     let deep = ["d"; aurora_core::limits::LIBRARY_TREE_DEPTH_MAX + 1].join("/");
@@ -585,7 +585,8 @@ async fn a_repository_nested_too_deep_is_refused() {
         ],
     );
     let (s, v) = check(&w, json!({"url": url("acme/deep")})).await;
-    assert_eq!((s, code(&v)), (422, "library_tree_too_large"), "{v}");
+    assert_eq!(s, 200, "{v}");
+    assert!(!v.to_string().contains("d/d/d"), "{v}");
     // the folder that is shallow enough reads
     let (s, v) = check(&w, json!({"url": url("acme/deep"), "path": "alpha"})).await;
     assert_eq!(s, 200, "{v}");

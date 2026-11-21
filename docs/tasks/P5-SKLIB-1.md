@@ -411,12 +411,11 @@ Where to look: `services/aurora-api/src/domains/skill_libraries/git/mod.rs` (the
 
 1. **Memory exhaustion in `walk` (blocker): fixed.** `limits::LIBRARY_TREE_NAME_MAX` (255 bytes, refused in `pack::tree_entries` as `Malformed`),
    `LIBRARY_TREE_DEPTH_MAX` (**5**: a skill's own path depth is 4, plus one) and `LIBRARY_TREE_PATH_BYTES_MAX` (4 MiB, counting a folder's path twice because
-   the stack holds a copy). Over the depth or the bytes the walk answers `TreeTooLarge` (**refuse, not skip**: skipping a deeper folder would silently drop files of
-   a skill that is then listed as valid; the answer is `library_tree_too_large`, narrow `path`). Tests: unit `a_deeply_nested_tree_is_refused_fast`
-   (2 000 nested trees of 255-byte names, under 2 s; exactly at the cap passes, one over refuses), `the_total_path_bytes_are_capped` (a wide tree),
+   the stack holds a copy). Over the bytes the walk answers `TreeTooLarge` (`library_tree_too_large`, narrow `path`); **a folder deeper than the depth cap is
+   skipped, not refused (send-back 2 below; the first version refused it)**. Tests: unit `a_deeply_nested_tree_is_read_only_to_the_depth_cap_fast`
+   (send-back 2), `the_total_path_bytes_are_capped` (a wide tree),
    `a_tree_entry_name_over_255_bytes_is_malformed` (256 → malformed, 255 fine; 1 KiB names cannot be built any more: the name cap refuses them first);
-   IT `skill_library/git.rs::a_repository_nested_too_deep_is_refused` (a repository one level too deep over the testkit git server → 422
-   `library_tree_too_large`; the shallow folder reads). Limits in `limits.rs`, docs/02 §Limits, SEC-148 rows of docs/17 and security-coverage.
+   IT `skill_library/git.rs::a_repository_nested_too_deep_is_read_without_the_deep_part` (send-back 2). Limits in `limits.rs`, docs/02 §Limits, SEC-148 rows of docs/17 and security-coverage.
 2. **Concurrency and rate: fixed.** `LibraryEnv.reads: ReadSlots` (`LIBRARY_READS_CONCURRENT` = 4 permits per replica) is taken by `probe` (create, patch),
    `check`, browse's cold listing, `load_for_add`, `skill_content` and every refresh pass (`refresh_library_within`, before its budget starts).
    Interactive reads wait for a permit **inside** `LIBRARY_READ_DEADLINE` (90 s, browse keeps its `BROWSE_DEADLINE`) and answer the existing
@@ -438,3 +437,13 @@ Where to look: `services/aurora-api/src/domains/skill_libraries/git/mod.rs` (the
 **Commands** (all through `heavy.sh p5-polish-a`, throwaway `pg-p5-polish-a`): `cargo fmt --check` ok; `cargo clippy -p aurora-api -p aurora-core --all-targets -- -D warnings` clean;
 `cargo test -p aurora-api --lib skill_libraries` 28 passed; `cargo test -p aurora-api --test it -- skill_library openapi_matches permission_matrix skills_library` 66 passed;
 `python3 scripts/extract-schema.py --check` ok; `bash scripts/guards/run-all.sh` all passed. Not run: web tests (no web source changed beyond the regenerated `schema.d.ts`).
+
+#### Security review send-back 2 (SEC-148; lane A, Sonnet, 2026-11-21): deeper folders are not read
+
+`walk` no longer answers `TreeTooLarge` for a folder deeper than `LIBRARY_TREE_DEPTH_MAX` (5) below the library's folder: **deeper folders are not read**. The
+folder entry at the cap is skipped: it is not listed, its entries are not read and nothing about it is counted (chosen so that browse never shows a folder
+whose content it cannot show; a person can still set the library's `path` to it, which restarts the depth). No skill path is deeper than 4, so a library set to
+the root of an ordinary repository (`src/a/b/c/d/e/…`, `node_modules`, docs trees) reads. The name cap (malformed pack), the path-bytes cap (`TreeTooLarge`)
+and `LIBRARY_TREE_MAX` are unchanged; depth × 255-byte names still bounds every path. Tests: unit `a_deeply_nested_tree_is_read_only_to_the_depth_cap_fast`
+(2 000 nested 255-byte folders → Ok in under 2 s, nothing deeper than the cap; at the cap listed, one over skipped), `a_skill_is_listed_beside_an_over_deep_folder`,
+`the_total_path_bytes_are_capped` still `TreeTooLarge`; IT `a_repository_nested_too_deep_is_read_without_the_deep_part` (200, the skill listed, the deep part absent).
