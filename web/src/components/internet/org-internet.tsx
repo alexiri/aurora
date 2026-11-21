@@ -11,8 +11,6 @@ import { LoadMore } from "@/components/ui/load-more";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { personName } from "@/lib/workspace-name";
-import { ScopeLadder } from "@/components/ui/scope-ladder";
-import { Section } from "@/components/ui/section";
 import { WhoCan } from "@/components/ui/who-can";
 import { errorMessage } from "@/lib/api/errors";
 import {
@@ -30,7 +28,6 @@ import {
 import { useAllMembers } from "@/lib/api/org";
 import { overrideValues, useWorkspaceOverrides } from "@/lib/api/overrides";
 import { useWorkspaces, type Org } from "@/lib/api/queries";
-import { limitsFromAbove } from "@/lib/internet-access";
 import { wsRoutes } from "@/lib/routes";
 import { whoCanFromContacts } from "@/lib/who-can";
 
@@ -144,15 +141,13 @@ function OrgInternetBody({ org, slug, eff, revision: initialRevision, initial }:
   );
 }
 
-/** (P5-IA-2, C-965) Internet access of an organization: owners and admins edit; members read the limits. */
+/** (P5-IA-2, C-965) Internet access of an organization: owners and admins edit; a member reads who to ask (D-444: no limits from above). */
 export function OrgInternet({ org, slug }: { org: Org; slug: string }) {
   const admin = org.my_role === "owner" || org.my_role === "admin";
-  const eff = useEffectiveGovernance(org.id);
+  // (FIX-206, D-444) A member changes nothing here: no limits from above, so no read of them either.
+  const eff = useEffectiveGovernance(org.id, admin);
   const doc = useGovernanceDoc(org.id, admin);
   const instance = useInstanceGovernance(admin);
-  if (eff.isPending || (admin && (doc.isPending || instance.isPending))) return <Loading />;
-  if (eff.isError) return <ErrorState error={eff.error} onRetry={() => eff.refetch()} />;
-  if (admin && doc.isError) return <ErrorState error={doc.error} onRetry={() => doc.refetch()} />;
   if (!admin) {
     const who = whoCanFromContacts("org_admin", org.contacts, "change_this");
     return (
@@ -161,12 +156,12 @@ export function OrgInternet({ org, slug }: { org: Org; slug: string }) {
         <Notice role="status">
           <WhoCan value={who} lead className="text-inherit" />
         </Notice>
-        <Section id="internet-limits" title="Limits">
-          <ScopeLadder above={limitsFromAbove("workspace", eff.data, { org: who, instance: whoCanFromContacts("instance_admin", undefined, "change_this") })} />
-        </Section>
       </div>
     );
   }
+  if (eff.isPending || doc.isPending || instance.isPending) return <Loading />;
+  if (eff.isError) return <ErrorState error={eff.error} onRetry={() => eff.refetch()} />;
+  if (doc.isError) return <ErrorState error={doc.error} onRetry={() => doc.refetch()} />;
   // (P5-REFINE-18 #2) The preset card writes the document too: the page starts again from the new revision.
   return (
     <div className="max-w-page space-y-6">

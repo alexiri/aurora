@@ -381,9 +381,7 @@ export function InternetLevel(p: InternetLevelProps) {
             {memberRead.data ? <ReadOnlyRules rules={memberRead.data.rules} /> : null}
           </Section>
         ) : null}
-        <Section id="internet-limits" title="Limits">
-          <ScopeLadder above={limitsFromAbove("workspace", p.eff, who)} />
-        </Section>
+        {/* (FIX-206, D-444) No "Limits": a viewer who can change nothing here is not shown what is set above this level. */}
       </div>
     );
   }

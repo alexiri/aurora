@@ -1380,6 +1380,11 @@ Every setting that is inherited across levels is shown as a ladder on its topic 
 3. **Below** (Internet access only, C-964): what the levels below have tightened, as a table:
    organizations for Administration, workspaces for an organization.
 
+**Above** is drawn only for viewers who can change this level and only when something can still be tightened
+(D-442, D-444): a viewer who can change nothing (a workspace member or approver, an organization member) reads what is in
+force in words and who to ask, and no "Set for you by …" rows; a collapsed ladder whose controls offer no stricter
+value draws nothing (`ScopeLadder` `canTighten={false}`, set by the caller).
+
 The ladder applies to Internet access, AI keys and rules, Bring your own, Data › Retention and app availability.
 
 #### Who can fix this (D-349, C-981)

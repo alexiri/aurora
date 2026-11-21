@@ -40,11 +40,23 @@ describe("ScopeLadder (C-963)", () => {
     expect(screen.getByText(/Looser options are not available: Administration requires/)).toBeInTheDocument();
   });
 
-  it("collapsed: a plain member at Use reads the limits from above and gets no Restrict further… (D-406)", () => {
+  it("collapsed: a plain member at Use gets no Restrict further… and the controls stay out (D-406)", () => {
     wrap(<ScopeLadder collapsed above={above} here={<p>Four workspace controls</p>} />, { moreControls: false });
-    expect(screen.getByText("Requests without an account")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Restrict further…" })).toBeNull();
     expect(screen.queryByText("Four workspace controls")).toBeNull();
+  });
+
+  it("collapsed with canTighten={false} draws nothing: no limits from above, no controls (D-444)", () => {
+    const { container } = wrap(<ScopeLadder collapsed canTighten={false} above={above} here={<p>Four workspace controls</p>} />, { moreControls: true });
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText("Requests without an account")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Restrict further…" })).toBeNull();
+  });
+
+  it("canTighten={false} does not change a ladder that is not collapsed", () => {
+    render(<ScopeLadder canTighten={false} above={above} here={<p>Organization controls</p>} />);
+    expect(screen.getByText("Requests without an account")).toBeInTheDocument();
+    expect(screen.getByText("Organization controls")).toBeInTheDocument();
   });
 
   it("collapsed: the controls stay out of the page until Restrict further… is opened", () => {

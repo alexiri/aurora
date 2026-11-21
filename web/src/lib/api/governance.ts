@@ -38,8 +38,9 @@ export function useGovernanceDoc(orgId: string, enabled: boolean) {
   });
 }
 
-export function useEffectiveGovernance(orgId: string) {
+export function useEffectiveGovernance(orgId: string, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: govKeys.effective(orgId),
     queryFn: () => unwrap(api.GET("/v1/orgs/{org}/governance/effective", { params: { path: { org: orgId } } })),
     retry: retryUnlessClientError,

@@ -46,6 +46,7 @@ export function ScopeLadder({
   here,
   minimumNote,
   collapsed = false,
+  canTighten = true,
   tightenLabel = "Restrict further…",
   below,
   className,
@@ -55,6 +56,11 @@ export function ScopeLadder({
   here?: ReactNode;
   minimumNote?: ReactNode;
   collapsed?: boolean;
+  /**
+   * (D-444) False when this level's controls offer no stricter value for any row. In a `collapsed` ladder the limits
+   * above are then not drawn either: a ladder you cannot act on is not shown. The caller says so; the ladder never guesses.
+   */
+  canTighten?: boolean;
   tightenLabel?: string;
   below?: LadderBelow;
   className?: string;
@@ -63,6 +69,7 @@ export function ScopeLadder({
   const panelId = useId();
   // "Set for you by <who>": the actors of the rows, named as WhoCan names them.
   const aboveHeading = `Set for you by ${[...new Set(above.map((a) => SOURCE_WORDS[a.source]))].join(" and ")}`;
+  if (collapsed && !canTighten) return null;
   return (
     <div className={className ? `space-y-4 ${className}` : "space-y-4"}>
       {above.length > 0 ? (
