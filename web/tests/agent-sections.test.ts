@@ -101,7 +101,7 @@ describe("agent sections by altitude (D-406)", () => {
 
   it("at Use lists Instructions, Apps & access, Automations, and the Computer's Files and Details only", () => {
     const s = availableSections(all, at("use"));
-    expect(labels(s, "settings")).toEqual(["Instructions", "Apps & access"]);
+    expect(labels(s, "settings")).toEqual(["Instructions", "Apps & access", "Memory", "Skills"]);
     expect(labels(s, "triggers")).toEqual(["Automations"]);
     expect(labels(s, "computer")).toEqual(["Files", "Details"]);
   });
@@ -111,7 +111,7 @@ describe("agent sections by altitude (D-406)", () => {
     expect(sectionLanding("computer", pages({ ...all, terminal: false }))).toBe("computer");
     expect(sectionLanding("chat", [{ id: "chat" }])).toBe("chat");
   });
-  it("at Set up adds Memory and Skills; at Expert everything", () => {
+  it("at Set up lists the same settings pages as Use; at Expert everything", () => {
     expect(labels(availableSections(all, at("setup")), "settings")).toEqual(["Instructions", "Apps & access", "Memory", "Skills"]);
     const s = availableSections(all, at("expert"));
     expect(labels(s, "settings")).toEqual(["Instructions", "Apps & access", "Memory", "Skills", "Tests", "Other agents"]);
@@ -119,10 +119,10 @@ describe("agent sections by altitude (D-406)", () => {
   });
   it("keeps the open page listed, and a direct ?tab= still resolves to it", () => {
     expect(resolvePage("evals", hosted)).toBe("evals");
-    expect(labels(availableSections(hosted, at("use"), "evals"), "settings")).toEqual(["Instructions", "Apps & access", "Tests"]);
+    expect(labels(availableSections(hosted, at("use"), "evals"), "settings")).toEqual(["Instructions", "Apps & access", "Memory", "Skills", "Tests"]);
   });
   it("counts the pages the altitude leaves out", () => {
-    expect(hiddenPageCount(all, at("use"))).toBe(7);
+    expect(hiddenPageCount(all, at("use"))).toBe(5);
     expect(hiddenPageCount(all, at("expert"))).toBe(0);
   });
   it("lists a BYO agent's Computer: Connect only at Expert", () => {

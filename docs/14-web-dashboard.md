@@ -2346,7 +2346,7 @@ which wraps it with the id given.
 | `rail.skills`, `rail.apps`, `rail.internet`, `rail.activity`, `rail.people`, `rail.settings` | rail topics other than Overview, Agents, Approvals | Set up | Now (`visibleTopics`) |
 | `rail.platform` | Administration topics | Expert (default for instance admins) | Now (no hiding; marks the rule) |
 | `agent.instructions` | Name, Instructions, Model | Use | no wrapper |
-| `agent.memory`, `agent.skills` | Memory, Skills pages | Set up | Now (`PAGE_ALTITUDE`) |
+| `agent.memory`, `agent.skills` | Memory, Skills pages | Use (P5-REFINE-12 #8; no row, no wrapper) | no wrapper |
 | `agent.tests`, `agent.otheragents` | Tests, Other agents pages | Expert | Now |
 | `agent.terminal`, `agent.ssh`, `agent.previews`, `agent.connect` | Terminal, SSH, Previews, Computer: Connect pages | Expert | Now (Files stays Use) |
 | `agent.byo` | BYO as a kind of agent: the kind select in New agent (Expert), the BYO row on the Agents list (Set up) | Expert / Set up | Now |

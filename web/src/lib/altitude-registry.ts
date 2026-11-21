@@ -26,10 +26,9 @@ export const ALTITUDE_REGISTRY = {
   "rail.people": { altitude: "setup", area: "rail", mark: true },
   "rail.settings": { altitude: "setup", area: "rail", mark: true },
   "rail.platform": { altitude: "expert", area: "admin nav", mark: true },
-  "agent.memory": { altitude: "setup", area: "agent pages" },
+  // (P5-REFINE-12 #8) Memory and Skills are Use: they are listed at every altitude, so they have no row here.
   "memory.key": { altitude: "expert", area: "Memory" },
   "skill.files": { altitude: "expert", area: "Skills" },
-  "agent.skills": { altitude: "setup", area: "agent pages" },
   "agent.tests": { altitude: "expert", area: "agent pages" },
   "agent.otheragents": { altitude: "expert", area: "agent pages" },
   "agent.terminal": { altitude: "expert", area: "agent pages" },
