@@ -107,6 +107,11 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(used.getByRole("listitem", { name: "acme-bot" }).getByRole("combobox", { name: /Daneel's access to/ })).toHaveValue("read");
         await expect(used.getByText(/Daneel thinks with claude-sonnet through this key/)).toBeVisible();
         await expect(page.getByText("Not given to Daneel (1)")).toBeVisible();
+        // (P5-REFINE-20, access-2) The level and the … menu share one line, at every width.
+        const row = used.getByRole("listitem", { name: "acme-bot" });
+        const level = await row.getByRole("combobox", { name: /Daneel's access to/ }).boundingBox();
+        const more = await row.getByRole("button", { name: /^More for/ }).boundingBox();
+        expect(level && more && Math.abs(level.y + level.height / 2 - (more.y + more.height / 2)) < 8).toBe(true);
         await check(page, "agent-access", scheme, width);
       });
 

@@ -41,7 +41,8 @@ function LevelPill({
     <select
       aria-label={label}
       data-testid="level-pill"
-      className={cn(pill, "w-auto", inRow && "max-sm:w-full")}
+      // On a phone the select takes the line's room and the … menu sits beside it (access-2), never a line of its own.
+      className={cn(pill, "w-auto", inRow && "max-sm:min-w-0 max-sm:flex-1")}
       value={value}
       onChange={() => undefined}
     >
@@ -207,7 +208,7 @@ export function AccessControl({
           aria-label={`${entry.agent.name}'s access to ${account.name}`}
           className={cn(
             "h-9 rounded-control border border-line-strong bg-surface px-2 text-sm text-ink pointer-coarse:h-11",
-            inRow ? "w-auto max-w-56 max-sm:w-full max-sm:max-w-none" : "w-full max-w-xs",
+            inRow ? "w-auto max-w-56 max-sm:w-full max-sm:min-w-0 max-sm:max-w-none" : "w-full max-w-xs",
           )}
           disabled={put.isPending}
           value={entry.level === "custom" ? CUSTOM : (level ?? "")}
