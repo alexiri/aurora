@@ -383,7 +383,7 @@ fn cannot_answer_item(a: &HostedAgentRow, r: AnswerReason, sl: &Slugs) -> Attent
         TOPIC_AGENTS,
         id.clone(),
         text::cannot_answer_text(&a.name, reason_key(r)),
-        a.created_at,
+        a.since,
         String::new(),
     )
     .action("Fix", dash_paths::ws_agent_access(&sl.org, &sl.ws, &id))

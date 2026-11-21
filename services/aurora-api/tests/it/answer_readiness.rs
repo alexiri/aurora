@@ -260,3 +260,41 @@ async fn a_paused_agent_is_not_a_cannot_answer_item() {
     let feed = ws_attention(&r, &owner).await;
     assert!(cannot_answer_items(&feed).is_empty(), "{feed}");
 }
+
+/// (P5-REFINE-20 batch 7, access-3) "Since" is when the agent lost its key, not when it was made: an agent created
+/// two days ago whose key was taken away just now reads "just now" on Overview.
+#[tokio::test]
+async fn the_cannot_answer_item_is_since_the_key_was_taken_away() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    let owner = person(&r, "owner@x.io", "member", Some("owner")).await;
+    sqlx::query("UPDATE agents SET created_at = now() - interval '2 days' WHERE id = $1")
+        .bind(a)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let since = |feed: &Value| {
+        let items = cannot_answer_items(feed);
+        assert_eq!(items.len(), 1, "{feed}");
+        chrono::DateTime::parse_from_rfc3339(items[0]["since"].as_str().unwrap())
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    };
+    // Never had a key: since its creation.
+    let age = chrono::Utc::now() - since(&ws_attention(&r, &owner).await);
+    assert!(age > chrono::Duration::hours(47), "{age}");
+
+    // Given a key, then the key is taken away: since the removal.
+    let key = org_key(&r, "Company key", "active", Some(a)).await;
+    let (s, _, v) =
+        r.h.send(
+            Method::DELETE,
+            &format!("/v1/agents/{a}/grants/secrets/{key}"),
+            &[("cookie", owner.as_str()), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s.as_u16(), 204, "{v}");
+    let age = chrono::Utc::now() - since(&ws_attention(&r, &owner).await);
+    assert!(age < chrono::Duration::minutes(5), "{age}");
+}

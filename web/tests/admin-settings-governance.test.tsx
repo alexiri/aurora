@@ -160,6 +160,11 @@ describe("Admin › Settings › Governance (SET-2)", () => {
     // A sentence, not the key: the key and its reason are under Technical details only.
     expect(within(dialog).getByTestId("loosening-sentences")).toHaveTextContent("People may run agents outside Aurora.");
     expect(within(dialog).getByTestId("loosening-sentences")).not.toHaveTextContent("byo.enabled");
+    // (batch 7, admin-3) The change is named by its part of the page, in the amber callout, not under the section's title in plain bullets.
+    expect(within(dialog).getByText("BYO agents")).toBeTruthy();
+    expect(within(dialog).queryByText("Instance rules")).toBeNull();
+    expect(within(dialog).getByText("People may run agents outside Aurora.").className).toContain("bg-pending-panel");
+    expect(within(dialog).getByTestId("loosening-sentences").querySelector("ul")).toBeNull();
     expect(within(dialog).getByText("Acme")).toBeTruthy();
     expect(puts).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Yes, save" }));
