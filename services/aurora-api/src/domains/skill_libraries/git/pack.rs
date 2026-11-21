@@ -407,7 +407,12 @@ pub fn tree_entries(data: &[u8]) -> Result<Vec<RawTreeEntry>, PackError> {
         }
         let nul = data[sp + 1..].iter().position(|&b| b == 0).ok_or(bad)? + sp + 1;
         let name = std::str::from_utf8(&data[sp + 1..nul]).map_err(|_| bad)?;
-        if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+        if name.is_empty()
+            || name.len() > aurora_core::limits::LIBRARY_TREE_NAME_MAX
+            || name == "."
+            || name == ".."
+            || name.contains('/')
+        {
             return Err(bad);
         }
         let id = data.get(nul + 1..nul + 21).ok_or(bad)?;

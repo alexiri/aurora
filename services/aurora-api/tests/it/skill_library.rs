@@ -540,10 +540,13 @@ async fn create_refusals_address_reach_and_limit() {
     assert_eq!(w.count("SELECT count(*) FROM skill_libraries").await, 0);
     assert_eq!(w.count("SELECT count(*) FROM skill_library_heads").await, 0);
     // LIBRARIES_PER_ORG (each a different folder: the same url + ref + path is one library)
+    // (SEC-148: a create is a read and shares the check's per-person rate, so two admins share
+    // the ten creates.)
     for i in 0..10 {
         let mut b = mk(&url("acme/skills"), &format!("l{i}"));
         b["path"] = json!(format!("p{i}"));
-        let (s, v) = w.call(&w.admin, Method::POST, &list, Some(b)).await;
+        let who = if i < 5 { &w.admin } else { &w.owner };
+        let (s, v) = w.call(who, Method::POST, &list, Some(b)).await;
         assert_eq!(s, 201, "{v}");
     }
     let (s, v) = w

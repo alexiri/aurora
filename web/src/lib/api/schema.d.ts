@@ -21774,7 +21774,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Too many requests: the per-principal rate limit */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -38363,7 +38362,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Too many requests: the per-principal rate limit */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -40988,7 +40986,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Too many requests: the per-principal rate limit */
             429: {
                 headers: {
                     [name: string]: unknown;

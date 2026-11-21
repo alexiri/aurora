@@ -189,3 +189,30 @@ Where to look: `domains/skill_libraries/access.rs` (the authority), `routes.rs` 
 - **Add and approve keep their authority.** `add` still needs the tier's write authority (the route's check, unchanged) and now only relaxes "the library is the organization's own" for `org_id` null; approvals decide by the skill's tier authority and its own organization (A's admin got 404 on B's skill).
 - **Delete.** One transaction: affected organizations are read under the library's row lock, skills detached, library and sealed token deleted, instance and per-organization audit rows written atomically (`commit_critical_many`); an organization's row carries only that organization's count.
 - **Things I would look at twice:** (1) `GET /v1/skill-libraries/{id}?org=X` by an instance admin does not require membership of X (they can see totals anyway); (2) an instance library's `last_error` text (for example "The repository needs an access token") is shown to every organization's admins: fixed reasons only, never the URL or token; (3) `skill_library_org_state` rows are replaced at the end of a *completed* pass only, so a pass that errors leaves the previous states; (4) an organization admin sees an instance library's address (`url`, `repo`): intended (they browse it), but it is the instance admin's choice what to publish there.
+
+#### Security review send-back (SEC-149; lane A, Sonnet, 2026-11-21; commits on top of `b99fedec`)
+
+5. **Stale row in delete/patch: fixed.** `delete` now has no earlier `get`: `token_ref`, `label`, `repo` and `org_id` come from the row
+   `get_library_for_update` returns inside the transaction. `patch` keeps its earlier read for validation but decides what to discard from the locked row
+   (`locked.token_ref`, when the patch changes the reference and it differs from the new one) and only after the commit. Test:
+   IT `instance.rs::deleting_an_instance_library_discards_its_sealed_token_from_the_store` (the default store is a `MemoryStore`, so the sealed value is **counted**:
+   create 1 → replace by PATCH 1 → delete 0; a second library: `token: null` 0). A deterministic race test is not practical (the window is between two
+   statements of one request); the replace-then-delete sequence is covered, and the delete assertion fails if `discard_token` is removed.
+6. **Errors as 404: fixed.** `access::hide_denial` turns only 404/403 into the library's 404; a database or other internal error passes through (5xx).
+   Used by `read` (the `?org=` audience) and the organization branch of `view_as`.
+7. **One authority helper: done.** `access::view_as(caller, state, row, org) -> View` replaces the inline logic of `GET /v1/skill-libraries/{id}`
+   (the handler is now two lines). Behaviour kept: an instance admin's session may view any organization's per-tier counts of an instance library (no names;
+   D-449(c)); **new: the `?org=` must exist** (`orgs::name_of`), else 404. Noted in the SEC-149 row of docs/17 and security-coverage. Test: IT
+   `the_view_as_an_organization_needs_that_organization_to_exist` (existing org 200 with the organization's view, unknown org 404).
+8. **Shared refresh fairness: done.** At the top of the per-skill loop an organization already `over` is skipped before `content::load`; each changed directory is
+   loaded once per pass (`BTreeMap<dir, Loaded>`) and reused across the skills of every organization (a read error still fails the pass; an invalid result is cached too).
+   The test hook is `LibraryEnv.loads` (a per-replica counter, so parallel ITs do not disturb each other). Test: IT
+   `a_refresh_pass_loads_a_directory_once_and_skips_an_over_budget_organization` (A over budget with two skills, B with one of the same directory: **one** load for the pass
+   instead of two, A without a proposal, B with its proposal; it fails without either the skip or the cache).
+9. **Tests that would not fail: added.** Sealed-value deletion: see 5. `added_by_path`'s `can_use`: IT `added_chips_leave_out_workspaces_the_caller_cannot_use`
+   (a skill added to a second workspace of the organization is absent from a member's `added` of another workspace and present for the admin).
+   Organization library with another organization's `?org=`: IT `the_view_as_an_organization_needs_that_organization_to_exist` (browse and skill content → 404; its own organization 200).
+
+**Not changed, as told:** the error reasons, and `http_instance` without `.no_proxy()`. **For lane B / API shape:** none of the routes, fields or error codes changed;
+the new `502 library_unavailable` and `429 rate_limited` on create/patch use existing codes (a create that used to answer 201 can now answer 429 after ten reads a minute by one person).
+Same commands and results as in the SEC-148 send-back under P5-SKLIB-1.

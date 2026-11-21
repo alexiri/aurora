@@ -778,6 +778,235 @@ async fn paused_instance_libraries_the_kill_switch_and_the_cap() {
     assert_eq!(s, 403);
 }
 
+/// The default secret store is a memory store (an external one: its values are not in the row),
+/// so a test can count the sealed values that are left.
+async fn with_memory_store(w: &mut W) -> std::sync::Arc<aurora_secrets::MemoryStore> {
+    use aurora_secrets::{MemoryStore, SecretVault, StoreRegistry};
+    let key = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [b'k'; 32]);
+    let keyring =
+        std::sync::Arc::new(aurora_crypto::Keyring::parse(&format!("k1:{key}"), "k1").unwrap());
+    let mut sr = StoreRegistry::from_config(&w.h.state.config.secrets, keyring).unwrap();
+    let mem = std::sync::Arc::new(MemoryStore::new("memory"));
+    sr.register(mem.clone());
+    sr.set_default("memory").unwrap();
+    w.h.state =
+        w.h.state
+            .clone()
+            .with_vault(std::sync::Arc::new(SecretVault::new(sr)));
+    w.h.app = test_router(w.h.state.clone());
+    mem
+}
+
+/// (SEC-149) The token's sealed value lives in an external store: a replacement discards the old
+/// value (the one the row held under its lock) and the deletion discards the current one.
+#[tokio::test]
+async fn deleting_an_instance_library_discards_its_sealed_token_from_the_store() {
+    let mut w = world().await;
+    w.seed();
+    let mem = with_memory_store(&mut w).await;
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::POST,
+            ADMIN_LIBS,
+            Some(json!({"label": "shared", "url": url("acme/skills"), "token": "first"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let lib: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(mem.managed_count(), 1, "the token is sealed into the store");
+    let one = format!("/v1/skill-libraries/{lib}");
+    // a replacement: the old sealed value goes, the new one stays
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::PATCH,
+            &one,
+            Some(json!({"token": "second"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(mem.managed_count(), 1, "the replaced value was discarded");
+    // the row's reference is the one the store still holds: the deletion discards it
+    let (s, _) = w.call(&w.root, Method::DELETE, &one, None).await;
+    assert_eq!(s, 204);
+    assert_eq!(
+        mem.managed_count(),
+        0,
+        "the sealed value itself is gone from the store"
+    );
+    // a removed token (null) is discarded too
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::POST,
+            ADMIN_LIBS,
+            Some(json!({"label": "again", "url": url("acme/skills"), "token": "third"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let lib2 = v["id"].as_str().unwrap().to_owned();
+    assert_eq!(mem.managed_count(), 1);
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::PATCH,
+            &format!("/v1/skill-libraries/{lib2}"),
+            Some(json!({"token": null})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(mem.managed_count(), 0);
+}
+
+/// (SEC-149) `?org=` on one instance library: the instance admin may view any **existing**
+/// organization's numbers; an organization that does not exist is 404. An organization library
+/// read with another organization's `?org=` is 404; a database failure would not be (5xx).
+#[tokio::test]
+async fn the_view_as_an_organization_needs_that_organization_to_exist() {
+    let w = world().await;
+    w.seed();
+    let b = second_org(&w).await;
+    let inst = w.instance_library("shared").await;
+    let one = format!("/v1/skill-libraries/{inst}");
+    let (s, v) = w
+        .call(&w.root, Method::GET, &format!("{one}?org={}", b.org), None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["orgs_using"].is_null(), "an organization's view: {v}");
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::GET,
+            &format!("{one}?org={}", Uuid::now_v7()),
+            None,
+        )
+        .await;
+    assert_eq!((s, code(&v)), (404, "not_found"), "{v}");
+    // an organization library, read as another organization
+    let own = w.library().await;
+    for uri in [
+        format!("/v1/skill-libraries/{own}/skills?org={}", b.org),
+        format!("/v1/skill-libraries/{own}/skills/alpha?org={}", b.org),
+    ] {
+        let (s, v) = w.call(&w.admin, Method::GET, &uri, None).await;
+        assert_eq!((s, code(&v)), (404, "not_found"), "{uri}: {v}");
+    }
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::GET,
+            &format!("/v1/skill-libraries/{own}/skills?org={}", w.org),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "its own organization reads: {v}");
+}
+
+/// (SEC-149) The browse list's `added` shows only what the caller can use: a skill added to a
+/// workspace the member cannot use is not theirs to see (the admin sees it).
+#[tokio::test]
+async fn added_chips_leave_out_workspaces_the_caller_cannot_use() {
+    let w = world().await;
+    let sha = w.seed();
+    let lib = w.library().await;
+    let ws2 = w.h.workspace(w.org).await;
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &format!("/v1/workspaces/{ws2}/skills"),
+            Some(W::from_library(lib, "alpha", &sha)),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let hidden: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) = w.add_org(lib, "beta", &sha).await;
+    assert_eq!(s, 201, "{v}");
+    let shown: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let uri = format!("/v1/skill-libraries/{lib}/skills");
+    let added_of = |v: &Value, path: &str| -> Value {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["path"] == path)
+            .unwrap()["added"]
+            .clone()
+    };
+    // the member uses only the first workspace: ws2's skill is not listed, the org's is
+    let (s, v) = w.call(&w.member, Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(added_of(&v, "alpha"), json!([]), "{v}");
+    assert_eq!(
+        added_of(&v, "beta"),
+        json!([{"tier": "org", "id": shown}]),
+        "{v}"
+    );
+    // the organization's admin sees both
+    let (_, v) = w.call(&w.admin, Method::GET, &uri, None).await;
+    assert_eq!(
+        added_of(&v, "alpha"),
+        json!([{"tier": "workspace", "id": hidden}]),
+        "{v}"
+    );
+}
+
+/// (SEC-149, D-449) One pass loads each changed directory once for every organization, and an
+/// organization that is over budget has no more skills loaded in that pass.
+#[tokio::test]
+async fn a_refresh_pass_loads_a_directory_once_and_skips_an_over_budget_organization() {
+    let w = world().await;
+    let sha = w.seed();
+    let b = second_org(&w).await;
+    let lib = w.instance_library("shared").await;
+    let (_, v) = w.add_org(lib, "alpha", &sha).await;
+    let a_alpha: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (_, v) = w.add_org(lib, "beta", &sha).await;
+    let a_beta: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (_, v) = w.add_agent_of(&b, lib, "alpha", &sha).await;
+    let b_alpha: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let filler = Uuid::now_v7();
+    sqlx::query("INSERT INTO skill_library_updates (id, skill_id, library_id, kind, status, commit_sha, content_sha256, bytes) VALUES ($1,$2,$3,'removed','pending','x','\\x00',4194300)")
+        .bind(filler).bind(a_beta).bind(lib).execute(w.h.pool()).await.unwrap();
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[
+            put("alpha/SKILL.md", md("Alpha v2", "v2 body")),
+            put("beta/SKILL.md", md("Beta v2", "v2 body")),
+        ],
+    );
+    let before =
+        w.h.state
+            .library
+            .loads
+            .load(std::sync::atomic::Ordering::Relaxed);
+    w.refresh(lib).await;
+    let loads =
+        w.h.state
+            .library
+            .loads
+            .load(std::sync::atomic::Ordering::Relaxed)
+            - before;
+    // alpha is loaded once and shared by A's and B's skills; A is over budget after its first
+    // skill, so beta (A's second) is never loaded
+    assert_eq!(loads, 1, "directories loaded in the pass");
+    assert_eq!(w.pending(a_alpha).await["update"], Value::Null);
+    let (_, pb) = w
+        .call(
+            &b.member,
+            Method::GET,
+            &format!("/v1/skills/{b_alpha}/library"),
+            None,
+        )
+        .await;
+    assert_eq!(
+        pb["update"]["kind"], "changed",
+        "another organization still gets its proposal: {pb}"
+    );
+}
+
 #[tokio::test]
 async fn the_kill_switch_hides_instance_libraries_too() {
     let w = world_with(|c| c.skills_library.enabled = false).await;

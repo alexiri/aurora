@@ -406,3 +406,35 @@ Where to look: `services/aurora-api/src/domains/skill_libraries/git/mod.rs` (the
 - **Size and time.** The body is read as a stream and stops at `LIBRARY_PACK_MAX`; inflate is capped at `LIBRARY_INFLATE_MAX`, object count, blob size and delta depth (50); every object id is recomputed and compared with what was asked or listed (`wrong_pack` IT); a 65 MiB zero file is refused only when the filter is off (IT); a total timeout per request and per refresh pass (`LIBRARY_REFRESH_BUDGET` below the lease); SHA-256 repositories refused.
 - **Things I would look at twice:** (1) `Reader::prefetch`/`blobs` ask for at most `LIBRARY_WANTS_MAX` ids per request (a request with more is split, not refused); (2) the fallback to a depth-1 whole pack when blob wants are refused is bounded by the same caps but costs up to 32 MiB per read; (3) `PATCH` of `token: null` reads the repository without it first, so removing the token of a private repository is refused with "needs an access token" until the repository is public or the library deleted: intended, but a person may find it surprising; (4) the discovery answer's `Content-Type` is checked, its body is not trusted beyond the parser; (5) no log-capture test exists for the token (only the redacted `Debug` and the source scan).
 - SEC-83 holds unchanged: every scenario of `skill_library.rs` that proves it runs on the new reader (34 tests).
+
+#### Security review send-back (SEC-148; lane A, Sonnet, 2026-11-21; commits on top of `b99fedec`)
+
+1. **Memory exhaustion in `walk` (blocker): fixed.** `limits::LIBRARY_TREE_NAME_MAX` (255 bytes, refused in `pack::tree_entries` as `Malformed`),
+   `LIBRARY_TREE_DEPTH_MAX` (**5**: a skill's own path depth is 4, plus one) and `LIBRARY_TREE_PATH_BYTES_MAX` (4 MiB, counting a folder's path twice because
+   the stack holds a copy). Over the depth or the bytes the walk answers `TreeTooLarge` (**refuse, not skip**: skipping a deeper folder would silently drop files of
+   a skill that is then listed as valid; the answer is `library_tree_too_large`, narrow `path`). Tests: unit `a_deeply_nested_tree_is_refused_fast`
+   (2 000 nested trees of 255-byte names, under 2 s; exactly at the cap passes, one over refuses), `the_total_path_bytes_are_capped` (a wide tree),
+   `a_tree_entry_name_over_255_bytes_is_malformed` (256 → malformed, 255 fine; 1 KiB names cannot be built any more: the name cap refuses them first);
+   IT `skill_library/git.rs::a_repository_nested_too_deep_is_refused` (a repository one level too deep over the testkit git server → 422
+   `library_tree_too_large`; the shallow folder reads). Limits in `limits.rs`, docs/02 §Limits, SEC-148 rows of docs/17 and security-coverage.
+2. **Concurrency and rate: fixed.** `LibraryEnv.reads: ReadSlots` (`LIBRARY_READS_CONCURRENT` = 4 permits per replica) is taken by `probe` (create, patch),
+   `check`, browse's cold listing, `load_for_add`, `skill_content` and every refresh pass (`refresh_library_within`, before its budget starts).
+   Interactive reads wait for a permit **inside** `LIBRARY_READ_DEADLINE` (90 s, browse keeps its `BROWSE_DEADLINE`) and answer the existing
+   **502 `library_unavailable`** (the message says too many reads or too slow); a refresh waits without a deadline. `check_rate` is now also called by
+   `service::create` (organization and instance routes) and by a `patch` that re-reads (same bucket as the check: 10 a minute per person). The OpenAPI
+   operations of create (both) and patch list 429 explicitly (it was already emitted generically; only a description line changed in `web/openapi.json`,
+   `schema.d.ts` regenerated, no shape change for lane B). Tests: unit `skill_libraries::tests::reads_are_capped_and_a_full_replica_answers_unavailable`
+   (peak concurrency 2 of 8 tasks, the deadline answer, permits returned after a timeout); IT `create_and_a_rereading_patch_share_the_checks_rate`
+   (create 429 after 10–11, then a check by the same person 429, a re-reading patch 429, a rename not limited). `create_refusals_address_reach_and_limit`
+   now creates its ten libraries with two admins (the shared allowance).
+3. **Docs: done.** `docs/operator/upgrades.md`: library reads use the API's own guarded client, not `gateway.egress_proxy` (D-448(b)); migrated
+   GitHub Enterprise / self-managed libraries whose base path was an API prefix may need the address entered again. docs/05 notes the 429 and 502 on create and patch.
+4. **Missing tests: added** (unit, in `git/mod.rs`): `disguised_ip_literals_are_refused_like_the_plain_ones` (`https://2130706433/a`, `https://0x7f.1/a`,
+   `https://[::ffff:127.0.0.1]/a`, plus the plain one: refused with the address reason before anything is dialled) and
+   `a_redirect_to_a_name_that_resolves_privately_is_refused` (a canned 302 to `https://localhost:9/…` through the override; the new test-only
+   `Env.override_bypass` makes the reader dial that one host for real, so the **guarded resolver** refuses it with `ADDRESS_REFUSED`; without the bypass the same
+   redirect is followed to the override). The brief's "testkit resolver override" did not exist (the override replaces every dial, resolver included); the bypass is the smallest addition.
+
+**Commands** (all through `heavy.sh p5-polish-a`, throwaway `pg-p5-polish-a`): `cargo fmt --check` ok; `cargo clippy -p aurora-api -p aurora-core --all-targets -- -D warnings` clean;
+`cargo test -p aurora-api --lib skill_libraries` 28 passed; `cargo test -p aurora-api --test it -- skill_library openapi_matches permission_matrix skills_library` 66 passed;
+`python3 scripts/extract-schema.py --check` ok; `bash scripts/guards/run-all.sh` all passed. Not run: web tests (no web source changed beyond the regenerated `schema.d.ts`).

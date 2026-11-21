@@ -139,6 +139,9 @@ pub async fn refresh_library_within(
         .skills_library
         .refresh_interval_secs
         .max(limits::LIBRARY_REFRESH_INTERVAL_MIN.as_secs());
+    // (SEC-148) The replica's shared read permits: a refresh waits for one (it never fails for
+    // want of one), and the budget starts once it has it.
+    let _permit = state.library.reads.background().await;
     let result = match tokio::time::timeout(budget, compare(state, &lib, owner)).await {
         Ok(r) => r,
         Err(_) => Err("the refresh took too long and was stopped; it will retry".into()),
@@ -248,6 +251,13 @@ impl From<ReadError> for Fail {
     }
 }
 
+/// What loading one skill directory gave in this pass (kept for the other organizations' skills
+/// of the same directory).
+enum Loaded {
+    Ok(content::LoadedSkill),
+    Invalid(String),
+}
+
 async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Done, Fail> {
     fn db<E>(_: E) -> Fail {
         "the database is unavailable".into()
@@ -298,7 +308,13 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
     };
     // Organizations whose open-proposal budget did not fit a proposal in this pass.
     let mut over: std::collections::BTreeSet<Uuid> = std::collections::BTreeSet::new();
+    let mut loaded: BTreeMap<String, Loaded> = BTreeMap::new();
     for s in &skills {
+        // (SEC-148) An organization that is over budget gets no more proposals in this pass, so
+        // none of its remaining skills is worth loading.
+        if over.contains(&s.org_id) {
+            continue;
+        }
         let dir = s.library_path.clone().unwrap_or_default();
         let pinned = blobs_of(&s.library_blobs);
         let pending = repo::pending_update(&mut c, s.id).await.map_err(db)?;
@@ -332,14 +348,27 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
                     }
                     continue;
                 }
-                match content::load(&reader, cand).await {
-                    Err(LoadError::Read(e)) => return Err(e.into()),
-                    Err(LoadError::Invalid(r)) => {
-                        let r = one_line(&r, 300);
+                // (SEC-148) Each changed directory is loaded once per pass and reused by the
+                // skills of every organization that added it.
+                if !loaded.contains_key(dir.as_str()) {
+                    state
+                        .library
+                        .loads
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let v = match content::load(&reader, cand).await {
+                        Err(LoadError::Read(e)) => return Err(e.into()),
+                        Err(LoadError::Invalid(r)) => Loaded::Invalid(r),
+                        Ok(l) => Loaded::Ok(l),
+                    };
+                    loaded.insert(dir.clone(), v);
+                }
+                match &loaded[dir.as_str()] {
+                    Loaded::Invalid(r) => {
+                        let r = one_line(r, 300);
                         let h = content::marker_sha256("invalid", &r, &cand.blobs());
                         ("invalid", Some(r), None, h.to_vec(), 0)
                     }
-                    Ok(l) => {
+                    Loaded::Ok(l) => {
                         if Some(l.content_sha256.as_slice()) == s.library_content_sha256.as_deref()
                         {
                             if pending.is_some() {

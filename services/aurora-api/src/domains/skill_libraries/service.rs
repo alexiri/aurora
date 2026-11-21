@@ -352,18 +352,25 @@ async fn probe(
     src: &SourceAddr,
     token: Option<&Token>,
 ) -> Result<Resolved, ApiError> {
-    let git = GitRepo::new(&state.connect, &src.url, token, state.library.fetch_timeout)
-        .map_err(|e| unreachable_on_create(&e))?;
-    let reader = Reader::new(&git, &src.path);
-    let resolved = reader
-        .resolve_full(src.reference.as_deref())
+    // (SEC-148) One of the replica's read permits, under the overall read deadline.
+    state
+        .library
+        .reads
+        .interactive(async {
+            let git = GitRepo::new(&state.connect, &src.url, token, state.library.fetch_timeout)
+                .map_err(|e| unreachable_on_create(&e))?;
+            let reader = Reader::new(&git, &src.path);
+            let resolved = reader
+                .resolve_full(src.reference.as_deref())
+                .await
+                .map_err(|e| unreachable_on_create(&e))?;
+            reader
+                .tree(&resolved.sha)
+                .await
+                .map_err(|e| unreachable_on_create(&e))?;
+            Ok(resolved)
+        })
         .await
-        .map_err(|e| unreachable_on_create(&e))?;
-    reader
-        .tree(&resolved.sha)
-        .await
-        .map_err(|e| unreachable_on_create(&e))?;
-    Ok(resolved)
 }
 
 /// Creates a library of `org`, or (`None`) an instance library (D-449; the caller has been
@@ -400,6 +407,8 @@ pub async fn create(
             return Err(exists());
         }
     }
+    // (SEC-148) A create reads the repository like a check: the same per-person rate.
+    super::routes::check_rate(caller, state)?;
     let head = probe(state, &src, token.as_ref()).await?.sha;
     let id = Uuid::now_v7();
     // Seal first; a failed insert deletes the sealed value again.
@@ -472,21 +481,29 @@ pub async fn check(
         req.path.as_deref(),
     )?;
     let token = token_input(req.token.as_deref(), req.token_username.as_deref())?;
-    let git = GitRepo::new(
-        &state.connect,
-        &src.url,
-        token.as_ref(),
-        state.library.fetch_timeout,
-    )
-    .map_err(|e| unreachable_on_create(&e))?;
-    let reader = Reader::new(&git, &src.path);
-    let resolved = reader
-        .resolve_full(src.reference.as_deref())
-        .await
-        .map_err(|e| unreachable_on_create(&e))?;
-    let listing = catalogue(&reader, &src.path, resolved.sha.clone())
-        .await
-        .map_err(|e| unreachable_on_create(&e))?;
+    // (SEC-148) One of the replica's read permits, under the overall read deadline.
+    let (resolved, listing) = state
+        .library
+        .reads
+        .interactive(async {
+            let git = GitRepo::new(
+                &state.connect,
+                &src.url,
+                token.as_ref(),
+                state.library.fetch_timeout,
+            )
+            .map_err(|e| unreachable_on_create(&e))?;
+            let reader = Reader::new(&git, &src.path);
+            let resolved = reader
+                .resolve_full(src.reference.as_deref())
+                .await
+                .map_err(|e| unreachable_on_create(&e))?;
+            let listing = catalogue(&reader, &src.path, resolved.sha.clone())
+                .await
+                .map_err(|e| unreachable_on_create(&e))?;
+            Ok((resolved, listing))
+        })
+        .await?;
     let mut names: Vec<String> = listing
         .items
         .iter()
@@ -787,6 +804,8 @@ pub async fn patch(
             path: effective_path.clone(),
             address: git_url::parse(u).map_err(url_invalid)?,
         };
+        // (SEC-148) A patch that re-reads is a read like a check: the same per-person rate.
+        super::routes::check_rate(caller, state)?;
         head = probe(state, &src, token).await?.sha;
         p.head_sha = Some(&head);
     }
@@ -801,7 +820,9 @@ pub async fn patch(
     }
     let result = async {
         let mut tx = audit::begin(state).await?;
-        repo::get_library_for_update(&mut tx, id)
+        // (SEC-149) What the row holds *now*, under its lock: a token replaced or removed since
+        // the earlier read is the one to discard, never a stale reference.
+        let locked = repo::get_library_for_update(&mut tx, id)
             .await?
             .ok_or_else(|| ApiError::not_found("Skill library not found."))?;
         let row = repo::patch_library(&mut tx, id, &p)
@@ -822,24 +843,29 @@ pub async fn patch(
             .target("skill_library", id)
             .metadata(meta);
         audit::commit_critical(tx, &ev).await?;
-        Ok::<_, ApiError>(row)
+        // The value the row held under the lock and no longer holds.
+        let replaced = match p.token_ref {
+            Some(new) if locked.token_ref.as_deref() != new => locked.token_ref.clone(),
+            _ => None,
+        };
+        Ok::<_, ApiError>((row, replaced))
     }
     .await;
-    match &result {
-        Ok(_) => {
+    let result = match result {
+        Ok((row, replaced)) => {
             // The replaced or removed value is gone from the row: discard it from its store.
-            if token_change.is_some_and(|t| t != "set")
-                && let Some(old) = &cur.token_ref
-            {
+            if let Some(old) = &replaced {
                 discard_token(state, id, cur.org_id, old).await;
             }
+            Ok(row)
         }
-        Err(_) => {
+        Err(e) => {
             if let Some(s) = &sealed {
                 discard_token(state, id, cur.org_id, s).await;
             }
+            Err(e)
         }
-    }
+    };
     state.library.forget(id);
     result
 }
@@ -847,9 +873,10 @@ pub async fn patch(
 /// Deletes the library; every skill added from it is detached (keeps its content); the sealed
 /// token is deleted.
 pub async fn delete(state: &AppState, caller: &Caller, id: Uuid) -> Result<u64, ApiError> {
-    let cur = get(state, id).await?;
     let mut tx = audit::begin(state).await?;
-    repo::get_library_for_update(&mut tx, id)
+    // (SEC-149) Everything below (the token to discard, the label and repository of the audit
+    // rows) comes from the row as the lock sees it, not from an earlier read.
+    let cur = repo::get_library_for_update(&mut tx, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Skill library not found."))?;
     // (D-449) An instance library's deletion detaches in every organization: one audit row each
@@ -942,6 +969,8 @@ pub async fn listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>,
         if let Some(l) = cached_listing(&state.library, row) {
             return Ok(l);
         }
+        // (SEC-148) The replica's shared read permits; the wait counts toward the deadline.
+        let _permit = state.library.reads.permit().await?;
         read_listing(state, row).await
     };
     match tokio::time::timeout(BROWSE_DEADLINE, cold).await {
@@ -1124,24 +1153,44 @@ pub async fn load_for_add(
     dir: &str,
     commit: &str,
 ) -> Result<LoadedSkill, ApiError> {
-    let token = read_token(state, row).await?;
-    let git = git_for(state, row, token.as_ref())?;
-    let reader = Reader::new(&git, &row.path);
-    ensure_known_commit(state, row, &reader, commit).await?;
-    let entries = reader.tree(commit).await.map_err(|e| read_failure(&e))?;
-    let cands = content::assemble(&row.path, &entries);
-    let Some(c) = cands.iter().find(|c| c.dir == dir) else {
-        return Err(ApiError::unprocessable(
-            "library_skill_invalid",
-            "This commit has no skill directory with that name.",
-        ));
-    };
-    content::load(&reader, c).await.map_err(load_failure)
+    state
+        .library
+        .reads
+        .interactive(async {
+            let token = read_token(state, row).await?;
+            let git = git_for(state, row, token.as_ref())?;
+            let reader = Reader::new(&git, &row.path);
+            ensure_known_commit(state, row, &reader, commit).await?;
+            let entries = reader.tree(commit).await.map_err(|e| read_failure(&e))?;
+            let cands = content::assemble(&row.path, &entries);
+            let Some(c) = cands.iter().find(|c| c.dir == dir) else {
+                return Err(ApiError::unprocessable(
+                    "library_skill_invalid",
+                    "This commit has no skill directory with that name.",
+                ));
+            };
+            content::load(&reader, c).await.map_err(load_failure)
+        })
+        .await
 }
 
 /// One skill at a commit (default: the current head): what an add would store; an invalid skill
 /// is a 200 with `valid = false` and the reason.
 pub async fn skill_content(
+    state: &AppState,
+    row: &LibraryRow,
+    dir: &str,
+    commit: Option<&str>,
+) -> Result<LibrarySkillContent, ApiError> {
+    // (SEC-148) One of the replica's read permits, under the overall read deadline.
+    state
+        .library
+        .reads
+        .interactive(skill_content_read(state, row, dir, commit))
+        .await
+}
+
+async fn skill_content_read(
     state: &AppState,
     row: &LibraryRow,
     dir: &str,

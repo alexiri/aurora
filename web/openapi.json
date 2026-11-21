@@ -6937,7 +6937,6 @@
             }
           },
           "429": {
-            "description": "Too many requests: the per-principal rate limit",
             "content": {
               "application/json": {
                 "schema": {
@@ -30260,7 +30259,6 @@
             }
           },
           "429": {
-            "description": "Too many requests: the per-principal rate limit",
             "content": {
               "application/json": {
                 "schema": {
@@ -33916,7 +33914,6 @@
             }
           },
           "429": {
-            "description": "Too many requests: the per-principal rate limit",
             "content": {
               "application/json": {
                 "schema": {

@@ -228,6 +228,21 @@ pub const LIBRARY_BYTES_PER_ORG: usize = 4 * MIB;
 pub const LIBRARY_SKILLS_PER_ORG: usize = 100;
 pub const LIBRARY_FILE_MAX: usize = 64 * KIB;
 pub const LIBRARY_TREE_MAX: usize = 20_000;
+/// (SEC-148, review send-back; docs/02 §Limits) Folder depth below the library's folder that a
+/// tree read follows: one more than a skill's own path depth (4); deeper is
+/// `library_tree_too_large`.
+pub const LIBRARY_TREE_DEPTH_MAX: usize = 5;
+/// (SEC-148; docs/02 §Limits) Bytes of one tree entry's name; a longer name fails the read.
+pub const LIBRARY_TREE_NAME_MAX: usize = 255;
+/// (SEC-148; docs/02 §Limits) Path bytes of one tree read together (all listed paths); more is
+/// `library_tree_too_large`.
+pub const LIBRARY_TREE_PATH_BYTES_MAX: usize = 4 * MIB;
+/// (SEC-148; docs/02 §Limits) Repository reads running at once on one replica (check, create,
+/// patch, browse, add, refresh share the permits).
+pub const LIBRARY_READS_CONCURRENT: usize = 4;
+/// (SEC-148; docs/02 §Limits) How long an interactive repository read (check, create, patch)
+/// may take overall, waiting for a read permit included.
+pub const LIBRARY_READ_DEADLINE: Duration = Duration::from_secs(90);
 pub const LIBRARY_BROWSE_MAX: usize = 200;
 /// (P5-IA-1, C-987) One-time notice keys a person can have dismissed.
 pub const ONBOARDING_NOTICES_MAX: usize = 50;

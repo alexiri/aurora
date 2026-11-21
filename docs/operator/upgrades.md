@@ -207,6 +207,13 @@ read through the gateway.
   an access token" until an organization admin adds one (Libraries › Edit › access token); skills already added
   keep working. Libraries of public repositories need nothing.
 - **The API pods need egress to the git hosts** (a server on a private network: `gateway.allowed_private`).
+  Library reads go through the API's **own guarded client** (https only, public addresses only), **not** through
+  `gateway.egress_proxy`: a deployment that forces all outbound traffic through that proxy must allow the git
+  hosts from the API pods directly (D-448(b)).
+- **Libraries migrated from a GitHub Enterprise or self-managed GitLab instance** whose registered base path was an
+  *API prefix* (for example `/api/v3`) may need their address entered again: the migration builds the clone address
+  from `host || base_path`, and such an address is not a repository. It fails safely: the library shows "The
+  repository was not found" and an organization admin sets the address once (Libraries › Edit).
 - **Rolling upgrade**: a new API replica never calls the gateway's old `POST /internal/v1/library-fetch`; an
   old API replica talking to a new gateway gets 404 and records a transient refresh error that the next pass of
   the new release clears. The gateway route and the `aurora_gateway_library_fetch_total` metric are gone; the

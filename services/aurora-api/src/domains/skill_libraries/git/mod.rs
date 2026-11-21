@@ -148,14 +148,17 @@ impl<'a> GitRepo<'a> {
 
     /// The address actually dialled: the logical one, or the test override's origin.
     fn dial(&self, logical: &url::Url) -> url::Url {
+        let bypass = logical
+            .host_str()
+            .is_some_and(|h| self.env.override_bypass.iter().any(|b| b == h));
         match &self.env.override_origin {
-            Some(o) => {
+            Some(o) if !bypass => {
                 let mut t = o.clone();
                 t.set_path(logical.path());
                 t.set_query(logical.query());
                 t
             }
-            None => logical.clone(),
+            _ => logical.clone(),
         }
     }
 
@@ -401,8 +404,11 @@ fn walk(
         }
     }
     let mut out = Vec::new();
-    let mut stack = vec![(prefix.to_owned(), root)];
-    while let Some((dir, id)) = stack.pop() {
+    // (SEC-148) The depth and the total path bytes are capped, not only the entry count: folders
+    // nested thousands deep with long names would otherwise hold O(depth²) bytes of paths.
+    let mut path_bytes = 0usize;
+    let mut stack = vec![(prefix.to_owned(), root, 0usize)];
+    while let Some((dir, id, depth)) = stack.pop() {
         for e in tree_of(&id)? {
             let full = if dir.is_empty() {
                 e.name.clone()
@@ -414,8 +420,16 @@ fn walk(
                 "160000" => "commit",
                 _ => "blob",
             };
+            path_bytes = path_bytes.saturating_add(full.len());
             if kind == "tree" {
-                stack.push((full.clone(), e.id));
+                if depth + 1 > limits::LIBRARY_TREE_DEPTH_MAX {
+                    return Err(ReadError::TreeTooLarge);
+                }
+                path_bytes = path_bytes.saturating_add(full.len());
+                stack.push((full.clone(), e.id, depth + 1));
+            }
+            if path_bytes > limits::LIBRARY_TREE_PATH_BYTES_MAX {
+                return Err(ReadError::TreeTooLarge);
             }
             let size = objects
                 .get(&e.id)
@@ -640,6 +654,168 @@ mod tests {
         assert_eq!(
             walk(&objects, &only, ""),
             Err(ReadError::Unreachable(reason::MISMATCH.into()))
+        );
+    }
+
+    /// Builds `depth` nested trees (each holding the next under `name`) under a commit; the
+    /// innermost holds one blob.
+    fn nested(depth: usize, name: &str) -> (HashMap<Oid, Object>, Oid) {
+        let b = pack::object_id(Kind::Blob, b"x");
+        let mut entries = Vec::new();
+        let mut child = tree(&[("100644", "f", b)]);
+        let mut id = pack::object_id(Kind::Tree, &child);
+        entries.push(E::Plain(Kind::Tree, child.clone()));
+        for _ in 0..depth {
+            child = tree(&[("40000", name, id)]);
+            id = pack::object_id(Kind::Tree, &child);
+            entries.push(E::Plain(Kind::Tree, child.clone()));
+        }
+        let commit = format!("tree {}\n\nm\n", pack::hex(&id)).into_bytes();
+        let commit_id = pack::object_id(Kind::Commit, &commit);
+        entries.push(E::Plain(Kind::Commit, commit));
+        let objects = pack::parse(&build(&entries), pack::Limits::standard()).unwrap();
+        (objects, commit_id)
+    }
+
+    /// (SEC-148) Folders nested thousands deep with long names: refused at the depth cap, long
+    /// before the path bytes could add up (without the cap this holds ~250 MB of paths).
+    #[test]
+    fn a_deeply_nested_tree_is_refused_fast() {
+        let name = "n".repeat(limits::LIBRARY_TREE_NAME_MAX);
+        let (objects, commit) = nested(2_000, &name);
+        let t = std::time::Instant::now();
+        assert_eq!(walk(&objects, &commit, ""), Err(ReadError::TreeTooLarge));
+        assert!(t.elapsed() < Duration::from_secs(2));
+        // exactly at the depth cap is fine
+        let (objects, commit) = nested(limits::LIBRARY_TREE_DEPTH_MAX, "d");
+        assert!(walk(&objects, &commit, "").is_ok());
+        let (objects, commit) = nested(limits::LIBRARY_TREE_DEPTH_MAX + 1, "d");
+        assert_eq!(walk(&objects, &commit, ""), Err(ReadError::TreeTooLarge));
+    }
+
+    /// (SEC-148) The total of the listed paths is capped (wide and not deep).
+    #[test]
+    fn the_total_path_bytes_are_capped() {
+        let b = pack::object_id(Kind::Blob, b"x");
+        let name = "m".repeat(limits::LIBRARY_TREE_NAME_MAX - 7);
+        let per = limits::LIBRARY_TREE_PATH_BYTES_MAX / (limits::LIBRARY_TREE_NAME_MAX) + 100;
+        let mut entries: Vec<(String, String, Oid)> = (0..per)
+            .map(|i| ("100644".to_owned(), format!("{i:07}{name}"), b))
+            .collect();
+        entries.sort_by(|a, b| a.1.cmp(&b.1));
+        let refs: Vec<(&str, &str, Oid)> = entries
+            .iter()
+            .map(|(m, n, o)| (m.as_str(), n.as_str(), *o))
+            .collect();
+        let root = tree(&refs);
+        let root_id = pack::object_id(Kind::Tree, &root);
+        let commit = format!("tree {}\n\nm\n", pack::hex(&root_id)).into_bytes();
+        let commit_id = pack::object_id(Kind::Commit, &commit);
+        let p = build(&[E::Plain(Kind::Commit, commit), E::Plain(Kind::Tree, root)]);
+        let objects = pack::parse(&p, pack::Limits::standard()).unwrap();
+        assert!(per <= limits::LIBRARY_TREE_MAX);
+        assert_eq!(walk(&objects, &commit_id, ""), Err(ReadError::TreeTooLarge));
+    }
+
+    /// (SEC-148) A tree entry name over 255 bytes is a malformed pack; 255 is fine.
+    #[test]
+    fn a_tree_entry_name_over_255_bytes_is_malformed() {
+        let b = pack::object_id(Kind::Blob, b"x");
+        let ok = tree(&[("100644", &"a".repeat(255), b)]);
+        assert!(pack::tree_entries(&ok).is_ok());
+        let long = tree(&[("100644", &"a".repeat(256), b)]);
+        assert!(matches!(
+            pack::tree_entries(&long),
+            Err(pack::PackError::Malformed(_))
+        ));
+        let (objects, commit) = nested(2, &"a".repeat(256));
+        assert_eq!(
+            walk(&objects, &commit, ""),
+            Err(unreachable(reason::PROTOCOL))
+        );
+    }
+
+    /// (SEC-148) Loopback written as a decimal, hex or IPv4-mapped literal is the same address:
+    /// the URL parser normalizes it and the destination guard refuses it. Nothing is dialled.
+    #[tokio::test]
+    async fn disguised_ip_literals_are_refused_like_the_plain_ones() {
+        let ring = aurora_crypto::SecretRing::default();
+        let strict = Env::new("http://hooks.example:4104", &ring, &[], None).unwrap();
+        for u in [
+            "https://2130706433/a",
+            "https://0x7f.1/a",
+            "https://[::ffff:127.0.0.1]/a",
+            "https://127.0.0.1/a",
+        ] {
+            let refused = match GitRepo::new(&strict, u, None, Duration::from_secs(2)) {
+                Err(_) => true,
+                Ok(r) => {
+                    r.resolve(None).await
+                        == Err(ReadError::Unreachable(reason::ADDRESS_REFUSED.into()))
+                }
+            };
+            assert!(refused, "{u} must be refused");
+        }
+    }
+
+    /// Serves one canned answer to every request on a local port (plain http; the reader's
+    /// override dials it for `git.example`).
+    async fn canned(answer: String) -> std::net::SocketAddr {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = l.accept().await else {
+                    return;
+                };
+                let answer = answer.clone();
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 2048];
+                    let _ = s.read(&mut buf).await;
+                    let _ = s.write_all(answer.as_bytes()).await;
+                });
+            }
+        });
+        addr
+    }
+
+    /// (SEC-148) A discovery redirect to a host **name** that resolves to a private address is
+    /// refused by the guarded resolver at dial time (the name passes the literal check).
+    #[tokio::test]
+    async fn a_redirect_to_a_name_that_resolves_privately_is_refused() {
+        let ring = aurora_crypto::SecretRing::default();
+        let loc = "https://localhost:9/acme/skills/info/refs?service=git-upload-pack";
+        let addr = canned(format!(
+            "HTTP/1.1 302 Found\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ))
+        .await;
+        let mut env = Env::new("http://hooks.example:4104", &ring, &[], None).unwrap();
+        env.override_origin = Some(reqwest::Url::parse(&format!("http://{addr}")).unwrap());
+        env.override_bypass = vec!["localhost".to_owned()];
+        let r = GitRepo::new(
+            &env,
+            "https://git.example/acme/skills",
+            None,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(
+            r.resolve(None).await,
+            Err(ReadError::Unreachable(reason::ADDRESS_REFUSED.into()))
+        );
+        // The same redirect to a name that is not special-cased is followed (to the override).
+        env.override_bypass = Vec::new();
+        let r = GitRepo::new(
+            &env,
+            "https://git.example/acme/skills",
+            None,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_ne!(
+            r.resolve(None).await,
+            Err(ReadError::Unreachable(reason::ADDRESS_REFUSED.into()))
         );
     }
 

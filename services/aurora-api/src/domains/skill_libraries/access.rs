@@ -9,15 +9,61 @@
 //!   A caller who may do neither gets 404, never 403, so ids do not leak.
 
 use aurora_core::ApiError;
+use axum::http::StatusCode;
 use uuid::Uuid;
 
 use aurora_db::repo::skill_libraries::LibraryRow;
 
+use super::service::View;
 use crate::app::AppState;
 use crate::http::auth::Caller;
 
 fn not_found() -> ApiError {
     ApiError::not_found("Skill library not found.")
+}
+
+/// A refusal (404 or 403) becomes the library's own 404; any other error (a database or other
+/// internal failure) is passed through unchanged.
+fn hide_denial(e: ApiError) -> ApiError {
+    if matches!(e.status(), StatusCode::NOT_FOUND | StatusCode::FORBIDDEN) {
+        not_found()
+    } else {
+        e
+    }
+}
+
+/// How `GET /v1/skill-libraries/{id}` looks at a library: its manager's view, or one
+/// organization's numbers.
+///
+/// - Organization library: its owner/admin (`Manage`; `?org=` is not consulted).
+/// - Instance library with `?org=`: an instance admin's session may look at **any existing**
+///   organization's per-tier counts (no names; D-449(c)); an organization's owner/admin sees
+///   that organization's view; anyone else, and an organization that does not exist, is 404.
+/// - Instance library without `?org=`: an instance admin's totals, else 404.
+pub async fn view_as(
+    c: &Caller,
+    s: &AppState,
+    row: &LibraryRow,
+    org: Option<Uuid>,
+) -> Result<View, ApiError> {
+    match (row.org_id, org) {
+        (Some(_), _) | (None, None) => {
+            manage(c, s, row).await?;
+            Ok(View::Manage)
+        }
+        (None, Some(o)) => {
+            if c.is_instance_admin && c.is_session() {
+                return match aurora_db::repo::orgs::name_of(&s.pool, o).await? {
+                    Some(_) => Ok(View::Org(o)),
+                    None => Err(not_found()),
+                };
+            }
+            match c.org(s, o).await.and_then(|a| a.require_admin()) {
+                Ok(()) => Ok(View::Org(o)),
+                Err(e) => Err(hide_denial(e)),
+            }
+        }
+    }
 }
 
 /// May `c` manage (change, pause, delete, refresh, token) this library? Org library: the
@@ -83,9 +129,11 @@ pub async fn read(
                 ));
             };
             // Another organization's id, or no right to use a workspace there: the same 404.
+            // Only "not found" and "forbidden" are hidden that way; a database or other
+            // internal failure stays a 5xx.
             match audience(c, s, o).await {
                 Ok(admin) => (o, admin),
-                Err(_) => return Err(not_found()),
+                Err(e) => return Err(hide_denial(e)),
             }
         }
     };

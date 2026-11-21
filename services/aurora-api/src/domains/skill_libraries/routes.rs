@@ -109,7 +109,8 @@ async fn list_instance_libraries(
     tag = "skill-libraries", request_body = CreateSkillLibraryRequest,
     responses((status = 201, body = SkillLibrary), (status = 400, body = ErrorEnvelope),
         (status = 401, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
+        (status = 429, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn create_instance_library(
     c: InstanceAdmin,
@@ -166,25 +167,7 @@ async fn get_library(
 ) -> Result<Json<SkillLibrary>, ApiError> {
     service::ensure_enabled(&s)?;
     let row = service::get(&s, id).await?;
-    let how = match row.org_id {
-        Some(_) => {
-            access::manage(&c, &s, &row).await?;
-            View::Manage
-        }
-        None => match q.org {
-            // An instance admin may look at any organization's numbers.
-            Some(o) if c.is_instance_admin && c.is_session() => View::Org(o),
-            // An organization's owner/admin sees that organization's view, nobody else's.
-            Some(o) => match c.org(&s, o).await.and_then(|a| a.require_admin()) {
-                Ok(()) => View::Org(o),
-                Err(_) => return Err(ApiError::not_found("Skill library not found.")),
-            },
-            None => {
-                access::manage(&c, &s, &row).await?;
-                View::Manage
-            }
-        },
-    };
+    let how = access::view_as(&c, &s, &row, q.org).await?;
     Ok(Json(service::view(&s, &row, how).await?))
 }
 
@@ -195,7 +178,8 @@ async fn get_library(
     request_body = PatchSkillLibraryRequest,
     responses((status = 200, body = SkillLibrary), (status = 400, body = ErrorEnvelope),
         (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
+        (status = 429, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn patch_library(
     c: Caller,
@@ -291,7 +275,8 @@ async fn check_library(
     request_body = CreateSkillLibraryRequest,
     responses((status = 201, body = SkillLibrary), (status = 400, body = ErrorEnvelope),
         (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
+        (status = 429, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn create_library(
     c: Caller,

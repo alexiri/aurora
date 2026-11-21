@@ -499,6 +499,98 @@ async fn the_check_stores_nothing_is_limited_and_only_admins_may_use_it() {
     assert_eq!(s, 200);
 }
 
+/// (SEC-148) A create is a repository read like a check, and so is a patch that re-reads: all of
+/// them draw on the same per-person allowance (10 a minute), the answer is the same 429.
+#[tokio::test]
+async fn create_and_a_rereading_patch_share_the_checks_rate() {
+    let w = world().await;
+    w.seed();
+    let list = list_uri(&w);
+    // creates that fail at the read (the repository does not exist) still count
+    let mut limited = None;
+    for i in 0..13 {
+        let (s, v) = w
+            .call(
+                &w.admin,
+                Method::POST,
+                &list,
+                Some(json!({"label": format!("m{i}"), "url": url("acme/missing")})),
+            )
+            .await;
+        if s == 429 {
+            assert_eq!(code(&v), "rate_limited", "{v}");
+            limited = Some(i);
+            break;
+        }
+        assert_eq!((s, code(&v)), (422, "library_unreachable"), "{v}");
+    }
+    assert!(
+        limited.is_some_and(|i| (10..=11).contains(&i)),
+        "create is limited after the allowance: {limited:?}"
+    );
+    // a check by the same person is limited too: it is one allowance
+    let (s, _) = check(&w, json!({"url": url("acme/skills")})).await;
+    assert_eq!(s, 429);
+    // a patch that re-reads (a new ref) draws on the owner's allowance; one that does not
+    // (a rename) never does
+    let owner_lib = {
+        let (s, v) = w
+            .call(
+                &w.owner,
+                Method::POST,
+                &list,
+                Some(json!({"label": "owned", "url": url("acme/skills"), "path": "alpha"})),
+            )
+            .await;
+        assert_eq!(s, 201, "{v}");
+        v["id"].as_str().unwrap().to_owned()
+    };
+    let one = format!("/v1/skill-libraries/{owner_lib}");
+    let mut limited = false;
+    for _ in 0..13 {
+        let (s, v) = w
+            .call(&w.owner, Method::PATCH, &one, Some(json!({"ref": "main"})))
+            .await;
+        if s == 429 {
+            assert_eq!(code(&v), "rate_limited", "{v}");
+            limited = true;
+            break;
+        }
+        assert_eq!(s, 200, "{v}");
+    }
+    assert!(limited, "a re-reading patch is limited");
+    let (s, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &one,
+            Some(json!({"label": "renamed"})),
+        )
+        .await;
+    assert_eq!(s, 200, "a patch that reads nothing is not limited: {v}");
+}
+
+/// (SEC-148) Folders nested deeper than `LIBRARY_TREE_DEPTH_MAX` refuse the read, over the wire.
+#[tokio::test]
+async fn a_repository_nested_too_deep_is_refused() {
+    let w = world().await;
+    w.git.add_repo("acme/deep");
+    let deep = ["d"; aurora_core::limits::LIBRARY_TREE_DEPTH_MAX + 1].join("/");
+    w.git.commit(
+        "acme/deep",
+        "main",
+        &[
+            put("alpha/SKILL.md", md("Alpha", "b")),
+            put(&format!("{deep}/f.txt"), b"x".to_vec()),
+        ],
+    );
+    let (s, v) = check(&w, json!({"url": url("acme/deep")})).await;
+    assert_eq!((s, code(&v)), (422, "library_tree_too_large"), "{v}");
+    // the folder that is shallow enough reads
+    let (s, v) = check(&w, json!({"url": url("acme/deep"), "path": "alpha"})).await;
+    assert_eq!(s, 200, "{v}");
+}
+
 #[tokio::test]
 async fn the_token_is_sealed_replaced_removed_and_never_shown() {
     let w = world().await;
