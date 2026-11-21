@@ -33,7 +33,10 @@ async function openWelcome(page: Page, scheme: "light" | "dark", o: { noAccounts
       const keys = o.noKey ? (keyAdded ? [aiKeyAccount(id(310), "Mock LLM", "workspace")] : []) : [aiKeyAccount(id(300), "AIGW", "organization")];
       return json({ items: keys, next_cursor: null });
     }
-    if (o.noKey && /^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json(keyAdded ? readinessReady : readinessEmpty);
+    // After the add, readiness names the key the test added (the accounts list's checked row), not the organization's AIGW:
+    // Welcome counts the key readiness names only when its accounts row says it works (P5-REFINE-20 batch 7).
+    const added = { ...readinessReady, keys: [{ ...readinessReady.keys[0]!, secret_id: id(310), name: "Mock LLM", scope: "workspace" }] };
+    if (o.noKey && /^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json(keyAdded ? added : readinessEmpty);
     if (o.noKey && p === `/v1/workspaces/${ws.id}/secrets` && req.method() === "POST") {
       keyAdded = true;
       return json({ id: id(310), name: "Mock LLM", kind: "llm", scope: "workspace", status: "active", created_at: new Date().toISOString() }, 201);

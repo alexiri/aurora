@@ -140,7 +140,8 @@ for (const width of [1256, 1600]) {
       expect(c!.x + c!.width).toBeLessThanOrEqual(l!.x + l!.width);
       await list.getByRole("button", { name: /^Morning summary that is named/ }).click();
       // Each run row's own title ends with its date and time ("… · 19 Nov 09:00"), never cut by a clamp.
-      const rows = list.getByRole("button", { name: /· \d{1,2} \w{3} \d\d:\d\d/ });
+      // Anchored on the title: each run row also has its own "Actions for Morning summary · …" menu button.
+      const rows = list.getByRole("button", { name: /^Morning summary · \d{1,2} \w{3} \d\d:\d\d/ });
       await expect(rows).toHaveCount(3);
       for (let i = 0; i < 3; i++) {
         const r = rows.nth(i);
