@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useId } from "react";
 
 import { LockPill } from "@/components/ui/lock-pill";
-import { inputClass } from "@/components/ui/field";
+import { Field, inputClass } from "@/components/ui/field";
 import { Select } from "@/components/ui/select";
 import { useMe } from "@/lib/api/queries";
 import { adminRoutes } from "@/lib/routes";
@@ -44,11 +45,11 @@ export function PostureSelect<T extends string>({
   /** The instance setting that decides when `locked` (C-783). */
   setting?: string;
 }) {
+  const id = useId();
   return (
-    <label className="block text-sm font-medium text-ink">
-      <span>{label}{locked ? <Locked setting={setting} /> : null}</span>
-      <Select value={value} disabled={locked || readOnly} className="mt-1.5 max-w-lg" onChange={(v) => onChange(v as T)} options={options.map((o) => ({ value: o.value, label: o.label }))} />
-    </label>
+    <Field id={id} label={<>{label}{locked ? <Locked setting={setting} /> : null}</>}>
+      <Select id={id} value={value} disabled={locked || readOnly} className="max-w-lg" onChange={(v) => onChange(v as T)} options={options.map((o) => ({ value: o.value, label: o.label }))} />
+    </Field>
   );
 }
 

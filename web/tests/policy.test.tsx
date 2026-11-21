@@ -105,13 +105,14 @@ describe("Internet access page (InternetLevel)", () => {
     expect(screen.getByText("Your rules")).toBeInTheDocument();
   });
 
-  it("a member sees the limits from above and who to ask: no rules, no Common changes, no Restrict further…, no policy reads", async () => {
+  it("a member sees what is in force and who to ask, and no limits from above (D-444): no rules, no Common changes, no Restrict further…, no policy reads", async () => {
     const fn = base();
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit={false} />);
-    expect(await screen.findByText("Browser connections (not inspected)")).toBeInTheDocument();
-    expect(screen.getByText("Only for listed websites")).toBeInTheDocument();
-    expect(screen.getByText("Set for you by an Aurora administrator")).toBeInTheDocument();
-    for (const gone of ["Allow x", "Common changes", "Add rule", "Restrict further…", "Apply changes"]) expect(screen.queryByText(gone)).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Internet access" })).toBeInTheDocument();
+    expect(screen.getAllByRole("status").some((s) => /workspace owners/i.test(s.textContent ?? ""))).toBe(true);
+    expect(await screen.findByText("Your rules")).toBeInTheDocument();
+    for (const gone of ["Limits", "Browser connections (not inspected)", "Only for listed websites", "Set for you by an Aurora administrator", "Allow x", "Common changes", "Add rule", "Restrict further…", "Apply changes"]) expect(screen.queryByText(gone)).toBeNull();
+    expect(screen.queryByRole("list", { name: "Limits set above this level" })).toBeNull();
     const urls = fn.mock.calls.map((c) => (c[0] as Request).url);
     expect(urls.some((u) => u.includes("/policy"))).toBe(false);
   });
@@ -206,7 +207,8 @@ describe("Internet access page (InternetLevel)", () => {
       expect(note.textContent).toMatch(/Does not affect AI endpoints\. See AI models/);
       expect(note.getAttribute("title")).toMatch(/explicit block rule that names an AI host still applies/);
       expect(screen.getByRole("link", { name: "AI models" })).toHaveAttribute("href", "/o/acme/ai-models");
-      expect(screen.getByLabelText("Default rule")).toHaveAttribute("aria-describedby", "default-rule-llm-note");
+      expect(screen.getByLabelText("Default rule")).toHaveAttribute("aria-describedby", "default-rule-hint");
+      expect(note.closest("p")).toHaveAttribute("id", "default-rule-hint");
       cleanup();
     }
   });

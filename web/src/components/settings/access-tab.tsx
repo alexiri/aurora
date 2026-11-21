@@ -457,10 +457,9 @@ export function AccessTab({
         }}
       >
         <div className="space-y-3 text-sm">
-          <label className="block space-y-1">
-            <span className="font-medium text-ink">New role</span>
-            <Select value={bulkRole} onChange={(v) => setBulkRole(v as Role)} options={ROLE_ORDER.map((r) => ({ value: r, label: ROLE_LABEL[r] }))} />
-          </label>
+          <Field id="bulk-role" label="New role">
+            <Select id="bulk-role" value={bulkRole} onChange={(v) => setBulkRole(v as Role)} options={ROLE_ORDER.map((r) => ({ value: r, label: ROLE_LABEL[r] }))} />
+          </Field>
           <ul aria-label={`What ${ROLE_LABEL[bulkRole]}s can do`} className="space-y-1">
             {ROLE_CAN.workspace[bulkRole].can.map((c) => (
               <li key={c} className="text-ink">

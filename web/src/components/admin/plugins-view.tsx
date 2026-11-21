@@ -9,11 +9,11 @@ import { AttentionChip } from "@/components/ui/attention-chip";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { FormDialog } from "@/components/ui/confirm-dialog";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
-import { inputClass } from "@/components/ui/field";
+import { Field, inputClass } from "@/components/ui/field";
 import { TechnicalDetails } from "@/components/ui/technical-details";
 import { checkSummary, useAddonSources, useCheckAllAddonSources } from "@/lib/api/addon-sources";
 import { errorDetail, errorMessage } from "@/lib/api/errors";
@@ -84,25 +84,29 @@ function SentenceText({ text }: { text: string }) {
   );
 }
 
-export function UploadForm({ onDone, onCancel }: { onDone?: () => void; onCancel?: () => void }) {
+/** The "Upload an app" dialog: the package field in the body, Cancel and Upload in the footer row. */
+export function UploadDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (open: boolean) => void; onDone?: () => void }) {
   const upload = useUploadPlugin();
   const [file, setFile] = useState<File | null>(null);
   const input = useRef<HTMLInputElement>(null);
   // After an error the same file would fail the same way: Upload waits for another file (the mockup disables it).
   const failed = upload.isError || upload.data?.status === "invalid";
   return (
-    <form
-      className="space-y-4"
+    <FormDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Upload an app"
+      description="Upload an app package for review."
+      submitLabel={upload.isPending ? "Uploading…" : "Upload"}
+      busy={upload.isPending}
+      submitDisabled={!file || failed}
       onSubmit={(e) => {
         e.preventDefault();
         if (!file) return;
         upload.mutate(file, { onSuccess: () => onDone?.() });
       }}
     >
-      <div className="space-y-1.5">
-        <label className="block text-sm font-medium text-ink" htmlFor="plugin-package">
-          App package
-        </label>
+      <Field id="plugin-package" label="App package">
         {/* Once a file is chosen its name is shown once, in the row below: the native input (which prints it too) stays for the picker only. */}
         <input
           ref={input}
@@ -122,7 +126,7 @@ export function UploadForm({ onDone, onCancel }: { onDone?: () => void; onCancel
             </Button>
           </div>
         ) : null}
-      </div>
+      </Field>
       {upload.isError ? (
         <Notice tone="danger" role="alert" className="space-y-1">
           <p>
@@ -137,17 +141,7 @@ export function UploadForm({ onDone, onCancel }: { onDone?: () => void; onCancel
           <ViolationList violations={upload.data.violations} />
         </Notice>
       ) : null}
-      <div className="flex justify-end gap-2">
-        {onCancel ? (
-          <Button type="button" variant="ghost" size="lg" onClick={onCancel}>
-            Cancel
-          </Button>
-        ) : null}
-        <Button type="submit" size="lg" disabled={!file || upload.isPending || failed}>
-          {upload.isPending ? "Uploading…" : "Upload"}
-        </Button>
-      </div>
-    </form>
+    </FormDialog>
   );
 }
 
@@ -265,6 +259,7 @@ const FIRST_AURORA = 3;
 
 export function PluginsView() {
   const [open, setOpen] = useState(false);
+  const [uploadRun, setUploadRun] = useState(0);
   const [showAll, setShowAll] = useState(false);
   const approved = useSearchParams().get("approved");
   const q = usePlugins("");
@@ -288,14 +283,11 @@ export function PluginsView() {
         description="The apps and chat platforms people can add."
         className="mb-2"
         actions={
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button>Upload app</Button>
-            </DialogTrigger>
-            <DialogContent title="Upload an app" description="Upload an app package for review.">
-              <UploadForm onDone={() => setOpen(false)} onCancel={() => setOpen(false)} />
-            </DialogContent>
-          </Dialog>
+          <>
+            <Button onClick={() => { setUploadRun((n) => n + 1); setOpen(true); }}>Upload app</Button>
+            {/* A new key per opening: the chosen file and the last error start empty each time. */}
+            <UploadDialog key={uploadRun} open={open} onOpenChange={setOpen} onDone={() => setOpen(false)} />
+          </>
         }
       />
       {approved ? (

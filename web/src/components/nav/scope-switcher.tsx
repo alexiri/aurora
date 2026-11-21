@@ -8,6 +8,7 @@ import { CountBadge } from "@/components/attention/count-badge";
 import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
 import { useOrgBadge } from "@/lib/api/attention";
 import { ArrowLeftIcon, ArrowRightIcon, CheckIcon, ChevronsUpDownIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
+import { inputClass } from "@/components/ui/field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CreateOrgDialog } from "@/components/create-org-dialog";
 import { useInstance, useMe, useResolve, useWorkspaces } from "@/lib/api/queries";
@@ -408,7 +409,7 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Find a workspace or organization"
                 autoComplete="off"
-                className="h-9 w-full rounded-control border border-line bg-surface pl-8 pr-2 text-sm text-ink placeholder:text-muted"
+                className={cn(inputClass, "min-h-9 py-1 pl-8 pr-2")}
               />
             </label>
             {body}

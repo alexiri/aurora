@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { inputClass } from "@/components/ui/field";
+import { cn } from "@/lib/utils";
 import { commonEmoji, searchEmoji, type EmojiHit } from "@/components/chat/composer/emoji";
 
 /**
@@ -37,7 +39,7 @@ export function EmojiPicker({ onPick }: { onPick: (emoji: string) => void }) {
         onChange={(e) => setQ(e.target.value)}
         placeholder="Search emoji"
         autoComplete="off"
-        className="block min-h-11 w-full rounded-control border border-line-strong bg-surface px-2 text-base text-ink placeholder:text-muted md:min-h-9 md:text-sm"
+        className={cn(inputClass, "min-h-11 px-2 text-base md:min-h-9 md:text-sm")}
       />
       {loading ? (
         <p role="status" className="text-xs text-muted">

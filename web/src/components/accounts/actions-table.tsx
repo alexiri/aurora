@@ -9,6 +9,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
+import { Select } from "@/components/ui/select";
 import { WhoCan } from "@/components/ui/who-can";
 import { type Account, type AgentAccess, type AppAccessTool, useAppAccess, usePutAccess } from "@/lib/api/accounts";
 import { useGrants } from "@/lib/api/policy";
@@ -262,18 +263,13 @@ function Editor({
                       </Altitude>
                     </div>
                     <div className="space-y-1 sm:text-right">
-                      <select
+                      <Select
                         aria-label={`${t.name}: what happens`}
-                        className="h-9 rounded-control border border-line bg-surface px-2 text-sm text-ink"
+                        className="min-h-9 w-auto px-2 py-1"
                         value={decisions[t.id] ?? "block"}
-                        onChange={(e) => setDecisions({ ...decisions, [t.id]: e.target.value as Decision })}
-                      >
-                        {(["allow", "ask", "block"] as const).map((d) => (
-                          <option key={d} value={d}>
-                            {DECISION_LABEL[d]}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => setDecisions({ ...decisions, [t.id]: v as Decision })}
+                        options={(["allow", "ask", "block"] as const).map((d) => ({ value: d, label: DECISION_LABEL[d] }))}
+                      />
                       {/* Something else decided: what actually happens, and why. The select above is the agent's own choice. */}
                       {row?.reason ? (
                         <div className="space-y-1">

@@ -284,6 +284,17 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     expect((screen.getByTestId("internet-more") as HTMLDetailsElement).open).toBe(false);
   });
 
+  it("(D-444) an organization member reads who to ask and no limits from above, and the effective limits are not read", async () => {
+    const calls = routes();
+    const member = { id: "o1", slug: "acme", name: "Acme", my_role: "member", contacts: null } as never;
+    wrap(<OrgInternet org={member} slug="acme" />);
+    expect(await screen.findByRole("heading", { name: "Internet access" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    for (const gone of ["Limits", "Set for you by an Aurora administrator", "Set for you by your organization's admins", "Your rules"]) expect(screen.queryByText(gone)).toBeNull();
+    expect(screen.queryByRole("list", { name: "Limits set above this level" })).toBeNull();
+    expect(calls.mock.calls.some((c) => (c[0] as Request).url.includes("/governance/effective"))).toBe(false);
+  });
+
   it("lists the workspaces that tightened, with a link to each", async () => {
     routes();
     wrap(<OrgInternet org={org} slug="acme" />);

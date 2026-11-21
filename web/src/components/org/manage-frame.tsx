@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { CountBadge } from "@/components/attention/count-badge";
 import { ArrowLeftIcon } from "@/components/ui/icons";
+import { Select } from "@/components/ui/select";
 import { useOrgBadge } from "@/lib/api/attention";
 import { useAltitude } from "@/lib/altitude";
 import { visibleTopics } from "@/lib/api/roles";
@@ -85,25 +86,18 @@ export function ManageFrame({ children }: { children: ReactNode }) {
             ))}
           </ul>
         </nav>
-        <label className="block md:hidden">
-          <span className="sr-only">Section of {orgName}</span>
-          <select
-            aria-label={`Section of ${orgName}`}
-            className="h-11 w-full rounded-control border border-line bg-surface px-2.5 text-sm text-ink"
-            value={current?.href ?? ""}
-            onChange={(e) => router.push(e.target.value)}
-          >
-            {current ? null : <option value="">Choose a section</option>}
-            {items.map((i) => {
-              const n = i.topic === "overview" ? badge?.count : badge?.topics[i.topic];
-              return (
-                <option key={i.topic} value={i.href}>
-                  {n ? `${i.label} (${n})` : i.label}
-                </option>
-              );
-            })}
-          </select>
-        </label>
+        {/* The label stays visually hidden on purpose (the rail's heading says the same): the shared Select carries it as aria-label. */}
+        <Select
+          aria-label={`Section of ${orgName}`}
+          className="min-h-11 md:hidden"
+          value={current?.href ?? ""}
+          onChange={(v) => router.push(v)}
+          placeholder={current ? undefined : "Choose a section"}
+          options={items.map((i) => {
+            const n = i.topic === "overview" ? badge?.count : badge?.topics[i.topic];
+            return { value: i.href, label: n ? `${i.label} (${n})` : i.label };
+          })}
+        />
         <div className="min-w-0 flex-1 pt-4 md:pt-0">{children}</div>
       </div>
     </div>

@@ -5,8 +5,9 @@ import { useState } from "react";
 
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
+import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
+import { Field, inputClass } from "@/components/ui/field";
+import { errorMessage } from "@/lib/api/errors";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { accountKeys, useRemoveAccess, type Account } from "@/lib/api/accounts";
 import { useApp, useDeleteConnection, usePatchConnection } from "@/lib/api/apps";
@@ -73,6 +74,8 @@ export function AccountMenu({
   const alsoRemovesFrom = others.length > 0 ? `Also removes it from ${others.join(", ")}` : "Nobody else uses it";
   const off = account.health.state === "disabled";
   const error = patchConn.error ?? delConn.error ?? patchSecret.error ?? delSecret.error;
+  const renameError = isConn ? patchConn.error : patchSecret.error;
+  const renameBusy = isConn ? patchConn.isPending : patchSecret.isPending;
   // A turned-off account runs nothing and an expired sign-in is fixed by Reconnect: there is nothing to test.
   const healthTestable = !isConn || (account.health.state !== "disabled" && account.health.state !== "sign_in_expired");
   // (P5-REFINE-13, access-11) An app account offers only what its app can do (`accountActions`); websites and AI keys keep their own.
@@ -142,57 +145,52 @@ export function AccountMenu({
           }}
         />
       ) : null}
-      <Dialog open={renaming} onOpenChange={setRenaming}>
-        <DialogContent title={`Rename ${account.name}`}>
-          <form
-            className="space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const name = label.trim();
-              if (!name) return;
-              const done = { onSuccess: () => { setRenaming(false); refresh(); } };
-              if (isConn) patchConn.mutate({ id: account.ref.id, label: name }, done);
-              else patchSecret.mutate({ name }, done);
-            }}
-          >
-            <label className="block space-y-1 text-sm font-medium text-ink">
-              Name
-              <input className="block h-10 w-full rounded-control border border-line bg-surface px-3 text-sm font-normal" value={label} onChange={(e) => setLabel(e.target.value)} />
-            </label>
-            <div className="flex justify-end gap-2">
-              <DialogClose asChild>
-                <Button variant="outline" type="button">Cancel</Button>
-              </DialogClose>
-              <Button type="submit" disabled={!label.trim()}>Save</Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <FormDialog
+        open={renaming}
+        onOpenChange={setRenaming}
+        title={`Rename ${account.name}`}
+        submitLabel="Save"
+        busy={renameBusy}
+        submitDisabled={!label.trim()}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const name = label.trim();
+          if (!name) return;
+          const done = { onSuccess: () => { setRenaming(false); refresh(); } };
+          if (isConn) patchConn.mutate({ id: account.ref.id, label: name }, done);
+          else patchSecret.mutate({ name }, done);
+        }}
+      >
+        <Field id="account-rename" label="Name" error={renameError ? errorMessage(renameError) : undefined}>
+          <input
+            id="account-rename"
+            className={inputClass}
+            value={label}
+            autoComplete="off"
+            onChange={(e) => setLabel(e.target.value)}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+        </Field>
+      </FormDialog>
       {account.kind === "website" ? (
         <EditWebsite scope={scope} accountId={account.ref.id} name={account.name} open={editingSite} onOpenChange={setEditingSite} />
       ) : null}
-      <Dialog open={replacing} onOpenChange={(o) => { setReplacing(o); if (!o) setNewValue(""); }}>
-        <DialogContent title={`Replace ${account.name}`}>
-          <form
-            className="space-y-3"
-            aria-label={`Replace value of ${account.name}`}
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!newValue) return;
-              setValue.mutate({ value: newValue }, { onSuccess: () => { setReplacing(false); refresh(); }, onSettled: () => setNewValue("") });
-            }}
-          >
-            <ValueInput id={`rv-${account.ref.id}`} label="New value" value={newValue} onChange={setNewValue} />
-            {setValue.error ? <ErrorState error={setValue.error} /> : null}
-            <div className="flex justify-end gap-2">
-              <DialogClose asChild>
-                <Button variant="outline" type="button">Cancel</Button>
-              </DialogClose>
-              <Button type="submit" disabled={!newValue || setValue.isPending}>Replace</Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <FormDialog
+        open={replacing}
+        onOpenChange={(o) => { setReplacing(o); if (!o) setNewValue(""); }}
+        title={`Replace ${account.name}`}
+        submitLabel="Replace"
+        busy={setValue.isPending}
+        submitDisabled={!newValue}
+        error={setValue.error}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!newValue) return;
+          setValue.mutate({ value: newValue }, { onSuccess: () => { setReplacing(false); refresh(); }, onSettled: () => setNewValue("") });
+        }}
+      >
+        <ValueInput id={`rv-${account.ref.id}`} label="New value" value={newValue} onChange={setNewValue} />
+      </FormDialog>
       <ConfirmDialog
         open={removing}
         onOpenChange={setRemoving}

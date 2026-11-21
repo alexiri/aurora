@@ -2,6 +2,7 @@
 
 import { Errors, Locked, PostureSelect, TextArea } from "@/components/governance/controls";
 import { IdPicker, joinIds, splitIds, type PickOption } from "@/components/governance/id-picker";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useAccounts } from "@/lib/api/accounts";
 import { issuesUnder, type EndpointForm, type GovForm, type GovIssues } from "@/lib/api/governance";
@@ -152,22 +153,17 @@ export function ModelsTab({
               ))}
             </ul>
           {readOnly || addable.length === 0 ? null : (
-            <select
+            <Select
               aria-label="Add team or workspace"
-              className="h-9 rounded-control border border-line bg-surface px-2 text-sm text-ink"
+              className="min-h-9 w-auto px-2 py-1"
               value=""
-              onChange={(ev) => {
-                const pick = addable.find((o) => `${o.kind}:${o.id}` === ev.target.value);
+              onChange={(v) => {
+                const pick = addable.find((o) => `${o.kind}:${o.id}` === v);
                 if (pick) addUse(pick.kind, pick.id);
               }}
-            >
-              <option value="">Add team or workspace</option>
-              {addable.map((o) => (
-                <option key={`${o.kind}:${o.id}`} value={`${o.kind}:${o.id}`}>
-                  {o.text}
-                </option>
-              ))}
-            </select>
+              placeholder="Add team or workspace"
+              options={addable.map((o) => ({ value: `${o.kind}:${o.id}`, label: o.text }))}
+            />
           )}
           </dd>
         </div>

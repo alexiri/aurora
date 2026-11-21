@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 
 export interface PickOption {
   id: string;
@@ -60,19 +61,14 @@ export function IdPicker({
         ))}
       </ul>
       {readOnly || rest.length === 0 ? null : (
-        <select
+        <Select
           id={id}
-          className="h-9 rounded-control border border-line bg-surface px-2 text-sm text-ink"
+          className="min-h-9 w-auto px-2 py-1"
           value=""
-          onChange={(e) => e.target.value && onChange(joinIds([...ids, e.target.value]))}
-        >
-          <option value="">Add…</option>
-          {rest.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => v && onChange(joinIds([...ids, v]))}
+          placeholder="Add…"
+          options={rest.map((o) => ({ value: o.id, label: o.label }))}
+        />
       )}
     </div>
   );
