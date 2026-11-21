@@ -9,7 +9,7 @@ use aurora_policy::facts::ToolTags;
 use aurora_policy::graphql::{self, GraphqlKind as PolicyGql};
 use aurora_policy::{HostPattern, PathPattern};
 
-use crate::index::{HostIndex, Snapshot, tool_serves_host};
+use crate::index::{HostIndex, Snapshot, path_prefix_matches, tool_serves_host};
 use crate::manifest::{GitKind, GraphqlKind, ToolItem};
 use crate::snapshot::{AppEntry, HostEntry};
 
@@ -49,7 +49,7 @@ pub fn identify_instance_app<'a>(
     app.instances.as_ref()?;
     let entry = snap
         .instance_entries(app_id)
-        .filter(|e| path.starts_with(e.path_prefix.as_deref().unwrap_or("/")))
+        .filter(|e| path_prefix_matches(e.path_prefix.as_deref(), path))
         .max_by_key(|e| e.path_prefix.as_deref().map_or(0, str::len))?;
     Some(AppMatch {
         entry,

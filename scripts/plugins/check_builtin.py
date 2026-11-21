@@ -28,6 +28,13 @@ REFUSED = {
     "calendar": ["calendar clear"],
     "gmail": ["mail deletion"],
     "microsoft-365": ["mail deletion"],
+    # (P5-GRAFANA, D-429, SEC-145) credentials, administration, data sources (they hold the
+    # backends' credentials), dashboard deletion, plugins, and the Prometheus admin API behind the
+    # data source proxy.
+    "grafana": ["service-account token creation", "service-account creation", "API key creation",
+                "user admin", "organization admin", "datasource creation", "datasource update",
+                "datasource deletion", "dashboard deletion", "plugin install",
+                "Prometheus admin API"],
 }
 
 
@@ -219,8 +226,19 @@ def entry_matches(entry, host, path, instance_hosts=()):
             return False
     elif not fnmatch.fnmatchcase(host, m["host"].lower()):
         return False
-    pre = m.get("path_prefix")
-    return pre is None or path == pre or path.startswith(pre.rstrip("/") + "/")
+    return path_prefix_matches(m.get("path_prefix"), path)
+
+
+def path_prefix_matches(pre, path):
+    # Whole path segments (FIX-215, 09 §3.4), the rule of the core's
+    # `aurora_registry::index::path_prefix_matches`: the path equals the prefix or continues it
+    # with `/`; a prefix ending in `/` covers the paths below it. `/rest` matches `/rest/api`,
+    # not `/restricted`.
+    if pre is None or pre == "":
+        return True
+    if pre.endswith("/"):
+        return path.startswith(pre)
+    return path == pre or path.startswith(pre + "/")
 
 
 def check_app(app, paired, err):

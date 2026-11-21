@@ -33,10 +33,10 @@
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://gitlab.com/api/v4/projects/42" }
   expect: { tool: get_project }
-- name: "get_project: full path with encoded slashes is one segment"
+- name: "get_project: a full path with encoded slashes is refused by the gateway (FIX-216)"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://gitlab.com/api/v4/projects/group%2Fsub%2Fdemo" }
-  expect: { tool: get_project }
+  expect: { refused: ambiguous_path }
 - name: "negative get_project: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42" }
@@ -149,13 +149,17 @@
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/tree" }
   expect: { app: gitlab }
-- name: "get_repository_file: the file path is one encoded segment"
+- name: "get_repository_file: a file at the repository root"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/repository/files/main.rs?ref=main" }
+  expect: { tool: get_repository_file }
+- name: "get_repository_file: an encoded folder path is refused by the gateway (FIX-216)"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/repository/files/src%2Fmain.rs?ref=main" }
-  expect: { tool: get_repository_file }
+  expect: { refused: ambiguous_path }
 - name: "negative get_repository_file: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/files/src%2Fmain.rs" }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/files/main.rs" }
   expect: { app: gitlab }
 - name: "get_repository_file_raw"
   connection: { credentials: { access_token: "tok-fixture-1" } }

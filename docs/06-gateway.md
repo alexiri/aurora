@@ -730,7 +730,9 @@ minted.
    host, first select the registration whose base path covers the path (longest
    wins; none → no instance candidate) and use the app path from here on
    (`§MITM lane: connect-time resolution`). Look up the app serving (host, path) in the
-   snapshot host index (longest path prefix wins among non-lost claims); find
+   snapshot host index (longest path prefix wins among non-lost claims; (phase 5, FIX-215) a
+   `path_prefix` matches whole path segments: `/rest` matches `/rest` and `/rest/api/2`, not
+   `/restricted`, and a prefix ending in `/` matches the paths below it, `09 §3.4`); find
    the matching tool in that app's catalogue (host, path, methods, GraphQL kind
    via the fail-closed classifier, git operation; (phase 4, P4-GRANTS, Q8) a tool's
    `params` conditions evaluated on the query, the urlencoded body prefix of step 4 or

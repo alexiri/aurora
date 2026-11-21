@@ -1,8 +1,8 @@
 # Find why a pipeline failed and retry it
 
 Use this for "why is the pipeline of project X red" or "retry the failed pipeline". `$H` is the GitLab
-address shown with the account in `guide.md`; `$P` is the project's numeric id or its full path with
-slashes encoded as `%2F` (`group%2Fsubgroup%2Fproject`). Send no token, no `-k`. Reading needs the
+address shown with the account in `guide.md`; `$P` is the project's numeric id (find it with
+`GET /api/v4/projects?search=<words>`; a path with `%2F` is refused as `ambiguous_path`). Send no token, no `-k`. Reading needs the
 read tools; the retry is a write and may need approval (see `tools.md`: `retry_pipeline`).
 
 ## 1. Find the pipeline
