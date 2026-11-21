@@ -6,30 +6,26 @@ import { UndoToastHost } from "@/components/ui/undo-toast";
 import { json, mockFetch } from "./support/api";
 import { wrap } from "./support/render";
 
-const starterKey = (over: Record<string, unknown> = {}) => ({
-  ref: { type: "secret", id: "k1" }, kind: "ai_key", name: "Company key", scope: "organization", starter: true, ...over,
-});
-const readiness = (keys: unknown[], def: unknown = null) => ({ harness: "h", override_dropped: false, default: def, keys });
+const GIVE = { action: "give_key", key: { secret_id: "k1", name: "Company key", scope: "organization" } };
+const answer = (over: Record<string, unknown> = {}) => ({ can_answer: false, reason: "no_ai_key", usable_keys: 0, fix: GIVE, ...over });
 
-function routes(opts: { accounts?: unknown[]; ready?: unknown; post?: () => Response; role?: string }) {
+function routes(ready: unknown, post?: () => Response) {
   return {
-    "GET /v1/orgs/o1": () => json(200, { id: "o1", my_role: opts.role ?? "owner", settings: {} }),
-    "GET /v1/orgs/o1/accounts": () => json(200, { items: opts.accounts ?? [starterKey()], next_cursor: null }),
-    "GET /v1/agents/a1/model-readiness": () => json(200, opts.ready ?? readiness([])),
-    "POST /v1/secrets/k1/grants": opts.post ?? (() => json(200, { items: [{ agent_id: "a1", status: "created" }] })),
+    "GET /v1/agents/a1/answer-readiness": () => json(200, ready),
+    "POST /v1/secrets/k1/grants": post ?? (() => json(200, { items: [{ agent_id: "a1", status: "created" }] })),
   };
 }
 const card = () =>
   wrap(
     <>
-      <StarterKeyCard agentId="a1" agentName="Rex" orgId="o1" />
+      <StarterKeyCard agentId="a1" agentName="Rex" />
       <UndoToastHost />
     </>,
   );
 
 describe("the missing starter key (access-3)", () => {
   it("offers the organization's key by its own name and gives it in one click", async () => {
-    const fn = mockFetch(routes({}));
+    const fn = mockFetch(routes(answer()));
     card();
     expect(await screen.findByText("Rex can't answer yet: it has no AI key.")).toBeInTheDocument();
     expect(screen.getByText(/Your organization's Company key goes to every new agent automatically, and Rex was created before it was set\./)).toBeInTheDocument();
@@ -41,25 +37,16 @@ describe("the missing starter key (access-3)", () => {
     expect(await screen.findByText("Rex can answer now")).toBeInTheDocument();
   });
 
-  it("never asks for the organization's accounts of someone who is not an owner or admin (403 in the console)", async () => {
-    const fn = mockFetch(routes({ role: "member" }));
-    card();
-    await waitFor(() => expect(fn.mock.calls.some(([r]) => r instanceof Request && new URL(r.url).pathname === "/v1/orgs/o1")).toBe(true));
-    await new Promise((res) => setTimeout(res, 30));
-    expect(fn.mock.calls.some(([r]) => r instanceof Request && new URL(r.url).pathname === "/v1/orgs/o1/accounts")).toBe(false);
-    expect(screen.queryByTestId("starter-key-card")).toBeNull();
-  });
-
-  it("shows nothing when the agent can answer, the key is already given, or the organization has no starter key", async () => {
-    const usable = { secret_id: "k1", name: "Company key", scope: "organization", provider: "p", endpoint_id: "e", usable: true, reason: null };
+  it("shows nothing when the agent can answer, the key exists but stopped working, or the fix is another one", async () => {
     for (const r of [
-      routes({ ready: readiness([usable], { model_id: "m" }) }),
-      routes({ ready: readiness([{ ...usable, usable: false, reason: "inactive" }]) }),
-      routes({ accounts: [starterKey({ starter: false })] }),
+      answer({ can_answer: true, reason: null, usable_keys: 1, fix: null }),
+      answer({ reason: "key_not_usable" }),
+      answer({ fix: { action: "add_key" } }),
+      answer({ fix: { action: "ask_admin", who_can: { roles: ["organization admin"] } } }),
     ]) {
-      const fn = mockFetch(r);
+      const fn = mockFetch(routes(r));
       const { unmount } = card();
-      await waitFor(() => expect(fn.mock.calls.length).toBeGreaterThanOrEqual(2));
+      await waitFor(() => expect(fn.mock.calls.length).toBeGreaterThanOrEqual(1));
       await new Promise((res) => setTimeout(res, 20));
       expect(screen.queryByTestId("starter-key-card")).toBeNull();
       unmount();

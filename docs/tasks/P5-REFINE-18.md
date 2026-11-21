@@ -578,3 +578,5 @@ Done (the items that waited on brief 6): **admin-5** (a connector whose host run
   (16, d2ec5967) the Helm role warning on an AI endpoint card says "Set the … roles in your Helm values." and keeps
   `llm.endpoints.<id>.roles` under Technical details. Tests: `connectors-admin.test.tsx` (1 new; the list test reads the bold
   "Next:" sentence across elements), `plugins-admin.test.tsx` (exactly once, 1 new), `admin-settings-llm.test.tsx`. None removed.
+
+Send-back batch 4 #5 (lane A): "Administration" is said once in its rail: the sidebar-foot entry is not shown inside Administration (the rail header "You're in Administration" names it; Overview carries the count there). Outside Administration the foot entry stays. Tests: `context-switcher` (1 new, 1 edited); Playwright by reading: `e2e/admin-attention.spec.ts`.

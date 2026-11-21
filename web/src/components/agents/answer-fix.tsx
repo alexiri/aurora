@@ -40,10 +40,11 @@ export function orgSlugOf(base: string): string | null {
 export function GiveKeyButton({ agentId, agentName, fix, size = "sm" }: { agentId: string; agentName: string; fix: Extract<AnswerFix, { action: "give_key" }>; size?: "sm" | "default" }) {
   const add = useAddCredentialGrants({ kind: "secret", id: fix.key.secret_id });
   return (
-    <span className="inline-flex flex-col items-start gap-1">
+    <span className="inline-flex max-w-full flex-col items-start gap-1">
       <Button
         type="button"
         size={size}
+        className="h-auto min-h-11 max-w-full whitespace-normal py-1.5 text-left md:min-h-9"
         disabled={add.isPending}
         onClick={() => add.mutate({ agentIds: [agentId] }, { onSuccess: () => showUndoToast(`${agentName} can answer now`) })}>
         Give {agentName} the {fix.key.name}

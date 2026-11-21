@@ -310,10 +310,16 @@ describe("Administration rail", () => {
     expect(groups.map((g) => g.getAttribute("aria-labelledby") && g.querySelector("p")?.textContent)).toEqual(["Policy for everyone", "This installation"]);
     expect(within(groups[0]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["What agents may do", "Apps", "Chat platforms", "People & sign-in", "Data"]);
     expect(within(groups[1]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["Health & runners", "AI endpoints", "Set in Helm", "All settings"]);
-    // The footer entry stays and is current.
+    // "Administration" is said once: the header's "You're in Administration"; the footer entry is only outside Administration.
     const shell = screen.getByRole("complementary", { name: "Sidebar" });
-    const footer = within(shell).getAllByRole("link", { name: "Administration" });
-    expect(footer.some((a) => a.getAttribute("aria-current") === "page")).toBe(true);
+    expect(within(shell).queryByRole("link", { name: "Administration" })).toBeNull();
+    expect(within(shell).getAllByText("Administration")).toHaveLength(1);
+  });
+
+  it("outside Administration the sidebar's foot has the Administration entry", async () => {
+    onWorkspace({ admin: true });
+    const shell = screen.getByRole("complementary", { name: "Sidebar" });
+    expect(await within(shell).findByRole("link", { name: "Administration" })).toHaveAttribute("href", "/admin");
   });
 
   it.each(["javascript:alert(1)", "//evil.example/x", "https://evil.example/", "/\\evil"])("ignores a remembered href that is not an internal path: %s", async (href) => {
@@ -343,15 +349,19 @@ describe("Administration rail", () => {
 });
 
 describe("Administration count badge (P5-REFINE-18 #18, C-1022)", () => {
-  it("shows the count on Overview in the Administration rail and on the sidebar-foot entry", async () => {
+  it("shows the count on Overview in the Administration rail, and on the sidebar-foot entry outside it", async () => {
     render("/admin/people", {}, { admin: true, attention: 2 });
     const nav = await screen.findByRole("navigation", { name: "Administration" });
     const overview = within(nav).getByRole("link", { name: /^Overview/ });
     await waitFor(() => expect(within(overview).getByTestId("admin-attention-badge")).toHaveTextContent("2"));
     // Other topics carry no total.
     expect(within(within(nav).getByRole("link", { name: /^People/ })).queryByTestId("admin-attention-badge")).toBeNull();
+    // Inside Administration the foot entry is gone (the rail header names it).
+    expect(within(screen.getByRole("complementary", { name: "Sidebar" })).queryByRole("link", { name: /^Administration/ })).toBeNull();
+    cleanup();
+    onWorkspace({ admin: true, attention: 2 });
     const shell = screen.getByRole("complementary", { name: "Sidebar" });
-    const foot = within(shell).getByRole("link", { name: /^Administration 2/ });
+    const foot = await within(shell).findByRole("link", { name: /^Administration 2/ });
     expect(within(foot).getByTestId("admin-attention-badge")).toHaveTextContent("2");
   });
 

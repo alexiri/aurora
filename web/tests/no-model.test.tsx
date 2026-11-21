@@ -134,7 +134,14 @@ describe("the empty chat of an agent with no AI key", () => {
 });
 
 describe("the header's action (access-3)", () => {
-  const header = () => wrap(<AgentState agentId="a1" wsId="w" canApprove={false} hosted action={<AnswerFixAction agentId="a1" agentName="Daneel" wsId="w" base="/o/x/w/y" />} />);
+  // The page header puts the action on its own row after the state line.
+  const header = () =>
+    wrap(
+      <>
+        <AgentState agentId="a1" wsId="w" canApprove={false} hosted />
+        <AnswerFixAction agentId="a1" agentName="Daneel" wsId="w" base="/o/x/w/y" />
+      </>,
+    );
 
   it("'Can't answer: no AI key' carries Give Daneel the Company key; one click, a toast, and the header turns Ready", async () => {
     readiness = NO_KEY(GIVE);

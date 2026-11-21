@@ -49,7 +49,7 @@ function renderState(readiness: Record<string, unknown>) {
   );
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <AgentState agentId="a1" wsId="w1" canApprove={false} hosted action={<button type="button">Fix it</button>} />
+      <AgentState agentId="a1" wsId="w1" canApprove={false} hosted />
     </QueryClientProvider>,
   );
 }
@@ -59,16 +59,15 @@ describe("AgentState (header)", () => {
     ["no_ai_key", "Can't answer: no AI key"],
     ["key_not_usable", "Can't answer: the key stopped working"],
     ["no_model", "Can't answer: choose a model"],
-  ] as const)("says why it cannot answer (%s) and shows the action slot beside it", async (reason, words) => {
+  ] as const)("says why it cannot answer (%s) and has no button of its own (the fix is its own row of the page header)", async (reason, words) => {
     renderState({ can_answer: false, reason, usable_keys: 0, fix: null });
     await waitFor(() => expect(screen.getByTestId("agent-state")).toHaveTextContent(words));
     expect(CANT_ANSWER_REASON[reason]).toBe(words.replace("Can't answer: ", ""));
-    expect(screen.getByRole("button", { name: "Fix it" })).toBeInTheDocument();
+    expect(screen.getByTestId("agent-state").querySelector("button")).toBeNull();
   });
-  it("says Ready when it can answer and the computer answers, with no action", async () => {
+  it("says Ready when it can answer and the computer answers", async () => {
     renderState({ can_answer: true, reason: null, usable_keys: 1, fix: null });
     await waitFor(() => expect(screen.getByTestId("agent-state")).toHaveTextContent("Ready"));
-    expect(screen.queryByRole("button", { name: "Fix it" })).toBeNull();
   });
 });
 

@@ -150,7 +150,7 @@ export function AgentPage() {
       <HiddenPages availability={availability} allows={altitude.allows} />
       {/* One line at md and up (breadcrumb above the name beside the avatar · section switcher · Agent actions); on a phone
           one compact row (back, avatar, name + status, actions) with the section switcher as the row under it (14 §Agent page). */}
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 md:flex-nowrap md:gap-x-4">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 md:gap-x-4">
         <div className="order-1 flex min-w-0 flex-1 items-center gap-2 md:gap-3">
           <Link href={`${base}/agents`} aria-label="Back to agents" className="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:text-ink md:hidden">
             <ChevronLeftIcon className="size-5" />
@@ -184,8 +184,6 @@ export function AgentPage() {
                     canOwn={canOwn}
                     canApprove={canApprove}
                     hosted
-                    // (access-3) The one action next to "Can't answer: no AI key": give it the Company key, add a key, or ask an admin.
-                    action={<AnswerFixAction agentId={agent.id} agentName={agent.name} wsId={wsId} base={base} />}
                   />
                 )}
                 {wsId ? <AgentAttentionChip workspaceId={wsId} agentId={agent.id} accessHref={`${base}/agents/${agent.handle}?tab=access`} /> : null}
@@ -210,6 +208,14 @@ export function AgentPage() {
             Settings
           </Button>
         </div>
+        {/* (access-3) The one action for "Can't answer: no AI key" (give it the Company key, add a key, or ask an admin) on its
+            own row under the name and state, so the name is never pushed out at 1256 and nothing runs under Status at 390.
+            Empty (no row) unless the agent cannot answer. */}
+        {byo || !wsId ? null : (
+          <div className="order-3 min-w-0 max-w-full empty:hidden md:order-4 md:basis-full">
+            <AnswerFixAction agentId={agent.id} agentName={agent.name} wsId={wsId} base={base} />
+          </div>
+        )}
         <div className="order-3 w-full min-w-0 md:order-2 md:w-auto md:shrink-0">
           <Tabs
             items={barSections.map((s) => ({ value: s.id, label: s.label }))}
