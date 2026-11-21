@@ -21,7 +21,7 @@ pub mod inject;
 pub mod instance;
 pub mod invalidation;
 pub mod ldap;
-pub mod library_fetch;
+pub mod limiter;
 pub mod links;
 pub mod llm_mint;
 pub mod mechanisms;

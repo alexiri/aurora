@@ -58,7 +58,7 @@ async fn start_test(fresh_role: bool, guard_allows_loopback: bool) -> Fx {
         guard: Arc::new(Guard::new(&allowed, vec![]).unwrap()),
         egress: None,
         external_url: "https://aurora.test".into(),
-        limiter: aurora_gateway::library_fetch::Limiter::with_rates(100_000.0, 100_000.0),
+        limiter: aurora_gateway::limiter::Limiter::with_rates(100_000.0, 100_000.0),
     });
     Fx { env, test, ring }
 }

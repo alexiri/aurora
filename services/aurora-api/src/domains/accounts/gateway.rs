@@ -1,7 +1,7 @@
 //! The API's side of `POST /internal/v1/account-test` (P5-UX-14, C-943, SEC-129): the checks only the gateway
 //! can make, because the credential is used only there (a gateway login to a database up to `ReadyForQuery`, a
 //! token mint of a hook-minted token, a refresh). The route sits on the internal listener the API already uses
-//! for the gateway (`POST /internal/v1/library-fetch`), authenticated with the same internal secret. A trait so
+//! for the gateway (`gateway_internal_url`), authenticated with the same internal secret. A trait so
 //! tests can stand in for the gateway.
 
 use async_trait::async_trait;
