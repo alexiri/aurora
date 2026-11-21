@@ -143,6 +143,19 @@ export const groupFixture = (n: number, source: "manual" | "idp") => ({
   org_role: source === "idp" ? "member" : null, member_count: 1, workspace_count: 1, revision: 1, created_at: now,
 });
 
+/** An `ai_key` row of the accounts list (C-917) whose check said `works` (C-1065): Welcome counts only such a key (firstday-3). */
+export const aiKeyAccount = (secretId: string, name: string, scope: "workspace" | "organization", state = "works") => ({
+  ref: { type: "secret", id: secretId },
+  kind: "ai_key",
+  name,
+  scope,
+  levels: [],
+  health: { state: "not_used" },
+  agents: [],
+  can: { give_access: true, change_access: true, manage: true },
+  verification: { state, checked_at: now },
+});
+
 /** P4-ONB-2: Daneel holds the organization's LiteLLM key (AIGW) and a default model resolves. */
 export const readinessReady = {
   harness: "claude-code",

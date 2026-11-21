@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { openJourney } from "./support/journey";
-import { id, mockApi, readinessEmpty, readinessReady, ws } from "./support/mock-api";
+import { aiKeyAccount, id, mockApi, readinessEmpty, readinessReady, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
 import { serious } from "./support/axe";
 import { chooseService } from "./support/llm";
@@ -28,7 +28,11 @@ async function openWelcome(page: Page, scheme: "light" | "dark", o: { noAccounts
     const req = route.request();
     const p = new URL(req.url()).pathname;
     const json = (b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(b) });
-    if (o.noAccounts && req.method() === "GET" && p === `/v1/workspaces/${ws.id}/accounts`) return json({ items: [], next_cursor: null });
+    // No app account; the AI key (the organization's AIGW, or the one the test adds) is there with its check: it works.
+    if (o.noAccounts && req.method() === "GET" && p === `/v1/workspaces/${ws.id}/accounts`) {
+      const keys = o.noKey ? (keyAdded ? [aiKeyAccount(id(310), "Mock LLM", "workspace")] : []) : [aiKeyAccount(id(300), "AIGW", "organization")];
+      return json({ items: keys, next_cursor: null });
+    }
     if (o.noKey && /^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json(keyAdded ? readinessReady : readinessEmpty);
     if (o.noKey && p === `/v1/workspaces/${ws.id}/secrets` && req.method() === "POST") {
       keyAdded = true;

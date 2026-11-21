@@ -5,9 +5,10 @@ import { useMemo } from "react";
 
 import { useModelReadiness } from "@/lib/api/credential-grants";
 import { chatApi } from "@/lib/api/conversations";
+import { useAccounts } from "@/lib/api/accounts";
 import { useSecrets, type SecretScope } from "@/lib/api/secrets";
 
-import { computeGuide, type Guide, type GuideKey } from "./guide";
+import { computeGuide, type Guide, type GuideKey, type GuideVerification } from "./guide";
 
 /**
  * How long until the next look for an answer (ms), or `false` to stop polling. Each look costs one list request plus
@@ -50,12 +51,12 @@ export function useAgentReplied(agentId: string | undefined, enabled = true) {
 }
 
 function llmKeys(
-  items: { id: string; name: string; kind: string; status: string; verification?: { state: NonNullable<GuideKey["verification"]> } | null }[] | undefined,
+  items: { id: string; name: string; kind: string; status: string }[] | undefined,
   scope: GuideKey["scope"],
 ): GuideKey[] {
   return (items ?? [])
     .filter((s) => s.kind === "llm" && s.status === "active")
-    .map((s) => ({ id: s.id, name: s.name, scope, verification: s.verification?.state }));
+    .map((s) => ({ id: s.id, name: s.name, scope }));
 }
 
 export interface GuideState {
@@ -82,22 +83,31 @@ export function useGuide({ wsId, orgId, agentId, isOwner }: { wsId: string; orgI
   const orgSecrets = useSecrets(orgScope);
   const replied = useAgentReplied(agentId);
 
+  // (firstday-3, C-1065) What the keys' checks said: the workspace's accounts list holds its own AI keys and the
+  // organization's (the secrets lists carry no verification, and an owner who is no org admin cannot list the org's).
+  const accounts = useAccounts({ kind: "workspace", id: wsId }, isOwner);
+  const verification = useMemo(() => {
+    const m: Record<string, GuideVerification> = {};
+    for (const a of accounts.data?.items ?? []) if (a.kind === "ai_key" && a.verification) m[a.ref.id] = a.verification.state;
+    return m;
+  }, [accounts.data]);
   const keys = useMemo(
     () => [...llmKeys(wsSecrets.data?.items, "workspace"), ...llmKeys(orgSecrets.data?.items, "organization")],
     [wsSecrets.data, orgSecrets.data],
   );
-  const loading = !agentId || replied.isPending || (isOwner && (readiness.isPending || wsSecrets.isPending));
+  const loading = !agentId || replied.isPending || (isOwner && (readiness.isPending || wsSecrets.isPending || accounts.isPending));
   const guide = useMemo(
     () =>
       loading
         ? null
-        : computeGuide({ isOwner, readiness: readiness.data, keys, replied: replied.data === true }),
-    [loading, isOwner, readiness.data, keys, replied.data],
+        : computeGuide({ isOwner, readiness: readiness.data, keys, verification, replied: replied.data === true }),
+    [loading, isOwner, readiness.data, keys, verification, replied.data],
   );
   // A failed query is an error with a retry, never a guide stuck on "Checking…" (readiness) or one that claims no key
   // exists (workspace secrets). The organization's secrets stay best-effort (above).
-  const error = isOwner && agentId ? (readiness.error ?? wsSecrets.error ?? null) : null;
+  const error = isOwner && agentId ? (readiness.error ?? wsSecrets.error ?? accounts.error ?? null) : null;
   const retry = () => {
+    if (accounts.error) void accounts.refetch();
     if (readiness.error) void readiness.refetch();
     if (wsSecrets.error) void wsSecrets.refetch();
   };

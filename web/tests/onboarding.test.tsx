@@ -62,7 +62,22 @@ const llmSecret = (id: string, name: string, scope: string) => ({
   id, scope, kind: "llm", name, status: "active", host_pattern: null, path_pattern: null, injection: { kind: "bearer" }, value_source: "value", value_version: 1, llm: null, origin: null,
 });
 
+/** An `ai_key` row of `GET /v1/workspaces/{ws}/accounts` (C-917, C-1065). */
+const aiKeyAccount = (id: string, name: string, scope: string, state: string) => ({
+  ref: { type: "secret", id },
+  kind: "ai_key",
+  name,
+  scope,
+  levels: [],
+  health: { state: "not_used" },
+  agents: [],
+  can: { give_access: true, change_access: true, manage: true },
+  verification: { state, checked_at: state === "checking" ? null : "2026-11-21T09:00:00Z" },
+});
+
 interface World {
+  /** The accounts list's verification state by key id (default `works`). */
+  verification?: Record<string, string>;
   isOwner?: boolean;
   readiness?: unknown;
   wsKeys?: unknown[];
@@ -82,6 +97,16 @@ function world(w: World = {}) {
   routes["GET /v1/agents/a1/model-readiness"] = () => json(200, w.readiness ?? readiness([]));
   routes["GET /v1/workspaces/w1/secrets"] = () => json(200, { items: w.wsKeys ?? [] });
   routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: w.orgKeys ?? [] });
+  // (C-1065) The verification state comes from the accounts list, never from the secrets list: every key listed
+  // above is an `ai_key` account that works unless the test says otherwise.
+  routes["GET /v1/workspaces/w1/accounts"] = () =>
+    json(200, {
+      items: [...(w.wsKeys ?? []), ...(w.orgKeys ?? [])].map((k) => {
+        const s = k as { id: string; name: string; scope: string };
+        return aiKeyAccount(s.id, s.name, s.scope, w.verification?.[s.id] ?? "works");
+      }),
+      next_cursor: null,
+    });
   routes["GET /v1/agents/a1/conversations"] = () =>
     json(200, { items: w.replied ? [{ id: "c1", agent_id: "a1", kind: "direct", last_seq: 3, created_at: "2026-11-10T09:00:00Z", last_activity_at: "2026-11-10T09:01:00Z" }] : [], next_cursor: null });
   routes["GET /v1/conversations/c1/events"] = () =>
@@ -124,13 +149,29 @@ describe("getting-started guide: every state", () => {
   it("a key still being checked does not count: 0 of 2 done, and hello comes after the step above (firstday-3)", async () => {
     world({
       readiness: readiness([keyRow({ scope: "workspace", name: "My Anthropic key", secret_id: "k9" })]),
-      wsKeys: [{ ...llmSecret("k9", "My Anthropic key", "workspace"), verification: { state: "checking", checked_at: null } }],
+      wsKeys: [llmSecret("k9", "My Anthropic key", "workspace")],
+      verification: { k9: "checking" },
     });
     guide();
     expect(await screen.findByText("My Anthropic key is still being checked. It counts once it has answered.")).toBeInTheDocument();
     expect(screen.getByText("0 of 2 done")).toBeInTheDocument();
     expect(screen.getByText("Comes after the step above.")).toBeInTheDocument();
   });
+
+  it.each([["not_checked", "has not been checked yet"], ["unreachable", "did not get an answer from the AI service"], ["rejected", "was refused by the AI service"]])(
+    "a key whose check is %s does not tick the step (firstday-3)",
+    async (state, words) => {
+      world({
+        readiness: readiness([keyRow({ scope: "workspace", name: "My Anthropic key", secret_id: "k9" })]),
+        wsKeys: [llmSecret("k9", "My Anthropic key", "workspace")],
+        verification: { k9: state },
+      });
+      guide();
+      expect(await screen.findByTestId("key-unanswered")).toHaveTextContent(`My Anthropic key ${words}, so it does not count yet.`);
+      expect(screen.getByText("0 of 2 done")).toBeInTheDocument();
+      expect(screen.queryByText(/This workspace has an AI key/)).not.toBeInTheDocument();
+    },
+  );
 
   it("not granted: the access step names the key and preselects the agent", async () => {
     world({ readiness: readiness([]), wsKeys: [llmSecret("k2", "my-key", "workspace")] });
