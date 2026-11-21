@@ -118,6 +118,9 @@ function ExportDialog({ agent, onClose }: { agent: ExportAgent; onClose: () => v
           {!state && !error ? <p role="status">Reading {agent.name}…</p> : null}
           {state ? <p data-testid="export-summary">{summaryLine(state.data) || "Nothing to export yet."}</p> : null}
           {s && s.webhooks > 0 ? <p>Webhook addresses and secrets stay behind: an imported webhook gets new ones.</p> : null}
+          {state?.data.automations.some((a) => a.kind === "schedule" && "run_at" in a.cadence) ? (
+            <p>A one-time schedule keeps its date, time and time zone. An import creates it paused: check the time, then turn it on.</p>
+          ) : null}
           {state?.omitted.map((o) => (
             <Notice key={o} tone="neutral" role="status">
               {o}

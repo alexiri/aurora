@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentExportImport } from "@/components/agents/export-import";
 import { exportZip, type AgentExport } from "@/lib/export/agent-export";
-import { DEFAULT_CHOICES, runImport, summaryLine, type ImportApi, type ImportExisting } from "@/lib/export/agent-import";
+import { DEFAULT_CHOICES, liveImportApi, runImport, summaryLine, type ImportApi, type ImportExisting } from "@/lib/export/agent-import";
 import { seedMoreControls } from "./support/render";
 import { json } from "./support/api";
 
@@ -70,6 +70,26 @@ describe("runImport", () => {
     expect(r.schedulesPaused).toBe(1);
     expect(r.webhooksPaused).toBe(1);
     expect(r.failed).toEqual([]);
+  });
+
+  it("creates a one-time schedule from its run_at and time zone, paused like the others", async () => {
+    const once: AgentExport = { ...exp, memories: [], skills: [], automations: [{ kind: "schedule", name: "Remind me", prompt: "Call Ada.", cadence: { preset: "once", run_at: "2026-12-01T09:00" }, time_zone: "Europe/Zurich", enabled: true }] };
+    const posted: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Request) => {
+        const url = new URL(input.url, "http://localhost");
+        if (input.method === "POST" && url.pathname === "/v1/agents/a1/schedules") {
+          posted.push(JSON.parse(await input.clone().text()));
+          return json(201, { id: "sc9" });
+        }
+        return json(200, {});
+      }),
+    );
+    const r = await runImport(once, DEFAULT_CHOICES, none, liveImportApi("a1"));
+    expect(posted).toEqual([{ name: "Remind me", prompt: "Call Ada.", run_at: "2026-12-01T09:00", timezone: "Europe/Zurich" }]);
+    expect(r.schedulesPaused).toBe(1);
+    expect(r.done).toEqual(["Schedule “Remind me” (paused)"]);
   });
 
   it("keeps the agent's own instructions by default", async () => {

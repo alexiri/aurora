@@ -67,6 +67,31 @@ describe("the tree", () => {
     expect(back).toEqual(sample);
   });
 
+  it("writes a one-time schedule as cadence { preset: once, run_at } with its time zone, and a skill's other files beside SKILL.md, and reads them back", async () => {
+    const e: AgentExport = {
+      ...sample,
+      skills: [{ name: "release-notes", useItWhen: "x", body: "b", files: [{ path: "bin/run.sh", content: new TextEncoder().encode("#!/bin/sh\n") }, { path: "blob.bin", content: new Uint8Array([0xff, 0, 1]) }] }],
+      automations: [{ kind: "schedule", name: "Remind me", prompt: "Call Ada.", cadence: { preset: "once", run_at: "2026-12-01T09:00" }, time_zone: "Europe/Zurich", enabled: false }],
+    };
+    const files = Object.fromEntries(exportFiles(e, "daneel", NOW).map((f) => [f.name, f.data]));
+    expect(text(files["daneel/automations/remind-me.yaml"]!)).toBe(
+      'kind: schedule\nname: Remind me\nprompt: Call Ada.\ncadence:\n  preset: once\n  run_at: "2026-12-01T09:00"\ntime_zone: Europe/Zurich\nenabled: false\n',
+    );
+    expect([...files["daneel/skills/release-notes/blob.bin"]!]).toEqual([0xff, 0, 1]);
+    const back = parseExport(await readZip(exportZip(e, "daneel", NOW).bytes));
+    expect(back.automations).toEqual(e.automations);
+    expect(back.skills[0]!.files.map((f) => [f.path, [...f.content]])).toEqual(e.skills[0]!.files.map((f) => [f.path, [...f.content]]));
+  });
+
+  it("refuses a one-time schedule whose run_at is not a local time", () => {
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const yaml = (runAt: string) => `kind: schedule\nname: x\nprompt: p\ncadence:\n  preset: once\n  run_at: "${runAt}"\ntime_zone: UTC\nenabled: false\n`;
+    const read = (runAt: string) => parseExport([{ name: "a/agent.yaml", data: enc("format: 1\nname: A\n") }, { name: "a/automations/x.yaml", data: enc(yaml(runAt)) }]);
+    expect(() => read("tomorrow at nine")).toThrow(/run_at is a local time/);
+    expect(() => read("2026-12-01T09:00:00Z")).toThrow(/run_at is a local time/);
+    expect(read("2026-12-01T09:00:30").automations[0]).toMatchObject({ cadence: { preset: "once", run_at: "2026-12-01T09:00:30" } });
+  });
+
   it("slugs names for files", () => {
     expect(slug("Morning check!")).toBe("morning-check");
     expect(slug("Café déjà vu")).toBe("cafe-deja-vu");
@@ -151,20 +176,37 @@ describe("what never leaves", () => {
     mockFetch({
       "GET /v1/agents/a1/memories": () => json(200, { items: [{ key: "likes-tea", content: "Ada likes tea.", index_line: "x", revision: 3, updated_at: "2026-11-01T09:00:00Z", created_at: "2026-10-01T09:00:00Z" }], next_cursor: null }),
       "GET /v1/agents/a1/skills": () =>
-        json(200, { items: [{ id: "sk-123456", name: "release-notes", description: "When asked what shipped", body: "# Notes", files: [{ path: "SKILL.md", size: 5, executable: false }, { path: "run.sh", size: 9, executable: true }], org_id: "org-999" }], next_cursor: null }),
+        json(200, { items: [{ id: "sk-123456", name: "release-notes", description: "When asked what shipped", body: "# Notes", files: [{ path: "bin/run.sh", size: 9, executable: true }, { path: "blob.bin", size: 4, executable: false }], org_id: "org-999" }], next_cursor: null }),
+      // The skill's other files, as stored (C-1099).
+      // (The client sends the wildcard path as one encoded segment, as for PUT.)
+      "GET /v1/skills/sk-123456/files/bin%2Frun.sh": () => new Response("#!/bin/sh", { status: 200, headers: { "content-type": "application/octet-stream", "x-skill-file-executable": "true" } }),
+      "GET /v1/skills/sk-123456/files/blob.bin": () => new Response(new Uint8Array([0xff, 0xfe, 0xfd, 0x00]), { status: 200, headers: { "content-type": "application/octet-stream" } }),
       "GET /v1/agents/a1/schedules": () =>
         json(200, { items: [
           { id: "sched-5", agent_id: "a1", name: "Morning", prompt: "Check.", cron: "0 8 * * *", timezone: "UTC", enabled: true, created_by: { id: "u-777" } },
-          { id: "sched-6", agent_id: "a1", name: "Once", prompt: "Later.", cron: null, run_at: "2026-12-01T09:00:00Z", timezone: "UTC", enabled: true },
+          { id: "sched-6", agent_id: "a1", name: "Once", prompt: "Later.", cron: null, run_at: "2026-12-01T09:00", timezone: "Europe/Zurich", enabled: true, completed_at: null },
+          { id: "sched-7", agent_id: "a1", name: "Ran already", prompt: "Past.", cron: null, run_at: "2026-11-01T09:00", timezone: "Europe/Zurich", enabled: false, completed_at: "2026-11-01T08:00:03Z" },
         ], next_cursor: null }),
       "GET /v1/agents/a1/webhooks": () => json(200, { items: [hook], next_cursor: null }),
     });
     const { data, omitted } = await loadAgentExport({ id: "a1", name: "Daneel", brief: "You are Daneel.", model_id: "claude-sonnet", proactive_messaging: "allow" });
     expect(data.model).toBe("claude-sonnet");
     expect(data.may_message_first).toBe(true);
-    // A one-time schedule has no cadence; skill files other than SKILL.md cannot be read back: both are said, not silently dropped.
-    expect(omitted).toEqual(["The one-time schedule “Once” is not exported.", "Skill files other than SKILL.md are not exported: the API cannot read them back."]);
+    // A pending one-time schedule is exported with its local time and zone; a Done one is skipped, and said.
+    expect(data.automations.filter((a) => a.kind === "schedule")).toEqual([
+      { kind: "schedule", name: "Morning", prompt: "Check.", cadence: { cron: "0 8 * * *" }, time_zone: "UTC", enabled: true },
+      { kind: "schedule", name: "Once", prompt: "Later.", cadence: { preset: "once", run_at: "2026-12-01T09:00" }, time_zone: "Europe/Zurich", enabled: true },
+    ]);
+    expect(omitted).toEqual(["The one-time schedule “Ran already” already ran, so it is not exported."]);
+    // The skill's other files, as stored, bytes and all.
+    expect(data.skills[0]!.files.map((f) => f.path)).toEqual(["bin/run.sh", "blob.bin"]);
+    expect(text(data.skills[0]!.files[0]!.content)).toBe("#!/bin/sh");
+    expect([...data.skills[0]!.files[1]!.content]).toEqual([0xff, 0xfe, 0xfd, 0x00]);
     const files = exportFiles(data, "daneel", NOW);
+    expect(files.map((f) => f.name)).toContain("daneel/skills/release-notes/bin/run.sh");
+    expect(files.map((f) => f.name)).toContain("daneel/skills/release-notes/blob.bin");
+    const onceYaml = text(files.find((f) => f.name === "daneel/automations/once.yaml")!.data);
+    expect(parseYaml(onceYaml)).toEqual({ kind: "schedule", name: "Once", prompt: "Later.", cadence: { preset: "once", run_at: "2026-12-01T09:00" }, time_zone: "Europe/Zurich", enabled: true });
     const all = files.map((f) => `${f.name}\n${text(f.data)}`).join("\n=====\n");
     for (const leak of ["6f1c2f6a", "SECRETPREFIX", "hooks/", "u-777", "ada@example.test", "org-999", "sk-123456", "sched-5", "X-Signature", "https://"]) {
       expect(all, leak).not.toContain(leak);

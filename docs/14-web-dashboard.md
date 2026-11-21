@@ -2421,8 +2421,10 @@ listed by name with **Retry** (only the failed ones go again); what succeeded is
 - **Accounts** (the main list of a workspace or organization): **Give to an agent…** (a picker: the workspace's agents; for an
   organization's accounts those of the workspaces you own; apps at the lowest level that exists, websites and AI keys as they
   are) and **Turn off…** (only an app account has a switch; the dialog names those that have none).
-- **Automations** (an agent's Schedules and Webhooks lists): **Pause** and **Resume** (undoable: they act at once and a toast
-  offers **Undo**) and **Delete…** (permanent: type the number).
+- **Automations** (the one list on an agent's Automations page, `components/automations/automations-bulk.tsx`): a checkbox on each
+  schedule and webhook row (a chat row has none) and **Select all** for what the filter shows; **Pause** and **Resume** (for the
+  ones that are on or paused; a Done one-time schedule has neither; undoable: they act at once and a toast offers **Undo**) and
+  **Delete…** (permanent: type the number). A mixed selection says "automations", a single kind says "schedules" or "webhooks".
 
 **Export and import an agent (`export.agent`, Expert; D-413).** On the agent's Settings page, for workspace owners of a
 hosted agent: a section **Export and import** with **Export <Agent>…** and **Import into <Agent>…** (also palette verbs).
@@ -2461,8 +2463,14 @@ time_zone: Europe/Zurich
 enabled: true
 ```
 
-Never in an export: ids, secrets, webhook addresses, accounts, channels, conversations, the AI key. One-time schedules
-(no cron) and the files of a skill other than `SKILL.md` (no route reads one back) are left out, and the dialog says so.
+A pending one-time schedule has `cadence: { preset: once, run_at: "2026-12-01T09:00" }` instead of `cron` (the local time, read in `time_zone`).
+
+Never in an export: ids, secrets, webhook addresses, accounts, channels, conversations, the AI key. A skill's other files
+are written beside its `SKILL.md` as stored (read one by one with `GET /v1/skills/{id}/files/{path}`, C-1099; the list is the
+`files` of the skill). A **pending one-time schedule** is exported as `cadence: { preset: once, run_at: "2026-12-01T09:00" }`
+(its local time) with its `time_zone`; one that already ran (Done) is left out, and the dialog says so. An import creates a
+one-time schedule through the same route and pauses it like the others ("Check the schedule, then turn it on"); the dialog
+says to check the time first.
 **Import** opens a dialog: pick or drop a `.zip` (at most 5 MB and 200 files; absolute, hidden and `..` names refused with one
 sentence), a checklist (*Instructions · 3 memories · 2 skills · 1 schedule · 1 webhook*, a checkbox per group) and **Keep mine**
 (default) or **Replace instructions**. **Import** creates through the existing routes; a name that already exists is skipped and
@@ -2470,9 +2478,10 @@ listed (*Skipped: skill “release-notes” already exists*); schedules and webh
 signing secret shown once in `SecretOnce`; its address is on the card, *Rotate URL*); a failure is listed and the rest go on.
 Import never changes access, accounts or the AI key.
 
-**Copy as curl (`copy.curl`, Expert).** A webhook card's **Copy as curl** copies the call for its verification (signed: the
-`X-Signature: sha256=<hex>` recipe; password: the header; none: a plain POST) with `$SECRET`; a card holds only the address's
-prefix, so the command says the full address was shown once. Each API key's row menu has **Copy as curl** (`curl -H
+**Copy as curl (`copy.curl`, Expert).** A webhook row's **Copy as curl** copies the command the *How to call it* panel shows
+for its verification (signed: the `X-Signature: sha256=<hex>` recipe; password: the header; none: a plain POST), built by the
+same function (`lib/webhook-snippets.ts`: one recipe source) with `$SECRET`; a row holds only the address's prefix, so the
+command says the full address was shown once. Each API key's row menu has **Copy as curl** (`curl -H
 "Authorization: Bearer $AURORA_API_KEY" <origin>/v1/me`). Neither ever holds a secret or a key value. The API key pages say
 what a key acts as ("Acts as you in this workspace through the Aurora API."; organization keys: "Acts for this
 organization …") and link the **OpenAPI description** (`/v1/openapi.json`, Expert).

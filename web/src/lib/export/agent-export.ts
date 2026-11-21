@@ -37,12 +37,18 @@ export interface ExportSkill {
   name: string;
   useItWhen: string;
   body: string;
-  /** The skill's files other than SKILL.md (read from a zip on import; the API has no route that reads one). */
+  /** The skill's files other than SKILL.md, as stored (read with `GET /v1/skills/{id}/files/{path}`, C-1099). */
   files: ExportSkillFile[];
 }
 
+/** A recurring schedule's cron, or a pending one-time schedule's local `run_at` (`YYYY-MM-DDTHH:MM[:SS]`, read in `time_zone`). */
+export type ExportCadence = { cron: string } | { preset: "once"; run_at: string };
+
+/** The local date-time the API takes for a one-time schedule (C-1092). */
+export const RUN_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
+
 export type ExportAutomation =
-  | { kind: "schedule"; name: string; prompt: string; cadence: { cron: string }; time_zone: string; enabled: boolean }
+  | { kind: "schedule"; name: string; prompt: string; cadence: ExportCadence; time_zone: string; enabled: boolean }
   // `instructions` is what the agent does when the webhook is called (not a secret); the address and the secret are never carried.
   | { kind: "webhook"; name: string; instructions: string; verification: "signed" | "password" | "none"; enabled: boolean };
 
@@ -84,7 +90,7 @@ export function slug(text: string): string {
 
 function automationYaml(a: ExportAutomation): YamlValue {
   return a.kind === "schedule"
-    ? { kind: "schedule", name: a.name, prompt: a.prompt, cadence: { cron: a.cadence.cron }, time_zone: a.time_zone, enabled: a.enabled }
+    ? { kind: "schedule", name: a.name, prompt: a.prompt, cadence: "cron" in a.cadence ? { cron: a.cadence.cron } : { preset: "once", run_at: a.cadence.run_at }, time_zone: a.time_zone, enabled: a.enabled }
     : { kind: "webhook", name: a.name, instructions: a.instructions, verification: a.verification, enabled: a.enabled };
 }
 
@@ -140,13 +146,13 @@ export function templateAsExport(t: AgentTemplate): AgentExport {
 
 /** The template an export would make (what `templateAsExport` reads back), for the equality test and for templates from files. */
 export function exportAsTemplate(e: AgentExport, label: string): Pick<AgentTemplate, "id" | "label" | "nameSuggestion" | "instructions" | "schedule"> {
-  const schedule = e.automations.find((a) => a.kind === "schedule");
+  const schedule = e.automations.find((a) => a.kind === "schedule" && "cron" in a.cadence);
   return {
     id: (e.purpose ?? "blank") as AgentTemplate["id"],
     label,
     nameSuggestion: e.name,
     instructions: e.instructions,
-    ...(schedule && schedule.kind === "schedule" ? { schedule: { cron: schedule.cadence.cron, prompt: schedule.prompt } } : {}),
+    ...(schedule && schedule.kind === "schedule" && "cron" in schedule.cadence ? { schedule: { cron: schedule.cadence.cron, prompt: schedule.prompt } } : {}),
   };
 }
 
@@ -262,8 +268,15 @@ function automation(v: Record<string, YamlValue>, file: string): ExportAutomatio
   const enabled = v.enabled === true;
   if (v.kind === "schedule") {
     const cadence = v.cadence;
-    const cron = cadence !== null && typeof cadence === "object" && !Array.isArray(cadence) ? cadence.cron : undefined;
-    return { kind: "schedule", name, prompt: str(v.prompt, "a prompt", file), cadence: { cron: str(cron, "a cadence with a cron", file) }, time_zone: typeof v.time_zone === "string" ? v.time_zone : "UTC", enabled };
+    const map = cadence !== null && typeof cadence === "object" && !Array.isArray(cadence) ? cadence : undefined;
+    const time_zone = typeof v.time_zone === "string" ? v.time_zone : "UTC";
+    const prompt = str(v.prompt, "a prompt", file);
+    if (map?.preset === "once") {
+      const runAt = str(map.run_at, "a cadence with a run_at", file);
+      if (!RUN_AT_RE.test(runAt)) throw new ExportError(`“${file}”: run_at is a local time like 2026-12-01T09:00 (read in time_zone).`);
+      return { kind: "schedule", name, prompt, cadence: { preset: "once", run_at: runAt }, time_zone, enabled };
+    }
+    return { kind: "schedule", name, prompt, cadence: { cron: str(map?.cron, "a cadence with a cron", file) }, time_zone, enabled };
   }
   if (v.kind === "webhook") {
     const verification = v.verification;

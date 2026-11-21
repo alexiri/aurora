@@ -1,5 +1,6 @@
 import { api } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
+import { readSkillFile } from "@/lib/api/skills";
 import { unwrap } from "@/lib/api/unwrap";
 import type { Agent } from "@/lib/api/queries";
 import type { components } from "@/lib/api/schema";
@@ -28,19 +29,29 @@ export async function loadAgentExport(agent: Pick<Agent, "id" | "name" | "brief"
   const omitted: string[] = [];
   const automations: ExportAutomation[] = [];
   for (const s of schedules.items) {
-    // A one-time schedule (`run_at`) has no cadence to carry.
-    if (!s.cron) {
-      omitted.push(`The one-time schedule “${s.name}” is not exported.`);
-      continue;
+    if (s.cron) {
+      automations.push({ kind: "schedule", name: s.name, prompt: s.prompt, cadence: { cron: s.cron }, time_zone: s.timezone, enabled: s.enabled });
+    } else if (s.completed_at || !s.run_at) {
+      // A one-time schedule that already ran is Done: there is nothing left to carry.
+      omitted.push(`The one-time schedule “${s.name}” already ran, so it is not exported.`);
+    } else {
+      // A pending one-time schedule: its local time and zone (C-1092).
+      automations.push({ kind: "schedule", name: s.name, prompt: s.prompt, cadence: { preset: "once", run_at: s.run_at }, time_zone: s.timezone, enabled: s.enabled });
     }
-    automations.push({ kind: "schedule", name: s.name, prompt: s.prompt, cadence: { cron: s.cron }, time_zone: s.timezone, enabled: s.enabled });
   }
   for (const w of webhooks.items) {
     const kind = w.verification.kind;
     automations.push({ kind: "webhook", name: w.name, instructions: w.instructions, verification: kind === "hmac_sha256" ? "signed" : kind === "bearer" ? "password" : "none", enabled: w.enabled });
   }
-  const skillFiles = skills.items.reduce((n, s) => n + s.files.length, 0);
-  if (skillFiles > 0) omitted.push("Skill files other than SKILL.md are not exported: the API cannot read them back.");
+  // The skill's other files, as stored (C-1099); the list is on the skill itself.
+  const skillList: ExportSkill[] = await Promise.all(
+    skills.items.map(async (s) => ({
+      name: s.name,
+      useItWhen: s.description,
+      body: s.body,
+      files: await Promise.all(s.files.map(async (f) => ({ path: f.path, content: await readSkillFile(s.id, f.path) }))),
+    })),
+  );
   return {
     omitted,
     data: {
@@ -50,7 +61,7 @@ export async function loadAgentExport(agent: Pick<Agent, "id" | "name" | "brief"
       may_message_first: agent.proactive_messaging === "allow",
       instructions: agent.brief,
       memories: memories.items.map((m) => ({ key: m.key, updated: m.updated_at, content: m.content })),
-      skills: skills.items.map((s) => ({ name: s.name, useItWhen: s.description, body: s.body, files: [] })),
+      skills: skillList,
       automations,
     },
   };
@@ -247,7 +258,9 @@ export function liveImportApi(agentId: string): ImportApi {
       );
     },
     async createSchedule(a) {
-      const made = await unwrap(api.POST("/v1/agents/{agent}/schedules", { ...path, body: { name: a.name, prompt: a.prompt, cron: a.cadence.cron, timezone: a.time_zone } satisfies S["CreateScheduleRequest"] }));
+      // Exactly one of `cron` / `run_at` (C-1092); a one-time schedule's `run_at` is its local time in `time_zone`.
+      const when = "cron" in a.cadence ? { cron: a.cadence.cron } : { run_at: a.cadence.run_at };
+      const made = await unwrap(api.POST("/v1/agents/{agent}/schedules", { ...path, body: { name: a.name, prompt: a.prompt, ...when, timezone: a.time_zone } satisfies S["CreateScheduleRequest"] }));
       return { id: made.id };
     },
     async pauseSchedule(id) {
