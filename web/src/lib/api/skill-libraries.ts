@@ -31,8 +31,8 @@ export type BudgetTier = keyof typeof LIBRARY_BUDGET;
 export const libraryKeys = {
   list: (org: string) => ["orgs", org, "skill-libraries"] as const,
   one: (id: string) => ["skill-libraries", id] as const,
-  catalogue: (id: string, q: string) => ["skill-libraries", id, "skills", q] as const,
-  content: (id: string, path: string, commit: string) => ["skill-libraries", id, "skill", path, commit] as const,
+  catalogue: (id: string, q: string, org: string) => ["skill-libraries", id, "skills", q, org] as const,
+  content: (id: string, path: string, commit: string, org: string) => ["skill-libraries", id, "skill", path, commit, org] as const,
   info: (skill: string) => ["skills", skill, "library"] as const,
   pending: (scope: SkillScope) => ["skill-library-updates", scope.kind, scope.id] as const,
 };
@@ -90,15 +90,18 @@ export function useCheckLibraryNow(org: string) {
   });
 }
 
-/** The library's current head, live (cached 5 minutes server-side). Nothing is stored by browsing. */
-export function useLibraryCatalogue(id: string | undefined, q: string) {
+/**
+ * The library's current head, live (cached 5 minutes server-side). Nothing is stored by browsing. `org` is the
+ * organization to browse as: required for an instance library (C-1128), harmless for an organization's own.
+ */
+export function useLibraryCatalogue(id: string | undefined, q: string, org: string | undefined) {
   return useInfiniteQuery({
-    queryKey: libraryKeys.catalogue(id ?? "", q),
+    queryKey: libraryKeys.catalogue(id ?? "", q, org ?? ""),
     initialPageParam: "",
     queryFn: ({ pageParam }) =>
       unwrap(
         api.GET("/v1/skill-libraries/{id}/skills", {
-          params: { path: { id: id! }, query: { q: q || undefined, cursor: pageParam || undefined } },
+          params: { path: { id: id! }, query: { q: q || undefined, cursor: pageParam || undefined, org } },
         }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
@@ -109,13 +112,13 @@ export function useLibraryCatalogue(id: string | undefined, q: string) {
 }
 
 /** Exactly what an add would store, at one commit. */
-export function useLibrarySkill(id: string | undefined, path: string | undefined, commit: string | undefined) {
+export function useLibrarySkill(id: string | undefined, path: string | undefined, commit: string | undefined, org: string | undefined) {
   return useQuery({
-    queryKey: libraryKeys.content(id ?? "", path ?? "", commit ?? ""),
+    queryKey: libraryKeys.content(id ?? "", path ?? "", commit ?? "", org ?? ""),
     queryFn: () =>
       unwrap(
         api.GET("/v1/skill-libraries/{id}/skills/{path}", {
-          params: { path: { id: id!, path: path! }, query: { commit_sha: commit } },
+          params: { path: { id: id!, path: path! }, query: { commit_sha: commit, org } },
         }),
       ),
     enabled: !!id && !!path && !!commit,

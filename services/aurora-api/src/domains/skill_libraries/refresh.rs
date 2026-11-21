@@ -15,7 +15,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::content::{self, Candidate, LoadError, ReadError, Reader};
-use super::service::block_for;
+use super::git::GitRepo;
+use super::service::{open_token, row_url};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 
@@ -25,7 +26,6 @@ const RETENTION_JOB: &str = "skill_library_retention";
 
 struct Done {
     head: String,
-    over_budget: bool,
     proposed: usize,
 }
 
@@ -54,8 +54,7 @@ pub fn spawn(state: AppState) {
     });
 }
 
-/// Daily retention (singleton): prune decided proposals older than 90 days, expire leases, mark
-/// libraries whose connection vanished `error`.
+/// Daily retention (singleton): prune decided proposals older than 90 days, expire leases.
 pub async fn retention(state: &AppState) -> Result<Option<(u64, u64)>, aurora_core::ApiError> {
     let ran = aurora_db::jobs::try_singleton(&state.pool, RETENTION_JOB, || async {
         let mut c = state.pool.acquire().await?;
@@ -123,8 +122,8 @@ pub async fn refresh_library(state: &AppState, lib: LibraryRow, owner: Uuid) {
     refresh_library_within(state, lib, owner, limits::LIBRARY_REFRESH_BUDGET).await;
 }
 
-/// [`refresh_library`] with an explicit overall bound. A read of a library is many gateway
-/// calls (tree pages, up to 50 blobs per skill, each with its own timeout and busy retries);
+/// [`refresh_library`] with an explicit overall bound. A read of a library is several git
+/// requests (discovery, refs, the tree pack, the blob pack, each with its own timeout);
 /// the whole pass must end — and record its outcome, releasing the lease — before
 /// `LIBRARY_LEASE` runs out, or another replica claims the library and repeats the work. On the
 /// bound the pass is recorded as a failure (backoff) and the next run starts from scratch.
@@ -147,12 +146,10 @@ pub async fn refresh_library_within(
     metrics::histogram!("aurora_skill_library_refresh_duration_seconds")
         .record(started.elapsed().as_secs_f64());
     let (status, error, failures, head, label, next) = match &result {
+        // (D-449) The budget is per organization (`skill_library_org_state`): the library's own
+        // status is `active` after a pass that read the repository, whoever was over budget.
         Ok(d) => (
-            if d.over_budget {
-                "over_budget"
-            } else {
-                "active"
-            },
+            "active",
             None,
             0,
             Some(d.head.as_str()),
@@ -169,9 +166,7 @@ pub async fn refresh_library_within(
             retry_after: Some(secs),
             ..
         }) => (
-            if lib.status == "over_budget" {
-                "over_budget"
-            } else if lib.status == "error" {
+            if lib.status == "error" {
                 "error"
             } else {
                 "active"
@@ -257,49 +252,52 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
     fn db<E>(_: E) -> Fail {
         "the database is unavailable".into()
     }
-    let conn = lib.connection_id.ok_or("connection_deleted")?;
+    // (P5-SKLIB-1, C-1125) The API reads the repository itself, with the library's token when
+    // it has one (opened for this pass only).
+    let url = row_url(lib)?;
+    let token = open_token(state, lib).await?;
+    let git = GitRepo::new(
+        &state.connect,
+        url,
+        token.as_ref(),
+        state.library.fetch_timeout,
+    )?;
+    let reader = Reader::new(&git, &lib.path);
     let mut c = state.pool.acquire().await.map_err(db)?;
-    let brief = repo::connection_brief(&mut c, conn)
-        .await
-        .map_err(db)?
-        .ok_or("connection_deleted")?;
-    if brief.workspace_id.is_some() {
-        return Err("the connection is not organization-scoped".into());
-    }
-    match brief.status.as_str() {
-        "active" => {}
-        "reauth_required" => {
-            return Err("reauth_required: the connection needs to be reconnected".into());
-        }
-        _ => return Err("the connection is not active".into()),
-    }
-    let block = block_for(state, &lib.app_id).await?;
-    let reader = Reader {
-        gw: state.library.gateway.as_ref(),
-        lib: &block,
-        org: lib.org_id,
-        conn,
-        repo: &lib.repo,
-    };
     let head = reader.resolve(lib.reference.as_deref()).await?;
     repo::record_head(&mut c, lib.id, &head).await.map_err(db)?;
-    // An unchanged head costs this one call (a library over budget re-checks: space may be free).
-    if lib.last_head_sha.as_deref() == Some(head.as_str()) && lib.status != "over_budget" {
-        return Ok(Done {
-            head,
-            over_budget: false,
-            proposed: 0,
-        });
+    // An unchanged head costs this one call, unless an organization is over budget for the library
+    // (space may be free: its skipped proposals are compared again).
+    if lib.last_head_sha.as_deref() == Some(head.as_str())
+        && !repo::has_org_state(&mut c, lib.id).await.map_err(db)?
+    {
+        return Ok(Done { head, proposed: 0 });
     }
-    let skills = repo::library_skills(&mut c, lib.id).await.map_err(db)?;
+    // Every organization's skills: an instance library is added in many (D-449).
+    let skills = repo::library_skills(&mut c, lib.id, None)
+        .await
+        .map_err(db)?;
     let entries = reader.tree(&head).await?;
-    let cands = content::assemble(&block, &lib.path, &entries);
+    let cands = content::assemble(&lib.path, &entries);
     let by_dir: BTreeMap<&str, &Candidate> = cands.iter().map(|c| (c.dir.as_str(), c)).collect();
+    // One blob request for every skill whose files changed (C-1125).
+    let mut wanted: Vec<String> = Vec::new();
+    for s in &skills {
+        let dir = s.library_path.clone().unwrap_or_default();
+        if let Some(cand) = by_dir.get(dir.as_str())
+            && cand.problems.is_empty()
+            && cand.blobs() != blobs_of(&s.library_blobs)
+        {
+            wanted.extend(cand.blob_ids());
+        }
+    }
+    reader.prefetch(&wanted).await?;
     let mut done = Done {
         head: head.clone(),
-        over_budget: false,
         proposed: 0,
     };
+    // Organizations whose open-proposal budget did not fit a proposal in this pass.
+    let mut over: std::collections::BTreeSet<Uuid> = std::collections::BTreeSet::new();
     for s in &skills {
         let dir = s.library_path.clone().unwrap_or_default();
         let pinned = blobs_of(&s.library_blobs);
@@ -380,22 +378,25 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
             continue;
         }
         let replaced = pending.as_ref().map_or(0, |p| i64::from(p.bytes));
-        // (FIX-096) Sum and insert under the org's lock: two libraries of one organization
-        // refreshing at once must not both pass the cap.
+        // (FIX-096, D-449) Sum and insert under the lock of the **skill's** organization (an
+        // instance library's skills are in many): two libraries refreshing at once must not both
+        // pass one organization's cap, and one organization's budget never stops another's.
         let mut tx = state.pool.begin().await.map_err(db)?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("skill_library_pending:{}", lib.org_id))
+            .bind(format!("skill_library_pending:{}", s.org_id))
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let pending_bytes = repo::pending_bytes_org(&mut tx, lib.org_id)
+        let pending_bytes = repo::pending_bytes_org(&mut tx, s.org_id)
             .await
             .map_err(db)?;
         if pending_bytes - replaced + i64::from(bytes)
             > limits::LIBRARY_PENDING_BYTES_PER_ORG as i64
         {
-            done.over_budget = true;
-            break;
+            // No proposal for this organization's skill; its state row says so (below) and the
+            // library's other organizations get theirs.
+            over.insert(s.org_id);
+            continue;
         }
         let u = repo::insert_update(
             &mut tx,
@@ -427,7 +428,7 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
                 "skill.library.update_proposed",
                 Outcome::Success,
             )
-            .org(lib.org_id)
+            .org(s.org_id)
             .target("skill", s.id)
             .metadata(
                 json!({"update_id": u.id, "kind": kind, "library_id": lib.id,
@@ -435,5 +436,11 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
             ),
         );
     }
+    // Exactly the organizations that did not fit are over budget; those that fit again (or no
+    // longer use the library) are cleared.
+    let over: Vec<Uuid> = over.into_iter().collect();
+    repo::set_org_states(&mut c, lib.id, &over)
+        .await
+        .map_err(db)?;
     Ok(done)
 }

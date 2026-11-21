@@ -746,32 +746,55 @@ done when its tests exist, pass in CI, and the security invariants it touches
   next request wakes; plus the Playwright journey of C-907; a secret-grep over the run for a canary
   uploaded in a file (no log, audit or request-log hit).
 
-### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
-- **Fake git host** in the test kit (`tests/kit`): serves a GitHub-shaped and a GitLab-shaped API (ref
-  resolution, recursive and paginated trees, blobs, raw files, rate-limit responses, truncated trees, a
-  moving head, renames/deletions, symlink and submodule entries, oversize files, hostile names and
-  descriptions) behind the gateway's guarded resolver (loopback allowed only in the test configuration).
-- **Registry** (`reg/it/library.rs`): the `library` linter matrix of `09 §3.4 library` (non-exact or
-  wildcard host, host not in `hosts[]`, free placeholders, non-GET, JSON path shapes, bad
-  `repo_pattern`, unknown keys), snapshot copy, re-approval when the block changes, the built-in GitHub
-  and GitLab packages validate with their fixtures (resolve, tree incl. pagination, blob; instance-bound
-  GitLab host).
-- **Gateway** (`gw/it/library_fetch.rs`): parameter fuzzing → 400 `library_param`; connection checks (other
-  org, workspace-scoped, disabled, other app, no `library` block) → 409/404; the request is built from the
-  template (the fake host sees exactly one `GET` per step with the injected credential, no agent headers);
-  redirect not followed; size/time caps; OAuth refresh and `reauth_required`; the route needs the internal
-  secret and is not on the proxy listener; no log line or response contains a credential; rate limits.
-- **API** (`api/it/skill_library.rs`, real Postgres, the fake host, a fake gateway client where useful):
-  create/list/patch/delete with the permission matrix (org admin yes, member no, workspace-scoped connection
-  422, limit 409), browse (live, nothing stored, validity and reasons, caching 5 min), **add** at each tier
+### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83; any git URL since P5-SKLIB-1, D-448, SEC-148)
+- **Git server in the test kit** (`aurora_testkit::git_server::GitServer`, P5-SKLIB-1): fixture repositories built
+  with the `git` command line in a temporary directory (commits, branches, annotated and lightweight tags, a
+  moving head, renames and deletions, symlink and submodule entries, an oversize file, 51 files, a very large
+  tree, hostile names and descriptions, a SHA-256 repository) and served by **`git http-backend`** (CGI) behind a
+  small axum server, with switches: protocol v2 off, `uploadpack.allowFilter` off, `uploadpack.allowAnySHA1InWant`
+  off, Basic auth with a given token, an injected status (401/403/404/429 with `Retry-After`/503), redirects (same
+  origin, another origin, to `http:`), a slow answer, an oversize or wrong-objects answer, and a log of the
+  requests received with their `Authorization` and `Git-Protocol` headers. It needs `git` 2.31 or later on the
+  machine and **panics with a clear message when `git` is missing** (never skips). The API reaches it through
+  the guarded client's test override (`Env::override_origin`), which maps every https origin to the server while
+  the reader still decides by the logical URL which origin gets the token and which addresses are allowed.
+- **Registry** (`reg/it/library.rs`): the `library` block still parses and lints (the linter matrix of
+  `09 §3.4 library`) but is **ignored**: the warning `library_ignored`, and the built-in GitHub and GitLab
+  packages carry no block.
+- **Core** (`aurora-core` `git_url`): the address table of C-1123 (30+ cases, every refused form with its reason).
+- **API unit and property tests** (`skill_libraries::git`): the pkt-line and pack parsers never panic (truncated
+  input, bad lengths, flush/delim, bad zlib, delta offsets out of range, chain depth 51, object count over cap,
+  wrong object id, SHA-256 capability).
+- **Reader** (`api/it/skill_library/git.rs`, SEC-148): every server configuration (v2 with and without filter,
+  v0, v0 without any-sha1-in-want → whole-pack fallback), branch, annotated tag (peeled), lightweight tag, full
+  commit, default branch by symref, a folder, a private repository (no token, wrong token, right token, other user
+  names, 403 and 404 texts), three redirects allowed and a fourth refused, redirects to `http:`, private,
+  loopback, metadata and IPv6 literals and to credentials refused, **`Authorization` absent from every request
+  to another origin**, a pack over `LIBRARY_PACK_MAX`, objects that were not asked for, an inflate over
+  `LIBRARY_INFLATE_MAX`, SHA-256, a slow host, more than `LIBRARY_BROWSE_MAX` skills, the check route (shape,
+  stores nothing, org admins only, 10 a minute), the token's life (sealed, replaced, kept on a failed re-read,
+  removed, never in a response, `last_error` or audit row), `url` patch only while null, blob ids equal git's own
+  ids, and a source scan that only the library service opens the token. **Instance libraries**
+  (`api/it/skill_library/instance.rs`, P5-SKLIB-2, SEC-149): two organizations on one instance library (their own
+  numbers, `?org=` browse and chips, 400/404 rules), the authority per tier of caller (instance admin session; org
+  owner/admin/member, stranger and API key all 404), one refresh writing one proposal per skill with per-organization
+  budgets (an organization over budget gets a state row and no proposal while the other gets its own), deletion with
+  an audit row in each organization, paused libraries, the kill switch and `LIBRARIES_PER_INSTANCE`; the migration
+  test `skill_library_instance_migration` (an `over_budget` row moves to its organization's state, null `org_id` is
+  one scope for the unique indexes). Migration test (`db/it`
+  `skill_library_git_url_migration`): a database with GitHub, GitHub Enterprise, GitLab with an instance and
+  without, a duplicate and a third-app library.
+- **API** (`api/it/skill_library.rs`, real Postgres, the git server of the test kit):
+  create/list/patch/delete with the permission matrix (org admin yes, member no, address refusals with their
+  reasons, same address 409, limit 409), browse (live, nothing stored, validity and reasons, caching 5 min), **add** at each tier
   with its authority (agent `can_use`, workspace `can_own`, org admin; agent tool and agent credential
   refused; the exact requested commit is read even if the head moved), validation (symlink, submodule, big
   file, bad frontmatter name, reserved name, size limits), uniqueness and shadowing across tiers unchanged,
   **budgets** per agent/workspace/org at add and approve, **read-only** enforcement through every route and tool,
   detach and library deletion; **refresh** under the lease (two replicas never refresh one library; lease
-  expiry; backoff; unchanged head costs one call; changed blobs → one proposal; superseding; deletion →
-  `removed`; invalid → `invalid`; over-budget; connection revoked/deleted/`reauth_required`; package without
-  `library`; interval floor) with the invariant checks of SEC-83 (no change to `skills`, `skill_files`, any
+  expiry; backoff; unchanged head costs one discovery and one `ls-refs`; changed blobs → one proposal;
+  superseding; deletion → `removed`; invalid → `invalid`; over-budget; repository gone or turned private,
+  token revoked; host throttling honours `Retry-After`; interval floor) with the invariant checks of SEC-83 (no change to `skills`, `skill_files`, any
   home-sync generation or the sync parts until approval); **approve** (session only; hash quoted; race with
   a newer proposal → 409 `update_superseded`; re-validation; audit rows critical; generation bump for exactly
   the affected agents), reject remembered, `skill.library.update_proposed` best-effort.

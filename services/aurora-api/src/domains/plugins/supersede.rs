@@ -4,7 +4,8 @@
 //! `aurora_registry::superseded`). When a version that has the target app with that method is
 //! activated, [`apply`] runs **inside the activation transaction**
 //! (before the snapshot is compiled, so the retired package's host claims are gone by then):
-//! the old app's connections, instances, skill libraries and availability move to the new app,
+//! the old app's connections, instances and availability move to the new app (skill libraries
+//! no longer name an app since P5-SKLIB-1, D-448: nothing of theirs moves),
 //! the host-claim decisions between the old and the new package are deleted, and the retired
 //! package is disabled. Idempotent; only counts and ids are logged, never a credential.
 
@@ -29,7 +30,6 @@ pub struct Report {
     pub instances: u64,
     /// Preset instances the version declares (seeded or refreshed; not a change by itself).
     pub presets: u64,
-    pub libraries: u64,
     pub availability: u64,
     pub decisions_deleted: u64,
     /// Retired package versions disabled, by package id.
@@ -41,7 +41,6 @@ impl Report {
     pub fn is_empty(&self) -> bool {
         self.connections.is_empty()
             && self.instances == 0
-            && self.libraries == 0
             && self.availability == 0
             && self.decisions_deleted == 0
             && self.disabled.is_empty()
@@ -51,7 +50,7 @@ impl Report {
         json!({
             "connections_moved": self.connections.values().sum::<i64>(),
             "by_app": self.connections, "connections_reauth": self.flipped,
-            "instances": self.instances, "presets": self.presets, "skill_libraries": self.libraries,
+            "instances": self.instances, "presets": self.presets,
             "availability": self.availability, "claim_decisions_deleted": self.decisions_deleted,
             "retired_packages": self.disabled,
         })
@@ -136,7 +135,6 @@ pub async fn apply(
         }
         report.instances +=
             plugins::move_instances(&mut *conn, s.old_app, s.new_app, &manifest.package.id).await?;
-        report.libraries += plugins::move_skill_libraries(&mut *conn, s.old_app, s.new_app).await?;
         report.availability += plugins::move_availability(&mut *conn, s.old_app, s.new_app).await?;
     }
     // A moved connection must satisfy the new app's required credential fields (it normally does:
@@ -191,7 +189,7 @@ pub async fn apply(
     tracing::info!(
         package = %manifest.package.id, version,
         connections = report.connections.values().sum::<i64>(), flipped = report.flipped,
-        instances = report.instances, skill_libraries = report.libraries,
+        instances = report.instances,
         availability = report.availability, decisions_deleted = report.decisions_deleted,
         "plugin supersede: applied"
     );

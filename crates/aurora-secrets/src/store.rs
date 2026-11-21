@@ -34,13 +34,17 @@ pub enum Purpose {
     /// (phase 5, P4-011B-3, D-266(b)) A Web Push subscription's `{ endpoint, p256dh, auth }`;
     /// owner = the subscription id, org = nil UUID; always the inline store.
     WebpushSubscription,
+    /// (phase 5, P5-SKLIB-1, D-448(c), C-1126, SEC-148) A skill library's read-only access token
+    /// `{ username, token }`; owner = the library id, org = the library's org (nil UUID for an
+    /// instance library). Opened only by the repository reader.
+    SkillLibraryToken,
 }
 
 impl Purpose {
     /// The purposes the migration job and CLI know (one source table each). The Web Push
     /// purposes are not here: they are sealed in the `inline` store whatever the default store is
     /// (D-266(b)) and are never moved, rekeyed or counted by those tools.
-    pub const ALL: [Purpose; 11] = [
+    pub const ALL: [Purpose; 12] = [
         Purpose::SecretValue,
         Purpose::ConnectionCredentials,
         Purpose::OauthClientSecret,
@@ -52,6 +56,7 @@ impl Purpose {
         Purpose::InstanceSetting,
         Purpose::UserToken,
         Purpose::ChannelOpUserToken,
+        Purpose::SkillLibraryToken,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -69,6 +74,7 @@ impl Purpose {
             Self::ChannelOpUserToken => "channel_op_user_token",
             Self::WebpushVapid => "webpush.vapid",
             Self::WebpushSubscription => "webpush.subscription",
+            Self::SkillLibraryToken => "skill_library.token",
         }
     }
 }

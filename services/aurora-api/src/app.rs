@@ -95,7 +95,7 @@ pub struct AppState {
     pub connect: Arc<crate::domains::connect::Env>,
     /// Card requests from inbox processing (BE-073).
     pub card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests>,
-    /// (phase 4, P4-GSL) git skill library: the gateway client and the browse cache.
+    /// (phase 4, P4-GSL; P5-SKLIB-1) git skill library: the browse cache and the refresh owner.
     pub library: Arc<crate::domains::skill_libraries::LibraryEnv>,
     /// (phase 5, P5-UX-14, C-943) The checks of Test only the gateway can make (a database login, a token
     /// mint, a refresh), over the internal listener.
@@ -204,13 +204,7 @@ impl AppState {
             )?,
         );
         let counters = Arc::new(web::counters::ApiCounters::build(&config.counters, &pool)?);
-        let library = Arc::new(crate::domains::skill_libraries::LibraryEnv::new(Arc::new(
-            crate::domains::skill_libraries::gateway::HttpGateway::new(
-                &config.gateway_internal_url,
-                &config.internal_ring,
-                config.tls.extra_ca_bundle.as_deref(),
-            )?,
-        )));
+        let library = Arc::new(crate::domains::skill_libraries::LibraryEnv::new());
         let account_gateway: Arc<dyn domains::accounts::gateway::AccountGateway> =
             Arc::new(domains::accounts::gateway::HttpAccountGateway::new(
                 &config.gateway_internal_url,
@@ -605,13 +599,12 @@ impl AppState {
         self
     }
 
-    /// Replace the library gateway client (tests: a fake that reads a fake git host).
+    /// Shorten the timeout of one git request of the skill-library reader (tests).
     #[must_use]
-    pub fn with_library_gateway(
-        mut self,
-        gw: Arc<dyn crate::domains::skill_libraries::gateway::LibraryGateway>,
-    ) -> Self {
-        self.library = Arc::new(crate::domains::skill_libraries::LibraryEnv::new(gw));
+    pub fn with_library_fetch_timeout(mut self, d: std::time::Duration) -> Self {
+        let mut env = crate::domains::skill_libraries::LibraryEnv::new();
+        env.fetch_timeout = d;
+        self.library = Arc::new(env);
         self
     }
 

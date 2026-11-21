@@ -351,12 +351,13 @@ export function AddFromLibrary({
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<LibrarySkillItem | null>(null);
   const current = libId || active[0]?.id;
-  const catalogue = useLibraryCatalogue(open ? current : undefined, q);
+  // (P5-SKLIB-2, C-1128) A library shared by the instance is browsed as this organization.
+  const catalogue = useLibraryCatalogue(open ? current : undefined, q, orgId);
   // Every page is read at one commit; the first page names it. `truncated` (past 200) is on the last page.
   const head = catalogue.data?.pages[0];
   const lastPage = catalogue.data?.pages[catalogue.data.pages.length - 1];
   const catalogueItems = (catalogue.data?.pages ?? []).flatMap((p) => p.items);
-  const content = useLibrarySkill(open ? current : undefined, picked?.path, head?.commit_sha);
+  const content = useLibrarySkill(open ? current : undefined, picked?.path, head?.commit_sha, orgId);
   const create = useCreateSkill(scope);
   if (!orgId || active.length === 0) return null;
   const budget = LIBRARY_BUDGET[tier];

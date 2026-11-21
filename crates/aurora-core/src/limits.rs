@@ -243,6 +243,15 @@ pub const LIBRARY_REFRESH_CONCURRENCY: usize = 4;
 pub const LIBRARY_CHECK_NOW_INTERVAL: Duration = Duration::from_secs(60);
 pub const LIBRARY_BROWSE_CACHE: Duration = Duration::from_secs(5 * 60);
 pub const LIBRARY_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+/// (P5-SKLIB-1, C-1125, C-1127; docs/02 §Limits) One git smart-HTTP response body (a pack with
+/// its side-band framing): reading stops at this many bytes.
+pub const LIBRARY_PACK_MAX: usize = 32 * MIB;
+/// (P5-SKLIB-1, C-1125; docs/02 §Limits) Inflated bytes of every object of one pack together.
+pub const LIBRARY_INFLATE_MAX: usize = 64 * MIB;
+/// (P5-SKLIB-1, C-1125; docs/02 §Limits) Object ids wanted in one fetch request.
+pub const LIBRARY_WANTS_MAX: usize = 500;
+/// (P5-SKLIB-2, C-1128; docs/02 §Limits) Instance-level skill libraries.
+pub const LIBRARIES_PER_INSTANCE: usize = 20;
 // Addon sources (phase 5, P5-ASRC, D-250; docs/02 §Limits, docs/22).
 /// The `aurora-addons.yaml` manifest (download cap; a bigger body is refused before parsing).
 pub const ADDON_MANIFEST_MAX: usize = MIB;

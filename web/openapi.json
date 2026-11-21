@@ -6804,6 +6804,227 @@
         ]
       }
     },
+    "/v1/admin/skill-libraries": {
+      "get": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "(P5-SKLIB-2, C-1128) The instance's libraries with their totals over every organization and\n`orgs_using` (instance admins, session only).",
+        "operationId": "listInstanceSkillLibraries",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_SkillLibrary"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "(P5-SKLIB-2, C-1128) Add an instance library: every organization sees it (instance admins,\nsession only).",
+        "operationId": "createInstanceSkillLibrary",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSkillLibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillLibrary"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/skill-libraries/check": {
+      "post": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "(P5-SKLIB-2, C-1124, C-1128) The check before saving an instance library; stores nothing.",
+        "operationId": "checkInstanceSkillLibrary",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckSkillLibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryCheck"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/storage": {
       "get": {
         "tags": [
@@ -29873,7 +30094,7 @@
         "tags": [
           "skill-libraries"
         ],
-        "summary": "List the organization's libraries: owners/admins get everything; other people who can use a\nworkspace get `id`, `label` and `status` of the active ones (the browse picker).",
+        "summary": "List the organization's libraries, then the instance libraries (D-449): owners/admins get\neverything (an instance library with this organization's numbers); other people who can use a\nworkspace get `id`, `label`, `status` and `scope` of the active ones (the browse picker).",
         "operationId": "listSkillLibraries",
         "parameters": [
           {
@@ -29949,7 +30170,7 @@
         "tags": [
           "skill-libraries"
         ],
-        "summary": "Connect a repository as a skill library (org owner/admin).",
+        "summary": "Add a git repository as a skill library (org owner/admin).",
         "operationId": "createSkillLibrary",
         "parameters": [
           {
@@ -30040,6 +30261,111 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/skill-libraries/check": {
+      "post": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "Read a repository like a create would and say what was found; nothing is stored\n(org owner/admin).",
+        "operationId": "checkSkillLibrary",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckSkillLibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryCheck"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
             "content": {
               "application/json": {
                 "schema": {
@@ -33344,7 +33670,7 @@
         "tags": [
           "skill-libraries"
         ],
-        "summary": "Read one library (org owner/admin).",
+        "summary": "Read one library. An organization library: its owner/admin. An instance library: an instance\nadmin (totals), or an owner/admin of an organization with `?org=` (that organization's view);\nanyone else 404.",
         "operationId": "getSkillLibrary",
         "parameters": [
           {
@@ -33352,6 +33678,16 @@
             "in": "path",
             "description": "Library id",
             "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "org",
+            "in": "query",
+            "description": "The organization to read the library as: required for an instance library, optional (and\nequal to the library's organization) for an organization library.",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid"
@@ -33420,7 +33756,7 @@
         "tags": [
           "skill-libraries"
         ],
-        "summary": "Delete the library; every skill added from it is detached and keeps its content.",
+        "summary": "Delete the library; every skill added from it is detached and keeps its content (an instance\nlibrary: in every organization, with an audit row in each).",
         "operationId": "deleteSkillLibrary",
         "parameters": [
           {
@@ -33490,7 +33826,7 @@
         "tags": [
           "skill-libraries"
         ],
-        "summary": "Rename, pause or resume, or change connection, ref or path (re-resolves; stored skills are\nnever touched).",
+        "summary": "Rename, pause or resume, change ref, path or token (re-reads; stored skills are never\ntouched), or set the address of a migrated library that has none.",
         "operationId": "updateSkillLibrary",
         "parameters": [
           {
@@ -33714,6 +34050,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "org",
+            "in": "query",
+            "description": "The organization to browse as: required for an instance library (`added` then lists only\nthat organization's skills the caller can see), optional for an organization library.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -33722,6 +34068,15 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibraryCatalogue"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -33828,6 +34183,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "org",
+            "in": "query",
+            "description": "The organization to read the skill as (required for an instance library).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -33836,6 +34201,15 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibrarySkillContent"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -45909,6 +46283,68 @@
           }
         }
       },
+      "CheckSkillLibraryRequest": {
+        "type": "object",
+        "description": "`POST …/skill-libraries/check` (C-1124): the create body without `label`.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Used for this one read and dropped."
+          },
+          "token_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "CheckSkills": {
+        "type": "object",
+        "required": [
+          "found",
+          "valid",
+          "names"
+        ],
+        "properties": {
+          "found": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The first 20 valid names, sorted (untrusted text)."
+          },
+          "valid": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "ChoiceConnection": {
         "type": "object",
         "required": [
@@ -46853,27 +47289,6 @@
           }
         ],
         "description": "A connection grant seen from the connection (FIX-020, C-504)."
-      },
-      "ConnectionRef": {
-        "type": "object",
-        "required": [
-          "id",
-          "label",
-          "status"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "label": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "description": "`active`, `reauth_required`, `disabled`, …"
-          }
-        }
       },
       "ConnectorAdmin": {
         "type": "object",
@@ -48530,15 +48945,9 @@
         "type": "object",
         "required": [
           "label",
-          "connection_id",
-          "repo"
+          "url"
         ],
         "properties": {
-          "connection_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "An **org-scoped**, active connection of an app that declares a `library` block."
-          },
           "label": {
             "type": "string",
             "description": "1 to 80 characters, unique in the organization."
@@ -48548,18 +48957,32 @@
               "string",
               "null"
             ],
-            "description": "Directory that holds the skill directories (at most 4 segments); default the root."
+            "description": "Directory that holds the skill directories (at most 4 segments); default: from a page\nURL, else the root."
           },
           "ref": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Branch, tag or commit; default the repository's default branch."
+            "description": "Branch, tag or commit; default: from a page URL, else the default branch."
           },
-          "repo": {
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A read-only access token for a private repository (1..1024 printable ASCII)."
+          },
+          "token_username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Basic-auth user name sent with the token; default `x-access-token`."
+          },
+          "url": {
             "type": "string",
-            "description": "`owner/name` (the package's `repo_pattern`)."
+            "description": "The repository's https address or its web page (C-1123)."
           }
         }
       },
@@ -53139,6 +53562,53 @@
           "truncated": {
             "type": "boolean",
             "description": "More than `LIBRARY_BROWSE_MAX` skills: the listing is cut; narrow the folder."
+          }
+        }
+      },
+      "LibraryCheck": {
+        "type": "object",
+        "description": "What a check found (C-1124); nothing was stored.",
+        "required": [
+          "url",
+          "repo",
+          "resolved",
+          "commit_sha",
+          "path",
+          "skills",
+          "truncated",
+          "suggested_label"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "type": "string"
+          },
+          "resolved": {
+            "$ref": "#/components/schemas/ResolvedRef"
+          },
+          "skills": {
+            "$ref": "#/components/schemas/CheckSkills"
+          },
+          "suggested_label": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "More than `LIBRARY_BROWSE_MAX` skill directories: only the first were read."
+          },
+          "url": {
+            "type": "string"
           }
         }
       },
@@ -60164,30 +60634,14 @@
             "type": "array",
             "items": {
               "type": "object",
-              "description": "A skill library. Org owners/admins see every field; other members who can use a workspace of\nthe org get `id`, `label` and `status` of the active libraries (the browse picker).",
+              "description": "A skill library (C-1122). Managers see every field; other members who can use a workspace of\nthe org get `id`, `label`, `status` and `scope` of the active libraries (the browse picker).\nThe access token is never returned: only whether one is set and when.",
               "required": [
                 "id",
+                "scope",
                 "label",
                 "status"
               ],
               "properties": {
-                "app_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "connection": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/ConnectionRef",
-                      "description": "Null when the connection was deleted."
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
                 "created_at": {
                   "type": [
                     "string",
@@ -60222,6 +60676,22 @@
                   ],
                   "format": "date-time"
                 },
+                "org_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "Null for an instance library (and for members)."
+                },
+                "orgs_using": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64",
+                  "description": "An instance library, in its manager's view only: how many organizations have a skill\nadded from it (never which skills)."
+                },
                 "path": {
                   "type": [
                     "string",
@@ -60245,7 +60715,12 @@
                   "type": [
                     "string",
                     "null"
-                  ]
+                  ],
+                  "description": "The display form `host/path` (without `.git`)."
+                },
+                "scope": {
+                  "type": "string",
+                  "description": "`org` | `instance`."
                 },
                 "skill_counts": {
                   "oneOf": [
@@ -60260,6 +60735,27 @@
                 "status": {
                   "type": "string",
                   "description": "`active` | `paused` | `error` | `over_budget`."
+                },
+                "token_set": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "Whether an access token is saved (never the token)."
+                },
+                "token_updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The normalized https clone URL; null for a library migrated without one."
                 }
               }
             }
@@ -61349,13 +61845,6 @@
       "PatchSkillLibraryRequest": {
         "type": "object",
         "properties": {
-          "connection_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
           "label": {
             "type": [
               "string",
@@ -61373,7 +61862,7 @@
               "string",
               "null"
             ],
-            "description": "`null` is not distinguishable from absent; send an empty string to clear the ref."
+            "description": "Send an empty string to clear the ref."
           },
           "status": {
             "type": [
@@ -61381,6 +61870,26 @@
               "null"
             ],
             "description": "`active` | `paused`."
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A new token (set or replace; the repository is read with it first) or `null` (remove)."
+          },
+          "token_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only while the stored address is null (a migrated library); else 409 `library_url_fixed`."
           }
         }
       },
@@ -64781,6 +65290,27 @@
           }
         }
       },
+      "ResolvedRef": {
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "default"
+        ],
+        "properties": {
+          "default": {
+            "type": "boolean",
+            "description": "Whether this is the repository's default branch."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`branch` | `tag` | `commit`."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "ResolvedWorkspace": {
         "type": "object",
         "required": [
@@ -68034,30 +68564,14 @@
       },
       "SkillLibrary": {
         "type": "object",
-        "description": "A skill library. Org owners/admins see every field; other members who can use a workspace of\nthe org get `id`, `label` and `status` of the active libraries (the browse picker).",
+        "description": "A skill library (C-1122). Managers see every field; other members who can use a workspace of\nthe org get `id`, `label`, `status` and `scope` of the active libraries (the browse picker).\nThe access token is never returned: only whether one is set and when.",
         "required": [
           "id",
+          "scope",
           "label",
           "status"
         ],
         "properties": {
-          "app_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "connection": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ConnectionRef",
-                "description": "Null when the connection was deleted."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "created_at": {
             "type": [
               "string",
@@ -68092,6 +68606,22 @@
             ],
             "format": "date-time"
           },
+          "org_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Null for an instance library (and for members)."
+          },
+          "orgs_using": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "An instance library, in its manager's view only: how many organizations have a skill\nadded from it (never which skills)."
+          },
           "path": {
             "type": [
               "string",
@@ -68115,7 +68645,12 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The display form `host/path` (without `.git`)."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`org` | `instance`."
           },
           "skill_counts": {
             "oneOf": [
@@ -68130,6 +68665,27 @@
           "status": {
             "type": "string",
             "description": "`active` | `paused` | `error` | `over_budget`."
+          },
+          "token_set": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether an access token is saved (never the token)."
+          },
+          "token_updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The normalized https clone URL; null for a library migrated without one."
           }
         }
       },

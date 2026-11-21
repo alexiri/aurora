@@ -395,29 +395,6 @@ async fn serve(
     hub.register(handler.link_cache());
     // (P5-WEBHOOK-2, C-912) The outgoing-webhook send ceilings follow the settings live.
     settings.apply_webhook_ceiling_on_change(handler.webhook_ceiling());
-    // (phase 4, P4-GSL, D-149) The skill-library fetch route on the internal port: its own guarded
-    // client (same destination guard and egress proxy as agent requests), the internal secret.
-    let library = Arc::new(aurora_gateway::library_fetch::LibraryFetch {
-        ring: ring.clone(),
-        snapshots: snapshots.clone(),
-        pool: pool.clone(),
-        tokens: tokens.clone(),
-        plaintext: plaintext.clone(),
-        upstream: Arc::new(aurora_gateway::upstream::Upstream::new(
-            guard.clone(),
-            cfg.gateway
-                .egress_proxy
-                .as_deref()
-                .map(aurora_gateway::upstream::EgressProxy::parse)
-                .transpose()?,
-            extra_ca_pem.as_deref(),
-            aurora_gateway::library_fetch::FETCH_TIMEOUT,
-        )?),
-        external_url: cfg.external_url.clone(),
-        scheme: aurora_gateway::pipeline::Scheme::Https,
-        port: 443,
-        limiter: aurora_gateway::library_fetch::Limiter::default(),
-    });
     // (phase 5, P5-UX-14, C-943, SEC-129) The checks of Test that only the gateway can make, through the same
     // destination guard and egress proxy as agent traffic.
     let account_test = Arc::new(aurora_gateway::account_test::AccountTest {
@@ -434,12 +411,11 @@ async fn serve(
             .map(aurora_gateway::upstream::EgressProxy::parse)
             .transpose()?,
         external_url: cfg.external_url.clone(),
-        limiter: aurora_gateway::library_fetch::Limiter::default(),
+        limiter: aurora_gateway::limiter::Limiter::default(),
     });
     let internal = service::traced(
         aurora_gateway::status::readyz_router(outage.clone())
             .merge(aurora_gateway::status::router_with(ring, Some(outage)))
-            .merge(aurora_gateway::library_fetch::router(library))
             .merge(aurora_gateway::account_test::router(account_test))
             .fallback_service(service::ops_router(metrics, Vec::new())),
         service::INTERNAL_TRUST,

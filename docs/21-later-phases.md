@@ -184,6 +184,8 @@ An org connects a repository (through an app connection of a git-hosting
 plugin) as a skill library; only skills added to agents are stored (with commit
 sha); background refresh under a lease; byte budget per agent.
 
+- **Superseded in part (P5-SKLIB-1, D-448, SEC-148):** a library is now an https git URL read by the API itself
+  (no app connection, no manifest `library` block, no gateway route); the paragraph below is the phase 4 record.
 - **Specified (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84).** A library is an org-scoped
   connection of a git-hosting package plus `repo`/`ref`/`path` (`skill_libraries`); a package opts in with
   the manifest block `library` (declarative GET templates and JSON paths, `09 §3.4`; the built-in GitHub

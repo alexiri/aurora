@@ -90,14 +90,14 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // Git skill library (phase 4, P4-GSL). Codes that carry a reason from the git host
   // (`library_unreachable`, `library_unavailable`, `library_skill_invalid`, `library_budget_exceeded`)
   // are shown with the server's message.
-  library_exists: "A library with this label already exists in this organization.",
-  library_limit: "This organization has reached its limit of connected libraries.",
-  library_check_too_soon: "This library was checked a moment ago. Try again in a minute.",
+  library_exists: "This organization already has a library with this label, or with this repository, branch and folder.",
+  library_limit: "This organization has reached its limit of libraries.",
+  // (P5-SKLIB-1, C-1122, C-1123) Libraries are git addresses now; the reason of `library_url_invalid` is in `details.reason`.
+  library_url_invalid: "That is not a repository address Aurora can use. Paste the https address of the repository, or its page in a browser.",
+  library_url_fixed: "The address of a library cannot be changed. Add a new library for another repository.",  library_check_too_soon: "This library was checked a moment ago. Try again in a minute.",
   library_paused: "Resume the library before checking it.",
   library_skill_readonly: "This skill is managed by a skill library. Detach it to edit it.",
   update_superseded: "This update changed or was decided in the meantime. Reload and review it again.",
-  connection_not_org_scoped: "A skill library needs an organization-level connection, not a workspace one.",
-  app_without_library: "This connection's app cannot serve a skill library.",
   commit_required: "Reload the library list so the page knows which commit you are adding.",
   library_tree_too_large: "This repository is too large to list. Connect a narrower folder.",
   skill_libraries_disabled: "Skill libraries are turned off on this instance.",

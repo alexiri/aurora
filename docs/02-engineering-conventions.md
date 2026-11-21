@@ -438,7 +438,10 @@ overridden by the named configuration key (`15`).
 | `LIBRARY_PENDING_BYTES_PER_ORG` | (phase 4, P4-GSL) 4 MiB of open proposed updates per org | — | 10 |
 | `LIBRARY_REFRESH_INTERVAL` / `LIBRARY_LEASE` / `LIBRARY_REFRESH_CONCURRENCY` | (phase 4, P4-GSL) 15 min (minimum 5 min) per library / 5 min lease / 4 refreshes per API replica | `skills.library.refresh_interval_secs` (≥ 300) | 05, 10 |
 | `LIBRARY_CHECK_NOW_INTERVAL` | (phase 4, P4-GSL) 60 s per library | — | 05 |
-| `LIBRARY_FETCH_TIMEOUT` / `LIBRARY_FETCH_RATE` | (phase 4, P4-GSL) 20 s per fetch / 20 per second per gateway, 5 per second per org | — | 06 |
+| `LIBRARY_FETCH_TIMEOUT` | (phase 4, P4-GSL; P5-SKLIB-1: now the API's total time for one repository read) 20 s | — | 10 |
+| `LIBRARY_PACK_MAX` / `LIBRARY_INFLATE_MAX` / `LIBRARY_WANTS_MAX` | (P5-SKLIB-1, C-1125, SEC-148) 32 MiB of answer body per fetch (streamed, stopped at the cap) / 64 MiB inflated bytes of all objects of one pack / 500 object ids wanted in one fetch request | — | 10 |
+| `LIBRARIES_PER_INSTANCE` | (P5-SKLIB-2, C-1128) 20 instance-level skill libraries | — | 10, 05 |
+| (removed) `LIBRARY_FETCH_RATE` | the gateway's library-fetch rate (20 per second per gateway, 5 per organization) went with the route (P5-SKLIB-1); the same limiter now serves the account Test (`06`) | — | 06 |
 | `ADDON_MANIFEST_MAX` / `ADDON_ADDONS_MAX` / `ADDON_VERSIONS_MAX` | (phase 5, P5-ASRC, D-250) 1 MiB per manifest / 100 addons per manifest / 50 versions per addon | — | 09, 22 |
 | `ADDON_LEASE` / `ADDON_CHECK_CONCURRENCY` / `ADDON_FETCH_TIMEOUT` / `ADDON_FAILURE_BACKOFF` | (phase 5, P5-ASRC) 5 min lease per source / 2 checks per replica at once / 20 s per fetch / 1 h backoff after a failed check | `plugins.addon_sources.update_interval` (the schedule itself) | 05, 22 |
 | `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |

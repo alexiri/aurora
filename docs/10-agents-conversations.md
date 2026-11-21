@@ -897,9 +897,9 @@ supervisor prunes by manifest.
 - Agents may create/update/delete their **own agent-tier** skills via tools;
 org skills (and, from phase 3, workspace skills) are dashboard/API-only. (Phase 4, P4-GSL: skills may also come from an org's **git skill library**, below; those are pinned and read-only.)
 
-### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
+### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83; any git URL since P5-SKLIB-1, D-448, SEC-148)
 
-An organization may connect a git repository as a **skill library**: a catalogue of skills
+An organization may add any git repository as a **skill library**: a catalogue of skills
 (`<dir>/SKILL.md` plus files, the format above) that people **add** to agents, workspaces or the
 org. The library is a *source*, never a tier: nothing in a repository reaches an agent until a
 person adds a specific skill at a specific commit, and nothing a later push changes reaches an agent
@@ -907,19 +907,46 @@ until a person approves that exact change.
 
 **Opt-out switch and visibility.** Always available but invisible until used: `skills.library.enabled`
 (default `true`, an instance kill-switch) and an org owner/admin who creates a library. It needs no
-new infrastructure: it uses an **org-scoped app connection of a git-hosting package** (GitHub or
-GitLab built-in, or any package whose manifest has a `library` block, `09 §3.4 library`); reads go
-through the gateway (`06 §Library fetch`).
+new infrastructure and **no app connection or GitHub/GitLab account**: a library is an https git
+address read by the API itself (D-448), the way an addon source is imported from an external repository
+(`22 §The manifest`). Any server that speaks git smart HTTP works (GitHub, GitLab, Gitea, Forgejo,
+Bitbucket, cgit, a plain `git http-backend`).
 
-**Connecting.** Org `owner`/`admin` creates a library: `{ label, connection_id, repo, ref?, path? }`
-where the connection is **org-scoped**, `active`, of an app that declares `library`; `repo` must match
-the package's `repo_pattern`; `ref` (branch, tag or sha; default the repository's default branch)
-matches the ref grammar; `path` is the directory that holds the skill directories (default the root;
-at most 4 segments). Creation performs one `resolve_ref` through the gateway and fails with the
-reason if the repository is unreachable or the connection lacks access (422 `library_unreachable`,
-sanitized). Up to `LIBRARIES_PER_ORG` (10) libraries. The dashboard warns when the connection is not
-read-only (`required_access`): use a read-only token or a deploy key's OAuth equivalent; Aurora only
-ever sends `GET`s.
+**Connecting.** Org `owner`/`admin` creates a library: `{ label, url, ref?, path?, token?, token_username? }`
+(C-1122). `url` is the repository's https address or the page of the repository in a browser (C-1123: a
+trailing `.git`, `/-/tree/<ref>/<path>` and `/tree|blob/<ref>/<path>` page forms are understood, the page's ref
+and folder fill `ref` and `path` when those are absent; `http:`, `git:`, ssh, credentials in the address, a
+query or a fragment are refused, 422 `library_url_invalid` with a `reason`). `ref` (branch, tag or commit; default the
+repository's default branch) matches the ref grammar; `path` is the directory that holds the skill directories
+(default the root; at most 4 segments). **A read before saving:** creation reads the repository (discovery,
+resolve the ref, list the folder) and fails with a fixed reason if it cannot (422 `library_unreachable`:
+"The repository needs an access token", "The access token was refused", "The repository was not found, or the
+token cannot read it", "The branch or tag was not found", the redirect, size, timeout and address reasons of C-1125);
+nothing is stored. `POST /v1/orgs/{org}/skill-libraries/check` (C-1124) does the same read and answers
+what it found (`repo`, resolved ref, `commit_sha`, how many skills are valid, the first names, a suggested label)
+and stores nothing, so the dashboard can show it before **Add library**. The same url, ref and folder in
+one organization is 409 `library_exists`. Up to `LIBRARIES_PER_ORG` (10) libraries.
+
+**The reader (C-1125).** The API fetches with the git smart-HTTP protocol itself (no `git` binary, nothing on
+disk): `GET info/refs?service=git-upload-pack`, protocol v2 `ls-refs` (v0 when that is all the server speaks),
+and `fetch` with `filter blob:none` where advertised (only the `SKILL.md` blobs and a skill's files are then
+asked for by id; a server that refuses blob wants gets a depth-1 pack, bounded). Every request goes through
+`http_instance` (the destination guard: public addresses only unless `gateway.allowed_private` opens one),
+https only, redirects only on discovery and at most 3 (each https and guarded), a total timeout and streamed
+caps on the answer (`LIBRARY_PACK_MAX`, `LIBRARY_INFLATE_MAX`, objects, blob size, delta depth); every
+object id is recomputed and must be what was asked or listed. SHA-256 repositories are refused. The list
+reads only `SKILL.md` blobs, so an oversize *other* file of a skill is refused when the skill is read for
+adding, not in the list.
+
+**Access token (C-1126, SEC-148).** A private repository needs an optional read-only token (`token`, with
+`token_username`, default `x-access-token`, sent as HTTP Basic): sealed with purpose `SkillLibraryToken`
+(`08`), shown nowhere again (the library says only `token_set` and when), sent **only to the library
+address's own origin** (never after a redirect to another origin), opened per read and not kept, never in
+a response, log, audit row (`token: set|replaced|removed`) or `last_error`. `PATCH` with a token replaces it
+(the repository is read with it first; on failure the old one stays), `token: null` removes it (the repository
+is read without it first). After the upgrade from the app-connection model, a library of a private repository
+shows "The repository needs an access token" until an organization admin adds one; skills already added keep
+working.
 
 **Catalogue (browse).** `GET …/skills` reads the library's current head live (resolve → recursive
 tree → each `SKILL.md` for name and description, at most `LIBRARY_BROWSE_MAX` (200) entries,
@@ -963,8 +990,9 @@ uses when they want to edit). Authority for all three is the tier's write author
 **Refresh without surprises** (D-149, SEC-83). A background job (`05 §Background jobs`, under a
 per-library lease) re-reads each library that has at least one added skill, every
 `LIBRARY_REFRESH_INTERVAL` (15 min; 5 min minimum; "Check now" for org admins at most once per
-`LIBRARY_CHECK_NOW_INTERVAL`): `resolve_ref` → if the commit sha is unchanged, stop; otherwise one
-recursive tree call, and for each added skill compare the blob ids of its files with the pinned ones.
+`LIBRARY_CHECK_NOW_INTERVAL`): resolve the ref (discovery and `ls-refs`) → if the commit sha is unchanged,
+stop; otherwise one tree read and one blob read, and for each added skill compare the blob ids of its files
+with the pinned ones (git's own object ids, which are what the pinned rows hold).
 A skill whose files changed, or whose directory vanished, gets a **proposed update**
 (`skill_library_updates`, `03`): the proposed content (`changed`), or a marker (`removed`), or the
 validation failure (`invalid`), with the new commit sha and `content_sha256`. **Nothing is applied.**
@@ -979,11 +1007,40 @@ fact (`status = over_budget`) and stops proposing for that library until space i
 commit sha, bumps the home-sync generation of the affected agents and writes the critical audit row
 `skill.library.update_apply`. `removed` proposals, when approved, remove the skill; **rejecting**
 (`…/reject`) ignores that commit (the same blob set is not proposed again; a later change is). There
-is **no auto-update and no "track the branch" mode in phase 4**. When the connection fails
-(revoked, `reauth_required`, package updated without `library`, repository deleted) or the library is
+is **no auto-update and no "track the branch" mode in phase 4**. When the repository cannot be read
+(it was deleted or made private, the token was revoked, the server is down) or the library is
 deleted, the **pinned skills keep working unchanged**: the library shows `error` or is gone, deleting a
 library **detaches** its skills (they keep their content and a read-only "was from <repo>@<sha>"
 note) rather than deleting instructions agents rely on.
+
+**Instance libraries (P5-SKLIB-2, D-449, C-1128, SEC-149).** An **instance admin** can set up a library for
+the whole installation (`/v1/admin/skill-libraries`, session only): `org_id` is null and every organization
+sees it beside its own libraries. The instance admin curates the **catalogue** (address, branch, folder, the
+token, pause, delete); each **organization still decides skill by skill** what its agents are told and approves
+its own updates, with exactly the authority of the tier it adds at (agent `can_use`, workspace `can_own`, org
+owner/admin, SEC-56 unchanged).
+- **Who manages, who sees.** Only an instance admin's session manages an instance library (an API key never;
+  everyone else, org owners included, gets 404 for its id). An organization's owners/admins see it in their list
+  (every status: a paused one shows as Paused, an organization's own libraries first, then the instance's, each by
+  label); members who can use a workspace see the active ones in their picker. The token is the instance admin's:
+  organizations see only that one is set. There is no per-organization opt-out (open question Q-SKLIB-1).
+- **Browse as an organization.** Browse and content take `?org=<organization>` (required for an instance library:
+  400 without it; 404 when the caller cannot use a workspace of it). The catalogue is the same for every
+  organization and is cached once per library; the "already added" chips are computed per request from **that
+  organization's** skills the caller can see, never cached. Adding works at any tier of any organization.
+- **Numbers are per organization.** An organization's view of an instance library counts only its own skills
+  and pending updates; the instance admin's view has totals and `orgs_using` (how many organizations use it,
+  never which skills).
+- **One refresh for everyone.** The job reads the repository once per pass and writes proposals **per skill**;
+  the open-proposal budget (`LIBRARY_PENDING_BYTES_PER_ORG`) is the **skill's organization's**, taken under that
+  organization's lock. An organization over budget gets a `skill_library_org_state` row and no proposal (its view
+  says "Pending updates over budget"; other organizations still get theirs); freeing space clears it at the
+  next pass. The library's own status (`active`, `paused`, `error`) and its backoff stay library-wide, and a
+  library with any state row is compared again even at an unchanged head.
+- **Deleting** an instance library detaches its skills in **every** organization (their content is unchanged) and
+  deletes the sealed token; the audit trail is one instance row and one `skill_library.delete` row in each
+  organization whose skills were detached, in one transaction. At most `LIBRARIES_PER_INSTANCE` (20) exist.
+- `skills.library.enabled: false` hides instance libraries too.
 
 **Untrusted text.** Everything that comes from the repository (names, descriptions, bodies,
 commit messages, paths, error text) is untrusted: sanitized on load, shown in the dashboard as data

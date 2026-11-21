@@ -1,20 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! P4-GSL (D-148, D-149; SEC-83, SEC-84): the git skill library API against the fake git host
-//! (`aurora_testkit::git_host`) through a gateway stand-in that builds the same requests from the
-//! package's `library` block (`18 §Git skill library`). Real Postgres.
+//! P4-GSL (D-148; SEC-83) and P5-SKLIB-1 (D-448; SEC-148): the git skill library API against a
+//! real git server (`aurora_testkit::git_server`: `git http-backend`), read by the API's own git
+//! reader through the guarded client's test override (`18 §Git skill library`). Real Postgres.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use async_trait::async_trait;
-use aurora_api::domains::skill_libraries::gateway::{
-    FetchOk, FetchRequest, GatewayError, LibraryGateway,
-};
 use aurora_api::domains::skill_libraries::refresh;
 use aurora_db::repo::skill_libraries as repo;
-use aurora_registry::library::{self, Params};
-use aurora_registry::manifest::Library;
-use aurora_testkit::git_host::{Change, FakeGitHost};
+use aurora_testkit::git_server::{Change, GitServer};
 use axum::body::Body;
 use http::{Method, Request};
 use serde_json::{Value, json};
@@ -23,200 +14,47 @@ use uuid::Uuid;
 
 use crate::common::*;
 
-const YAML: &str = r#"package: { id: forge, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: Forge }
-apps:
-  - about: { id: forge, name: Forge, description: D, category: development }
-    credentials: [ { name: access_token, secret: true } ]
-    connect:
-      - id: token
-        kind: fields
-        fields: [ { name: access_token, label: Token, type: secret, required: true } ]
-    hosts:
-      - match: { host: api.forge.example }
-        inject:
-          - bearer: "{credentials.access_token}"
-    library:
-      repo_pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
-      request_host: api.forge.example
-      resolve_ref:
-        path: "/repos/{repo}/commits/{ref}"
-        default_path: "/repos/{repo}"
-        sha: "$.sha"
-        default_branch: "$.default_branch"
-      list_tree:
-        path: "/repos/{repo}/git/trees/{sha}?recursive=1"
-        entries: "$.tree[*]"
-        fields: { path: "$.path", type: "$.type", mode: "$.mode", blob: "$.sha", size: "$.size" }
-        file_type: blob
-        truncated: "$.truncated"
-        paginate: none
-      get_blob:
-        path: "/repos/{repo}/git/blobs/{blob}"
-        content: "$.content"
-        encoding: "$.encoding"
-  - about: { id: forgelab, name: ForgeLab, description: D, category: development }
-    credentials: [ { name: access_token, secret: true } ]
-    connect:
-      - id: token
-        kind: fields
-        fields: [ { name: access_token, label: Token, type: secret, required: true } ]
-    hosts:
-      - match: { host: lab.forge.example, path_prefix: /api/v4 }
-        inject:
-          - bearer: "{credentials.access_token}"
-    library:
-      repo_pattern: "^[A-Za-z0-9_.-]{1,100}(/[A-Za-z0-9_.-]{1,100}){1,19}$"
-      request_host: lab.forge.example
-      resolve_ref:
-        path: "/api/v4/projects/{repo|urlencode}/repository/commits/{ref|urlencode}"
-        default_path: "/api/v4/projects/{repo|urlencode}"
-        sha: "$.id"
-        default_branch: "$.default_branch"
-      list_tree:
-        path: "/api/v4/projects/{repo|urlencode}/repository/tree?recursive=true&per_page=100&ref={sha}"
-        entries: "$[*]"
-        fields: { path: "$.path", type: "$.type", mode: "$.mode", blob: "$.id" }
-        file_type: blob
-        paginate: link_header
-        max_pages: 50
-      get_blob:
-        path: "/api/v4/projects/{repo|urlencode}/repository/blobs/{blob}/raw"
-        encoding: raw
-  - about: { id: plain, name: Plain, description: D, category: development }
-    credentials: [ { name: access_token, secret: true } ]
-    connect:
-      - id: token
-        kind: fields
-        fields: [ { name: access_token, label: Token, type: secret, required: true } ]
-    hosts:
-      - match: { host: plain.forge.example }
-        inject:
-          - bearer: "{credentials.access_token}"
-"#;
+mod git;
+mod instance;
 
-/// The gateway stand-in: the same checks and the same request building as the real route, sent
-/// to the fake git host with a fixed token.
-struct Direct {
-    pool: sqlx::PgPool,
-    base: String,
-    blocks: HashMap<String, Library>,
+/// The https origin every library URL uses; the test override maps it to the git server.
+pub(crate) const GIT_ORIGIN: &str = "https://git.example";
+
+pub(crate) fn url(repo: &str) -> String {
+    format!("{GIT_ORIGIN}/{repo}")
 }
 
-#[async_trait]
-impl LibraryGateway for Direct {
-    async fn fetch(&self, r: &FetchRequest) -> Result<FetchOk, GatewayError> {
-        let row: Option<(Option<Uuid>, String, String)> = sqlx::query_as(
-            "SELECT workspace_id, app_id, status FROM app_connections WHERE id = $1 AND org_id = $2",
-        )
-        .bind(r.connection_id)
-        .bind(r.org_id)
-        .fetch_optional(&self.pool)
-        .await
-        .unwrap();
-        let Some((ws, app, status)) = row else {
-            return Err(GatewayError::ConnectionNotFound);
-        };
-        if ws.is_some() {
-            return Err(GatewayError::Unavailable);
-        }
-        match status.as_str() {
-            "active" => {}
-            "reauth_required" => return Err(GatewayError::Reauth),
-            _ => return Err(GatewayError::Unavailable),
-        }
-        let Some(block) = self.blocks.get(&app) else {
-            return Err(GatewayError::Unavailable);
-        };
-        let p = Params {
-            repo: r.params.repo.clone(),
-            reference: r.params.reference.clone(),
-            sha: r.params.sha.clone(),
-            blob: r.params.blob.clone(),
-            page: r.params.page,
-        };
-        let target = library::build(block, r.step, &p).map_err(|_| GatewayError::Param)?;
-        let resp = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap()
-            .get(format!("{}{target}", self.base))
-            .bearer_auth("tok")
-            .send()
-            .await
-            .map_err(|_| GatewayError::Upstream("the git host could not be reached"))?;
-        let status = resp.status().as_u16();
-        let link = resp
-            .headers()
-            .get("link")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
-        let retry_after = resp
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
-        let body = resp.bytes().await.unwrap().to_vec();
-        if body.len() > r.max_bytes {
-            return Err(GatewayError::Upstream(
-                "the git host's response was too large",
-            ));
-        }
-        Ok(FetchOk {
-            status,
-            link,
-            retry_after,
-            body,
-        })
-    }
+pub(crate) struct W {
+    pub(crate) h: Harness,
+    pub(crate) git: GitServer,
+    pub(crate) org: Uuid,
+    pub(crate) ws: Uuid,
+    pub(crate) agent: Uuid,
+    pub(crate) root: String,
+    pub(crate) owner: String,
+    pub(crate) admin: String,
+    pub(crate) wsowner: String,
+    pub(crate) member: String,
+    pub(crate) unbound: String,
+    pub(crate) nonmember: String,
 }
 
-struct W {
-    h: Harness,
-    git: FakeGitHost,
-    org: Uuid,
-    ws: Uuid,
-    agent: Uuid,
-    root: String,
-    owner: String,
-    admin: String,
-    wsowner: String,
-    member: String,
-    unbound: String,
-    nonmember: String,
-    /// Org-scoped connection of `forge` (GitHub-shaped).
-    conn: Uuid,
-    /// Org-scoped connection of `forgelab` (GitLab-shaped).
-    lab: Uuid,
-}
-
-async fn upload(h: &Harness, admin: &str, yaml: &str) {
-    crate::plugins_lifecycle::Admin::trust(h, admin.to_owned())
-        .await
-        .install(yaml)
-        .await;
-}
-
-fn blocks() -> HashMap<String, Library> {
-    let m = aurora_registry::Manifest::parse(YAML, "0.1.0").unwrap();
-    m.apps
-        .iter()
-        .filter_map(|a| a.library.clone().map(|l| (a.about.id.clone(), l)))
-        .collect()
-}
-
-async fn world_with(mutate: impl FnOnce(&mut aurora_config::ApiConfig) + Send + 'static) -> W {
+pub(crate) async fn world_with(
+    mutate: impl FnOnce(&mut aurora_config::ApiConfig) + Send + 'static,
+) -> W {
     let mut h = Harness::with_config(mutate).await;
-    let git = FakeGitHost::start().await;
-    let state = h.state.clone().with_library_gateway(Arc::new(Direct {
-        pool: h.pool().clone(),
-        base: git.base(),
-        blocks: blocks(),
-    }));
+    let git = GitServer::start().await;
+    // Every https origin is mapped to the git server (the reader still decides by the logical
+    // URL which origin gets the token and which addresses are allowed).
+    let state = h
+        .state
+        .clone()
+        .with_connect_override(&git.base())
+        .with_library_fetch_timeout(std::time::Duration::from_secs(5));
     h.app = test_router(state.clone());
     h.state = state;
     let root = h.user("root@x.io", true).await;
     let root_cookie = cookie(&h.good_session(root).await.1);
-    upload(&h, &root_cookie, YAML).await;
     let org = h.org().await;
     let ws = h.workspace(org).await;
     let mk = |email: &'static str, role: &'static str, ws_role: Option<&'static str>| {
@@ -249,8 +87,6 @@ async fn world_with(mutate: impl FnOnce(&mut aurora_config::ApiConfig) + Send + 
     .execute(h.pool())
     .await
     .unwrap();
-    let conn = connection(&h, org, None, "forge", "active").await;
-    let lab = connection(&h, org, None, "forgelab", "active").await;
     W {
         h,
         git,
@@ -264,37 +100,11 @@ async fn world_with(mutate: impl FnOnce(&mut aurora_config::ApiConfig) + Send + 
         member,
         unbound,
         nonmember,
-        conn,
-        lab,
     }
 }
 
-async fn world() -> W {
+pub(crate) async fn world() -> W {
     world_with(|_| {}).await
-}
-
-async fn connection(h: &Harness, org: Uuid, ws: Option<Uuid>, app: &str, status: &str) -> Uuid {
-    let id = Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref)
-         VALUES ($1,$2,$3,$4,'forge','1.0.0','c','active','x')",
-    )
-    .bind(id)
-    .bind(org)
-    .bind(ws)
-    .bind(app)
-    .execute(h.pool())
-    .await
-    .unwrap();
-    if status != "active" {
-        sqlx::query("UPDATE app_connections SET status = $2 WHERE id = $1")
-            .bind(id)
-            .bind(status)
-            .execute(h.pool())
-            .await
-            .unwrap();
-    }
-    id
 }
 
 fn md(desc: &str, body: &str) -> Vec<u8> {
@@ -328,16 +138,38 @@ impl W {
         self.library_at("lib", "").await
     }
 
+    /// A library over its own copy of the default repository (the same url, ref and folder is
+    /// refused as `library_exists`, so a test that needs several libraries uses copies).
+    async fn library_copy(&self, label: &str) -> Uuid {
+        let repo = format!("acme/copy-{label}");
+        self.git.add_repo(&repo);
+        self.git.commit(
+            &repo,
+            "main",
+            &[
+                put("alpha/SKILL.md", md("Alpha skill", "Alpha body v1")),
+                put("beta/SKILL.md", md("Beta skill", "Beta body v1")),
+            ],
+        );
+        let (s, v) = self
+            .call(
+                &self.admin,
+                Method::POST,
+                &format!("/v1/orgs/{}/skill-libraries", self.org),
+                Some(json!({"label": label, "url": url(&repo)})),
+            )
+            .await;
+        assert_eq!(s, 201, "{v}");
+        v["id"].as_str().unwrap().parse().unwrap()
+    }
+
     async fn library_at(&self, label: &str, path: &str) -> Uuid {
         let (s, v) = self
             .call(
                 &self.admin,
                 Method::POST,
                 &format!("/v1/orgs/{}/skill-libraries", self.org),
-                Some(
-                    json!({"label": label, "connection_id": self.conn, "repo": "acme/skills",
-                    "path": path}),
-                ),
+                Some(json!({"label": label, "url": url("acme/skills"), "path": path})),
             )
             .await;
         assert_eq!(s, 201, "{v}");
@@ -477,7 +309,7 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
     w.seed();
     let org = w.org;
     let list = format!("/v1/orgs/{org}/skill-libraries");
-    let body = json!({"label": "Team skills", "connection_id": w.conn, "repo": "acme/skills"});
+    let body = json!({"label": "Team skills", "url": url("acme/skills")});
     // org owner/admin only
     for who in [&w.member, &w.wsowner, &w.unbound] {
         let (s, v) = w.call(who, Method::POST, &list, Some(body.clone())).await;
@@ -492,9 +324,16 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
         .await;
     assert_eq!(s, 201, "{v}");
     assert_eq!(v["status"], "active");
-    assert_eq!(v["repo"], "acme/skills");
+    assert_eq!(v["scope"], "org");
+    assert_eq!(v["url"], url("acme/skills"));
+    assert_eq!(v["repo"], "git.example/acme/skills");
+    assert_eq!(v["token_set"], false);
+    assert!(v["token_updated_at"].is_null());
     assert_eq!(v["last_head_sha"], w.git.head("acme/skills", "main"));
-    assert_eq!(v["connection"]["id"], w.conn.to_string());
+    assert!(
+        v.get("connection").is_none() && v.get("app_id").is_none(),
+        "{v}"
+    );
     assert_eq!(
         v["skill_counts"],
         json!({"agent": 0, "workspace": 0, "org": 0})
@@ -503,9 +342,18 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
     let id = v["id"].as_str().unwrap().to_owned();
     assert_eq!(w.audit_critical("skill_library.create").await, 1);
 
-    // duplicate label
+    // duplicate label; (C-1122) the same url + ref + path under another label
     let (s, v) = w
         .call(&w.admin, Method::POST, &list, Some(body.clone()))
+        .await;
+    assert_eq!((s, code(&v)), (409, "library_exists"), "{v}");
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &list,
+            Some(json!({"label": "Other label", "url": format!("{}/", url("acme/skills"))})),
+        )
         .await;
     assert_eq!((s, code(&v)), (409, "library_exists"), "{v}");
 
@@ -513,12 +361,17 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
     let (s, v) = w.call(&w.owner, Method::GET, &list, None).await;
     assert_eq!(
         (s, v["items"][0]["repo"].as_str()),
-        (200, Some("acme/skills"))
+        (200, Some("git.example/acme/skills"))
     );
     let (s, v) = w.call(&w.member, Method::GET, &list, None).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["items"][0]["label"], "Team skills");
-    assert!(v["items"][0]["repo"].is_null() && v["items"][0]["connection"].is_null());
+    assert_eq!(v["items"][0]["scope"], "org");
+    assert!(
+        v["items"][0]["repo"].is_null()
+            && v["items"][0]["url"].is_null()
+            && v["items"][0]["token_set"].is_null()
+    );
     let (s, v) = w.call(&w.unbound, Method::GET, &list, None).await;
     assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
     let (s, _) = w
@@ -579,107 +432,118 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
 }
 
 #[tokio::test]
-async fn create_refusals_scope_app_repo_reach_and_limit() {
+async fn create_refusals_address_reach_and_limit() {
     let w = world().await;
     w.seed();
     let list = format!("/v1/orgs/{}/skill-libraries", w.org);
-    let mk = |conn: Uuid, repo: &str, label: &str| json!({"label": label, "connection_id": conn, "repo": repo});
-    // workspace-scoped connection
-    let ws_conn = connection(&w.h, w.org, Some(w.ws), "forge", "active").await;
+    let mk = |u: &str, label: &str| json!({"label": label, "url": u});
+    // (C-1123) every refused address form gives its reason; nothing is read
+    w.git.clear_requests();
+    for (u, reason) in [
+        ("http://git.example/acme/skills", "not_https"),
+        ("git://git.example/acme/skills", "not_https"),
+        ("ssh://git@git.example/acme/skills", "ssh_url"),
+        ("git@git.example:acme/skills.git", "ssh_url"),
+        ("https://u:p@git.example/acme/skills", "credentials_in_url"),
+        ("https://git.example/acme/skills?x=1", "query_or_fragment"),
+        ("https://git.example/", "not_a_repository_path"),
+        ("https://git.example/acme/../x", "not_a_repository_path"),
+    ] {
+        let (s, v) = w
+            .call(&w.admin, Method::POST, &list, Some(mk(u, "a")))
+            .await;
+        assert_eq!((s, code(&v)), (422, "library_url_invalid"), "{u}: {v}");
+        assert_eq!(v["error"]["details"]["reason"], reason, "{u}: {v}");
+    }
+    let long = format!("https://git.example/{}", "a".repeat(500));
     let (s, v) = w
-        .call(
-            &w.admin,
-            Method::POST,
-            &list,
-            Some(mk(ws_conn, "acme/skills", "a")),
-        )
+        .call(&w.admin, Method::POST, &list, Some(mk(&long, "a")))
         .await;
-    assert_eq!((s, code(&v)), (422, "connection_not_org_scoped"), "{v}");
-    // an app without a library block
-    let plain = connection(&w.h, w.org, None, "plain", "active").await;
+    assert_eq!(
+        (s, code(&v), v["error"]["details"]["reason"].as_str()),
+        (422, "library_url_invalid", Some("too_long")),
+        "{v}"
+    );
+    // (SEC-148) an IP-literal host the destination guard refuses is never dialled
     let (s, v) = w
         .call(
             &w.admin,
             Method::POST,
             &list,
-            Some(mk(plain, "acme/skills", "b")),
-        )
-        .await;
-    assert_eq!((s, code(&v)), (422, "app_without_library"), "{v}");
-    // not active
-    let off = connection(&w.h, w.org, None, "forge", "disabled").await;
-    let (s, v) = w
-        .call(
-            &w.admin,
-            Method::POST,
-            &list,
-            Some(mk(off, "acme/skills", "c")),
+            Some(mk("https://10.1.2.3/acme/skills", "b")),
         )
         .await;
     assert_eq!((s, code(&v)), (422, "library_unreachable"), "{v}");
-    // a connection of another organization
-    let other = w.h.org().await;
-    let foreign = connection(&w.h, other, None, "forge", "active").await;
-    let (s, v) = w
-        .call(
-            &w.admin,
-            Method::POST,
-            &list,
-            Some(mk(foreign, "acme/skills", "d")),
-        )
-        .await;
-    assert_eq!((s, code(&v)), (400, "invalid_request"), "{v}");
-    // repository grammar, ref grammar, path grammar
-    for (repo, reference, path) in [
-        ("../x", None, ""),
-        ("acme", None, ""),
-        ("acme/skills", Some("a..b"), ""),
-        ("acme/skills", Some("-x"), ""),
-        ("acme/skills", None, "../up"),
-        ("acme/skills", None, "a/b/c/d/e"),
+    assert_eq!(w.git.requests().len(), 0, "nothing was sent");
+    // ref grammar, path grammar, token and user name rules
+    for (reference, path, token, user) in [
+        (Some("a..b"), "", None, None),
+        (Some("-x"), "", None, None),
+        (None, "../up", None, None),
+        (None, "a/b/c/d/e", None, None),
+        (None, "", Some("has space"), None),
+        (None, "", Some(""), None),
+        (None, "", None, Some("x-access-token")),
+        (None, "", Some("tok"), Some("bad user")),
     ] {
-        let mut b = mk(w.conn, repo, "e");
+        let mut b = mk(&url("acme/skills"), "e");
         b["ref"] = json!(reference);
         b["path"] = json!(path);
+        if let Some(t) = token {
+            b["token"] = json!(t);
+        }
+        if let Some(u) = user {
+            b["token_username"] = json!(u);
+        }
         let (s, v) = w.call(&w.admin, Method::POST, &list, Some(b)).await;
         assert_eq!(
             (s, code(&v)),
             (400, "invalid_request"),
-            "{repo} {reference:?} {path}: {v}"
+            "{reference:?} {path} {token:?} {user:?}: {v}"
         );
     }
+    let mut b = mk(&url("acme/skills"), "e");
+    b["token"] = json!("x".repeat(1025));
+    let (s, v) = w.call(&w.admin, Method::POST, &list, Some(b)).await;
+    assert_eq!((s, code(&v)), (400, "invalid_request"), "{v}");
     // unreachable repository: the reason is shown, sanitized
     let (s, v) = w
         .call(
             &w.admin,
             Method::POST,
             &list,
-            Some(mk(w.conn, "acme/missing", "f")),
+            Some(mk(&url("acme/missing"), "f")),
         )
         .await;
     assert_eq!((s, code(&v)), (422, "library_unreachable"), "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
     assert!(
-        !v["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("127.0.0.1")
+        msg.contains("The repository was not found, or the token cannot read it"),
+        "{v}"
+    );
+    assert!(
+        !msg.contains("127.0.0.1") && !msg.contains("git.example"),
+        "{v}"
     );
     // unknown ref
-    let mut b = mk(w.conn, "acme/skills", "g");
+    let mut b = mk(&url("acme/skills"), "g");
     b["ref"] = json!("nonexistent");
     let (s, v) = w.call(&w.admin, Method::POST, &list, Some(b)).await;
     assert_eq!((s, code(&v)), (422, "library_unreachable"), "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("The branch or tag was not found"),
+        "{v}"
+    );
     assert_eq!(w.count("SELECT count(*) FROM skill_libraries").await, 0);
-    // LIBRARIES_PER_ORG
+    assert_eq!(w.count("SELECT count(*) FROM skill_library_heads").await, 0);
+    // LIBRARIES_PER_ORG (each a different folder: the same url + ref + path is one library)
     for i in 0..10 {
-        let (s, v) = w
-            .call(
-                &w.admin,
-                Method::POST,
-                &list,
-                Some(mk(w.conn, "acme/skills", &format!("l{i}"))),
-            )
-            .await;
+        let mut b = mk(&url("acme/skills"), &format!("l{i}"));
+        b["path"] = json!(format!("p{i}"));
+        let (s, v) = w.call(&w.admin, Method::POST, &list, Some(b)).await;
         assert_eq!(s, 201, "{v}");
     }
     let (s, v) = w
@@ -687,14 +551,17 @@ async fn create_refusals_scope_app_repo_reach_and_limit() {
             &w.admin,
             Method::POST,
             &list,
-            Some(mk(w.conn, "acme/skills", "l10")),
+            Some(mk(&url("acme/skills"), "l10")),
         )
         .await;
     assert_eq!((s, code(&v)), (409, "library_limit"), "{v}");
-    // a ref (branch) and a path are honoured; the GitLab shape works with a nested project
+    // (C-1123) a page URL fills ref and path; a nested GitLab-style project works
     w.git.add_repo("grp/sub/proj");
-    w.git
-        .commit("grp/sub/proj", "main", &[put("s/SKILL.md", md("d", "b"))]);
+    w.git.commit(
+        "grp/sub/proj",
+        "dev",
+        &[put("team/s/SKILL.md", md("d", "b"))],
+    );
     let (s, v) = w
         .call(
             &w.admin,
@@ -712,10 +579,23 @@ async fn create_refusals_scope_app_repo_reach_and_limit() {
             &w.admin,
             Method::POST,
             &list,
-            Some(mk(w.lab, "grp/sub/proj", "gl")),
+            Some(mk(
+                &format!("{GIT_ORIGIN}/grp/sub/proj/-/tree/dev/team"),
+                "gl",
+            )),
         )
         .await;
     assert_eq!(s, 201, "{v}");
+    assert_eq!(
+        (v["url"].as_str(), v["ref"].as_str(), v["path"].as_str()),
+        (
+            Some(url("grp/sub/proj").as_str()),
+            Some("dev"),
+            Some("team")
+        ),
+        "{v}"
+    );
+    assert_eq!(v["last_head_sha"], w.git.head("grp/sub/proj", "dev"));
 }
 
 #[tokio::test]
@@ -735,7 +615,7 @@ async fn the_kill_switch_hides_the_feature_and_stops_the_job() {
                 &w.admin,
                 m,
                 &uri,
-                Some(json!({"label": "x", "connection_id": w.conn, "repo": "a/b"})),
+                Some(json!({"label": "x", "url": url("acme/skills")})),
             )
             .await;
         assert_eq!(
@@ -799,20 +679,15 @@ async fn browse_is_live_stores_nothing_is_cached_and_marks_untrusted_text() {
     };
     assert_eq!(by("alpha")["valid"], true);
     assert_eq!(by("alpha")["description"], "Alpha skill");
-    for bad in [
-        "linked",
-        "Bad_Name",
-        "nofm",
-        "mismatch",
-        "big",
-        "aurora-reserved",
-    ] {
+    for bad in ["linked", "Bad_Name", "nofm", "mismatch", "aurora-reserved"] {
         assert_eq!(by(bad)["valid"], false, "{bad}");
         assert!(
             by(bad)["reason"].as_str().is_some_and(|r| !r.is_empty()),
             "{bad}"
         );
     }
+    // (the list reads only SKILL.md blobs, `filter blob:none`: an oversize *other* file is not
+    // known there, and is refused when the skill is read: see the content request below)
     assert!(by("linked")["reason"].as_str().unwrap().contains("symlink"));
     assert!(
         items.iter().all(|i| i["path"] != "notaskill"),
@@ -903,20 +778,46 @@ async fn browse_is_live_stores_nothing_is_cached_and_marks_untrusted_text() {
 }
 
 #[tokio::test]
-async fn browse_follows_pagination_and_a_truncated_tree_is_refused() {
+async fn a_repository_over_the_tree_limit_is_refused_but_a_folder_of_it_can_be_read() {
     let w = world().await;
     w.git.add_repo("grp/proj");
-    let changes: Vec<Change> = (0..12)
-        .map(|i| put(&format!("s{i:02}/SKILL.md"), md(&format!("Skill {i}"), "b")))
+    let mut changes: Vec<Change> = (0..12)
+        .map(|i| {
+            put(
+                &format!("s/s{i:02}/SKILL.md"),
+                md(&format!("Skill {i}"), "b"),
+            )
+        })
         .collect();
+    changes.push(Change::Fill(
+        "big".into(),
+        aurora_core::limits::LIBRARY_TREE_MAX + 1,
+        b"x".to_vec(),
+    ));
     w.git.commit("grp/proj", "main", &changes);
-    w.git.set_page_size(5);
+    let list = format!("/v1/orgs/{}/skill-libraries", w.org);
+    // the whole repository is over LIBRARY_TREE_MAX: refused with advice to narrow the folder
     let (s, v) = w
         .call(
             &w.admin,
             Method::POST,
-            &format!("/v1/orgs/{}/skill-libraries", w.org),
-            Some(json!({"label": "gl", "connection_id": w.lab, "repo": "grp/proj"})),
+            &list,
+            Some(json!({"label": "whole", "url": url("grp/proj")})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "library_tree_too_large"), "{v}");
+    assert_eq!(
+        w.count("SELECT count(*) FROM skill_libraries").await,
+        0,
+        "nothing stored"
+    );
+    // a folder that is small enough reads and browses
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &list,
+            Some(json!({"label": "s", "url": url("grp/proj"), "path": "s"})),
         )
         .await;
     assert_eq!(s, 201, "{v}");
@@ -931,21 +832,6 @@ async fn browse_follows_pagination_and_a_truncated_tree_is_refused() {
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["items"].as_array().unwrap().len(), 12);
-    assert!(w.git.count("page=3") >= 1, "three pages were read");
-    // GitHub shape: a truncated listing is refused with advice to narrow the folder
-    let w2 = world().await;
-    w2.seed();
-    let lib = w2.library().await;
-    w2.git.set_truncated(true);
-    let (s, v) = w2
-        .call(
-            &w2.admin,
-            Method::GET,
-            &format!("/v1/skill-libraries/{lib}/skills"),
-            None,
-        )
-        .await;
-    assert_eq!((s, code(&v)), (422, "library_tree_too_large"), "{v}");
 }
 
 #[tokio::test]
@@ -955,16 +841,16 @@ async fn browse_errors_are_reasons_never_credentials() {
     let mut libs = Vec::new();
     // one library row per round: no browse cache between rounds
     for label in ["r404", "r401", "r429", "r500", "redir"] {
-        libs.push((label, w.library_at(label, "").await));
+        libs.push((label, w.library_copy(label).await));
     }
     for (label, status, needle) in [
-        ("r404", 404, "not found"),
-        ("r401", 401, "rejected"),
+        ("r404", 404, "was not found"),
+        ("r401", 401, "needs an access token"),
         ("r429", 429, "rate limiting"),
         ("r500", 500, "status 500"),
     ] {
         w.git.clear_overrides();
-        w.git.override_status("/commits/", status);
+        w.git.override_status("/info/refs", status, None);
         let id = libs.iter().find(|(l, _)| *l == label).unwrap().1;
         let (s, v) = w
             .call(
@@ -977,11 +863,14 @@ async fn browse_errors_are_reasons_never_credentials() {
         assert_eq!((s, code(&v)), (502, "library_unavailable"), "{status}: {v}");
         let m = v["error"]["message"].as_str().unwrap();
         assert!(m.contains(needle), "{status}: {m}");
-        assert!(!m.contains("tok") && !m.contains("Bearer") && !m.contains("127.0.0.1"));
+        assert!(!m.contains("Basic") && !m.contains("Bearer") && !m.contains("127.0.0.1"));
     }
-    // a redirect is reported, never followed
+    // a redirect to an address that is not https is refused, never followed
     w.git.clear_overrides();
-    w.git.redirect("/commits/", "http://evil.example/");
+    w.git.redirect(
+        "/info/refs",
+        "http://evil.example/acme/skills/info/refs?service=git-upload-pack",
+    );
     let id = libs.iter().find(|(l, _)| *l == "redir").unwrap().1;
     let (s, v) = w
         .call(
@@ -992,7 +881,13 @@ async fn browse_errors_are_reasons_never_credentials() {
         )
         .await;
     assert_eq!((s, code(&v)), (502, "library_unavailable"), "{v}");
-    assert!(v["error"]["message"].as_str().unwrap().contains("redirect"));
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("redirected to an address that is not allowed"),
+        "{v}"
+    );
 }
 
 // ---- add ------------------------------------------------------------------------------------
@@ -1018,13 +913,20 @@ async fn add_pins_the_exact_requested_commit_even_when_the_head_moved() {
     assert_eq!(v["source"]["commit_sha"], sha1);
     assert_eq!(
         (v["source"]["repo"].as_str(), v["source"]["path"].as_str()),
-        (Some("acme/skills"), Some("alpha"))
+        (Some("git.example/acme/skills"), Some("alpha"))
     );
     assert_eq!(v["source"]["detached"], false);
-    // a different head is never fetched
-    assert_eq!(w.git.count(&format!("/trees/{sha2}")), 0);
+    // a different head is never fetched: every fetch asks for the quoted commit only
+    let _ = &sha2;
+    for r in w.git.requests().iter().filter(|r| r.method == "POST") {
+        let body = String::from_utf8_lossy(&r.body);
+        assert!(
+            !body.contains(&sha2),
+            "the newer head was asked for: {body}"
+        );
+    }
     assert_eq!(
-        w.git.count("/commits/"),
+        w.git.ls_refs(),
         0,
         "no ref is resolved when a commit is quoted"
     );
@@ -1079,7 +981,7 @@ async fn add_pins_the_exact_requested_commit_even_when_the_head_moved() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         (v["commit_sha"].as_str(), v["library"]["repo"].as_str()),
-        (Some(sha1.as_str()), Some("acme/skills"))
+        (Some(sha1.as_str()), Some("git.example/acme/skills"))
     );
     assert!(v["update"].is_null());
 }
@@ -1364,7 +1266,7 @@ async fn library_skills_are_read_only_through_every_route() {
             .method(m)
             .uri(format!("{one}/files/{p}"))
             .header("cookie", &w.admin)
-            .header("origin", ORIGIN)
+            .header("origin", crate::common::ORIGIN)
             .header("content-type", "application/octet-stream")
             .body(Body::from("new"))
             .unwrap();
@@ -1467,7 +1369,7 @@ async fn detach_and_library_deletion_keep_the_content() {
             v["source"]["detached"].as_bool(),
             v["source"]["repo"].as_str()
         ),
-        (Some(true), Some("acme/skills"))
+        (Some(true), Some("git.example/acme/skills"))
     );
     let (s, _) = w
         .call(
@@ -1497,9 +1399,17 @@ async fn refresh_unchanged_head_costs_one_call_and_changes_nothing() {
     let before = w.snapshot().await;
     w.git.clear_requests();
     w.refresh(lib).await;
-    assert_eq!(w.git.count("/commits/"), 1, "one resolve_ref");
-    assert_eq!(w.git.count("/trees/"), 0);
-    assert_eq!(w.git.requests().len(), 1);
+    assert_eq!(w.git.ls_refs(), 1, "one ref resolution");
+    assert_eq!(
+        w.git.fetches(),
+        0,
+        "nothing is fetched for an unchanged head"
+    );
+    assert_eq!(
+        w.git.requests().len(),
+        2,
+        "one discovery and one ls-refs, nothing else"
+    );
     let l = w.library_row(lib).await;
     assert_eq!(l["status"], "active");
     assert!(l["last_refresh_at"].is_string());
@@ -1752,7 +1662,7 @@ async fn refresh_errors_back_off_and_leave_pinned_skills_alone() {
     w.add_org(lib, "alpha", &sha).await;
     let before = w.snapshot().await;
     // the git host fails: error with a reason, 15 min -> 1 h -> 6 h
-    w.git.override_status("/commits/", 500);
+    w.git.override_status("/info/refs", 500, None);
     let mut waits = Vec::new();
     for _ in 0..4 {
         w.refresh(lib).await;
@@ -1779,65 +1689,33 @@ async fn refresh_errors_back_off_and_leave_pinned_skills_alone() {
         (Some("active"), true),
         "{l}"
     );
-    // connection revoked / reauth_required / deleted, package without a library
-    sqlx::query("UPDATE app_connections SET status = 'reauth_required' WHERE id = $1")
-        .bind(w.conn)
-        .execute(w.h.pool())
-        .await
-        .unwrap();
+    // the repository is gone (404) or turned private (401): a fixed reason, pinned skills untouched
+    w.git.override_status("/info/refs", 404, None);
     w.refresh(lib).await;
     let l = w.library_row(lib).await;
-    assert_eq!(l["status"], "error");
-    assert!(
-        l["last_error"]
-            .as_str()
-            .unwrap()
-            .contains("reauth_required"),
+    assert_eq!(l["status"], "error", "{l}");
+    assert_eq!(
+        l["last_error"], "The repository was not found, or the token cannot read it",
         "{l}"
     );
-    sqlx::query("UPDATE app_connections SET status = 'active' WHERE id = $1")
-        .bind(w.conn)
-        .execute(w.h.pool())
-        .await
-        .unwrap();
-    sqlx::query("UPDATE skill_libraries SET app_id = 'plain' WHERE id = $1")
-        .bind(lib)
-        .execute(w.h.pool())
-        .await
-        .unwrap();
-    w.refresh(lib).await;
-    assert!(
-        w.library_row(lib).await["last_error"]
-            .as_str()
-            .unwrap()
-            .contains("no longer supports")
-    );
-    sqlx::query("UPDATE skill_libraries SET app_id = 'forge' WHERE id = $1")
-        .bind(lib)
-        .execute(w.h.pool())
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM app_connections WHERE id = $1")
-        .bind(w.conn)
-        .execute(w.h.pool())
-        .await
-        .unwrap();
+    w.git.clear_overrides();
+    w.git.require_token("x-access-token", "secret-pw");
     w.refresh(lib).await;
     let l = w.library_row(lib).await;
     assert_eq!(
         (l["status"].as_str(), l["last_error"].as_str()),
-        (Some("error"), Some("connection_deleted")),
+        (Some("error"), Some("The repository needs an access token")),
         "{l}"
     );
-    assert!(l["connection"].is_null());
+    assert!(!l.to_string().contains("secret-pw"));
     assert_eq!(
         w.snapshot().await,
         before,
         "pinned skills keep working unchanged"
     );
-    // the daily retention also marks a library whose connection vanished
-    let (_, m) = refresh::retention(&w.h.state).await.unwrap().unwrap();
-    assert_eq!(m, 0, "already marked");
+    // the daily retention runs without touching a library that cannot be read
+    let _ = refresh::retention(&w.h.state).await.unwrap();
+    assert_eq!(w.library_row(lib).await["status"], "error");
 }
 
 #[tokio::test]
@@ -1966,11 +1844,12 @@ async fn open_proposals_are_bounded_per_organization() {
     assert_eq!(w.library_row(lib).await["status"], "active");
 }
 
-/// FIX-066: a pass cut short by the budget must not record the head it was comparing — or a
-/// later pass at the same head (e.g. after an intervening error/active flip) would short-circuit
-/// as "unchanged" and never compare the skills the pass did not reach.
+/// FIX-066, D-449: an organization over its open-proposal budget gets no proposal and a
+/// `skill_library_org_state` row (the library's own status stays `active`; the organization's view
+/// says `over_budget`); a library with a state row is compared again even at an unchanged head,
+/// so the skipped skill is proposed on the pass after the space is freed, and the row goes.
 #[tokio::test]
-async fn over_budget_pass_does_not_advance_the_head_and_the_next_pass_compares_the_rest() {
+async fn over_budget_pass_gives_the_org_a_state_row_and_the_next_pass_compares_the_rest() {
     let w = world().await;
     let sha = w.seed();
     let lib = w.library().await;
@@ -1986,41 +1865,55 @@ async fn over_budget_pass_does_not_advance_the_head_and_the_next_pass_compares_t
         &[put("alpha/SKILL.md", md("Alpha v2", "v2"))],
     );
     w.refresh(lib).await;
+    // the organization's view says over budget; the library's own status does not
     assert_eq!(w.library_row(lib).await["status"], "over_budget");
+    let own: String = sqlx::query_scalar("SELECT status FROM skill_libraries WHERE id = $1")
+        .bind(lib)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        own, "active",
+        "the library's status never becomes over_budget"
+    );
+    assert_eq!(
+        w.count(&format!(
+            "SELECT count(*) FROM skill_library_org_state WHERE library_id = '{lib}' AND org_id = '{}'",
+            w.org
+        ))
+        .await,
+        1
+    );
+    assert_eq!(
+        w.pending(alpha).await["update"],
+        Value::Null,
+        "no proposal while over budget"
+    );
     let recorded: Option<String> =
         sqlx::query_scalar("SELECT last_head_sha FROM skill_libraries WHERE id = $1")
             .bind(lib)
             .fetch_one(w.h.pool())
             .await
             .unwrap();
-    assert_ne!(
+    assert_eq!(
         recorded.as_deref(),
         Some(head.as_str()),
-        "a partial pass records no head"
+        "the head is recorded"
     );
-    // The state an intervening pass would leave (status back to active, same head), and the
-    // space freed: the remaining skill is compared on the next pass.
-    sqlx::query("UPDATE skill_libraries SET status = 'active' WHERE id = $1")
-        .bind(lib)
-        .execute(w.h.pool())
-        .await
-        .unwrap();
+    // space freed: the same head is compared again because the state row exists
     sqlx::query("DELETE FROM skill_library_updates")
         .execute(w.h.pool())
         .await
         .unwrap();
     w.refresh(lib).await;
     assert_eq!(w.pending(alpha).await["update"]["kind"], "changed");
-}
-
-/// A gateway that never answers (a stalled git host).
-struct Stall;
-
-#[async_trait]
-impl LibraryGateway for Stall {
-    async fn fetch(&self, _r: &FetchRequest) -> Result<FetchOk, GatewayError> {
-        std::future::pending().await
-    }
+    assert_eq!(w.library_row(lib).await["status"], "active");
+    assert_eq!(
+        w.count("SELECT count(*) FROM skill_library_org_state")
+            .await,
+        0,
+        "the row is deleted once the organization fits again"
+    );
 }
 
 /// FIX-066: a stalled refresh gives up inside its bound (below the lease), records the failure
@@ -2051,11 +1944,12 @@ async fn a_stalled_refresh_gives_up_before_the_lease_and_releases_it() {
             .unwrap()
             .is_empty()
     );
-    let stalled = w.h.state.clone().with_library_gateway(Arc::new(Stall));
+    // A git host that never answers.
+    w.git.slow("", std::time::Duration::from_secs(3600));
     tokio::time::timeout(
         std::time::Duration::from_secs(20),
         refresh::refresh_library_within(
-            &stalled,
+            &w.h.state,
             mine.remove(0),
             a,
             std::time::Duration::from_millis(300),
@@ -2110,12 +2004,19 @@ async fn concurrent_creates_at_the_cap_admit_exactly_one() {
     let w = world().await;
     w.seed();
     for i in 0..9 {
-        w.library_at(&format!("l{i}"), "").await;
+        w.library_copy(&format!("l{i}")).await;
+    }
+    for i in 0..4 {
+        w.git.add_repo(&format!("acme/race{i}"));
+        w.git.commit(
+            &format!("acme/race{i}"),
+            "main",
+            &[put("alpha/SKILL.md", md("Alpha skill", "b"))],
+        );
     }
     let uri = format!("/v1/orgs/{}/skill-libraries", w.org);
     let results = futures::future::join_all((0..4).map(|i| {
-        let body = json!({"label": format!("race{i}"), "connection_id": w.conn,
-            "repo": "acme/skills", "path": ""});
+        let body = json!({"label": format!("race{i}"), "url": url(&format!("acme/race{i}"))});
         w.call(&w.admin, Method::POST, &uri, Some(body))
     }))
     .await;
@@ -2374,14 +2275,11 @@ async fn sec_83_a_failing_or_removed_library_leaves_pinned_skills_as_they_were()
     w.add_agent(lib, "beta", &sha).await;
     let before = w.snapshot().await;
     // repository deleted, token revoked, library deleted: nothing the agents are told moves
-    w.git.override_status("/", 404);
+    w.git.override_status("/", 404, None);
     w.refresh(lib).await;
     assert_eq!(w.library_row(lib).await["status"], "error");
-    sqlx::query("UPDATE app_connections SET status = 'disabled' WHERE id = $1")
-        .bind(w.conn)
-        .execute(w.h.pool())
-        .await
-        .unwrap();
+    w.git.clear_overrides();
+    w.git.require_token("x-access-token", "revoked-elsewhere");
     w.refresh(lib).await;
     assert_eq!(w.snapshot().await, before);
     let (s, _) = w
@@ -2707,24 +2605,12 @@ async fn parallel_cold_browses_share_one_read() {
         assert_eq!(s, 200, "{v}");
         assert_eq!(v["items"].as_array().unwrap().len(), 2);
     }
-    assert_eq!(w.git.count("/git/trees/"), 1, "one tree read");
-    assert_eq!(w.git.count("/git/blobs/"), 2, "one read per SKILL.md");
-    assert_eq!(w.git.count("/commits/"), 1, "one ref resolution");
-}
-
-/// A gateway whose git host always answers 429 with `Retry-After: 120`.
-struct Throttle;
-
-#[async_trait]
-impl LibraryGateway for Throttle {
-    async fn fetch(&self, _r: &FetchRequest) -> Result<FetchOk, GatewayError> {
-        Ok(FetchOk {
-            status: 429,
-            link: None,
-            retry_after: Some("120".into()),
-            body: Vec::new(),
-        })
-    }
+    assert_eq!(w.git.count("/info/refs"), 1, "one discovery");
+    assert_eq!(
+        w.git.fetches(),
+        2,
+        "one tree fetch and one blob fetch for all the SKILL.md files"
+    );
 }
 
 /// FIX-096: a git-host 429 is not a failure of the library: no failure counted, no `error`
@@ -2735,7 +2621,8 @@ async fn git_host_throttling_is_not_a_failure_and_honours_retry_after() {
     let sha = w.seed();
     let lib = w.library().await;
     add_org_id(&w, lib, "alpha", &sha).await;
-    let throttled = w.h.state.clone().with_library_gateway(Arc::new(Throttle));
+    // The git host always answers 429 with `Retry-After: 120`.
+    w.git.override_status("", 429, Some("120"));
     for _ in 0..3 {
         sqlx::query("UPDATE skill_libraries SET next_refresh_at = now() - interval '1 second', refresh_lease_until = NULL, lease_owner = NULL WHERE id = $1")
             .bind(lib)
@@ -2746,7 +2633,7 @@ async fn git_host_throttling_is_not_a_failure_and_honours_retry_after() {
         let mut c = w.h.pool().acquire().await.unwrap();
         let mut mine = repo::claim_due(&mut c, owner, 4, 300.0).await.unwrap();
         assert_eq!(mine.len(), 1);
-        refresh::refresh_library(&throttled, mine.remove(0), owner).await;
+        refresh::refresh_library(&w.h.state, mine.remove(0), owner).await;
     }
     let (status, failures, ahead): (String, i32, f64) = sqlx::query_as(
         "SELECT status, refresh_failures, extract(epoch FROM next_refresh_at - now())::float8
@@ -2760,26 +2647,67 @@ async fn git_host_throttling_is_not_a_failure_and_honours_retry_after() {
     assert!((100.0..=130.0).contains(&ahead), "next attempt in {ahead}s");
 }
 
+/// SEC-148: a private repository is read with the sealed token as Basic auth, a refresh uses it
+/// too, and the token never shows in a response, `last_error` or an audit row.
 #[tokio::test]
-async fn refresh_reads_the_host_with_the_host_credential_only_through_the_stand_in() {
-    // the API never sees a token: the request carries no credential of its own and the
-    // stand-in gateway adds the fixed one
+async fn refresh_reads_a_private_repository_with_the_sealed_token_and_never_shows_it() {
+    use base64::Engine;
     let w = world().await;
-    w.seed();
-    w.git.expect_authorization("Bearer tok");
-    let lib = w.library().await;
+    let sha = w.seed();
+    w.git.require_token("x-access-token", "s3cret-tok");
+    let list = format!("/v1/orgs/{}/skill-libraries", w.org);
     let (s, v) = w
         .call(
             &w.admin,
-            Method::GET,
-            &format!("/v1/skill-libraries/{lib}/skills"),
-            None,
+            Method::POST,
+            &list,
+            Some(json!({"label": "priv", "url": url("acme/skills")})),
         )
         .await;
-    assert_eq!(s, 200, "{v}");
-    for r in w.git.requests() {
-        assert_eq!(r.method, "GET");
-        assert_eq!(r.authorization.as_deref(), Some("Bearer tok"));
+    assert_eq!((s, code(&v)), (422, "library_unreachable"), "no token: {v}");
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &list,
+            Some(json!({"label": "priv", "url": url("acme/skills"), "token": "s3cret-tok"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["token_set"], true);
+    assert!(!v.to_string().contains("s3cret-tok"));
+    let lib: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    w.add_org(lib, "alpha", &sha).await;
+    w.git.clear_requests();
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("alpha/SKILL.md", md("A2", "v2"))],
+    );
+    w.refresh(lib).await;
+    let want = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode("x-access-token:s3cret-tok")
+    );
+    let reqs = w.git.requests();
+    assert!(!reqs.is_empty());
+    for r in &reqs {
+        assert_eq!(
+            r.authorization.as_deref(),
+            Some(want.as_str()),
+            "{}",
+            r.target
+        );
     }
+    // a refused token is recorded as a fixed text, not the token
+    w.git.require_token("x-access-token", "rotated");
+    w.refresh(lib).await;
+    let row = w.library_row(lib).await;
+    assert_eq!(row["status"], "error", "{row}");
+    assert!(!row.to_string().contains("s3cret-tok"), "{row}");
+    let leaked: i64 = w
+        .count("SELECT count(*) FROM audit_log WHERE metadata::text LIKE '%s3cret-tok%'")
+        .await;
+    assert_eq!(leaked, 0, "no audit row carries the token");
     let _ = w.root;
 }

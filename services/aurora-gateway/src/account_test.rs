@@ -45,7 +45,7 @@ pub struct AccountTest {
     pub guard: Arc<Guard>,
     pub egress: Option<EgressProxy>,
     pub external_url: String,
-    pub limiter: crate::library_fetch::Limiter,
+    pub limiter: crate::limiter::Limiter,
 }
 
 #[derive(Deserialize)]

@@ -744,7 +744,17 @@ package (unknown key; packages that use it declare `min_core` of the release tha
 introduces it), which fails closed. The linter also rejects unknown keys inside `grants` and
 non-boolean values. Both flags are copied into the snapshot's `apps[].grants` (`§9`).
 
-#### `library` (phase 4, P4-GSL, D-148, D-149, SEC-84)
+#### `library` (phase 4, P4-GSL, D-148, D-149, SEC-84; **ignored since P5-SKLIB-1, D-448**)
+
+> **Ignored.** A skill library is no longer served through an app: it is an https git URL that the API
+> reads itself (`10 §Git skill library`, C-1122..C-1125), so no app, connection or credential is involved
+> and the gateway route this block fed (`06 §Library fetch`) is gone. The key stays in contract 1 (an
+> existing third-party package that carries it still installs; contract changes are additive), it is still
+> parsed and linted as below, and **nothing uses it**; the linter adds the warning `library_ignored`
+> (`aurora plugin validate` prints it, `check-builtin.sh` fails a built-in package on it). The built-in
+> `github` (2.4.2) and `gitlab` (1.4.3) packages dropped their blocks. The text below describes what the
+> block still accepts, for packages that carry it.
+
 ```yaml
 library:                                  # optional, per app: "this app is a git host that can serve a skill library"
   repo_pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"   # what an admin may type as the repository
@@ -770,7 +780,7 @@ library:                                  # optional, per app: "this app is a gi
 Optional, per app; **absent = the app cannot serve a library** (no existing package changes). The
 block is **data, not code**: three GET request templates, a ref grammar and JSON-path extractors
 (the `json` decoder of `§4`, no hooks, no new mechanism), so the core stays integration-neutral
-(SEC-33; the built-in GitHub and GitLab packages are the first users, **GitLab** with the
+(SEC-33; the built-in GitHub and GitLab packages were the only users, **GitLab** with the
 repository tree endpoint paginated by `link_header` and the blob endpoint `encoding: raw`, a
 project path URL-encoded by the template function `{repo|urlencode}`). Rules (the linter enforces
 them; ids in the errors are `library_*`):
@@ -1049,7 +1059,8 @@ if any of:
 - (phase 4, P4-GSL) `library` violating the rules of `§3.4 library` (`library_host_not_exact`,
   `library_no_credential`, `library_path_placeholder`, `library_repo_pattern`, `library_json_path`, `library_method`,
   unknown keys or non-conforming values), or `library` on an app without a credential that can
-  authenticate requests to `request_host`;
+  authenticate requests to `request_host` (and, since P5-SKLIB-1, the **warning** `library_ignored` on any
+  package that still carries the block: it is parsed, never used);
 - (phase 5, P5-GUIDE-1) the agent guide rules of `24 §3`: `agent.summary` longer than
   `AGENT_SUMMARY_MAX` or not one line (`agent_summary_too_long`, `agent_summary_multiline`),
   `guide` without `summary` (`agent_summary_required`); a guide entry whose `file` does not match
