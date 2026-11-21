@@ -99,7 +99,10 @@ for (const scheme of ["light", "dark"] as const) {
       await expect(sidebar.getByTestId("scope-switcher")).toHaveCount(0);
       await expect(page.getByText("Select organization")).toHaveCount(0);
       await expect(page.getByTestId("level-badge")).toHaveCount(0);
-      await expect(sidebar.getByRole("link", { name: "Administration" })).toHaveAttribute("aria-current", "page");
+      // (P5-REFINE-20 batch 4) Inside Administration the rail's header names it once ("You're in Administration"): the
+      // sidebar's own Administration entry is gone there.
+      await expect(sidebar.getByText("Administration", { exact: true }).first()).toBeVisible();
+      await expect(sidebar.getByRole("link", { name: /^Administration/ })).toHaveCount(0);
       await sidebar.getByRole("link", { name: "Back to Acme Labs" }).click();
       await expect(page).toHaveURL(/\/o\/acme\/w\/team-3$/);
       expect(errors).toEqual([]);
