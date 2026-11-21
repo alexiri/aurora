@@ -38,7 +38,9 @@ pub async fn show(
     section: Option<&str>,
     as_json: bool,
 ) -> Result<String, ApiError> {
-    let rows = repo::list_all(&state.pool).await.map_err(ApiError::from)?;
+    let rows = repo::list_all_named(&state.pool)
+        .await
+        .map_err(ApiError::from)?;
     let (stored, meta) = stored_from_rows(&rows);
     let eff = state
         .settings

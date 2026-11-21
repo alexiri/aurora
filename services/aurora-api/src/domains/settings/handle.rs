@@ -237,7 +237,7 @@ impl SettingsHandle {
 
     /// Re-read every row, validate the merged view and swap. A failure keeps the old snapshot.
     pub async fn reload(&self, pool: &PgPool, service: &'static str) -> Result<(), ReloadError> {
-        let rows = repo::list_all(pool)
+        let rows = repo::list_all_named(pool)
             .await
             .map_err(|e| ReloadError::Database(e.to_string()))?;
         let (stored, meta) = stored_from_rows(&rows);

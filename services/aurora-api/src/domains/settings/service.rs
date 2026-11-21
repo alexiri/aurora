@@ -1244,7 +1244,7 @@ pub async fn apply(
         // The error may have come after COMMIT was sent (outcome unknown): discard only what the
         // stored rows do not reference; when they cannot be read, keep everything (a leaked
         // sealed value is harmless, a discarded live one is not).
-        if let Ok(rows) = repo::list_all(&state.pool).await {
+        if let Ok(rows) = repo::list_all_named(&state.pool).await {
             let mut live = Vec::new();
             for row in &rows {
                 collect_secrets(&row.value, &mut live);
@@ -1331,7 +1331,7 @@ async fn apply_inner(
         });
     }
     // The merged view of every section, with the new values in place, must be valid.
-    let rows = repo::list_all(&mut *tx).await.map_err(dberr)?;
+    let rows = repo::list_all_named(&mut *tx).await.map_err(dberr)?;
     let (mut stored, _) = stored_from_rows(&rows);
     overlay(&mut stored, &changed);
     let after = match h.evaluate(&stored) {
@@ -1480,7 +1480,7 @@ pub async fn proposed_effective(
     section: &str,
     values: &Map<String, Value>,
 ) -> Result<Effective, ApiError> {
-    let rows = repo::list_all(&state.pool).await.map_err(dberr)?;
+    let rows = repo::list_all_named(&state.pool).await.map_err(dberr)?;
     let row = rows.iter().find(|r| r.section == section);
     let plan = plan_section(state, section, row, values, false, true, &mut Vec::new()).await?;
     let (stored, _) = stored_from_rows(&rows);
@@ -1501,7 +1501,7 @@ pub async fn preview(
 ) -> Result<SettingsPreview, ApiError> {
     section_def(section)?;
     let h = &state.settings;
-    let rows = repo::list_all(&state.pool).await.map_err(dberr)?;
+    let rows = repo::list_all_named(&state.pool).await.map_err(dberr)?;
     let row = rows.iter().find(|r| r.section == section);
     let current = row.map_or(0, |r| r.generation);
     if generation != current {
@@ -2063,7 +2063,7 @@ pub fn import_requests(
 
 /// Dry run of an import: each section's diff, loosening and warnings, and the errors per section.
 pub async fn import_dry_run(state: &AppState, reqs: &[SectionRequest]) -> ImportResult {
-    let rows = repo::list_all(&state.pool).await.unwrap_or_default();
+    let rows = repo::list_all_named(&state.pool).await.unwrap_or_default();
     let mut sections_out = Vec::new();
     let mut errors = Vec::new();
     for r in reqs {
@@ -2106,7 +2106,7 @@ async fn preview_import(
 ) -> Result<SettingsPreview, ApiError> {
     // The same computation as a preview, with the import's normalisation (locked keys ignored with a warning).
     let h = &state.settings;
-    let rows = repo::list_all(&state.pool).await.map_err(dberr)?;
+    let rows = repo::list_all_named(&state.pool).await.map_err(dberr)?;
     let row = rows.iter().find(|r| r.section == section);
     let plan = plan_section(state, section, row, values, true, true, &mut Vec::new()).await?;
     let (stored_before, _) = stored_from_rows(&rows);
@@ -2149,7 +2149,7 @@ pub async fn reset(
 ) -> Result<Vec<Value>, ApiError> {
     section_def(section)?;
     let h = &state.settings;
-    let rows = repo::list_all(&state.pool).await.map_err(dberr)?;
+    let rows = repo::list_all_named(&state.pool).await.map_err(dberr)?;
     let stored_all = stored_from_rows(&rows).0;
     let stored: Map<String, Value> = stored_all
         .sections
