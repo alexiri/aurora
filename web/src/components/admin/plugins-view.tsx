@@ -68,7 +68,7 @@ function SentenceText({ text }: { text: string }) {
   const code = (s: string) =>
     s.split(/`([^`]+)`/).map((part, i) =>
       i % 2 === 1 ? (
-        <code key={i} className="font-mono text-[0.9em]">
+        <code key={i} className="font-mono">
           {part}
         </code>
       ) : (
