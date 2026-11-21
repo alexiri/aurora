@@ -48,6 +48,10 @@ impl ApiError {
 /// `stream.open` budget; `16 §W18` connect timeout 10 s).
 const PREVIEW_HTTP_TIMEOUT: Duration = aurora_core::limits::PREVIEW_CONNECT_TIMEOUT;
 
+/// (C-620, C-796, C-1058) The keep-awake stamp, relative to `base` (`…/v1/runner`): the route is
+/// `POST /v1/runner/terminal/keep-awake`.
+const KEEP_AWAKE_PATH: &str = "/terminal/keep-awake";
+
 #[derive(Debug, Clone, Copy)]
 pub struct RetryPolicy {
     pub attempts: u32,
@@ -288,20 +292,28 @@ impl ApiClient {
     ///
     /// (P4-SSH-2, C-796) `ssh` stamps `ssh_active_until` instead (`kind: "ssh"`; an older API
     /// ignores the field and stamps the terminal column, which is harmless).
+    ///
+    /// (P5-REFINE-20 batch 5) The route is `POST /v1/runner/terminal/keep-awake`, and `base`
+    /// already ends in `/v1/runner`: until this batch the path here repeated `/runner`, every
+    /// stamp was a 404 nobody saw, and an open terminal or SSH session never held the computer
+    /// awake. A refused stamp is now logged (at most one per half grace per sandbox and kind).
     pub async fn keep_awake(&self, sandbox: Uuid, ssh: bool) {
         let body = if ssh {
             serde_json::json!({ "sandbox_id": sandbox, "kind": "ssh" })
         } else {
             serde_json::json!({ "sandbox_id": sandbox })
         };
-        let _ = self
+        if let Err(e) = self
             .once::<_, serde_json::Value>(
                 Method::POST,
-                "/runner/terminal/keep-awake",
+                KEEP_AWAKE_PATH,
                 Some(&body),
                 Some(PREVIEW_HTTP_TIMEOUT),
             )
-            .await;
+            .await
+        {
+            tracing::warn!(sandbox_id = %sandbox, ssh, error = %e, "keep-awake stamp failed");
+        }
     }
 
     /// Single attempt: tool calls are not idempotent.

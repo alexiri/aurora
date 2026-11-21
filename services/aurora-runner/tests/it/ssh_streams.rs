@@ -22,7 +22,9 @@ use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 use uuid::Uuid;
 use wiremock::MockServer;
 
-use crate::stream_support::{close_code_slow, data, dial, frame, next_leg, next_msg, silent};
+use crate::stream_support::{
+    KEEP_AWAKE, close_code_slow, data, dial, frame, next_leg, next_msg, silent,
+};
 use crate::terminal_streams::{
     Client, WINDOW, close_code, connect_supervisor, mount_runner_api, next_text, rig,
 };
@@ -67,7 +69,7 @@ async fn open_leg(sup: &mut Client, st: std::net::SocketAddr) -> (Client, u32) {
 
 fn keep_awakes(reqs: &[wiremock::Request]) -> Vec<Value> {
     reqs.iter()
-        .filter(|r| r.url.path().ends_with("/terminal/keep-awake"))
+        .filter(|r| r.url.path() == KEEP_AWAKE)
         .map(|r| serde_json::from_slice(&r.body).unwrap())
         .collect()
 }
