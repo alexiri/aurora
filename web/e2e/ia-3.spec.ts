@@ -100,6 +100,10 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByRole("button", { name: "Save" }).dispatchEvent("click");
         expect((await put).postDataJSON().document.llm.endpoints.gateway.allowed_models).toEqual(["claude-haiku"]);
         await expect(page.getByText(/Saved\./)).toBeVisible();
+        // The fold is still there after the save (the page re-reads its rules, and the fold comes back collapsed).
+        const fold = page.getByTestId("models-above");
+        await expect(fold).toBeVisible();
+        if (!(await fold.evaluate((d) => (d as HTMLDetailsElement).open))) await fold.locator("summary").click();
         await expect(above).toContainText("Only keys an administrator approved");
         await expect(page.getByRole("tab")).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
