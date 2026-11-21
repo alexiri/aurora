@@ -499,6 +499,28 @@ Fill in per pass (the owner reads this):
     `pnpm typecheck`, eslint on touched dirs, `cargo fmt --check`, `extract-schema --check`, `guards/run-all.sh`, clippy
     `-D warnings` on aurora-db and aurora-api all clean. Not run: Playwright, the full vitest suite.
 
+- **Pass 7** (2026-11-21, master `23a42a70` (all of batch 10); cluster `aurora-r20` on :4720, lane `p5-platform`; rebuilt
+  `dev api web`, 354 s, no new migration):
+  - Counts (119 findings): Match 119 / Minor 0 / Needs changes 0 / Not checked 0 / Accepted 0.
+  - Batch 10: the starter-key card's button stays in its card at 768–1280 (Match); "Paused by Erin · Last run" (Match); the
+    agent, workspace and organization pause banners and Admin › Settings "Last change" name the person ("Paused by Erin",
+    "Paused by Alice Admin", "Last change: Alice Admin, …"; Match); Chat at 768–1023 shows the thread alone with its back arrow
+    and the rail, so Live, Send and the callout fit (Match for what b10#2 named).
+  - Outside the 119, found: at 768–900 the thread header's three lines (title, "Conversations", the two-line privacy line)
+    overflow its 64 px: the title is cut at the card's edge and the last line sits on the border (Needs changes); in the list
+    view at 768–1023 the list pushes the status rail out of the card, and focusing the rail scrolls the card 56 px sideways
+    (Needs changes); the starter-key card's dot alone on its own line at 768–~860 (Minor, pre-existing).
+  - Smoke, both themes: Chat at 390/768/900/1024/1280 (three agents: the callout, automation threads, no key), Apps & access
+    at the same widths, the three pause banners with a paused item, Admin › Settings: no horizontal scroll, no axe violation,
+    no console error, no `/v1` error.
+  - Report path: `docs/audit/ux-review-5-verify/REPORT-pass7.md` (screenshots in `docs/audit/ux-review-5-verify/pass7/`, not in git).
+  - Change list sent: batch 11 (3 items, all lane A, with the worker_done message): 1 the thread header at 768–900, 2 the rail
+    in the list view at 768–1023, 3 the card's dot. Two further ideas in the report (the Chat page scrolls 64 px below 1280,
+    allowed by docs/14's 1280×800 rule; the agent Settings sub-navigation at 768), not sent.
+  - Fixed in this lane (Scope 7): none (every difference is in a file a lane owns).
+  - UX review 4 regressions: none found.
+  - Exit not reached (two Needs changes and one Minor outside the 119); the cluster stays up for pass 8.
+
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
   - Report path: `UXR5/verify/REPORT-pass<N>.md`
