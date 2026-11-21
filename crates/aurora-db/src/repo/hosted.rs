@@ -1269,6 +1269,19 @@ pub async fn model_basis(
     .await?)
 }
 
+/// (C-1100) Whether the secret is a workspace key (`Some(true)`), an organization key (`Some(false)`), or gone (`None`).
+pub async fn secret_is_workspace_key(
+    conn: &mut PgConnection,
+    secret: Uuid,
+) -> Result<Option<bool>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT workspace_id IS NOT NULL FROM secrets WHERE id = $1")
+            .bind(secret)
+            .fetch_optional(conn)
+            .await?,
+    )
+}
+
 /// Queued turns of an agent as `(turn id, conversation id)`.
 pub async fn queued_turns_of_agent(
     conn: &mut PgConnection,

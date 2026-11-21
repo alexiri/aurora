@@ -824,6 +824,9 @@ pub async fn finish_turn(
     if let Some(u) = &row.usage {
         payload["usage"] = u.clone();
     }
+    if let Some(class) = ai_key_class(&mut *conn, turn_id).await? {
+        payload["ai_key"] = json!(class);
+    }
     transcript::append_durable_event(
         &mut *conn,
         row.conversation_id,
@@ -834,6 +837,46 @@ pub async fn finish_turn(
     .await?;
     promote_followups(&mut *conn, turn_id).await?;
     Ok(Some(row))
+}
+
+/// (C-1100) The class of the key a turn ran on, from the secret the dispatcher recorded in `turns.model_basis.key_id`:
+/// `workspace`; `starter` (an organization key the saved placement hands to every new agent of the organization, as
+/// C-1049); `organization`. `None` when nothing was recorded or the secret is gone. A class, never a name.
+async fn ai_key_class(
+    conn: &mut PgConnection,
+    turn_id: Uuid,
+) -> Result<Option<&'static str>, ApiError> {
+    let Some((org, Some(basis))) =
+        aurora_db::repo::hosted::model_basis(&mut *conn, turn_id).await?
+    else {
+        return Ok(None);
+    };
+    let Some(key) = basis
+        .get("key_id")
+        .and_then(Value::as_str)
+        .and_then(|s| Uuid::parse_str(s).ok())
+    else {
+        return Ok(None);
+    };
+    let Some(is_workspace) =
+        aurora_db::repo::hosted::secret_is_workspace_key(&mut *conn, key).await?
+    else {
+        return Ok(None);
+    };
+    if is_workspace {
+        return Ok(Some("workspace"));
+    }
+    let starter = match aurora_db::repo::placement::get(&mut *conn).await? {
+        Some(p)
+            if p.mode == "shared_org" && p.personal_enabled && p.default_org_id == Some(org) =>
+        {
+            crate::domains::placement::service::starter_ids(&p)
+                .0
+                .contains(&key)
+        }
+        _ => false,
+    };
+    Ok(Some(if starter { "starter" } else { "organization" }))
 }
 
 /// Promote every `joining` follow-up of `parent` into queued turns (the first becomes the active

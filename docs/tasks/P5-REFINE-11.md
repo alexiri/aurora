@@ -514,8 +514,10 @@ Lane A, branch `alexiri/p5-polish-a`, master at 6cbf3a12 then re-merged at 4c92c
     `RailContext.terminalAvailable/sshAvailable` are now unused (kept to avoid churn).
   - Header: a computer that failed to start reads "Can't answer: its computer couldn't start" (not in the brief's word list; "Ready" would be false).
   - First-success keys are dashed (`first-answer`, …) because the API accepts only lowercase letters, digits and dashes (so no question to the Orchestrator was needed).
-    The first-answer card does not name the key ("thought with the Company key"): members cannot see it; it says "changed nothing outside this chat" only when the
-    turn used no tools, else "answered and used N tools". The cards sit at the end of the transcript (under the latest rows), not pinned under the exact event.
+    The first-answer card says "It thought with the Company key" only when the turn ran on the organization's starter key (C-1100, 2026-11-21:
+    `turn.finished.ai_key` = `starter` | `organization` | `workspace`, a class and never a name); another key reads "your own AI key" / "this workspace's AI key" /
+    "an AI key your organization added", and when the record does not say the clause is dropped ("Daneel answered and changed nothing outside this chat."). It says
+    "changed nothing outside this chat" only when the turn used no tools, else "answered and used N tools". The cards sit at the end of the transcript (under the latest rows), not pinned under the exact event.
     A card appears only for a success from the last 24 hours.
   - chat-9: no "Replying to …" line — `SearchItem` carries no reply information (needs an API field). Titles of direct chats stay "Direct chat" until -7 auto-titles.
   - chat-7: the error event's `message` and the agent bubble that repeats it (same turn, text equal to or contained in the message) are handled client-side; -7's split event makes it cleaner.

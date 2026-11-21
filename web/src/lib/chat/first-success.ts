@@ -14,8 +14,11 @@ export const FIRST_SUCCESS_KEYS: readonly FirstSuccessKey[] = ["first-answer", "
 /** A success older than this is history, not news: a person who has used the product for weeks sees no card for an old chat. */
 export const FIRST_SUCCESS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/** (C-1100) The class of the key a turn ran on, `turn.finished.ai_key`. Never a name. */
+export type AiKeyClass = "starter" | "organization" | "workspace";
+
 export type FirstSuccess =
-  | { key: "first-answer"; tools: number }
+  | { key: "first-answer"; tools: number; /** The key the answering turn ran on; `null` when the API did not say. */ aiKey: AiKeyClass | null }
   | { key: "first-app"; appId: string; appName: string }
   | { key: "first-approval" }
   | { key: "first-run"; title: string; at: string; /** The run's own thread (C-1074), when this card is not inside it. */ conversationId?: string };
@@ -41,7 +44,8 @@ export function pendingFirstSuccesses(
     const turn = done.find((e) => fresh(e) && events.some((x) => x.type === "text" && str(x.payload.turn_id) === str(e.payload.turn_id)));
     if (turn) {
       const tools = events.filter((x) => x.type === "tool.started" && str(x.payload.turn_id) === str(turn.payload.turn_id)).length;
-      out.push({ key: "first-answer", tools });
+      const k = str(turn.payload.ai_key);
+      out.push({ key: "first-answer", tools, aiKey: k === "starter" || k === "organization" || k === "workspace" ? k : null });
     }
   }
   if (!seen.includes("first-app")) {
@@ -57,6 +61,29 @@ export function pendingFirstSuccesses(
     if (last) out.push({ key: "first-run", title: conversation.title || "The schedule", at: last.ts });
   }
   return out;
+}
+
+/**
+ * The first-answer card's sentence. It names the key only as far as the turn's own record says (C-1100): the Company key
+ * for the organization's starter key, "your own AI key" or "this workspace's AI key" for a key of the workspace, "an AI key
+ * your organization added" for another organization key, and nothing when the record does not say. "Changed nothing outside
+ * this chat" is said only when the turn used no tools.
+ */
+export function answerSentence(agentName: string, tools: number, aiKey: AiKeyClass | null, personalWorkspace: boolean): string {
+  if (tools > 0) return `${agentName} answered and used ${tools} ${tools === 1 ? "tool" : "tools"}.`;
+  const key =
+    aiKey === "starter"
+      ? "the Company key"
+      : aiKey === "workspace"
+        ? personalWorkspace
+          ? "your own AI key"
+          : "this workspace's AI key"
+        : aiKey === "organization"
+          ? "an AI key your organization added"
+          : null;
+  return key
+    ? `${agentName} answered. It thought with ${key} and changed nothing outside this chat.`
+    : `${agentName} answered and changed nothing outside this chat.`;
 }
 
 /**

@@ -372,6 +372,8 @@ pub enum Selection {
         /// (P5-MODELS-1) Set when agent roles were dropped: the dispatcher stores this back
         /// (`Some(None)` clears the agent's roles). Selection itself writes nothing.
         stored_roles: Option<Option<Value>>,
+        /// (C-1100) The secret the selection chose; `None` for the scripted `fake` harness. Stored in the basis.
+        key_id: Option<Uuid>,
     },
     /// No usable key. The message lists reason counts, never key names (C-501).
     NoKey { message: String },
@@ -1372,6 +1374,7 @@ pub async fn select(
             },
             notices: vec![],
             stored_roles: None,
+            key_id: None,
         });
     }
     let llm = state.llm();
@@ -1428,15 +1431,20 @@ pub async fn select(
         ),
         notices,
         stored_roles: r.roles.as_ref().and_then(|rr| rr.stored_after_drop.clone()),
+        key_id: Some(k.secret.id),
     })
 }
 
 /// (P5-MODELS-2, D-304) What the dispatcher chose for a turn, stored with it (`turns.model_basis`): the
 /// trust rule at turn end reads the default and the roles from here, never from the harness.
-pub fn basis_of(c: &ModelChoice) -> Value {
+pub fn basis_of(c: &ModelChoice, key_id: Option<Uuid>) -> Value {
     let mut b = serde_json::json!({
         "provider": c.provider, "endpoint_id": c.endpoint_id, "model": c.model,
     });
+    // (C-1100) Which key the turn ran on; `finish_turn` turns it into the class `turn.finished.ai_key`.
+    if let Some(k) = key_id {
+        b["key_id"] = serde_json::json!(k);
+    }
     if let Some(r) = &c.roles {
         b["roles"] = serde_json::json!(r.set().map(|(_, m)| m).collect::<Vec<_>>());
     }

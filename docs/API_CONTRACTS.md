@@ -2342,6 +2342,10 @@ Data (add to `docs/03-data-model.md` `user_onboarding`): row `| more_controls | 
   - The path is validated as for `PUT` (relative, `[A-Za-z0-9._/-]`, depth at most 4, no `.` or `..` segment, no `SKILL.md` segment): a bad path is 400 `validation_failed` with `/path`. A path the skill does not have is 404 `not_found` ("Skill file not found."); a skill id that is not visible is 404. A file is looked up by the pair (skill id, path), so a path of another skill is never reachable through this skill's id.
   - The list of a skill's file paths is the `files` array of `GET /v1/skills/{id}` (`path`, `size`, `executable`); no change to it. No audit row (a read).
   - The dashboard's agent export (`docs/14` Expert speed) reads each file of a skill with it and writes it to `skills/<name>/<path>` beside `SKILL.md`.
+- C-1100 **Which key answered** (P5-REFINE-20 item 14 follow-up; amends `10 §Transcript events` and `05 §Turn and transcript persistence rules`). No column, no migration.
+  - `turns.model_basis` gains `key_id` (uuid string): the secret the dispatcher's selection chose (`readiness.keys[default.key]`), written with the rest of the basis. Never returned by any route.
+  - The durable `turn.finished` event payload gains optional `ai_key: "starter" | "organization" | "workspace"`, computed in `finish_turn` from `key_id`: a key with a `workspace_id` is `workspace`; else `starter` when the saved placement (`mode = shared_org`, `personal_enabled`, default organization = the agent's) lists it among its starter secrets (C-1049's rule); else `organization`. Absent when there is no `key_id`, no such secret, or the turn is not a hosted `turn`. It is a class only (no name, no id), so it is readable by exactly those who may read the transcript (SEC-143's rule); the dashboard says "the Company key" only for `starter`.
+  - Not in `usage`, not on `Turn`; the openapi schema is unchanged (event payloads are free-form objects).
 
 ## Shared schemas
 

@@ -306,6 +306,7 @@ async fn arm6_dispatch(
             choice,
             mut notices,
             stored_roles,
+            key_id,
         } = sel
         else {
             continue;
@@ -314,7 +315,7 @@ async fn arm6_dispatch(
             continue;
         }
         // (P5-MODELS-2, D-304) What the turn may legitimately have used: the trust rule at turn end reads it.
-        hosted::set_model_basis(tx, turn.id, &model::basis_of(&choice)).await?;
+        hosted::set_model_basis(tx, turn.id, &model::basis_of(&choice, key_id)).await?;
         // (P5-MODELS-1, `08 §Model roles` drop rule) Roles that are no longer usable are cleared once, with
         // the notice below; they are never re-pointed.
         if let Some(rest) = &stored_roles {

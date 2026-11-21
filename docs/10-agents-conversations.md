@@ -391,7 +391,7 @@ generically.
 | `attachment`                                                 | yes     | `{ turn_id, attachment_id, filename, size, caption? }` (agent `send_file`)          |
 | `notice`                                                     | yes     | `{ code, text }` — platform-authored only                                           |
 | `error`                                                      | yes     | `{ turn_id, code, message, detail? }` ((phase 5, P5-REFINE-7, C-1076) `detail`: the technical line, ≤ 2 000 characters) |
-| `turn.finished`                                              | yes     | `{ turn_id, status, error_code?, usage? }`                                          |
+| `turn.finished`                                              | yes     | `{ turn_id, status, error_code?, usage?, ai_key? }` ((phase 5, C-1100) `ai_key`: `starter` \| `organization` \| `workspace`, the class of the key the turn ran on) |
 
 
 No vendor concept may appear in this vocabulary; adapters translate.
