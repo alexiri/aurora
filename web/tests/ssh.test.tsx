@@ -190,7 +190,7 @@ describe("SshPage", () => {
       ...over,
     });
 
-  it("leads with the Aurora command (the handle, not the id) and shows the plain ssh command with the id kept out of sight", async () => {
+  it("leads with the Aurora command (the handle, not the id) and shows the plain ssh command with the id in full", async () => {
     base();
     // The host key and the sessions are Expert (D-406, `ssh.sessions`).
     wrap(<SshPage agentId={AGENT} agentName="Daneel" agentHandle="daneel" frozen={false} />, { moreControls: true });
@@ -198,11 +198,11 @@ describe("SshPage", () => {
     expect(screen.getByRole("heading", { name: "Connect to Daneel's computer" })).toBeInTheDocument();
     expect(screen.getByText("With the Aurora command line:")).toBeInTheDocument();
     expect(screen.getByLabelText("the aurora ssh command").textContent).toBe("aurora ssh daneel");
-    // The terminator still wants the agent id as the user name: the block shows an ellipsis, Copy command has the whole line.
+    // The terminator still wants the agent id as the user name: the block shows it, exactly what Copy puts on the clipboard.
     expect(screen.getByLabelText("the ssh command").textContent).toBe(
-      "ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 …@ssh.example.org",
+      `ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 ${AGENT}@ssh.example.org`,
     );
-    expect(screen.getByRole("button", { name: "Copy command" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy the ssh command" })).toBeInTheDocument();
     expect(screen.getByText(/Port forwarding, agent forwarding and X11 are not available/)).toBeInTheDocument();
     // D-434, FIX-199: a quiet session stays open while the client is connected (its keepalives count).
     expect(
@@ -213,12 +213,12 @@ describe("SshPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("copies the full command, with the id, from Copy command", async () => {
+  it("copies the full command, with the id, from Copy", async () => {
     base();
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     wrap(<SshPage agentId={AGENT} agentName="Daneel" agentHandle="daneel" frozen={false} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Copy command" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Copy the ssh command" }));
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith(
         `ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 ${AGENT}@ssh.example.org`,

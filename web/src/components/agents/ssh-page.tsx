@@ -128,10 +128,10 @@ function SshContent({ agentId, agentName, agentHandle }: { agentId: string; agen
   const name = agentName ?? "the agent";
   const handle = agentHandle ?? agentId;
   const file = certFileName(handle);
-  // The terminator still takes the agent id as the user name (C-1060): a handle command would not connect, so the id stays
-  // behind Copy and the block shows an ellipsis in its place.
+  // The terminator still takes the agent id as the user name (C-1060; FIX-208 makes it the handle): the block shows the id
+  // in full, so a command typed from the screen connects too (owner, 2026-11-21).
   const port = f.port === 22 ? "" : ` -p ${f.port}`;
-  const plainFor = (user: string) => `ssh -i ~/.ssh/aurora-${handle} -o CertificateFile=~/.ssh/${file}${port} ${user}@${f.host}`;
+  const plainCommand = `ssh -i ~/.ssh/aurora-${handle} -o CertificateFile=~/.ssh/${file}${port} ${agentId}@${f.host}`;
   const error = mint.error;
   const rateLimited = error instanceof ApiError && error.code === "ssh_mint_rate_limited";
 
@@ -219,7 +219,7 @@ function SshContent({ agentId, agentName, agentHandle }: { agentId: string; agen
                   : (sshErrorText(error) ?? errorMessage(error))}
               </Notice>
             ) : null}
-            <CopyBlock text={plainFor(agentId)} display={plainFor("…")} label="the ssh command" />
+            <CopyBlock text={plainCommand} label="the ssh command" />
           </div>
         </div>
       </Section>

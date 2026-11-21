@@ -31,7 +31,7 @@ export function CopyButton({ text, label, className }: { text: string; label: st
 /**
  * A command or a few lines, monospace, with a Copy button. Long lines wrap inside the block (never scroll the page, 390 px).
  */
-export function CopyBlock({ text, label, display }: { text: string; label: string; /** What the block shows when it differs from what Copy puts on the clipboard (an id kept out of sight). */ display?: string }) {
+export function CopyBlock({ text, label }: { text: string; label: string }) {
   return (
     <div className="space-y-1.5">
       <pre
@@ -39,10 +39,10 @@ export function CopyBlock({ text, label, display }: { text: string; label: strin
         aria-label={label}
         className="max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink"
       >
-        {display ?? text}
+        {text}
       </pre>
       <div className="flex flex-wrap items-center gap-2">
-        <CopyButton text={text} label={display ? "command" : label} />
+        <CopyButton text={text} label={label} />
       </div>
     </div>
   );
