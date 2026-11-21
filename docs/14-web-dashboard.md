@@ -1221,7 +1221,7 @@ unified by D-407 (P5-REFINE-1).
 | **Accepted**, **Refused: wrong signature**, **Refused: paused**, **Duplicate, ignored** | accepted (as a word), rejected_signature, disabled | a webhook delivery's outcome | Set up |
 | **Answered**, **Skipped by the gate**, **Failed**, **Running** | fired, gated_quiet, gate_failed | a schedule run's outcome | Set up |
 | **Only wake when a check finds something**, **Keep running without you** | Gate command, Anchor to workspace, Keep running if I leave | a schedule's condition and who it belongs to | Set up (the check, in Advanced); Expert (the menu item) |
-| **Every 5 minutes**, **Hourly**, **Every day**, **Weekdays**, **Weekly**, **Custom** | Cron, cron expression (outside Custom) | how often a schedule runs | Use (Custom: Expert) |
+| **Every 5 minutes**, **Hourly**, **Every day**, **Weekdays**, **Weekly**, **Custom** | Cron, cron expression (outside Custom) | how often a schedule runs | Use |
 | **How to call it** | curl command, webhook docs | what a sender must send to a webhook | Set up |
 | **New automation** | New schedule, New webhook (as header buttons) | the one button of the Automations page | Use |
 | **Which service is this key for?** | Provider endpoint | the choice in the AI key dialog | Set up |
@@ -2366,7 +2366,6 @@ which wraps it with the id given.
 | `agent.handle` | the agent's @handle line | Expert | Now |
 | `policy.restrict`, `policy.try` | "Restrict further…" (the "Set for you by" ladder detail stays), "Try a request" | Set up | Now |
 | `policy.presets` | Open / Balanced / Locked down | Set up | Now |
-| `auto.cron` | the raw cron field | Expert | Later: P5-REFINE-14 |
 | `auto.gate`, `auto.anchor` | "Only run when…", "Keep running if I leave" | Expert | Now |
 | `auto.curl`, `auto.signature` | webhook call detail, Copy as curl, signature recipe | Expert | Later: P5-REFINE-14 / 19 |
 | `auto.deliveryids` | delivery ids, raw payload sizes, a webhook test's answer code | Expert | Now |
@@ -2582,14 +2581,15 @@ Schedules · Webhooks · Chats** with counts, and one list. Empty: "No automatio
   defaults to the workspace's (its name in the option). The summary under it ("Every day at 09:00 · next: tomorrow 09:00 (Zurich
   time). Schedules run at most every 5 minutes.") takes the next run times from the API preview (`POST …/schedules/preview`,
   rate class `check`: the input is debounced for 1 s and an answer is cached for 60 s). **Custom** keeps the 5-field cron in a
-  monospace field (**Expert**; without the person's switch it is disabled with "Custom needs more controls · Show") and flags a cron that
+  monospace field (D-443: Custom is a preset like the others, enabled for anyone who can edit the schedule; choosing it shows the
+  cron field beside the zone, leaving it hides it, what was typed is kept; no altitude, no switch) and flags a cron that
   runs more often than every 5 minutes as you type ("Too often: a schedule can run at most every 5 minutes. Try */5 * * * *.");
   the API stays the authority. **Advanced** (Set up, collapsed): "Only wake when a check finds something" with the command, and
   "Keep running without you". A cron the presets do not cover reads "Custom schedule", with the raw cron under Technical details.
 - **Every year and Once** (phase 5, P5-SCHED-ONCE Part C, D-421, D-407, C-1092): the **When** row is **Every 5 minutes · Hourly ·
   Every day · Weekdays · Weekly · Every year · Once · Custom**. **Every year** is a day of the month, a month and a time (cron
   `M H D Mo *`; "Every year on 27 November at 10:00 · next: 27 Nov 2027 (Zurich time)"); **Once** is a date (default tomorrow)
-  and a time (default 09:00), sent as `run_at` (a local `YYYY-MM-DDTHH:MM`, no cron): "Once, on Sat 21 Nov at 09:00 (Zurich
+  and a time (default 09:00) on one line with the zone (a `DateField` the width of a date; they wrap only on a phone), sent as `run_at` (a local `YYYY-MM-DDTHH:MM`, no cron): "Once, on Sat 21 Nov at 09:00 (Zurich
   time)". Both use the same time zone select as the other presets. The Once instant is previewed through the API's `run_at`
   preview as you type, and a past time reads "Pick a time in the future" and disables the button (the API stays the
   authority). Edit of a yearly cron opens on Every year, of a `run_at` schedule on Once (`cronToSpec`, `runAtToSpec`).

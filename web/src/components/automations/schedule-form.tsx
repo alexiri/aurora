@@ -4,16 +4,15 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { Altitude } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
+import { DateField } from "@/components/ui/date-field";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, FormActions } from "@/components/ui/form";
 import { ErrorNotice } from "@/components/ui/notice";
 import { Segmented } from "@/components/ui/segmented";
 import { Combobox } from "@/components/ui/combobox";
 import { Select } from "@/components/ui/select";
-import { useAltitude } from "@/lib/altitude";
 import { fieldErrors } from "@/lib/api/errors";
 import { cronFieldCount, useCreateSchedule, useSchedulePreview, useUpdateSchedule, type Schedule } from "@/lib/api/schedules";
-import { useMoreControls } from "@/lib/api/use-more-controls";
 import {
   cadenceWords,
   clock,
@@ -120,8 +119,6 @@ export function ScheduleForm({
 }) {
   const create = useCreateSchedule(agentId);
   const update = useUpdateSchedule(agentId);
-  const alt = useAltitude();
-  const { setMore, pending: morePending } = useMoreControls();
   const [name, setName] = useState(initial?.name ?? "");
   const [prompt, setPrompt] = useState(initial?.prompt ?? "");
   const [timezone, setTimezone] = useState(initial?.timezone ?? defaultTimezone ?? "UTC");
@@ -141,7 +138,6 @@ export function ScheduleForm({
   const mut = initial ? update : create;
   const fe = fieldErrors(mut.error);
 
-  const customAllowed = alt.allows("expert");
   const once = spec.preset === "once";
   const cron = once ? "" : spec.preset === "custom" ? customCron.trim() : (specToCron(spec) ?? "");
   const runAt = once ? specToRunAt(spec) : "";
@@ -222,16 +218,8 @@ export function ScheduleForm({
           className="flex-wrap"
           value={spec.preset}
           onChange={setPreset}
-          options={PRESETS.map((p) => ({ value: p.value, label: p.label, disabled: p.value === "custom" && !customAllowed && spec.preset !== "custom" }))}
+          options={PRESETS.map((p) => ({ value: p.value, label: p.label }))}
         />
-        {!customAllowed && spec.preset !== "custom" ? (
-          <p className="text-xs text-muted">
-            Custom needs more controls ·{" "}
-            <button type="button" disabled={morePending} className="min-h-9 text-accent-ink underline underline-offset-2 hover:no-underline" onClick={() => setMore(true)}>
-              Show
-            </button>
-          </p>
-        ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
           {spec.preset === "weekly" ? (
@@ -244,14 +232,12 @@ export function ScheduleForm({
             />
           ) : null}
           {once ? (
-            <input
-              type="date"
+            <DateField
+              format="app"
               aria-label="Date"
-              className={`${inputClass} w-auto`}
               value={spec.date}
-              required
               aria-invalid={!!(onceError ?? fe.run_at) || undefined}
-              onChange={(e) => setSpec((s) => ({ ...s, date: e.target.value }))}
+              onChange={(iso) => setSpec((s) => ({ ...s, date: iso }))}
             />
           ) : null}
           {spec.preset === "yearly" ? (
@@ -290,6 +276,20 @@ export function ScheduleForm({
               options={Array.from({ length: 60 }, (_, m) => ({ value: String(m), label: `at minute ${m}` }))}
             />
           ) : null}
+          {spec.preset === "custom" ? (
+            <input
+              id="sch-cron"
+              aria-label="Cron (5 fields)"
+              className={`${inputClass} w-64 max-w-full font-mono`}
+              value={customCron}
+              required
+              spellCheck={false}
+              placeholder="0 9 * * 1-5"
+              aria-invalid={tooOften || !!cronError || undefined}
+              aria-describedby={tooOften ? "sch-cron-often" : cronError ? "sch-cron-error" : "sch-cron-hint"}
+              onChange={(e) => setCustomCron(e.target.value)}
+            />
+          ) : null}
           {spec.preset !== "every5" && spec.preset !== "hourly" ? (
             <Combobox aria-label="Time zone" wrapperClassName="w-72 max-w-full" value={timezone} onChange={setTimezone} options={zones} />
           ) : null}
@@ -301,29 +301,22 @@ export function ScheduleForm({
         ) : null}
 
         {spec.preset === "custom" ? (
-          customAllowed ? (
-            <Altitude id="auto.cron" level="expert">
-              <Field id="sch-cron" label="Cron (5 fields)" error={cronError} hint="Minute, hour, day, month, weekday. For example 0 9 * * 1-5.">
-                <input
-                  id="sch-cron"
-                  className={`${inputClass} font-mono`}
-                  value={customCron}
-                  required
-                  spellCheck={false}
-                  aria-invalid={tooOften || undefined}
-                  aria-describedby={tooOften ? "sch-cron-often" : undefined}
-                  onChange={(e) => setCustomCron(e.target.value)}
-                />
-              </Field>
-              {tooOften ? (
-                <p id="sch-cron-often" role="alert" className="mt-1 text-xs text-danger-ink">
-                  Too often: a schedule can run at most every {MIN_GAP_MINUTES} minutes. Try */5 * * * *.
-                </p>
-              ) : null}
-            </Altitude>
-          ) : (
-            <p className="text-sm text-ink-2">Custom schedule</p>
-          )
+          <div className="space-y-1">
+            {cronError ? (
+              <p id="sch-cron-error" role="alert" className="text-xs text-danger-ink">
+                {cronError}
+              </p>
+            ) : (
+              <p id="sch-cron-hint" className="text-xs text-muted">
+                Minute, hour, day, month, weekday. For example 0 9 * * 1-5.
+              </p>
+            )}
+            {tooOften ? (
+              <p id="sch-cron-often" role="alert" className="text-xs text-danger-ink">
+                Too often: a schedule can run at most every {MIN_GAP_MINUTES} minutes. Try */5 * * * *.
+              </p>
+            ) : null}
+          </div>
         ) : null}
 
         {once && (onceError ?? fe.run_at) ? (

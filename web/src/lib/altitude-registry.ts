@@ -46,7 +46,6 @@ export const ALTITUDE_REGISTRY = {
   "policy.restrict": { altitude: "setup", area: "Internet access" },
   "policy.try": { altitude: "setup", area: "Internet access" },
   "policy.presets": { altitude: "setup", area: "Internet access" },
-  "auto.cron": { altitude: "expert", area: "Schedules" },
   // (P5-REFINE-14) The schedule form's Advanced fold (the check that wakes it, keep running without you); it replaced `auto.gate`.
   "auto.advanced": { altitude: "setup", area: "Schedules" },
   "auto.anchor": { altitude: "expert", area: "Schedules" },
