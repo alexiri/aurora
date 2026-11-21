@@ -294,10 +294,20 @@ async fn a_member_sees_the_default_model_of_a_key_they_can_use() {
     )
     .await;
     let uri = format!("/v1/workspaces/{}/accounts?kind=ai_key", r.ws);
-    let (s, v) = accounts(&r, &member, &uri).await;
-    assert_eq!(s, 200, "{v}");
-    let k = item(&v, org_key);
+    // (P5-REFINE-20 batch 6 item 1) The list never calls an endpoint: it reads the cached key listing, and a miss warms
+    // the cache in the background. So the first list of a new key may not know the listing yet: wait (bounded) for it.
     // The configured default is not served: the first chat model of this key's listing (not the embedding model).
+    let mut v = Value::Null;
+    for _ in 0..100 {
+        let (s, got) = accounts(&r, &member, &uri).await;
+        assert_eq!(s, 200, "{got}");
+        v = got;
+        if item(&v, org_key)["default_model"] == "m-b" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let k = item(&v, org_key);
     assert_eq!(k["default_model"], "m-b", "{v}");
     assert!(
         k.get("starter").is_none(),
