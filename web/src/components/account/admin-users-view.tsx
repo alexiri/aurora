@@ -16,6 +16,7 @@ import { ErrorNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAdminUsers, usePatchAdminUser, type AdminUser } from "@/lib/api/account";
 import { useSession } from "@/lib/api/queries";
+import { personName } from "@/lib/workspace-name";
 
 import { When } from "@/components/ui/when";
 
@@ -71,13 +72,14 @@ export function UsersTable({
             <tr key={u.id}>
               <Td cell="title">
                 <div className="flex min-w-0 items-start gap-3">
-                  <Avatar name={u.display_name} size={32} />
+                  <Avatar name={personName(u.display_name)} size={32} />
                   <div className="min-w-0">
-                    <div className="font-medium text-ink">{u.display_name}</div>
+                    <div className="font-medium text-ink">{personName(u.display_name)}</div>
                     {/* The e-mail's name and the role, in words: "alice · Instance admin". The full address is the tooltip. */}
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 break-all text-sm text-muted" title={u.email}>
                       <span>
-                        {u.email.split("@")[0]} · {u.is_instance_admin ? "Instance admin" : "User"}
+                        {/* A person stored by their address has no name of their own: the address is then shown once, as the address. */}
+                        {u.display_name.includes("@") ? u.email : u.email.split("@")[0]} · {u.is_instance_admin ? "Instance admin" : "User"}
                       </span>
                       {u.instance_admin_idp_value ? <IdpRoleBadge value={u.instance_admin_idp_value} /> : null}
                       {disabled ? <Badge tone="danger">disabled</Badge> : null}
@@ -100,7 +102,7 @@ export function UsersTable({
                 {canAdmin || canDisable || u.idp_roles ? (
                   <Menu>
                     <MenuTrigger asChild>
-                      <Button variant="outline" size="sm" aria-label={`Manage ${u.display_name}`}>
+                      <Button variant="outline" size="sm" aria-label={`Manage ${personName(u.display_name)}`}>
                         Manage
                       </Button>
                     </MenuTrigger>

@@ -435,6 +435,24 @@ Fill in per pass (the owner reads this):
   - Data and Helm state on `aurora-r20`: see the report's Environment; the Helm values are back to the starting ones, and
     `terminal.enabled` now reads source helm. The cluster stays up for pass 4.
 
+- **Pass 4** (2026-11-21, master `306b6efb` (batch 7), then `cf2e80d5` (FIX-199); cluster `aurora-r20` on :4720, lane
+  `p5-platform`; rebuilt `dev api web`, then `api terminator web`; the API's egress to the LiteLLM mock added with
+  `helm upgrade --reuse-values --set-json networkPolicy.apiExtraEgress=…`, revision 7):
+  - Counts (119 findings): Match 112 / Minor 5 (firstday-3, schedules-7, admin-12, computer-2, behaviour-4) / Needs changes 2
+    (org-7, access-3's header at 390) / Not checked 0 / Accepted 0. Outside the 119: the bubble contrast Match, the e-mail as a
+    name Minor.
+  - With the mock reachable: a key check answers `works`; the grader test passes (scn-pong), fails (scn-overload) and reports
+    `rate_limited` (scn-ratelimit). A rejected key cannot be made on the mock (it answers any non-master key with 400 "No
+    connected db"), so that path stays judged on the Anthropic endpoint. access-3's new sentence is a Match.
+  - FIX-199 live: SSH with `ServerAliveInterval=30` ran `sleep 900` to DONE on the same computer; with no keepalives the
+    session ended at exactly 600 s ("no activity"); the SSH page line is there.
+  - Report path: `docs/audit/ux-review-5-verify/REPORT-pass4.md` (screenshots in `docs/audit/ux-review-5-verify/pass4/`, not in git).
+  - Change list sent: batch 8 (8 items, with the worker_done message): 1, 3, 5 to lane A; 2, 4, 6, 7, 8 to lane B.
+  - Fixed in this lane (Scope 7): none (every difference is in a file a lane owns).
+  - UX review 4 regressions: none found.
+  - Dev stack: `kind-dev.sh dev` does not accept `terminator` (an untracked copy with it added was used and deleted).
+  - The cluster stays up for pass 5.
+
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
   - Report path: `UXR5/verify/REPORT-pass<N>.md`

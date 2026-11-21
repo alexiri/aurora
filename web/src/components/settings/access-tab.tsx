@@ -26,6 +26,7 @@ import { matchesFilter, PickerFilter } from "@/components/ui/picker-filter";
 import { Section } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { personName } from "@/lib/workspace-name";
 import { WORKSPACE_ROLE_OPTIONS } from "@/lib/labels";
 import {
   useAccess,
@@ -209,7 +210,7 @@ function Row({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 font-medium">
               <span>
-                {b.display_name}
+                {personName(b.display_name)}
                 {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
               </span>
               {suspended ? <Badge tone="neutral">Suspended</Badge> : null}
@@ -525,7 +526,7 @@ export function AccessTab({
                     <Avatar name={d.user.display_name || d.user.email} tintKey={d.user.id} size={32} />
                     <div className="min-w-0">
                       <div className="font-medium">
-                        {d.user.display_name}
+                        {personName(d.user.display_name)}
                         {d.user.id === meId ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
                       </div>
                       <div className="text-xs text-muted">{d.user.email}</div>

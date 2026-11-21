@@ -39,6 +39,7 @@ import {
   deleteOp,
   effectiveKind,
   useFileList,
+  UNAVAILABLE_ATTEMPTS,
   type FileEntry,
 } from "@/lib/api/files";
 import { ApiError } from "@/lib/api/client";
@@ -299,7 +300,7 @@ function FilesBrowser({ agentId, agentName, onOpenInstructions }: { agentId: str
               waking ? (
                 <Notice tone="pending" role="status">
                   {list.failureReason instanceof ApiError && list.failureReason.code === "files_unavailable"
-                    ? "The computer restarted; retrying…"
+                    ? `Reconnecting… (attempt ${Math.min(list.failureCount + 1, UNAVAILABLE_ATTEMPTS)} of ${UNAVAILABLE_ATTEMPTS})`
                     : "Waking the computer…"}
                 </Notice>
               ) : (

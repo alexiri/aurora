@@ -208,7 +208,7 @@ describe("states", () => {
     expect(seen.filter((s) => s.path === "/v1/agents/a1/files")).toHaveLength(3);
   });
 
-  it("says the computer restarted while files_unavailable retries", async () => {
+  it("says what the terminal says while files_unavailable retries, never \"restarted\"", async () => {
     let calls = 0;
     mockApi((r) => {
       if (r.path !== "/v1/agents/a1/files") return undefined;
@@ -216,7 +216,8 @@ describe("states", () => {
       return calls < 2 ? err(503, "files_unavailable") : listing("/workspace", [entry("a.txt", "file")]);
     });
     renderTab();
-    expect(await screen.findByText("The computer restarted; retrying…")).toBeInTheDocument();
+    expect(await screen.findByText("Reconnecting… (attempt 2 of 4)")).toBeInTheDocument();
+    expect(screen.queryByText(/restarted/)).toBeNull();
     expect(await screen.findByText("a.txt")).toBeInTheDocument();
   });
 

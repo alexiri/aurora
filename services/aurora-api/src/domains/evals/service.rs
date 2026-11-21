@@ -356,6 +356,8 @@ enum JudgeCheck {
     NotGranted,
     NotPermitted,
     NotUsable,
+    /// The key works but the endpoint's list does not name this model.
+    ModelNotListed,
 }
 
 async fn judge_check(
@@ -412,7 +414,7 @@ async fn judge_check(
         return Ok(JudgeCheck::NotPermitted);
     }
     if !ep.models.is_empty() && !ep.models.iter().any(|m| m == model_id) {
-        return Ok(JudgeCheck::NotUsable);
+        return Ok(JudgeCheck::ModelNotListed);
     }
     Ok(JudgeCheck::Usable)
 }
@@ -524,6 +526,14 @@ pub async fn put_settings(
                     "eval_judge_not_usable",
                     "The judge key or model cannot be used right now.",
                 ));
+            }
+            JudgeCheck::ModelNotListed => {
+                // (batch 8, behaviour-4) Same code; `details.cause = "model"` says the key is fine and the model is the problem.
+                return Err(ApiError::unprocessable(
+                    "eval_judge_not_usable",
+                    "The judge key does not list that model.",
+                )
+                .with_details(serde_json::json!({ "cause": "model" })));
             }
             JudgeCheck::NotPermitted => {
                 return Err(ApiError::unprocessable(
