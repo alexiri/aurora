@@ -67,7 +67,7 @@ async function mockSsh(page: Page, over: { terminators?: number; keys?: typeof K
       route,
       {
         certificate: "ssh-ed25519-cert-v01@openssh.com AAAACERT aurora:agent", serial: "7", principal: "p", key_id: "k",
-        valid_after: new Date().toISOString(), valid_before: new Date(Date.now() + 15 * 60_000).toISOString(), username: "p", host: "ssh.example.org", port: 22, known_hosts: [],
+        valid_after: new Date().toISOString(), valid_before: new Date(Date.now() + 15 * 60_000).toISOString(), username: "daneel", host: "ssh.example.org", port: 22, known_hosts: [],
       },
       201,
     ),
@@ -180,6 +180,10 @@ test.describe("certificate download", () => {
     // earlier on a loaded machine): 14 to 16.
     await expect(page.getByTestId("cert-state")).toContainText(/Certificate valid for 1[456] more minutes \(until /);
     await expect(page.getByText(/Save it as/)).toContainText("~/.ssh/aurora-daneel-cert.pub");
+    // D-445: the plain command connects as the handle.
+    await expect(page.getByLabel("the ssh command", { exact: true })).toHaveText(
+      "ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub daneel@ssh.example.org",
+    );
     const [download] = await Promise.all([page.waitForEvent("download"), link.click()]);
     expect(download.suggestedFilename()).toBe("aurora-daneel-cert.pub");
     // The certificate is public: it stays for this tab until it expires, so a reload keeps Download.

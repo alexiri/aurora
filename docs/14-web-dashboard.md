@@ -649,9 +649,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     - **Connect (SSH)** (computer-6): "Connect to Dani's computer"; first **With the Aurora command line:** `aurora ssh <handle>`; then
       **Plain ssh** with a live line "Certificate valid for 13 more minutes (until 00:10)" (or "Expired · Get a new certificate"),
       **Download** under one name, `aurora-<handle>-cert.pub` ("Save it as `~/.ssh/aurora-<handle>-cert.pub`"), and the command
-      `ssh -i ~/.ssh/aurora-<handle> -o CertificateFile=~/.ssh/aurora-<handle>-cert.pub … <agent id>@host`. The terminator still takes the
-      agent id as the user name (C-1060; FIX-208 makes it the handle), so the block shows the id in full and **Copy** copies exactly that
-      line (owner, 2026-11-21: a command typed from the screen must connect). The
+      `ssh -i ~/.ssh/aurora-<handle> -o CertificateFile=~/.ssh/aurora-<handle>-cert.pub … <handle>@host` (D-445, C-1121: the user
+      name is the minted certificate's `username`, the handle; before one is minted, the handle), shown in full, and **Copy** copies
+      exactly that line (owner, 2026-11-21: a command typed from the screen must connect). The
       minted certificate (public, not a secret) is kept in `sessionStorage` per agent and key until `valid_before`, so Download survives a
       reload. Host key and Active sessions are Expert (`ssh.sessions`).
   - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
@@ -1383,7 +1383,10 @@ Every setting that is inherited across levels is shown as a ladder on its topic 
 
 **Above** is drawn only for viewers who can change this level and only when something can still be tightened
 (D-442, D-444): a viewer who can change nothing (a workspace member or approver, an organization member) reads what is in
-force in words and who to ask, and no "Set for you by …" rows; a collapsed ladder whose controls offer no stricter
+force in words and who to ask, and no "Set for you by …" rows (an organization member's Internet access: one sentence
+from `GET /v1/orgs/{org}/governance/effective`, which any organization member may read, about requests without an
+account and the allow-list, e.g. "In Acme, requests without an account can reach any website unless a rule or a
+workspace blocks them."; the organization's rules are not a member's read, so the sentence leaves room for them); a collapsed ladder whose controls offer no stricter
 value draws nothing (`ScopeLadder` `canTighten={false}`, set by the caller).
 
 The ladder applies to Internet access, AI keys and rules, Bring your own, Data › Retention and app availability.

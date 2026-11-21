@@ -641,7 +641,8 @@ same identity in the sandbox (the agent uid). Routes and errors: API_CONTRACTS C
 
 ## SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
 
-People with access to an agent can `ssh <agent id>@<ssh host>` into its sandbox with an ordinary
+People with access to an agent can `ssh <handle>@<ssh host>` (or `<agent id>@…`; D-445, SEC-147: the
+certificate names both, and the session always opens the agent in its key id) into its sandbox with an ordinary
 OpenSSH client: an interactive shell, a remote command, `sftp` and `scp`. Off unless the operator
 sets `ssh.enabled` (an internet-facing port is a deliberate deployment choice); requires
 `terminal.enabled` (D-358: SSH runs on the terminal's exec path). Who may connect is the web terminal's rule (`04 §SSH access`).
@@ -701,8 +702,8 @@ peer to the runner's existing listener and nothing to the sandboxes namespace.
   CLI's API key, writes it to `~/.config/aurora/ssh/<agent id>-cert.pub` (0600) and the
   `known_hosts` lines of `GET /v1/ssh` to `~/.config/aurora/ssh/known_hosts`, then execs
   `ssh -i <key> -o CertificateFile=<cert> -o UserKnownHostsFile=<that file> -o StrictHostKeyChecking=yes
-  -o IdentitiesOnly=yes -p <port> <agent id>@<host> <ssh args>`; a certificate with more than 60 s of
-  validity left is reused. `aurora ssh cert <agent>` only mints and writes the files (for `sftp` and `scp`) and prints the options to use.
+  -o IdentitiesOnly=yes -p <port> <handle>@<host> <ssh args>` (the certificate's user name, C-1121); a certificate
+  whose first principal is the agent id and with more than 60 s of validity left is reused. `aurora ssh cert <agent>` only mints and writes the files (for `sftp` and `scp`) and prints the options to use.
 
 ## Reconcile and orphan reaping
 

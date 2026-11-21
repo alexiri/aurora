@@ -74,6 +74,21 @@ export function internetSummary(a: InternetAccess, subject: string): string {
 }
 
 /**
+ * (FIX-206 follow-up, D-444) What an organization member reads in force, in one sentence, from the effective governance
+ * (`GET /v1/orgs/{org}/governance/effective`, readable by any organization member): the posture for requests without an
+ * account and the allow-lists. The organization's rules are not a member's read, so the sentence leaves room for them, and
+ * for workspaces, which can only narrow it.
+ */
+export function orgMemberSummary(egress: { posture: { value: string }; baseline_allowlist: unknown[]; org_allowlist: unknown[] }, orgName: string): string {
+  if (egress.posture.value !== "credentialed_only") {
+    return `In ${orgName}, requests without an account can reach any website unless a rule or a workspace blocks them.`;
+  }
+  const n = egress.baseline_allowlist.length + egress.org_allowlist.length;
+  if (n === 0) return `In ${orgName}, requests without an account reach only the websites a rule allows.`;
+  return `In ${orgName}, requests without an account reach only the ${n} ${n === 1 ? "website" : "websites"} on the allow-list and those a rule allows.`;
+}
+
+/**
  * A level's `InternetAccess` from its policy generation, given whether a level above already blocks requests without an
  * account (the instance's or the organization's `credentialed_only` posture, which a level below can only tighten).
  */

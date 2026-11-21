@@ -190,7 +190,7 @@ describe("SshPage", () => {
       ...over,
     });
 
-  it("leads with the Aurora command (the handle, not the id) and shows the plain ssh command with the id in full", async () => {
+  it("leads with the Aurora command (the handle, not the id) and shows the plain ssh command with the handle as the user", async () => {
     base();
     // The host key and the sessions are Expert (D-406, `ssh.sessions`).
     wrap(<SshPage agentId={AGENT} agentName="Daneel" agentHandle="daneel" frozen={false} />, { moreControls: true });
@@ -198,10 +198,11 @@ describe("SshPage", () => {
     expect(screen.getByRole("heading", { name: "Connect to Daneel's computer" })).toBeInTheDocument();
     expect(screen.getByText("With the Aurora command line:")).toBeInTheDocument();
     expect(screen.getByLabelText("the aurora ssh command").textContent).toBe("aurora ssh daneel");
-    // The terminator still wants the agent id as the user name: the block shows it, exactly what Copy puts on the clipboard.
+    // D-445: the user name is the handle; the block shows the whole command, exactly what Copy puts on the clipboard.
     expect(screen.getByLabelText("the ssh command").textContent).toBe(
-      `ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 ${AGENT}@ssh.example.org`,
+      "ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 daneel@ssh.example.org",
     );
+    expect(screen.getByLabelText("the ssh command").textContent).not.toContain(AGENT);
     expect(screen.getByRole("button", { name: "Copy the ssh command" })).toBeInTheDocument();
     expect(screen.getByText(/Port forwarding, agent forwarding and X11 are not available/)).toBeInTheDocument();
     // D-434, FIX-199: a quiet session stays open while the client is connected (its keepalives count).
@@ -213,7 +214,7 @@ describe("SshPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("copies the full command, with the id, from Copy", async () => {
+  it("copies the full command, with the handle, from Copy", async () => {
     base();
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
@@ -221,7 +222,7 @@ describe("SshPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Copy the ssh command" }));
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith(
-        `ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 ${AGENT}@ssh.example.org`,
+        "ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 daneel@ssh.example.org",
       ),
     );
   });
@@ -259,7 +260,7 @@ describe("SshPage", () => {
     key_id: "k",
     valid_after: "2026-01-01T00:00:00Z",
     valid_before: validBefore,
-    username: AGENT,
+    username: "daneel",
     host: "ssh.example.org",
     port: 2222,
     known_hosts: [],
@@ -282,6 +283,29 @@ describe("SshPage", () => {
     expect(screen.getByText(/Save it as/).textContent).toContain("~/.ssh/aurora-daneel-cert.pub");
     expect(screen.getByRole("button", { name: "Get a new certificate" })).toBeInTheDocument();
     expect(bodies).toEqual([{ public_key: key(1).public_key }]);
+  });
+
+  it("takes the user name from the certificate's username (C-1121): a certificate minted before it still shows the id", async () => {
+    window.sessionStorage.clear();
+    const until = new Date(Date.now() + 5 * 60_000).toISOString();
+    // A certificate kept from before D-445 names only the id: its command must use the id, or it would not connect.
+    window.sessionStorage.setItem(`aurora.ssh.cert.${AGENT}.${key(1).id}`, JSON.stringify({ ...certBody(until), username: AGENT }));
+    base();
+    const first = wrap(<SshPage agentId={AGENT} agentHandle="daneel" frozen={false} />);
+    await screen.findByRole("link", { name: "Download" });
+    expect(screen.getByLabelText("the ssh command").textContent).toBe(
+      `ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 ${AGENT}@ssh.example.org`,
+    );
+    first.unmount();
+    window.sessionStorage.clear();
+    base({ [`POST /v1/agents/${AGENT}/ssh-certificate`]: () => json(201, certBody(until)) });
+    wrap(<SshPage agentId={AGENT} agentHandle="daneel" frozen={false} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Get a certificate" }));
+    await screen.findByRole("link", { name: "Download" });
+    expect(screen.getByLabelText("the ssh command").textContent).toBe(
+      "ssh -i ~/.ssh/aurora-daneel -o CertificateFile=~/.ssh/aurora-daneel-cert.pub -p 2222 daneel@ssh.example.org",
+    );
+    window.sessionStorage.clear();
   });
 
   it("keeps Download after a reload until the certificate expires (sessionStorage), and says Expired afterwards", async () => {

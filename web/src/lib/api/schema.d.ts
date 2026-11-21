@@ -15299,11 +15299,11 @@ export interface components {
             known_hosts: string[];
             /** Format: int32 */
             port: number;
-            /** @description The agent id (the certificate's only principal). */
+            /** @description The agent id: the certificate's first principal (the second is the handle, C-1121). */
             principal: string;
             /** @description The serial as a decimal string (a u64). */
             serial: string;
-            /** @description The SSH user name to connect as: the agent id. */
+            /** @description The SSH user name to connect as: the agent's handle (C-1121; the agent id also works). */
             username: string;
             /** Format: date-time */
             valid_after: string;

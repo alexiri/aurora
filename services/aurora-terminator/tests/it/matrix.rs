@@ -98,10 +98,40 @@ async fn every_refusal_is_the_same_failure_after_the_same_delay_with_no_api_call
         }),
         ("wrong principal", agent.clone(), {
             let mut s = s.clone();
-            s.principal = Some(other.clone());
+            s.principals = Some(vec![other.clone()]);
             r.cert(&s)
         }),
         ("username is not the principal", other.clone(), r.cert(&s)),
+        // SEC-147: a certificate for this agent presented with another agent's handle.
+        ("another agent's handle", "giskard".to_owned(), {
+            let mut s = s.clone();
+            s.principals = Some(vec![agent.clone(), "daneel".into()]);
+            r.cert(&s)
+        }),
+        ("the handle alone", "daneel".to_owned(), {
+            let mut s = s.clone();
+            s.principals = Some(vec!["daneel".into()]);
+            r.cert(&s)
+        }),
+        ("the handle first", "daneel".to_owned(), {
+            let mut s = s.clone();
+            s.principals = Some(vec!["daneel".into(), agent.clone()]);
+            r.cert(&s)
+        }),
+        ("three principals", "daneel".to_owned(), {
+            let mut s = s.clone();
+            s.principals = Some(vec![agent.clone(), "daneel".into(), "giskard".into()]);
+            r.cert(&s)
+        }),
+        (
+            "first principal is not the key id's agent",
+            "daneel".to_owned(),
+            {
+                let mut s = s.clone();
+                s.principals = Some(vec![other.clone(), "daneel".into()]);
+                r.cert(&s)
+            },
+        ),
         ("foreign CA", agent.clone(), {
             let mut s = s.clone();
             s.ca = key(0x77);
@@ -170,6 +200,44 @@ async fn every_refusal_is_the_same_failure_after_the_same_delay_with_no_api_call
     let (f, _) = timed_cert(&r, &agent, r.good()).await;
     assert_eq!(f, None);
     assert_eq!(r.stub.count("sessions"), 4);
+}
+
+/// SEC-147, D-445: a `[uuid, handle]` certificate logs in as the handle and as the id, and the API
+/// is asked to open a session for the key id's agent each time, never for the typed name. A handle
+/// that spells another agent's UUID still opens the certificate's agent.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_handle_and_the_id_both_log_in_and_the_api_is_asked_for_the_certificates_agent() {
+    let r = rig(RigOpts::default()).await;
+    let agent = r.agent.to_string();
+    let mut s = r.spec();
+    s.principals = Some(vec![agent.clone(), "daneel".into()]);
+    for user in ["daneel", agent.as_str()] {
+        let (f, _) = timed_cert(&r, user, r.cert(&s)).await;
+        assert_eq!(f, None, "{user} did not log in");
+    }
+    // Another agent's id as a handle (a handle may spell a UUID): typed, it opens this agent.
+    let other = Uuid::new_v4();
+    let spelled: String = format!("a{}", &other.to_string()[1..]);
+    s.principals = Some(vec![agent.clone(), spelled.clone()]);
+    let (f, _) = timed_cert(&r, &spelled, r.cert(&s)).await;
+    assert_eq!(f, None);
+    // A certificate minted before D-445 (`[uuid]`) still logs in with the id.
+    let (f, _) = timed_cert(&r, &agent, r.good()).await;
+    assert_eq!(f, None);
+
+    let asked: Vec<String> = r
+        .stub
+        .sessions
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|b| b["username"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        asked,
+        vec![agent.clone(); 4],
+        "the API was asked for another name"
+    );
 }
 
 /// The `none` probe is answered (listing `publickey`) without counting; six real failures are

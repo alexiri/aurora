@@ -28,6 +28,7 @@ import {
 import { useAllMembers } from "@/lib/api/org";
 import { overrideValues, useWorkspaceOverrides } from "@/lib/api/overrides";
 import { useWorkspaces, type Org } from "@/lib/api/queries";
+import { orgMemberSummary } from "@/lib/summary/internet";
 import { wsRoutes } from "@/lib/routes";
 import { whoCanFromContacts } from "@/lib/who-can";
 
@@ -141,18 +142,31 @@ function OrgInternetBody({ org, slug, eff, revision: initialRevision, initial }:
   );
 }
 
-/** (P5-IA-2, C-965) Internet access of an organization: owners and admins edit; a member reads who to ask (D-444: no limits from above). */
+/** (P5-IA-2, C-965) Internet access of an organization: owners and admins edit; a member reads what is in force in one sentence and who to ask (D-444: no limits from above). */
 export function OrgInternet({ org, slug }: { org: Org; slug: string }) {
   const admin = org.my_role === "owner" || org.my_role === "admin";
-  // (FIX-206, D-444) A member changes nothing here: no limits from above, so no read of them either.
-  const eff = useEffectiveGovernance(org.id, admin);
+  // (FIX-206, D-444) A member changes nothing here: no limits from above. What is in force comes in words from the
+  // effective governance, a read any organization member may make (05); the document and the instance's are not read.
+  const eff = useEffectiveGovernance(org.id);
   const doc = useGovernanceDoc(org.id, admin);
   const instance = useInstanceGovernance(admin);
   if (!admin) {
     const who = whoCanFromContacts("org_admin", org.contacts, "change_this");
     return (
       <div className="max-w-page space-y-6">
-        <PageHeader title="Internet access" description="Which websites agents can reach. Only owners and admins can change this." className="mb-2" />
+        <PageHeader
+          title="Internet access"
+          description={
+            eff.data ? (
+              <span data-testid="internet-summary" className="block font-display text-xl text-ink">
+                {orgMemberSummary(eff.data.egress, org.name)}
+              </span>
+            ) : (
+              "Which websites agents can reach."
+            )
+          }
+          className="mb-2"
+        />
         <Notice role="status">
           <WhoCan value={who} lead className="text-inherit" />
         </Notice>

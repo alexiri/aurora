@@ -1825,6 +1825,8 @@ struct SshId {
     dir: std::path::PathBuf,
     port: u16,
     agent: String,
+    /// The mint answer's `username`: the agent's handle (D-445, C-1121).
+    user: String,
 }
 
 impl SshId {
@@ -1852,8 +1854,9 @@ impl SshId {
         v
     }
 
+    /// `<handle>@127.0.0.1`: the user name the dashboard shows (D-445).
     fn dest(&self) -> String {
-        format!("{}@127.0.0.1", self.agent)
+        format!("{}@127.0.0.1", self.user)
     }
 
     fn command(&self, prog: &str, pre: &[&str], post: &[&str]) -> Command {
@@ -1929,6 +1932,9 @@ async fn ssh_identity(api: &Api, agent: &str, port: u16, host_key: &str) -> SshI
         )
         .await;
     assert_eq!(s, 201, "mint: {v}");
+    // C-1121: the user name to connect as is the handle, not the id.
+    let user = v["username"].as_str().unwrap().to_owned();
+    assert_ne!(user, agent, "the mint answer's username is the handle: {v}");
     std::fs::write(
         dir.join("id-cert.pub"),
         format!("{}\n", v["certificate"].as_str().unwrap().trim()),
@@ -1943,6 +1949,7 @@ async fn ssh_identity(api: &Api, agent: &str, port: u16, host_key: &str) -> SshI
         dir,
         port,
         agent: agent.to_owned(),
+        user,
     }
 }
 
@@ -2046,9 +2053,18 @@ async fn k9_ssh_journey() {
     say_and_finish(&api, &conv, "[[say: ssh journey]]").await;
     let id = ssh_identity(&api, &agent, port, &host_key).await;
 
-    // 1. A remote command; stdout and stderr stay separate; the exit status propagates.
+    // 1. A remote command (as the handle, D-445); stdout and stderr stay separate; the exit status
+    // propagates.
     let (rc, out, err) = run_client(id.command("ssh", &[], &["echo aurora-ssh"]), b"", 60).await;
     assert_eq!((rc, out.trim()), (0, "aurora-ssh"), "stderr: {err}");
+    // The agent id still works as the user name (SEC-147), and lands on the same agent.
+    let mut by_id = Command::new("ssh");
+    by_id
+        .args(id.opts())
+        .arg(format!("{}@127.0.0.1", id.agent))
+        .arg("echo by-id");
+    let (rc, out, err) = run_client(by_id, b"", 60).await;
+    assert_eq!((rc, out.trim()), (0, "by-id"), "stderr: {err}");
     let (rc, out, err) = run_client(
         id.command("ssh", &[], &["echo to-out; echo to-err >&2; exit 7"]),
         b"",
@@ -2250,7 +2266,7 @@ async fn k9_ssh_journey() {
     assert!(err.contains("Permission denied (publickey)"), "{err}");
     assert!(!out.contains("not-here"));
 
-    // 6. `aurora ssh <agent> -- echo aurora-ssh` (C-798): a workspace API key in a config directory of its own.
+    // 6. `aurora ssh <handle> -- echo aurora-ssh` (C-798, C-1121): a workspace API key in a config directory of its own.
     if let Ok(cli) = std::env::var("AURORA_E2E_CLI") {
         let (s, k) = api
             .post(
@@ -2278,7 +2294,8 @@ async fn k9_ssh_journey() {
         let mut c = Command::new(cli);
         c.env("AURORA_CONFIG_DIR", &cfg_dir)
             .arg("ssh")
-            .arg(&agent)
+            // By handle (D-445): the CLI resolves it in its workspace and connects as `<handle>@`.
+            .arg(&id.user)
             .arg("--key")
             .arg(id.path("id.pub"))
             .arg("--")

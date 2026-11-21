@@ -621,8 +621,11 @@ the differences. Off unless `ssh.enabled`.
   a certificate, **before any API call**,
   the terminator applies the whole certificate law offline: CA signature by one of the
   `ca_public_keys` of its registration, type `user`, inside the validity window (60 s skew),
-  principal list exactly `[<username>]` and the username a UUID, **no critical options**, the key id
-  in the `aurora:u=…:k=…:a=…:w=…` shape. Only when it passes does the terminator call `POST /v1/terminator/sessions`, and
+  principals `[<uuid>]` or `[<uuid>, <handle>]` (SEC-147, D-445: the first a canonical UUID equal to the
+  key id's `a=`, the second a valid handle shape) with the typed user name one of them, **no critical
+  options**, the key id in the `aurora:u=…:k=…:a=…:w=…` shape. The law yields the key id's agent; the
+  terminator sends that agent id (never the typed name) as `username` in `POST /v1/terminator/sessions`,
+  and nothing looks an agent up by name. Only when it passes does the terminator call `POST /v1/terminator/sessions`, and
   authentication succeeds only if the API answers 201. Every other outcome — plain keys, `password`,
   `keyboard-interactive`, `hostbased`, a failing certificate, an API refusal or error — is the same
   `USERAUTH_FAILURE` listing `publickey` only, after the same 1 s delay, no banner (hint-free). The

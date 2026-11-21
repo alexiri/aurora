@@ -50,6 +50,8 @@ pub enum SshSub {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Prepared {
     pub agent_id: String,
+    /// The SSH user name: the certificate's handle (C-1121), else the agent id.
+    pub user: String,
     pub private_key: PathBuf,
     pub cert_file: PathBuf,
     pub known_hosts_file: PathBuf,
@@ -58,7 +60,7 @@ pub struct Prepared {
 }
 
 /// The `ssh` argument list (without the program name): our options, then the destination
-/// `<agent id>@<host>`, then whatever the person passed after `--`.
+/// `<user>@<host>` (the handle, C-1121), then whatever the person passed after `--`.
 pub fn build_argv(p: &Prepared, extra: &[String]) -> Vec<String> {
     let mut a: Vec<String> = vec![
         "-i".into(),
@@ -73,7 +75,7 @@ pub fn build_argv(p: &Prepared, extra: &[String]) -> Vec<String> {
         "IdentitiesOnly=yes".into(),
         "-p".into(),
         p.port.to_string(),
-        format!("{}@{}", p.agent_id, p.host),
+        format!("{}@{}", p.user, p.host),
     ];
     a.extend(extra.iter().cloned());
     a
@@ -107,15 +109,39 @@ pub fn cert_path(dir: &Path, agent_id: &str) -> PathBuf {
 }
 
 /// Whether the certificate in `text` can still be used: it parses, certifies `subject`, names
-/// `agent_id` as its only principal and stays valid for more than [`REUSE_MARGIN_SECS`].
+/// `agent_id` as its first principal (then at most the handle, C-1121) and stays valid for more
+/// than [`REUSE_MARGIN_SECS`].
 pub fn cert_reusable(text: &str, now_unix: u64, agent_id: &str, subject: &PublicKey) -> bool {
     let Ok(cert) = Certificate::from_openssh(text.trim()) else {
         return false;
     };
+    let principals = cert.valid_principals();
     cert.public_key() == subject.key_data()
-        && cert.valid_principals() == [agent_id.to_owned()]
+        && (1..=2).contains(&principals.len())
+        && principals[0] == agent_id
         && cert.valid_before() > now_unix.saturating_add(REUSE_MARGIN_SECS)
         && cert.valid_after() <= now_unix.saturating_add(REUSE_MARGIN_SECS)
+}
+
+/// The user name to connect as with the certificate in `text` (C-1121): `offered` (the mint
+/// answer's `username`) or, for a reused certificate, its last principal, but only when it is one
+/// of the certificate's principals and the agent id or a handle; otherwise the agent id. Never a
+/// string that `ssh` could read as an option.
+pub fn ssh_user(text: &str, agent_id: &str, offered: Option<&str>) -> String {
+    let Ok(cert) = Certificate::from_openssh(text.trim()) else {
+        return agent_id.to_owned();
+    };
+    let principals = cert.valid_principals();
+    let wanted = offered.or_else(|| principals.last().map(String::as_str));
+    match wanted {
+        Some(u)
+            if principals.iter().any(|p| p == u)
+                && (u == agent_id || aurora_core::ids::is_valid_handle(u)) =>
+        {
+            u.to_owned()
+        }
+        _ => agent_id.to_owned(),
+    }
 }
 
 /// Write `contents` to `path` atomically with mode 0600 (the directory 0700 when created).
@@ -216,18 +242,23 @@ pub async fn prepare(
     )?;
 
     let cert_file = cert_path(dir, agent_id);
-    let reuse = std::fs::read_to_string(&cert_file)
-        .map(|t| cert_reusable(&t, now_unix, agent_id, &subject))
-        .unwrap_or(false);
-    if !reuse {
-        let minted = client
-            .mint_ssh_certificate(agent_id, line)
-            .await
-            .map_err(|e| explain(e, cfg_url))?;
-        write_private_file(&cert_file, &format!("{}\n", minted.certificate.trim()))?;
-    }
+    let reusable = std::fs::read_to_string(&cert_file)
+        .ok()
+        .filter(|t| cert_reusable(t, now_unix, agent_id, &subject));
+    let user = match reusable {
+        Some(text) => ssh_user(&text, agent_id, None),
+        None => {
+            let minted = client
+                .mint_ssh_certificate(agent_id, line)
+                .await
+                .map_err(|e| explain(e, cfg_url))?;
+            write_private_file(&cert_file, &format!("{}\n", minted.certificate.trim()))?;
+            ssh_user(&minted.certificate, agent_id, Some(&minted.username))
+        }
+    };
     Ok(Prepared {
         agent_id: agent_id.to_owned(),
+        user,
         private_key,
         cert_file,
         known_hosts_file,
@@ -326,8 +357,14 @@ mod tests {
         )
     }
 
-    /// A certificate signed by a throwaway CA.
+    const HANDLE: &str = "daneel";
+
+    /// A certificate signed by a throwaway CA, as the API mints it (C-1121): `[agent, handle]`.
     fn cert_line(agent: &str, valid_after: u64, valid_before: u64) -> String {
+        cert_with(&[agent, HANDLE], valid_after, valid_before)
+    }
+
+    fn cert_with(principals: &[&str], valid_after: u64, valid_before: u64) -> String {
         let ca = PrivateKey::from(Ed25519Keypair::from_seed(&[9; 32]));
         let mut b = Builder::new(
             vec![1u8; 32],
@@ -339,7 +376,9 @@ mod tests {
         b.serial(5).unwrap();
         b.cert_type(CertType::User).unwrap();
         b.key_id("aurora:test").unwrap();
-        b.valid_principal(agent).unwrap();
+        for p in principals {
+            b.valid_principal(*p).unwrap();
+        }
         b.extension("permit-pty", "").unwrap();
         b.sign(&ca).unwrap().to_openssh().unwrap()
     }
@@ -356,6 +395,7 @@ mod tests {
     fn argv_is_exact() {
         let p = Prepared {
             agent_id: AGENT.into(),
+            user: HANDLE.into(),
             private_key: "/home/u/.ssh/id_ed25519".into(),
             cert_file: format!("/home/u/.config/aurora/ssh/{AGENT}-cert.pub").into(),
             known_hosts_file: "/home/u/.config/aurora/ssh/known_hosts".into(),
@@ -377,7 +417,7 @@ mod tests {
                 "IdentitiesOnly=yes",
                 "-p",
                 "2222",
-                &format!("{AGENT}@ssh.example.org"),
+                "daneel@ssh.example.org",
                 "ls",
                 "-la",
             ]
@@ -428,6 +468,45 @@ mod tests {
         let other = PrivateKey::from(Ed25519Keypair::from_seed(&[4; 32]));
         assert!(!cert_reusable(&ok, NOW, AGENT, other.public_key()));
         assert!(!cert_reusable("not a certificate", NOW, AGENT, &subject));
+        // A certificate minted before C-1121 (`[agent]`) is reused; the handle first or a third
+        // principal is not.
+        assert!(cert_reusable(
+            &cert_with(&[AGENT], NOW - 60, NOW + 900),
+            NOW,
+            AGENT,
+            &subject
+        ));
+        assert!(!cert_reusable(
+            &cert_with(&[HANDLE, AGENT], NOW - 60, NOW + 900),
+            NOW,
+            AGENT,
+            &subject
+        ));
+        assert!(!cert_reusable(
+            &cert_with(&[AGENT, HANDLE, "x"], NOW - 60, NOW + 900),
+            NOW,
+            AGENT,
+            &subject
+        ));
+    }
+
+    /// C-1121: the user name is the handle the certificate names; anything else falls back to
+    /// the agent id, so nothing `ssh` could parse as an option ever reaches the destination.
+    #[test]
+    fn the_user_is_the_certificates_handle() {
+        let new = cert_line(AGENT, NOW - 60, NOW + 900);
+        assert_eq!(ssh_user(&new, AGENT, Some(HANDLE)), HANDLE);
+        assert_eq!(ssh_user(&new, AGENT, None), HANDLE);
+        assert_eq!(ssh_user(&new, AGENT, Some(AGENT)), AGENT);
+        // An offered name the certificate does not carry, or one shaped like an option.
+        assert_eq!(ssh_user(&new, AGENT, Some("giskard")), AGENT);
+        let odd = cert_with(&[AGENT, "-oProxyCommand=x"], NOW - 60, NOW + 900);
+        assert_eq!(ssh_user(&odd, AGENT, Some("-oProxyCommand=x")), AGENT);
+        assert_eq!(ssh_user(&odd, AGENT, None), AGENT);
+        // A certificate minted before C-1121 connects as the id.
+        let old = cert_with(&[AGENT], NOW - 60, NOW + 900);
+        assert_eq!(ssh_user(&old, AGENT, None), AGENT);
+        assert_eq!(ssh_user("garbage", AGENT, Some(HANDLE)), AGENT);
     }
 
     #[test]
@@ -471,7 +550,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({
                 "certificate": cert_line(AGENT, NOW - 60, NOW + 900), "serial": "5",
                 "principal": AGENT, "key_id": "k", "valid_after": "2033-05-18T03:32:00Z",
-                "valid_before": "2033-05-18T03:48:00Z", "username": AGENT,
+                "valid_before": "2033-05-18T03:48:00Z", "username": HANDLE,
                 "host": "ssh.example.org", "port": 2222, "known_hosts": []
             })))
             .expect(mint_times)
@@ -495,6 +574,8 @@ mod tests {
         let c = Client::new(&s.uri(), Some("auk_x".into())).unwrap();
         let first = prepare(&c, &s.uri(), AGENT, &key, &dir, NOW).await.unwrap();
         assert_eq!(first.private_key, d.join("id_ed25519"));
+        // The answer's `username`, the handle (C-1121); the reused certificate below gives the same.
+        assert_eq!(first.user, HANDLE);
         assert_eq!((first.host.as_str(), first.port), ("ssh.example.org", 2222));
         assert_eq!(
             std::fs::read_to_string(&first.known_hosts_file).unwrap(),

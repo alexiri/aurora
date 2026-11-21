@@ -281,6 +281,8 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     routes();
     wrap(<OrgInternet org={org} slug="acme" />);
     expect((await screen.findByTestId("internet-summary")).textContent).toMatch(/^What agents in .* may reach\.$/);
+    // (FIX-206 follow-up) The member's sentence is the member's: an owner keeps the editor and its own heading line.
+    expect(screen.queryByText(/requests without an account can reach any website/)).toBeNull();
     expect(screen.getByRole("heading", { name: "Your rules" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Set above you" })).toBeInTheDocument();
     // (P5-REFINE-20, org-8) The page heading is the first thing: the preset card sits under it, and there is one h1.
@@ -295,15 +297,36 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     expect((screen.getByTestId("internet-more") as HTMLDetailsElement).open).toBe(false);
   });
 
-  it("(D-444) an organization member reads who to ask and no limits from above, and the effective limits are not read", async () => {
+  it("(D-444) an organization member reads what is in force in one sentence and who to ask, and no limits from above", async () => {
     const calls = routes();
     const member = { id: "o1", slug: "acme", name: "Acme", my_role: "member", contacts: null } as never;
     wrap(<OrgInternet org={member} slug="acme" />);
     expect(await screen.findByRole("heading", { name: "Internet access" })).toBeInTheDocument();
+    // The sentence comes from the effective governance, a read any organization member may make (05).
+    expect((await screen.findByTestId("internet-summary")).textContent).toBe(
+      "In Acme, requests without an account can reach any website unless a rule or a workspace blocks them.",
+    );
     expect(screen.getByRole("status")).toBeInTheDocument();
+    // The description no longer repeats the notice's "who can change this".
+    expect(screen.queryByText(/Only owners and admins can change this/)).toBeNull();
     for (const gone of ["Limits", "Set for you by an Aurora administrator", "Set for you by your organization's admins", "Your rules"]) expect(screen.queryByText(gone)).toBeNull();
     expect(screen.queryByRole("list", { name: "Limits set above this level" })).toBeNull();
-    expect(calls.mock.calls.some((c) => (c[0] as Request).url.includes("/governance/effective"))).toBe(false);
+    const urls = calls.mock.calls.map((c) => new URL((c[0] as Request).url).pathname);
+    expect(urls).toContain("/v1/orgs/o1/governance/effective");
+    // Nothing a member may not read: not the governance document, not the instance's, not the organization's rules.
+    for (const no of ["/v1/orgs/o1/governance", "/v1/governance/instance", "/v1/orgs/o1/policy", "/v1/orgs/o1/workspace-overrides"]) expect(urls).not.toContain(no);
+  });
+
+  it("(D-444) an organization member of a credentialed-only organization reads the allow-list sentence", async () => {
+    routes({
+      "GET /v1/orgs/o1/governance/effective": () =>
+        json(200, { ...EFF, egress: { ...EFF.egress, posture: { value: "credentialed_only", source: "org" }, org_allowlist: [{ host: "a.example" }, { host: "b.example" }] } }),
+    });
+    const member = { id: "o1", slug: "acme", name: "Acme", my_role: "member", contacts: null } as never;
+    wrap(<OrgInternet org={member} slug="acme" />);
+    expect((await screen.findByTestId("internet-summary")).textContent).toBe(
+      "In Acme, requests without an account reach only the 2 websites on the allow-list and those a rule allows.",
+    );
   });
 
   it("lists the workspaces that tightened, with a link to each", async () => {

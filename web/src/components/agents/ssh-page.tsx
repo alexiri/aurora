@@ -128,10 +128,11 @@ function SshContent({ agentId, agentName, agentHandle }: { agentId: string; agen
   const name = agentName ?? "the agent";
   const handle = agentHandle ?? agentId;
   const file = certFileName(handle);
-  // The terminator still takes the agent id as the user name (C-1060; FIX-208 makes it the handle): the block shows the id
-  // in full, so a command typed from the screen connects too (owner, 2026-11-21).
+  // (FIX-208, D-445, C-1121) The user name is the handle: the minted certificate's `username`, else the handle. The block
+  // shows the whole command and Copy copies exactly it (owner, 2026-11-21: a command typed from the screen must connect).
+  const user = live?.username ?? handle;
   const port = f.port === 22 ? "" : ` -p ${f.port}`;
-  const plainCommand = `ssh -i ~/.ssh/aurora-${handle} -o CertificateFile=~/.ssh/${file}${port} ${agentId}@${f.host}`;
+  const plainCommand = `ssh -i ~/.ssh/aurora-${handle} -o CertificateFile=~/.ssh/${file}${port} ${user}@${f.host}`;
   const error = mint.error;
   const rateLimited = error instanceof ApiError && error.code === "ssh_mint_rate_limited";
 

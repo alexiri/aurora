@@ -66,12 +66,12 @@ pub struct SshCertificate {
     pub certificate: String,
     /// The serial as a decimal string (a u64).
     pub serial: String,
-    /// The agent id (the certificate's only principal).
+    /// The agent id: the certificate's first principal (the second is the handle, C-1121).
     pub principal: String,
     pub key_id: String,
     pub valid_after: DateTime<Utc>,
     pub valid_before: DateTime<Utc>,
-    /// The SSH user name to connect as: the agent id.
+    /// The SSH user name to connect as: the agent's handle (C-1121; the agent id also works).
     pub username: String,
     pub host: String,
     pub port: u16,
