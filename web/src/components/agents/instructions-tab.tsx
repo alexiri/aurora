@@ -20,7 +20,7 @@ import { adminRoutes } from "@/lib/routes";
 import { Altitude } from "@/components/ui/altitude";
 
 import { AvatarField } from "./avatar-field";
-import { automaticModelText, READINESS_WARNING_COPY } from "./model-readiness";
+import { READINESS_WARNING_COPY } from "./model-readiness";
 import { EMPTY_ROLES, ModelRolesFields, type RoleDraft, type RoleFieldErrors } from "./model-roles-fields";
 
 /**
@@ -30,7 +30,16 @@ import { EMPTY_ROLES, ModelRolesFields, type RoleDraft, type RoleFieldErrors } f
  * collapsed **Advanced** with the harness, the model roles, Subagents use and Effort. No role warnings here (the
  * endpoint shows them). Save appears at the bottom of the viewport only when something changed.
  */
-export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string }) {
+export function InstructionsTab({
+  agent,
+  wsId,
+  saveState,
+}: {
+  agent: Agent;
+  wsId: string;
+  /** The "Saved" flash kept by the parent, which remounts this form with a new `key` after a save. */
+  saveState?: { bar: ReturnType<typeof useSaveBar>; sig: string | null; setSig: (s: string | null) => void };
+}) {
   const patch = usePatchAgent(wsId, agent.id);
   const isAdmin = useMe().data?.user.is_instance_admin === true;
   const [name, setName] = useState(agent.name);
@@ -41,7 +50,8 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
   const initialModel = agent.model_endpoint_id && agent.model_id ? `${agent.model_endpoint_id}\u0000${agent.model_id}` : "";
   const [model, setModel] = useState(initialModel);
   const [clientErr, setClientErr] = useState("");
-  const bar = useSaveBar();
+  const localBar = useSaveBar();
+  const bar = saveState?.bar ?? localBar;
   const fe = patch.error ? fieldErrors(patch.error) : {};
 
   // (FIX-170) The chat's "Choose a model" link ends in `#a-model`: scroll to the Model field and focus it
@@ -99,8 +109,9 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
 
   // What the form holds, so "Saved" stays only while nothing was edited after the save.
   const draftSig = JSON.stringify([name, brief, effort, proactive, model, harness, roles, subagent]);
-  const [savedSig, setSavedSig] = useState<string | null>(null);
-  const justSaved = bar.saved && savedSig === draftSig;
+  const [localSig, setLocalSig] = useState<string | null>(null);
+  const savedSig = saveState ? saveState.sig : localSig;
+  const setSavedSig = saveState ? saveState.setSig : setLocalSig;
   const dirty =
     name !== agent.name ||
     brief !== agent.brief ||
@@ -110,6 +121,8 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     harnessChanged ||
     rolesPatch() !== null ||
     (agent.kind === "hosted" && !roleless && subagent !== agent.subagent_model);
+  // Right after a save the agent may not be refetched yet (same draft) or the form was remounted from the new agent (clean).
+  const justSaved = bar.saved && (savedSig === draftSig || !dirty);
 
   function discard() {
     setName(agent.name);
@@ -195,12 +208,8 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
               </option>
             ))}
           </select>
-          {/* (FIX-170, C-1026) What the next turn uses while no model is chosen, and the warnings of the default selection. */}
-          {!model && defaultView ? (
-            <p className="text-xs text-ink-2" data-testid="model-automatic">
-              {automaticModelText(defaultView.source, defaultView.model_id)}
-            </p>
-          ) : null}
+          {/* (FIX-170, C-1026) The warnings of the default selection; the option itself names the model the next turn uses
+              ("Workspace default · Pong"), so the field has the one hint line (behaviour-5). */}
           {(readiness.data?.warnings ?? []).map((w) => (
             <p key={w} className="text-xs text-pending-ink" data-testid="model-warning">
               {READINESS_WARNING_COPY[w] ?? w}

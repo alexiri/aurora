@@ -80,7 +80,10 @@ describe("Default model field", () => {
       },
     });
     wrap(<InstructionsTab agent={agent} wsId="w1" />);
-    await waitFor(() => expect(screen.getByTestId("model-automatic").textContent).toBe("Automatic: glm-5.3-flash-int4 (the first model your key serves)"));
+    // One hint line (behaviour-5): the option names the model the next turn uses, no second "Automatic: …" line.
+    await waitFor(() => expect(screen.getByRole("option", { name: "Workspace default · glm-5.3-flash-int4" })).toBeInTheDocument());
+    expect(screen.queryByText(/^Automatic:/)).toBeNull();
+    expect(screen.getByText("The model Bot starts with.")).toBeInTheDocument();
     expect(screen.getByTestId("model-warning").textContent).toContain("not in your key's model list");
   });
 

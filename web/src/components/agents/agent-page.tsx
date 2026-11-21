@@ -33,6 +33,7 @@ import { PeersTab } from "@/components/peers/peers-tab";
 import { EvalsTab } from "./evals/evals-tab";
 import { FilesTab } from "./files-tab";
 import { useLeaveGate } from "./files/leave-gate";
+import { useSaveBar } from "@/components/ui/save-bar";
 import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
 import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, LEGACY_AUTOMATION_TAB, resolvePage, sectionLanding, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
@@ -83,6 +84,9 @@ export function AgentPage() {
   });
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  // (behaviour-6) The Instructions form remounts when a save refreshes `updated_at`; its "Saved" flash lives here so it survives.
+  const instructionsBar = useSaveBar();
+  const [instructionsSig, setInstructionsSig] = useState<string | null>(null);
   // The page last open in each section, so a section's switcher button returns to it.
   const lastPage = useRef<Partial<Record<SectionId, AgentPageId>>>({});
 
@@ -291,7 +295,7 @@ export function AgentPage() {
             />
           ) : null}
           {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} agentName={agent.name} memoryLanguage={workspace.data?.memory_language} /> : null}
-          {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
+          {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} agentName={agent.name} /> : null}
           {tab === "evals" && !byo ? <EvalsTab agentId={agent.id} frozen={agent.frozen !== null} canOwn={canOwn} defaultTimezone={workspace.data?.timezone} /> : null}
           {/* (P5-REFINE-14) Schedules, Webhooks and Channels are one page; the old ids open it filtered to their kind. */}
           {tab === "automations" && !byo && workspace.data ? (
@@ -321,7 +325,12 @@ export function AgentPage() {
           ) : null}
           {tab === "previews" && !byo ? <PreviewsTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "ssh" && !byo && sshEnabled ? <SshPage agentId={agent.id} agentName={agent.name} agentHandle={agent.handle} frozen={agent.frozen !== null} /> : null}
-          {tab === "instructions" ? <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} /> : null}
+          {tab === "instructions" ? <InstructionsTab
+              key={agent.updated_at}
+              agent={agent}
+              wsId={wsId!}
+              saveState={{ bar: instructionsBar, sig: instructionsSig, setSig: setInstructionsSig }}
+            /> : null}
           {tab === "access" && workspace.data ? (
             <AccessTab agentId={agent.id} agentName={agent.name} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} agentBase={`${base}/agents/${agent.handle}`} />
           ) : null}
