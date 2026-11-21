@@ -409,8 +409,11 @@ Changes and why:
 
 `images/services/Containerfile` and the supervisor stage of `images/sandbox/Containerfile` use cargo-chef
 (`planner` → `cargo chef cook` dependency layer → workspace build) with lld, and all six service images are
-copies of **one** `builder` stage compile. In CI the `images-builder` job (final jobs of `ci.yml`, after every
-check job) builds that stage once into the gha cache scope `services`; the per-image jobs import it.
+copies of **one** `builder` stage compile. In CI the `images-builder` job builds that stage once into the gha
+cache scope `services`; the per-image jobs import it. Since 2026-11-21 `images-builder` runs in parallel with
+the check jobs: it only fills the cache and never pushes. The publishing jobs (`images-services`, `images-api`,
+`images-api-pr`, `images-web`, `images-sandbox`) still need every check job. Before the change, run
+44875380182 took 54 min wall time: `web` 30 min, then `images-builder` 18 min, then the service/api images 5 min.
 `target/` is deliberately kept in image layers, not a `--mount=type=cache`: `cache-to type=gha` exports layers
 only, so a cache-mounted `target/` would be lost between CI runs. The cargo registry/git use cache mounts.
 

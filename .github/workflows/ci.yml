@@ -422,9 +422,12 @@ jobs:
   # Cache design (docs/ops/build-performance.md): `images-builder` compiles the Rust workspace ONCE
   # (Containerfile `builder` stage, cargo-chef deps layer) and exports the layers to the gha cache scope
   # `services`; the per-image jobs import that scope, so every service image is a copy of one compile.
+  # `images-builder` is the one image job that does NOT wait for the checks: it only fills the cache (no
+  # login, no push, no packages:write, no secrets), so it runs alongside `web` and the Rust jobs (each
+  # ~20-30 min) instead of after them. Every publishing job below still needs every check job, so
+  # nothing is pushed unless all of them are green.
   images-builder:
     concurrency: { group: "images-builder-${{ github.ref }}", cancel-in-progress: false }
-    needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, gated-suites, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -446,7 +449,7 @@ jobs:
     # One group per image: a shared group lets only one matrix leg run and keeps a single pending
     # slot, so the next push's legs replaced (cancelled) the siblings still waiting.
     concurrency: { group: "images-services-${{ github.ref }}-${{ matrix.image }}", cancel-in-progress: false }
-    needs: [images-builder]
+    needs: [images-builder, rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, gated-suites, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -531,7 +534,7 @@ jobs:
     # pushes in flight the queued legs replaced (cancelled) each other — the api leg of run
     # 43578568574 was cancelled a second after it started.
     concurrency: { group: "images-api-${{ github.ref }}-${{ matrix.image }}", cancel-in-progress: false }
-    needs: [images-builder]
+    needs: [images-builder, rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, gated-suites, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -588,7 +591,7 @@ jobs:
   images-api-pr:
     if: github.event_name == 'pull_request'
     concurrency: { group: "images-api-pr-${{ github.ref }}", cancel-in-progress: false }
-    needs: [images-builder]
+    needs: [images-builder, rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, gated-suites, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
