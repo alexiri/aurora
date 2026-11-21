@@ -75,6 +75,7 @@ pub async fn open(
         .bind(n.turn_id)
         .fetch_one(&mut *tx)
         .await?;
+        hint(tx, &row).await?;
         return Ok((row, moved));
     }
     let row: RequestRow = sqlx::query_as(sql(
@@ -98,7 +99,24 @@ pub async fn open(
     .bind(n.reason)
     .fetch_one(&mut *tx)
     .await?;
+    hint(tx, &row).await?;
     Ok((row, true))
+}
+
+/// (P5-REFINE-9, C-1084) Queue the agent's timeline hint for a changed request.
+async fn hint(tx: &mut PgConnection, row: &RequestRow) -> Result<(), DbError> {
+    super::timeline::hint(tx, row.agent_id, super::timeline::Source::Access, row.id).await
+}
+
+/// [`hint`] for a fenced update's result.
+async fn hinted(
+    tx: &mut PgConnection,
+    row: Option<RequestRow>,
+) -> Result<Option<RequestRow>, DbError> {
+    if let Some(r) = &row {
+        hint(tx, r).await?;
+    }
+    Ok(row)
 }
 
 /// The agent's open request for an app, marked `given` (at most one per agent and app).
@@ -107,14 +125,15 @@ pub async fn mark_given_for_app(
     agent_id: Uuid,
     app_id: &str,
 ) -> Result<Option<RequestRow>, DbError> {
-    Ok(sqlx::query_as(sql(
+    let row = sqlx::query_as(sql(
         "UPDATE agent_access_requests SET status = 'given', resolved_at = now(), updated_at = now() \
          WHERE agent_id = $1 AND kind = 'app' AND app_id = $2 AND status = 'open' RETURNING {COLS}"
     ))
     .bind(agent_id)
     .bind(app_id)
     .fetch_optional(&mut *tx)
-    .await?)
+    .await?;
+    hinted(tx, row).await
 }
 
 /// The agent's open request for a proposed website's secret, marked `given`.
@@ -123,7 +142,7 @@ pub async fn mark_given_for_secret(
     agent_id: Uuid,
     secret_id: Uuid,
 ) -> Result<Option<RequestRow>, DbError> {
-    Ok(sqlx::query_as(sql(
+    let row = sqlx::query_as(sql(
         "UPDATE agent_access_requests SET status = 'given', resolved_at = now(), updated_at = now() \
          WHERE agent_id = $1 AND kind = 'website' AND secret_id = $2 AND status = 'open' \
          RETURNING {COLS}"
@@ -131,7 +150,8 @@ pub async fn mark_given_for_secret(
     .bind(agent_id)
     .bind(secret_id)
     .fetch_optional(&mut *tx)
-    .await?)
+    .await?;
+    hinted(tx, row).await
 }
 
 pub async fn get(db: &PgPool, id: Uuid) -> Result<Option<RequestRow>, DbError> {
@@ -149,14 +169,15 @@ pub async fn dismiss(
     id: Uuid,
     by: Option<Uuid>,
 ) -> Result<Option<RequestRow>, DbError> {
-    Ok(sqlx::query_as(sql(
+    let row = sqlx::query_as(sql(
         "UPDATE agent_access_requests SET status = 'dismissed', resolved_at = now(), \
          resolved_by = $2, updated_at = now() WHERE id = $1 AND status = 'open' RETURNING {COLS}",
     ))
     .bind(id)
     .bind(by)
     .fetch_optional(&mut *tx)
-    .await?)
+    .await?;
+    hinted(tx, row).await
 }
 
 /// A workspace's requests of one status, newest first.
@@ -189,10 +210,13 @@ pub async fn secret_host(db: &PgPool, secret_id: Uuid) -> Result<Option<String>,
 
 /// Open requests older than `ttl_secs` → `expired`. Returns how many.
 pub async fn expire_overdue(db: &PgPool, ttl_secs: f64) -> Result<u64, DbError> {
-    Ok(sqlx::query(
-        "UPDATE agent_access_requests SET status = 'expired', resolved_at = now(), \
-         updated_at = now() WHERE status = 'open' AND updated_at < now() - make_interval(secs => $1)",
-    )
+    // (P5-REFINE-9, C-1084) One timeline hint per expired request, sent with the update.
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
+        "WITH hinted AS (UPDATE agent_access_requests SET status = 'expired', resolved_at = now(), \
+         updated_at = now() WHERE status = 'open' AND updated_at < now() - make_interval(secs => $1) \
+         RETURNING id, agent_id) {}",
+        super::timeline::hint_rows_sql(super::timeline::Source::Access)
+    )))
     .bind(ttl_secs)
     .execute(db)
     .await?

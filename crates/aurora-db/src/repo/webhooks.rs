@@ -323,9 +323,10 @@ pub async fn insert_delivery(
     .bind(status)
     .bind(size_bytes)
     .bind(reason)
-    .execute(conn)
+    .execute(&mut *conn)
     .await?;
-    Ok(())
+    // (P5-REFINE-9, C-1084) The agent's timeline shows the delivery as soon as this commits.
+    super::timeline::hint_automation(conn, super::timeline::Source::Delivery, webhook, id).await
 }
 
 /// An accepted delivery with this idempotency key newer than `window_secs`.

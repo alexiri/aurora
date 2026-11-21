@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { NoModelBar, NoModelCard, useAnswerFix } from "@/components/agents/answer-fix";
 import { ConversationActions, RestoreButton } from "@/components/agents/conversation-actions";
 import { Avatar } from "@/components/agent-avatar";
 import { ErrorState, Loading } from "@/components/states";
@@ -120,6 +121,8 @@ export function ChatThread({
   // A conversation switch unmounts this thread: the rail must not keep its last turn.
   useEffect(() => () => onTurn?.({ active: false, line: null }), [onTurn]);
   const agentName = agent?.name ?? "the agent";
+  // (D-414) The agent has no AI key at all: no composer, and the empty chat says "<Agent> has no AI model yet".
+  const { noKey: noModel } = useAnswerFix(agentId);
   const readOnly = ownerView !== null;
   const isDirect = ownDirect || !!direct || readOnly || conversation?.kind === "direct";
   const empty = !loading && !error && state.events.length === 0 && Object.keys(state.deltas).length === 0;
@@ -212,11 +215,16 @@ export function ChatThread({
             }
             empty={
               empty ? (
-                <div className="mx-auto flex max-w-sm flex-col items-center gap-2 text-center">
-                  <Avatar name={agent?.name ?? "Agent"} url={agent?.avatarUrl} tintKey={agent?.id} size={72} />
-                  <h3 className="font-display text-lg font-semibold text-ink">Say hello to {agent?.name ?? "the agent"}</h3>
-                  {agent?.handle ? <p className="text-sm text-ink-2">@{agent.handle}</p> : null}
-                </div>
+                noModel ? (
+                  // (D-414, access-3) No AI key at all: the empty chat says so, with the one action for this viewer.
+                  <NoModelCard agentId={agentId} agentName={agentName} wsId={wsId} base={base} />
+                ) : (
+                  <div className="mx-auto flex max-w-sm flex-col items-center gap-2 text-center">
+                    <Avatar name={agent?.name ?? "Agent"} url={agent?.avatarUrl} tintKey={agent?.id} size={72} />
+                    <h3 className="font-display text-lg font-semibold text-ink">Say hello to {agent?.name ?? "the agent"}</h3>
+                    {agent?.handle ? <p className="text-sm text-ink-2">@{agent.handle}</p> : null}
+                  </div>
+                )
               ) : undefined
             }
           />
@@ -260,6 +268,10 @@ export function ChatThread({
         ) : (
           <>
             <AccountsBanner workspaceId={wsId} agent={{ id: agentId, name: agentName }} base={base} />
+          {noModel ? (
+            // The composer is disabled while the agent has no AI key (the action is in the card above, or in the header).
+            <NoModelBar agentId={agentId} agentName={agentName} />
+          ) : (
           <Composer
             agentId={agentId}
             convId={convId}
@@ -277,6 +289,7 @@ export function ChatThread({
             draftRef={draftRef}
             onSent={() => setSent((n) => n + 1)}
           />
+          )}
           </>
         )}
       </section>

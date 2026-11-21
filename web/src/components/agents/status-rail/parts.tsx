@@ -4,17 +4,18 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import type { AgentPageId } from "@/components/agents/sections";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusDot } from "@/components/ui/status-dot";
 import { StatusLine } from "@/components/ui/status-line";
 import { useDecideAction } from "@/lib/api/action-approvals";
 import { countdown, isAlreadyDecided, useDecide, useNow } from "@/lib/api/approvals";
 import { approvalAnchorId } from "@/components/chat/approval-card";
-import { formatDuration } from "@/lib/chat/layout";
+import { formatWhen } from "@/lib/format-date";
+import { timelineWords } from "@/lib/labels";
+import { timelineHref } from "@/lib/timeline-links";
 import { cn } from "@/lib/utils";
 
-import { decisionBadge, sandboxLook, type AgentStatus, type NeedsItem, type OpenTurn } from "./status-data";
+import { sandboxLook, type AgentStatus, type NeedsItem, type OpenTurn } from "./status-data";
 
 /** At most this many pending items are listed; more link to the Approvals page. */
 export const NEEDS_LIMIT = 5;
@@ -183,32 +184,48 @@ export function DoingNow({
   );
 }
 
-// ---- Recent tool calls -----------------------------------------------------------------------------------------
+// ---- What <Agent> did ------------------------------------------------------------------------------------------
+
+const didDot = { neutral: "bg-muted", accent: "bg-accent", pending: "bg-pending-ink", danger: "bg-danger-ink" } as const;
 
 /**
- * (P5-REFINE-11, D-415) "What <Agent> did": until the agent timeline (P5-REFINE-9) is wired here this is today's list of the
- * agent's recent requests to apps and websites, under the new heading.
+ * (P5-REFINE-11, D-415) "What <Agent> did": the last five timeline rows as sentences, each a link to its target, "All" to the
+ * workspace Activity filtered to the agent. The rows come from the agent's timeline feed and its stream (`useAgentStatus`):
+ * a new row appears on top and an in-progress row turns into its outcome in place.
  */
-export function RecentCalls({ status, activityHref }: { status: AgentStatus; activityHref: string }) {
+export function WhatItDid({ status, activityHref, base, agentBase }: { status: AgentStatus; activityHref: string; base: string; agentBase: string }) {
+  const now = useNow(30_000);
   return (
     <div className="space-y-2">
-      <p className="text-xs text-muted">The latest things it did in apps and on websites.</p>
-      {status.recentLoading ? <p className="text-sm text-muted">Loading…</p> : null}
-      {status.recentError ? <p className="text-sm text-danger-ink">Could not load recent actions.</p> : null}
-      {!status.recentLoading && !status.recentError && status.recent.length === 0 ? (
-        <p className="text-sm text-ink-2">No actions yet.</p>
-      ) : null}
-      {status.recent.length > 0 ? (
-        <ul className="space-y-1.5">
-          {status.recent.map((r) => {
-            const b = decisionBadge(r);
+      {status.didLoading ? <p className="text-sm text-muted">Loading…</p> : null}
+      {status.didError ? <p className="text-sm text-danger-ink">Could not load what it did.</p> : null}
+      {!status.didLoading && !status.didError && status.did.length === 0 ? <p className="text-sm text-ink-2">Nothing yet.</p> : null}
+      {status.did.length > 0 ? (
+        <ul className="space-y-2" data-testid="rail-did">
+          {status.did.map((item) => {
+            const w = timelineWords(item);
+            const href = timelineHref(item, { base, agentBase });
+            const body = (
+              <>
+                <span aria-hidden="true" className={cn("mt-1.5 inline-block size-2 shrink-0 rounded-full", didDot[w.tone])} />
+                <span className="min-w-0 flex-1">
+                  <span className="block break-words text-sm text-ink">{w.title}</span>
+                  <span className="block break-words text-xs text-muted">
+                    {w.meta ? `${w.meta} · ` : ""}
+                    {formatWhen(item.at, { now })}
+                  </span>
+                </span>
+              </>
+            );
             return (
-              <li key={r.id} className="flex min-w-0 items-center gap-2 text-xs">
-                <Badge tone={b.tone} className="shrink-0">
-                  {b.label}
-                </Badge>
-                <span className="min-w-0 flex-1 truncate font-mono text-ink-2">{r.tool_id ?? `${r.method} ${r.host}`}</span>
-                <span className="shrink-0 tabular-nums text-muted">{formatDuration(r.latency_ms)}</span>
+              <li key={item.id}>
+                {href ? (
+                  <Link href={href} className="flex min-w-0 items-start gap-2 rounded-control hover:bg-subtle">
+                    {body}
+                  </Link>
+                ) : (
+                  <div className="flex min-w-0 items-start gap-2">{body}</div>
+                )}
               </li>
             );
           })}

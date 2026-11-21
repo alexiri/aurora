@@ -65,7 +65,18 @@ pub async fn insert(conn: &mut PgConnection, n: &NewPeerTask) -> Result<PeerTask
     .bind(n.ttl_secs)
     .execute(&mut *conn)
     .await?;
-    get(&mut *conn, n.id).await?.ok_or(DbError::NotFound)
+    get_hinted(conn, n.id).await?.ok_or(DbError::NotFound)
+}
+
+/// (P5-REFINE-9, C-1084) The task after a change, with a timeline hint queued for both agents.
+async fn get_hinted(conn: &mut PgConnection, id: Uuid) -> Result<Option<PeerTaskRow>, DbError> {
+    let row = get(&mut *conn, id).await?;
+    if let Some(r) = &row {
+        use super::timeline::{Source, hint};
+        hint(&mut *conn, r.from_agent_id, Source::Peer, r.id).await?;
+        hint(&mut *conn, r.to_agent_id, Source::Peer, r.id).await?;
+    }
+    Ok(row)
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<PeerTaskRow>, DbError> {
@@ -184,7 +195,7 @@ pub async fn open_queued(
     if done.rows_affected() == 0 {
         return Ok(None);
     }
-    get(conn, id).await
+    get_hinted(conn, id).await
 }
 
 /// Close a `queued`/`open` task (`completed` | `cancelled` | `expired`). Fenced: `None` when the
@@ -207,7 +218,7 @@ pub async fn close(
     if done.rows_affected() == 0 {
         return Ok(None);
     }
-    get(conn, id).await
+    get_hinted(conn, id).await
 }
 
 /// Count one more message against the budget of an `open` task. `None` when the task is not

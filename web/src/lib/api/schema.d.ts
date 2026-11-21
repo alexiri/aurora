@@ -2510,6 +2510,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What an agent did, newest first: structured kinds and names, never sentences (C-1083). */
+        get: operations["getAgentTimeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/timeline/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Server-sent events: `row` (`{op: "upsert", item}`), `request` (with `technical=true`) and
+         *     `resync`; no SSE ids (C-1084).
+         */
+        get: operations["streamAgentTimeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/token": {
         parameters: {
             query?: never;
@@ -15581,6 +15618,128 @@ export interface components {
             id: string;
             tier: string;
         };
+        /** @description One row of an agent's timeline (C-1083). */
+        TimelineItem: {
+            agent: components["schemas"]["TimelineRef"];
+            app?: components["schemas"]["TimelineRef"] | null;
+            /** Format: date-time */
+            at: string;
+            /** @description `computer`: the first line of the command, at most 120 characters. */
+            command?: string | null;
+            /**
+             * Format: int64
+             * @description `answered`, `ran_schedule`, `received_webhook`: tool calls; `called`: requests;
+             *     `computer`: files written.
+             */
+            count?: number | null;
+            /** Format: int64 */
+            duration_ms?: number | null;
+            /** Format: date-time */
+            ended_at?: string | null;
+            /** @description `computer`: at most five workspace-relative paths. */
+            files?: string[] | null;
+            host?: string | null;
+            /**
+             * @description Stable across the row's updates: `turn:<turn>`, `computer:<turn>:<seq>`,
+             *     `call:<turn>:<app or host>:<outcome>`, `call:<request>`, `approval:<id>`,
+             *     `action_approval:<id>`, `run:<id>`, `delivery:<id>`, `peer:<task>`, `access:<id>`.
+             */
+            id: string;
+            kind: components["schemas"]["TimelineKind"];
+            link?: components["schemas"]["TimelineLink"] | null;
+            /** @description The AI model's id (the turn's most used `request_log.llm_model`). */
+            model?: string | null;
+            /** @description The kind's outcome word (C-1083); null while the row is `running` or `waiting`. */
+            outcome?: string | null;
+            peer?: components["schemas"]["TimelineRef"] | null;
+            person?: components["schemas"]["TimelinePerson"] | null;
+            rule?: components["schemas"]["TimelineRule"] | null;
+            schedule?: components["schemas"]["TimelineRef"] | null;
+            state: components["schemas"]["TimelineState"];
+            tool?: string | null;
+            webhook?: components["schemas"]["TimelineRef"] | null;
+        };
+        /**
+         * @description What a row says the agent did (C-1083).
+         * @enum {string}
+         */
+        TimelineKind: "answered" | "computer" | "asked_before" | "called" | "ran_schedule" | "received_webhook" | "handed_task" | "got_task" | "asked_for_access";
+        TimelineLink: {
+            /**
+             * @description The conversation, approval, run, delivery, rule (logical id), app, peer task, or (for
+             *     `file`) the agent.
+             */
+            id: string;
+            /** @description `file`: the absolute path under `/workspace` (the Files page). */
+            path?: string | null;
+            /**
+             * Format: int64
+             * @description `conversation`: the event to scroll to.
+             */
+            seq?: number | null;
+            type: components["schemas"]["TimelineLinkType"];
+        };
+        /**
+         * @description What a row opens.
+         * @enum {string}
+         */
+        TimelineLinkType: "conversation" | "approval" | "action_approval" | "run" | "delivery" | "file" | "rule" | "app" | "peer_task";
+        /** @description `GET /v1/agents/{agent}/timeline`. */
+        TimelinePage: {
+            items: components["schemas"]["TimelineItem"][];
+            next_cursor?: string | null;
+        };
+        TimelinePerson: {
+            display_name: string;
+        };
+        TimelineRef: {
+            id: string;
+            name: string;
+        };
+        /**
+         * @description `event: request` of the timeline stream (C-1084, SEC-143): a new request-log row of the agent,
+         *     sent only with `?technical=true` and only when the viewer may see its conversation (a row with
+         *     none is sent without its host). It carries **no path, no context label, no secret or connection
+         *     id**: the Technical view reads the full row from `GET /workspaces/{ws}/activity`, which has its own
+         *     authorization, when it sees this event.
+         */
+        TimelineRequestEvent: {
+            /** Format: uuid */
+            agent_id: string;
+            app_id?: string | null;
+            decision: string;
+            /** @description Only with a visible conversation. */
+            host?: string | null;
+            /** Format: uuid */
+            id: string;
+            method: string;
+            /** Format: int32 */
+            status: number;
+            tool_id?: string | null;
+            /** Format: date-time */
+            ts: string;
+        };
+        /** @description `event: row` of the timeline stream (C-1084). */
+        TimelineRowEvent: {
+            item: components["schemas"]["TimelineItem"];
+            /** @description Always `upsert`. */
+            op: string;
+        };
+        TimelineRule: {
+            /** Format: uuid */
+            logical_id: string;
+            name: string;
+        };
+        /**
+         * @description Where a row is now: `running` and `waiting` rows are updated in place by the stream.
+         * @enum {string}
+         */
+        TimelineState: "running" | "waiting" | "done" | "failed" | "blocked" | "skipped";
+        /** @description The events of the timeline stream by their `event:` name (C-1084); `resync` carries `{}`. */
+        TimelineStreamEvents: {
+            request: components["schemas"]["TimelineRequestEvent"];
+            row: components["schemas"]["TimelineRowEvent"];
+        };
         TokenRequest: {
             device_code: string;
         };
@@ -26947,6 +27106,136 @@ export interface operations {
                 };
             };
             /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentTimeline: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=100 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous page's `next_cursor` (older rows). */
+                cursor?: string;
+                /** @description Comma-separated `TimelineKind`s. */
+                kind?: string;
+                /** @description Comma-separated outcome words. */
+                outcome?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimelinePage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    streamAgentTimeline: {
+        parameters: {
+            query?: {
+                /** @description Also send `request` events (the Technical view is open). */
+                technical?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["TimelineStreamEvents"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             429: {
                 headers: {
                     [name: string]: unknown;

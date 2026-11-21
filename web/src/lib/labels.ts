@@ -7,6 +7,8 @@
  *
  * `sentence(ctx)` is the longer form for a place that has room ("Blocked because no rule allows it.").
  */
+import type { TimelineItem, TimelineKind } from "@/lib/api/timeline";
+
 export interface LabelEntry<Ctx = void> {
   label: string;
   sentence?: (ctx: Ctx) => string;
@@ -359,17 +361,26 @@ export function simWords(
   }
 }
 
-/** What one request-log row is, for the person's view of Activity (workspace-2). */
-export type ActivityKind = "answer" | "app" | "approval" | "web";
+/** What a person filters Activity by (workspace-2), and the timeline kinds each choice asks the API for. */
+export type ActivityKind = "answer" | "app" | "approval" | "automation";
 export type ActivityOutcome = "answered" | "blocked" | "waited" | "failed";
 
-/** The filter words of Activity: "Everything · Answers · Calls to apps · Approvals". */
+/** The filter words of Activity: "Everything · Answers · Calls to apps · Approvals · Automations". */
 export const ACTIVITY_KIND = {
   "": { label: "Everything" },
   answer: { label: "Answers" },
   app: { label: "Calls to apps" },
   approval: { label: "Approvals" },
+  automation: { label: "Automations" },
 } satisfies LabelTable;
+
+/** The timeline kinds (`kind=` of the feed) behind each choice of the first filter. */
+export const ACTIVITY_KIND_FILTER: Record<ActivityKind, readonly TimelineKind[]> = {
+  answer: ["answered", "computer"],
+  app: ["called"],
+  approval: ["asked_before"],
+  automation: ["ran_schedule", "received_webhook"],
+};
 
 /** "Any outcome · Answered · Blocked · Waited for you · Failed". */
 export const ACTIVITY_OUTCOME = {
@@ -380,76 +391,17 @@ export const ACTIVITY_OUTCOME = {
   failed: { label: "Failed" },
 } satisfies LabelTable;
 
-interface ActivityRow {
-  method: string;
-  host: string;
-  path: string;
-  decision: string;
-  status?: number | null;
-  rule_name?: string | null;
-  app_id?: string | null;
-  llm_model?: string | null;
-  approval_id?: string | null;
-}
-
-const BLOCKED = new Set(["blocked", "blocked_by_policy", "default_denied", "egress_denied", "governance_refused", "rate_limited", "guard_refused"]);
-
-/** A model call goes to the model endpoint (`…/v1/messages`, `…/chat/completions`) or names the model it asked for. */
-export function activityKind(e: ActivityRow): ActivityKind {
-  if (e.approval_id || e.decision.startsWith("approval_")) return "approval";
-  if (e.app_id) return "app";
-  if (e.llm_model || /\/v1\/(messages|chat\/completions|responses)\b/.test(e.path)) return "answer";
-  return "web";
-}
-
-export function activityOutcome(e: ActivityRow): ActivityOutcome {
-  if (e.decision === "error" || e.decision === "approval_expired") return "failed";
-  if (e.approval_id || e.decision === "approval_denied") return "waited";
-  if (BLOCKED.has(e.decision)) return "blocked";
+/**
+ * The "Any outcome" group a timeline row belongs to. The API's outcome words differ per kind, so the filter is the web's:
+ * an approval (or a row waiting for a person) is "Waited for you", then Blocked (a rule, the default, a refusal, a limit),
+ * then Failed, and the rest Answered.
+ */
+export function timelineOutcomeGroup(item: Pick<TimelineItem, "kind" | "state" | "outcome">): ActivityOutcome {
+  const out = item.outcome ?? "";
+  if (item.kind === "asked_before" || item.state === "waiting" || out === "not_approved") return "waited";
+  if (item.state === "blocked" || out.startsWith("blocked") || out.startsWith("refused") || out === "rate_limited") return "blocked";
+  if (item.state === "failed" || out === "failed") return "failed";
   return "answered";
-}
-
-/** The tone of the dot at the start of a row. */
-export function activityTone(e: ActivityRow): "accent" | "danger" | "pending" | "neutral" {
-  const o = activityOutcome(e);
-  return o === "answered" ? "accent" : o === "blocked" ? "danger" : o === "waited" ? "pending" : "neutral";
-}
-
-/** The two lines of a row: the sentence and the meta line ("Blocked by your rule 'X'"). `appName` names the app called. */
-export function activitySentence(e: ActivityRow, agent: string, appName?: string | null): { title: string; meta: string } {
-  const kind = activityKind(e);
-  const outcome = activityOutcome(e);
-  const entry = (GATEWAY_DECISION as Record<string, { sentence?: () => string } | undefined>)[e.decision];
-  const why = e.rule_name ? `Blocked by your rule ‘${e.rule_name}’` : (entry?.sentence?.() ?? "Blocked");
-  if (kind === "answer") {
-    return outcome === "answered"
-      ? { title: `${agent} answered you`, meta: `Used ${e.llm_model ?? "the workspace's model"}` }
-      : { title: `${agent} couldn't get an answer`, meta: outcome === "blocked" ? why : "The model didn't answer" };
-  }
-  if (kind === "approval") {
-    const meta =
-      e.decision === "approved"
-        ? "You approved it"
-        : e.decision === "approval_denied"
-          ? "You said no"
-          : e.decision === "approval_expired"
-            ? "Nobody answered in time"
-            : "Waiting for you in Approvals";
-    return { title: `${agent} asked before changing ${e.host}`, meta };
-  }
-  if (kind === "app") {
-    const app = appName ?? "an app";
-    return outcome === "blocked"
-      ? { title: `${agent} called ${app}`, meta: why }
-      : outcome === "failed"
-        ? { title: `${agent} called ${app}`, meta: "It didn't work" }
-        : { title: `${agent} called ${app}`, meta: "Allowed" };
-  }
-  return outcome === "blocked"
-    ? { title: `${agent} tried to reach ${e.host}`, meta: why }
-    : outcome === "failed"
-      ? { title: `${agent} tried to reach ${e.host}`, meta: "It didn't work" }
-      : { title: `${agent} reached ${e.host}`, meta: "Allowed" };
 }
 
 /** How much an audit entry matters to a workspace owner; `critical` rows are Critical whatever the table says. */
@@ -682,5 +634,155 @@ export function webhookTestErrorSentence(code: string | undefined): string | nul
       return "Nothing is there. Check the address.";
     default:
       return null;
+  }
+}
+
+// ---- The agent timeline (P5-REFINE-9 feed; P5-REFINE-11 rail, P5-REFINE-16 Activity; D-415) ----------------------------
+
+/** The kinds of timeline row (`TimelineKind`) in the filter's words (workspace-2: "Everything · Answers · Calls to apps · Approvals · Automations"). */
+export const TIMELINE_KIND = {
+  answered: { label: "Answers" },
+  computer: { label: "On its computer" },
+  asked_before: { label: "Approvals" },
+  called: { label: "Calls to apps" },
+  ran_schedule: { label: "Automations" },
+  received_webhook: { label: "Automations" },
+  handed_task: { label: "Other agents" },
+  got_task: { label: "Other agents" },
+  asked_for_access: { label: "Access requests" },
+} satisfies LabelTable;
+COVERED.TimelineKind = TIMELINE_KIND;
+
+/** Where a row is now (`TimelineState`), in words. */
+export const TIMELINE_STATE = {
+  running: { label: "Working" },
+  waiting: { label: "Waiting for you" },
+  done: { label: "Done" },
+  failed: { label: "Failed" },
+  blocked: { label: "Blocked" },
+  skipped: { label: "Skipped" },
+} satisfies LabelTable;
+COVERED.TimelineState = TIMELINE_STATE;
+
+/** The outcome words C-1083 lists per kind, as the meta line says them. `labels.test.ts` walks every one. */
+export const TIMELINE_OUTCOME_LINE: Record<string, Record<string, string>> = {
+  answered: { answered: "Answered", failed: "It didn't answer", stopped: "You stopped it" },
+  computer: { ok: "It worked", failed: "It didn't work" },
+  asked_before: {
+    allowed_once: "Allowed once",
+    always_allowed: "Always allowed",
+    blocked: "Blocked",
+    expired: "Nobody answered in time",
+    abandoned: "The request went away before anyone answered",
+  },
+  called: {
+    allowed: "Allowed",
+    blocked_by_rule: "Blocked by a rule",
+    blocked_default: "Blocked: no rule allows it",
+    not_approved: "Not approved",
+    rate_limited: "Slowed down: too many requests",
+    failed: "It didn't work",
+  },
+  ran_schedule: { answered: "Answered", skipped_by_gate: "Skipped: its condition wasn't met", failed: "It didn't work", skipped: "Skipped" },
+  received_webhook: {
+    answered: "Answered",
+    failed: "It didn't work",
+    refused_signature: "Refused: the signature didn't match",
+    refused_too_large: "Refused: too large",
+    refused_paused: "Refused: the webhook is paused",
+    refused_frozen: "Refused: the agent is paused",
+    refused_unauthorized: "Refused: not authorized",
+    duplicate: "Already received",
+  },
+  handed_task: { completed: "Done", cancelled: "Cancelled", expired: "Expired" },
+  got_task: { completed: "Done", cancelled: "Cancelled", expired: "Expired" },
+  asked_for_access: { given: "Access given", dismissed: "Dismissed", expired: "Expired" },
+};
+
+export interface TimelineWords {
+  /** "Dani called GitHub" */
+  title: string;
+  /** "Blocked by your rule ‘Block evil.example.org’" */
+  meta: string;
+  /** The dot at the start of a row. */
+  tone: "accent" | "danger" | "pending" | "neutral";
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * One timeline row as a sentence and a meta line (D-415: the API returns kinds and names, the web writes the words). A
+ * running row reads as in progress ("Running ‘Morning summary’…") and turns into its outcome in place when the stream
+ * upserts the same `id`.
+ */
+export function timelineWords(item: TimelineItem): TimelineWords {
+  const agent = item.agent.name;
+  const running = item.state === "running";
+  const waiting = item.state === "waiting";
+  const out = item.outcome ?? "";
+  const outLine = TIMELINE_OUTCOME_LINE[item.kind]?.[out] ?? (item.state === "failed" ? "It didn't work" : "");
+  const tone: TimelineWords["tone"] = running
+    ? "accent"
+    : waiting
+      ? "pending"
+      : item.state === "failed" || item.state === "blocked"
+        ? "danger"
+        : item.state === "skipped"
+          ? "neutral"
+          : "accent";
+  const thing = item.app?.name ?? item.host ?? "something";
+  const calls = item.count != null && item.count > 0 ? plural(item.count, "call", "calls") : null;
+  switch (item.kind) {
+    case "answered": {
+      const parts = [item.model ? `Used ${item.model}` : null, calls].filter(Boolean);
+      return {
+        title: running ? `${agent} is answering` : out === "answered" || !out ? `${agent} answered you` : out === "stopped" ? `${agent} was stopped` : `${agent} couldn't answer`,
+        meta: running ? parts.join(" · ") || "Working on it" : out === "answered" || !out ? parts.join(" · ") || "Answered" : outLine,
+        tone: out === "stopped" ? "neutral" : tone,
+      };
+    }
+    case "computer": {
+      const n = item.files?.length ?? 0;
+      const files = item.count ?? n;
+      const title = item.command
+        ? `${agent} ran ‘${item.command}’ on its computer`
+        : n === 1
+          ? `${agent} wrote ${item.files![0]}`
+          : files > 0
+            ? `${agent} wrote ${plural(files, "file", "files")}`
+            : `${agent} ran something on its computer`;
+      const meta = item.command && files > 0 ? `Wrote ${n === 1 ? item.files![0] : plural(files, "file", "files")}` : out === "failed" ? outLine : "On its computer";
+      return { title, meta, tone };
+    }
+    case "asked_before":
+      return {
+        title: `${agent} asked before changing ${item.host ?? item.app?.name ?? "something"}`,
+        meta: waiting ? "Waiting for you in Approvals" : item.person && (out === "allowed_once" || out === "always_allowed" || out === "blocked") ? `${outLine} by ${item.person.display_name}` : outLine,
+        tone,
+      };
+    case "called": {
+      const rule = item.rule?.name;
+      const meta =
+        out === "blocked_by_rule" && rule ? `Blocked by your rule ‘${rule}’` : out === "allowed" ? [outLine, calls && item.count! > 1 ? calls : null].filter(Boolean).join(" · ") : outLine;
+      return { title: `${agent} called ${thing}`, meta, tone };
+    }
+    case "ran_schedule": {
+      const name = item.schedule?.name ?? "a schedule";
+      return { title: running ? `Running ‘${name}’…` : `Ran ‘${name}’`, meta: running ? `${agent} is on it` : outLine, tone };
+    }
+    case "received_webhook": {
+      const name = item.webhook?.name ?? "a webhook";
+      return { title: running ? `Handling ‘${name}’…` : `Received ‘${name}’`, meta: running ? `${agent} is on it` : outLine, tone };
+    }
+    case "handed_task": {
+      const peer = item.peer?.name ?? "another agent";
+      return { title: `${agent} asked ${peer} for help`, meta: running || waiting ? `Waiting for ${peer}` : outLine, tone };
+    }
+    case "got_task": {
+      const peer = item.peer?.name ?? "another agent";
+      return { title: `${peer} asked ${agent} for help`, meta: running || waiting ? `${agent} is on it` : outLine, tone };
+    }
+    case "asked_for_access":
+      return { title: `${agent} asked for access to ${thing}`, meta: waiting ? "Waiting for you" : outLine, tone };
   }
 }
