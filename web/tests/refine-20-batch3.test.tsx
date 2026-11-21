@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { personalWorkspaceSentence } from "@/components/org/invite-dialog";
 import { OrgSkills } from "@/components/skills/org-skills";
+import { pickRailWorkspace } from "@/lib/nav/manage-return";
+import { lastScope, writeRecent } from "@/lib/nav/recent-scopes";
 import { json } from "./support/api";
 import { wrap } from "./support/render";
 
@@ -24,6 +26,19 @@ function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal("fetch", fn);
   return fn;
 }
+
+describe("P5-REFINE-20 batch 3 (workspace-7: one personal-workspace name)", () => {
+  const memberships = [{ org: { slug: "acme", name: "Acme" }, status: "active", workspaces: [{ slug: "team", name: "Team" }, { slug: "alice", name: "Alice's workspace", personal: true }] }];
+
+  it("the Manage back link and the last scope call your personal workspace 'Your workspace', as the switcher does", () => {
+    expect(pickRailWorkspace("acme", null, memberships)).toEqual({ wsSlug: "alice", wsName: "Your workspace" });
+    window.localStorage.clear();
+    writeRecent("u1", "acme/alice");
+    expect(lastScope("u1", memberships)?.wsName).toBe("Your workspace");
+    writeRecent("u1", "acme/team");
+    expect(lastScope("u1", memberships)?.wsName).toBe("Team");
+  });
+});
 
 describe("P5-REFINE-20 batch 3 (organization words)", () => {
   it("org-11: the personal workspace sentence agrees with its subject", () => {
