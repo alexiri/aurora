@@ -3,7 +3,9 @@
  * (D-389: the switcher orders its lists by it). P5-REFINE-2: the same list gives "the last scope" to the pages that have
  * none of their own (Account, a 404) — no new storage key.
  */
-const recentKey = (userId: string | undefined) => `aurora.recent-scopes:${userId ?? "anon"}`;
+import { workspaceDisplayName } from "@/lib/workspace-name";
+
+const recentKey =(userId: string | undefined) => `aurora.recent-scopes:${userId ?? "anon"}`;
 
 export function readRecent(userId: string | undefined): string[] {
   try {
@@ -27,7 +29,7 @@ export function writeRecent(userId: string | undefined, key: string) {
 export interface ScopeMembership {
   org: { slug: string; name?: string | null };
   status?: string;
-  workspaces: { slug: string; name?: string | null }[];
+  workspaces: { slug: string; name?: string | null; personal?: boolean }[];
 }
 
 export interface LastScope {
@@ -47,7 +49,7 @@ export function lastScope(userId: string | undefined, memberships: ScopeMembersh
     const [orgSlug, wsSlug] = key.split("/");
     const m = active.find((x) => x.org.slug === orgSlug);
     const w = m?.workspaces.find((x) => x.slug === wsSlug);
-    if (m && w) return { orgSlug: m.org.slug, orgName: m.org.name ?? m.org.slug, wsSlug: w.slug, wsName: w.name ?? w.slug };
+    if (m && w) return { orgSlug: m.org.slug, orgName: m.org.name ?? m.org.slug, wsSlug: w.slug, wsName: workspaceDisplayName({ name: w.name ?? w.slug, personal: w.personal }, null) };
   }
   const first = active[0];
   return first ? { orgSlug: first.org.slug, orgName: first.org.name ?? first.org.slug } : undefined;

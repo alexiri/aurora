@@ -46,7 +46,9 @@ for (const scheme of ["light", "dark"] as const) {
         const seen: string[] = [];
         const errors = await open(page, scheme, seen);
         await expect(page).toHaveURL(/\/admin\/data\?(?=.*tab=audit)(?=.*action=instance_settings\.)/);
-        await expect(page.getByLabel("Filter by action")).toHaveValue("instance_settings.");
+        // (P5-REFINE-20, admin-10) One "All actions" select in words; the area from the link shows by its name.
+        await expect(page.getByLabel("Action")).toHaveValue("instance_settings.");
+        await expect(page.getByLabel("Action").locator("option:checked")).toHaveText("Instance settings");
         expect(new URLSearchParams(seen[0]).get("action")).toBe("instance_settings.");
 
         // (P5-REFINE-18 #11) The entry reads as a sentence; Details opens the raw event under Technical details.

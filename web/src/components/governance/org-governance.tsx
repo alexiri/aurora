@@ -254,13 +254,7 @@ const REASONS: Record<string, string> = {
 export function KeysNotice({ eff, org }: { eff: EffectiveGovernance; org: Org }) {
   const workspaces = useWorkspaces(org.id);
   const bad = eff.non_compliant_secrets;
-  if (bad.length === 0) {
-    return (
-      <Notice tone="accent" role="status">
-        All AI keys follow these rules.
-      </Notice>
-    );
-  }
+  if (bad.length === 0) return null;
   const slugOf = new Map((workspaces.data?.items ?? []).map((w) => [w.id, w]));
   const orgKeys = bad.filter((s) => !s.workspace_id);
   const byWorkspace = new Map<string, typeof bad>();
@@ -389,6 +383,19 @@ function MemberByo({ org }: { org: Org }) {
   );
 }
 
+/** (P5-REFINE-20, org-7) What an Aurora administrator set for AI models, one collapsed disclosure after the organization's own rules. */
+function AboveYou({ rows }: { rows: LadderAbove[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <details className="rounded-card border border-line bg-surface shadow-card" data-testid="models-above">
+      <summary className="cursor-pointer px-4 py-3 font-display text-base font-semibold text-ink">Set above you ({rows.length})</summary>
+      <div className="border-t border-line p-4">
+        <ScopeLadder above={rows} />
+      </div>
+    </details>
+  );
+}
+
 /**
  * (P5-IA-3, C-966) The organization's AI models page: the notice for keys that no longer comply, Administration's
  * limits as ladder rows, then the organization's model rules. Members read it.
@@ -402,16 +409,11 @@ export function OrgAiModels({ org }: { org: Org }) {
       {({ form, patch, issues, readOnly, eff }) => (
         <div className="space-y-5">
           <OrgPolicyPresets org={org} part="models" />
-          <KeysNotice eff={eff} org={org} />
-          <ScopeLadder
-            above={modelLimitsFromAbove(eff)}
-            here={
-              <div className="space-y-5">
-                <h3 className="text-sm font-semibold text-ink">Rules for {org.name}</h3>
-                <ModelsTab org={org} form={form} patch={patch} issues={issues} readOnly={readOnly} />
-              </div>
-            }
-          />
+          {/* (P5-REFINE-20, org-7) Said only when something is wrong: a green "all follow" box explained nothing. */}
+          {eff.non_compliant_secrets.length > 0 ? <KeysNotice eff={eff} org={org} /> : null}
+          {/* The page opens with the one summary; Endpoints and Advanced are collapsed under it, and what is set above comes last. */}
+          <ModelsTab org={org} form={form} patch={patch} issues={issues} readOnly={readOnly} />
+          <AboveYou rows={modelLimitsFromAbove(eff)} />
         </div>
       )}
     </GovernanceForm>

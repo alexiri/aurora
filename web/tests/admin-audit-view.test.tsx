@@ -19,6 +19,7 @@ const entry = (id: string, action: string, org: string | null) => ({
   actor_kind: "instance_admin",
   actor_id: null,
   actor_label: "root@x.io",
+  actor_name: "Root Admin",
   action,
   target_kind: null,
   target_id: null,
@@ -64,7 +65,7 @@ describe("AdminAuditView filters in the URL (FIX-171)", () => {
     const seen: string[] = [];
     stubAudit(seen);
     view();
-    await screen.findByText("root@x.io changed the instance settings");
+    await screen.findByText("Root changed the instance settings");
     const q = new URLSearchParams(seen[0]);
     expect(q.get("action")).toBe("instance_settings.");
     expect(q.get("scope")).toBe("all");
@@ -77,7 +78,7 @@ describe("AdminAuditView filters in the URL (FIX-171)", () => {
     const seen: string[] = [];
     stubAudit(seen);
     view();
-    await screen.findByText("root@x.io changed the instance settings");
+    await screen.findByText("Root changed the instance settings");
     const q = new URLSearchParams(seen[0]);
     expect(q.get("scope")).toBe("instance");
     expect(q.has("since")).toBe(false);
@@ -86,17 +87,22 @@ describe("AdminAuditView filters in the URL (FIX-171)", () => {
   it("writes a changed filter back, keeping tab and leaving out empty values", async () => {
     stubAudit([]);
     view();
-    await screen.findByText("root@x.io changed the instance settings");
+    await screen.findByText("Root changed the instance settings");
     fireEvent.click(screen.getByLabelText("Security-critical only"));
     expect(nav.replace).toHaveBeenLastCalledWith("/admin/data?tab=audit&critical=1", { scroll: false });
-    fireEvent.change(screen.getByLabelText("Filter by action"), { target: { value: "plugin." } });
-    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    // (admin-10) One "All actions" select in words, applied at once: no typed key, no Filter button.
+    const action = screen.getByLabelText("Action") as HTMLSelectElement;
+    expect(action.options[0]!.textContent).toBe("All actions");
+    expect(screen.queryByRole("button", { name: "Filter" })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Action prefix|e\.g\. plugin/);
+    fireEvent.change(action, { target: { value: "plugin." } });
     expect(nav.replace).toHaveBeenLastCalledWith("/admin/data?tab=audit&action=plugin.&critical=1", { scroll: false });
+    expect(action.selectedOptions[0]!.textContent).toBe("Apps");
   });
   it("opens and closes a row's Details", async () => {
     stubAudit([]);
     view();
-    await screen.findByText("root@x.io changed the instance settings");
+    await screen.findByText("Root changed the instance settings");
     const btn = screen.getByRole("button", { name: "Details" });
     expect(btn).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(btn);
@@ -135,13 +141,14 @@ describe("AdminAuditView (FIX-125)", () => {
         <AdminAuditView />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText("root@x.io trusted a new app publisher")).toBeTruthy();
+    expect(await screen.findByText("Root trusted a new app publisher")).toBeTruthy();
     expect(screen.queryByText(/acme/)).toBeNull();
     expect(seen[0]).toContain("scope=instance");
     expect(screen.getAllByText("Critical")).toHaveLength(1);
 
     fireEvent.click(screen.getByLabelText("All organizations"));
-    expect(await screen.findByText(/root@x.io did something/)).toBeTruthy();
+    expect(await screen.findByText("Root paused an organization")).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/did something|root@x\.io/);
     // The line under a sentence names the organization, or the instance for an instance-level row.
     expect(screen.getByText(/· acme/)).toBeTruthy();
     expect(screen.getByText(/· Instance$/)).toBeTruthy();
@@ -170,11 +177,12 @@ describe("System events are hidden by the server, with its count (C-1088, admin-
       }),
     );
     view();
-    await screen.findByText("root@x.io changed the instance settings");
+    await screen.findByText("Root changed the instance settings");
     expect(new URLSearchParams(seen[0]).get("include_system")).toBe("false");
     expect(await screen.findByText("40 system install events are hidden.")).toBeTruthy();
     fireEvent.click(screen.getByRole("switch", { name: "Show system events" }));
-    expect(await screen.findByText("system added the package of an app")).toBeTruthy();
+    // A machine actor in words: Aurora, never the slug "system".
+    expect(await screen.findByText("Aurora added the package of an app")).toBeTruthy();
     expect(screen.getAllByTestId("audit-sentence")).toHaveLength(2);
     expect(new URLSearchParams(seen[seen.length - 1]).get("include_system")).toBe("true");
   });

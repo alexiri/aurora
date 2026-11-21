@@ -56,6 +56,9 @@ pub struct AuditRow {
     pub actor_kind: String,
     pub actor_id: Option<Uuid>,
     pub actor_label: String,
+    /// (P5-REFINE-20, workspace-3) The acting person's display name, when the actor is a person
+    /// (`actor_id` is a user); `None` for a system, a service or a user since deleted.
+    pub actor_name: Option<String>,
     pub action: String,
     pub target_kind: Option<String>,
     pub target_id: Option<String>,
@@ -77,6 +80,7 @@ pub struct InstanceAuditRow {
     pub actor_kind: String,
     pub actor_id: Option<Uuid>,
     pub actor_label: String,
+    pub actor_name: Option<String>,
     pub action: String,
     pub target_kind: Option<String>,
     pub target_id: Option<String>,
@@ -142,9 +146,10 @@ pub async fn list_instance<'e, E: PgExecutor<'e>>(
     let (t, id) = split(after);
     Ok(sqlx::query_as(
         "SELECT a.id, a.org_id, o.slug AS org_slug, a.workspace_id, a.actor_kind, a.actor_id,
-                a.actor_label, a.action, a.target_kind, a.target_id, a.outcome, a.source,
-                host(a.ip) AS ip, a.metadata, a.critical, a.created_at
+                a.actor_label, u.display_name AS actor_name, a.action, a.target_kind, a.target_id,
+                a.outcome, a.source, host(a.ip) AS ip, a.metadata, a.critical, a.created_at
          FROM audit_log a LEFT JOIN organizations o ON o.id = a.org_id
+              LEFT JOIN users u ON u.id = a.actor_id AND a.actor_kind IN ('user', 'instance_admin', 'service')
          WHERE ($1 OR $2::uuid IS NOT NULL OR a.org_id IS NULL)
            AND ($2::uuid IS NULL OR a.org_id = $2)
            AND ($3::text IS NULL OR starts_with(a.action, $3))
@@ -196,15 +201,17 @@ pub async fn list<'e, E: PgExecutor<'e>>(
         Scope::Workspace(w) => (None, Some(w)),
     };
     Ok(sqlx::query_as(
-        "SELECT id, org_id, workspace_id, actor_kind, actor_id, actor_label, action, target_kind,
-                target_id, outcome, source, host(ip) AS ip, metadata, critical, created_at
-         FROM audit_log
-         WHERE ($1::uuid IS NULL OR org_id = $1) AND ($2::uuid IS NULL OR workspace_id = $2)
-           AND ($3::text IS NULL OR action = $3) AND ($4::uuid IS NULL OR actor_id = $4)
-           AND (NOT $8 OR critical)
-           AND ($9 OR actor_kind <> 'system')
-           AND ($5::timestamptz IS NULL OR (created_at, id) < ($5, $6))
-         ORDER BY created_at DESC, id DESC LIMIT $7",
+        "SELECT a.id, a.org_id, a.workspace_id, a.actor_kind, a.actor_id, a.actor_label,
+                u.display_name AS actor_name, a.action, a.target_kind, a.target_id, a.outcome,
+                a.source, host(a.ip) AS ip, a.metadata, a.critical, a.created_at
+         FROM audit_log a
+              LEFT JOIN users u ON u.id = a.actor_id AND a.actor_kind IN ('user', 'instance_admin', 'service')
+         WHERE ($1::uuid IS NULL OR a.org_id = $1) AND ($2::uuid IS NULL OR a.workspace_id = $2)
+           AND ($3::text IS NULL OR a.action = $3) AND ($4::uuid IS NULL OR a.actor_id = $4)
+           AND (NOT $8 OR a.critical)
+           AND ($9 OR a.actor_kind <> 'system')
+           AND ($5::timestamptz IS NULL OR (a.created_at, a.id) < ($5, $6))
+         ORDER BY a.created_at DESC, a.id DESC LIMIT $7",
     )
     .bind(org)
     .bind(ws)

@@ -150,7 +150,8 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
             Filter
           </Button>
         </form>
-        <DataTable caption="Request activity" stackBelow={900}>
+        {/* (P5-REFINE-20, workspace-2) Five columns that fit the card at 1256 px: the rule sits under the decision it made and the app / tool under the request. */}
+        <DataTable caption="Request activity" stackBelow={900} fit>
           <thead>
             <tr>
               <Th>Request</Th>
@@ -158,8 +159,6 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
               <Th>Agent</Th>
               <Th>Model</Th>
               <Th>Decision</Th>
-              <Th>Rule</Th>
-              <Th>App / tool</Th>
             </tr>
           </thead>
           <tbody>
@@ -173,6 +172,12 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
                     {e.context_label ? (
                       <span className="mt-0.5 block font-sans text-xs text-muted" data-testid="context-label">
                         {e.context_label}
+                      </span>
+                    ) : null}
+                    {e.app_id ? (
+                      <span className="mt-0.5 block font-sans text-xs text-ink-2" data-testid="app-tool">
+                        App: {e.app_id}
+                        {e.tool_id ? ` / ${e.tool_id}` : ""}
                       </span>
                     ) : null}
                   </Td>
@@ -194,9 +199,12 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
                   <Td>
                     <Badge tone={decisionTone(e.decision)}>{label(GATEWAY_DECISION, e.decision)}</Badge>
                     {e.status ? <span className="ml-1.5 text-xs text-muted">{e.status}</span> : null}
+                    {e.rule_name ? (
+                      <span className="mt-0.5 block text-xs text-ink-2" data-testid="rule-name">
+                        Rule: {e.rule_name}
+                      </span>
+                    ) : null}
                   </Td>
-                  <Td label="Rule">{e.rule_name ?? "—"}</Td>
-                  <Td label="App / tool">{e.app_id ? `${e.app_id}${e.tool_id ? ` / ${e.tool_id}` : ""}` : "—"}</Td>
                 </tr>
               );
             })}

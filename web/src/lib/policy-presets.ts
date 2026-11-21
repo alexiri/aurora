@@ -235,11 +235,35 @@ export function withAskRule(rules: RuleInput[], on: boolean): RuleInput[] {
  */
 export function detectOrgPreset(form: GovForm, floors: OrgFloors, part: OrgPart, askRule = false): PresetId | null {
   for (const id of PRESET_IDS) {
-    const keysMatch = ORG_KEYS[part].every((k) => heldValue(form, floors, k) === (ORG_PRESETS[id][k] || floors[k]));
+    const keysMatch = ORG_KEYS[part].every((k) => orgKeyMatches(id, k, heldValue(form, floors, k)));
     const askMatches = part !== "internet" || id === "locked_down" || askRule === (id === "balanced");
-    if (keysMatch && askMatches) return id;
+    // (P5-REFINE-20, org-7) A card says what people may do; the settings must say it too.
+    const keysOk = part !== "models" || peopleKeysMatch(id, form);
+    if (keysMatch && askMatches && keysOk) return id;
   }
   return null;
+}
+
+/** Whether the held value of one key is the card's: an "inherit" card (`""`) takes the floor, except that Open still says owners may run agents elsewhere, so it needs the held posture not to be Disabled. */
+function orgKeyMatches(id: PresetId, key: keyof OrgPresetValues, held: string): boolean {
+  const want = ORG_PRESETS[id][key];
+  if (want !== "") return held === want;
+  return key === "byoPosture" ? held !== "disabled" : true;
+}
+
+/**
+ * Whether people may add their own AI key, from the endpoints' key scopes (the same value the page's switch shows):
+ * true when every permitted endpoint takes workspace keys, `null` when no endpoint is permitted (nothing to say).
+ */
+export function peopleMayAddOwnKey(endpoints: { allowed: boolean; key_scopes: string[] }[]): boolean | null {
+  const live = endpoints.filter((e) => e.allowed);
+  return live.length === 0 ? null : live.every((e) => e.key_scopes.includes("workspace"));
+}
+
+/** Open says "people may add their own AI keys"; Balanced and Locked down say organization keys only. */
+function peopleKeysMatch(id: PresetId, form: GovForm): boolean {
+  const may = peopleMayAddOwnKey(form.endpoints);
+  return may === null || may === (id === "open");
 }
 
 /** The form with a preset applied to this part's keys. */
@@ -252,16 +276,33 @@ export function applyOrgPreset(id: PresetId, form: GovForm, part: OrgPart): GovF
     else if (k === "egressPosture") next.egressPosture = v.egressPosture;
     else next.openLane = v.openLane;
   }
+  if (part === "models") {
+    // Who may add their own AI key follows the card (an endpoint whose scopes the instance set stays as it is).
+    next.endpoints = form.endpoints.map((e) => {
+      if (!e.allowed || e.locked.key_scopes) return e;
+      const rest = e.key_scopes.filter((s) => s !== "workspace");
+      return { ...e, key_scopes: id === "open" ? [...rest, "workspace"] : rest };
+    });
+  }
   return next;
 }
 
-/** Why a card cannot be chosen: its value is looser than what the instance set; `null` when it can. */
-export function orgPresetForbidden(id: PresetId, floors: OrgFloors, part: OrgPart): string | null {
+/**
+ * Why a card cannot be chosen: its value is looser than what the instance set, or an endpoint's key scopes the instance
+ * set say the opposite of the card; `null` when it can.
+ */
+export function orgPresetForbidden(id: PresetId, floors: OrgFloors, part: OrgPart, form?: GovForm): string | null {
+  const why = "Set by the instance admin";
   for (const k of ORG_KEYS[part]) {
     const want = ORG_PRESETS[id][k];
-    if (want === "") continue;
+    if (want === "") {
+      // Open leaves agents elsewhere to the instance floor, but says owners may run them: not under a floor of Disabled.
+      if (k === "byoPosture" && floors.byoPosture === "disabled") return why;
+      continue;
+    }
     const rank = rankOf(k);
-    if (rank.indexOf(want) < rank.indexOf(floors[k])) return "Set by the instance admin";
+    if (rank.indexOf(want) < rank.indexOf(floors[k])) return why;
   }
+  if (part === "models" && form?.endpoints.some((e) => e.allowed && e.locked.key_scopes && e.key_scopes.includes("workspace") !== (id === "open"))) return why;
   return null;
 }

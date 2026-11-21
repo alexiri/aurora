@@ -73,6 +73,18 @@ describe("the Add people dialog", () => {
     expect(screen.getByText("Give one person access to this workspace.")).toBeInTheDocument();
   });
 
+  it("(workspace-4) the fold never explains a role the choice lacks without saying where it is set", async () => {
+    const { unmount } = dialog();
+    await screen.findByRole("radiogroup", { name: "Role" });
+    const fold = screen.getByTestId("role-fold");
+    expect(within(fold).getByText(/Approver:/)).toBeInTheDocument();
+    expect(fold).toHaveTextContent("Not offered here yet: change a person's role in the list once they are added.");
+    unmount();
+    dialog({ hasApprover: true });
+    await screen.findByRole("radiogroup", { name: "Role" });
+    expect(screen.getByTestId("role-fold")).not.toHaveTextContent("Not offered here yet");
+  });
+
   it("offers Member and Owner, and Approver only in a workspace that already has one", async () => {
     const { unmount } = dialog();
     const group = await screen.findByRole("radiogroup", { name: "Role" });

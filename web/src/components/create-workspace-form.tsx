@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 
 import { fieldErrors } from "@/lib/api/errors";
 import type { CreateWorkspaceRequest } from "@/lib/api/queries";
-import { MEMORY_LANGUAGES, timeZones } from "@/lib/nav/landing";
+import { MEMORY_LANGUAGES, memoryLanguageName, timeZones } from "@/lib/nav/landing";
 import { validateNameSlug } from "@/lib/nav/validation";
 
 import { Altitude } from "./ui/altitude";
@@ -92,7 +92,7 @@ export function CreateWorkspaceForm({
       </Field>
       <Altitude id="ws.memlang" level="expert" promote={!!errs.memory_language}>
         <Field id="ws-lang" label="Language agents remember in" error={errs.memory_language}>
-          <Select id="ws-lang" value={memoryLanguage} onChange={setMemoryLanguage} options={MEMORY_LANGUAGES.map((l) => ({ value: l, label: l }))} />
+          <Select id="ws-lang" value={memoryLanguage} onChange={setMemoryLanguage} options={MEMORY_LANGUAGES.map((l) => ({ value: l, label: memoryLanguageName(l) }))} />
         </Field>
       </Altitude>
       {error && !hasFieldErrors ? (

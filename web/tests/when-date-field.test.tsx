@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DateField, isoToLocaleText, localeDatePattern, localeTextToIso } from "@/components/ui/date-field";
+import { appTextToIso, DateField, isoToAppText, isoToLocaleText, localeDatePattern, localeTextToIso } from "@/components/ui/date-field";
 import { When, WHEN_TICK_MS } from "@/components/ui/when";
 
 describe("When", () => {
@@ -75,6 +75,28 @@ describe("DateField", () => {
     expect(onChange).toHaveBeenCalledWith("2026-11-19");
     fireEvent.change(input, { target: { value: "" } });
     expect(onChange).toHaveBeenLastCalledWith("");
+  });
+
+  it("(admin-10) format=app writes and reads the date as the app shows every date, never 'mm/dd/yyyy'", () => {
+    expect(isoToAppText("2026-11-19", "en-GB")).toBe("19 Nov 2026");
+    expect(isoToAppText("2026-11-19", "en-US")).toBe("Nov 19, 2026");
+    expect(appTextToIso("19 Nov 2026", "en-GB")).toBe("2026-11-19");
+    expect(appTextToIso("Nov 19, 2026", "en-US")).toBe("2026-11-19");
+    expect(appTextToIso("19 november 2026", "en-GB")).toBe("2026-11-19");
+    expect(appTextToIso("2026-11-19")).toBe("2026-11-19");
+    expect(appTextToIso("31 Feb 2026", "en-GB")).toBeNull();
+    expect(appTextToIso("19 Foo 2026", "en-GB")).toBeNull();
+    const onChange = vi.fn();
+    render(<DateField format="app" aria-label="From date" value="" onChange={onChange} />);
+    const input = screen.getByLabelText("From date");
+    expect(input.getAttribute("placeholder")).toBe(isoToAppText("2026-11-19"));
+    expect(input.getAttribute("placeholder")).not.toMatch(/mm|dd|yyyy/);
+    fireEvent.change(input, { target: { value: isoToAppText("2026-11-19") } });
+    expect(onChange).toHaveBeenCalledWith("2026-11-19");
+    cleanup();
+    // A date from outside (the URL's ?since=) shows in the same words.
+    render(<DateField format="app" aria-label="To date" value="2026-11-18" onChange={onChange} />);
+    expect((screen.getByLabelText("To date") as HTMLInputElement).value).toBe(isoToAppText("2026-11-18"));
   });
 
   it("marks an impossible date invalid and sends nothing", () => {

@@ -4,6 +4,8 @@
  */
 import { useMemo, useSyncExternalStore } from "react";
 
+import { workspaceDisplayName } from "@/lib/workspace-name";
+
 const KEY = "aurora.manage-rail";
 
 export interface RailWorkspace {
@@ -66,5 +68,5 @@ export function pickRailWorkspace(orgSlug: string, stored: RailWorkspace | null,
     return { wsSlug: stored.wsSlug, wsName: stored.wsName };
   }
   const w = list.find((x) => x.personal === true) ?? list[0];
-  return w ? { wsSlug: w.slug, wsName: w.name ?? w.slug } : null;
+  return w ? { wsSlug: w.slug, wsName: workspaceDisplayName({ name: w.name ?? w.slug, personal: w.personal }, null) } : null;
 }

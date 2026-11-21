@@ -2,7 +2,8 @@
 
 import { useId, useState, type ReactNode } from "react";
 
-import { AUDIT_ACTION, auditArea, auditWords } from "@/lib/labels";
+import { AUDIT_ACTION, auditActionLabel, auditActor, auditArea, auditWords, type AuditFilterGroup } from "@/lib/labels";
+import { Select } from "@/components/ui/select";
 import { Avatar } from "@/components/ui/avatar";
 import { ResponsiveTable } from "@/components/ui/responsive-table";
 import { cn } from "@/lib/utils";
@@ -11,7 +12,6 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { inputClass } from "@/components/ui/field";
 import { TechnicalDetails } from "@/components/ui/technical-details";
 import { LoadMore } from "@/components/ui/load-more";
 import { PageHeader } from "@/components/ui/page-header";
@@ -45,7 +45,7 @@ export interface AuditFilters {
 export function AuditPanel({
   title,
   description,
-  placeholder,
+  actions,
   feed,
   filters,
   onFilters,
@@ -63,7 +63,8 @@ export function AuditPanel({
   targetName?: (e: AuditEntry) => string | null;
   title: string;
   description: string;
-  placeholder: string;
+  /** The actions the filter offers, grouped and in words (`auditFilterGroups`): one "All actions" select, never a typed key. */
+  actions: AuditFilterGroup[];
   feed: AuditFeed;
   filters: AuditFilters;
   onFilters: (f: AuditFilters) => void;
@@ -76,28 +77,26 @@ export function AuditPanel({
   /** Content right under the list (Administration: how many system events are hidden). */
   afterList?: ReactNode;
 }) {
-  const [input, setInput] = useState(filters.action);
   const items = feed.data?.pages.flatMap((p) => p.items) ?? [];
+  // A value from the address that is not one of the choices (an older link) still shows, in words.
+  const offered = actions.some((g) => g.options.some((o) => o.value === filters.action));
   return (
     <div className="max-w-page space-y-4">
       {headed ? <PageHeader title={title} description={description} className="mb-2" /> : null}
-      <form
-        role="search"
-        className="flex flex-wrap items-center gap-x-4 gap-y-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onFilters({ ...filters, action: input.trim() });
-        }}>
-        <input
-          aria-label="Filter by action"
-          placeholder={placeholder}
-          className={`${inputClass} max-w-xs`}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-        <Button type="submit" variant="outline">
-          Filter
-        </Button>
+      <form role="search" className="flex flex-wrap items-center gap-x-4 gap-y-2" onSubmit={(e) => e.preventDefault()}>
+        <Select aria-label="Action" value={filters.action} className="w-64 max-w-full" onChange={(v) => onFilters({ ...filters, action: v })}>
+          <option value="">All actions</option>
+          {filters.action && !offered ? <option value={filters.action}>{auditActionLabel(filters.action)}</option> : null}
+          {actions.map((g) => (
+            <optgroup key={g.group} label={g.group}>
+              {g.options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </Select>
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -163,7 +162,7 @@ function AuditRow({ e, showOrg, columns }: { e: AuditEntry; showOrg: boolean; co
         <Td label="When" className="whitespace-nowrap text-ink-2">
           <When value={e.created_at} />
         </Td>
-        <Td label="By">{e.actor_label}</Td>
+        <Td label="By">{auditActor(e).full}</Td>
         {showOrg ? <Td label="Organization" className="text-ink-2">{e.org_id ? (e.org_slug ?? e.org_id) : "Instance"}</Td> : null}
         <Td label="Target" className="break-all text-ink-2">{e.target_kind ? `${e.target_kind} ${e.target_id ?? ""}` : "—"}</Td>
         <Td label="Outcome">{e.outcome}</Td>
@@ -220,11 +219,11 @@ function SentenceList({
           const w = auditWords(e, targetName(e));
           return (
             <div className="flex min-w-0 items-start gap-3">
-              <Avatar name={e.actor_label} size={32} />
+              <Avatar name={auditActor(e).full} size={32} />
               <div className="min-w-0">
                 <p className="text-sm font-medium text-ink" data-testid="audit-sentence">{w.sentence}</p>
                 <p className="text-xs text-muted">
-                  <When value={e.created_at} /> · {areas ? (auditArea(e.action) ?? "Administration") : e.actor_label}
+                  <When value={e.created_at} /> · {areas ? (auditArea(e.action) ?? "Administration") : auditActor(e).full}
                   {showOrg ? <> · {e.org_id ? (e.org_slug ?? e.org_id) : "Instance"}</> : null}
                 </p>
                 {open === e.id ? (
