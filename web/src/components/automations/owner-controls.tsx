@@ -10,6 +10,7 @@ import { MenuSwitchItem } from "@/components/ui/menu";
 import { ErrorNotice } from "@/components/ui/notice";
 import { useAccess } from "@/lib/api/account";
 import { useReassignCreator, type Offboarding, type ReassignTarget } from "@/lib/api/automations";
+import { personName } from "@/lib/workspace-name";
 
 type Creator = { id: string; display_name: string } | null | undefined;
 
@@ -17,14 +18,14 @@ type Creator = { id: string; display_name: string } | null | undefined;
 export function OwnerLabel({ anchor, creator }: { anchor: string; creator: Creator }) {
   if (anchor === "workspace") {
     return (
-      <span className="text-xs text-ink-2" title={creator ? `Created by ${creator.display_name}` : undefined}>
+      <span className="text-xs text-ink-2" title={creator ? `Created by ${personName(creator.display_name)}` : undefined}>
         Owner: <strong className="font-medium">Workspace</strong>
       </span>
     );
   }
   return (
     <span className="text-xs text-ink-2">
-      Owner: {creator ? creator.display_name || "Unknown" : "nobody (creator removed)"}
+      Owner: {creator ? personName(creator.display_name) :"nobody (creator removed)"}
     </span>
   );
 }
@@ -99,7 +100,7 @@ export function ReassignPanel({
         <option value="">Select a member…</option>
         {candidates.map((b) => (
           <option key={b.user_id} value={b.user_id}>
-            {b.display_name} ({b.email})
+            {personName(b.display_name)} ({b.email})
           </option>
         ))}
       </select>

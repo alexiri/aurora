@@ -1076,7 +1076,7 @@ export function timelineWords(item: TimelineItem): TimelineWords {
     case "asked_before":
       return {
         title: `${agent} asked before changing ${item.host ?? item.app?.name ?? "something"}`,
-        meta: waiting ? "Waiting for you in Approvals" : item.person && (out === "allowed_once" || out === "always_allowed" || out === "blocked") ? `${outLine} by ${item.person.display_name}` : outLine,
+        meta: waiting ? "Waiting for you in Approvals" : item.person && (out === "allowed_once" || out === "always_allowed" || out === "blocked") ? `${outLine} by ${personName(item.person.display_name)}` : outLine,
         tone,
       };
     case "called": {

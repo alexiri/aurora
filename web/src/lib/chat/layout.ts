@@ -1,6 +1,7 @@
 import type { Conversation, TranscriptEvent } from "@/lib/api/conversations";
 import { displayTimeZone } from "@/lib/format-date";
 
+import { personName } from "@/lib/workspace-name";
 import { activeTurnId, type TranscriptState } from "./transcript";
 
 // Pure helpers behind the chat layout (D-102): sender grouping, day dividers, list ordering and
@@ -114,7 +115,7 @@ export function conversationTitle(
     if (when) return `${c.automation.name} · ${when}`;
   }
   if (c.title) return c.title;
-  if (c.kind === "direct") return c.direct_user?.display_name || "Direct chat";
+  if (c.kind === "direct") return c.direct_user?.display_name ? personName(c.direct_user.display_name) : "Direct chat";
   return c.external_ref;
 }
 

@@ -22,6 +22,7 @@ import { When } from "@/components/ui/when";
 import { useDeleteWebhook, useRotateWebhook, useRotateWebhookSecret, useUpdateWebhook, useWebhookDeliveries, type Webhook, type WebhookDelivery } from "@/lib/api/webhooks";
 import { automationThreadHref } from "@/lib/automation-thread";
 import { DELIVERY_RESULT, label } from "@/lib/labels";
+import { personName } from "@/lib/workspace-name";
 
 /** (webhooks-3) The deliveries as a table: When · Result · Size · Conversation; stacked rows below 900 px. */
 export function Deliveries({ agentId, id, agentBase }: { agentId: string; id: string; agentBase: string }) {
@@ -127,7 +128,7 @@ export function WebhookRow({
       body={w.instructions}
       meta={
         <>
-          {w.paused_by ? `Paused by ${w.paused_by.display_name} · ` : ""}
+          {w.paused_by ? `Paused by ${personName(w.paused_by.display_name)} ·` : ""}
           Last delivery: {w.last_delivery_at ? <When value={w.last_delivery_at} /> : "never"} · <OwnerLabel anchor={w.anchor} creator={w.created_by} />
         </>
       }

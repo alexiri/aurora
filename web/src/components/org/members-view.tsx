@@ -219,7 +219,7 @@ function OffboardDialog({
       query={q}
       candidates={members
         .filter((x) => x.status === "active" && x.user_id !== target?.m.user_id)
-        .map((x) => ({ id: x.user_id, label: `${x.display_name} (${x.email})` }))}
+        .map((x) => ({ id: x.user_id, label: `${personName(x.display_name)} (${x.email})` }))}
       busy={busy}
       error={error}
       onConfirm={onConfirm}
@@ -391,7 +391,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
         {promote ? (
           <div className="space-y-3 text-sm">
             <div className="flex items-center gap-3">
-              <Avatar name={promote.m.display_name || promote.m.email} tintKey={promote.m.user_id} size={36} />
+              <Avatar name={personName(promote.m.display_name)} tintKey={promote.m.user_id} size={36} />
               <div className="min-w-0">
                 <p className="font-semibold text-ink">{promote.m.display_name || promote.m.email}</p>
                 <p className="text-ink-2">
@@ -474,7 +474,7 @@ function Invitations({ orgId, mailOn }: { orgId: string; mailOn: boolean }) {
           cell: (i) => (
             <>
               <div className="break-all font-medium">{i.email}</div>
-              {i.invited_by?.display_name ? <div className="text-xs text-muted">Invited by {i.invited_by.display_name}</div> : null}
+              {i.invited_by?.display_name ? <div className="text-xs text-muted">Invited by {personName(i.invited_by.display_name)}</div> : null}
             </>
           ),
         }}

@@ -49,6 +49,7 @@ import { internetAccessOf, internetSummary } from "@/lib/summary/internet";
 import { limitsFromAbove, ruleIsPending } from "@/lib/internet-access";
 import { orgRoutes, wsRoutes } from "@/lib/routes";
 import { whoCanFromContacts, type WhoCanValue } from "@/lib/who-can";
+import { personName } from "@/lib/workspace-name";
 
 /** The organization's own limits (the governance document): its controls and one apply for them (C-989). */
 export interface GovernanceEditor {
@@ -109,7 +110,7 @@ function HistorySection({ scope, description }: { scope: PolicyScope; descriptio
             <li key={g.id} className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-ink">
               <span className="flex min-w-0 items-center gap-3">
                 {g.actor || g.published_by ? (
-                  <Avatar name={g.actor?.display_name ?? g.published_by?.display_name ?? "?"} tintKey={g.actor?.display_name ?? g.id} size={32} />
+                  <Avatar name={personName((g.actor ?? g.published_by)?.display_name)} tintKey={g.actor?.display_name ?? g.id} size={32} />
                 ) : (
                   // No one to show (the seeded first version, or a person who has left): a neutral tile, never a "?" avatar.
                   <span aria-hidden="true" className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-subtle text-ink-2">
@@ -177,7 +178,8 @@ export function historySentence(g: {
   const total = changes.length + (g.more ?? 0);
   // The seeded first version has no author and no change list: it is the starting rules, not "Someone".
   if (g.number === 1 && !g.actor && !g.published_by && total === 0) return "The starting rules, version 1";
-  const who = g.actor?.display_name ?? g.published_by?.display_name ?? "Someone";
+  const author = g.actor ?? g.published_by;
+  const who = author ? personName(author.display_name) : "Someone";
   if (total === 0) return `${who} published version ${g.number}`;
   if (total > 2) return `${who} changed ${total} rules`;
   const [a, b] = changes;

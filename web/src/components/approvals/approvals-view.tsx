@@ -39,6 +39,7 @@ import { useAgents } from "@/lib/api/queries";
 import { ApprovalExample } from "./approval-example";
 import { AlwaysAllowedNote, ApprovalQuestion } from "./approval-question";
 import { OwnSendApprovals } from "./own-send-approvals";
+import { personName } from "@/lib/workspace-name";
 import { ParkedChip, ResumeBadge } from "./parked";
 
 /** Summary text is untrusted data: React text nodes only, never HTML. */
@@ -367,7 +368,7 @@ function ActionHistory({ wsId }: { wsId: string }) {
                     {a.status}
                   </Badge>
                 </Td>
-                <Td>{a.decided_by?.display_name ?? "—"}</Td>
+                <Td>{a.decided_by ? personName(a.decided_by.display_name) : "—"}</Td>
               </tr>
             ))}
           </tbody>
@@ -427,7 +428,7 @@ function HistoryTab({ wsId }: { wsId: string }) {
                     </span>
                   ) : null}
                 </Td>
-                <Td>{a.decided_by?.display_name ?? "—"}</Td>
+                <Td>{a.decided_by ? personName(a.decided_by.display_name) : "—"}</Td>
               </tr>
             ))}
           </tbody>

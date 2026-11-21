@@ -16,6 +16,7 @@ import { AGENT_TEMPLATES, BRIEF_MAX, DRAFT_MAX, fillTemplate, templateFor, type 
 import { useVerb } from "@/lib/palette-verb";
 import { wsRoutes } from "@/lib/routes";
 
+import { personName } from "@/lib/workspace-name";
 import { AgentRevealDialog, type Revealed } from "./reveal";
 
 const HANDLE_RE = /^[a-z][a-z0-9-]{0,39}$/;
@@ -66,7 +67,7 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
   const fe = create.error ? fieldErrors(create.error) : {};
 
   const template = templateFor(templateId);
-  const person = me.data?.user.display_name ?? null;
+  const person = me.data?.user.display_name?.trim() ? personName(me.data.user.display_name) : null;
   const shownName = name.trim() || template.nameSuggestion;
   const instructions = typed ?? fillTemplate(template.instructions, { name: shownName, person });
   const handleValue = handle ?? handleFromName(name);

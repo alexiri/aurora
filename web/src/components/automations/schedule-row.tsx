@@ -26,6 +26,7 @@ import { label, RUN_RESULT, runReason } from "@/lib/labels";
 import { clockIn, dayMonthIn, onceInstantWords, onceLocalWords } from "@/lib/schedule-words";
 import { zoneCity } from "@/lib/cron";
 import { personTimeZone } from "@/lib/format-date";
+import { personName } from "@/lib/workspace-name";
 
 /** (D-407) "Answered", "Skipped by the gate · nothing to report", "Failed · the check could not run". */
 export function runOutcomeWords(r: Pick<ScheduleRun, "result" | "reason">): string {
@@ -214,7 +215,7 @@ export function ScheduleRow({
       body={s.prompt}
       meta={
         <>
-          {s.paused_by ? `Paused by ${s.paused_by.display_name} · ` : ""}
+          {s.paused_by ? `Paused by ${personName(s.paused_by.display_name)} ·` : ""}
           {last} · <OwnerLabel anchor={s.anchor} creator={s.created_by} />
           {s.origin_conversation_id ? " · Also posts in the chat it was made in" : ""}
         </>

@@ -39,6 +39,7 @@ import { orgRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 import { isTalkable, NextSteps } from "./agent-next-steps";
+import { personName } from "@/lib/workspace-name";
 import { MutationError, StatusChip } from "./shared";
 
 /** Empty state: the organization has no chat integration, so say who can create one. */
@@ -400,7 +401,7 @@ function Reach({ agentId, canOwn }: { agentId: string; canOwn: boolean }) {
                 <span className="text-ink">{g.subject_label}</span>
                 <StatusChip status={g.state} />
                 <span className="text-xs text-muted">
-                  {g.decided_by ? `${g.decided_by.display_name} · ` : ""}
+                  {g.decided_by ? `${personName(g.decided_by.display_name)} · ` : ""}
                   {fmtDate(g.decided_at ?? g.created_at)}
                 </span>
               </li>
