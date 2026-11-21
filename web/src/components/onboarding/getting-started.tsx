@@ -288,7 +288,7 @@ function KeyStep({ step, wsId, orgId, agent, base, keysCount }: { step: GuideSte
     return (
       <Notice tone="pending" role="status">
         <span data-testid="key-unanswered">
-          {un.name} {what}, so it does not count yet. It counts once a check says it works: open the key and use Test.
+          {un.name} {what}, so it does not count yet. It counts once a check says it works: open the key and press {un.state === "not_checked" ? "Check again" : "Try again"}.
         </span>{" "}
         <Link href={`${base}/apps?tab=accounts&kind=ai-key`} className="font-semibold underline">
           Open AI keys

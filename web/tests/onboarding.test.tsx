@@ -168,6 +168,10 @@ describe("getting-started guide: every state", () => {
       });
       guide();
       expect(await screen.findByTestId("key-unanswered")).toHaveTextContent(`My Anthropic key ${words}, so it does not count yet.`);
+      // (batch 8) It names the control the key's row really has, not a "Test" nobody can find.
+      // (the key's row says "Check again" for a key not checked yet, "Try again" for one that failed)
+      expect(screen.getByTestId("key-unanswered")).toHaveTextContent(`open the key and press ${state === "not_checked" ? "Check again" : "Try again"}.`);
+      expect(screen.getByTestId("key-unanswered")).not.toHaveTextContent("use Test");
       expect(screen.getByText("0 of 2 done")).toBeInTheDocument();
       expect(screen.queryByText(/This workspace has an AI key/)).not.toBeInTheDocument();
     },
