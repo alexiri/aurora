@@ -1,7 +1,7 @@
 # Security review (P5-CATALOG §Security review, D-429): Grafana's data source proxy forwards any
 # method and any backend path, so only the named backend paths are tools. Every request below is a
 # Grafana request (the token is injected under /api, so grants, approvals and the request log apply)
-# but selects no tool: a custom grant or `block_untooled` refuses it. Tool paths are exact (no `**`),
+# but selects no tool: the package's `grants.block_untooled` blocks it under every grant. Tool paths are exact (no `**`),
 # so an extra, encoded or dot segment after a tool path never matches it.
 #
 # In production the gateway refuses dot segments (`.`, `..`, also as `%2e`), an encoded `/` (`%2F`) or

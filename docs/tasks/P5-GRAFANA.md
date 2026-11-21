@@ -255,15 +255,32 @@ named packages only), `scripts/e2e` and the Rust ITs. The tests that read every 
    - `query_datasources` shows the first query's `expr`, `rawSql` or `query` and every data source
      UID. On a SQL data source the statement runs as that data source's database user, so it can
      write. The setup guide tells admins to give SQL data sources read-only users.
-   - No `grants` flags (`custom_only` / `block_untooled`), as for sentry and gitlab. Untooled
-     requests are refused under custom grants. Under a `full` grant the token's role is the limit.
-     The credential, user, organization, data source and plugin endpoints need the organization
-     Admin role or Grafana server admin, which a Viewer or Editor token lacks. Dashboard deletion
-     is within an Editor's reach under a `full` grant, as with any app whose token can delete. The
-     setup guide says not to give the service account Admin.
+7. **`grants.block_untooled: true`** (send-back, reviewer's decision, 2026-11-21). The first version
+   had no `grants` flags, and under a `full` grant the token's Grafana role was the only limit. That
+   is not enough here: the data source proxy forwards any method and path to the backend with
+   Grafana's own credentials for that data source, and the token's role does not limit what it
+   forwards. So an untooled request could reach a backend admin API that no reviewed tool allows,
+   for example a Mimir or Loki delete endpoint, or a data source type that Grafana's own
+   `validateRequest` does not cover. With the flag, every request on a Grafana connection must
+   match a catalogued tool, under every grant: reads run, writes are held, and anything else is
+   blocked with 403 `blocked_by_policy`, reason `app_untooled_blocked`, before any rule, and the
+   token is never sent. `custom_only` stays off: a `full` grant still means "every tool, reads
+   without asking", and it can no longer reach past the catalogue.
 
-     If the reviewer wants untooled requests blocked under every grant, set `block_untooled: true`.
-     That is a one-line change, and it is a widening-free minor bump later.
+   Evidence: `aurora-gateway` IT `apps::grafana_full_grant_blocks_untooled_proxy_requests`
+   compiles the shipped `plugin.yaml` (the agent guide dropped, the gateway never reads it) and
+   holds a `full` grant on an instance connection. These are injected: `GET /api/user`, the
+   Prometheus `query` and the Loki `labels` proxy tools. These are blocked with
+   `app_untooled_blocked` and no token: proxy `POST …/api/v1/admin/tsdb/delete_series`,
+   `PUT …/admin/tsdb/clean_tombstones`, `GET …/api/v1/status/config`, Loki
+   `POST …/loki/api/v1/delete`, `DELETE` on a tool path, the numeric-id proxy route,
+   `POST /api/serviceaccounts/2/tokens` and `DELETE /api/dashboards/uid/abc`. With the flag forced
+   off in the test, the first blocked case reached the upstream (200), so the test proves the flag.
+   The setup guide ("What agents can do") and the comments of `refused.yaml` and
+   `proxy-boundaries.yaml` say so. The version stays 1.0.0: it was never published.
+
+   This also closes what the first version left to the token's role: dashboard deletion, which an
+   Editor token can do, is untooled and so blocked under every grant.
 
 ### Findings for the Orchestrator (outside this lane's files)
 
@@ -287,7 +304,11 @@ named packages only), `scripts/e2e` and the Rust ITs. The tests that read every 
   which led to the `/api/` change above.
 - `aurora plugin guide plugins/builtin/grafana --app grafana --out <scratch>`: renders. `guide.md`,
   `tools.md` (31 read, 5 held writes, untooled blocked under a custom grant), `api.json`, the
-  recipe and the reference file were read once for sense.
+  recipe and the reference file were read once for sense. After the send-back (`block_untooled`)
+  it renders "Requests that match no operation above: [blocked]" under every grant.
+- Send-back: `heavy.sh p5-platform cargo test -p aurora-gateway --test it grafana_full_grant`:
+  1 passed (and failed with the flag forced off, as it should). `cargo fmt --check` and
+  `cargo clippy -p aurora-gateway --tests -- -D warnings`: clean. `check-builtin.sh grafana`: `ok`.
 - `heavy.sh p5-platform cargo test -p aurora-registry --test it`: 173 passed. This covers
   `builtin_versions`, `manifests::every_builtin_and_fixture_validates…`,
   `snapshot::the_shipped_builtin_packages_compile…` and `agent_guide`.

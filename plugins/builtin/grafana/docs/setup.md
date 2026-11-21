@@ -61,8 +61,10 @@ Reading is allowed by default:
   `label/<name>/values` and `series`;
 - Grafana alert rules and their state, Alertmanager alerts and silences, annotations.
 
-Every other proxy path (the Prometheus admin and status APIs, other data source types) matches no
-tool, so agents with a custom permission cannot reach it.
+Every request must match one of these tools or one of the held ones below, whatever permission the
+agent has, full access included. Every other request is blocked, and the token is never sent with it:
+other proxy paths (the Prometheus admin and status APIs, other data source types) and the rest of
+Grafana's API.
 
 These are separate permissions and are held for approval:
 

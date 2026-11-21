@@ -1,5 +1,5 @@
 # Dangerous endpoints no tool offers (FIX-118, SEC-145, D-429): each request is a Grafana request
-# but selects no tool, so custom grants and `block_untooled` refuse it. Paths and methods are
+# but selects no tool, so the package's `grants.block_untooled` blocks it under every grant. Paths and methods are
 # Grafana v13.3.1's (pkg/api/api.go, pkg/services/serviceaccounts/api/api.go). All credentials are fake.
 - name: "refused service-account token creation: POST /api/serviceaccounts/<id>/tokens selects no tool (SEC-145)"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }

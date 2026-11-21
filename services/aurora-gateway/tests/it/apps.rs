@@ -1217,10 +1217,15 @@ async fn snapshot_load_refuses_host_header_injection() {
 
 /// GET `http://{host}:{port}{path}` through the proxy.
 async fn get_host(env: &Env, host: &str, path: &str) -> Reply {
+    send_host(env, "GET", host, path).await
+}
+
+/// `{method} http://{host}:{port}{path}` through the proxy, with an empty body.
+async fn send_host(env: &Env, method: &str, host: &str, path: &str) -> Reply {
     let mut s = crate::common::connect(env.proxy).await;
     let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{TOKEN}"));
     let req = format!(
-        "GET http://{host}:{port}{path} HTTP/1.1\r\nHost: {host}:{port}\r\nProxy-Authorization: Basic {auth}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        "{method} http://{host}:{port}{path} HTTP/1.1\r\nHost: {host}:{port}\r\nProxy-Authorization: Basic {auth}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         port = env.up.port()
     );
     s.write_all(req.as_bytes()).await.unwrap();
@@ -2100,6 +2105,90 @@ async fn sts_credential_minting_actions_are_blocked_and_never_signed() {
         "{}",
         r.body
     );
+}
+
+/// (P5-GRAFANA security review, D-429) The shipped grafana package, compiled as the API does:
+/// under a `full` grant its `grants.block_untooled` refuses every untooled request before any rule
+/// and never sends the token. Grafana's data source proxy forwards any method and path to the
+/// backend, so this is what keeps the backends' admin APIs out of reach. Catalogued reads still run.
+#[tokio::test]
+async fn grafana_full_grant_blocks_untooled_proxy_requests() {
+    let path = format!(
+        "{}/../../plugins/builtin/grafana/plugin.yaml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut m = aurora_registry::Manifest::parse(&std::fs::read_to_string(&path).unwrap(), "9.9.9")
+        .unwrap();
+    assert!(m.apps[0].grants.block_untooled, "grafana blocks untooled");
+    // The agent guide's files are digested from the stored archive; the gateway never reads them.
+    m.apps[0].agent = None;
+    let p = aurora_registry::snapshot::ActivePackage {
+        manifest: m,
+        digest: "d".into(),
+        publisher: "aurora".into(),
+        hooks_digest: None,
+    };
+    let compiled = aurora_registry::snapshot::compile(&[p], &[], &[], 1).unwrap();
+    let snap: Value = serde_json::from_slice(&compiled.json).unwrap();
+    let inst = Uuid::now_v7();
+    let (env, ..) = start(
+        snap,
+        &[("g1", r#"{"access_token":"GLSATOKEN"}"#)],
+        move |w| {
+            let mut c = conn(w, "grafana", "g1", None);
+            c.instance_id = Some(inst);
+            // A full grant: the strongest one a person can give.
+            let mut r = granted(c)(w);
+            r.instances
+                .push(instance_row_at(inst, "grafana", "localhost", None));
+            r
+        },
+    )
+    .await;
+    // Catalogued reads: injected.
+    for p in [
+        "/api/user",
+        "/api/datasources/proxy/uid/prom-1/api/v1/query?query=up",
+        "/api/datasources/proxy/uid/loki-1/loki/api/v1/labels",
+    ] {
+        let r = get_host(&env, "localhost", p).await;
+        assert_eq!(r.status, 200, "{p}: {}", r.body);
+        assert!(has_token(&r, "GLSATOKEN"), "{p}: {}", r.body);
+    }
+    // Untooled: data source proxy admin and status paths, and Grafana endpoints no tool offers.
+    for (method, p) in [
+        (
+            "POST",
+            "/api/datasources/proxy/uid/prom-1/api/v1/admin/tsdb/delete_series",
+        ),
+        (
+            "PUT",
+            "/api/datasources/proxy/uid/prom-1/api/v1/admin/tsdb/clean_tombstones",
+        ),
+        (
+            "GET",
+            "/api/datasources/proxy/uid/prom-1/api/v1/status/config",
+        ),
+        (
+            "POST",
+            "/api/datasources/proxy/uid/loki-1/loki/api/v1/delete",
+        ),
+        ("DELETE", "/api/datasources/proxy/uid/prom-1/api/v1/query"),
+        ("GET", "/api/datasources/proxy/7/api/v1/query"),
+        ("POST", "/api/serviceaccounts/2/tokens"),
+        ("DELETE", "/api/dashboards/uid/abc"),
+    ] {
+        let r = send_host(&env, method, "localhost", p).await;
+        assert_eq!(r.status, 403, "{method} {p}: {}", r.body);
+        assert_eq!(r.code(), "blocked_by_policy", "{method} {p}");
+        let v: Value = serde_json::from_str(&r.body).unwrap();
+        assert_eq!(
+            v["error"]["details"]["reason"], "app_untooled_blocked",
+            "{method} {p}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("GLSATOKEN"), "{method} {p}: {}", r.body);
+    }
 }
 
 // ---- D-231 / SEC-59: a registration under a base path -----------------------------------------

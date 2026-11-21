@@ -60,6 +60,12 @@ apps:
       - match: { host: "{instance}", path_prefix: /api/ }
         inject:
           - bearer: "{credentials.access_token}"
+    # (Security review of P5-GRAFANA, 2026-11-21) Every request must match a tool below, under a
+    # `full` grant too: Grafana's data source proxy forwards any method and path to the backend
+    # with Grafana's own credentials, and the token's Grafana role does not limit that, so an
+    # untooled proxy request could reach a backend's admin API. Reads run, writes are held.
+    grants:
+      block_untooled: true
     tools:
       read:
         items:
