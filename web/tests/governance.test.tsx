@@ -185,6 +185,41 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     expect(screen.queryByText("Rules for Acme")).toBeNull();
   });
 
+  it("(org-7, pass 3) never says people may not add their own while they may on some endpoints: the sentence and the row name them", async () => {
+    // Anthropic takes organization keys only (set by the instance); LiteLLM and AIGW take a workspace's too.
+    const ep = (id: string, name: string, scopes: string[], source: string) => ({
+      id, provider: id, display_name: name,
+      permitted: { value: true, source: "instance" },
+      key_scopes: { value: scopes, source },
+      allowed_models: { value: [], source: "org" },
+      origin_rule: null,
+    });
+    const e = eff({
+      llm: {
+        posture: { value: "open", source: "org" },
+        endpoints: [ep("anthropic", "Anthropic", ["organization"], "instance"), ep("litellm", "LiteLLM", ["organization", "workspace"], "org"), ep("aigw", "AIGW", ["organization", "workspace"], "org")],
+      },
+    });
+    const d = { ...doc, llm: { posture: "open", endpoints: {
+      anthropic: { allowed: true, key_scopes: ["organization"], allowed_models: [] },
+      litellm: { allowed: true, key_scopes: ["organization", "workspace"], allowed_models: [] },
+      aigw: { allowed: true, key_scopes: ["organization", "workspace"], allowed_models: [] },
+    } } };
+    mockFetch(routes({
+      "GET /v1/orgs/o1/governance/effective": () => json(200, e),
+      "GET /v1/orgs/o1/governance": () => json(200, { document: d, revision: 4 }),
+      "GET /v1/orgs/o1/accounts": () =>
+        json(200, { items: [{ kind: "ai_key", scope: "organization", name: "Company key", ref: { type: "secret", id: "k1" }, agents: [], levels: [], starter: true }], next_cursor: null }),
+    }));
+    wrap(<OrgAiModels org={ORG} />);
+    await waitFor(() => expect(screen.getByTestId("models-summary").textContent).toBe("Agents in Acme use Company key. People may add their own on LiteLLM and AIGW."));
+    const row = screen.getByText("People may add their own key").closest("div")!;
+    expect(row.textContent).toContain("Allowed on LiteLLM and AIGW");
+    expect(row.textContent).not.toContain("Not allowed");
+    // The switch is what the card acts on: the endpoints the organization can change all take workspace keys.
+    expect(within(row).getByRole("switch", { name: "People may add their own key" })).toBeChecked();
+  });
+
   it("(org-7) opens with the summary sentence and plain rows, endpoints and Advanced collapsed, origin as names", async () => {
     // An admin reads the organization's own list; the first workspace (here one the admin is not in: 404) is not needed.
     mockFetch(routes({

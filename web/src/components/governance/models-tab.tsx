@@ -7,7 +7,7 @@ import { useAccounts } from "@/lib/api/accounts";
 import { issuesUnder, type EndpointForm, type GovForm, type GovIssues } from "@/lib/api/governance";
 import { useGroups } from "@/lib/api/groups";
 import { useMe, useWorkspaces, type Org } from "@/lib/api/queries";
-import { peopleMayAddOwnKey } from "@/lib/policy-presets";
+import { peopleMayAddOwnKey, whereKeysMayBeAdded } from "@/lib/policy-presets";
 
 /**
  * The names of the organization's own AI keys, the starter Company key included: from the organization's accounts list
@@ -28,9 +28,15 @@ export function useOrgKeyNames(orgId: string): { names: string[]; pending: boole
 const listWords = (xs: string[]) => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
 /** "Agents in Acme use **Company key**. People may add their own." — from the form, so it never disagrees with the switches. */
-export function modelsSummarySentence(orgName: string, keyNames: string[], peopleMayAdd: boolean): string {
+export function modelsSummarySentence(orgName: string, keyNames: string[], where: ReturnType<typeof whereKeysMayBeAdded>): string {
   const use = keyNames.length === 0 ? "keys added in a workspace" : listWords(keyNames);
-  return `Agents in ${orgName} use ${use}. ${peopleMayAdd ? "People may add their own." : "People may not add their own."}`;
+  return `Agents in ${orgName} use ${use}. ${peopleAddSentence(where)}`;
+}
+
+/** "People may add their own." / "People may add their own on AIGW and LiteLLM." / "People may not add their own." */
+export function peopleAddSentence(where: ReturnType<typeof whereKeysMayBeAdded>): string {
+  if (!where || where.kind === "none") return "People may not add their own.";
+  return where.kind === "all" ? "People may add their own." : `People may add their own on ${listWords(where.names)}.`;
 }
 
 /** The key scopes of an endpoint in words, from the same value the switches show. */
@@ -71,8 +77,11 @@ export function ModelsTab({
   const teamOptions: PickOption[] = (groups.data?.items ?? []).map((g) => ({ id: g.id, label: g.name }));
 
   const live = form.endpoints.filter((e) => e.allowed);
-  // The one reading of "people may add their own key": the switch, the sentence and the preset card all use it.
-  const peopleMayAdd = peopleMayAddOwnKey(form.endpoints) === true;
+  // The one reading of "people may add their own key" (policy-presets.ts): the sentence and the row say where (every live
+  // endpoint, some by name, none); the switch and the preset card act on the endpoints the organization can change.
+  const where = whereKeysMayBeAdded(form.endpoints);
+  const changeable = form.endpoints.filter((e) => !e.locked.key_scopes);
+  const peopleMayAdd = peopleMayAddOwnKey(changeable) === true;
   const lead = form.endpoints[0];
   const chosenTeams = lead ? splitIds(lead.team_ids) : [];
   const chosenWs = lead ? splitIds(lead.workspace_ids) : [];
@@ -90,7 +99,7 @@ export function ModelsTab({
   return (
     <>
       <p className="text-base text-ink" data-testid="models-summary">
-        {modelsSummarySentence(org.name, keys.names, peopleMayAdd)}
+        {modelsSummarySentence(org.name, keys.names, where)}
       </p>
       <dl className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface text-sm shadow-card">
         <div className="px-4 py-3">
@@ -102,11 +111,11 @@ export function ModelsTab({
         <div className="px-4 py-3">
           <dt className="font-medium text-ink">People may add their own key</dt>
           <dd className="flex items-center justify-between gap-3 text-ink-2">
-            <span>{peopleMayAdd ? "Allowed" : "Not allowed"}</span>
+            <span>{!where || where.kind === "none" ? "Not allowed" : where.kind === "all" ? "Allowed" : `Allowed on ${listWords(where.names)}`}</span>
             <Switch
               aria-label="People may add their own key"
               checked={peopleMayAdd}
-              disabled={readOnly || live.length === 0}
+              disabled={readOnly || changeable.filter((e) => e.allowed).length === 0}
               onCheckedChange={(v) =>
                 setAll((e) =>
                   e.locked.key_scopes || !e.allowed ? {} : { key_scopes: v ? [...new Set([...e.key_scopes, "workspace"])] : e.key_scopes.filter((s) => s !== "workspace") },

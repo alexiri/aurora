@@ -261,6 +261,21 @@ export function peopleMayAddOwnKey(endpoints: { allowed: boolean; key_scopes: st
 }
 
 /**
+ * (org-7, pass 3) Where people may add their own AI key, from the endpoints' effective key scopes (instance-set ones
+ * included): `all` live endpoints, `some` (named), `none`, or `null` when no endpoint is permitted. The page's sentence
+ * and row say this; its switch and the preset card act on the endpoints the organization can change (`peopleMayAddOwnKey`
+ * over those), so "Not allowed" is only ever said when no live endpoint takes a person's key.
+ */
+export function whereKeysMayBeAdded(
+  endpoints: { allowed: boolean; key_scopes: string[]; display_name?: string; id: string }[],
+): { kind: "all" | "none" | "some"; names: string[] } | null {
+  const live = endpoints.filter((e) => e.allowed);
+  if (live.length === 0) return null;
+  const names = live.filter((e) => e.key_scopes.includes("workspace")).map((e) => e.display_name || e.id);
+  return { kind: names.length === live.length ? "all" : names.length === 0 ? "none" : "some", names };
+}
+
+/**
  * Open says "people may add their own AI keys"; Balanced and Locked down say organization keys only. Only what the
  * organization can change counts: an endpoint whose key scopes the instance set (the starter Company key's endpoint is
  * organization-keys-only) is the instance's decision, not this card's, so it never turns Open into "Custom" and never
