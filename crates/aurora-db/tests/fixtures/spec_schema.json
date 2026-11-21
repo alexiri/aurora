@@ -1246,6 +1246,11 @@
       "library_id",
       "seen_at"
     ],
+    "skill_library_org_state": [
+      "library_id",
+      "org_id",
+      "over_budget_since"
+    ],
     "skill_library_updates": [
       "bytes",
       "commit_sha",
@@ -2840,7 +2845,7 @@
       "last_refresh_at": "timestamptz null",
       "lease_owner": "uuid null",
       "next_refresh_at": "timestamptz",
-      "org_id": "uuid",
+      "org_id": "uuid null",
       "path": "text not null",
       "ref": "text null",
       "refresh_failures": "integer not null",
@@ -2855,6 +2860,11 @@
       "commit_sha": "text",
       "library_id": "uuid",
       "seen_at": "timestamptz not null"
+    },
+    "skill_library_org_state": {
+      "library_id": "uuid",
+      "org_id": "uuid",
+      "over_budget_since": "timestamptz not null"
     },
     "skill_library_updates": {
       "bytes": "integer not null",

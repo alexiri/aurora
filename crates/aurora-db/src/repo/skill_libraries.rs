@@ -17,7 +17,9 @@ const LIB_COLS: &str = "id, org_id, label, url, repo, ref, path, status, \
 #[derive(Clone, sqlx::FromRow)]
 pub struct LibraryRow {
     pub id: Uuid,
-    pub org_id: Uuid,
+    /// (P5-SKLIB-2, C-1128) Null = an instance library (managed by instance admins, visible to
+    /// every organization).
+    pub org_id: Option<Uuid>,
     pub label: String,
     /// (P5-SKLIB-1, C-1122) The normalized https clone URL; null only for a library migrated
     /// without one (C-1127).
@@ -64,7 +66,8 @@ impl std::fmt::Debug for LibraryRow {
 pub struct NewLibrary<'a> {
     /// The new row's id (chosen first: the token is sealed with it as owner).
     pub id: Uuid,
-    pub org_id: Uuid,
+    /// `None` creates an instance library.
+    pub org_id: Option<Uuid>,
     pub label: &'a str,
     pub url: &'a str,
     pub repo: &'a str,
@@ -102,18 +105,19 @@ pub async fn insert_library(
     .await?)
 }
 
-/// Whether the organization already has a library of this url + ref + path (C-1122's 409).
+/// Whether the scope (an organization, or `None` = the instance) already has a library of this
+/// url + ref + path (C-1122's 409).
 pub async fn url_taken(
     conn: &mut PgConnection,
-    org: Uuid,
+    org: Option<Uuid>,
     url: &str,
     reference: Option<&str>,
     path: &str,
     except: Option<Uuid>,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM skill_libraries WHERE org_id = $1 AND url = $2
-           AND coalesce(ref, '') = coalesce($3, '') AND path = $4
+        "SELECT EXISTS (SELECT 1 FROM skill_libraries WHERE org_id IS NOT DISTINCT FROM $1
+           AND url = $2 AND coalesce(ref, '') = coalesce($3, '') AND path = $4
            AND id IS DISTINCT FROM $5)",
     )
     .bind(org)
@@ -158,13 +162,111 @@ pub async fn list_libraries(
     .await?)
 }
 
-pub async fn count_libraries(conn: &mut PgConnection, org: Uuid) -> Result<i64, DbError> {
+/// Instance libraries by label (every status; the caller filters for its audience).
+pub async fn list_instance_libraries(conn: &mut PgConnection) -> Result<Vec<LibraryRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {LIB_COLS} FROM skill_libraries WHERE org_id IS NULL ORDER BY label, id"
+    )))
+    .fetch_all(conn)
+    .await?)
+}
+
+/// Libraries of the scope: an organization's, or (`None`) the instance's.
+pub async fn count_libraries(conn: &mut PgConnection, org: Option<Uuid>) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM skill_libraries WHERE org_id IS NOT DISTINCT FROM $1",
+    )
+    .bind(org)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// How many organizations have at least one skill added from the library.
+pub async fn orgs_using(conn: &mut PgConnection, library: Uuid) -> Result<i64, DbError> {
     Ok(
-        sqlx::query_scalar("SELECT count(*) FROM skill_libraries WHERE org_id = $1")
-            .bind(org)
+        sqlx::query_scalar("SELECT count(DISTINCT org_id) FROM skills WHERE library_id = $1")
+            .bind(library)
             .fetch_one(conn)
             .await?,
     )
+}
+
+/// `(organization, skills detached)` for every organization with a skill added from the library
+/// (the per-organization audit rows of an instance library's deletion).
+pub async fn affected_orgs(
+    conn: &mut PgConnection,
+    library: Uuid,
+) -> Result<Vec<(Uuid, i64)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT org_id, count(*) FROM skills WHERE library_id = $1 GROUP BY org_id ORDER BY org_id",
+    )
+    .bind(library)
+    .fetch_all(conn)
+    .await?)
+}
+
+// ---- per-organization budget state (P5-SKLIB-2, C-1128) ---------------------------------------
+
+/// Whether this organization's open proposals of the library are over its budget.
+pub async fn org_over_budget(
+    conn: &mut PgConnection,
+    library: Uuid,
+    org: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM skill_library_org_state WHERE library_id = $1 AND org_id = $2)",
+    )
+    .bind(library)
+    .bind(org)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// The libraries over budget for an organization.
+pub async fn org_over_budget_libraries(
+    conn: &mut PgConnection,
+    org: Uuid,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT library_id FROM skill_library_org_state WHERE org_id = $1")
+            .bind(org)
+            .fetch_all(conn)
+            .await?,
+    )
+}
+
+/// Whether any organization is over budget for the library (an unchanged head is then compared
+/// again: space may be free).
+pub async fn has_org_state(conn: &mut PgConnection, library: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM skill_library_org_state WHERE library_id = $1)",
+    )
+    .bind(library)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// After a full pass: exactly `over` are over budget (rows added, rows of organizations that fit
+/// again or no longer use the library deleted; `over_budget_since` of a kept row stays).
+pub async fn set_org_states(
+    conn: &mut PgConnection,
+    library: Uuid,
+    over: &[Uuid],
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM skill_library_org_state WHERE library_id = $1 AND org_id <> ALL($2)")
+        .bind(library)
+        .bind(over)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "INSERT INTO skill_library_org_state (library_id, org_id)
+         SELECT $1, o FROM unnest($2::uuid[]) AS o ON CONFLICT DO NOTHING",
+    )
+    .bind(library)
+    .bind(over)
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// Changes an admin may make; `None` keeps the value. `reference`/`token_ref`: `Some(None)`
@@ -260,40 +362,55 @@ pub async fn request_check(
         > 0)
 }
 
-/// Per tier, the number of skills added from the library.
+/// Per tier, the number of skills added from the library; `org` limits the count to one
+/// organization's skills (an instance library's per-organization view), `None` counts them all.
 pub async fn skill_counts(
     conn: &mut PgConnection,
     library: Uuid,
+    org: Option<Uuid>,
 ) -> Result<(i64, i64, i64), DbError> {
     Ok(sqlx::query_as(
         "SELECT count(*) FILTER (WHERE agent_id IS NOT NULL),
                 count(*) FILTER (WHERE workspace_id IS NOT NULL),
                 count(*) FILTER (WHERE agent_id IS NULL AND workspace_id IS NULL)
-         FROM skills WHERE library_id = $1",
+         FROM skills WHERE library_id = $1 AND ($2::uuid IS NULL OR org_id = $2)",
     )
     .bind(library)
+    .bind(org)
     .fetch_one(conn)
     .await?)
 }
 
-pub async fn pending_count(conn: &mut PgConnection, library: Uuid) -> Result<i64, DbError> {
+/// Open proposals of the library; `org` counts only those of one organization's skills (the
+/// skill's organization, not the library's).
+pub async fn pending_count(
+    conn: &mut PgConnection,
+    library: Uuid,
+    org: Option<Uuid>,
+) -> Result<i64, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT count(*) FROM skill_library_updates WHERE library_id = $1 AND status = 'pending'",
+        "SELECT count(*) FROM skill_library_updates u JOIN skills s ON s.id = u.skill_id
+         WHERE u.library_id = $1 AND u.status = 'pending' AND ($2::uuid IS NULL OR s.org_id = $2)",
     )
     .bind(library)
+    .bind(org)
     .fetch_one(conn)
     .await?)
 }
 
-/// Skills currently linked to the library (the read-only, pinned ones).
+/// Skills currently linked to the library (the read-only, pinned ones); `org` limits them to one
+/// organization's skills.
 pub async fn library_skills(
     conn: &mut PgConnection,
     library: Uuid,
+    org: Option<Uuid>,
 ) -> Result<Vec<SkillRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {SKILL_COLS} FROM skills WHERE library_id = $1 ORDER BY name, id"
+        "SELECT {SKILL_COLS} FROM skills WHERE library_id = $1 AND ($2::uuid IS NULL OR org_id = $2)
+         ORDER BY name, id"
     )))
     .bind(library)
+    .bind(org)
     .fetch_all(conn)
     .await?)
 }
@@ -784,7 +901,8 @@ pub struct RefreshDone<'a> {
     /// The library's `head_epoch` when the pass was claimed: the head is written only if no add
     /// cleared it since (compare-and-set).
     pub head_epoch: i32,
-    /// `active`, `error` or `over_budget`.
+    /// `active` or `error` (the budget is per organization, `skill_library_org_state`; the library's own
+    /// status never becomes `over_budget` since P5-SKLIB-2).
     pub status: &'a str,
     pub error: Option<&'a str>,
     pub failures: i32,
@@ -794,8 +912,7 @@ pub struct RefreshDone<'a> {
 pub async fn finish_refresh(conn: &mut PgConnection, d: &RefreshDone<'_>) -> Result<bool, DbError> {
     Ok(sqlx::query(
         "UPDATE skill_libraries SET status = $3, last_error = $4, refresh_failures = $5,
-            last_head_sha = CASE WHEN $3 = 'over_budget' THEN NULL
-                                 WHEN head_epoch <> $8 THEN last_head_sha
+            last_head_sha = CASE WHEN head_epoch <> $8 THEN last_head_sha
                                  ELSE COALESCE($6, last_head_sha) END,
             last_refresh_at = now(),
             next_refresh_at = now() + make_interval(secs => $7),

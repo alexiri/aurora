@@ -6804,6 +6804,227 @@
         ]
       }
     },
+    "/v1/admin/skill-libraries": {
+      "get": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "(P5-SKLIB-2, C-1128) The instance's libraries with their totals over every organization and\n`orgs_using` (instance admins, session only).",
+        "operationId": "listInstanceSkillLibraries",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_SkillLibrary"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "(P5-SKLIB-2, C-1128) Add an instance library: every organization sees it (instance admins,\nsession only).",
+        "operationId": "createInstanceSkillLibrary",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSkillLibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillLibrary"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/skill-libraries/check": {
+      "post": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "(P5-SKLIB-2, C-1124, C-1128) The check before saving an instance library; stores nothing.",
+        "operationId": "checkInstanceSkillLibrary",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckSkillLibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryCheck"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/storage": {
       "get": {
         "tags": [
@@ -29873,7 +30094,7 @@
         "tags": [
           "skill-libraries"
         ],
-        "summary": "List the organization's libraries: owners/admins get everything; other people who can use a\nworkspace get `id`, `label` and `status` of the active ones (the browse picker).",
+        "summary": "List the organization's libraries, then the instance libraries (D-449): owners/admins get\neverything (an instance library with this organization's numbers); other people who can use a\nworkspace get `id`, `label`, `status` and `scope` of the active ones (the browse picker).",
         "operationId": "listSkillLibraries",
         "parameters": [
           {
@@ -33449,7 +33670,7 @@
         "tags": [
           "skill-libraries"
         ],
-        "summary": "Read one library (org owner/admin).",
+        "summary": "Read one library. An organization library: its owner/admin. An instance library: an instance\nadmin (totals), or an owner/admin of an organization with `?org=` (that organization's view);\nanyone else 404.",
         "operationId": "getSkillLibrary",
         "parameters": [
           {
@@ -33457,6 +33678,16 @@
             "in": "path",
             "description": "Library id",
             "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "org",
+            "in": "query",
+            "description": "The organization to read the library as: required for an instance library, optional (and\nequal to the library's organization) for an organization library.",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid"
@@ -33525,7 +33756,7 @@
         "tags": [
           "skill-libraries"
         ],
-        "summary": "Delete the library; every skill added from it is detached and keeps its content.",
+        "summary": "Delete the library; every skill added from it is detached and keeps its content (an instance\nlibrary: in every organization, with an audit row in each).",
         "operationId": "deleteSkillLibrary",
         "parameters": [
           {
@@ -33819,6 +34050,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "org",
+            "in": "query",
+            "description": "The organization to browse as: required for an instance library (`added` then lists only\nthat organization's skills the caller can see), optional for an organization library.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -33827,6 +34068,15 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibraryCatalogue"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -33933,6 +34183,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "org",
+            "in": "query",
+            "description": "The organization to read the skill as (required for an instance library).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -33941,6 +34201,15 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibrarySkillContent"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -60415,6 +60684,14 @@
                   "format": "uuid",
                   "description": "Null for an instance library (and for members)."
                 },
+                "orgs_using": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64",
+                  "description": "An instance library, in its manager's view only: how many organizations have a skill\nadded from it (never which skills)."
+                },
                 "path": {
                   "type": [
                     "string",
@@ -68336,6 +68613,14 @@
             ],
             "format": "uuid",
             "description": "Null for an instance library (and for members)."
+          },
+          "orgs_using": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "An instance library, in its manager's view only: how many organizations have a skill\nadded from it (never which skills)."
           },
           "path": {
             "type": [

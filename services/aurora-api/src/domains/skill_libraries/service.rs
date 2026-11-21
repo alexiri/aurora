@@ -25,8 +25,21 @@ use super::dto::{
 use super::git::{self, GitRepo, Token};
 use super::{CachedListing, LibraryEnv};
 use crate::app::AppState;
-use crate::audit::{self, AuditEvent};
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::Caller;
+
+/// The audit event of a library action: an organization library's is an organization row by the
+/// caller; an instance library's is an instance row (`org_id` null) by the instance admin (D-449).
+fn event(caller: &Caller, org: Option<Uuid>, action: &str) -> AuditEvent {
+    match org {
+        Some(o) => AuditEvent::by(caller, action).org(o),
+        None => AuditEvent::new(
+            AuditActor::instance_admin(caller),
+            action.to_owned(),
+            Outcome::Success,
+        ),
+    }
+}
 
 #[derive(Debug)]
 pub struct ListItem {
@@ -267,7 +280,7 @@ pub(crate) async fn open_token(
     let r: SecretRef = tr.parse().map_err(|_| fail())?;
     let plain = state
         .vault
-        .open(&token_ctx(row.id, Some(row.org_id)), &r)
+        .open(&token_ctx(row.id, row.org_id), &r)
         .await
         .map_err(|_| fail())?;
     let v: serde_json::Value = serde_json::from_slice(plain.expose()).map_err(|_| fail())?;
@@ -308,14 +321,19 @@ fn refresh_interval(state: &AppState) -> f64 {
         .max(limits::LIBRARY_REFRESH_INTERVAL_MIN.as_secs()) as f64
 }
 
-async fn check_library_cap(conn: &mut sqlx::PgConnection, org: Uuid) -> Result<(), ApiError> {
-    if repo::count_libraries(conn, org).await? >= limits::LIBRARIES_PER_ORG as i64 {
+/// `LIBRARIES_PER_ORG` for an organization, `LIBRARIES_PER_INSTANCE` for the instance's own.
+async fn check_library_cap(
+    conn: &mut sqlx::PgConnection,
+    org: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let (max, who) = match org {
+        Some(_) => (limits::LIBRARIES_PER_ORG, "An organization"),
+        None => (limits::LIBRARIES_PER_INSTANCE, "The instance"),
+    };
+    if repo::count_libraries(conn, org).await? >= max as i64 {
         return Err(ApiError::conflict(
             "library_limit",
-            format!(
-                "An organization can have at most {} libraries.",
-                limits::LIBRARIES_PER_ORG
-            ),
+            format!("{who} can have at most {max} libraries."),
         ));
     }
     Ok(())
@@ -348,10 +366,12 @@ async fn probe(
     Ok(resolved)
 }
 
+/// Creates a library of `org`, or (`None`) an instance library (D-449; the caller has been
+/// authorized by the route).
 pub async fn create(
     state: &AppState,
     caller: &Caller,
-    org: Uuid,
+    org: Option<Uuid>,
     req: &CreateSkillLibraryRequest,
 ) -> Result<LibraryRow, ApiError> {
     let label = clean_label_field(&req.label)?;
@@ -384,15 +404,16 @@ pub async fn create(
     let id = Uuid::now_v7();
     // Seal first; a failed insert deletes the sealed value again.
     let token_ref = match &token {
-        Some(t) => Some(seal_token(state, id, Some(org), t).await?),
+        Some(t) => Some(seal_token(state, id, org, t).await?),
         None => None,
     };
     let result = async {
         let mut tx = audit::begin(state).await?;
-        // Serialise creates per organization: without the lock, concurrent creates at 9
-        // libraries all pass the count and exceed `LIBRARIES_PER_ORG`.
+        // Serialise creates per organization (or for the instance): without the lock, concurrent
+        // creates at 9 libraries all pass the count and exceed `LIBRARIES_PER_ORG`.
+        let scope = org.map_or_else(|| "instance".to_owned(), |o| o.to_string());
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("skill_library_count:{org}"))
+            .bind(format!("skill_library_count:{scope}"))
             .execute(&mut *tx)
             .await
             .map_err(DbError::from)?;
@@ -424,8 +445,7 @@ pub async fn create(
         if token.is_some() {
             meta["token"] = json!("set");
         }
-        let ev = AuditEvent::by(caller, "skill_library.create")
-            .org(org)
+        let ev = event(caller, org, "skill_library.create")
             .target("skill_library", row.id)
             .metadata(meta);
         audit::commit_critical(tx, &ev).await?;
@@ -435,7 +455,7 @@ pub async fn create(
     if result.is_err()
         && let Some(r) = &token_ref
     {
-        discard_token(state, id, Some(org), r).await;
+        discard_token(state, id, org, r).await;
     }
     result
 }
@@ -509,21 +529,49 @@ pub async fn get(state: &AppState, id: Uuid) -> Result<LibraryRow, ApiError> {
         .ok_or_else(|| ApiError::not_found("Skill library not found."))
 }
 
-pub async fn list(state: &AppState, org: Uuid) -> Result<Vec<LibraryRow>, ApiError> {
+/// The libraries an organization sees: its own by label, then the instance libraries by label
+/// (D-449). Every status is returned; the caller hides what its audience may not see.
+pub async fn list_for_org(state: &AppState, org: Uuid) -> Result<Vec<LibraryRow>, ApiError> {
     let mut c = state.pool.acquire().await.map_err(DbError::from)?;
-    Ok(repo::list_libraries(&mut c, org).await?)
+    let mut rows = repo::list_libraries(&mut c, org).await?;
+    rows.extend(repo::list_instance_libraries(&mut c).await?);
+    Ok(rows)
 }
 
-/// The dashboard view. `full == false` (a member's picker): `id`, `label`, `status`, `scope`.
-pub async fn view(
-    state: &AppState,
-    row: &LibraryRow,
-    full: bool,
-) -> Result<SkillLibrary, ApiError> {
-    if !full {
+/// The instance's own libraries (the admin list).
+pub async fn list_instance(state: &AppState) -> Result<Vec<LibraryRow>, ApiError> {
+    let mut c = state.pool.acquire().await.map_err(DbError::from)?;
+    Ok(repo::list_instance_libraries(&mut c).await?)
+}
+
+/// What a caller is shown of a library (C-1122, C-1128).
+#[derive(Clone, Copy, Debug)]
+pub enum View {
+    /// A member's picker: `id`, `label`, `status`, `scope`.
+    Picker,
+    /// An organization owner/admin's view: every field but `token_updated_at` of an instance
+    /// library; `skill_counts`, `pending_updates` and `status` (`over_budget` from this
+    /// organization's budget state) are **this organization's only**.
+    Org(Uuid),
+    /// An instance admin's view of an instance library (or an organization library's full
+    /// view): totals over every organization, `orgs_using`, the library's own status.
+    Manage,
+}
+
+fn scope_of(row: &LibraryRow) -> &'static str {
+    if row.org_id.is_some() {
+        "org"
+    } else {
+        "instance"
+    }
+}
+
+/// The dashboard view of one library for one audience.
+pub async fn view(state: &AppState, row: &LibraryRow, how: View) -> Result<SkillLibrary, ApiError> {
+    if matches!(how, View::Picker) {
         return Ok(SkillLibrary {
             id: row.id,
-            scope: "org",
+            scope: scope_of(row),
             org_id: None,
             label: row.label.clone(),
             status: row.status.clone(),
@@ -538,24 +586,53 @@ pub async fn view(
             last_error: None,
             skill_counts: None,
             pending_updates: None,
+            orgs_using: None,
             created_at: None,
         });
     }
     let mut c = state.pool.acquire().await.map_err(DbError::from)?;
-    let (a, w, o) = repo::skill_counts(&mut c, row.id).await?;
-    let pending = repo::pending_count(&mut c, row.id).await?;
+    let only = match how {
+        View::Org(o) => Some(o),
+        // An organization library's manager sees its organization's numbers (all of them).
+        View::Manage => row.org_id,
+        View::Picker => None,
+    };
+    let (a, w, o) = repo::skill_counts(&mut c, row.id, only).await?;
+    let pending = repo::pending_count(&mut c, row.id, only).await?;
+    // An organization's view says `over_budget` while its own proposals do not fit (and the
+    // library is otherwise fine); the library's own status never becomes `over_budget`.
+    let org_scope = match how {
+        View::Org(o) => Some(o),
+        _ => row.org_id,
+    };
+    let status = match org_scope {
+        Some(o) if row.status == "active" && repo::org_over_budget(&mut c, row.id, o).await? => {
+            "over_budget".to_owned()
+        }
+        _ => row.status.clone(),
+    };
+    let instance_in_org_view = row.org_id.is_none() && matches!(how, View::Org(_));
+    let orgs_using = if row.org_id.is_none() && matches!(how, View::Manage) {
+        Some(repo::orgs_using(&mut c, row.id).await?)
+    } else {
+        None
+    };
     Ok(SkillLibrary {
         id: row.id,
-        scope: "org",
-        org_id: Some(row.org_id),
+        scope: scope_of(row),
+        org_id: row.org_id,
         label: row.label.clone(),
-        status: row.status.clone(),
+        status,
         url: row.url.clone(),
         repo: row.repo.clone(),
         reference: row.reference.clone(),
         path: Some(row.path.clone()),
         token_set: Some(row.token_ref.is_some()),
-        token_updated_at: row.token_updated_at,
+        token_updated_at: if instance_in_org_view {
+            None
+        } else {
+            row.token_updated_at
+        },
         last_head_sha: row.last_head_sha.clone(),
         last_refresh_at: row.last_refresh_at,
         last_error: row.last_error.clone(),
@@ -565,6 +642,7 @@ pub async fn view(
             org: o,
         }),
         pending_updates: Some(pending),
+        orgs_using,
         created_at: Some(row.created_at),
     })
 }
@@ -713,7 +791,7 @@ pub async fn patch(
         p.head_sha = Some(&head);
     }
     let sealed = match &new_token {
-        Some(t) => Some(seal_token(state, id, Some(cur.org_id), t).await?),
+        Some(t) => Some(seal_token(state, id, cur.org_id, t).await?),
         None => None,
     };
     match (&sealed, token_change) {
@@ -740,8 +818,7 @@ pub async fn patch(
         if let Some(t) = token_change {
             meta["token"] = json!(t);
         }
-        let ev = AuditEvent::by(caller, "skill_library.update")
-            .org(cur.org_id)
+        let ev = event(caller, cur.org_id, "skill_library.update")
             .target("skill_library", id)
             .metadata(meta);
         audit::commit_critical(tx, &ev).await?;
@@ -754,12 +831,12 @@ pub async fn patch(
             if token_change.is_some_and(|t| t != "set")
                 && let Some(old) = &cur.token_ref
             {
-                discard_token(state, id, Some(cur.org_id), old).await;
+                discard_token(state, id, cur.org_id, old).await;
             }
         }
         Err(_) => {
             if let Some(s) = &sealed {
-                discard_token(state, id, Some(cur.org_id), s).await;
+                discard_token(state, id, cur.org_id, s).await;
             }
         }
     }
@@ -775,15 +852,31 @@ pub async fn delete(state: &AppState, caller: &Caller, id: Uuid) -> Result<u64, 
     repo::get_library_for_update(&mut tx, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Skill library not found."))?;
+    // (D-449) An instance library's deletion detaches in every organization: one audit row each
+    // (the count of that organization's skills), beside the instance row with the total.
+    let per_org = if cur.org_id.is_none() {
+        repo::affected_orgs(&mut tx, id).await?
+    } else {
+        Vec::new()
+    };
     let detached = repo::detach_all(&mut tx, id).await?;
     repo::delete_library(&mut tx, id).await?;
-    let ev = AuditEvent::by(caller, "skill_library.delete")
-        .org(cur.org_id)
-        .target("skill_library", id)
-        .metadata(json!({"label": cur.label, "repo": cur.repo, "skills_detached": detached}));
-    audit::commit_critical(tx, &ev).await?;
+    let meta = |n: u64| json!({"library_label": cur.label, "label": cur.label, "repo": cur.repo, "skills_detached": n});
+    let mut events = vec![
+        event(caller, cur.org_id, "skill_library.delete")
+            .target("skill_library", id)
+            .metadata(meta(detached)),
+    ];
+    for (org, n) in per_org {
+        events.push(
+            event(caller, Some(org), "skill_library.delete")
+                .target("skill_library", id)
+                .metadata(meta(u64::try_from(n).unwrap_or(0))),
+        );
+    }
+    audit::commit_critical_many(tx, &events).await?;
     if let Some(t) = &cur.token_ref {
-        discard_token(state, id, Some(cur.org_id), t).await;
+        discard_token(state, id, cur.org_id, t).await;
     }
     state.library.forget(id);
     Ok(detached)

@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::common::*;
 
 mod git;
+mod instance;
 
 /// The https origin every library URL uses; the test override maps it to the git server.
 pub(crate) const GIT_ORIGIN: &str = "https://git.example";
@@ -1843,11 +1844,12 @@ async fn open_proposals_are_bounded_per_organization() {
     assert_eq!(w.library_row(lib).await["status"], "active");
 }
 
-/// FIX-066: a pass cut short by the budget must not record the head it was comparing — or a
-/// later pass at the same head (e.g. after an intervening error/active flip) would short-circuit
-/// as "unchanged" and never compare the skills the pass did not reach.
+/// FIX-066, D-449: an organization over its open-proposal budget gets no proposal and a
+/// `skill_library_org_state` row (the library's own status stays `active`; the organization's view
+/// says `over_budget`); a library with a state row is compared again even at an unchanged head,
+/// so the skipped skill is proposed on the pass after the space is freed, and the row goes.
 #[tokio::test]
-async fn over_budget_pass_does_not_advance_the_head_and_the_next_pass_compares_the_rest() {
+async fn over_budget_pass_gives_the_org_a_state_row_and_the_next_pass_compares_the_rest() {
     let w = world().await;
     let sha = w.seed();
     let lib = w.library().await;
@@ -1863,31 +1865,55 @@ async fn over_budget_pass_does_not_advance_the_head_and_the_next_pass_compares_t
         &[put("alpha/SKILL.md", md("Alpha v2", "v2"))],
     );
     w.refresh(lib).await;
+    // the organization's view says over budget; the library's own status does not
     assert_eq!(w.library_row(lib).await["status"], "over_budget");
+    let own: String = sqlx::query_scalar("SELECT status FROM skill_libraries WHERE id = $1")
+        .bind(lib)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        own, "active",
+        "the library's status never becomes over_budget"
+    );
+    assert_eq!(
+        w.count(&format!(
+            "SELECT count(*) FROM skill_library_org_state WHERE library_id = '{lib}' AND org_id = '{}'",
+            w.org
+        ))
+        .await,
+        1
+    );
+    assert_eq!(
+        w.pending(alpha).await["update"],
+        Value::Null,
+        "no proposal while over budget"
+    );
     let recorded: Option<String> =
         sqlx::query_scalar("SELECT last_head_sha FROM skill_libraries WHERE id = $1")
             .bind(lib)
             .fetch_one(w.h.pool())
             .await
             .unwrap();
-    assert_ne!(
+    assert_eq!(
         recorded.as_deref(),
         Some(head.as_str()),
-        "a partial pass records no head"
+        "the head is recorded"
     );
-    // The state an intervening pass would leave (status back to active, same head), and the
-    // space freed: the remaining skill is compared on the next pass.
-    sqlx::query("UPDATE skill_libraries SET status = 'active' WHERE id = $1")
-        .bind(lib)
-        .execute(w.h.pool())
-        .await
-        .unwrap();
+    // space freed: the same head is compared again because the state row exists
     sqlx::query("DELETE FROM skill_library_updates")
         .execute(w.h.pool())
         .await
         .unwrap();
     w.refresh(lib).await;
     assert_eq!(w.pending(alpha).await["update"]["kind"], "changed");
+    assert_eq!(w.library_row(lib).await["status"], "active");
+    assert_eq!(
+        w.count("SELECT count(*) FROM skill_library_org_state")
+            .await,
+        0,
+        "the row is deleted once the organization fits again"
+    );
 }
 
 /// FIX-066: a stalled refresh gives up inside its bound (below the lease), records the failure

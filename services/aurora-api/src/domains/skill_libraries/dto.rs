@@ -43,6 +43,9 @@ pub struct SkillLibrary {
     pub last_error: Option<String>,
     pub skill_counts: Option<SkillCounts>,
     pub pending_updates: Option<i64>,
+    /// An instance library, in its manager's view only: how many organizations have a skill
+    /// added from it (never which skills).
+    pub orgs_using: Option<i64>,
     pub created_at: Option<DateTime<Utc>>,
 }
 

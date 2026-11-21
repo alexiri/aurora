@@ -3,6 +3,7 @@
 //! read-only token) plus ref and path: a *source*, never a tier. Only skills people add are
 //! stored (pinned, read-only); a refresh only writes proposals. The API reads repositories
 //! itself with the git smart-HTTP protocol (`git`), on its guarded `http_instance` client.
+pub mod access;
 pub mod content;
 pub mod dto;
 pub mod git;

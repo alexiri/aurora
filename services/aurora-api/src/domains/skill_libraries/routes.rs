@@ -1,11 +1,13 @@
+use super::access::{self, ReadAs};
 use super::dto::*;
-use super::service;
+use super::service::{self, View};
 use crate::app::AppState;
-use crate::http::auth::Caller;
+use crate::http::auth::{Caller, InstanceAdmin};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::Page;
 use aurora_core::ApiError;
+use aurora_db::repo::skill_libraries::LibraryRow;
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -17,56 +19,41 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_libraries, create_library))
         .routes(routes!(check_library))
+        .routes(routes!(list_instance_libraries, create_instance_library))
+        .routes(routes!(check_instance_library))
         .routes(routes!(get_library, patch_library, delete_library))
         .routes(routes!(refresh_library))
         .routes(routes!(browse_library))
         .routes(routes!(get_library_skill))
 }
 
-/// Org owner/admin of the library's org (404 for anyone who cannot see the org).
-async fn admin_of(
-    c: &Caller,
-    s: &AppState,
-    library: Uuid,
-) -> Result<aurora_db::repo::skill_libraries::LibraryRow, ApiError> {
+/// Who may manage this library (`access::manage`), kill-switch first.
+async fn admin_of(c: &Caller, s: &AppState, library: Uuid) -> Result<LibraryRow, ApiError> {
     service::ensure_enabled(s)?;
     let row = service::get(s, library).await?;
-    c.org(s, row.org_id).await?.require_admin()?;
+    access::manage(c, s, &row).await?;
     Ok(row)
 }
 
-/// Browse audience: any person who can use a workspace of the org (org owners/admins included).
+/// Browse audience (`access::read`): any person who can use a workspace of the organization the
+/// library is read as (org owners/admins included); members only see `active` libraries.
 async fn browse_of(
     c: &Caller,
     s: &AppState,
     library: Uuid,
-) -> Result<aurora_db::repo::skill_libraries::LibraryRow, ApiError> {
+    org: Option<Uuid>,
+) -> Result<(LibraryRow, ReadAs), ApiError> {
     service::ensure_enabled(s)?;
     let row = service::get(s, library).await?;
-    let admin = browse_audience(c, s, row.org_id).await?;
-    // C-570: members see only `active` libraries (the list hides the rest); pausing is the
-    // admin's stop control, so a member who holds the id gets the same 404 as for a missing
-    // library. Owners/admins keep browsing every status.
-    if !admin && row.status != "active" {
-        return Err(ApiError::not_found("Skill library not found."));
-    }
-    Ok(row)
+    let who = access::read(c, s, &row, org).await?;
+    Ok((row, who))
 }
 
-pub async fn browse_audience(c: &Caller, s: &AppState, org: Uuid) -> Result<bool, ApiError> {
-    let a = c.org(s, org).await?;
-    if a.role.is_admin() {
-        return Ok(true);
-    }
-    if aurora_db::authz::uses_any_workspace(&s.pool, c.user_id, org).await? {
-        Ok(false)
-    } else {
-        Err(ApiError::forbidden("Workspace access required."))
-    }
-}
+pub use access::audience as browse_audience;
 
-/// List the organization's libraries: owners/admins get everything; other people who can use a
-/// workspace get `id`, `label` and `status` of the active ones (the browse picker).
+/// List the organization's libraries, then the instance libraries (D-449): owners/admins get
+/// everything (an instance library with this organization's numbers); other people who can use a
+/// workspace get `id`, `label`, `status` and `scope` of the active ones (the browse picker).
 #[utoipa::path(get, path = "/orgs/{org}/skill-libraries", operation_id = "listSkillLibraries",
     tag = "skill-libraries", params(("org" = Uuid, Path, description = "Organization id")),
     responses((status = 200, body = Page<SkillLibrary>), (status = 403, body = ErrorEnvelope),
@@ -79,13 +66,14 @@ async fn list_libraries(
 ) -> Result<Json<Page<SkillLibrary>>, ApiError> {
     service::ensure_enabled(&s)?;
     let admin = browse_audience(&c, &s, org).await?;
-    let rows = service::list(&s, org).await?;
+    let rows = service::list_for_org(&s, org).await?;
     let mut items = Vec::new();
     for r in rows {
         if !admin && r.status != "active" {
             continue;
         }
-        items.push(service::view(&s, &r, admin).await?);
+        let how = if admin { View::Org(org) } else { View::Picker };
+        items.push(service::view(&s, &r, how).await?);
     }
     Ok(Json(Page {
         items,
@@ -93,72 +81,80 @@ async fn list_libraries(
     }))
 }
 
-/// (P5-SKLIB-1, C-1124) 10 checks per minute per person.
-pub(crate) const CHECKS_PER_MINUTE: u32 = 10;
-
-/// The check rate (per person, per replica) and its 429.
-pub(crate) fn check_rate(c: &Caller, s: &AppState) -> Result<(), ApiError> {
-    s.rate_limiter.check_quota(
-        "skill_library_check",
-        &c.user_id.to_string(),
-        crate::http::ratelimit::Quota {
-            capacity: CHECKS_PER_MINUTE,
-            per: std::time::Duration::from_secs(60),
-        },
-    )
-}
-
-/// Read a repository like a create would and say what was found; nothing is stored
-/// (org owner/admin).
-#[utoipa::path(post, path = "/orgs/{org}/skill-libraries/check", operation_id = "checkSkillLibrary",
-    tag = "skill-libraries", params(("org" = Uuid, Path, description = "Organization id")),
-    request_body = CheckSkillLibraryRequest,
-    responses((status = 200, body = LibraryCheck), (status = 400, body = ErrorEnvelope),
-        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 422, body = ErrorEnvelope), (status = 429, body = ErrorEnvelope)),
-    security(("session" = []), ("api_key" = [])))]
-async fn check_library(
-    c: Caller,
+/// (P5-SKLIB-2, C-1128) The instance's libraries with their totals over every organization and
+/// `orgs_using` (instance admins, session only).
+#[utoipa::path(get, path = "/admin/skill-libraries", operation_id = "listInstanceSkillLibraries",
+    tag = "skill-libraries",
+    responses((status = 200, body = Page<SkillLibrary>), (status = 401, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn list_instance_libraries(
+    _c: InstanceAdmin,
     State(s): State<AppState>,
-    Path(org): Path<Uuid>,
-    Json(req): Json<CheckSkillLibraryRequest>,
-) -> Result<Response, ApiError> {
+) -> Result<Json<Page<SkillLibrary>>, ApiError> {
     service::ensure_enabled(&s)?;
-    c.org(&s, org).await?.require_admin()?;
-    check_rate(&c, &s)?;
-    let body = service::check(&s, &req).await?;
-    let mut resp = Json(body).into_response();
-    resp.headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    Ok(resp)
+    let mut items = Vec::new();
+    for r in service::list_instance(&s).await? {
+        items.push(service::view(&s, &r, View::Manage).await?);
+    }
+    Ok(Json(Page {
+        items,
+        next_cursor: None,
+    }))
 }
 
-/// Add a git repository as a skill library (org owner/admin).
-#[utoipa::path(post, path = "/orgs/{org}/skill-libraries", operation_id = "createSkillLibrary",
-    tag = "skill-libraries", params(("org" = Uuid, Path, description = "Organization id")),
-    request_body = CreateSkillLibraryRequest,
+/// (P5-SKLIB-2, C-1128) Add an instance library: every organization sees it (instance admins,
+/// session only).
+#[utoipa::path(post, path = "/admin/skill-libraries", operation_id = "createInstanceSkillLibrary",
+    tag = "skill-libraries", request_body = CreateSkillLibraryRequest,
     responses((status = 201, body = SkillLibrary), (status = 400, body = ErrorEnvelope),
-        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 401, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
         (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
-    security(("session" = []), ("api_key" = [])))]
-async fn create_library(
-    c: Caller,
+    security(("session" = [])))]
+async fn create_instance_library(
+    c: InstanceAdmin,
     State(s): State<AppState>,
-    Path(org): Path<Uuid>,
     Json(req): Json<CreateSkillLibraryRequest>,
 ) -> Result<(StatusCode, Json<SkillLibrary>), ApiError> {
     service::ensure_enabled(&s)?;
-    c.org(&s, org).await?.require_admin()?;
-    let row = service::create(&s, &c, org, &req).await?;
+    let row = service::create(&s, &c, None, &req).await?;
     Ok((
         StatusCode::CREATED,
-        Json(service::view(&s, &row, true).await?),
+        Json(service::view(&s, &row, View::Manage).await?),
     ))
 }
 
-/// Read one library (org owner/admin).
+/// (P5-SKLIB-2, C-1124, C-1128) The check before saving an instance library; stores nothing.
+#[utoipa::path(post, path = "/admin/skill-libraries/check", operation_id = "checkInstanceSkillLibrary",
+    tag = "skill-libraries", request_body = CheckSkillLibraryRequest,
+    responses((status = 200, body = LibraryCheck), (status = 401, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
+        (status = 429, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn check_instance_library(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Json(req): Json<CheckSkillLibraryRequest>,
+) -> Result<Response, ApiError> {
+    service::ensure_enabled(&s)?;
+    check_rate(&c, &s)?;
+    check_response(service::check(&s, &req).await?)
+}
+
+/// `?org=` of the routes that read a library as an organization (C-1128).
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct OrgParam {
+    /// The organization to read the library as: required for an instance library, optional (and
+    /// equal to the library's organization) for an organization library.
+    pub org: Option<Uuid>,
+}
+
+/// Read one library. An organization library: its owner/admin. An instance library: an instance
+/// admin (totals), or an owner/admin of an organization with `?org=` (that organization's view);
+/// anyone else 404.
 #[utoipa::path(get, path = "/skill-libraries/{id}", operation_id = "getSkillLibrary",
-    tag = "skill-libraries", params(("id" = Uuid, Path, description = "Library id")),
+    tag = "skill-libraries", params(("id" = Uuid, Path, description = "Library id"), OrgParam),
     responses((status = 200, body = SkillLibrary), (status = 403, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
@@ -166,9 +162,30 @@ async fn get_library(
     c: Caller,
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
+    Query(q): Query<OrgParam>,
 ) -> Result<Json<SkillLibrary>, ApiError> {
-    let row = admin_of(&c, &s, id).await?;
-    Ok(Json(service::view(&s, &row, true).await?))
+    service::ensure_enabled(&s)?;
+    let row = service::get(&s, id).await?;
+    let how = match row.org_id {
+        Some(_) => {
+            access::manage(&c, &s, &row).await?;
+            View::Manage
+        }
+        None => match q.org {
+            // An instance admin may look at any organization's numbers.
+            Some(o) if c.is_instance_admin && c.is_session() => View::Org(o),
+            // An organization's owner/admin sees that organization's view, nobody else's.
+            Some(o) => match c.org(&s, o).await.and_then(|a| a.require_admin()) {
+                Ok(()) => View::Org(o),
+                Err(_) => return Err(ApiError::not_found("Skill library not found.")),
+            },
+            None => {
+                access::manage(&c, &s, &row).await?;
+                View::Manage
+            }
+        },
+    };
+    Ok(Json(service::view(&s, &row, how).await?))
 }
 
 /// Rename, pause or resume, change ref, path or token (re-reads; stored skills are never
@@ -188,10 +205,11 @@ async fn patch_library(
 ) -> Result<Json<SkillLibrary>, ApiError> {
     admin_of(&c, &s, id).await?;
     let row = service::patch(&s, &c, id, &req).await?;
-    Ok(Json(service::view(&s, &row, true).await?))
+    Ok(Json(service::view(&s, &row, View::Manage).await?))
 }
 
-/// Delete the library; every skill added from it is detached and keeps its content.
+/// Delete the library; every skill added from it is detached and keeps its content (an instance
+/// library: in every organization, with an audit row in each).
 #[utoipa::path(delete, path = "/skill-libraries/{id}", operation_id = "deleteSkillLibrary",
     tag = "skill-libraries", params(("id" = Uuid, Path, description = "Library id")),
     responses((status = 204, description = "Deleted"), (status = 403, body = ErrorEnvelope),
@@ -224,12 +242,81 @@ async fn refresh_library(
     Ok(StatusCode::ACCEPTED)
 }
 
+/// (P5-SKLIB-1, C-1124) 10 checks per minute per person.
+pub(crate) const CHECKS_PER_MINUTE: u32 = 10;
+
+/// The check rate (per person, per replica) and its 429.
+pub(crate) fn check_rate(c: &Caller, s: &AppState) -> Result<(), ApiError> {
+    s.rate_limiter.check_quota(
+        "skill_library_check",
+        &c.user_id.to_string(),
+        crate::http::ratelimit::Quota {
+            capacity: CHECKS_PER_MINUTE,
+            per: std::time::Duration::from_secs(60),
+        },
+    )
+}
+
+fn check_response(body: LibraryCheck) -> Result<Response, ApiError> {
+    let mut resp = Json(body).into_response();
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(resp)
+}
+
+/// Read a repository like a create would and say what was found; nothing is stored
+/// (org owner/admin).
+#[utoipa::path(post, path = "/orgs/{org}/skill-libraries/check", operation_id = "checkSkillLibrary",
+    tag = "skill-libraries", params(("org" = Uuid, Path, description = "Organization id")),
+    request_body = CheckSkillLibraryRequest,
+    responses((status = 200, body = LibraryCheck), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope), (status = 429, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn check_library(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+    Json(req): Json<CheckSkillLibraryRequest>,
+) -> Result<Response, ApiError> {
+    service::ensure_enabled(&s)?;
+    c.org(&s, org).await?.require_admin()?;
+    check_rate(&c, &s)?;
+    check_response(service::check(&s, &req).await?)
+}
+
+/// Add a git repository as a skill library (org owner/admin).
+#[utoipa::path(post, path = "/orgs/{org}/skill-libraries", operation_id = "createSkillLibrary",
+    tag = "skill-libraries", params(("org" = Uuid, Path, description = "Organization id")),
+    request_body = CreateSkillLibraryRequest,
+    responses((status = 201, body = SkillLibrary), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn create_library(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+    Json(req): Json<CreateSkillLibraryRequest>,
+) -> Result<(StatusCode, Json<SkillLibrary>), ApiError> {
+    service::ensure_enabled(&s)?;
+    c.org(&s, org).await?.require_admin()?;
+    let row = service::create(&s, &c, Some(org), &req).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(service::view(&s, &row, View::Manage).await?),
+    ))
+}
+
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct BrowseParams {
     /// Case-insensitive filter on name and description.
     pub q: Option<String>,
     pub cursor: Option<String>,
+    /// The organization to browse as: required for an instance library (`added` then lists only
+    /// that organization's skills the caller can see), optional for an organization library.
+    pub org: Option<Uuid>,
 }
 
 const BROWSE_PAGE: usize = 50;
@@ -238,9 +325,9 @@ const BROWSE_PAGE: usize = 50;
 #[utoipa::path(get, path = "/skill-libraries/{id}/skills", operation_id = "browseSkillLibrary",
     tag = "skill-libraries",
     params(("id" = Uuid, Path, description = "Library id"), BrowseParams),
-    responses((status = 200, body = LibraryCatalogue), (status = 403, body = ErrorEnvelope),
-        (status = 404, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
-        (status = 502, body = ErrorEnvelope)),
+    responses((status = 200, body = LibraryCatalogue), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope), (status = 502, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn browse_library(
     c: Caller,
@@ -248,9 +335,11 @@ async fn browse_library(
     Path(id): Path<Uuid>,
     Query(q): Query<BrowseParams>,
 ) -> Result<Response, ApiError> {
-    let row = browse_of(&c, &s, id).await?;
+    let (row, who) = browse_of(&c, &s, id, q.org).await?;
     let l = service::listing(&s, &row).await?;
-    let added = crate::domains::skills::library::added_by_path(&s, row.id).await?;
+    // Never cached with the listing: the chips are this organization's skills the caller can see.
+    let added =
+        crate::domains::skills::library::added_by_path(&s, &c, row.id, who.org, who.admin).await?;
     let needle =
         q.q.as_deref()
             .map(str::to_lowercase)
@@ -305,6 +394,8 @@ async fn browse_library(
 pub struct SkillParams {
     /// The commit to read; default the current head.
     pub commit_sha: Option<String>,
+    /// The organization to read the skill as (required for an instance library).
+    pub org: Option<Uuid>,
 }
 
 /// One skill's full content at a commit: exactly what an add would store (and the diff base).
@@ -312,8 +403,9 @@ pub struct SkillParams {
     operation_id = "getSkillLibrarySkill", tag = "skill-libraries",
     params(("id" = Uuid, Path, description = "Library id"),
         ("path" = String, Path, description = "The skill's directory name"), SkillParams),
-    responses((status = 200, body = LibrarySkillContent), (status = 403, body = ErrorEnvelope),
-        (status = 404, body = ErrorEnvelope), (status = 502, body = ErrorEnvelope)),
+    responses((status = 200, body = LibrarySkillContent), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 502, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn get_library_skill(
     c: Caller,
@@ -321,7 +413,7 @@ async fn get_library_skill(
     Path((id, path)): Path<(Uuid, String)>,
     Query(q): Query<SkillParams>,
 ) -> Result<Response, ApiError> {
-    let row = browse_of(&c, &s, id).await?;
+    let (row, _) = browse_of(&c, &s, id, q.org).await?;
     let content = service::skill_content(&s, &row, &path, q.commit_sha.as_deref()).await?;
     let mut resp = Json(content).into_response();
     resp.headers_mut()
