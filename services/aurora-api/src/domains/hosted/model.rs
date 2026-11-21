@@ -1107,14 +1107,50 @@ pub async fn key_default_model(
         origin: s.origin.clone(),
         value_version: s.value_version,
     };
+    // (P5-REFINE-20 batch 6) A list never waits for an endpoint: the cache only. A miss goes to a background read that
+    // warms the cache for the next list (an unreachable endpoint made `GET …/accounts` take 10 s per key).
     let listing = if ep.provider == "litellm" {
-        key_listing(state, &cand, true).await
+        let k = listing_key(&cand);
+        match listing_cached(&k) {
+            Some(hit) => hit,
+            None => {
+                warm_listing(state, cand);
+                None
+            }
+        }
     } else {
         None
     };
     default_model(llm, eff, ep, listing.as_deref())
         .pick
         .map(|(m, _)| m)
+}
+
+/// The keys whose listing is being read in the background on this replica (one read per key).
+fn warming() -> &'static Mutex<std::collections::HashSet<Uuid>> {
+    static W: std::sync::OnceLock<Mutex<std::collections::HashSet<Uuid>>> =
+        std::sync::OnceLock::new();
+    W.get_or_init(Default::default)
+}
+
+/// Read what a key serves in the background and cache it (a failed read too, for `LISTING_FAILED_TTL`), so a request that
+/// found the cache empty answers at once and the next one finds it filled.
+fn warm_listing(state: &AppState, cand: LlmCandidate) {
+    if !warming()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(cand.id)
+    {
+        return;
+    }
+    let state = state.clone();
+    tokio::spawn(async move {
+        let _ = key_listing(&state, &cand, true).await;
+        warming()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&cand.id);
+    });
 }
 
 /// The one readiness function (D-136, `08 §Model readiness`): every granted key's `usable`

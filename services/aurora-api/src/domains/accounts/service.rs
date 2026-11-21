@@ -291,7 +291,8 @@ async fn model_line(
         .unwrap_or_else(|| state.ops().hosted.default_harness.clone());
     let llm = state.llm();
     let mut conn = state.pool.acquire().await.map_err(DbError::from).ok()?;
-    let r = crate::domains::hosted::model::readiness(
+    // (P5-REFINE-20 batch 6) The list never waits for an endpoint: the cached listings only.
+    let r = crate::domains::hosted::model::readiness_cached(
         state,
         &llm,
         &mut conn,
