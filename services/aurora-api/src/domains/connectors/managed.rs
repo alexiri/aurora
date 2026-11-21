@@ -321,6 +321,7 @@ pub async fn create(
     let mut settings: Map<String, Value> = req.settings.unwrap_or_default();
     settings.retain(|_, v| !v.is_null());
     setup::validate_settings(&fields, &settings, &mut errs);
+    setup::validate_public_url(&settings, &req.id, &s.config.external_url, &mut errs);
     let supplied = req.secrets.unwrap_or_default();
     setup::validate_secrets(
         &fields,
@@ -471,6 +472,7 @@ pub async fn patch(
             }
         }
         setup::validate_settings(&fields, &settings, &mut errs);
+        setup::validate_public_url(&settings, &row.id, &s.config.external_url, &mut errs);
     }
 
     // Secrets: replace (string), clear (null), regenerate.

@@ -544,6 +544,23 @@ async fn managed_create_validation() {
     let (s, v) = post(b).await;
     assert_eq!(s, 201, "{v}");
 
+    // D-446: public_url must be <origin>/connectors/<id>; the server's own address is refused.
+    for bad in [
+        "https://platform.example",
+        "https://platform.example/mm/actions",
+        "https://aurora.test/connectors/other",
+        "https://aurora.test/connectors/alpha?x=1",
+        "https://aurora.test/connectors/alpha#f",
+    ] {
+        let mut b = m.create_body("alpha");
+        b["id"] = json!("alpha");
+        b["settings"] = json!({ "public_url": bad });
+        let (s, v) = post(b).await;
+        assert_eq!(s, 422, "{bad}: {v}");
+        assert_eq!(field_paths(&v), ["/settings/public_url"], "{bad}: {v}");
+        assert!(v.to_string().contains("/connectors/alpha"), "{v}");
+    }
+
     // Existing id → 409 connector_exists (managed and self-hosted alike).
     let (s, v) = post(m.create_body("alpha")).await;
     assert_eq!(
@@ -721,8 +738,10 @@ async fn sec70_patch_replaces_clears_and_regenerates_and_bumps_the_revision() {
     assert_eq!(s, 422);
 
     // Settings merge per key; null restores the default; validation as on create.
-    let (s, v) =
-        patch(json!({"settings": {"region": "us", "public_url": "https://x.example"}})).await;
+    let (s, v) = patch(
+        json!({"settings": {"region": "us", "public_url": "https://x.example/connectors/alpha"}}),
+    )
+    .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["settings"]["region"], "us");
     assert_eq!(
@@ -733,7 +752,26 @@ async fn sec70_patch_replaces_clears_and_regenerates_and_bumps_the_revision() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["settings"]["region"], "eu");
     assert_eq!(v["settings"]["catchup_window_secs"], 600);
-    assert_eq!(v["settings"]["public_url"], "https://x.example");
+    assert_eq!(
+        v["settings"]["public_url"],
+        "https://x.example/connectors/alpha"
+    );
+    for bad_url in [
+        "https://platform.example",
+        "https://x.example/connectors/other",
+        "https://x.example/connectors/alpha/?q=1",
+        "https://u:p@x.example/connectors/alpha",
+    ] {
+        let (s, v) = patch(json!({"settings": {"public_url": bad_url}})).await;
+        assert_eq!(s, 422, "{bad_url}: {v}");
+        assert_eq!(field_paths(&v), ["/settings/public_url"], "{bad_url}: {v}");
+    }
+    let (s, v) =
+        patch(json!({"settings": {"public_url": "https://x.example/connectors/alpha/"}})).await;
+    assert_eq!(s, 200, "trailing slash is accepted: {v}");
+    let (s, v) =
+        patch(json!({"settings": {"public_url": "https://x.example/connectors/alpha"}})).await;
+    assert_eq!(s, 200, "{v}");
     for bad in [
         json!({"settings": {"region": "mars"}}),
         json!({"settings": {"api_key": "x"}}),
@@ -1367,14 +1405,14 @@ async fn assignments_apply_defaults_decrypt_secrets_and_are_not_cached() {
         .admin(
             Method::PATCH,
             "/v1/admin/connectors/alpha",
-            Some(json!({"settings": {"public_url": "https://chat.example/aurora"}})),
+            Some(json!({"settings": {"public_url": "https://chat.example/connectors/alpha"}})),
         )
         .await;
     assert_eq!(s, 200, "{v}");
     let (_, _, v) = m.assignments(Some(host), None, 0).await;
     assert_eq!(
         v["connectors"][0]["settings"]["public_url"],
-        "https://chat.example/aurora"
+        "https://chat.example/connectors/alpha"
     );
 }
 

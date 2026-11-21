@@ -184,6 +184,15 @@ HTTPRoute rules, `15`; `scripts/guards/edge-routes.sh`). A connector's `public_u
 defaults to `<server.external_url>/connectors/<id>`; set it only when the platform reaches
 Aurora under another name.
 
+(FIX-209, D-446) Only the origin may differ: when set, `public_url` must be `<origin>/connectors/<id>`
+(a trailing `/` is allowed; no credentials, query or fragment). Create and PATCH refuse anything
+else with one field error on `/settings/public_url`, "must be this Aurora's address followed by
+`/connectors/<id>`, e.g. `<externalUrl>/connectors/<id>`" (no new error code). The rule is keyed on
+the setting name, so it holds for any managed connector that declares `public_url`. A value stored
+earlier is not rewritten; the next PATCH of any setting re-validates the merged object. The Mattermost
+connector adds a second rule: an integration whose server URL has the same origin as the callback
+address uses no buttons and no `/aurora` (`20 §Managed`).
+
 **Mattermost** declares `instance_setup`: `public_url` (url, optional, default above),
 `callback_hmac_key` (`generated_secret`), `catchup_window_secs` (number, default 600, 1–86400),
 `token_check_secs` (number, default 30, 1–3600). The server URL and admin token stay per

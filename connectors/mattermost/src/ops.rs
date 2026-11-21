@@ -210,7 +210,7 @@ async fn person_post(integ: &Arc<Integ>, op: &Operation, m: MessagePostOp) -> R<
 }
 
 /// Neutral content → `(message, props.attachments)`, honouring the integration's capabilities.
-async fn render_content(integ: &Integ, content: &Value) -> R<(String, Vec<Value>)> {
+pub(crate) async fn render_content(integ: &Integ, content: &Value) -> R<(String, Vec<Value>)> {
     let c: Content = serde_json::from_value(content.clone())
         .map_err(|e| err(ErrorCode::Invalid, e.to_string()))?;
     // (P4-NARR, C-851) A narration card is a platform-authored post, rendered as data.
@@ -221,7 +221,8 @@ async fn render_content(integ: &Integ, content: &Value) -> R<(String, Vec<Value>
         }
         return Ok((message, Vec::new()));
     }
-    let actions_url = integ.settings.actions_url();
+    // (FIX-209) A callback address that is this Mattermost server itself counts as none.
+    let actions_url = integ.actions_url();
     let mut caps_vec: Vec<Capability> = integ
         .snapshot()
         .caps
