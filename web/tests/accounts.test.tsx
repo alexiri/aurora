@@ -92,6 +92,27 @@ describe("AccountsList: one row per kind", () => {
     expect(screen.getAllByRole("button", { name: /^More for / })).toHaveLength(3);
   });
 
+  it("(P5-LAYOUT-2, D-440) is a CardGrid labelled Accounts, one card per account, each with its menu in the head", async () => {
+    listWs([app(), website(), aiKey()]);
+    list();
+    const grid = await screen.findByRole("list", { name: "Accounts" });
+    expect(grid).toHaveClass("grid", "sm:grid-cols-2", "lg:grid-cols-3", "2xl:grid-cols-4");
+    const cards = Array.from(grid.children) as HTMLElement[];
+    expect(cards).toHaveLength(3);
+    for (const card of cards) {
+      expect(card).toHaveClass("rounded-card", "shadow-card", "h-full");
+      const head = card.firstElementChild as HTMLElement;
+      expect(within(head).getByRole("button", { name: /^More for / })).toBeInTheDocument();
+    }
+  });
+
+  it("shows card skeletons in the grid while the accounts load", () => {
+    routes["GET /v1/workspaces/w1/accounts"] = () => new Promise<Response>(() => {});
+    list();
+    expect(screen.getAllByTestId("skeleton-card").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Loading your accounts…").length).toBeGreaterThan(0);
+  });
+
   it("an organization's starter key says new agents get it automatically; other keys do not (P5-APIGAP-3, C-1049)", async () => {
     routes["GET /v1/orgs/o1/accounts"] = () =>
       json(200, { items: [aiKey({ name: "Starter key", scope: "organization", starter: true }), aiKey({ ref: { type: "secret", id: "s3" }, name: "Other key", scope: "organization", starter: false })], next_cursor: null });

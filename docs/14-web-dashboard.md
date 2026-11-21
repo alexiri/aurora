@@ -2743,7 +2743,12 @@ list of the earlier draft.
     (§11).
 
   An agent that runs outside Aurora (BYO) has the same Access tab and the same journey.
-- **A row** shows:
+- **A card** shows (P5-LAYOUT-2, D-440; on an agent's Access tab the same contents sit in one row of the
+  bordered list). The workspace's and the organization's Accounts are a grid of cards like Apps
+  (`CardGrid`, the Apps card frame; 4 per row at 1920 px, 1 at 390 px); an agent's Access tab keeps one
+  bordered list. The head holds the icon, the name (wrapping) and the "…" menu pinned top-right; the
+  agent pills wrap inside the card; Technical details (Expert) sits at the foot. A skeleton of cards shows
+  while the list loads:
   - the icon and name ("GitHub · bob-builder");
   - a kind chip: **App**, **Website** or **AI key**;
   - **who can use it**: each agent with its access ("Daneel · Read only"), or the `warning` badge **No
