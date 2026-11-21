@@ -37,6 +37,19 @@ describe("Activity at Use", () => {
     expect(await screen.findByRole("table", { name: "Request activity" })).toBeInTheDocument();
   });
 
+  it("(workspace-2) the technical table fits its card: five columns, the rule under the decision, the app under the request, no forced width", async () => {
+    mockFetch({
+      "GET /v1/workspaces/w1/activity": () => json(200, { items: [{ ...entry, decision: "allow", rule_name: "Block evil.example.org", app_id: "github", tool_id: "create_issue" }], next_cursor: null }),
+      "GET /v1/workspaces/w1/agents": () => json(200, { items: [{ id: "a1", name: "Scout", handle: "scout" }], next_cursor: null }),
+    });
+    wrap(<ActivityView wsId="w1" base="/o/x/w/y" />, { moreControls: true });
+    const table = await screen.findByRole("table", { name: "Request activity" });
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Request", "When", "Agent", "Model", "Decision"]);
+    expect(table.className).not.toContain("min-w-max");
+    expect(screen.getByTestId("rule-name").textContent).toBe("Rule: Block evil.example.org");
+    expect(screen.getByTestId("app-tool").textContent).toBe("App: github / create_issue");
+  });
+
   it("shows the request log with Show more controls on", async () => {
     routes();
     wrap(<ActivityView wsId="w1" base="/o/x/w/y" />, { moreControls: true });
