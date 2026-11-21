@@ -1,5 +1,5 @@
 import type { Conversation, TranscriptEvent } from "@/lib/api/conversations";
-import { automationTimeZone, displayTimeZone } from "@/lib/format-date";
+import { displayTimeZone } from "@/lib/format-date";
 
 import { activeTurnId, type TranscriptState } from "./transcript";
 
@@ -11,14 +11,32 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 /** Messages from one sender within this window share one meta line. */
 export const GROUP_WINDOW_MS = 5 * 60_000;
 
-const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-const dayDiff = (a: Date, b: Date) => Math.round((startOfDay(a).getTime() - startOfDay(b).getTime()) / 86_400_000);
-// en-GB: day before month and a 24-hour clock, matching the dashboard's other dates.
-const WEEKDAY = new Intl.DateTimeFormat("en-GB", { weekday: "long" });
-const WEEKDAY_SHORT = new Intl.DateTimeFormat("en-GB", { weekday: "short" });
-const DAY_MONTH = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
-const DAY_MONTH_YEAR = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
-const CLOCK = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" });
+// (P5-REFINE-20, b2#18) One zone on a screen: every stamp, day divider and list time is in the person's zone
+// (`displayTimeZone()`, the browser's when none is set), like `formatWhen`.
+const formatters = new Map<string, Intl.DateTimeFormat>();
+/** A cached en-GB formatter (day before month, 24-hour clock, matching the dashboard's other dates) in the display zone. */
+function fmt(opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const timeZone = displayTimeZone();
+  const key = `${timeZone ?? ""}|${JSON.stringify(opts)}`;
+  let f = formatters.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-GB", { ...opts, timeZone });
+    formatters.set(key, f);
+  }
+  return f;
+}
+/** The calendar day of `d` in the display zone, as a day number. */
+function dayIndex(d: Date): number {
+  const p = Object.fromEntries(fmt({ year: "numeric", month: "numeric", day: "numeric" }).formatToParts(d).map((x) => [x.type, x.value]));
+  return Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day)) / 86_400_000;
+}
+const yearIn = (d: Date) => Number(fmt({ year: "numeric" }).format(d));
+const dayDiff = (a: Date, b: Date) => Math.round(dayIndex(a) - dayIndex(b));
+const WEEKDAY = { format: (d: Date) => fmt({ weekday: "long" }).format(d) };
+const WEEKDAY_SHORT = { format: (d: Date) => fmt({ weekday: "short" }).format(d) };
+const DAY_MONTH = { format: (d: Date) => fmt({ day: "numeric", month: "short" }).format(d) };
+const DAY_MONTH_YEAR = { format: (d: Date) => fmt({ day: "numeric", month: "short", year: "numeric" }).format(d) };
+const CLOCK = { format: (d: Date) => fmt({ hour: "2-digit", minute: "2-digit" }).format(d) };
 
 /** `14:05` in the viewer's time zone. */
 export function clockTime(iso: string): string {
@@ -35,7 +53,7 @@ export function dayLabel(iso: string, now: Date): string {
   if (diff === 1) return "Yesterday";
   if (diff > 1 && diff < 7) return WEEKDAY.format(d);
   const base = `${WEEKDAY_SHORT.format(d)}, ${DAY_MONTH.format(d)}`;
-  return d.getFullYear() === now.getFullYear() ? base : `${base} ${d.getFullYear()}`;
+  return yearIn(d) === yearIn(now) ? base : `${base} ${yearIn(d)}`;
 }
 
 /** List time: the clock today, the short weekday within the week, a date before that. */
@@ -46,7 +64,7 @@ export function listTime(iso: string | null | undefined, now: Date): string {
   const diff = dayDiff(now, d);
   if (diff <= 0) return CLOCK.format(d);
   if (diff < 7) return WEEKDAY_SHORT.format(d);
-  return d.getFullYear() === now.getFullYear() ? DAY_MONTH.format(d) : DAY_MONTH_YEAR.format(d);
+  return yearIn(d) === yearIn(now) ? DAY_MONTH.format(d) : DAY_MONTH_YEAR.format(d);
 }
 
 /** (chat-9) A search result's time: the date and the clock, "19 Nov 23:50" ("19 Nov 2025 23:50" in another year). */
@@ -55,7 +73,7 @@ export function searchTime(iso: string | null | undefined, now: Date, timeZone: 
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const parts = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone, ...o }).format(d);
-  const sameYear = d.getFullYear() === now.getFullYear();
+  const sameYear = yearIn(d) === yearIn(now);
   return `${parts({ day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) })} ${parts({ hour: "2-digit", minute: "2-digit", hour12: false })}`;
 }
 
@@ -91,8 +109,8 @@ export function conversationTitle(
   now: Date = new Date(),
 ): string {
   if (c.automation && c.run_at) {
-    // A run's thread is named in the workspace's zone, like the schedule rows and the delivery message.
-    const when = searchTime(c.run_at, now, automationTimeZone());
+    // A run's thread is named in the person's zone, like every other time on the screen.
+    const when = searchTime(c.run_at, now);
     if (when) return `${c.automation.name} · ${when}`;
   }
   if (c.title) return c.title;

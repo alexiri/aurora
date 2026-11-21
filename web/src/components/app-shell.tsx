@@ -17,7 +17,7 @@ import { workspaceDisplayName } from "@/lib/workspace-name";
 import { pickRailWorkspace, useRailWorkspace, writeRailWorkspace } from "@/lib/nav/manage-return";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, ADMIN_RAIL_GROUPS, ADMIN_RAIL_LABEL, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
-import { useTimezoneAutofill, useWorkspaceTimeZone } from "@/lib/timezone";
+import { useTimezoneAutofill } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
 import { useRefreshAttentionOnMutation, useWorkspaceCounts } from "@/lib/api/attention";
@@ -541,8 +541,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const resolvedQuery = useResolve(orgSlug, wsSlug);
   const resolved = resolvedQuery.data;
   const wsId = resolved?.workspace?.id;
-  // The times of the workspace's automations (schedule rows, run threads, deliveries) are in its zone.
-  useWorkspaceTimeZone(wsId);
   const waiting = useWaitingCount(wsId);
   // (P5-REFINE-2, org-3) An unknown organization or workspace is a 404 *inside* the shell: the rail and switcher show the
   // viewer's real organization, never the unknown slug, and the page body is the not-found state.

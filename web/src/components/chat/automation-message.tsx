@@ -2,7 +2,7 @@
 
 import { Altitude } from "@/components/ui/altitude";
 import { TechnicalDetails } from "@/components/ui/technical-details";
-import { automationTimeZone, formatTime } from "@/lib/format-date";
+import { formatTime } from "@/lib/format-date";
 
 /** What the API puts in the `display` of a schedule or webhook turn's `turn.queued` event (C-1079). */
 export type AutomationDisplay =
@@ -48,8 +48,8 @@ export function acceptedWords(v: Extract<AutomationDisplay, { kind: "webhook" }>
  * collapsed Technical details for Expert.
  */
 export function AutomationMessage({ display, ts, text }: { display: AutomationDisplay; ts: string; text?: string }) {
-  // 24-hour, in the workspace's zone, like the schedule rows and the run thread's title.
-  const time = formatTime(ts, "", automationTimeZone());
+  // 24-hour, in the person's zone like every other time on the screen.
+  const time = formatTime(ts, "");
   if (display.kind === "schedule") {
     return (
       <div className="space-y-1 break-words" data-testid="automation-message">
