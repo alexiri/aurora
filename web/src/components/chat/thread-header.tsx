@@ -42,8 +42,12 @@ export function ThreadHeader({
       <div className="min-w-0 flex-1">
         <h2 className="truncate font-display text-base font-semibold text-ink">{title}</h2>
         {/* (chat-11) On a phone the list is one tap back: the arrow and its word, "Conversations", under the title. */}
-        {onBack ? <p className="text-xs text-muted lg:hidden">Conversations</p> : null}
-        <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted">
+        {/* From 768 the 64 px header holds the title and the meta line (two lines at 768–900); the arrow alone goes back. */}
+        {onBack ? <p className="text-xs text-muted md:hidden">Conversations</p> : null}
+        {/* At 768–1023 the thread is ~390 px wide and the line can wrap to three lines: two fit the 64 px header, the rest is cut (the full text is the tooltip). */}
+        <p
+          title={[visibility, ...segments].filter(Boolean).join(" · ") || undefined}
+          className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted md:max-h-8 md:overflow-hidden lg:max-h-none">
           {visibility ? (
             <span className="inline-flex min-w-0 items-center gap-1">
               <LockIcon aria-hidden="true" width={12} height={12} className="shrink-0" />

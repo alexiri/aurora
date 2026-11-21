@@ -14,7 +14,8 @@ import { Notice } from "@/components/ui/notice";
 import { StatusLine } from "@/components/ui/status-line";
 import { useAskSetup, useWithdrawSetup } from "@/lib/api/app-setup-requests";
 import { useApps, useConnectChannel, type AppSummary } from "@/lib/api/apps";
-import { appDisplayName, productKey, productName } from "@/lib/api/app-name";
+import { appDisplayName, isProductReady, productKey, productName, usableChoices, type ChoiceInstance } from "@/lib/api/app-name";
+import { useAppInstances } from "@/lib/api/apps";
 
 import { useAppHref } from "./app-link";
 import { ConnectJourney } from "./connect-journey/connect-journey";
@@ -35,10 +36,13 @@ export type AppStatus =
   | { kind: "needs_admin"; line: string; askedByMe: boolean };
 
 
-export function appStatus(members: AppSummary[]): AppStatus {
+export function appStatus(members: AppSummary[], instances?: readonly ChoiceInstance[]): AppStatus {
   const accounts = members.flatMap((m) => m.accounts ?? []);
   const connections = members.reduce((n, m) => n + m.connection_count, 0);
-  const ready = members.some((m) => m.readiness?.state !== "needs_admin" && m.available !== false);
+  // (FIX-202) Ready when any variant is usable; a self-hosted variant counts with an active registration (once those are read).
+  const ready = instances
+    ? isProductReady(members, instances)
+    : members.some((m) => m.readiness?.state !== "needs_admin" && m.available !== false);
   if (connections > 0) {
     const line = accounts.length === 1 ? `Connected · ${accounts[0]!.name}` : `Connected · ${connections} accounts`;
     return { kind: "connected", line, ready };
@@ -66,17 +70,19 @@ function AppCard({
   members,
   canOwn,
   workspaceId,
+  instances,
   onConnect,
 }: {
   members: AppSummary[];
   canOwn: boolean;
   workspaceId: string;
+  instances?: readonly ChoiceInstance[];
   onConnect: () => void;
 }) {
   const app = members[0]!;
   const name = productName(app);
   const href = useAppHref()(app);
-  const status = appStatus(members);
+  const status = appStatus(members, instances);
   const ask = useAskSetup(workspaceId);
   const withdraw = useWithdrawSetup(workspaceId);
   const [asking, setAsking] = useState(false);
@@ -170,6 +176,10 @@ export function AppsTab({ workspaceId, orgId, canOwn }: { workspaceId: string; o
   const qc = useQueryClient();
   // The Connect dialog (D-272): opened by a card's button or the deep link `?tab=apps&connect=<app>`.
   const [connecting, setConnecting] = useUrlDialog("connect");
+  // (FIX-202) A card's Connect opens at the App step's decision: "Where does your <App> run?", or the one usable variant.
+  const instances = useAppInstances({ kind: "organization", id: orgId });
+  const registered = instances.data?.items;
+  const [launch, setLaunch] = useState<{ appId?: string; instanceId?: string; where?: AppSummary[] } | null>(null);
   const refresh = useCallback(() => {
     void qc.invalidateQueries({ queryKey: ["apps"] });
     void qc.invalidateQueries({ queryKey: ["connections"] });
@@ -194,7 +204,14 @@ export function AppsTab({ workspaceId, orgId, canOwn }: { workspaceId: string; o
     .sort((a, b) => appDisplayName(a[0]!).localeCompare(appDisplayName(b[0]!)));
   // (workspace-9) Connected, then Ready to connect, then Needs an admin first; empty groups are not drawn; A to Z inside each.
   const found = products.filter((m) => matchesFilter(query, ...m.flatMap((a) => [productName(a), a.summary, a.description])));
-  const kindOf = (m: AppSummary[]) => appStatus(m).kind;
+  const kindOf = (m: AppSummary[]) => appStatus(m, registered).kind;
+  function connectCard(members: AppSummary[]) {
+    const options = usableChoices(members, registered);
+    if (options.length > 1) return setLaunch({ where: members });
+    const only = options[0];
+    if (only?.instanceId) return setLaunch({ appId: only.appId, instanceId: only.instanceId });
+    setConnecting(only?.appId ?? (members.find((m) => m.available) ?? members[0]!).app_id);
+  }
   const groups = [
     { title: "Connected", products: found.filter((m) => kindOf(m) === "connected") },
     { title: "Ready to connect", products: found.filter((m) => kindOf(m) === "ready") },
@@ -235,14 +252,27 @@ export function AppsTab({ workspaceId, orgId, canOwn }: { workspaceId: string; o
                   members={members}
                   canOwn={canOwn}
                   workspaceId={workspaceId}
-                  onConnect={() => setConnecting((members.find((m) => m.available) ?? members[0]!).app_id)}
+                  instances={registered}
+                  onConnect={() => connectCard(members)}
                 />
               ))}
             </ul>
           </section>
         ))}
       </div>
-      {target && target.available && canOwn ? (
+      {launch && canOwn ? (
+        <ConnectJourney
+          appId={launch.appId}
+          instanceId={launch.instanceId}
+          where={launch.where}
+          workspaceId={workspaceId}
+          orgId={orgId}
+          onClose={() => {
+            setLaunch(null);
+            refresh();
+          }}
+        />
+      ) : target && target.available && canOwn ? (
         <ConnectJourney
           appId={target.app_id}
           workspaceId={workspaceId}

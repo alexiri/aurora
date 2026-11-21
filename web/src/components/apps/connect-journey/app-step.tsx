@@ -8,7 +8,7 @@ import { AppIcon } from "@/components/ui/app-icon";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
-import { productKey, productName } from "@/lib/api/app-name";
+import { isProductReady, productKey, productName, usableChoices } from "@/lib/api/app-name";
 import { useAskSetup, useWithdrawSetup } from "@/lib/api/app-setup-requests";
 import { useAppInstances, useApps, type AppSummary } from "@/lib/api/apps";
 import { cn } from "@/lib/utils";
@@ -77,9 +77,12 @@ export function AppStep({
   agent,
   onPick,
   onGive,
+  initialWhere,
 }: {
   workspaceId: string;
   orgId: string;
+  /** (FIX-202) Open on "Where does your <App> run?" for this family's apps (the Apps tab, "Use <variant>"). */
+  initialWhere?: AppSummary[] | null;
   /** The agent the app is for (a fixed agent): "connected, <Agent> can't use it yet". */
   agent?: { id: string; name: string };
   onPick: (c: AppChoice) => void;
@@ -90,13 +93,13 @@ export function AppStep({
   const instances = useAppInstances({ kind: "organization", id: orgId });
   const ask = useAskSetup(workspaceId);
   const withdraw = useWithdrawSetup(workspaceId);
-  const [where, setWhere] = useState<AppSummary[] | null>(null);
+  const [where, setWhere] = useState<AppSummary[] | null>(initialWhere ?? null);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"ready" | "needs">("ready");
   // What the person did here, until the list is read again (an ask or an Undo changes `requested.by_me`).
   const [asked, setAsked] = useState<Record<string, "now" | "no">>({});
 
-  if (apps.isPending) return <Loading />;
+  if (apps.isPending || (instances.isPending && !where)) return <Loading />;
   if (apps.isError) return <ErrorState error={apps.error} onRetry={() => void apps.refetch()} />;
   const grouped = new Map<string, Product>();
   for (const a of apps.data.items.filter((x) => x.available)) grouped.set(productKey(a), [...(grouped.get(productKey(a)) ?? []), a]);
@@ -109,12 +112,13 @@ export function AppStep({
     return <DeploymentStep family={family} siblings={where} orgId={orgId} onPick={(w) => onPick({ kind: "app", ...w })} />;
   }
 
-  const servers = (instances.data?.items ?? []).filter((i) => i.status === "active" && !i.builtin);
+  const registered = instances.data?.items;
+  // (FIX-202) A family is ready when any variant is usable: one choice opens directly, several ask where it runs.
   function choose(members: Product) {
-    const first = members[0]!;
-    const bound = members.filter((m) => m.family?.instance_bound);
-    if (first.family && members.length > 1 && bound.some((b) => servers.some((s) => s.app_id === b.app_id))) return setWhere(members);
-    onPick({ kind: "app", appId: hostedOf(members).app_id });
+    const options = usableChoices(members, registered);
+    if (options.length > 1) return setWhere(members);
+    const only = options[0];
+    onPick({ kind: "app", appId: only?.appId ?? hostedOf(members).app_id, ...(only?.instanceId ? { instanceId: only.instanceId } : {}) });
   }
 
   const q = query.trim().toLowerCase();
@@ -126,7 +130,7 @@ export function AppStep({
   const blocked: Product[] = [];
   for (const p of products.filter(matches)) {
     if (givable(p).length > 0) connected.push(p);
-    else if (hostedOf(p).readiness?.state === "needs_admin") blocked.push(p);
+    else if (!isProductReady(p, registered)) blocked.push(p);
     else ready.push(p);
   }
   const showWebsite = !q || "another website or api".includes(q);

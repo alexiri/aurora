@@ -110,6 +110,10 @@ const ICON_PNG: &[u8] = include_bytes!("../assets/icon.png");
 
 impl MattermostConnector {
     pub fn new(settings: Settings) -> Self {
+        // (FIX-203) Where Mattermost must be able to send button clicks and slash commands.
+        if let Some(url) = settings.actions_url() {
+            tracing::info!(actions_url = %url, "interactive callbacks expected at this address");
+        }
         let declared: BTreeSet<String> = match &settings.capabilities {
             Some(names) => names.iter().cloned().collect(),
             None => DEFAULT_CAPABILITIES

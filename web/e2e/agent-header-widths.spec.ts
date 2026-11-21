@@ -147,3 +147,72 @@ for (const scheme of ["light", "dark"] as const) {
     });
   }
 }
+
+// P5-REFINE-20 batch 11: the chat card at 768–1023 px. The thread header's lines (title, "Conversations", the privacy line) all
+// sit inside the 64 px header and the card, its bottom border level with the status rail's; the list view keeps the status rail
+// inside the card (focusing "Expand status panel" does not scroll the card sideways); the give-key card's dot stays beside the
+// sentence's first line.
+const within = (inner: { x: number; y: number; width: number; height: number }, outer: typeof inner) =>
+  inner.x >= outer.x - 1 && inner.y >= outer.y - 1 && inner.x + inner.width <= outer.x + outer.width + 1 && inner.y + inner.height <= outer.y + outer.height + 1;
+const card = (l: Locator) => l.locator("xpath=ancestor::div[contains(@class,'rounded-card')][1]");
+
+for (const scheme of ["light", "dark"] as const) {
+  for (const width of [768, 820, 900, 960, 1023]) {
+    test.describe(`chat card, ${scheme} theme, ${width} px`, () => {
+      test.use({ viewport: { width, height: 900 } });
+
+      test("every header line is inside the header and the card, level with the rail's border", async ({ page }) => {
+        await mockApi(page);
+        await mockChat(page, { ...DEFAULT, events: { [MINE.id]: ANSWERED } });
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.goto(`${AGENT_ROUTE}?c=${MINE.id}`);
+        await page.getByRole("tab", { name: "Chat" }).click();
+        const thread = page.getByRole("region", { name: "Chat" });
+        const header = thread.locator("header").first();
+        await expect(header.getByRole("heading", { level: 2 })).toBeVisible();
+        const hb = await box(header);
+        const cb = await box(card(header));
+        expect(within(hb, cb), "the header is inside the card").toBe(true);
+        for (const line of await header.locator("h2, p").all()) {
+          if (!(await line.isVisible())) continue;
+          const lb = await box(line);
+          expect(within(lb, hb), `"${await line.innerText()}" is inside the header`).toBe(true);
+          expect(lb.y + lb.height, "the line is above the border").toBeLessThanOrEqual(hb.y + hb.height - 1);
+        }
+        const railHeader = page.getByRole("complementary", { name: "Status" }).locator("xpath=./div[1]");
+        const rb = await box(railHeader);
+        expect(Math.abs(rb.y + rb.height - (hb.y + hb.height)), "the header's border is level with the rail's").toBeLessThanOrEqual(1);
+        expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
+      });
+
+      test("in the list view the status rail is inside the card and focusing Expand status panel does not scroll it", async ({ page }) => {
+        await open(page, scheme);
+        // The Chat tab opens the latest thread; the back arrow is the list view.
+        await page.getByRole("button", { name: "Back to conversations" }).click();
+        const nav = page.getByRole("navigation", { name: "Conversations" });
+        await expect(nav).toBeVisible();
+        const panel = card(nav);
+        const rail = page.getByRole("complementary", { name: "Status" });
+        await expect(rail).toBeVisible();
+        expect(within(await box(rail), await box(panel)), "the rail is inside the card").toBe(true);
+        expect(within(await box(nav), await box(panel)), "the list is inside the card").toBe(true);
+        await rail.getByRole("button", { name: "Expand status panel" }).focus();
+        expect(await panel.evaluate((e) => e.scrollLeft), "the card did not scroll").toBe(0);
+        expect(await panel.evaluate((e) => e.scrollWidth - e.clientWidth), "the card has nothing to scroll").toBeLessThanOrEqual(0);
+      });
+
+      test("the give-key card's dot is beside the sentence's first line", async ({ page }) => {
+        await open(page, scheme, "?tab=access");
+        const starter = page.getByTestId("starter-key-card");
+        const sentence = starter.locator("p").first();
+        await expect(sentence).toBeVisible();
+        const dot = starter.locator("span[aria-hidden]").first();
+        const sb = await box(sentence);
+        const db = await box(dot);
+        expect(db.x + db.width, "the dot is left of the sentence").toBeLessThanOrEqual(sb.x + 1);
+        expect(db.y, "the dot is level with the first line").toBeGreaterThanOrEqual(sb.y - 1);
+        expect(db.y + db.height, "the dot is within the first line").toBeLessThanOrEqual(sb.y + 24);
+      });
+    });
+  }
+}

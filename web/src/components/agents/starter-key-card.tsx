@@ -29,13 +29,16 @@ export function StarterKeyCard({ agentId, agentName }: { agentId: string; agentN
       data-testid="starter-key-card"
       className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-card border border-pending-line bg-pending-panel p-4 text-pending-ink sm:p-5"
     >
-      <span aria-hidden="true" className="inline-block size-2 shrink-0 rounded-full bg-pending-ink" />
-      <p className="min-w-0 flex-1 basis-60 text-sm">
-        <strong className="font-semibold">
-          {agentName} can&apos;t answer yet: it has no AI key.
-        </strong>{" "}
-        Your organization&apos;s {offer.keyName} goes to every new agent automatically. {agentName} doesn&apos;t have it.
-      </p>
+      {/* The dot and the sentence wrap as one item, so the dot stays beside the first line. */}
+      <div className="flex min-w-0 flex-1 basis-60 items-start gap-3">
+        <span aria-hidden="true" className="mt-1.5 inline-block size-2 shrink-0 rounded-full bg-pending-ink" />
+        <p className="min-w-0 flex-1 text-sm">
+          <strong className="font-semibold">
+            {agentName} can&apos;t answer yet: it has no AI key.
+          </strong>{" "}
+          Your organization&apos;s {offer.keyName} goes to every new agent automatically. {agentName} doesn&apos;t have it.
+        </p>
+      </div>
       <ErrorNotice error={add.error} className="basis-full" />
       <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
         {/* (batch 10) The key's name can be long: the button wraps its words inside the card instead of running past it. */}
