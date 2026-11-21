@@ -264,6 +264,14 @@ cmd_dev() {
   done
   local t0=$SECONDS
   build_and_load "${svcs[@]}" || die "image build/load failed"
+  # A rebuilt api may carry new migrations, which only the chart's migrate hook Job runs (a bare restart does not: the
+  # new api then 500s on a missing table). Re-run the release with its own values so the hook runs first.
+  if [[ " ${CHANGED_SVCS[*]:-} " == *" api "* ]] && command -v helm >/dev/null 2>&1 \
+    && helm --kube-context "$CTX" -n "$NS" status "$RELEASE" >/dev/null 2>&1; then
+    log "running migrations: helm upgrade $RELEASE --reuse-values (the migrate hook)"
+    helm --kube-context "$CTX" upgrade "$RELEASE" deploy/helm/aurora -n "$NS" --reuse-values --wait --timeout 8m >&2 \
+      || die "migrations failed: helm --kube-context $CTX upgrade $RELEASE deploy/helm/aurora -n $NS --reuse-values (kubectl --context $CTX -n $NS get jobs)"
+  fi
   local restarted=()
   for s in "${CHANGED_SVCS[@]}"; do
     [ "$s" = sandbox ] && continue   # picked up by the next sandbox Pod

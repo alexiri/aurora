@@ -567,6 +567,11 @@ networkPolicy:
   # open a private-range LLM endpoint that `gateway.allowed_private` also permits. Dev example:
   # deploy/kind/values-llm-mock.yaml.
   gatewayExtraEgress: []
+  # Extra egress rules appended to the api policy (raw NetworkPolicy `egress` entries). Empty in every real
+  # deployment: the external-egress rule excludes the private ranges on purpose (SSRF protection), so the api
+  # cannot reach a private LLM endpoint's key check unless an operator opens it here. Dev only:
+  # deploy/kind/values-llm-mock.yaml opens the in-cluster LiteLLM mock.
+  apiExtraEgress: []
   # Extra egress rules appended to the connector host's policy (raw NetworkPolicy `egress` entries),
   # e.g. to reach a Mattermost server on a private range (the external-egress rule excludes them).
   connectorHostExtraEgress: []

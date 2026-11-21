@@ -24,9 +24,8 @@ config:
       # FIX-019 (D-136): the owner's production endpoint shape (`aigw`): only `base_url` and the `endpoint`
       # key origin; no default_model, models or dialects. A key on it is usable but names no model, so a
       # hosted turn fails `no_default_model` until the agent's model is set (web/e2e/no-default-model.spec.ts).
-      # No `key_origin` here (no rule behaves as method `endpoint`): the API pod has no egress to the mock, and
-      # with a rule the save-time check would fail `llm_endpoint_unreachable` (`litellm-mock` hides this behind
-      # its static `models` fallback). Without a rule the key is saved with a pending origin and is usable.
+      # No `key_origin` here (no rule behaves as method `endpoint`): the key is saved with a pending origin and is
+      # usable. (The api reaches the mock through `networkPolicy.apiExtraEgress` below.)
       # The gateway finds the endpoint of an LLM request by host, so this one uses the Service's fixed ClusterIP
       # (already allowed above) instead of the name `litellm-mock` uses: two endpoints must not share a host.
       - id: aigw-mock
@@ -35,6 +34,13 @@ config:
         base_url: http://10.96.100.40:4000
 
 networkPolicy:
+  # Dev only: the api's external-egress rule excludes 10.0.0.0/8, so without this rule it can never reach the mock and
+  # every key check and grader test ends "unreachable". The production chart keeps the exclusion (SSRF protection).
+  apiExtraEgress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: aurora-dev-mock}}
+          podSelector: {matchLabels: {app: litellm}}
+      ports: [{protocol: TCP, port: 4000}]
   gatewayExtraEgress:
     - to:
         - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: aurora-dev-mock}}
