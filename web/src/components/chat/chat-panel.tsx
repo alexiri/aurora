@@ -12,8 +12,9 @@ export const RAIL_OVERLAY_BELOW = 1400;
 
 /**
  * The messaging panel (D-102): one card that fills the rest of the viewport below the agent header (at least
- * 560 px; CSS only). From 768 px the list, the thread and (phase 5, D-201) the status rail sit side by side; below it
- * the list and the thread are two views and `threadOpen` picks one, with no rail. The page does not scroll: the list,
+ * 560 px; CSS only). From 1024 px (lg) the list and the thread sit side by side; below it the list and the thread are two
+ * views and `threadOpen` picks one (the thread has its back arrow, as at 390: at 768 the thread beside a 232 px list was
+ * 158 px wide and the composer, Send and the callout spilled out). The status rail (phase 5, D-201) is beside them from 768 px. The page does not scroll: the list,
  * the transcript and the rail scroll inside the panel.
  *
  * `rail` is given whether it should overlay (window narrower than 1400 px); while an expanded rail overlays, the list
@@ -29,7 +30,7 @@ export function ChatPanel({
   listWide = false,
   onKeyDown,
 }: {
-  /** (P5-CHAT-4) Message search results show: the list pane is 320 px wide instead of 232 px (from 768 px). */
+  /** (P5-CHAT-4) Message search results show: the list pane is 320 px wide instead of 232 px (from 1024 px). */
   listWide?: boolean;
   /** Keys pressed with focus anywhere in the panel (the search shortcuts). */
   onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
@@ -63,10 +64,10 @@ export function ChatPanel({
         "relative flex h-[calc(100dvh-21rem)] min-h-[560px] overflow-hidden rounded-card border border-line bg-surface shadow-card md:h-[calc(100dvh-7.5rem)]",
         className,
       )}>
-      <div {...inert} className={cn("min-h-0 w-full shrink-0 flex-col border-line md:flex md:border-r", listWide ? "md:w-80" : "md:w-58", threadOpen ? "hidden" : "flex")}>
+      <div {...inert} className={cn("min-h-0 w-full shrink-0 flex-col border-line lg:flex lg:border-r", listWide ? "lg:w-80" : "lg:w-58", threadOpen ? "hidden" : "flex")}>
         {list}
       </div>
-      <div {...inert} className={cn("min-h-0 min-w-0 flex-1 flex-col md:flex", threadOpen ? "flex" : "hidden")}>
+      <div {...inert} className={cn("min-h-0 min-w-0 flex-1 flex-col lg:flex", threadOpen ? "flex" : "hidden")}>
         {thread}
       </div>
       {rail ? <div className="hidden md:contents">{rail(overlay)}</div> : null}

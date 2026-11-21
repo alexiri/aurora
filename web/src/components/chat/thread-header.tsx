@@ -35,14 +35,14 @@ export function ThreadHeader({
           type="button"
           onClick={onBack}
           aria-label="Back to conversations"
-          className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink md:hidden">
+          className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink lg:hidden">
           <ArrowLeftIcon aria-hidden="true" width={20} height={20} />
         </button>
       ) : null}
       <div className="min-w-0 flex-1">
         <h2 className="truncate font-display text-base font-semibold text-ink">{title}</h2>
         {/* (chat-11) On a phone the list is one tap back: the arrow and its word, "Conversations", under the title. */}
-        {onBack ? <p className="text-xs text-muted md:hidden">Conversations</p> : null}
+        {onBack ? <p className="text-xs text-muted lg:hidden">Conversations</p> : null}
         <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted">
           {visibility ? (
             <span className="inline-flex min-w-0 items-center gap-1">

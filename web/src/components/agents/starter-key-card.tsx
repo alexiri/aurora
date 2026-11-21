@@ -37,9 +37,11 @@ export function StarterKeyCard({ agentId, agentName }: { agentId: string; agentN
         Your organization&apos;s {offer.keyName} goes to every new agent automatically. {agentName} doesn&apos;t have it.
       </p>
       <ErrorNotice error={add.error} className="basis-full" />
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+        {/* (batch 10) The key's name can be long: the button wraps its words inside the card instead of running past it. */}
         <Button
           type="button"
+          className="h-auto max-w-full whitespace-normal py-2 text-center"
           disabled={add.isPending}
           onClick={() => add.mutate({ agentIds: [agentId] }, { onSuccess: () => showUndoToast(`${agentName} can answer now`) })}
         >
