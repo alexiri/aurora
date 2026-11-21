@@ -495,7 +495,8 @@ function SidebarContent({
         ) : null}
       </div>
       <div className="space-y-2 border-t border-line pt-3">
-        {isInstanceAdmin ? (
+        {/* Inside Administration the rail's own header says "You're in Administration": the entry would name it a second time. */}
+        {isInstanceAdmin && !adminRail ? (
           <ul>
             <NavItem
               href={adminRoutes.home()}

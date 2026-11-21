@@ -81,7 +81,9 @@ test.describe("the Administration entry", () => {
   test("carries the count of items", async ({ page }) => {
     await open(page, "/admin", "light");
     await expect(page.getByTestId("admin-attention-badge").first()).toHaveText(/3/);
-    await expect(page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: /^Administration 3/ })).toBeVisible();
+    // Inside Administration the count is on Overview in the rail; the foot entry is not there ("Administration" once).
+    await expect(page.getByRole("navigation", { name: "Administration" }).getByRole("link", { name: /^Overview/ })).toContainText("3");
+    await expect(page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: /^Administration/ })).toHaveCount(0);
   });
 
   test("shows no badge and no section with nothing to attend to", async ({ page }) => {
@@ -134,10 +136,8 @@ test.describe("the Administration count follows what is resolved", () => {
     });
     await page.goto(`/admin/apps/packages/${pkgId}`);
     const rail = page.getByRole("navigation", { name: "Administration" });
-    await expect(rail.getByTestId("admin-attention-badge")).toHaveText(/3/);
-    await expect(page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: /^Administration 3/ })).toBeVisible();
+    await expect(rail.getByTestId("admin-attention-badge").first()).toHaveText(/3/);
     await page.getByRole("button", { name: "Approve" }).click();
-    await expect(rail.getByTestId("admin-attention-badge")).toHaveText(/2/);
-    await expect(page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: /^Administration 2/ })).toBeVisible();
+    await expect(rail.getByTestId("admin-attention-badge").first()).toHaveText(/2/);
   });
 });
