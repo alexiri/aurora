@@ -28,6 +28,13 @@ REFUSED = {
     "calendar": ["calendar clear"],
     "gmail": ["mail deletion"],
     "microsoft-365": ["mail deletion"],
+    # (P5-GRAFANA, D-429, SEC-145) credentials, administration, data sources (they hold the
+    # backends' credentials), dashboard deletion, plugins, and the Prometheus admin API behind the
+    # data source proxy.
+    "grafana": ["service-account token creation", "service-account creation", "API key creation",
+                "user admin", "organization admin", "datasource creation", "datasource update",
+                "datasource deletion", "dashboard deletion", "plugin install",
+                "Prometheus admin API"],
 }
 
 

@@ -1,0 +1,113 @@
+# Security review (P5-CATALOG §Security review, D-429): Grafana's data source proxy forwards any
+# method and any backend path, so only the named backend paths are tools. Every request below is a
+# Grafana request (the token is injected under /api, so grants, approvals and the request log apply)
+# but selects no tool: a custom grant or `block_untooled` refuses it. Tool paths are exact (no `**`),
+# so an extra, encoded or dot segment after a tool path never matches it.
+#
+# In production the gateway refuses dot segments (`.`, `..`, also as `%2e`), an encoded `/` (`%2F`) or
+# `\` and NUL with 400 `ambiguous_path` before matching (docs/06 step 3), and forwards the normalized
+# path, so matcher and Grafana see the same segments. This offline runner matches the raw path, so the
+# cases here show that even without that step such paths select no tool. All credentials are fake.
+- name: "proxy boundary: an unlisted backend GET (Prometheus configuration) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/status/config" }
+  expect:
+    app: grafana
+    no_tool: true
+    upstream: { url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/status/config", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "proxy boundary: the command-line flags status selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/status/flags" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: scrape targets select no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/targets" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: a GET to the admin API selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/admin/tsdb/snapshot" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: a dot-dot segment after a tool path does not reach the admin API through the query tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query/../admin/tsdb/snapshot" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: an encoded dot-dot (%2e%2e) after a tool path selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query/%2e%2e/admin/tsdb/snapshot" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: an upper-case encoded dot-dot (%2E%2E) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/labels/%2E%2E/admin/tsdb/snapshot" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: a double-encoded dot-dot (%252e%252e) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query/%252e%252e/admin/tsdb/snapshot" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: encoded slashes (%2F) in the backend path select no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/admin%2Ftsdb%2Fsnapshot" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: a doubled slash before the admin API selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main//api/v1/admin/tsdb/snapshot" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: a segment after a tool path selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query/admin" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: a suffix on the last segment (query.json) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query.json" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: a matrix parameter (;x) on the last segment selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query;x=1" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: an encoded question mark in the path is not a query string"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/admin/tsdb/snapshot%3F/api/v1/query" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: an upper-case variant of a tool path selects no tool (paths are case-sensitive)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/API/V1/QUERY" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: one trailing slash is the same path (FIX-109), still the query tool and still GET only"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query/?query=up" }
+  expect: { app: grafana, tool: prometheus_query }
+- name: "proxy boundary: a query string never changes the backend path"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query?query=up&x=/../admin/tsdb/snapshot" }
+  expect: { app: grafana, tool: prometheus_query }
+- name: "proxy boundary: the legacy numeric-id proxy route selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/7/api/v1/query?query=up" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: the proxy root of a data source selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: a DELETE on a tool path selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/series?match%5B%5D=up" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: Mimir's cardinality API selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/mimir-prod/api/v1/cardinality/label_names" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: an Elasticsearch data source's index API through the proxy selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/es-logs/_cat/indices" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: the data source resource route (another proxy) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/uid/prom-main/resources/api/v1/status/config" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: an app plugin's proxy route selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/plugin-proxy/example-app/anything" }
+  expect: { app: grafana, no_tool: true }
+- name: "proxy boundary: the frontend settings (all data source settings an account may query) select no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/frontend/settings" }
+  expect: { app: grafana, no_tool: true }

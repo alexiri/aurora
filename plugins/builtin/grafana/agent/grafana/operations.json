@@ -1,0 +1,417 @@
+{
+  "format": "aurora.operations/1",
+  "operations": [
+    {
+      "id": "get_current_user",
+      "method": "GET",
+      "path": "/api/user",
+      "summary": "The Grafana service account Aurora is connected as",
+      "tags": ["account"],
+      "tool": "get_current_user"
+    },
+    {
+      "id": "get_current_org",
+      "method": "GET",
+      "path": "/api/org",
+      "summary": "The Grafana organization the token belongs to",
+      "tags": ["account"],
+      "tool": "get_current_org"
+    },
+    {
+      "id": "search",
+      "method": "GET",
+      "path": "/api/search",
+      "summary": "Dashboards and folders by title, tag or folder",
+      "tags": ["dashboards"],
+      "params": [
+        { "name": "query", "in": "query", "type": "string", "description": "Words in the title" },
+        { "name": "tag", "in": "query", "type": "array", "description": "Dashboard tag; repeat for several (all must match)" },
+        { "name": "type", "in": "query", "type": "string", "enum": ["dash-db", "dash-folder"], "description": "dash-db for dashboards, dash-folder for folders" },
+        { "name": "folderUIDs", "in": "query", "type": "array", "description": "Only in these folders" },
+        { "name": "dashboardUIDs", "in": "query", "type": "array", "description": "Only these dashboards" },
+        { "name": "starred", "in": "query", "type": "boolean", "description": "Only the account's starred dashboards" },
+        { "name": "limit", "in": "query", "type": "integer", "default": 100, "description": "At most this many (Grafana's maximum is 5000)" },
+        { "name": "page", "in": "query", "type": "integer", "description": "Page number, from 1" }
+      ],
+      "pagination": { "style": "page_param", "param": "page", "start": 1, "size_param": "limit" },
+      "items": "$",
+      "tool": "search"
+    },
+    {
+      "id": "list_folders",
+      "method": "GET",
+      "path": "/api/folders",
+      "summary": "Folders, top level or below a parent",
+      "tags": ["dashboards"],
+      "params": [
+        { "name": "parentUid", "in": "query", "type": "string", "description": "List the folders inside this folder" },
+        { "name": "limit", "in": "query", "type": "integer", "default": 1000 },
+        { "name": "page", "in": "query", "type": "integer", "description": "Page number, from 1" }
+      ],
+      "pagination": { "style": "page_param", "param": "page", "start": 1, "size_param": "limit" },
+      "items": "$",
+      "tool": "list_folders"
+    },
+    {
+      "id": "get_folder",
+      "method": "GET",
+      "path": "/api/folders/{uid}",
+      "summary": "One folder",
+      "tags": ["dashboards"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Folder UID" }
+      ],
+      "tool": "get_folder"
+    },
+    {
+      "id": "list_dashboard_tags",
+      "method": "GET",
+      "path": "/api/dashboards/tags",
+      "summary": "Tags used on dashboards, with counts",
+      "tags": ["dashboards"],
+      "items": "$",
+      "tool": "list_dashboard_tags"
+    },
+    {
+      "id": "get_dashboard",
+      "method": "GET",
+      "path": "/api/dashboards/uid/{uid}",
+      "summary": "A dashboard's JSON model: panels, queries, data sources, variables (large)",
+      "tags": ["dashboards"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Dashboard UID, the part after /d/ in its URL" }
+      ],
+      "tool": "get_dashboard"
+    },
+    {
+      "id": "list_dashboard_versions",
+      "method": "GET",
+      "path": "/api/dashboards/uid/{uid}/versions",
+      "summary": "Saved versions of a dashboard (needs edit permission on it)",
+      "tags": ["dashboards"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Dashboard UID" },
+        { "name": "limit", "in": "query", "type": "integer", "description": "At most this many versions" }
+      ],
+      "tool": "list_dashboard_versions"
+    },
+    {
+      "id": "list_datasources",
+      "method": "GET",
+      "path": "/api/datasources",
+      "summary": "Data sources the token may read (Viewer and Editor see none by default)",
+      "tags": ["datasources"],
+      "items": "$",
+      "tool": "list_datasources"
+    },
+    {
+      "id": "get_datasource",
+      "method": "GET",
+      "path": "/api/datasources/uid/{uid}",
+      "summary": "One data source's settings (no stored secrets)",
+      "tags": ["datasources"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" }
+      ],
+      "tool": "get_datasource"
+    },
+    {
+      "id": "check_datasource_health",
+      "method": "GET",
+      "path": "/api/datasources/uid/{uid}/health",
+      "summary": "Whether Grafana can reach a data source",
+      "tags": ["datasources"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" }
+      ],
+      "tool": "check_datasource_health"
+    },
+    {
+      "id": "prometheus_query",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/api/v1/query",
+      "summary": "PromQL at one instant on a Prometheus or Mimir data source",
+      "tags": ["prometheus"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "query", "in": "query", "required": true, "type": "string", "description": "PromQL expression" },
+        { "name": "time", "in": "query", "type": "string", "description": "RFC 3339 or Unix seconds; default now" },
+        { "name": "limit", "in": "query", "type": "integer", "description": "At most this many series" }
+      ],
+      "tool": "prometheus_query"
+    },
+    {
+      "id": "prometheus_query_range",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/api/v1/query_range",
+      "summary": "PromQL over a time range on a Prometheus or Mimir data source",
+      "tags": ["prometheus"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "query", "in": "query", "required": true, "type": "string", "description": "PromQL expression" },
+        { "name": "start", "in": "query", "required": true, "type": "string", "description": "RFC 3339 or Unix seconds" },
+        { "name": "end", "in": "query", "required": true, "type": "string", "description": "RFC 3339 or Unix seconds" },
+        { "name": "step", "in": "query", "required": true, "type": "string", "description": "Resolution, e.g. 60s or 5m; keep (end-start)/step under about 1000" },
+        { "name": "limit", "in": "query", "type": "integer", "description": "At most this many series" }
+      ],
+      "tool": "prometheus_query_range"
+    },
+    {
+      "id": "prometheus_series",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/api/v1/series",
+      "summary": "Series that match a selector on a Prometheus or Mimir data source",
+      "tags": ["prometheus"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "match[]", "in": "query", "required": true, "type": "array", "description": "Series selector, e.g. up{job=\"api\"}; repeat for several" },
+        { "name": "start", "in": "query", "type": "string", "description": "RFC 3339 or Unix seconds" },
+        { "name": "end", "in": "query", "type": "string", "description": "RFC 3339 or Unix seconds" },
+        { "name": "limit", "in": "query", "type": "integer", "description": "At most this many series" }
+      ],
+      "items": "$.data",
+      "tool": "prometheus_series"
+    },
+    {
+      "id": "prometheus_labels",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/api/v1/labels",
+      "summary": "Label names on a Prometheus or Mimir data source",
+      "tags": ["prometheus"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "match[]", "in": "query", "type": "array", "description": "Only labels of these series" },
+        { "name": "start", "in": "query", "type": "string", "description": "RFC 3339 or Unix seconds" },
+        { "name": "end", "in": "query", "type": "string", "description": "RFC 3339 or Unix seconds" },
+        { "name": "limit", "in": "query", "type": "integer", "description": "At most this many names" }
+      ],
+      "items": "$.data",
+      "tool": "prometheus_labels"
+    },
+    {
+      "id": "prometheus_label_values",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/api/v1/label/{name}/values",
+      "summary": "Values of one label on a Prometheus or Mimir data source",
+      "tags": ["prometheus"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "name", "in": "path", "required": true, "type": "string", "description": "Label name, e.g. job" },
+        { "name": "match[]", "in": "query", "type": "array", "description": "Only values in these series" },
+        { "name": "start", "in": "query", "type": "string", "description": "RFC 3339 or Unix seconds" },
+        { "name": "end", "in": "query", "type": "string", "description": "RFC 3339 or Unix seconds" },
+        { "name": "limit", "in": "query", "type": "integer", "description": "At most this many values" }
+      ],
+      "items": "$.data",
+      "tool": "prometheus_label_values"
+    },
+    {
+      "id": "prometheus_metadata",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/api/v1/metadata",
+      "summary": "Metric types and help texts on a Prometheus or Mimir data source",
+      "tags": ["prometheus"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "metric", "in": "query", "type": "string", "description": "Only this metric" },
+        { "name": "limit", "in": "query", "type": "integer", "description": "At most this many metrics" }
+      ],
+      "tool": "prometheus_metadata"
+    },
+    {
+      "id": "prometheus_rules",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/api/v1/rules",
+      "summary": "Alerting and recording rules with their state on a Prometheus or Mimir data source",
+      "tags": ["prometheus", "alerting"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "type", "in": "query", "type": "string", "enum": ["alert", "record"], "description": "Only alerting or only recording rules" }
+      ],
+      "tool": "prometheus_rules"
+    },
+    {
+      "id": "prometheus_alerts",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/api/v1/alerts",
+      "summary": "Active alerts of a Prometheus or Mimir data source",
+      "tags": ["prometheus", "alerting"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" }
+      ],
+      "items": "$.data.alerts",
+      "tool": "prometheus_alerts"
+    },
+    {
+      "id": "prometheus_query_exemplars",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/api/v1/query_exemplars",
+      "summary": "Exemplars (sample trace ids) for a PromQL query on a Prometheus or Mimir data source",
+      "tags": ["prometheus"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "query", "in": "query", "required": true, "type": "string", "description": "PromQL expression" },
+        { "name": "start", "in": "query", "type": "string", "description": "RFC 3339 or Unix seconds" },
+        { "name": "end", "in": "query", "type": "string", "description": "RFC 3339 or Unix seconds" }
+      ],
+      "items": "$.data",
+      "tool": "prometheus_query_exemplars"
+    },
+    {
+      "id": "loki_query",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/loki/api/v1/query",
+      "summary": "LogQL at one instant on a Loki data source",
+      "tags": ["loki"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "query", "in": "query", "required": true, "type": "string", "description": "LogQL expression" },
+        { "name": "time", "in": "query", "type": "string", "description": "RFC 3339 or Unix nanoseconds; default now" },
+        { "name": "limit", "in": "query", "type": "integer", "default": 100, "description": "At most this many entries" },
+        { "name": "direction", "in": "query", "type": "string", "enum": ["backward", "forward"], "default": "backward" }
+      ],
+      "tool": "loki_query"
+    },
+    {
+      "id": "loki_query_range",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/loki/api/v1/query_range",
+      "summary": "Log lines, or a LogQL metric query, over a time range on a Loki data source",
+      "tags": ["loki"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "query", "in": "query", "required": true, "type": "string", "description": "LogQL expression, e.g. {app=\"api\"} |= \"error\"" },
+        { "name": "start", "in": "query", "type": "string", "description": "RFC 3339 or Unix nanoseconds; default an hour ago" },
+        { "name": "end", "in": "query", "type": "string", "description": "RFC 3339 or Unix nanoseconds; default now" },
+        { "name": "limit", "in": "query", "type": "integer", "default": 100, "description": "At most this many log lines" },
+        { "name": "step", "in": "query", "type": "string", "description": "Resolution of a metric query, e.g. 60s" },
+        { "name": "direction", "in": "query", "type": "string", "enum": ["backward", "forward"], "default": "backward" }
+      ],
+      "tool": "loki_query_range"
+    },
+    {
+      "id": "loki_labels",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/loki/api/v1/labels",
+      "summary": "Label names on a Loki data source",
+      "tags": ["loki"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "start", "in": "query", "type": "string", "description": "RFC 3339 or Unix nanoseconds" },
+        { "name": "end", "in": "query", "type": "string", "description": "RFC 3339 or Unix nanoseconds" }
+      ],
+      "items": "$.data",
+      "tool": "loki_labels"
+    },
+    {
+      "id": "loki_label_values",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/loki/api/v1/label/{name}/values",
+      "summary": "Values of one label on a Loki data source",
+      "tags": ["loki"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "name", "in": "path", "required": true, "type": "string", "description": "Label name, e.g. app" },
+        { "name": "query", "in": "query", "type": "string", "description": "Only values in streams of this selector" },
+        { "name": "start", "in": "query", "type": "string", "description": "RFC 3339 or Unix nanoseconds" },
+        { "name": "end", "in": "query", "type": "string", "description": "RFC 3339 or Unix nanoseconds" }
+      ],
+      "items": "$.data",
+      "tool": "loki_label_values"
+    },
+    {
+      "id": "loki_series",
+      "method": "GET",
+      "path": "/api/datasources/proxy/uid/{uid}/loki/api/v1/series",
+      "summary": "Log streams that match a selector on a Loki data source",
+      "tags": ["loki"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Data source UID" },
+        { "name": "match[]", "in": "query", "required": true, "type": "array", "description": "Stream selector, e.g. {app=\"api\"}; repeat for several" },
+        { "name": "start", "in": "query", "type": "string", "description": "RFC 3339 or Unix nanoseconds" },
+        { "name": "end", "in": "query", "type": "string", "description": "RFC 3339 or Unix nanoseconds" }
+      ],
+      "items": "$.data",
+      "tool": "loki_series"
+    },
+    {
+      "id": "list_alert_rule_states",
+      "method": "GET",
+      "path": "/api/prometheus/grafana/api/v1/rules",
+      "summary": "Grafana-managed alert rules with their state and firing instances",
+      "tags": ["alerting"],
+      "params": [
+        { "name": "dashboard_uid", "in": "query", "type": "string", "description": "Only rules of this dashboard" },
+        { "name": "folder_uid", "in": "query", "type": "string", "description": "Only rules in this folder" },
+        { "name": "state", "in": "query", "type": "array", "description": "normal, pending, firing, recovering, error or nodata" },
+        { "name": "search.rule_name", "in": "query", "type": "string", "description": "Words in the rule's title" },
+        { "name": "limit_alerts", "in": "query", "type": "integer", "description": "At most this many instances per rule" }
+      ],
+      "tool": "list_alert_rule_states"
+    },
+    {
+      "id": "list_alert_rules",
+      "method": "GET",
+      "path": "/api/v1/provisioning/alert-rules",
+      "summary": "Definitions of all Grafana-managed alert rules",
+      "tags": ["alerting"],
+      "items": "$",
+      "tool": "list_alert_rules"
+    },
+    {
+      "id": "get_alert_rule",
+      "method": "GET",
+      "path": "/api/v1/provisioning/alert-rules/{uid}",
+      "summary": "One Grafana-managed alert rule's definition: its queries, condition and labels",
+      "tags": ["alerting"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Alert rule UID" }
+      ],
+      "tool": "get_alert_rule"
+    },
+    {
+      "id": "list_alerts",
+      "method": "GET",
+      "path": "/api/alertmanager/grafana/api/v2/alerts",
+      "summary": "Alerts in Grafana's Alertmanager",
+      "tags": ["alerting"],
+      "params": [
+        { "name": "active", "in": "query", "type": "boolean", "default": true },
+        { "name": "silenced", "in": "query", "type": "boolean", "default": true },
+        { "name": "inhibited", "in": "query", "type": "boolean", "default": true },
+        { "name": "filter", "in": "query", "type": "array", "description": "Label matcher, e.g. severity=\"critical\"; repeat for several" }
+      ],
+      "items": "$",
+      "tool": "list_alerts"
+    },
+    {
+      "id": "list_silences",
+      "method": "GET",
+      "path": "/api/alertmanager/grafana/api/v2/silences",
+      "summary": "Silences in Grafana's Alertmanager (active, pending and expired)",
+      "tags": ["alerting"],
+      "params": [
+        { "name": "filter", "in": "query", "type": "array", "description": "Label matcher; repeat for several" }
+      ],
+      "items": "$",
+      "tool": "list_silences"
+    },
+    {
+      "id": "list_annotations",
+      "method": "GET",
+      "path": "/api/annotations",
+      "summary": "Annotations (deployments, incidents, notes) in a time range",
+      "tags": ["annotations"],
+      "params": [
+        { "name": "from", "in": "query", "type": "integer", "description": "Start, Unix milliseconds" },
+        { "name": "to", "in": "query", "type": "integer", "description": "End, Unix milliseconds" },
+        { "name": "dashboardUID", "in": "query", "type": "string", "description": "Only this dashboard's annotations" },
+        { "name": "tags", "in": "query", "type": "array", "description": "Only annotations with these tags (organization-wide ones)" },
+        { "name": "type", "in": "query", "type": "string", "enum": ["annotation", "alert"] },
+        { "name": "limit", "in": "query", "type": "integer", "default": 100 }
+      ],
+      "items": "$",
+      "tool": "list_annotations"
+    }
+  ]
+}

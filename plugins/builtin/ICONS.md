@@ -28,6 +28,7 @@ Monograms: rounded tile in `--subtle`/`--line-strong` with the letter in `--prim
 | `github` | Simple Icons 16.37.0 | `github` | `#181717` | `3bf8cceead820aec50d4ee825a3fd02c5a1cd6665cc9cf4cbf3d9c8861a204bb` | white (1.01:1) |
 | `gitlab` | Simple Icons 16.37.0 | `gitlab` | `#FC6D26` | `c7c39058bd1b6f9f40334383bd5136bb8c5ba5e6a24200f2d1f18365e2526e28` | same as light (6.19:1) |
 | `google-workspace` | Simple Icons 16.37.0 (Google; no Workspace icon) | `google` | `#4285F4` | `d8cf9fb2d5e234e03254f1d6400d8cc8160c309b010d031a64f37084b5a21d01` | same as light (4.96:1) |
+| `grafana` | Simple Icons 16.37.0 | `grafana` | `#F46800` | `e6da4ab998d25d509e27ce8a1f1afcb2d549907569b6fb1e4065890877cffefa` | same as light (5.74:1) |
 | `linear` | Simple Icons 16.37.0 | `linear` | `#5E6AD2` | `90b91b61090f4f9c94f9cb24769642278f03e8eedcfe5680738cf3a186bfc00f` | same as light (3.76:1) |
 | `notion` | Simple Icons 16.37.0 | `notion` | `#000000` | `b17d2a2b592a06252efef522d5205f0c7a958f748d40df1011ed081417e42f85` | white (1.19:1) |
 | `postgresql` | Simple Icons 16.37.0 | `postgresql` | `#4169E1` | `c8ccadbd88c9312c2ad3734c4861b31d3485ce179ee91d64793143f83cfa745c` | same as light (3.65:1) |

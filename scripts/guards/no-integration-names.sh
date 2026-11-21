@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOW="$ROOT/scripts/guards/integration-names.allow"
 
-TERMS='mattermost|slack|discord|telegram|msteams|github|gitlab|bitbucket|jira|confluence|gmail|notion|linear|sentry|salesforce|hubspot|zendesk'
+TERMS='mattermost|slack|discord|telegram|msteams|github|gitlab|bitbucket|jira|confluence|gmail|notion|linear|sentry|salesforce|hubspot|zendesk|grafana'
 # Whole-word-ish match: the term must not be surrounded by ASCII letters, so
 # "EgressEntry" (contains "sEntry") and "githubusercontent" do not match.
 PATTERN="(^|[^A-Za-z])(${TERMS})([^A-Za-z]|\$)"
