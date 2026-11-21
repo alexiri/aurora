@@ -580,3 +580,19 @@ Done (the items that waited on brief 6): **admin-5** (a connector whose host run
   "Next:" sentence across elements), `plugins-admin.test.tsx` (exactly once, 1 new), `admin-settings-llm.test.tsx`. None removed.
 
 Send-back batch 4 #5 (lane A): "Administration" is said once in its rail: the sidebar-foot entry is not shown inside Administration (the rail header "You're in Administration" names it; Overview carries the count there). Outside Administration the foot entry stays. Tests: `context-switcher` (1 new, 1 edited); Playwright by reading: `e2e/admin-attention.spec.ts`.
+
+Send-back batch 5 #3 (lane A, admin-9, `92ad4d42`): the terminal switch was drawn from `default` (the application's `false`) while
+the API said `value: true, source: "default"`. Helm's top-level `terminal.enabled: true` renders `terminal.available`, which the
+setting follows (D-237(d)). Now (C-782 note): with the followed key in the configuration, `GET /v1/admin/settings/terminal`
+reports `default` as that value and, until the dashboard stores one, `source: "helm"` with `locked: false` (still switchable; a
+stored value reads `dashboard`; Reset returns to the deployment's value). No wiring: unchanged (`default: false`,
+`source: "default"`). The form draws an untouched, unstored control from the effective `value`, and after Reset from `default`.
+The shared `Switch` carries `aria-checked`. The shared `SettingField`'s "Reset to default (…)" button wraps (`whitespace-normal`,
+`h-auto`, `max-w-full`), so "(Follows what your deployment provides)" no longer widens the page at 390 px. Tests:
+`it/settings_ops.rs::the_terminal_and_scim_switches_apply_live` (helm/unlocked/default true, then dashboard after a save) and
+`::switches_need_the_deployments_wiring` (no wiring: default), `web/tests/admin-settings-stacked.test.tsx` (1 new: on from Helm
+with `aria-checked`, off after a click, Reset back to on, the Reset class wraps). Run: those ITs (`-- settings_ops files:: settings`,
+95 passed), the 4 touched vitest files (34 passed), then the whole web vitest suite once, because `Switch` and `SettingField` are
+shared (243 files, 3341 tests passed); `pnpm typecheck`, eslint on the touched files, clippy on `aurora-api`. Playwright by
+reading: `e2e/org-pages.spec.ts`, `e2e/app-setup.spec.ts` (switches, unaffected), mock `terminal.enabled` (`available: false`,
+unchanged). None removed.
