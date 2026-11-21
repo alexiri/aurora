@@ -8,6 +8,7 @@ const URL_FULL = "https://aurora.example/hooks/abc123";
 const SECRET = "s3cr3t-value-that-must-not-appear";
 const BODY = '{"event":"deploy","status":"ok"}';
 const input: SnippetInput = { url: URL_FULL, kind: "hmac_sha256" };
+const CARD: SnippetInput = { prefix: "auw_9xLPEkbX", origin: "https://aurora.example", kind: "hmac_sha256" };
 
 describe("webhook snippets", () => {
   it("every signed snippet names the real address and the real header, and never the secret", () => {
@@ -20,6 +21,30 @@ describe("webhook snippets", () => {
     expect(webhookSnippet("curl", input)).toContain("$SECRET");
     expect(webhookSnippet("python", input)).toContain("WEBHOOK_SECRET");
     expect(webhookSnippet("node", input)).toContain("WEBHOOK_SECRET");
+  });
+
+  it("on a card the address is $WEBHOOK_URL with a comment naming <origin>/v1/hooks/auw_…, never the prefix as an address", () => {
+    const where = "https://aurora.example/v1/hooks/auw_9xLPEkbX…";
+    const curl = webhookSnippet("curl", CARD);
+    expect(curl.split("\n")[0]).toBe(`# WEBHOOK_URL is the address shown when you created it: ${where}`);
+    expect(curl).toContain('curl -X POST "$WEBHOOK_URL" ');
+    expect(webhookSnippet("python", CARD)).toContain(`# WEBHOOK_URL is the address shown when you created it: ${where}`);
+    expect(webhookSnippet("python", CARD)).toContain('urllib.request.Request(os.environ["WEBHOOK_URL"]');
+    expect(webhookSnippet("node", CARD)).toContain(`// WEBHOOK_URL is the address shown when you created it: ${where}`);
+    expect(webhookSnippet("node", CARD)).toContain("await fetch(process.env.WEBHOOK_URL, {");
+    for (const lang of ["curl", "python", "node"] as const) {
+      for (const kind of ["none", "bearer", "hmac_sha256"] as const) {
+        const s = webhookSnippet(lang, { ...CARD, kind });
+        expect(s).not.toMatch(/(?:POST|Request\(|fetch\()\s*"?auw_/);
+        expect(s).toContain("WEBHOOK_URL");
+      }
+    }
+  });
+
+  it("the signing line of a card's curl is the one the receiver checks (same vector)", () => {
+    const sigLine = webhookSnippet("curl", CARD).split("\n").find((l) => l.startsWith("SIG="))!;
+    const out = execFileSync("bash", ["-c", `BODY='${BODY}'; SECRET='${SECRET}'; ${sigLine}; printf %s "$SIG"`], { encoding: "utf8" });
+    expect(out).toBe(createHmac("sha256", SECRET).update(BODY).digest("hex"));
   });
 
   it("a webhook with its own header name shows it", () => {
@@ -45,7 +70,7 @@ describe("webhook snippets", () => {
       return {};
     };
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (...a: string[]) => (...a: unknown[]) => Promise<void>;
-    await new AsyncFunction("createHmac", "process", "fetch", code)(createHmac, { env: { WEBHOOK_SECRET: SECRET } }, fetchStub);
+    await new AsyncFunction("createHmac", "process", "fetch", code)(createHmac, { env: { WEBHOOK_SECRET: SECRET, WEBHOOK_URL: URL_FULL } }, fetchStub);
     expect(sent!.headers["X-Signature"]).toBe(`sha256=${createHmac("sha256", SECRET).update(sent!.body).digest("hex")}`);
   });
 

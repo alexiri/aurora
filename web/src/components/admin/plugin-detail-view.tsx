@@ -176,7 +176,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
       {/* (P5-REFINE-18 #8, admin-7) The tile, what the app does in plain sentences, and the decision, before any machinery. */}
       <Card className="space-y-4" aria-label="Summary">
         <div className="flex flex-wrap items-center gap-3">
-          <AppIcon appId={plugin.apps[0]?.app_id ?? plugin.package_id} name={appName} hasIcon={Boolean(plugin.apps[0])} size={40} />
+          <AppIcon appId={plugin.apps[0]?.app_id ?? plugin.package_id} name={appName} hasIcon={Boolean(plugin.apps[0])} />
           <div className="min-w-0 flex-1 basis-48">
             <p className="break-words font-semibold text-ink">{appName}</p>
             <p className="text-sm text-ink-2">App package, version {plugin.version}</p>

@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 const hook = {
-  id: "h1", name: "Deploy notice", url_prefix: "https://aurora.example.org/hooks/abcd1234", verification: { kind: "hmac_sha256", header: "X-Signature", format: "sha256=<hex>" },
+  id: "h1", name: "Deploy notice", url_prefix: "auw_9xLPEkbX", verification: { kind: "hmac_sha256", header: "X-Signature", format: "sha256=<hex>" },
   instructions: "Say what shipped.", enabled: true, anchor: "owner", created_by: { id: "u", display_name: "U" }, last_delivery_at: null,
 };
 
@@ -38,21 +38,22 @@ describe("Webhook cards", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Copy as curl" }));
     await waitFor(() => expect(copied).toHaveLength(1));
     expect(copied[0]).toContain('-H "X-Signature: sha256=$SIG"');
-    expect(copied[0]).toContain("hooks/abcd1234…");
+    expect(copied[0]).toContain('curl -X POST "$WEBHOOK_URL" ');
+    expect(copied[0]).toContain(`# WEBHOOK_URL is the address shown when you created it: ${window.location.origin}/v1/hooks/auw_9xLPEkbX…`);
     expect(copied[0]).toContain('"$SECRET"');
-    // The command is the one the How to call it panel shows (one recipe source).
+    // The command is exactly the one the How to call it panel shows (one generator).
     fireEvent.click(within(card).getByRole("button", { name: "How to call it" }));
     const shown = (await within(card).findByTestId("howto-snippet")).textContent!;
-    expect(copied[0]!.endsWith(shown)).toBe(true);
+    expect(copied[0]).toBe(shown);
     expect(await within(card).findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
-  it("has a From your terminal fold with the signed call and $SECRET (item 6)", async () => {
+  it("has no From your terminal box on the list: the command is on the card", async () => {
     routes();
     wrap(page);
-    const fold = await screen.findByTestId("from-your-terminal");
-    expect(within(fold).getByLabelText("the curl command")).toHaveTextContent("-hmac \"$SECRET\"");
-    expect(within(fold).getByLabelText("the curl command")).toHaveTextContent('"$WEBHOOK_URL"');
+    await screen.findByText("Deploy notice");
+    expect(screen.queryByTestId("from-your-terminal")).toBeNull();
+    expect(screen.queryByText("From your terminal")).toBeNull();
   });
 
   it("has no Copy as curl and no fold with Show more controls off", async () => {

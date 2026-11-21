@@ -213,7 +213,7 @@ function AppRow({ p, action, line, badge }: { p: PluginPackage; action: string; 
   const name = packageName(p);
   return (
     <li className="flex items-center gap-3 px-4 py-3 sm:px-5">
-      <AppIcon appId={app?.app_id ?? p.package_id} name={name} hasIcon={Boolean(app)} size={32} />
+      <AppIcon appId={app?.app_id ?? p.package_id} name={name} hasIcon={Boolean(app)} />
       <div className="min-w-0 flex-1">
         <Link href={adminRoutes.package(p.id)} className="block truncate font-medium text-ink hover:underline">
           {name}

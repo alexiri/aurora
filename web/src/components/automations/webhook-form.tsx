@@ -24,8 +24,8 @@ export interface WebhookReveal {
   secret?: string | null;
   kind: WebhookAuth;
   header?: string | null;
-  /** The address the snippets use: the full one when it is known, else the prefix with `…`. */
-  snippetUrl?: string;
+  /** The token's display prefix, when the full address is not known (a new secret): the snippets name it in a comment. */
+  prefix?: string;
   /** Which dialog: a new webhook, a new address, or a new secret. */
   reason: "created" | "address" | "secret";
 }
@@ -101,7 +101,7 @@ export function WebhookForm({
         kindChanged || secret !== "" || headerChanged ? { kind, header: kind === "none" ? null : hdr, secret: kind === "none" ? null : secret || undefined } : undefined;
       update.mutate(
         { id: initial.id, body: { name, instructions, verification } },
-        { onSuccess: (w) => (kindChanged && kind !== "none" && secret ? (onReveal({ name: w.name, secret, kind, header: hdr, snippetUrl: `${initial.url_prefix}…`, reason: "secret" }), onDone()) : onDone()) },
+        { onSuccess: (w) => (kindChanged && kind !== "none" && secret ? (onReveal({ name: w.name, secret, kind, header: hdr, prefix: initial.url_prefix, reason: "secret" }), onDone()) : onDone()) },
       );
       return;
     }

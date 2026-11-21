@@ -62,7 +62,7 @@ const sched = (over: Record<string, unknown> = {}) => ({
 });
 const hook = (over: Record<string, unknown> = {}) => ({
   id: "w1", agent_id: "a1", created_at: "2026-01-01T00:00:00Z", enabled: true, instructions: "Handle it", name: "Deploy notice", anchor: "creator",
-  updated_at: "2026-01-01T00:00:00Z", url_prefix: "https://aurora.example/hooks/whk_ab12", verification: { kind: "hmac_sha256", header: "X-Signature", format: "sha256=<hex>" }, ...over,
+  updated_at: "2026-01-01T00:00:00Z", url_prefix: "auw_9xLPEkbX", verification: { kind: "hmac_sha256", header: "X-Signature", format: "sha256=<hex>" }, ...over,
 });
 const run = (id: string, over: Record<string, unknown> = {}) => ({
   id, schedule_id: "s1", fired_at: "2026-01-02T09:00:00Z", scheduled_for: "2026-01-02T09:00:00Z", created_at: "2026-01-02T09:00:00Z", outcome: "fired", result: "answered", reason: null, conversation_id: "c-" + id, ...over,
@@ -492,15 +492,17 @@ describe("a webhook row", () => {
     await waitFor(() => expect((calls.find((c) => c.method === "POST" && c.path === "/v1/agents/a1/webhooks")?.body as { verification: { secret: string } }).verification.secret).toMatch(/^[A-Za-z0-9]{32}$/));
   });
 
-  it("How to call it on the card uses the address prefix and says the full address was shown once", async () => {
+  it("How to call it on the card runs from $WEBHOOK_URL, names where the address comes from and says it was shown once", async () => {
     mockApi({ "GET /v1/agents/a1/schedules": page([]), "GET /v1/agents/a1/webhooks": page([hook()]) });
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "How to call it" }));
     const panel = await screen.findByRole("region", { name: "How to call it" });
-    expect(within(panel).getByTestId("howto-snippet").textContent).toContain("https://aurora.example/hooks/whk_ab12…");
+    const text = within(panel).getByTestId("howto-snippet").textContent;
+    expect(text).toContain('curl -X POST "$WEBHOOK_URL"');
+    expect(text).toContain(`# WEBHOOK_URL is the address shown when you created it: ${window.location.origin}/v1/hooks/auw_9xLPEkbX…`);
     expect(within(panel).getByText("The full address was shown once. Rotate it to get a new one.")).toBeInTheDocument();
     fireEvent.click(within(panel).getByRole("tab", { name: "Python" }));
-    expect(within(panel).getByTestId("howto-snippet").textContent).toContain("urllib.request");
+    expect(within(panel).getByTestId("howto-snippet").textContent).toContain('os.environ["WEBHOOK_URL"]');
   });
 
   it("Copy puts the snippet on the clipboard", async () => {

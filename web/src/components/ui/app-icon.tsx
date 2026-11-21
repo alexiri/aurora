@@ -12,6 +12,7 @@ const SIZES: Record<number, string> = {
   32: "size-8 text-sm",
   40: "size-10 text-lg",
   48: "size-12 text-xl",
+  64: "size-16 text-2xl",
 };
 
 /** Same-origin icon route of an app; `variant=dark` is the package's `assets/icon-dark.png`. */
@@ -21,7 +22,7 @@ export function appIconUrl(appId: string, dark = false): string {
 }
 
 /**
- * App or package icon (modelled on `Avatar`): the icon image, and a monogram tile (the name's
+ * App or package icon (modelled on `Avatar`; FIX-211: 64 px, `size-16`, everywhere by default, owner 2026-11-21): the icon image, and a monogram tile (the name's
  * first letter on a token background, both themes) when the app has no icon or the image fails.
  *
  * In the dark theme the package's dark icon is used when the API says it has one
@@ -34,7 +35,7 @@ export function AppIcon({
   name,
   hasDarkIcon = false,
   hasIcon = true,
-  size = 40,
+  size = 64,
   className,
   src,
 }: {
@@ -50,7 +51,7 @@ export function AppIcon({
 }) {
   const [lightFailed, setLightFailed] = useState(false);
   const [darkFailed, setDarkFailed] = useState(false);
-  const sizeClass = SIZES[size] ?? SIZES[40];
+  const sizeClass = SIZES[size] ?? SIZES[64];
   const frame = cn("shrink-0 border border-line", sizeClass, className);
   // Vendor artwork is shown unaltered (AWS terms, plugins/builtin/ICONS.md): the <img> has no
   // radius (a radius would clip the corners), no filter, tint or overlay, and `object-contain`.

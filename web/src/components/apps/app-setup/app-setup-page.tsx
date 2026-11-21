@@ -81,7 +81,7 @@ function AppSetupView({
       <PageHeader
         title={
           <span className="flex min-w-0 items-center gap-3">
-            <AppIcon appId={s.app_id} name={name} hasDarkIcon={d.has_dark_icon} size={48} />
+            <AppIcon appId={s.app_id} name={name} hasDarkIcon={d.has_dark_icon} />
             <span className="min-w-0 break-words">{name}</span>
           </span>
         }

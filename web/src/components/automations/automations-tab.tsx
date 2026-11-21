@@ -16,7 +16,6 @@ import { BulkSelectAll, useBulkOn, useSelection } from "@/components/ui/bulk-bar
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { FromYourTerminal } from "@/components/ui/from-your-terminal";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { ErrorNotice } from "@/components/ui/notice";
 import { ClockIcon, LinkIcon, MessageIcon, PlusIcon } from "@/components/ui/icons";
@@ -29,7 +28,6 @@ import { useOrg } from "@/lib/api/queries";
 import { useSchedules } from "@/lib/api/schedules";
 import { useWebhooks } from "@/lib/api/webhooks";
 import { useWhoCan } from "@/lib/api/who-can";
-import { webhookCurl } from "@/lib/copy-as-curl";
 import { useVerb } from "@/lib/palette-verb";
 import { WhoCan } from "@/components/ui/who-can";
 
@@ -226,18 +224,6 @@ export function AutomationsTab({
           ) : (
             <p className="text-sm text-muted">Nothing of this kind yet.</p>
           )}
-          {/* (P5-REFINE-19, `fold.cli`, Expert) The signed call from a shell; a card's Copy as curl does the same for that webhook's own verification. */}
-          {show("webhooks") && hooks.length > 0 ? (
-            <FromYourTerminal
-              commands={[
-                {
-                  label: "the curl command",
-                  text: webhookCurl({ url: '"$WEBHOOK_URL"', kind: "hmac_sha256" }),
-                  note: "Call a signed webhook from a shell: put its address in WEBHOOK_URL and its secret in SECRET. A card's Copy as curl does the same for that webhook's own verification.",
-                },
-              ]}
-            />
-          ) : null}
         </>
       ) : null}
 

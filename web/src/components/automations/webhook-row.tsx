@@ -12,7 +12,8 @@ import { Altitude } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CopyCurlButton } from "@/components/ui/copy-curl";
-import { webhookCurl } from "@/lib/copy-as-curl";
+import { useOrigin } from "@/lib/use-origin";
+import { webhookSnippet } from "@/lib/webhook-snippets";
 import { LoadMore } from "@/components/ui/load-more";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
@@ -88,6 +89,7 @@ export function WebhookRow({
   canOwn?: boolean;
   onReveal: (r: WebhookReveal) => void;
 }) {
+  const origin = useOrigin();
   const [editing, setEditing] = useState(false);
   const [showDeliveries, setShowDeliveries] = useState(false);
   const [showHowTo, setShowHowTo] = useState(false);
@@ -148,7 +150,7 @@ export function WebhookRow({
             How to call it
           </Button>
           {/* (P5-REFINE-19, Expert) The same command the panel shows, for the address as the card has it; $SECRET, never the secret. */}
-          <CopyCurlButton command={webhookCurl({ url: w.url_prefix, prefixOnly: true, kind, header: w.verification.header })} />
+          <CopyCurlButton command={webhookSnippet("curl", { prefix: w.url_prefix, origin, kind, header: w.verification.header })} />
           {/* Below 640 px Deliveries stays on the row. */}
           <Button size="sm" variant="outline" className="sm:hidden" aria-expanded={showDeliveries} onClick={() => setShowDeliveries((v) => !v)}>
             Deliveries
@@ -176,7 +178,7 @@ export function WebhookRow({
     >
       {showHowTo ? (
         <Altitude id="auto.howto" level="setup" promote>
-          <HowToCall url={`${w.url_prefix}…`} kind={kind} header={w.verification.header} addressShownOnce idBase={`howto-${w.id}`} />
+          <HowToCall prefix={w.url_prefix} kind={kind} header={w.verification.header} addressShownOnce idBase={`howto-${w.id}`} />
         </Altitude>
       ) : null}
       {reassigning && wsId ? (
@@ -213,7 +215,7 @@ export function WebhookRow({
           rotateSecret.mutate(w.id, {
             onSuccess: (res) => {
               setConfirm(null);
-              onReveal({ name: res.webhook.name, secret: res.secret, kind, header: w.verification.header, snippetUrl: `${w.url_prefix}…`, reason: "secret" });
+              onReveal({ name: res.webhook.name, secret: res.secret, kind, header: w.verification.header, prefix: w.url_prefix, reason: "secret" });
               rotateSecret.reset();
             },
           })

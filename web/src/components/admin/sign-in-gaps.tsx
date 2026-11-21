@@ -99,7 +99,7 @@ export function SignInGaps({ gaps, where }: { gaps: SignInGap[]; where: Where })
               const names = joinNames(group.map((x) => x.name));
               return (
                 <li key={g.pkg ?? g.appId} data-app={g.appId} data-apps={group.map((x) => x.appId).join(" ")} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-sm">
-                  <AppIcon appId={g.appId} name={g.name} size={32} />
+                  <AppIcon appId={g.appId} name={g.name} />
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-ink">People can&apos;t sign in to {names} yet</p>
                     <p className="text-ink-2">
@@ -157,7 +157,7 @@ export function SignInGapRows({ gaps, where }: { gaps: SignInGap[]; where: Where
             key={g.pkg ?? g.appId}
             data-app={g.appId}
             data-apps={group.map((x) => x.appId).join(" ")}
-            icon={<AppIcon appId={g.appId} name={g.name} size={32} />}
+            icon={<AppIcon appId={g.appId} name={g.name} />}
             title={`People can't sign in to ${joinNames(group.map((x) => x.name))} yet`}
             detail={`${group.length === 1 ? `${g.name} has no other way to connect.` : "They share one sign-in and have no other way to connect."} Register a sign-in app so people can sign in.`}
             action={
