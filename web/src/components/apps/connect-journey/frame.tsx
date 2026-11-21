@@ -13,6 +13,17 @@ import { cn } from "@/lib/utils";
  * steps fill (`StepFooter`): Back on the left, the step's one action on the right.
  */
 const FooterContext = createContext<HTMLElement | null>(null);
+/** (FIX-210) The header's second row, under the stepper: it never scrolls with the step's body. */
+const HeaderContext = createContext<HTMLElement | null>(null);
+
+/**
+ * Renders its children into the frame's fixed header, under the stepper (the App step's search and tabs). Outside a frame
+ * (a step rendered alone) it renders them in place.
+ */
+export function StepHeader({ children }: { children: ReactNode }) {
+  const el = useContext(HeaderContext);
+  return el ? createPortal(children, el) : <>{children}</>;
+}
 
 /** Renders its children into the frame's footer. */
 export function StepFooter({ children }: { children: ReactNode }) {
@@ -88,6 +99,7 @@ export function JourneyFrame({
   children: ReactNode;
 }) {
   const [el, setEl] = useState<HTMLElement | null>(null);
+  const [headEl, setHeadEl] = useState<HTMLElement | null>(null);
   return (
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
       <DialogContent
@@ -99,10 +111,17 @@ export function JourneyFrame({
         // The title is one line on a phone: it is cut with an ellipsis, not wrapped.
         className={cn("[&_h2]:truncate")}
         back={back}
-        header={stepper}
+        header={
+          <div className="space-y-3">
+            {stepper}
+            <div ref={setHeadEl} className="space-y-3 empty:hidden" />
+          </div>
+        }
         footer={footer ? <div ref={setEl} className="flex flex-wrap items-center gap-2" /> : null}
       >
-        <FooterContext.Provider value={footer ? el : null}>{children}</FooterContext.Provider>
+        <HeaderContext.Provider value={headEl}>
+          <FooterContext.Provider value={footer ? el : null}>{children}</FooterContext.Provider>
+        </HeaderContext.Provider>
       </DialogContent>
     </Dialog>
   );
