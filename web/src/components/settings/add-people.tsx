@@ -172,6 +172,8 @@ export function AddPeople({
                   {(["owner", "approver", "member"] as const).map((r) => (
                     <li key={r}>
                       <strong className="text-ink">{ROLE_CAN.workspace[r].label}:</strong> {ROLE_CAN.workspace[r].summary}
+                      {/* (workspace-4) The choice above has no Approver until the workspace has one: say where it is set, so the fold never promises what the choice lacks. */}
+                      {r === "approver" && !hasApprover ? " Not offered here yet: change a person's role in the list once they are added." : null}
                     </li>
                   ))}
                 </ul>
