@@ -3,7 +3,7 @@
 #
 #   deploy/dev/kind-dev.sh up [--llm-mock] [--connector-fake] [--no-sandbox] [--tracing]   cluster + ingress + images + helm release
 #                                          --tracing: Jaeger (dev, in-memory) + deploy/kind/values-tracing.yaml; UI via port-forward svc/jaeger 16686
-#   deploy/dev/kind-dev.sh dev [api|gateway|hookhost|runner|connector-host|connector-fake|dev-idp|web|sandbox ...]
+#   deploy/dev/kind-dev.sh dev [api|gateway|hookhost|runner|connector-host|connector-fake|dev-idp|terminator|web|sandbox ...]
 #                                          rebuild changed service images, load them, restart those Deployments
 #   deploy/dev/kind-dev.sh bootstrap-admin <email>   pre-provision the first instance admin (binds at their first sign-in)
 #   deploy/dev/kind-dev.sh status | down
@@ -260,7 +260,7 @@ cmd_dev() {
   local svcs=("$@")
   [ "${#svcs[@]}" -gt 0 ] || svcs=(api gateway hookhost runner connector-host web dev-idp)
   local s; for s in "${svcs[@]}"; do
-    case "$s" in api|gateway|hookhost|runner|connector-host|connector-fake|dev-idp|web|sandbox) ;; *) die "unknown service: $s" ;; esac
+    case "$s" in api|gateway|hookhost|runner|connector-host|connector-fake|dev-idp|terminator|web|sandbox) ;; *) die "unknown service: $s" ;; esac
   done
   local t0=$SECONDS
   build_and_load "${svcs[@]}" || die "image build/load failed"
@@ -268,8 +268,12 @@ cmd_dev() {
   # new api then 500s on a missing table). Re-run the release with its own values so the hook runs first.
   if [[ " ${CHANGED_SVCS[*]:-} " == *" api "* ]] && command -v helm >/dev/null 2>&1 \
     && helm --kube-context "$CTX" -n "$NS" status "$RELEASE" >/dev/null 2>&1; then
-    log "running migrations: helm upgrade $RELEASE --reuse-values (the migrate hook)"
-    helm --kube-context "$CTX" upgrade "$RELEASE" deploy/helm/aurora -n "$NS" --reuse-values --wait --timeout 8m >&2 \
+    # --reuse-values keeps the release's old values and brings in no NEW key of a values file, so a cluster made before a
+    # key was added (networkPolicy.apiExtraEgress, 306b6efb) would miss it: on an llm-mock cluster layer its values file on top.
+    local mockvals=()
+    k get ns aurora-dev-mock >/dev/null 2>&1 && mockvals=(-f deploy/kind/values-llm-mock.yaml)
+    log "running migrations: helm upgrade $RELEASE --reuse-values ${mockvals[*]:-} (the migrate hook)"
+    helm --kube-context "$CTX" upgrade "$RELEASE" deploy/helm/aurora -n "$NS" --reuse-values "${mockvals[@]}" --wait --timeout 8m >&2 \
       || die "migrations failed: helm --kube-context $CTX upgrade $RELEASE deploy/helm/aurora -n $NS --reuse-values (kubectl --context $CTX -n $NS get jobs)"
   fi
   local restarted=()

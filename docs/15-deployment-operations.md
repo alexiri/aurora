@@ -541,7 +541,11 @@ Files: `deploy/dev/kind-dev.sh` (driven by `just kind-up | kind-dev | kind-statu
 `helm upgrade --install`. Rust services are built in a builder container against the bind-mounted source with a
 persistent cargo target volume and copied into thin distroless images; `kind-dev.sh dev [svc…]` rebuilds, loads
 and restarts only the services whose binary (web: sources) changed. Images are `localhost/aurora-dev/aurora-<svc>:dev`
-with `pullPolicy: Never`.
+with `pullPolicy: Never`. `dev` accepts every Rust service including `terminator`. Its api migration step runs
+`helm upgrade --reuse-values`, which brings in no *new* key of a values file: on a cluster with the `llm-mock` profile
+(namespace `aurora-dev-mock`) `dev` therefore also passes `-f deploy/kind/values-llm-mock.yaml`, so a cluster made before
+`networkPolicy.apiExtraEgress` existed (306b6efb) gets it on its next `dev` run. A cluster without that profile that needs a
+new key sets it explicitly (`helm upgrade aurora deploy/helm/aurora -n aurora --reuse-values --set …`).
 `scripts/e2e/kind.sh` uses the same builder + thin images by default (`--release-images` builds the release `Containerfile` instead); dev images are local only and never pushed (OPS-023, I-44).
 
 Developer loop without containers (phase 1, OPS-018; `docs/ops/live-reload.md`, decision I-43): `just dev` starts
