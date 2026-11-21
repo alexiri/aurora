@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AutomationsTab } from "@/components/automations/automations-tab";
 import { runThreadName } from "@/components/automations/schedule-row";
 import { dismissUndoToast, UndoToastHost } from "@/components/ui/undo-toast";
+import { isoToAppText } from "@/components/ui/date-field";
 import { setDisplayTimeZone } from "@/lib/format-date";
 import { json, err, type Handler } from "./support/api";
 import { seedMoreControls } from "./support/render";
@@ -361,7 +362,7 @@ describe("the schedule form", () => {
 
   it("Custom flags a too-frequent cron as you type, before submit, and does not send it", async () => {
     const calls = mockApi({ "GET /v1/agents/a1/schedules": page([]), "GET /v1/agents/a1/webhooks": page([]), "POST /v1/agents/a1/schedules": () => json(201, sched()) });
-    mount();
+    mount({}, false);
     const form = await openForm();
     fireEvent.click(within(form).getByRole("radio", { name: "Custom" }));
     fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Fast" } });
@@ -378,12 +379,20 @@ describe("the schedule form", () => {
     await waitFor(() => expect(created(calls)?.body).toMatchObject({ cron: "*/10 * * * *" }));
   });
 
-  it("Custom needs more controls: without the switch it is disabled with Show", async () => {
+  it("Custom is a preset: without the switch it is enabled, shows the cron field, and keeps what was typed (D-443)", async () => {
     mockApi({ "GET /v1/agents/a1/schedules": page([]), "GET /v1/agents/a1/webhooks": page([]) });
     mount({}, false);
     const form = await openForm();
-    expect(within(form).getByRole("radio", { name: "Custom" })).toBeDisabled();
-    expect(within(form).getByText(/Custom needs more controls/)).toBeInTheDocument();
+    expect(within(form).getByRole("radio", { name: "Custom" })).toBeEnabled();
+    expect(within(form).queryByLabelText(/^Cron/)).toBeNull();
+    fireEvent.click(within(form).getByRole("radio", { name: "Custom" }));
+    fireEvent.change(within(form).getByLabelText(/^Cron/), { target: { value: "0 8 * * 1" } });
+    expect(within(form).getByRole("combobox", { name: "Time zone" })).toBeInTheDocument();
+    fireEvent.click(within(form).getByRole("radio", { name: "Hourly" }));
+    expect(within(form).queryByLabelText(/^Cron/)).toBeNull();
+    fireEvent.click(within(form).getByRole("radio", { name: "Custom" }));
+    expect(within(form).getByLabelText(/^Cron/)).toHaveValue("0 8 * * 1");
+    expect(form).not.toHaveTextContent(/needs more controls/);
   });
 
   it("Every 5 minutes says 'Every 5 minutes · next 23:55, 00:00, 00:05.' from the preview (schedules-2)", async () => {
@@ -700,7 +709,14 @@ describe("one-time and yearly schedules", () => {
     fireEvent.change(within(form).getByLabelText("Prompt"), { target: { value: "remind me" } });
     fireEvent.click(within(form).getByRole("radio", { name: "Once" }));
     const date = within(form).getByLabelText("Date") as HTMLInputElement;
-    expect(date.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // A DateField: the app's date text ("22 Nov 2026"), not a native date input; it takes the ISO date typed too.
+    expect(date.type).toBe("text");
+    expect(date.value).toMatch(/\d{4}/);
+    // Date, time and zone sit in one row.
+    const row = date.closest(".flex-wrap");
+    expect(row).not.toBeNull();
+    expect(row).toContainElement(within(form).getByRole("combobox", { name: "Time of day" }));
+    expect(row).toContainElement(within(form).getByRole("combobox", { name: "Time zone" }));
     expect(within(form).getByRole("combobox", { name: "Time of day" })).toHaveValue("09:00");
     expect(within(form).getByRole("combobox", { name: "Time zone" })).toHaveValue("Europe/Zurich · Acme workspace");
     fireEvent.change(date, { target: { value: "2026-11-21" } });
@@ -740,7 +756,7 @@ describe("one-time and yearly schedules", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
     const form = await screen.findByRole("form", { name: "Edit schedule" });
     expect(within(form).getByRole("radio", { name: "Once" })).toBeChecked();
-    expect(within(form).getByLabelText("Date")).toHaveValue("2026-11-21");
+    expect(within(form).getByLabelText("Date")).toHaveValue(isoToAppText("2026-11-21"));
   });
 
   it("Waiting: a due one-time schedule of a paused agent says it runs when the agent is resumed", async () => {
@@ -802,7 +818,7 @@ describe("one-time and yearly schedules", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run again" }));
     const form = await screen.findByRole("form", { name: "Edit schedule" });
     expect(within(form).getByRole("radio", { name: "Once" })).toBeChecked();
-    expect(within(form).getByLabelText("Date")).not.toHaveValue("2026-11-21");
+    expect(within(form).getByLabelText("Date")).not.toHaveValue(isoToAppText("2026-11-21"));
     fireEvent.click(within(form).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toMatchObject({ run_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T09:00$/), timezone: "Europe/Zurich" }));
     expect(calls.find((c) => c.method === "PATCH")?.body).not.toHaveProperty("cron");

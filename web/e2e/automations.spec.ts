@@ -146,9 +146,17 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
         await check(page);
         await when.getByText("Once", { exact: true }).click();
         await expect(form.getByRole("radio", { name: "Once" })).toBeChecked();
-        await expect(form.getByLabel("Date")).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
+        // A DateField (the app's date text), exact: the calendar button is named "Pick date".
+        await expect(form.getByLabel("Date", { exact: true })).toHaveValue(/\d{4}/);
+        if (width >= 768) {
+          // D-443: date, time and zone share one line.
+          const y = async (l: ReturnType<typeof form.getByLabel>) => Math.round((await l.boundingBox())!.y);
+          const dateY = await y(form.getByLabel("Date", { exact: true }));
+          expect(Math.abs((await y(form.getByLabel("Time of day"))) - dateY)).toBeLessThanOrEqual(4);
+          expect(Math.abs((await y(form.getByLabel("Time zone"))) - dateY)).toBeLessThanOrEqual(4);
+        }
         await expect(form.getByTestId("schedule-summary")).toContainText(/^Once, on \w{3} \d{1,2} \w{3} at 10:00 \(UTC time\)\./); // the time picked for Every year carries over
-        await form.getByLabel("Date").fill("2020-01-01");
+        await form.getByLabel("Date", { exact: true }).fill("2020-01-01");
         await expect(form.getByText("Pick a time in the future")).toBeVisible();
         await expect(form.getByRole("button", { name: "Create schedule" })).toBeDisabled();
         await check(page);
