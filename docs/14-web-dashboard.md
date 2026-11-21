@@ -1383,7 +1383,10 @@ Every setting that is inherited across levels is shown as a ladder on its topic 
 
 **Above** is drawn only for viewers who can change this level and only when something can still be tightened
 (D-442, D-444): a viewer who can change nothing (a workspace member or approver, an organization member) reads what is in
-force in words and who to ask, and no "Set for you by …" rows; a collapsed ladder whose controls offer no stricter
+force in words and who to ask, and no "Set for you by …" rows (an organization member's Internet access: one sentence
+from `GET /v1/orgs/{org}/governance/effective`, which any organization member may read, about requests without an
+account and the allow-list, e.g. "In Acme, requests without an account can reach any website unless a rule or a
+workspace blocks them."; the organization's rules are not a member's read, so the sentence leaves room for them); a collapsed ladder whose controls offer no stricter
 value draws nothing (`ScopeLadder` `canTighten={false}`, set by the caller).
 
 The ladder applies to Internet access, AI keys and rules, Bring your own, Data › Retention and app availability.

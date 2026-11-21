@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { askSentence, internetAccessOf, internetSummary, reachSentence, type InternetAccess, type InternetRule } from "@/lib/summary/internet";
+import { askSentence, internetAccessOf, internetSummary, orgMemberSummary, reachSentence, type InternetAccess, type InternetRule } from "@/lib/summary/internet";
 
 // (P5-IA-2, C-986) Each row is a condition of a level's Internet access and the sentences it must produce. Every row is
 // checked against `07 §Evaluation` (rules first; then, for a request without an account, `block` allows only the
@@ -178,5 +178,20 @@ describe("Internet access summary (C-986)", () => {
     expect(internetSummary(internetAccessOf(gen, true), "Agents here")).toBe("Agents here can't reach the internet. Nothing asks you first.");
     // The organization lists one website: that one is reachable, so the sentence says "the allow-list".
     expect(internetSummary(internetAccessOf(gen, true, 1), "Agents here")).toBe("Agents here can reach only the websites on the allow-list. Nothing asks you first.");
+  });
+});
+
+// (FIX-206 follow-up, D-444) An organization member's one sentence, from the effective governance only: the organization's
+// rules are not a member's read, so the sentence leaves room for them (and for workspaces, which only narrow).
+describe("orgMemberSummary", () => {
+  const eg = (posture: string, baseline = 0, org = 0) => ({ posture: { value: posture }, baseline_allowlist: Array(baseline).fill({}), org_allowlist: Array(org).fill({}) });
+  it("says what requests without an account reach, for each posture", () => {
+    expect(orgMemberSummary(eg("open"), "Acme")).toBe("In Acme, requests without an account can reach any website unless a rule or a workspace blocks them.");
+    // An open posture with allow-list entries: the list does not narrow anything yet.
+    expect(orgMemberSummary(eg("open", 2, 1), "Acme")).toBe("In Acme, requests without an account can reach any website unless a rule or a workspace blocks them.");
+    expect(orgMemberSummary(eg("credentialed_only"), "Acme")).toBe("In Acme, requests without an account reach only the websites a rule allows.");
+    // The instance's baseline list counts too: it applies in every organization.
+    expect(orgMemberSummary(eg("credentialed_only", 1), "Acme")).toBe("In Acme, requests without an account reach only the 1 website on the allow-list and those a rule allows.");
+    expect(orgMemberSummary(eg("credentialed_only", 1, 2), "Acme")).toBe("In Acme, requests without an account reach only the 3 websites on the allow-list and those a rule allows.");
   });
 });
