@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { KeyTable } from "@/components/account/key-table";
 import { UndoToastHost } from "@/components/ui/undo-toast";
-import { apiKeyCurl, shellQuote, webhookCurl } from "@/lib/copy-as-curl";
+import { apiKeyCurl, shellQuote } from "@/lib/copy-as-curl";
 import { webhookSnippet } from "@/lib/webhook-snippets";
 import { wrap } from "./support/render";
 
@@ -29,27 +29,14 @@ describe("the commands", () => {
     expect(apiKeyCurl("https://aurora.example.org/")).toContain("org/v1/me");
   });
 
-  it("signs the body for a signed webhook, with $SECRET and the X-Signature recipe", () => {
-    const c = webhookCurl({ url: "https://a.example/hooks/abc", kind: "hmac_sha256", header: "X-Signature" });
-    expect(c).toContain('openssl dgst -sha256 -hmac "$SECRET"');
-    expect(c).toContain('-H "X-Signature: sha256=$SIG"');
-    expect(c).toContain("curl -X POST https://a.example/hooks/abc ");
-    expect(c).toBe(webhookSnippet("curl", { url: "https://a.example/hooks/abc", kind: "hmac_sha256", header: "X-Signature" }));
-    expect(c).not.toContain("#");
-  });
-
-  it("sends the password in the header for a bearer webhook, a plain POST for none", () => {
-    expect(webhookCurl({ url: "https://a.example/h", kind: "bearer", header: null })).toContain('-H "Authorization: Bearer $SECRET"');
-    expect(webhookCurl({ url: "https://a.example/h", kind: "bearer", header: "X-Token" })).toContain('-H "X-Token: Bearer $SECRET"');
-    const none = webhookCurl({ url: "https://a.example/h", kind: "none" });
+  it("a webhook's curl is the generator's (signed: the signing recipe; bearer: the header; none: a plain POST)", () => {
+    const signed = webhookSnippet("curl", { prefix: "auw_ab", origin: "https://a.example", kind: "hmac_sha256", header: "X-Signature" });
+    expect(signed).toContain('openssl dgst -sha256 -hmac "$SECRET"');
+    expect(signed).toContain('-H "X-Signature: sha256=$SIG"');
+    expect(webhookSnippet("curl", { prefix: "auw_ab", kind: "bearer", header: "X-Token" })).toContain('-H "X-Token: Bearer $SECRET"');
+    const none = webhookSnippet("curl", { prefix: "auw_ab", kind: "none" });
     expect(none).not.toContain("$SECRET");
-    expect(none).not.toContain("-H \"X-");
-  });
-
-  it("says when only the stored prefix is known", () => {
-    const c = webhookCurl({ url: "https://a.example/hooks/abcd", prefixOnly: true, kind: "none" });
-    expect(c.split("\n")[0]).toMatch(/^# The full address was shown once/);
-    expect(c).toContain("abcd…");
+    expect(none).not.toContain('-H "X-');
   });
 });
 
