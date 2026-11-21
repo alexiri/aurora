@@ -7,9 +7,6 @@
 # (no entries yet; add e.g.)
 # ^crates/aurora-llm/.*:known_llm_hosts
 
-# (P4-GSL) The fake git host of the test kit emulates the two built-in git hosts' API shapes (docs/18
-# §Git skill library); it is test support, never shipped, and the core code stays host-neutral.
-^crates/aurora-testkit/src/git_host\.rs$:.*
 # (P4-GSL) A sample `Link` header in a unit test of the host-neutral pagination parser.
 ^crates/aurora-registry/src/library\.rs$:gitlab\.example
 
@@ -23,6 +20,15 @@
 # `…/-/raw/HEAD/…`): URL shaping the admin's paste needs, not integration behaviour, and it names
 # no product beyond the two raw-file URL layouts.
 ^services/aurora-api/src/domains/addon_sources/manifest\.rs$:([Gg]it[Hh]ub|[Gg]it[Ll]ab)
+
+# (P5-SKLIB-1, D-448, C-1123) The git address parser's unit table: sample addresses of the forges whose page
+# URLs people paste (`/tree/`, `/-/tree/`, `/blob/` shapes). The parser is host-neutral (the page-URL shapes are
+# the only thing it knows), and the names appear only in the test table.
+^crates/aurora-core/src/git_url\.rs$:([Gg]it[Hh]ub|[Gg]it[Ll]ab|[Bb]it[Bb]ucket)
+
+# (P5-SKLIB-1, D-448, C-1127) The one-off backfill that gives the libraries of the two retired GitHub/GitLab
+# app connections their clone address (a migration, never run again; data, not integration behaviour).
+^crates/aurora-db/migrations/20261201000270_skill_library_git_url\.sql$:([Gg]it[Hh]ub|[Gg]it[Ll]ab|github\.com|gitlab\.com)
 
 # (FIX-142) Comments in the Markdown sanitizer and its tests that cite the dialect measurements the
 # D-227/D-270 exceptions rest on (the pinned chat server's parser behaviour). Comments only: no code

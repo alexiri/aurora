@@ -62,6 +62,8 @@ aurora-webhook = { workspace = true, features = ["utoipa"] }
 serde_yaml = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+# (P5-SKLIB-1, C-1125) zlib streams of git packs, parsed in memory.
+flate2 = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }
 hyper-util = { workspace = true }
@@ -74,6 +76,7 @@ opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 
 [dev-dependencies]
+proptest = { workspace = true }
 aurora-config = { workspace = true, features = ["test-registry"] }
 aurora-secrets = { workspace = true, features = ["memory-store"] }
 wiremock = { workspace = true }

@@ -9,19 +9,23 @@ use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-const LIB_COLS: &str = "id, org_id, label, connection_id, app_id, repo, ref, path, status, \
+const LIB_COLS: &str = "id, org_id, label, url, repo, ref, path, status, \
     last_head_sha, last_refresh_at, next_refresh_at, refresh_failures, last_error, \
     refresh_lease_until, lease_owner, check_requested_at, created_by_user_id, created_at, \
-    updated_at, head_epoch";
+    updated_at, head_epoch, token_ref, token_updated_at";
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Clone, sqlx::FromRow)]
 pub struct LibraryRow {
     pub id: Uuid,
-    pub org_id: Uuid,
+    /// (P5-SKLIB-2, C-1128) Null = an instance library (managed by instance admins, visible to
+    /// every organization).
+    pub org_id: Option<Uuid>,
     pub label: String,
-    pub connection_id: Option<Uuid>,
-    pub app_id: String,
-    pub repo: String,
+    /// (P5-SKLIB-1, C-1122) The normalized https clone URL; null only for a library migrated
+    /// without one (C-1127).
+    pub url: Option<String>,
+    /// The display form `host/path` (null only with `url`).
+    pub repo: Option<String>,
     #[sqlx(rename = "ref")]
     pub reference: Option<String>,
     pub path: String,
@@ -40,16 +44,36 @@ pub struct LibraryRow {
     /// Bumped whenever `last_head_sha` is cleared by an add (FIX-096): a refresh that read an
     /// older epoch must not write its head back.
     pub head_epoch: i32,
+    /// (P5-SKLIB-1, C-1126) The sealed token's reference: opened only by the repository
+    /// reader, never returned (the `Debug` below leaves it out).
+    pub token_ref: Option<String>,
+    pub token_updated_at: Option<DateTime<Utc>>,
+}
+
+impl std::fmt::Debug for LibraryRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LibraryRow")
+            .field("id", &self.id)
+            .field("org_id", &self.org_id)
+            .field("label", &self.label)
+            .field("url", &self.url)
+            .field("status", &self.status)
+            .field("token_set", &self.token_ref.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 pub struct NewLibrary<'a> {
-    pub org_id: Uuid,
+    /// The new row's id (chosen first: the token is sealed with it as owner).
+    pub id: Uuid,
+    /// `None` creates an instance library.
+    pub org_id: Option<Uuid>,
     pub label: &'a str,
-    pub connection_id: Uuid,
-    pub app_id: &'a str,
+    pub url: &'a str,
     pub repo: &'a str,
     pub reference: Option<&'a str>,
     pub path: &'a str,
+    pub token_ref: Option<&'a str>,
     pub head_sha: &'a str,
     pub created_by: Uuid,
     pub next_refresh_in_secs: f64,
@@ -60,22 +84,47 @@ pub async fn insert_library(
     n: &NewLibrary<'_>,
 ) -> Result<LibraryRow, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO skill_libraries (id, org_id, label, connection_id, app_id, repo, ref, path,
-            last_head_sha, last_refresh_at, next_refresh_at, created_by_user_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), now() + make_interval(secs => $10), $11)
+        "INSERT INTO skill_libraries (id, org_id, label, url, repo, ref, path, token_ref,
+            token_updated_at, last_head_sha, last_refresh_at, next_refresh_at, created_by_user_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $8::text IS NULL THEN NULL ELSE now() END,
+                 $9, now(), now() + make_interval(secs => $10), $11)
          RETURNING {LIB_COLS}"
     )))
-    .bind(Uuid::now_v7())
+    .bind(n.id)
     .bind(n.org_id)
     .bind(n.label)
-    .bind(n.connection_id)
-    .bind(n.app_id)
+    .bind(n.url)
     .bind(n.repo)
     .bind(n.reference)
     .bind(n.path)
+    .bind(n.token_ref)
     .bind(n.head_sha)
     .bind(n.next_refresh_in_secs)
     .bind(n.created_by)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// Whether the scope (an organization, or `None` = the instance) already has a library of this
+/// url + ref + path (C-1122's 409).
+pub async fn url_taken(
+    conn: &mut PgConnection,
+    org: Option<Uuid>,
+    url: &str,
+    reference: Option<&str>,
+    path: &str,
+    except: Option<Uuid>,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM skill_libraries WHERE org_id IS NOT DISTINCT FROM $1
+           AND url = $2 AND coalesce(ref, '') = coalesce($3, '') AND path = $4
+           AND id IS DISTINCT FROM $5)",
+    )
+    .bind(org)
+    .bind(url)
+    .bind(reference)
+    .bind(path)
+    .bind(except)
     .fetch_one(conn)
     .await?)
 }
@@ -113,24 +162,126 @@ pub async fn list_libraries(
     .await?)
 }
 
-pub async fn count_libraries(conn: &mut PgConnection, org: Uuid) -> Result<i64, DbError> {
+/// Instance libraries by label (every status; the caller filters for its audience).
+pub async fn list_instance_libraries(conn: &mut PgConnection) -> Result<Vec<LibraryRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {LIB_COLS} FROM skill_libraries WHERE org_id IS NULL ORDER BY label, id"
+    )))
+    .fetch_all(conn)
+    .await?)
+}
+
+/// Libraries of the scope: an organization's, or (`None`) the instance's.
+pub async fn count_libraries(conn: &mut PgConnection, org: Option<Uuid>) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM skill_libraries WHERE org_id IS NOT DISTINCT FROM $1",
+    )
+    .bind(org)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// How many organizations have at least one skill added from the library.
+pub async fn orgs_using(conn: &mut PgConnection, library: Uuid) -> Result<i64, DbError> {
     Ok(
-        sqlx::query_scalar("SELECT count(*) FROM skill_libraries WHERE org_id = $1")
-            .bind(org)
+        sqlx::query_scalar("SELECT count(DISTINCT org_id) FROM skills WHERE library_id = $1")
+            .bind(library)
             .fetch_one(conn)
             .await?,
     )
 }
 
-/// Changes an admin may make; `None` keeps the value. `reference`/`path`: `Some(None)` clears.
+/// `(organization, skills detached)` for every organization with a skill added from the library
+/// (the per-organization audit rows of an instance library's deletion).
+pub async fn affected_orgs(
+    conn: &mut PgConnection,
+    library: Uuid,
+) -> Result<Vec<(Uuid, i64)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT org_id, count(*) FROM skills WHERE library_id = $1 GROUP BY org_id ORDER BY org_id",
+    )
+    .bind(library)
+    .fetch_all(conn)
+    .await?)
+}
+
+// ---- per-organization budget state (P5-SKLIB-2, C-1128) ---------------------------------------
+
+/// Whether this organization's open proposals of the library are over its budget.
+pub async fn org_over_budget(
+    conn: &mut PgConnection,
+    library: Uuid,
+    org: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM skill_library_org_state WHERE library_id = $1 AND org_id = $2)",
+    )
+    .bind(library)
+    .bind(org)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// The libraries over budget for an organization.
+pub async fn org_over_budget_libraries(
+    conn: &mut PgConnection,
+    org: Uuid,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT library_id FROM skill_library_org_state WHERE org_id = $1")
+            .bind(org)
+            .fetch_all(conn)
+            .await?,
+    )
+}
+
+/// Whether any organization is over budget for the library (an unchanged head is then compared
+/// again: space may be free).
+pub async fn has_org_state(conn: &mut PgConnection, library: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM skill_library_org_state WHERE library_id = $1)",
+    )
+    .bind(library)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// After a full pass: exactly `over` are over budget (rows added, rows of organizations that fit
+/// again or no longer use the library deleted; `over_budget_since` of a kept row stays).
+pub async fn set_org_states(
+    conn: &mut PgConnection,
+    library: Uuid,
+    over: &[Uuid],
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM skill_library_org_state WHERE library_id = $1 AND org_id <> ALL($2)")
+        .bind(library)
+        .bind(over)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "INSERT INTO skill_library_org_state (library_id, org_id)
+         SELECT $1, o FROM unnest($2::uuid[]) AS o ON CONFLICT DO NOTHING",
+    )
+    .bind(library)
+    .bind(over)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Changes an admin may make; `None` keeps the value. `reference`/`token_ref`: `Some(None)`
+/// clears.
 #[derive(Default)]
 pub struct LibraryPatch<'a> {
     pub label: Option<&'a str>,
     pub status: Option<&'a str>,
-    pub connection_id: Option<Uuid>,
+    /// Only while the stored url is null (C-1122); with `repo`.
+    pub url: Option<(&'a str, &'a str)>,
     pub reference: Option<Option<&'a str>>,
     pub path: Option<&'a str>,
-    /// Set with a re-resolve (connection, ref or path change): the new head and a clean state.
+    /// A new sealed token (`Some(Some)`) or its removal (`Some(None)`).
+    pub token_ref: Option<Option<&'a str>>,
+    /// Set with a re-read (url, ref, path or token change): the new head and a clean state.
     pub head_sha: Option<&'a str>,
 }
 
@@ -143,13 +294,22 @@ pub async fn patch_library(
         Some(v) => (true, v),
         None => (false, None),
     };
+    let (set_token, token_val) = match p.token_ref {
+        Some(v) => (true, v),
+        None => (false, None),
+    };
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE skill_libraries SET
             label = COALESCE($2, label),
-            status = COALESCE($3, status),
-            connection_id = COALESCE($4, connection_id),
-            ref = CASE WHEN $5 THEN $6 ELSE ref END,
-            path = COALESCE($7, path),
+            status = CASE WHEN $8 IS NOT NULL AND COALESCE($3, status) <> 'paused' THEN 'active'
+                          ELSE COALESCE($3, status) END,
+            url = COALESCE($4, url),
+            repo = COALESCE($5, repo),
+            ref = CASE WHEN $6 THEN $7 ELSE ref END,
+            path = COALESCE($9, path),
+            token_ref = CASE WHEN $10 THEN $11 ELSE token_ref END,
+            token_updated_at = CASE WHEN $10 THEN (CASE WHEN $11::text IS NULL THEN NULL ELSE now() END)
+                                    ELSE token_updated_at END,
             last_head_sha = COALESCE($8, last_head_sha),
             last_error = CASE WHEN $8 IS NOT NULL OR $3 = 'active' THEN NULL ELSE last_error END,
             refresh_failures = CASE WHEN $8 IS NOT NULL OR $3 = 'active' THEN 0
@@ -162,11 +322,14 @@ pub async fn patch_library(
     .bind(id)
     .bind(p.label)
     .bind(p.status)
-    .bind(p.connection_id)
+    .bind(p.url.map(|u| u.0))
+    .bind(p.url.map(|u| u.1))
     .bind(set_ref)
     .bind(ref_val)
-    .bind(p.path)
     .bind(p.head_sha)
+    .bind(p.path)
+    .bind(set_token)
+    .bind(token_val)
     .fetch_one(conn)
     .await?)
 }
@@ -199,63 +362,55 @@ pub async fn request_check(
         > 0)
 }
 
-/// The org's connection row as the dashboard shows it.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct ConnectionBrief {
-    pub id: Uuid,
-    pub org_id: Uuid,
-    pub workspace_id: Option<Uuid>,
-    pub app_id: String,
-    pub label: String,
-    pub status: String,
-}
-
-pub async fn connection_brief(
-    conn: &mut PgConnection,
-    id: Uuid,
-) -> Result<Option<ConnectionBrief>, DbError> {
-    Ok(sqlx::query_as(
-        "SELECT id, org_id, workspace_id, app_id, label, status FROM app_connections WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(conn)
-    .await?)
-}
-
-/// Per tier, the number of skills added from the library.
+/// Per tier, the number of skills added from the library; `org` limits the count to one
+/// organization's skills (an instance library's per-organization view), `None` counts them all.
 pub async fn skill_counts(
     conn: &mut PgConnection,
     library: Uuid,
+    org: Option<Uuid>,
 ) -> Result<(i64, i64, i64), DbError> {
     Ok(sqlx::query_as(
         "SELECT count(*) FILTER (WHERE agent_id IS NOT NULL),
                 count(*) FILTER (WHERE workspace_id IS NOT NULL),
                 count(*) FILTER (WHERE agent_id IS NULL AND workspace_id IS NULL)
-         FROM skills WHERE library_id = $1",
+         FROM skills WHERE library_id = $1 AND ($2::uuid IS NULL OR org_id = $2)",
     )
     .bind(library)
+    .bind(org)
     .fetch_one(conn)
     .await?)
 }
 
-pub async fn pending_count(conn: &mut PgConnection, library: Uuid) -> Result<i64, DbError> {
+/// Open proposals of the library; `org` counts only those of one organization's skills (the
+/// skill's organization, not the library's).
+pub async fn pending_count(
+    conn: &mut PgConnection,
+    library: Uuid,
+    org: Option<Uuid>,
+) -> Result<i64, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT count(*) FROM skill_library_updates WHERE library_id = $1 AND status = 'pending'",
+        "SELECT count(*) FROM skill_library_updates u JOIN skills s ON s.id = u.skill_id
+         WHERE u.library_id = $1 AND u.status = 'pending' AND ($2::uuid IS NULL OR s.org_id = $2)",
     )
     .bind(library)
+    .bind(org)
     .fetch_one(conn)
     .await?)
 }
 
-/// Skills currently linked to the library (the read-only, pinned ones).
+/// Skills currently linked to the library (the read-only, pinned ones); `org` limits them to one
+/// organization's skills.
 pub async fn library_skills(
     conn: &mut PgConnection,
     library: Uuid,
+    org: Option<Uuid>,
 ) -> Result<Vec<SkillRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {SKILL_COLS} FROM skills WHERE library_id = $1 ORDER BY name, id"
+        "SELECT {SKILL_COLS} FROM skills WHERE library_id = $1 AND ($2::uuid IS NULL OR org_id = $2)
+         ORDER BY name, id"
     )))
     .bind(library)
+    .bind(org)
     .fetch_all(conn)
     .await?)
 }
@@ -746,7 +901,8 @@ pub struct RefreshDone<'a> {
     /// The library's `head_epoch` when the pass was claimed: the head is written only if no add
     /// cleared it since (compare-and-set).
     pub head_epoch: i32,
-    /// `active`, `error` or `over_budget`.
+    /// `active` or `error` (the budget is per organization, `skill_library_org_state`; the library's own
+    /// status never becomes `over_budget` since P5-SKLIB-2).
     pub status: &'a str,
     pub error: Option<&'a str>,
     pub failures: i32,
@@ -756,8 +912,7 @@ pub struct RefreshDone<'a> {
 pub async fn finish_refresh(conn: &mut PgConnection, d: &RefreshDone<'_>) -> Result<bool, DbError> {
     Ok(sqlx::query(
         "UPDATE skill_libraries SET status = $3, last_error = $4, refresh_failures = $5,
-            last_head_sha = CASE WHEN $3 = 'over_budget' THEN NULL
-                                 WHEN head_epoch <> $8 THEN last_head_sha
+            last_head_sha = CASE WHEN head_epoch <> $8 THEN last_head_sha
                                  ELSE COALESCE($6, last_head_sha) END,
             last_refresh_at = now(),
             next_refresh_at = now() + make_interval(secs => $7),
@@ -791,8 +946,8 @@ pub async fn release_lease(conn: &mut PgConnection, id: Uuid, owner: Uuid) -> Re
     Ok(())
 }
 
-/// Daily retention: prune decided proposals older than 90 days, expire stale leases and mark
-/// libraries whose connection vanished `error`. Returns `(pruned, marked)`.
+/// Daily retention: prune decided proposals older than 90 days and expire stale leases.
+/// Returns `(pruned, 0)` (P5-SKLIB-1: libraries no longer have a connection to lose).
 pub async fn retention(conn: &mut PgConnection) -> Result<(u64, u64), DbError> {
     let pruned = sqlx::query(
         "DELETE FROM skill_library_updates
@@ -805,16 +960,7 @@ pub async fn retention(conn: &mut PgConnection) -> Result<(u64, u64), DbError> {
         "UPDATE skill_libraries SET refresh_lease_until = NULL, lease_owner = NULL
          WHERE refresh_lease_until < now()",
     )
-    .execute(&mut *conn)
-    .await?;
-    let marked = sqlx::query(
-        "UPDATE skill_libraries SET status = 'error', last_error = 'connection_deleted',
-            updated_at = now()
-         WHERE connection_id IS NULL AND status <> 'paused'
-           AND last_error IS DISTINCT FROM 'connection_deleted'",
-    )
     .execute(conn)
-    .await?
-    .rows_affected();
-    Ok((pruned, marked))
+    .await?;
+    Ok((pruned, 0))
 }

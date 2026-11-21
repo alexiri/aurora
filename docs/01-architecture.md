@@ -104,9 +104,8 @@ database, no keys, no ambient network. It is called only on slow paths.
    operator's explicit exception.
 5. **Gateway control port (4103)** is internal: reachable from API replicas
    only (network policy), authenticated with the internal secret. It is never
-   on the sandbox network. (phase 4, P4-GSL) It also serves `POST /internal/v1/library-fetch`,
-   through which the API's skill-library jobs read repository files with an org connection's
-   credential without ever holding it (`06 §Library fetch`).
+   on the sandbox network. (Skill libraries are read by the API itself over `http_instance`
+   since P5-SKLIB-1, D-448; the former `POST /internal/v1/library-fetch` route is gone, `06 §Library fetch`.)
 6. **Hook host.** Plugin code is untrusted. It receives per call exactly the
    data one hook invocation may see; egress is limited to the package's
    approved hosts; `approval.summarize` has no egress at all.

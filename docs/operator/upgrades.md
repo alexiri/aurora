@@ -191,6 +191,35 @@ hands it to the dashboard with the value it had**, never with the default.
    re-authentication. Exit codes: 0 done, 2 refused by validation, 3 a Helm-locked key, 4 the
    database is unreachable.
 
+## Skill libraries by address (P5-SKLIB-1)
+
+The release that adds `20261201000270_skill_library_git_url.sql` changes how skill libraries are read
+(D-448): a library is an https git address read by the **API**, no longer a GitHub/GitLab app connection
+read through the gateway.
+
+- **The migration** gives every GitHub and GitLab library its clone address: on the host of its connection's
+  registered instance (host and base path) when it has one, else `github.com` / `gitlab.com`. A GitLab library
+  whose connection was deleted, a library of any other app, and the later duplicate of two libraries of one
+  organization with the same repository, branch and folder get **no address**: they show the error "Enter the
+  repository's git address" and an organization admin sets it once. Pinned skills are untouched everywhere.
+- **Private repositories**: the old reads used the connection's credential; the new ones use an optional read-only
+  token saved on the library. After the upgrade a library of a **private** repository shows "The repository needs
+  an access token" until an organization admin adds one (Libraries › Edit › access token); skills already added
+  keep working. Libraries of public repositories need nothing.
+- **The API pods need egress to the git hosts** (a server on a private network: `gateway.allowed_private`).
+  Library reads go through the API's **own guarded client** (https only, public addresses only), **not** through
+  `gateway.egress_proxy`: a deployment that forces all outbound traffic through that proxy must allow the git
+  hosts from the API pods directly (D-448(b)).
+- **Libraries migrated from a GitHub Enterprise or self-managed GitLab instance** whose registered base path was an
+  *API prefix* (for example `/api/v3`) may need their address entered again: the migration builds the clone address
+  from `host || base_path`, and such an address is not a repository. It fails safely: the library shows "The
+  repository was not found" and an organization admin sets the address once (Libraries › Edit).
+- **Rolling upgrade**: a new API replica never calls the gateway's old `POST /internal/v1/library-fetch`; an
+  old API replica talking to a new gateway gets 404 and records a transient refresh error that the next pass of
+  the new release clears. The gateway route and the `aurora_gateway_library_fetch_total` metric are gone; the
+  built-in `github` 2.4.2 and `gitlab` 1.4.3 packages drop their `library` blocks (no re-approval: nothing widens).
+- **Audit**: the plugin supersede audit row no longer has a `skill_libraries` key (libraries no longer belong to an app).
+
 ## Rollback
 
 Rolling back the binaries is safe only inside the N and N−1 window above. Forward-only migrations

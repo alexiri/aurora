@@ -621,8 +621,8 @@ impl Default for HostedSection {
 pub struct ApiSection {
     pub hookhost_url: String,
     /// (phase 4, P4-GSL, D-154) The gateway's internal listener (4103) as the API reaches it for
-    /// `POST /internal/v1/library-fetch` (docs/06 §Library fetch); the internal secret ring
-    /// authenticates the call.
+    /// `POST /internal/v1/account-test` (docs/06); the internal secret ring authenticates the call.
+    /// (The skill-library fetch route that first used it was removed, P5-SKLIB-1, D-448.)
     pub gateway_internal_url: String,
 }
 impl Default for ApiSection {

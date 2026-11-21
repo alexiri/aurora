@@ -37,21 +37,12 @@ const HOSTILE = "Evil <img src=x onerror=alert(1)> [click](javascript:alert(1))"
 const org = { id: "o1", slug: "acme", name: "Acme", my_role: "owner" };
 const resolve = () => json(200, { org: { id: "o1", slug: "acme", name: "Acme" } });
 
+// (P5-SKLIB-1, C-1122) A library is a git address: `url` and its display form `repo`; no app, no connection.
 const library = (over: Record<string, unknown> = {}) => ({
-  id: "l1", label: "Team skills", status: "active", app_id: "github", connection: { id: "c1", label: "skills-token", status: "active" },
-  repo: "acme/agent-skills", ref: null, path: "skills", last_head_sha: SHA_B, last_refresh_at: T, last_error: null,
+  id: "l1", scope: "org", org_id: "o1", label: "Team skills", status: "active", url: "https://git.example.org/acme/agent-skills.git",
+  repo: "git.example.org/acme/agent-skills", ref: null, path: "skills", token_set: false, token_updated_at: null,
+  last_head_sha: SHA_B, last_refresh_at: T, last_error: null,
   skill_counts: { agent: 1, workspace: 2, org: 3 }, pending_updates: 2, created_at: T, ...over,
-});
-
-const apps = () =>
-  json(200, {
-    items: [
-      { app_id: "github", name: "GitHub", serves_library: true, available: true, connection_count: 1, description: "", has_dark_icon: false, package_id: "github", package_version: "1.1.0", app_restrictions: { custom_only: false, block_untooled: false } },
-      { app_id: "linear", name: "Linear", serves_library: false, available: true, connection_count: 1, description: "", has_dark_icon: false, package_id: "linear", package_version: "1.0.0", app_restrictions: { custom_only: false, block_untooled: false } },
-    ],
-  });
-const conn = (id: string, app: string, scope = "organization", status = "active") => ({
-  id, app_id: app, label: `${app}-conn`, scope, status, injecting: [], metadata: {}, scopes: [], missing_scopes: [], org_id: "o1", package_id: app, app_version: "1", created_at: T, updated_at: T,
 });
 
 function skill(over: Partial<Skill> & Pick<Skill, "id" | "name" | "tier">): Skill {
@@ -73,7 +64,7 @@ function skill(over: Partial<Skill> & Pick<Skill, "id" | "name" | "tier">): Skil
   } as Skill;
 }
 const source = (over: Record<string, unknown> = {}) => ({
-  kind: "library", library_id: "l1", label: "Team skills", repo: "acme/agent-skills", path: "code-review", commit_sha: SHA_A, pinned_at: T, detached: false, update_pending: false, ...over,
+  kind: "library", library_id: "l1", label: "Team skills", repo: "git.example.org/acme/agent-skills", path: "code-review", commit_sha: SHA_A, pinned_at: T, detached: false, update_pending: false, ...over,
 });
 const libSkill = (over: Partial<Skill> = {}) =>
   skill({ id: "s1", name: "code-review", tier: "org", source: source() as Skill["source"], ...over });
@@ -84,19 +75,17 @@ describe("skill libraries page", () => {
   const base = (extra: Record<string, Handler> = {}) => ({
     "GET /v1/resolve": resolve,
     "GET /v1/orgs/o1": () => json(200, org),
-    "GET /v1/apps": apps,
-    "GET /v1/orgs/o1/connections": () => json(200, { items: [conn("c1", "github"), conn("c2", "linear"), conn("c3", "github", "workspace"), conn("c4", "github", "organization", "disabled")] }),
     ...extra,
   });
 
-  it("lists libraries with status, last error, reconnect, counts and pending updates", async () => {
+  it("lists libraries with their address, status, last error in words, counts and pending updates", async () => {
     mockFetch(
       base({
         "GET /v1/orgs/o1/skill-libraries": () =>
           json(200, {
             items: [
               library(),
-              library({ id: "l2", label: "Broken", status: "error", last_error: "reauth_required: the connection needs to be reconnected", connection: { id: "c1", label: "t", status: "reauth_required" }, skill_counts: { agent: 0, workspace: 0, org: 0 }, pending_updates: 0 }),
+              library({ id: "l2", label: "Broken", status: "error", last_error: "The repository needs an access token", repo: "git.example.org/acme/private", skill_counts: { agent: 0, workspace: 0, org: 0 }, pending_updates: 0 }),
             ],
           }),
       }),
@@ -104,40 +93,88 @@ describe("skill libraries page", () => {
     wrap(<SkillLibrariesPage />);
     const table = await screen.findByRole("table", { name: "Skill libraries" });
     const rows = within(table).getAllByRole("row");
-    expect(within(rows[1]).getByText("acme/agent-skills")).toBeTruthy();
+    expect(within(rows[1]).getByText("git.example.org/acme/agent-skills")).toBeTruthy();
     expect(within(rows[1]).getByText("1 agent · 2 workspace · 3 org")).toBeTruthy();
     expect(within(rows[1]).getByText("Active")).toBeTruthy();
     expect(within(rows[2]).getByText("Error")).toBeTruthy();
-    expect(within(rows[2]).getByText(/reauth_required/)).toBeTruthy();
-    expect((within(rows[2]).getByRole("link", { name: "Reconnect" }) as HTMLAnchorElement).getAttribute("href")).toBe("/o/acme/apps?tab=accounts");
+    expect(within(rows[2]).getByText("The repository needs an access token")).toBeTruthy();
+    // no app connection any more: nothing to reconnect
+    expect(within(table).queryByRole("link", { name: "Reconnect" })).toBeNull();
   });
 
-  it("connect dialog: only org-scoped active connections of apps that serve a library, read-only warning, errors in words", async () => {
+  it("shows an instance library read-only with its badge, and no action on it (P5-SKLIB-2)", async () => {
+    mockFetch(
+      base({
+        "GET /v1/orgs/o1/skill-libraries": () =>
+          json(200, {
+            items: [
+              library(),
+              library({ id: "l9", scope: "instance", org_id: null, label: "Company skills", repo: "git.example.org/it/skills", token_updated_at: null, skill_counts: { agent: 0, workspace: 0, org: 1 }, pending_updates: 0 }),
+            ],
+          }),
+      }),
+    );
+    wrap(<SkillLibrariesPage />);
+    const table = await screen.findByRole("table", { name: "Skill libraries" });
+    const rows = within(table).getAllByRole("row");
+    expect(within(rows[1]).queryByText("Shared with every organization")).toBeNull();
+    expect(within(rows[1]).getByRole("button", { name: "Delete Team skills" })).toBeTruthy();
+    expect(within(rows[2]).getByText("Company skills")).toBeTruthy();
+    expect(within(rows[2]).getByText("Shared with every organization")).toBeTruthy();
+    expect(within(rows[2]).getByText("0 agent · 0 workspace · 1 org")).toBeTruthy();
+    expect(within(rows[2]).queryByRole("button")).toBeNull();
+  });
+
+  it("connect dialog: the repository address, branch, folder and a secret access token; the reader's reason in words", async () => {
     let posts = 0;
+    let body: Record<string, unknown> = {};
     mockFetch(
       base({
         "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [] }),
         "POST /v1/orgs/o1/skill-libraries": async (r) => {
           posts += 1;
-          const b = (await r.json()) as Record<string, unknown>;
-          expect(b).toMatchObject({ label: "Team", connection_id: "c1", repo: "acme/skills" });
+          body = (await r.json()) as Record<string, unknown>;
           return posts === 1
-            ? json(422, { error: { code: "library_unreachable", message: "The repository could not be reached: the repository, ref or file was not found, or the connection cannot see it." } })
+            ? json(422, { error: { code: "library_unreachable", message: "The repository could not be read: The repository needs an access token." } })
             : json(201, library());
         },
       }),
     );
     wrap(<SkillLibrariesPage />);
     fireEvent.click((await screen.findAllByRole("button", { name: "Connect a repository" }))[0]);
-    expect(await screen.findByText(/Use a read-only token/)).toBeTruthy();
-    const options = within(screen.getByLabelText("Account")).getAllByRole("option");
-    expect(options.map((o) => o.textContent)).toEqual(["github-conn (github)"]);
-    fireEvent.change(screen.getByLabelText("Label"), { target: { value: "Team" } });
-    fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "acme/skills" } });
+    // no account to pick, no GitHub notice: any git address works
+    expect(screen.queryByLabelText("Account")).toBeNull();
+    expect(screen.queryByText(/Connect GitHub/)).toBeNull();
+    fireEvent.change(await screen.findByLabelText("Label"), { target: { value: "Team" } });
+    fireEvent.change(screen.getByLabelText("Repository address"), { target: { value: "https://git.example.org/acme/skills" } });
+    const token = screen.getByLabelText("Access token") as HTMLInputElement;
+    expect(token.type, "the token is a secret field").toBe("password");
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    expect(await screen.findByText(/could not be reached/)).toBeTruthy();
+    expect(await screen.findByText(/The repository needs an access token/)).toBeTruthy();
+    expect(body).toMatchObject({ label: "Team", url: "https://git.example.org/acme/skills", ref: null, path: null, token: null });
+    expect(Object.keys(body)).not.toContain("connection_id");
+    fireEvent.change(token, { target: { value: "ghp_secret" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(posts).toBe(2));
+    expect(body).toMatchObject({ url: "https://git.example.org/acme/skills", token: "ghp_secret" });
+  });
+
+  it("asks for a label and an address before sending anything", async () => {
+    const posts = vi.fn();
+    mockFetch(
+      base({
+        "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [] }),
+        "POST /v1/orgs/o1/skill-libraries": () => {
+          posts();
+          return json(201, library());
+        },
+      }),
+    );
+    wrap(<SkillLibrariesPage />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Connect a repository" }))[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
+    expect(await screen.findByText("Enter a label and the repository's address.")).toBeTruthy();
+    expect(posts).not.toHaveBeenCalled();
   });
 
   it("delete confirms how many skills keep their content; check now and pause call the API", async () => {
@@ -195,7 +232,7 @@ describe("library skills", () => {
       },
     });
     wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    expect(await screen.findByText("Library · acme/agent-skills · 0123456")).toBeTruthy();
+    expect(await screen.findByText("Library · git.example.org/acme/agent-skills · 0123456")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Code review/ }));
     expect(await screen.findByText("Managed by a skill library; edit it in the repository or detach it.")).toBeTruthy();
     expect((screen.getByLabelText("Use it when…") as HTMLInputElement).readOnly).toBe(true);
@@ -231,7 +268,7 @@ describe("library skills", () => {
     wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
     fireEvent.click(await screen.findByRole("button", { name: /Code review/ }));
     expect((await screen.findByLabelText("Use it when…") as HTMLInputElement).readOnly).toBe(false);
-    expect(screen.getAllByText(/Detached · was acme\/agent-skills@0123456/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Detached · was git\.example\.org\/acme\/agent-skills@0123456/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Managed by a skill library/)).toBeNull();
   });
 });
@@ -240,7 +277,7 @@ describe("library skills", () => {
 
 describe("update review", () => {
   const review = (over: Record<string, unknown> = {}) => ({
-    library: { id: "l1", label: "Team skills", repo: "acme/agent-skills", path: "code-review" }, commit_sha: SHA_A, pinned_at: T, pinned_by: null, detached: false,
+    library: { id: "l1", label: "Team skills", repo: "git.example.org/acme/agent-skills", path: "code-review" }, commit_sha: SHA_A, pinned_at: T, pinned_by: null, detached: false,
     update: {
       id: "u1", kind: "changed", commit_sha: SHA_B, created_at: T, content_sha256: "f".repeat(64), over_budget: false, reason: null,
       diff: {
@@ -394,9 +431,13 @@ describe("Add from library", () => {
     const mk = (from: number, n: number) =>
       Array.from({ length: n }, (_, i) => ({ path: `s-${from + i}`, name: `s-${from + i}`, description: "d", valid: true, reason: null, size: 10, files: 1, added: [] }));
     const cursors: (string | null)[] = [];
+    const orgs = new Set<string | null>();
     mockFetch(routes({
       "GET /v1/skill-libraries/l1/skills": (r) => {
-        const cursor = new URL(r.url, "http://localhost").searchParams.get("cursor");
+        const params = new URL(r.url, "http://localhost").searchParams;
+        const cursor = params.get("cursor");
+        // (P5-SKLIB-2, C-1128) the library is browsed as the organization (required for an instance library)
+        orgs.add(params.get("org"));
         cursors.push(cursor);
         return cursor
           ? json(200, { commit_sha: SHA_B, truncated: false, next_cursor: null, items: mk(50, 5) })
@@ -410,6 +451,7 @@ describe("Add from library", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(55));
     expect(cursors).toEqual([null, "c2"]);
+    expect([...orgs]).toEqual(["o1"]);
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 

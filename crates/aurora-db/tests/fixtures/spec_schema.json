@@ -1236,12 +1236,20 @@
       "refresh_failures",
       "refresh_lease_until",
       "repo",
-      "status"
+      "status",
+      "token_ref",
+      "token_updated_at",
+      "url"
     ],
     "skill_library_heads": [
       "commit_sha",
       "library_id",
       "seen_at"
+    ],
+    "skill_library_org_state": [
+      "library_id",
+      "org_id",
+      "over_budget_since"
     ],
     "skill_library_updates": [
       "bytes",
@@ -2825,7 +2833,7 @@
       "skill_id": "uuid"
     },
     "skill_libraries": {
-      "app_id": "text not null",
+      "app_id": "text null",
       "check_requested_at": "timestamptz null",
       "connection_id": "uuid null",
       "created_by_user_id": "uuid null",
@@ -2837,18 +2845,26 @@
       "last_refresh_at": "timestamptz null",
       "lease_owner": "uuid null",
       "next_refresh_at": "timestamptz",
-      "org_id": "uuid",
+      "org_id": "uuid null",
       "path": "text not null",
       "ref": "text null",
       "refresh_failures": "integer not null",
       "refresh_lease_until": "timestamptz null",
-      "repo": "text not null",
-      "status": "text not null"
+      "repo": "text null",
+      "status": "text not null",
+      "token_ref": "text null",
+      "token_updated_at": "timestamptz null",
+      "url": "text null"
     },
     "skill_library_heads": {
       "commit_sha": "text",
       "library_id": "uuid",
       "seen_at": "timestamptz not null"
+    },
+    "skill_library_org_state": {
+      "library_id": "uuid",
+      "org_id": "uuid",
+      "over_budget_since": "timestamptz not null"
     },
     "skill_library_updates": {
       "bytes": "integer not null",

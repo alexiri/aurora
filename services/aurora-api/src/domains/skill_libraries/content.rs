@@ -1,26 +1,76 @@
-//! Reading a repository through the gateway and turning it into skills (docs/10 §Git skill
-//! library; phase 4, P4-GSL, D-148). Pure assembly and validation live here so browse, add and
-//! refresh apply the same rules; everything that comes from the repository is untrusted.
+//! Reading a repository and turning it into skills (docs/10 §Git skill library; phase 4,
+//! P4-GSL, D-148; phase 5, P5-SKLIB-1, D-448). Pure assembly and validation live here so browse,
+//! add and refresh apply the same rules; everything that comes from the repository is untrusted.
+//! The repository itself is behind [`RepoSource`] (the API's git reader, `super::git`; an
+//! in-memory one in unit tests).
 
-use std::collections::BTreeMap;
-use std::time::Duration;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Mutex;
 
+use async_trait::async_trait;
 use aurora_core::limits;
 use aurora_core::sanitize::{is_stripped, one_line};
-use aurora_registry::library::{self, Step, TreeEntry};
-use aurora_registry::manifest::{Library, LibraryPaginate};
 use sha2::{Digest, Sha256};
-use uuid::Uuid;
 
-use super::gateway::{FetchParams, FetchRequest, GatewayError, LibraryGateway};
 use crate::domains::skills::service as skills;
 
 /// More files than this in one skill directory is refused (bounds the blob reads of an add).
 pub const FILES_PER_SKILL_MAX: usize = 50;
-const TREE_MAX_BYTES: usize = 4 * 1024 * 1024;
-const BLOB_MAX_BYTES: usize = 2 * limits::LIBRARY_FILE_MAX + 4096;
-const BUSY_RETRIES: u32 = 40;
-const BUSY_PAUSE: Duration = Duration::from_millis(250);
+
+/// One entry of a commit's tree under the library path (git's own ids and modes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeEntry {
+    /// The full path from the repository root.
+    pub path: String,
+    /// `blob`, `tree` or `commit` (a submodule).
+    pub kind: String,
+    /// git's octal mode (`100644`, `100755`, `120000`, `40000`, `160000`).
+    pub mode: String,
+    /// The object id (40 hex).
+    pub blob: String,
+    /// Known only when the blob itself was read.
+    pub size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefKind {
+    Branch,
+    Tag,
+    Commit,
+}
+
+impl RefKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Branch => "branch",
+            Self::Tag => "tag",
+            Self::Commit => "commit",
+        }
+    }
+}
+
+/// What a ref resolved to (C-1124's `resolved`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolved {
+    pub sha: String,
+    pub kind: RefKind,
+    pub name: String,
+    /// The repository's default branch.
+    pub default: bool,
+}
+
+/// A readable repository (C-1125's three reads). Each value is one read: implementations may
+/// cache what they fetched for its duration, never longer.
+#[async_trait]
+pub trait RepoSource: Send + Sync {
+    /// The commit a ref points at; `None` is the default branch.
+    async fn resolve(&self, reference: Option<&str>) -> Result<Resolved, ReadError>;
+    /// Every entry under `path` of commit `sha` (recursive, full paths).
+    async fn tree(&self, sha: &str, path: &str) -> Result<Vec<TreeEntry>, ReadError>;
+    /// The bytes of these blobs, in as few requests as possible.
+    async fn blobs(&self, ids: &[String]) -> Result<HashMap<String, Vec<u8>>, ReadError>;
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadError {
@@ -59,178 +109,79 @@ impl ReadError {
     }
 }
 
+/// One read of a library: the repository, the library path and the blobs fetched so far.
 pub struct Reader<'a> {
-    pub gw: &'a dyn LibraryGateway,
-    pub lib: &'a Library,
-    pub org: Uuid,
-    pub conn: Uuid,
-    pub repo: &'a str,
+    src: &'a dyn RepoSource,
+    path: &'a str,
+    cache: Mutex<HashMap<String, Vec<u8>>>,
 }
 
-impl Reader<'_> {
-    async fn call(
-        &self,
-        step: Step,
-        params: FetchParams,
-        max_bytes: usize,
-    ) -> Result<Vec<u8>, ReadError> {
-        let (body, _) = self.call_full(step, params, max_bytes).await?;
-        Ok(body)
-    }
-
-    async fn call_full(
-        &self,
-        step: Step,
-        params: FetchParams,
-        max_bytes: usize,
-    ) -> Result<(Vec<u8>, Option<String>), ReadError> {
-        let req = FetchRequest {
-            org_id: self.org,
-            connection_id: self.conn,
-            step,
-            params,
-            max_bytes,
-        };
-        let mut tries = 0;
-        let ok = loop {
-            match self.gw.fetch(&req).await {
-                Ok(ok) => break ok,
-                Err(GatewayError::Busy) if tries < BUSY_RETRIES => {
-                    tries += 1;
-                    tokio::time::sleep(BUSY_PAUSE).await;
-                }
-                Err(e) => return Err(ReadError::Unreachable(e.reason().into())),
-            }
-        };
-        match ok.status {
-            200..=299 => Ok((ok.body, ok.link)),
-            401 => Err(ReadError::Unreachable(
-                "the git host rejected the connection's credential".into(),
-            )),
-            403 | 404 => Err(ReadError::Unreachable(
-                "the repository, ref or file was not found, or the connection cannot see it".into(),
-            )),
-            429 | 503 => Err(ReadError::Throttled(throttle_secs(
-                ok.retry_after.as_deref(),
-            ))),
-            300..=399 => Err(ReadError::Unreachable(
-                "the git host answered with a redirect (the repository may have moved)".into(),
-            )),
-            s => Err(ReadError::Unreachable(format!(
-                "the git host answered with status {s}"
-            ))),
+impl<'a> Reader<'a> {
+    #[must_use]
+    pub fn new(src: &'a dyn RepoSource, path: &'a str) -> Self {
+        Self {
+            src,
+            path,
+            cache: Mutex::new(HashMap::new()),
         }
     }
 
-    fn params(&self) -> FetchParams {
-        FetchParams {
-            repo: self.repo.to_owned(),
-            ..FetchParams::default()
-        }
-    }
-
-    /// The commit a ref points at. No ref means the repository's default branch: `HEAD` resolves
-    /// it in the one `resolve_ref` call (both built-in hosts accept it); a host that does not
-    /// falls back to reading the default branch name first (the `default_path` template).
+    /// The commit a ref points at; `None` is the repository's default branch.
     pub async fn resolve(&self, reference: Option<&str>) -> Result<String, ReadError> {
-        let bad = |_| ReadError::Unreachable("unexpected response from the git host".into());
-        let branch;
-        let reference = match reference {
-            Some(r) => r,
-            None => {
-                if let Ok(body) = self
-                    .call(
-                        Step::ResolveRef,
-                        FetchParams {
-                            reference: Some("HEAD".to_owned()),
-                            ..self.params()
-                        },
-                        TREE_MAX_BYTES,
-                    )
-                    .await
-                    && let Ok(sha) = library::resolved_sha(self.lib, &body)
-                {
-                    return Ok(sha);
-                }
-                let body = self
-                    .call(Step::ResolveRef, self.params(), TREE_MAX_BYTES)
-                    .await?;
-                branch = library::default_branch(self.lib, &body).map_err(bad)?;
-                &branch
-            }
-        };
-        let body = self
-            .call(
-                Step::ResolveRef,
-                FetchParams {
-                    reference: Some(reference.to_owned()),
-                    ..self.params()
-                },
-                TREE_MAX_BYTES,
-            )
-            .await?;
-        library::resolved_sha(self.lib, &body).map_err(bad)
+        Ok(self.src.resolve(reference).await?.sha)
     }
 
-    /// Every entry of one commit's recursive tree (all pages).
+    /// What a ref resolved to, with its kind and whether it is the default branch.
+    pub async fn resolve_full(&self, reference: Option<&str>) -> Result<Resolved, ReadError> {
+        self.src.resolve(reference).await
+    }
+
+    /// Every entry under the library path of one commit.
     pub async fn tree(&self, sha: &str) -> Result<Vec<TreeEntry>, ReadError> {
-        let mut out: Vec<TreeEntry> = Vec::new();
-        let mut page: Option<u32> = None;
-        let max_pages = self.lib.list_tree.max_pages.unwrap_or(1).max(1);
-        for i in 0..max_pages {
-            let (body, link) = self
-                .call_full(
-                    Step::ListTree,
-                    FetchParams {
-                        sha: Some(sha.to_owned()),
-                        page,
-                        ..self.params()
-                    },
-                    TREE_MAX_BYTES,
-                )
-                .await?;
-            let tp = library::tree_page(self.lib, &body).map_err(|_| {
-                ReadError::Unreachable("unexpected response from the git host".into())
-            })?;
-            if tp.truncated {
-                return Err(ReadError::TreeTooLarge);
-            }
-            let empty = tp.entries.is_empty();
-            out.extend(tp.entries);
-            if out.len() > limits::LIBRARY_TREE_MAX {
-                return Err(ReadError::TreeTooLarge);
-            }
-            let next = match self.lib.list_tree.paginate {
-                LibraryPaginate::None => None,
-                LibraryPaginate::LinkHeader => link.as_deref().and_then(library::next_page),
-                LibraryPaginate::PageParam => (!empty).then_some(i + 2),
-            };
-            match next {
-                Some(n) if (2..=library::PAGE_MAX).contains(&n) && i + 1 < max_pages => {
-                    page = Some(n);
-                }
-                // More pages than the package's `max_pages` allows.
-                Some(_) => return Err(ReadError::TreeTooLarge),
-                None => return Ok(out),
-            }
+        self.src.tree(sha, self.path).await
+    }
+
+    /// Fetches these blobs in one go (browse, add and refresh call this first, so one read is
+    /// one blob request); later [`Reader::blob`] calls are served from memory.
+    pub async fn prefetch(&self, ids: &[String]) -> Result<(), ReadError> {
+        let missing: Vec<String> = {
+            let c = self
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            ids.iter()
+                .filter(|i| !c.contains_key(*i))
+                .cloned()
+                .collect()
+        };
+        if missing.is_empty() {
+            return Ok(());
         }
-        Err(ReadError::TreeTooLarge)
+        let got = self.src.blobs(&missing).await?;
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(got);
+        Ok(())
     }
 
     /// One file's bytes.
     pub async fn blob(&self, blob: &str) -> Result<Vec<u8>, ReadError> {
-        let body = self
-            .call(
-                Step::GetBlob,
-                FetchParams {
-                    blob: Some(blob.to_owned()),
-                    ..self.params()
-                },
-                BLOB_MAX_BYTES,
-            )
-            .await?;
-        library::blob_bytes(self.lib, &body)
-            .map_err(|_| ReadError::Unreachable("unexpected response from the git host".into()))
+        if let Some(b) = self
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(blob)
+        {
+            return Ok(b.clone());
+        }
+        self.prefetch(&[blob.to_owned()]).await?;
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(blob)
+            .cloned()
+            .ok_or_else(|| ReadError::Unreachable(super::git::reason::MISMATCH.into()))
     }
 }
 
@@ -279,6 +230,16 @@ impl Candidate {
             .sum()
     }
 
+    /// Every blob id a load of this candidate reads.
+    #[must_use]
+    pub fn blob_ids(&self) -> Vec<String> {
+        self.skill_md
+            .iter()
+            .chain(&self.files)
+            .map(|f| f.blob.clone())
+            .collect()
+    }
+
     #[must_use]
     pub fn problem(&self) -> Option<String> {
         (!self.problems.is_empty()).then(|| self.problems.join("; "))
@@ -291,7 +252,7 @@ const REGULAR: [&str; 2] = ["100644", "100755"];
 /// submodules (mode `160000`), other non-regular entries, oversize files, over-long listings and
 /// unusable paths are problems of their directory, never stored.
 #[must_use]
-pub fn assemble(lib: &Library, path: &str, entries: &[TreeEntry]) -> Vec<Candidate> {
+pub fn assemble(path: &str, entries: &[TreeEntry]) -> Vec<Candidate> {
     let prefix = path.trim_matches('/');
     let mut dirs: BTreeMap<String, Candidate> = BTreeMap::new();
     let mut marker: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -315,7 +276,7 @@ pub fn assemble(lib: &Library, path: &str, entries: &[TreeEntry]) -> Vec<Candida
         if dir.is_empty() {
             continue;
         }
-        let is_file = e.is_file_kind(lib);
+        let is_file = e.kind == "blob";
         let c = dirs.entry(dir.to_owned()).or_insert_with(|| Candidate {
             dir: dir.to_owned(),
             skill_md: None,
@@ -651,6 +612,8 @@ pub async fn load(reader: &Reader<'_>, c: &Candidate) -> Result<LoadedSkill, Loa
     let Some(sm) = &c.skill_md else {
         return Err(invalid("SKILL.md is missing"));
     };
+    // One blob request for the whole skill (a no-op when the caller prefetched).
+    reader.prefetch(&c.blob_ids()).await?;
     let raw = reader.blob(&sm.blob).await?;
     if raw.len() > limits::LIBRARY_FILE_MAX {
         return Err(invalid(format!(
@@ -756,9 +719,118 @@ pub fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn md(front: &str) -> Vec<u8> {
         format!("---\n{front}\n---\nbody\n").into_bytes()
+    }
+
+    /// An in-memory repository: one commit, files by path; counts blob requests.
+    pub(crate) struct MemRepo {
+        pub files: BTreeMap<String, (String, Vec<u8>)>,
+        pub blob_requests: std::sync::atomic::AtomicUsize,
+    }
+
+    impl MemRepo {
+        pub(crate) fn new(files: &[(&str, &str, &[u8])]) -> Self {
+            Self {
+                files: files
+                    .iter()
+                    .map(|(p, m, c)| ((*p).to_owned(), ((*m).to_owned(), c.to_vec())))
+                    .collect(),
+                blob_requests: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn id(c: &[u8]) -> String {
+            super::super::git::pack::hex(&super::super::git::pack::object_id(
+                super::super::git::pack::Kind::Blob,
+                c,
+            ))
+        }
+    }
+
+    #[async_trait]
+    impl RepoSource for MemRepo {
+        async fn resolve(&self, _r: Option<&str>) -> Result<Resolved, ReadError> {
+            Ok(Resolved {
+                sha: "a".repeat(40),
+                kind: RefKind::Branch,
+                name: "main".into(),
+                default: true,
+            })
+        }
+
+        async fn tree(&self, _sha: &str, path: &str) -> Result<Vec<TreeEntry>, ReadError> {
+            let mut out = Vec::new();
+            let mut dirs = std::collections::BTreeSet::new();
+            for (p, (mode, c)) in &self.files {
+                if !p.starts_with(path) {
+                    continue;
+                }
+                let mut d = p.as_str();
+                while let Some((parent, _)) = d.rsplit_once('/') {
+                    dirs.insert(parent.to_owned());
+                    d = parent;
+                }
+                out.push(TreeEntry {
+                    path: p.clone(),
+                    kind: "blob".into(),
+                    mode: mode.clone(),
+                    blob: Self::id(c),
+                    size: None,
+                });
+            }
+            for d in dirs {
+                out.push(TreeEntry {
+                    path: d,
+                    kind: "tree".into(),
+                    mode: "40000".into(),
+                    blob: "b".repeat(40),
+                    size: None,
+                });
+            }
+            Ok(out)
+        }
+
+        async fn blobs(&self, ids: &[String]) -> Result<HashMap<String, Vec<u8>>, ReadError> {
+            self.blob_requests
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self
+                .files
+                .values()
+                .filter(|(_, c)| ids.contains(&Self::id(c)))
+                .map(|(_, c)| (Self::id(c), c.clone()))
+                .collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_skill_loads_through_the_seam_with_one_blob_request() {
+        let repo = MemRepo::new(&[
+            (
+                "lib/alpha/SKILL.md",
+                "100644",
+                b"---\ndescription: Alpha\n---\nBody\n",
+            ),
+            ("lib/alpha/run.sh", "100755", b"echo hi\n"),
+            ("lib/alpha/notes/a.txt", "100644", b"n"),
+            ("lib/beta/SKILL.md", "120000", b"../alpha/SKILL.md"),
+            ("lib/README", "100644", b"r"),
+        ]);
+        let reader = Reader::new(&repo, "lib");
+        let sha = reader.resolve(None).await.unwrap();
+        let cands = assemble("lib", &reader.tree(&sha).await.unwrap());
+        assert_eq!(cands.len(), 2);
+        assert!(cands[1].problem().unwrap().contains("symlink"));
+        let s = load(&reader, &cands[0]).await.unwrap();
+        assert_eq!(s.description, "Alpha");
+        assert_eq!(s.files.len(), 2);
+        assert!(s.files.iter().any(|f| f.path == "run.sh" && f.executable));
+        assert_eq!(
+            repo.blob_requests.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     /// FIX-096: nested aliases multiply (the parser bounds jumps, not the product); they are

@@ -17,6 +17,9 @@ pub struct Env {
     pub allow: std::sync::Arc<arc_swap::ArcSwap<PrivateAllow>>,
     pub hooks: HookClient,
     pub override_origin: Option<reqwest::Url>,
+    /// Hosts the skill-library reader dials for real even while `override_origin` is set, so a
+    /// test can send a redirect to a **name** through the guarded resolver (tests only).
+    pub override_bypass: Vec<String>,
     /// How long the registration probe waits for an answer (10 s; tests shorten it).
     probe_timeout_ms: std::sync::atomic::AtomicU64,
 }
@@ -181,6 +184,7 @@ impl Env {
             allow,
             hooks: HookClient::new(hookhost_url, internal_ring, extra_ca_bundle)?,
             override_origin: None,
+            override_bypass: Vec::new(),
             probe_timeout_ms: std::sync::atomic::AtomicU64::new(10_000),
         })
     }

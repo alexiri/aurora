@@ -514,6 +514,11 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/admin/orgs/{org}/unfreeze", G::Inst, false),
     r("GET", "/v1/admin/host-claims", G::Inst, false),
     r("PUT", "/v1/admin/host-claims/{group_key}", G::Inst, false),
+    // (P5-SKLIB-2, C-1128, SEC-149) instance skill libraries: instance admins only, never an org owner
+    // or an API key
+    r("GET", "/v1/admin/skill-libraries", G::Inst, false),
+    r("POST", "/v1/admin/skill-libraries", G::Inst, false),
+    r("POST", "/v1/admin/skill-libraries/check", G::Inst, false),
     r("GET", "/v1/admin/app-instances", G::Inst, false),
     r("POST", "/v1/admin/app-instances", G::Inst, false),
     r(
@@ -1057,6 +1062,13 @@ const ROWS: &[Row] = &[
     // (unknown owner scope here: authentication only) and approve/reject/detach are session-only
     r("GET", "/v1/orgs/{org}/skill-libraries", G::UseAny, false),
     r("POST", "/v1/orgs/{org}/skill-libraries", G::Admin, false),
+    // (P5-SKLIB-1, C-1124) the check before saving: the same authority as adding a library
+    r(
+        "POST",
+        "/v1/orgs/{org}/skill-libraries/check",
+        G::Admin,
+        false,
+    ),
     r("GET", "/v1/skill-libraries/{id}", G::Auth, false),
     r("PATCH", "/v1/skill-libraries/{id}", G::Auth, false),
     r("DELETE", "/v1/skill-libraries/{id}", G::Auth, false),
@@ -1751,7 +1763,13 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"name": "s", "description": "d", "body": "b"})
         }
         ("POST", "/v1/orgs/{org}/skill-libraries") => {
-            json!({"label": "matrix", "connection_id": Uuid::now_v7(), "repo": "a/b"})
+            json!({"label": "matrix", "url": "https://git.example/a/b"})
+        }
+        ("POST", "/v1/orgs/{org}/skill-libraries/check" | "/v1/admin/skill-libraries/check") => {
+            json!({"url": "https://git.example/a/b"})
+        }
+        ("POST", "/v1/admin/skill-libraries") => {
+            json!({"label": "matrix", "url": "https://git.example/a/b"})
         }
         ("POST", "/v1/skills/{id}/library/updates/{uid}/approve") => {
             json!({"content_sha256": "0".repeat(64)})

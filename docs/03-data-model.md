@@ -1148,14 +1148,16 @@ other workspace); `skill_files` is unchanged.
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid pk | |
-| org_id | uuid FK→organizations (cascade) | |
-| label | text not null | 1..80, unique per org (`skill_libraries_label_uq`) |
-| connection_id | uuid null FK→app_connections (set null) | **org-scoped** connection (service-enforced at create and at every refresh); set null when the connection is deleted → `status = error`, `last_error = connection_deleted` |
-| app_id | text not null | the git-hosting app (snapshot id) at creation, for the dashboard |
-| repo | text not null | validated against the package's `repo_pattern` |
+| org_id | uuid null FK→organizations (cascade) | (P5-SKLIB-2, D-449, C-1128) **null = an instance library**, managed by instance admins and visible to every organization; a value = that organization's library |
+| label | text not null | 1..80, unique per org, and among the instance libraries (`skill_libraries_label_uq` on `(coalesce(org_id, nil uuid), label)`) |
+| connection_id | uuid null FK→app_connections (set null) | **unused since P5-SKLIB-1** (D-448): a library no longer needs an app connection; the column stays until a later cleanup and is never written or read |
+| app_id | text null | **unused since P5-SKLIB-1** (was the git-hosting app at creation); stays until a later cleanup |
+| url | text null CHECK null or 9..500 chars | (P5-SKLIB-1, C-1122/C-1123) the normalised https clone URL the API's own git reader fetches; null only on a row migrated from an app-connection library whose host was unknown (status `error`, "Enter the repository's git address"; `PATCH` may set it once) |
+| token_ref, token_updated_at | text null, timestamptz null | (C-1126, SEC-148) the sealed read-only access token `{ username, token }` (purpose `skill_library.token`, owner = the library id); both null or both set (`skill_libraries_token_ck`); never returned by any route |
+| repo | text null CHECK null or 1..500 chars | the display form `host/path` derived from `url` (was `owner/name`) |
 | ref | text null | validated ref; null = the repository's default branch |
 | path | text not null default `` | directory holding the skill directories, ≤ 4 segments |
-| status | text not null default `active` CHECK in (`active`,`paused`,`error`,`over_budget`) | `paused` = an admin stopped refreshing; `error` and `over_budget` are still refreshed (the job re-checks them) |
+| status | text not null default `active` CHECK in (`active`,`paused`,`error`,`over_budget`) | `paused` = an admin stopped refreshing; `error` is still refreshed (the job re-checks it). `over_budget` is **no longer written** (P5-SKLIB-2: the budget is per organization, `skill_library_org_state`); the CHECK keeps the value for one release |
 | last_head_sha, last_refresh_at, next_refresh_at | text null, timestamptz null, timestamptz | churn columns; `next_refresh_at` includes jitter and error backoff (15 min → 1 h → 6 h). `last_head_sha` is the head the last refresh *compared* (an add of a commit other than that head clears it) |
 | refresh_failures | integer not null default 0 | consecutive failed refreshes: drives the backoff (reset by a success) (D-154) |
 | last_error | text null | sanitized, ≤ 200 chars, never a token or a URL with credentials |
@@ -1163,8 +1165,16 @@ other workspace); `skill_files` is unchanged.
 | check_requested_at | timestamptz null | the last "Check now" (at most once per `LIBRARY_CHECK_NOW_INTERVAL`, 429 `library_check_too_soon`) (D-154) |
 | head_epoch | integer not null default 0 | bumped whenever an add clears `last_head_sha`; a refresh writes its head only if the epoch is the one it read (compare-and-set; FIX-096) |
 | created_by_user_id | uuid null FK→users (set null) | |
-| unique | (org_id, label) (`skill_libraries_label_uq`) | |
+| unique | (coalesce(org_id, nil uuid), label) (`skill_libraries_label_uq`); (coalesce(org_id, nil uuid), url, coalesce(ref, ''), path) where url is not null (`skill_libraries_url_uq`, 409 `library_exists`) | an instance library is one scope |
 | index | (org_id); (next_refresh_at) where status in (active, error, over_budget) | |
+
+### `skill_library_org_state` (P5-SKLIB-2, D-449, C-1128; per-organization budget state of a library)
+| Column | Type | Notes |
+|---|---|---|
+| library_id | uuid FK→skill_libraries (cascade) | pk part |
+| org_id | uuid FK→organizations (cascade) | pk part |
+| over_budget_since | timestamptz not null default now() | this organization's open proposals of the library did not fit `LIBRARY_PENDING_BYTES_PER_ORG`; the refresh writes the row when an organization's proposal is skipped and deletes it when the organization fits again; the organization's view shows the library `over_budget` while it exists, and a library with any row skips the unchanged-head short-circuit |
+| index | (org_id) | |
 
 ### `skill_library_heads` (FIX-096, D-178 Q-R5-3, D-210; heads browse and add accept)
 | Column | Type | Notes |

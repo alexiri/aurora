@@ -1254,6 +1254,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/skill-libraries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (P5-SKLIB-2, C-1128) The instance's libraries with their totals over every organization and
+         *     `orgs_using` (instance admins, session only).
+         */
+        get: operations["listInstanceSkillLibraries"];
+        put?: never;
+        /**
+         * (P5-SKLIB-2, C-1128) Add an instance library: every organization sees it (instance admins,
+         *     session only).
+         */
+        post: operations["createInstanceSkillLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/skill-libraries/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** (P5-SKLIB-2, C-1124, C-1128) The check before saving an instance library; stores nothing. */
+        post: operations["checkInstanceSkillLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/storage": {
         parameters: {
             query?: never;
@@ -4950,13 +4991,34 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List the organization's libraries: owners/admins get everything; other people who can use a
-         *     workspace get `id`, `label` and `status` of the active ones (the browse picker).
+         * List the organization's libraries, then the instance libraries (D-449): owners/admins get
+         *     everything (an instance library with this organization's numbers); other people who can use a
+         *     workspace get `id`, `label`, `status` and `scope` of the active ones (the browse picker).
          */
         get: operations["listSkillLibraries"];
         put?: never;
-        /** Connect a repository as a skill library (org owner/admin). */
+        /** Add a git repository as a skill library (org owner/admin). */
         post: operations["createSkillLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/skill-libraries/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read a repository like a create would and say what was found; nothing is stored
+         *     (org owner/admin).
+         */
+        post: operations["checkSkillLibrary"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5523,17 +5585,24 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read one library (org owner/admin). */
+        /**
+         * Read one library. An organization library: its owner/admin. An instance library: an instance
+         *     admin (totals), or an owner/admin of an organization with `?org=` (that organization's view);
+         *     anyone else 404.
+         */
         get: operations["getSkillLibrary"];
         put?: never;
         post?: never;
-        /** Delete the library; every skill added from it is detached and keeps its content. */
+        /**
+         * Delete the library; every skill added from it is detached and keeps its content (an instance
+         *     library: in every organization, with an audit row in each).
+         */
         delete: operations["deleteSkillLibrary"];
         options?: never;
         head?: never;
         /**
-         * Rename, pause or resume, or change connection, ref or path (re-resolves; stored skills are
-         *     never touched).
+         * Rename, pause or resume, change ref, path or token (re-reads; stored skills are never
+         *     touched), or set the address of a migrated library that has none.
          */
         patch: operations["updateSkillLibrary"];
         trace?: never;
@@ -8143,6 +8212,21 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        /** @description `POST …/skill-libraries/check` (C-1124): the create body without `label`. */
+        CheckSkillLibraryRequest: {
+            path?: string | null;
+            ref?: string | null;
+            /** @description Used for this one read and dropped. */
+            token?: string | null;
+            token_username?: string | null;
+            url: string;
+        };
+        CheckSkills: {
+            found: number;
+            /** @description The first 20 valid names, sorted (untrusted text). */
+            names: string[];
+            valid: number;
+        };
         ChoiceConnection: {
             app_id: string;
             /** Format: uuid */
@@ -8448,13 +8532,6 @@ export interface components {
             /** Format: uuid */
             workspace_id: string;
             workspace_name: string;
-        };
-        ConnectionRef: {
-            /** Format: uuid */
-            id: string;
-            label: string;
-            /** @description `active`, `reauth_required`, `disabled`, … */
-            status: string;
         };
         ConnectorAdmin: {
             /** Format: date-time */
@@ -9004,19 +9081,21 @@ export interface components {
             value?: string | null;
         };
         CreateSkillLibraryRequest: {
-            /**
-             * Format: uuid
-             * @description An **org-scoped**, active connection of an app that declares a `library` block.
-             */
-            connection_id: string;
             /** @description 1 to 80 characters, unique in the organization. */
             label: string;
-            /** @description Directory that holds the skill directories (at most 4 segments); default the root. */
+            /**
+             * @description Directory that holds the skill directories (at most 4 segments); default: from a page
+             *     URL, else the root.
+             */
             path?: string | null;
-            /** @description Branch, tag or commit; default the repository's default branch. */
+            /** @description Branch, tag or commit; default: from a page URL, else the default branch. */
             ref?: string | null;
-            /** @description `owner/name` (the package's `repo_pattern`). */
-            repo: string;
+            /** @description A read-only access token for a private repository (1..1024 printable ASCII). */
+            token?: string | null;
+            /** @description The Basic-auth user name sent with the token; default `x-access-token`. */
+            token_username?: string | null;
+            /** @description The repository's https address or its web page (C-1123). */
+            url: string;
         };
         CreateSkillRequest: {
             /** @description Required unless `from_library` is given. */
@@ -10446,6 +10525,19 @@ export interface components {
             next_cursor?: string | null;
             /** @description More than `LIBRARY_BROWSE_MAX` skills: the listing is cut; narrow the folder. */
             truncated: boolean;
+        };
+        /** @description What a check found (C-1124); nothing was stored. */
+        LibraryCheck: {
+            commit_sha: string;
+            path: string;
+            ref?: string | null;
+            repo: string;
+            resolved: components["schemas"]["ResolvedRef"];
+            skills: components["schemas"]["CheckSkills"];
+            suggested_label: string;
+            /** @description More than `LIBRARY_BROWSE_MAX` skill directories: only the first were read. */
+            truncated: boolean;
+            url: string;
         };
         /** @description The whole stored-versus-proposed content: never a summary and never truncated. */
         LibraryDiff: {
@@ -12670,8 +12762,6 @@ export interface components {
         };
         Page_SkillLibrary: {
             items: {
-                app_id?: string | null;
-                connection?: components["schemas"]["ConnectionRef"] | null;
                 /** Format: date-time */
                 created_at?: string | null;
                 /** Format: uuid */
@@ -12682,14 +12772,34 @@ export interface components {
                 last_head_sha?: string | null;
                 /** Format: date-time */
                 last_refresh_at?: string | null;
+                /**
+                 * Format: uuid
+                 * @description Null for an instance library (and for members).
+                 */
+                org_id?: string | null;
+                /**
+                 * Format: int64
+                 * @description An instance library, in its manager's view only: how many organizations have a skill
+                 *     added from it (never which skills).
+                 */
+                orgs_using?: number | null;
                 path?: string | null;
                 /** Format: int64 */
                 pending_updates?: number | null;
                 ref?: string | null;
+                /** @description The display form `host/path` (without `.git`). */
                 repo?: string | null;
+                /** @description `org` | `instance`. */
+                scope: string;
                 skill_counts?: components["schemas"]["SkillCounts"] | null;
                 /** @description `active` | `paused` | `error` | `over_budget`. */
                 status: string;
+                /** @description Whether an access token is saved (never the token). */
+                token_set?: boolean | null;
+                /** Format: date-time */
+                token_updated_at?: string | null;
+                /** @description The normalized https clone URL; null for a library migrated without one. */
+                url?: string | null;
             }[];
             next_cursor?: string | null;
         };
@@ -12993,14 +13103,17 @@ export interface components {
             path_pattern?: string | null;
         };
         PatchSkillLibraryRequest: {
-            /** Format: uuid */
-            connection_id?: string | null;
             label?: string | null;
             path?: string | null;
-            /** @description `null` is not distinguishable from absent; send an empty string to clear the ref. */
+            /** @description Send an empty string to clear the ref. */
             ref?: string | null;
             /** @description `active` | `paused`. */
             status?: string | null;
+            /** @description A new token (set or replace; the repository is read with it first) or `null` (remove). */
+            token?: string | null;
+            token_username?: string | null;
+            /** @description Only while the stored address is null (a migrated library); else 409 `library_url_fixed`. */
+            url?: string | null;
         };
         PatchUserTokenRequest: {
             /** @description At most 80 characters; empty or `null` clears it. */
@@ -14090,6 +14203,13 @@ export interface components {
             org: components["schemas"]["OrgSummary"];
             workspace?: components["schemas"]["ResolvedWorkspace"] | null;
         };
+        ResolvedRef: {
+            /** @description Whether this is the repository's default branch. */
+            default: boolean;
+            /** @description `branch` | `tag` | `commit`. */
+            kind: string;
+            name: string;
+        };
         ResolvedWorkspace: {
             /** Format: uuid */
             id: string;
@@ -15153,12 +15273,11 @@ export interface components {
             size: number;
         };
         /**
-         * @description A skill library. Org owners/admins see every field; other members who can use a workspace of
-         *     the org get `id`, `label` and `status` of the active libraries (the browse picker).
+         * @description A skill library (C-1122). Managers see every field; other members who can use a workspace of
+         *     the org get `id`, `label`, `status` and `scope` of the active libraries (the browse picker).
+         *     The access token is never returned: only whether one is set and when.
          */
         SkillLibrary: {
-            app_id?: string | null;
-            connection?: components["schemas"]["ConnectionRef"] | null;
             /** Format: date-time */
             created_at?: string | null;
             /** Format: uuid */
@@ -15169,14 +15288,34 @@ export interface components {
             last_head_sha?: string | null;
             /** Format: date-time */
             last_refresh_at?: string | null;
+            /**
+             * Format: uuid
+             * @description Null for an instance library (and for members).
+             */
+            org_id?: string | null;
+            /**
+             * Format: int64
+             * @description An instance library, in its manager's view only: how many organizations have a skill
+             *     added from it (never which skills).
+             */
+            orgs_using?: number | null;
             path?: string | null;
             /** Format: int64 */
             pending_updates?: number | null;
             ref?: string | null;
+            /** @description The display form `host/path` (without `.git`). */
             repo?: string | null;
+            /** @description `org` | `instance`. */
+            scope: string;
             skill_counts?: components["schemas"]["SkillCounts"] | null;
             /** @description `active` | `paused` | `error` | `over_budget`. */
             status: string;
+            /** @description Whether an access token is saved (never the token). */
+            token_set?: boolean | null;
+            /** Format: date-time */
+            token_updated_at?: string | null;
+            /** @description The normalized https clone URL; null for a library migrated without one. */
+            url?: string | null;
         };
         SkillLibraryInfo: {
             commit_sha: string;
@@ -21512,6 +21651,184 @@ export interface operations {
                 };
             };
             /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listInstanceSkillLibraries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_SkillLibrary"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createInstanceSkillLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSkillLibraryRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLibrary"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    checkInstanceSkillLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckSkillLibraryRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryCheck"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -38045,7 +38362,81 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    checkSkillLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckSkillLibraryRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryCheck"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -40407,7 +40798,13 @@ export interface operations {
     };
     getSkillLibrary: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description The organization to read the library as: required for an instance library, optional (and
+                 *     equal to the library's organization) for an organization library.
+                 */
+                org?: string;
+            };
             header?: never;
             path: {
                 /** @description Library id */
@@ -40589,7 +40986,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Too many requests: the per-principal rate limit */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -40668,6 +41064,11 @@ export interface operations {
                 /** @description Case-insensitive filter on name and description. */
                 q?: string;
                 cursor?: string;
+                /**
+                 * @description The organization to browse as: required for an instance library (`added` then lists only
+                 *     that organization's skills the caller can see), optional for an organization library.
+                 */
+                org?: string;
             };
             header?: never;
             path: {
@@ -40684,6 +41085,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryCatalogue"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
@@ -40743,6 +41152,8 @@ export interface operations {
             query?: {
                 /** @description The commit to read; default the current head. */
                 commit_sha?: string;
+                /** @description The organization to read the skill as (required for an instance library). */
+                org?: string;
             };
             header?: never;
             path: {
@@ -40761,6 +41172,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibrarySkillContent"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */

@@ -228,6 +228,21 @@ pub const LIBRARY_BYTES_PER_ORG: usize = 4 * MIB;
 pub const LIBRARY_SKILLS_PER_ORG: usize = 100;
 pub const LIBRARY_FILE_MAX: usize = 64 * KIB;
 pub const LIBRARY_TREE_MAX: usize = 20_000;
+/// (SEC-148, review send-back; docs/02 §Limits) Folder depth below the library's folder that a
+/// tree read follows: one more than a skill's own path depth (4); deeper folders are not read
+/// (skipped: not listed, not counted).
+pub const LIBRARY_TREE_DEPTH_MAX: usize = 5;
+/// (SEC-148; docs/02 §Limits) Bytes of one tree entry's name; a longer name fails the read.
+pub const LIBRARY_TREE_NAME_MAX: usize = 255;
+/// (SEC-148; docs/02 §Limits) Path bytes of one tree read together (all listed paths); more is
+/// `library_tree_too_large`.
+pub const LIBRARY_TREE_PATH_BYTES_MAX: usize = 4 * MIB;
+/// (SEC-148; docs/02 §Limits) Repository reads running at once on one replica (check, create,
+/// patch, browse, add, refresh share the permits).
+pub const LIBRARY_READS_CONCURRENT: usize = 4;
+/// (SEC-148; docs/02 §Limits) How long an interactive repository read (check, create, patch)
+/// may take overall, waiting for a read permit included.
+pub const LIBRARY_READ_DEADLINE: Duration = Duration::from_secs(90);
 pub const LIBRARY_BROWSE_MAX: usize = 200;
 /// (P5-IA-1, C-987) One-time notice keys a person can have dismissed.
 pub const ONBOARDING_NOTICES_MAX: usize = 50;
@@ -243,6 +258,15 @@ pub const LIBRARY_REFRESH_CONCURRENCY: usize = 4;
 pub const LIBRARY_CHECK_NOW_INTERVAL: Duration = Duration::from_secs(60);
 pub const LIBRARY_BROWSE_CACHE: Duration = Duration::from_secs(5 * 60);
 pub const LIBRARY_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+/// (P5-SKLIB-1, C-1125, C-1127; docs/02 §Limits) One git smart-HTTP response body (a pack with
+/// its side-band framing): reading stops at this many bytes.
+pub const LIBRARY_PACK_MAX: usize = 32 * MIB;
+/// (P5-SKLIB-1, C-1125; docs/02 §Limits) Inflated bytes of every object of one pack together.
+pub const LIBRARY_INFLATE_MAX: usize = 64 * MIB;
+/// (P5-SKLIB-1, C-1125; docs/02 §Limits) Object ids wanted in one fetch request.
+pub const LIBRARY_WANTS_MAX: usize = 500;
+/// (P5-SKLIB-2, C-1128; docs/02 §Limits) Instance-level skill libraries.
+pub const LIBRARIES_PER_INSTANCE: usize = 20;
 // Addon sources (phase 5, P5-ASRC, D-250; docs/02 §Limits, docs/22).
 /// The `aurora-addons.yaml` manifest (download cap; a bigger body is refused before parsing).
 pub const ADDON_MANIFEST_MAX: usize = MIB;

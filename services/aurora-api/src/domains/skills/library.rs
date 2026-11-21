@@ -185,7 +185,10 @@ pub async fn add(
         ));
     }
     let lib = lib_service::get(state, from.library_id).await?;
-    if lib.org_id != org {
+    // (D-449) An organization's library belongs to that organization only; an instance library
+    // (`org_id` null) can be added at any tier of any organization, with the tier's authority
+    // (the route has checked it) and the organization's budgets.
+    if lib.org_id.is_some_and(|o| o != org) {
         return Err(ApiError::not_found("Skill library not found."));
     }
     // A paused/errored library is invisible to members (C-570); only admins may still add.
@@ -205,7 +208,7 @@ pub async fn add(
     let src = Source {
         library_id: lib.id,
         label: &lib.label,
-        repo: &lib.repo,
+        repo: lib.repo.as_deref().unwrap_or(""),
         path: &from.path,
         commit_sha: commit,
         blobs: &blobs,
@@ -250,14 +253,42 @@ pub async fn add(
     service::view(&mut c, row).await
 }
 
-/// `{ directory name: [where it is added] }` for a library (the browse list's "already added").
+/// `{ directory name: [where it is added] }` for a library (the browse list's "already added"):
+/// only **this organization's** skills (an instance library is added in many organizations, and
+/// one organization's list never shows another's, SEC-149) that the caller can see: owners/admins
+/// see them all, other people the org tier's and those of the workspaces they can use.
 pub async fn added_by_path(
     state: &AppState,
+    caller: &Caller,
     library: Uuid,
+    org: Uuid,
+    org_admin: bool,
 ) -> Result<HashMap<String, Vec<TierRef>>, ApiError> {
     let mut c = state.pool.acquire().await.map_err(DbError::from)?;
     let mut out: HashMap<String, Vec<TierRef>> = HashMap::new();
-    for s in repo::library_skills(&mut c, library).await? {
+    let mut usable: HashMap<Uuid, bool> = HashMap::new();
+    for s in repo::library_skills(&mut c, library, Some(org)).await? {
+        if !org_admin && (s.workspace_id.is_some() || s.agent_id.is_some()) {
+            let ws = match (s.workspace_id, s.agent_id) {
+                (Some(w), _) => Some(w),
+                (None, Some(a)) => aurora_db::repo::agents::get(&mut *c, a)
+                    .await?
+                    .map(|r| r.workspace_id),
+                _ => None,
+            };
+            let Some(ws) = ws else { continue };
+            let ok = match usable.get(&ws) {
+                Some(ok) => *ok,
+                None => {
+                    let ok = aurora_db::authz::can_use(&mut *c, caller.user_id, ws).await?;
+                    usable.insert(ws, ok);
+                    ok
+                }
+            };
+            if !ok {
+                continue;
+            }
+        }
         out.entry(s.library_path.clone().unwrap_or_default())
             .or_default()
             .push(TierRef {

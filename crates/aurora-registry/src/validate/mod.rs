@@ -395,6 +395,15 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
 pub fn warnings(m: &Manifest) -> Vec<Violation> {
     let mut out = Vec::new();
     for (i, a) in m.apps.iter().enumerate() {
+        // (P5-SKLIB-1, D-448) The `library` block is still parsed (contract 1 is additive) but a skill
+        // library is now an https git URL read by the API: nothing uses the block any more.
+        if a.library.is_some() {
+            out.push(Violation::new(
+                "library_ignored",
+                format!("/apps/{i}/library"),
+                "the `library` block is ignored: skill libraries take a git URL (D-448); remove it",
+            ));
+        }
         let Some(tools) = &a.tools else { continue };
         for (gname, g) in [("read", &tools.read), ("write", &tools.write)] {
             let Some(g) = g else { continue };

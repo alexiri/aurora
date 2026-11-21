@@ -16,7 +16,6 @@ mod groups;
 mod held_closure;
 mod hold;
 mod hold_recheck;
-mod library_fetch;
 mod listener_binds;
 mod llm_mint;
 mod open_lane;

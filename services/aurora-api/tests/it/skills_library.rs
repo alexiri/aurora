@@ -10,11 +10,12 @@ use super::*;
 async fn library_skill(r: &Rig, agent: Uuid, name: &str, body: &str) -> (Uuid, Uuid) {
     let lib = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO skill_libraries (id, org_id, label, app_id, repo) VALUES ($1,$2,$3,'forge','acme/skills')",
+        "INSERT INTO skill_libraries (id, org_id, label, url, repo) VALUES ($1,$2,$3,$4,'git.example/acme/skills')",
     )
     .bind(lib)
     .bind(r.org)
     .bind(format!("lib-{name}"))
+    .bind(format!("https://git.example/acme/{name}"))
     .execute(r.h.pool())
     .await
     .unwrap();

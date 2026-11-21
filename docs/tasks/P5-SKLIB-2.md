@@ -132,3 +132,87 @@ Files changed, test commands and results, and anything left undecided. Always na
 - how the org list is ordered (org libraries first, then instance, each by label, unless you found a
   reason not to);
 - whether any existing audit action needed a new metadata key.
+
+### Completion report (lane A, Sonnet, 2026-11-21; same lane and commits as P5-SKLIB-1, after it)
+
+Everything in the brief is done (items 1–10 and acceptance 1–7); nothing waits. P5-SKLIB-1 is in the same lane
+and not yet merged, so this brief did not wait for a merge: it was built on top of it.
+
+**What was built.**
+- Migration `20261201000271_skill_library_instance.sql`: `org_id` nullable, the label and address unique indexes on
+  `(coalesce(org_id, nil uuid), …)`, `skill_library_org_state`, `over_budget` rows moved into it (status back to `active`).
+- `domains/skill_libraries/access.rs`: **the one authority helper**: `manage(caller, state, row)` (an organization's library: its owner/admin, 403 for a
+  member as before; an instance library: an instance admin's **session**, else 404) and `read(caller, state, row, ?org)`
+  (organization library: the browse audience of its organization, `?org` optional and equal to the library's organization;
+  instance library: `?org` required, 400 without it, the caller must use a workspace of it, else 404; members get 404 for a non-active library).
+  Every library route goes through them (`admin_of`, `browse_of`); the org-scoped list, create and check routes use the organization's own checks.
+- Routes: `GET/POST /v1/admin/skill-libraries`, `POST /v1/admin/skill-libraries/check` (`InstanceAdmin`: session only, the check limited to 10 a minute per person);
+  `GET /v1/skill-libraries/{id}` takes `?org=` (an organization's owner/admin gets that organization's view of an instance library, an instance admin its
+  totals and `orgs_using`); browse and content take `?org=`; the organization list is its own libraries by label, then the instance ones by label.
+- `SkillLibrary` gains `orgs_using`; `View::{Picker, Org(org), Manage}` decides what a caller sees; `status` is `over_budget` in an organization's view
+  while its `skill_library_org_state` row exists and the library is otherwise `active`; `token_updated_at` is hidden from organizations.
+- Refresh: one pass, proposals per skill, the budget sum and insert under the lock of **the skill's organization**; an organization over budget gets its state row and
+  no proposal while the others get theirs; rows are set from scratch at the end of a full pass (added, or deleted when the organization fits again or no longer uses the library);
+  a library with any row skips the unchanged-head short-circuit; the library's own status never becomes `over_budget` any more.
+- Delete: one transaction detaches everywhere, writes the instance row and one `skill_library.delete` row per affected organization (`commit_critical_many`), and discards the sealed token.
+- Web (only to stay green): instance rows show read-only in the same table with "Shared with every organization" and no actions; Add from library browses as the organization (`?org=`).
+
+**Files changed** (beyond P5-SKLIB-1's): `crates/aurora-db/migrations/20261201000271_skill_library_instance.sql`, `crates/aurora-db/src/repo/skill_libraries.rs`,
+`services/aurora-api/src/domains/skill_libraries/{access.rs (new), dto.rs, mod.rs, refresh.rs, routes.rs, service.rs}`, `services/aurora-api/src/domains/skills/library.rs`;
+docs 03, 04, 05, 10, 15, 18, `API_CONTRACTS.md`, operator page, security coverage; generated `web/openapi.json`, `schema.d.ts`, `spec_schema.json`;
+web `libraries-page.tsx`, `lib/api/skill-libraries.ts`, `skills/library.tsx`; tests `services/aurora-api/tests/it/{skill_library/instance.rs (new), skill_library.rs, permission_matrix.rs}`,
+`crates/aurora-db/tests/it/{skill_library_instance_migration.rs (new), main.rs}`, `web/tests/skill-library.test.tsx`, `web/e2e/support/skill-libraries.ts` (an instance row in the mocked list; the production Playwright projects cannot run here: `skill-libraries.spec.ts` for the nightly).
+
+**Commands run and results:** the same gate set as P5-SKLIB-1's report, run after this brief (clippy `-D warnings` and `cargo fmt --check` clean; the IT run `skill_library skills_library permission_matrix plugins_supersede groups secrets audit foundation`: 231 passed, the only 2 failures need the fixture package build, see that report; `skill_library::instance`: 7 passed; db `skill_library_instance_migration` and `schema_matches_spec` passed; `extract-schema.py --check`, `scripts/guards/run-all.sh` (the `limits-readers` guard needed this brief: `LIBRARIES_PER_INSTANCE` has a reader now), `tsc`, eslint and the vitest file: ok).
+The `over_budget` scenarios of `skill_library.rs` were rewritten for the new rule (state row, organization-view status, head recorded, the next pass compares again and clears the row); the other `over_budget` assertions pass unchanged through the organization view.
+
+**Always name:**
+- *Queries that moved from the library's org to the skill's org:* the refresh's per-skill budget lock key (`skill_library_pending:<skill org>`) and `pending_bytes_org(<skill org>)` (it used `lib.org_id`); the `skill.library.update_proposed` audit row (`.org(skill org)`); `library_skills(library, org)` for the browse chips (filtered by `skills.org_id`); `skill_counts(library, org)` and `pending_count(library, org)` (`skills.org_id`); the add path's check (`lib.org_id.is_some_and(|o| o != org)`). Approve, reject, detach, `pending_for_org/workspace/agent` and `pending_bytes_org` already keyed on the skill (`s.org_id` / the skill row) and are unchanged; the new `affected_orgs(library)` groups by `skills.org_id`. None of these joins a people table (the gateway role has no grant on these tables at all).
+- *Org list order:* the organization's own libraries by label, then the instance libraries by label (an IT asserts it).
+- *New audit metadata key:* `library_label` on `skill_library.delete` rows (the brief's `{ library_label, repo, skills_detached }`); the existing `label` is kept beside it. Instance rows (create, update, delete) have `org_id` null and actor kind `instance_admin`; nothing else changed.
+
+**Decisions and differences to review:**
+- Item 4 says the organization list appends the *active* instance libraries, item 9 says a paused one is listed as Paused. Built: **owners/admins see every status** (so Paused shows), members only `active`: the rule for an organization's own libraries. docs/05, C-1128 and docs/10 say so. Browse of a paused library behaves as for organization libraries today (owners/admins can browse it, members get 404); the brief's "409 `library_paused` as today" matches nothing in the code today (that code is only on check-now and approve), so it was not invented.
+- `added` chips: the library's skills **of the organization** the caller can see: owners/admins see all of them, other people the org-tier skills and those of the workspaces they can use. (For an organization's own library members used to see every tier's chips; this narrows that to what they can see.)
+- `GET /v1/skill-libraries/{id}` by an instance admin with `?org=` answers that organization's view (no membership needed); without `?org=` the totals.
+- A `PATCH` by a manager of an organization library keeps today's 403 for a member of the organization and 404 for a stranger; an instance library is always 404 for non-managers.
+- The `over_budget` value stays allowed in the status CHECK for one release (C-1128); nothing writes it.
+
+**Left undecided / for the owner:** Q-SKLIB-1..3 are built on the recommended defaults (no organization hiding, a token after the backfill for private repositories, https only). `PROGRESS.md` and `FEATURES.md` are the Orchestrator's.
+
+#### Security notes (SEC-149, for the review before merge)
+
+Where to look: `domains/skill_libraries/access.rs` (the authority), `routes.rs` (every handler's first lines), `service.rs` (`view`, `delete`), `refresh.rs` (`compare`), `domains/skills/library.rs` (`add`, `added_by_path`), `repo/skill_libraries.rs`.
+- **Authority per tier of caller.** Manage: an instance library only by `c.is_instance_admin && c.is_session()` (org owners/admins, members, strangers and **API keys, even an instance admin's, get 404**; the admin routes use `InstanceAdmin`, which is session-only, and answer 401/403 to a key). 404 rather than 403 so ids do not leak. Read: only *as* an organization the caller can use a workspace of; `?org=` is required (400) and anything else about the organization is a 404, so the answer for "another organization", "not a member" and "no workspace" is the same. Tests: `only_instance_admins_manage_an_instance_library_and_never_by_key`, `two_organizations_use_one_instance_library_each_with_its_own_numbers` (browse as B from A's admin: 404; unbound member: 404), permission-matrix rows for the three admin routes. Mutations checked by hand: allowing an instance admin's API key to manage fails the first; listing every organization's skills in the chips fails the second.
+- **Nothing moves between organizations.** Counts, pending updates, `status` and the chips are filtered by `skills.org_id` for an organization's view; the instance admin's list has totals and `orgs_using` only (no skill names, ids or tiers; the IT asserts a skill name is absent). `token_updated_at` is never shown to an organization. The browse cache is per library and holds only the repository listing; the chips are computed per request and never cached.
+- **Budgets.** One organization's open-proposal budget is taken under that organization's advisory lock and never stops another's proposals (IT with two organizations, one over budget). A concurrent refresh of two libraries of one organization still serialises on that lock.
+- **Add and approve keep their authority.** `add` still needs the tier's write authority (the route's check, unchanged) and now only relaxes "the library is the organization's own" for `org_id` null; approvals decide by the skill's tier authority and its own organization (A's admin got 404 on B's skill).
+- **Delete.** One transaction: affected organizations are read under the library's row lock, skills detached, library and sealed token deleted, instance and per-organization audit rows written atomically (`commit_critical_many`); an organization's row carries only that organization's count.
+- **Things I would look at twice:** (1) `GET /v1/skill-libraries/{id}?org=X` by an instance admin does not require membership of X (they can see totals anyway); (2) an instance library's `last_error` text (for example "The repository needs an access token") is shown to every organization's admins: fixed reasons only, never the URL or token; (3) `skill_library_org_state` rows are replaced at the end of a *completed* pass only, so a pass that errors leaves the previous states; (4) an organization admin sees an instance library's address (`url`, `repo`): intended (they browse it), but it is the instance admin's choice what to publish there.
+
+#### Security review send-back (SEC-149; lane A, Sonnet, 2026-11-21; commits on top of `b99fedec`)
+
+5. **Stale row in delete/patch: fixed.** `delete` now has no earlier `get`: `token_ref`, `label`, `repo` and `org_id` come from the row
+   `get_library_for_update` returns inside the transaction. `patch` keeps its earlier read for validation but decides what to discard from the locked row
+   (`locked.token_ref`, when the patch changes the reference and it differs from the new one) and only after the commit. Test:
+   IT `instance.rs::deleting_an_instance_library_discards_its_sealed_token_from_the_store` (the default store is a `MemoryStore`, so the sealed value is **counted**:
+   create 1 → replace by PATCH 1 → delete 0; a second library: `token: null` 0). A deterministic race test is not practical (the window is between two
+   statements of one request); the replace-then-delete sequence is covered, and the delete assertion fails if `discard_token` is removed.
+6. **Errors as 404: fixed.** `access::hide_denial` turns only 404/403 into the library's 404; a database or other internal error passes through (5xx).
+   Used by `read` (the `?org=` audience) and the organization branch of `view_as`.
+7. **One authority helper: done.** `access::view_as(caller, state, row, org) -> View` replaces the inline logic of `GET /v1/skill-libraries/{id}`
+   (the handler is now two lines). Behaviour kept: an instance admin's session may view any organization's per-tier counts of an instance library (no names;
+   D-449(c)); **new: the `?org=` must exist** (`orgs::name_of`), else 404. Noted in the SEC-149 row of docs/17 and security-coverage. Test: IT
+   `the_view_as_an_organization_needs_that_organization_to_exist` (existing org 200 with the organization's view, unknown org 404).
+8. **Shared refresh fairness: done.** At the top of the per-skill loop an organization already `over` is skipped before `content::load`; each changed directory is
+   loaded once per pass (`BTreeMap<dir, Loaded>`) and reused across the skills of every organization (a read error still fails the pass; an invalid result is cached too).
+   The test hook is `LibraryEnv.loads` (a per-replica counter, so parallel ITs do not disturb each other). Test: IT
+   `a_refresh_pass_loads_a_directory_once_and_skips_an_over_budget_organization` (A over budget with two skills, B with one of the same directory: **one** load for the pass
+   instead of two, A without a proposal, B with its proposal; it fails without either the skip or the cache).
+9. **Tests that would not fail: added.** Sealed-value deletion: see 5. `added_by_path`'s `can_use`: IT `added_chips_leave_out_workspaces_the_caller_cannot_use`
+   (a skill added to a second workspace of the organization is absent from a member's `added` of another workspace and present for the admin).
+   Organization library with another organization's `?org=`: IT `the_view_as_an_organization_needs_that_organization_to_exist` (browse and skill content → 404; its own organization 200).
+
+**Not changed, as told:** the error reasons, and `http_instance` without `.no_proxy()`. **For lane B / API shape:** none of the routes, fields or error codes changed;
+the new `502 library_unavailable` and `429 rate_limited` on create/patch use existing codes (a create that used to answer 201 can now answer 429 after ten reads a minute by one person).
+Same commands and results as in the SEC-148 send-back under P5-SKLIB-1.
