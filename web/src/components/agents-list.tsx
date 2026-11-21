@@ -6,6 +6,8 @@ import { AgentAvatar } from "./agent-avatar";
 import { TokenBadges } from "./agents/token-badges";
 import { EmptyState } from "./states";
 import { AttentionChip } from "./ui/attention-chip";
+import { agentChip as chipOf } from "@/lib/agent-chip";
+
 import { Badge } from "./ui/badge";
 import { ItemList, ListRow } from "./ui/section";
 
@@ -45,8 +47,7 @@ export function AgentsList({
                 <span aria-hidden="true">{needs?.[a.id]}</span>
               </AttentionChip>
             ) : null}
-            <Badge>{a.kind}</Badge>
-            {a.is_default ? <Badge tone="accent">Came with this workspace</Badge> : null}
+            {chipOf(a) ? <Badge tone={chipOf(a)!.tone}>{chipOf(a)!.text}</Badge> : null}
             {a.byo?.posture === "disabled" ? (
               <Badge tone="danger" title="Its tokens are refused until the setting is loosened; nothing was deleted.">
                 BYO disabled by {a.byo.posture_level}

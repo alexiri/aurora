@@ -136,9 +136,10 @@ describe("agent page frame (D-200)", () => {
     renderPage();
     expect(await screen.findByTestId("instructions-tab")).toBeInTheDocument();
     expect(sectionTabs()).toEqual(["Computer"]);
-    // Without a rail the kind and Default badges stay in the header.
-    expect(screen.getByText("byo")).toBeInTheDocument();
-    expect(screen.getByText("Default")).toBeInTheDocument();
+    // Without a rail one chip stays in the header, in a person's words: never the raw kind, never "Default".
+    expect(screen.getByText("Came with this workspace")).toBeInTheDocument();
+    expect(screen.queryByText("byo")).toBeNull();
+    expect(screen.queryByText("Default")).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: "Computer" }));
     expect(await screen.findByTestId("connect-tab")).toBeInTheDocument();
   });
