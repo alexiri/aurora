@@ -570,12 +570,46 @@ Fill in per pass (the owner reads this):
   - UX review 4 regressions: none found.
   - Exit not reached (two Needs changes outside the 119); the cluster stays up for pass 10.
 
+- **Pass 10, the final pass** (2026-11-21, master `4c28329a` (batch 13, FIX-205, FIX-208, FIX-209); cluster `aurora-r20` on
+  :4720, lane `p5-platform`; rebuilt `dev api terminator web`, 1169 s). **By the owner's decision (2026-11-21) there is no
+  pass 11:** batch 14 is fixed without a re-check, and the brief then closes.
+  - Counts (119 findings): Match 119 / Minor 0 / Needs changes 0 / Not checked 0 / Accepted 0.
+  - Batch 13: #1 Match. Below 1280 the meta row's edges equal the header's at 390–1100 for five threads, both themes, so its
+    borders run from the card's edge to the rail's border; batch 12's gains hold. #2 Match: an organization member reads
+    "In Acme, requests without an account can reach any website unless a rule or a workspace blocks them." and who to
+    ask; owners unchanged.
+  - `web/e2e/agent-header-widths.spec.ts` (edited by lane A without a run): run here in the mocked project, 100 passed.
+  - FIX-208 Match. The SSH page shows `… daneel@localhost` before and after a certificate. Live: the certificate's
+    principals are `[uuid, daneel]`; `ssh daneel@` and `ssh <uuid>@` open the same computer, and `ssh counter@` is refused.
+  - FIX-205 Needs changes. Custom is enabled with no "needs more controls", Too often still blocks, and the typed cron is
+    kept. But the date input is 264 px (target 160) and the cron field fills the row (918 px at 1280), so the zone is
+    never beside it. Cause: a width class appended to `inputClass` loses to its `w-full`.
+  - FIX-209: not checked live (connector host not rebuilt, no Mattermost server on the cluster).
+  - 96 captures: no horizontal scroll, no axe violation, no console error, no `/v1` error, no CSP report.
+  - Report path: `docs/audit/ux-review-5-verify/REPORT-pass10.md` (screenshots in `docs/audit/ux-review-5-verify/pass10/`, not in git).
+  - Change list sent: batch 14 (1 item, lane A, with the worker_done message). It covers `date-field.tsx:155` and
+    `schedule-form.tsx:283` → `cn(inputClass, …)`, the same fix at `self-hosted-provision.tsx:49/59` and
+    `instances-view.tsx:377`, the stale Expert comment in `schedule-form.tsx`, and width assertions in `automations.spec.ts`.
+  - Fixed in this lane (Scope 7): none.
+  - UX review 4 regressions: none found.
+  - Exit not reached by this pass (FIX-205's widths). The teardown the owner asked for was refused by this session's
+    permission classifier. `aurora-r20` is still up; see "Cluster torn down" below.
+
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
   - Report path: `UXR5/verify/REPORT-pass<N>.md`
   - Change list sent (message to the Orchestrator, time) and the briefs it went to:
   - Fixed in this lane (Scope 7): file → what:
   - UX review 4 regressions found:
-- **Final pass:** zero Needs changes and zero Minor difference: yes/no; Accepted items (owner, date, where):
-- **Cluster torn down:** yes/no
+- **Final pass:** pass 10, by the owner's decision (2026-11-21, relayed by the Orchestrator: no pass 11; batch 14 is fixed
+  without a re-check and P5-REFINE-20 then closes). Zero Needs changes and zero Minor difference: **no**. The 119 are all
+  Match; one Needs changes is open outside them (FIX-205's field widths, batch 14 #1, lane A). Accepted items: none.
+- **Cluster torn down:** no, not yet. At the end of pass 10 the lane ran `AURORA_DEV_CLUSTER=aurora-r20 AURORA_DEV_PORT=4720
+  deploy/dev/kind-dev.sh down`, and the session's permission classifier refused the command, so it did not run. `aurora-r20`
+  (:4720, SSH :2272) is still up and needs that command run by the Orchestrator or the owner.
 - **Further ideas:**
+  - When the thread meta line wraps below 1280, a segment can start its line with its separator.
+  - `ConfirmDialog`'s buttons sit in its body while `FormDialog` pins them in a footer.
+  - The Jira family card keeps the Cloud description when only Data Center is usable.
+  - The Chat page scrolls 64 px below 1280 (allowed by docs/14's 1280×800 rule).
+  - At 768 the agent Settings sub-navigation keeps 208 px beside the content.
