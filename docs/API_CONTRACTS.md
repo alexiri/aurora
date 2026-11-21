@@ -445,7 +445,7 @@ interface TrustedKey { id: Uuid; publisher: string; name: string; public_key: st
 | GET/POST `/v1/admin/oauth-clients` | IA | as above | instance clients | — |
 | PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K can_own | `{ mode: "full" \| "custom", allow_tools?: string[], ask_tools?: string[] }` | 200 `ConnectionGrant` / 204 | 422 `grant_invalid` (`details.reason`: `empty_custom` \| `tool_in_both` \| `unknown_tool`) |
 | GET `/v1/connections/{id}/grants` | S/K | — | 200 `{ items: ConnectionGrant[] }` | 404 |
-| GET `/v1/admin/plugins` | IA | `?status` | 200 `Page<PluginPackage>` | — |
+| GET `/v1/admin/plugins` | IA | `?status`, `?package_id` (C-1120) | 200 `Page<PluginPackage>` | — |
 | POST `/v1/admin/plugins` | IA | multipart `package` (C-16) | 201 `PluginPackage` | 413; 422 `package_invalid` (`details.violations`) |
 | GET `/v1/admin/plugins/{id}` | IA | — | 200 `PluginPackage` | 404 |
 | POST `/v1/admin/plugins/{id}/approve` \| `reject` \| `disable` \| `enable` | IA | `{ reason? }` | 200 `PluginPackage` | 409 `invalid_state`; 409 `claim_conflict_unresolved` |
@@ -2359,6 +2359,9 @@ Data (add to `docs/03-data-model.md` `user_onboarding`): row `| more_controls | 
   - `Frozen` (every route that returns one: the agent, workspace and organization reads, the freeze and unfreeze results, the instance-admin organization list) gains `by: { id: uuid, display_name: string } | null` (the shape of `paused_by`, C-1096): the freezer by name, read from `users` at request time; null when the user row is gone. `by_label` stays (the e-mail, `(deleted user)`), unchanged, for compatibility.
   - `SectionSummary` (C-771) and `SettingsSection` (C-772, also the `PUT` result) gain `updated_by: { id: uuid, display_name: string } | null`, from `instance_settings.updated_by` joined to `users` at read time; null when the section was never written, the writer was `system` or `cli` (no user) or the user is gone. `updated_by_label` stays.
   - The dashboard shows the person with `personName` ("Paused by Erin Example", "Last change: Alice Admin, <date>"); with `by` or `updated_by` null it writes "Paused on <date>" and "Last change: <date>", never the label (an address is not a name, D-402). The web guard that bans a raw `display_name` also bans reading `by_label`, `updated_by_label` and `decided_by_label` in a component.
+- C-1120 **The admin package list filters by package id** (FIX-201, D-438; amends the `GET /v1/admin/plugins` row here and in `05`). No column, no migration.
+  - `GET /v1/admin/plugins` gains `?package_id=<string>`: an exact match on the package id, combinable with `?status`; same order (`created_at` desc, `id` desc), cursor and page size as without it. An id that matches nothing is an empty page (200), never 404. Instance admins only, unchanged.
+  - The dashboard's package page `/admin/apps/packages/<package id>` uses it to find the active version (else the newest) and replaces the address with that version's UUID.
 
 ## Shared schemas
 
