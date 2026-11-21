@@ -70,7 +70,8 @@ export function AutomationMessage({ display, ts, text }: { display: AutomationDi
       ) : null}
       {display.truncated ? <p className="text-xs opacity-80">The payload was long, so only the start is shown.</p> : null}
       <Altitude id="auto.deliveryids" level="expert">
-        <TechnicalDetails className="text-xs" bodyClassName="mt-1 break-all font-mono">
+        {/* On the bubble's own background `text-muted` fails contrast (3.1:1 light, 4.4:1 dark): the bubble's token. */}
+        <TechnicalDetails className="text-xs" summaryClassName="text-bubble-muted" bodyClassName="mt-1 break-all font-mono text-bubble-ink">
           {[display.deliveryId && `Delivery ${display.deliveryId}`, display.contentType, display.size !== null ? `${display.size} B` : ""].filter(Boolean).join(" · ")}
         </TechnicalDetails>
       </Altitude>
