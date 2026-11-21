@@ -94,7 +94,10 @@ export function SkillsEditor({ scope, readOnly = false, orgId, agentName }: { sc
         />
       ) : null}
       {/* (P5-POLISH-6, C6) While the list is empty there is no detail pane and no "Select a skill" text. */}
-      <div className={items.length === 0 && !creating ? "hidden" : "grid gap-6 md:layout-aside-md"}>
+      {/* (P5-SKLIB-3) The list and the editor sit side by side when their own container is wide enough, not from a viewport
+          width: inside Agents › Skills the sub-nav rail leaves only ~224 px at 768 px. */}
+      <div className={items.length === 0 && !creating ? "hidden" : "@container"}>
+      <div className="grid gap-6 @3xl:layout-aside-md">
         <ul aria-label="Skills" className="min-w-0 space-y-1">
           {items.map((s) => (
             <li key={s.id} className="min-w-0">
@@ -123,6 +126,7 @@ export function SkillsEditor({ scope, readOnly = false, orgId, agentName }: { sc
           ) : null}
           {!creating && !current && items.length > 0 ? <p className="text-sm text-muted">Select a skill to edit it.</p> : null}
         </div>
+      </div>
       </div>
     </div>
   );

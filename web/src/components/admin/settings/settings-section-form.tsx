@@ -59,6 +59,8 @@ export interface SettingsGroup {
   title: string;
   description?: string;
   keys: string[] | null;
+  /** A row before the settings (P5-SKLIB-3: the "Skill libraries" row with its Manage link). */
+  lead?: ReactNode;
 }
 
 type SecretMode = "keep" | "replace" | "remove";
@@ -468,6 +470,7 @@ export function SettingsStackForm({
                   title={g.title}
                   description={g.description}
                   guide={shown.map((s) => fieldsByKey.get(s.key)?.doc?.title).find((t): t is string => Boolean(t))}>
+                  {g.lead ?? null}
                   {shown.map((s) => (
                     <SettingRow
                       key={s.key}

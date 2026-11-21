@@ -45,7 +45,7 @@ function LibrariesLink({ slug, orgId }: { slug: string; orgId: string }) {
   if (libs.isError) return null;
   return (
     <Button asChild variant="outline">
-      <Link href={orgRoutes(slug).skillLibraries()}>Skill libraries</Link>
+      <Link href={orgRoutes(slug).skillLibraries()}>Add a library</Link>
     </Button>
   );
 }

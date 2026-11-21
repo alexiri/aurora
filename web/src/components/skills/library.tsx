@@ -29,6 +29,7 @@ import {
   type LibraryDiff,
   type LibrarySkillContent,
   type LibrarySkillItem,
+  type SkillLibrary,
 } from "@/lib/api/skill-libraries";
 import { TIER_LABEL, useCreateSkill, type Skill, type SkillScope, type SkillTier } from "@/lib/api/skills";
 
@@ -326,9 +327,69 @@ function AddedChips({ item }: { item: LibrarySkillItem }) {
   );
 }
 
+/** The end of the preview in the adding browser: the pin sentence, the budget, the failure of the add, Cancel and **Add**. */
+function AddAction({
+  adding,
+  libraryId,
+  picked,
+  commit,
+  content,
+}: {
+  adding: { scope: SkillScope; tier: BudgetTier; usage: { bytes: number; count: number }; onAdded: (id: string) => void };
+  libraryId: string;
+  picked: LibrarySkillItem;
+  commit: string | undefined;
+  content: LibrarySkillContent | undefined;
+}) {
+  const create = useCreateSkill(adding.scope);
+  const { tier, usage } = adding;
+  const budget = LIBRARY_BUDGET[tier];
+  const size = content?.size ?? 0;
+  const over = !!content && (usage.bytes + size > budget.bytes || usage.count + 1 > budget.skills);
+
+  async function add() {
+    if (!commit) return;
+    try {
+      const s = await create.mutateAsync({ from_library: { library_id: libraryId, path: picked.path, commit_sha: commit } });
+      adding.onAdded(s.id);
+    } catch {
+      // shown below
+    }
+  }
+
+  return (
+    <>
+      <Notice role="status">Pinned to this commit. Changes in the repository are not applied until someone with permission approves them.</Notice>
+      {over ? (
+        <Notice tone="pending" role="status">
+          This would exceed the {TIER_LABEL[tier].toLowerCase()} library budget: {formatCount(usage.bytes + size)} of {formatCount(budget.bytes)} characters, {usage.count + 1} of{" "}
+          {budget.skills} skills.
+        </Notice>
+      ) : null}
+      <ErrorNotice error={create.error} />
+      <div className="flex justify-end gap-2">
+        <DialogClose asChild>
+          <Button type="button" variant="outline">
+            Cancel
+          </Button>
+        </DialogClose>
+        <Button type="button" disabled={!content?.valid || over || create.isPending} onClick={() => void add()}>
+          Add
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/** The libraries a person can add from: the organization's own, then the ones the instance shares, active only (C-1128). */
+export function activeLibraries(items: SkillLibrary[] | undefined): { own: SkillLibrary[]; shared: SkillLibrary[] } {
+  const active = (items ?? []).filter((l) => l.status === "active");
+  return { own: active.filter((l) => l.scope !== "instance"), shared: active.filter((l) => l.scope === "instance") };
+}
+
 /**
  * "Add from library…" (docs/14): picker → searchable list at the library's current commit → full preview
- * of what would be stored → Add (pinned to that commit). Shown only when the org has an active library.
+ * of what would be stored → Add (pinned to that commit). Shown when the org or the instance has an active library.
  * `usage` is the tier's library-sourced bytes and count, to disable Add when it would not fit.
  */
 export function AddFromLibrary({
@@ -345,12 +406,51 @@ export function AddFromLibrary({
   onAdded: (id: string) => void;
 }) {
   const libs = useSkillLibraries(orgId);
-  const active = (libs.data?.items ?? []).filter((l) => l.status === "active");
+  const groups = activeLibraries(libs.data?.items);
   const [open, setOpen] = useState(false);
-  const [libId, setLibId] = useState<string>("");
+  if (!orgId || groups.own.length + groups.shared.length === 0) return null;
+  return (
+    <>
+      <Button type="button" variant="outline" onClick={() => setOpen(true)}>
+        Add from library…
+      </Button>
+      <LibraryBrowserDialog
+        orgId={orgId}
+        groups={groups}
+        open={open}
+        onOpenChange={setOpen}
+        adding={{ scope, tier, usage, onAdded: (id) => { setOpen(false); onAdded(id); } }}
+      />
+    </>
+  );
+}
+
+/**
+ * The library browser: the picker (your organization's libraries, then the ones shared with every organization),
+ * a searchable list at the library's current commit and the exact preview. With `adding` it ends in **Add**; without
+ * it (an organization looking at a shared library) it is read-only. Library labels and repository text are data.
+ */
+export function LibraryBrowserDialog({
+  orgId,
+  groups,
+  open,
+  onOpenChange,
+  initialId,
+  adding,
+}: {
+  orgId: string;
+  groups: { own: SkillLibrary[]; shared: SkillLibrary[] };
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** The library to show first (Browse on a row). */
+  initialId?: string;
+  adding?: { scope: SkillScope; tier: BudgetTier; usage: { bytes: number; count: number }; onAdded: (id: string) => void };
+}) {
+  const all = [...groups.own, ...groups.shared];
+  const [libId, setLibId] = useState<string>(initialId ?? "");
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<LibrarySkillItem | null>(null);
-  const current = libId || active[0]?.id;
+  const current = (all.some((l) => l.id === libId) ? libId : "") || initialId || all[0]?.id;
   // (P5-SKLIB-2, C-1128) A library shared by the instance is browsed as this organization.
   const catalogue = useLibraryCatalogue(open ? current : undefined, q, orgId);
   // Every page is read at one commit; the first page names it. `truncated` (past 200) is on the last page.
@@ -358,41 +458,19 @@ export function AddFromLibrary({
   const lastPage = catalogue.data?.pages[catalogue.data.pages.length - 1];
   const catalogueItems = (catalogue.data?.pages ?? []).flatMap((p) => p.items);
   const content = useLibrarySkill(open ? current : undefined, picked?.path, head?.commit_sha, orgId);
-  const create = useCreateSkill(scope);
-  if (!orgId || active.length === 0) return null;
-  const budget = LIBRARY_BUDGET[tier];
-  const size = content.data?.size ?? 0;
-  const over = !!content.data && (usage.bytes + size > budget.bytes || usage.count + 1 > budget.skills);
-
-  async function add() {
-    if (!current || !picked || !head) return;
-    try {
-      const s = await create.mutateAsync({ from_library: { library_id: current, path: picked.path, commit_sha: head.commit_sha } });
-      setOpen(false);
-      setPicked(null);
-      onAdded(s.id);
-    } catch {
-      // shown below
-    }
-  }
 
   return (
     <>
-      <Button
-        type="button"
-        variant="outline"
-        onClick={() => {
-          setOpen(true);
-          setPicked(null);
-          create.reset();
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (o) setPicked(null);
+          onOpenChange(o);
         }}
       >
-        Add from library…
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent title="Add from a library" description="Skills are pinned to the commit you see here." size="xl">
+        <DialogContent title={adding ? "Add from a library" : "Browse a library"} description={adding ? "Skills are pinned to the commit you see here." : "What this library offers at its current commit. Add skills from an agent's, a workspace's or the organization's Skills page."} size="xl">
           <div className="space-y-4">
-            {active.length > 1 ? (
+            {all.length > 1 ? (
               <Field id="library-pick" label="Library">
                 <Select
                   id="library-pick"
@@ -401,8 +479,26 @@ export function AddFromLibrary({
                     setLibId(v);
                     setPicked(null);
                   }}
-                  options={active.map((l) => ({ value: l.id, label: l.label }))}
-                />
+                >
+                  {groups.own.length > 0 ? (
+                    <optgroup label="Your organization">
+                      {groups.own.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {groups.shared.length > 0 ? (
+                    <optgroup label="Shared with every organization">
+                      {groups.shared.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                </Select>
               </Field>
             ) : null}
             {!picked ? (
@@ -417,7 +513,7 @@ export function AddFromLibrary({
                     <p className="text-xs text-muted">
                       At commit <span className="font-mono">{shortSha(head.commit_sha)}</span>. Names and descriptions are repository text.
                     </p>
-                    {lastPage?.truncated ? <Notice role="status">This repository has more skills than can be listed. Connect a narrower folder.</Notice> : null}
+                    {lastPage?.truncated ? <Notice role="status">This repository has more skills than can be listed. Ask an admin to choose a narrower folder for this library.</Notice> : null}
                     {catalogueItems.length === 0 ? <EmptyState title="No skills found" /> : null}
                     <ul aria-label="Library skills" className="min-w-0 divide-y divide-line">
                       {catalogueItems.map((i) => (
@@ -463,24 +559,17 @@ export function AddFromLibrary({
                   </Notice>
                 ) : null}
                 {content.data?.valid ? <Preview content={content.data} /> : null}
-                <Notice role="status">Pinned to this commit. Changes in the repository are not applied until someone with permission approves them.</Notice>
-                {over ? (
-                  <Notice tone="pending" role="status">
-                    This would exceed the {TIER_LABEL[tier].toLowerCase()} library budget: {formatCount(usage.bytes + size)} of {formatCount(budget.bytes)} characters,{" "}
-                    {usage.count + 1} of {budget.skills} skills.
-                  </Notice>
-                ) : null}
-                <ErrorNotice error={create.error} />
-                <div className="flex justify-end gap-2">
-                  <DialogClose asChild>
-                    <Button type="button" variant="outline">
-                      Cancel
-                    </Button>
-                  </DialogClose>
-                  <Button type="button" disabled={!content.data?.valid || over || create.isPending} onClick={() => void add()}>
-                    Add
-                  </Button>
-                </div>
+                {adding && current ? (
+                  <AddAction adding={adding} libraryId={current} picked={picked} commit={head?.commit_sha} content={content.data} />
+                ) : (
+                  <div className="flex justify-end gap-2">
+                    <DialogClose asChild>
+                      <Button type="button" variant="outline">
+                        Close
+                      </Button>
+                    </DialogClose>
+                  </div>
+                )}
               </>
             )}
           </div>

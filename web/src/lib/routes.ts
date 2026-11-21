@@ -55,6 +55,8 @@ export const adminRoutes = {
   /** AI endpoints: the endpoints only; the AI key rules moved to What agents may do › AI keys and rules. */
   aiModels: () => "/admin/ai-models",
   internetAccess: () => "/admin/internet-access",
+  /** (P5-SKLIB-3, D-450(b)) The instance's skill libraries, a sub-page of What agents may do › Defaults. */
+  skillLibraries: () => "/admin/skill-libraries",
   people: (tab?: TabOf<"adminPeople">, hash?: string) => url("/admin/people", { tab }, hash),
   organizations: (hash?: string) => url("/admin/people", { tab: "organizations" }, hash),
   organization: (id: string) => `/admin/people/organizations/${seg(id)}`,

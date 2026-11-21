@@ -1431,7 +1431,7 @@ guide links, ladder rows and the organization's accounts.
   | `secrets` | Platform › Secret stores |
   | `agents`, `approvals` | What agents may do › Defaults |
   | `terminal`, `previews` | Platform › Computers |
-  | `skills` | What agents may do › Defaults (the skills library refresh is its second group) |
+  | `skills` | What agents may do › Defaults (the **Skill libraries** group: a first row "Skill libraries — <n> shared with every organization" with **Manage**, then the refresh settings) |
   | `retention` | Data › Retention |
   | `limits` | Platform › Rate limits |
   | `outgoing_webhooks` (P5-WEBHOOK) | Apps & accounts › Advanced |
@@ -1657,15 +1657,50 @@ every other topic is owners/admins and is not listed for a member.)
   <team>" and offers three buttons: **Attach an agent** (workspaces the viewer can own or use,
   shared presence by default, the existing attach route), **Link your Mattermost account**
   (`/account/channels`), **Open a DM with @bot** (`https://<server>/<team>/messages/@<bot>`).
-- **Skill libraries** (`/o/<org>/skills/libraries`, phase 4, P4-GSL, D-148; org owners/admins; a tab of
-  the org Skills page): a table (label, repository `owner/name`, ref, path, status chip with the sanitized
-  last error and "Reconnect" link when the connection needs it, last checked, skills in use by tier,
-  pending updates) and **Connect a repository** (dialog: pick an org-scoped connection of an app that can
-  serve a library, repository, optional branch/tag, optional folder; the read-only warning from
-  `required_access`; the creation check's failure shown in words), **Check now**, Pause/Resume, Delete
-  (confirm: "N skills keep their content and become editable skills"). No library exists until an admin
-  creates one; with none, the org Skills page shows an inline "Add a library" call to action only to
-  owners/admins.
+- **Skill libraries** (`/o/<org>/agents/skills/libraries`, phase 4, P4-GSL, D-148; rewritten in phase 5, P5-SKLIB-3,
+  D-450, C-1129; org owners/admins, others are sent where `OrgGate` sends them). The header has **Add a library**
+  and a link to Organization skills, and the page has two sections:
+  - **Your organization's libraries**: one `LibrariesTable` (`components/skills/libraries/`) on `DataTable`,
+    which becomes one card per row below 900 px. Columns: Label; Repository (`host/path` in monospace,
+    plain text, never a link, with **Copy address** for the clone address); Branch or tag ("Default branch"
+    when none); Folder ("Repository root" when empty); Status; Last checked (relative time and the commit's
+    first 7 characters); Skills in use ("1 agent · 2 workspace · 3 org"); Pending updates (a link to the
+    organization's Skills page, where the updates are reviewed, when above zero); actions **Check now**,
+    **Edit**, **Pause/Resume** and **Delete** (confirm: "N skills keep their content and become editable
+    skills"). With none: "No libraries yet" and "Add a git repository of skills; people then add the skills
+    they want to their agents, workspaces or the organization." with the button.
+  - **Shared with every organization** (shown only when the instance shares at least one): the instance's
+    libraries, read-only, with this organization's own counts and status; the only action is **Browse**,
+    which opens the library browser of Add from library in read mode (no **Add**). An organization
+    cannot hide one (Q-SKLIB-1: not in this version).
+  - **Statuses in words** (`LibraryStatus`, `LIBRARY_STATUS` in `lib/labels.ts`): Active; Paused; "Can't be
+    read" with the sanitized reason beneath; "Needs an access token" when that is the reason; "Pending
+    updates over budget"; a library migrated without an address says "Enter the repository's git address"
+    and offers **Set address**.
+  - **Add a library** is a two-step dialog that stores nothing until the last button. Step 1 *Where is it?*:
+    Repository address (required; hint: "The address you clone, or the repository's page. For example
+    https://gitlab.example.org/team/skills or https://github.com/acme/skills/tree/main/skills"), Branch or
+    tag ("Default: the repository's default branch"), Folder ("The folder that holds the skill folders.
+    Default: the repository root"), and a closed fold **This repository is private** with Access token
+    (`SecretInput`), User name ("Most hosts accept any name. Bitbucket: x-token-auth") and "Use a token that
+    can only read this repository. Aurora only reads." → **Check**. Step 2 *What Aurora found*: the
+    repository, the branch ("main (default branch)", a tag or a commit), the commit's first 7 characters,
+    the folder, "12 skills can be added", "1 can't be added (open it after adding to see why)", up to 20
+    names as plain text, the truncated notice, "Branch and folder were taken from the address." when the
+    check filled them in from a page address, and the Label (prefilled) → **Add library**; **Back** keeps
+    every field (the fold opens when a token was typed). Only https addresses are accepted (the field's own
+    check is only help; the API decides): a refused address shows one sentence on the address field per
+    reason (`not_https`, `ssh_url`: "Use the https address; Aurora doesn't use SSH.",
+    `credentials_in_url`, `query_or_fragment`, `not_a_repository_path`, `too_long`); an unreadable repository
+    (`library_unreachable`) and every other failure show above the fields; too many checks (10 a minute)
+    says "Try again in a minute".
+  - **Edit**: Label, Branch or tag, Folder; the address is shown read-only with "To use another repository,
+    add a new library." (a library migrated without an address shows **Set address** instead, the one PATCH
+    of `url`); the access token shows "A token is saved (since <date>)." with **Replace** (a secret field and
+    a user name) and **Remove** (confirm), or "No token." with **Add a token**. Saving makes the server read
+    the repository again; its failure keeps the dialog open with the reason.
+  No library exists until an admin creates one; with none, the org Skills page shows an inline "Add a
+  library" call to action only to owners/admins, and its header link also says **Add a library**.
 - **Skills**: org skills editor (tier badge "Organization"; phase 3, RFE-020: states that workspace and agent skills with the same name take precedence).
 - **Retention** (phase 2, RFE-010/015): conversation and attachment windows,
   attachment quota with the storage breakdown (by workspace and direction), a
@@ -1756,13 +1791,16 @@ every other topic is owners/admins and is not listed for a member.)
   - **Memory** — list, editor with revisions, restore, redact, search; banner
     "Memories in this workspace are written in <Language>".
   - **Skills** — editor with file tree, executable bit, size meter. (phase 3, RFE-020) Lists the agent's **effective** skills with a tier badge (Agent / Workspace / Organization) and, for shadowing, "overrides the Workspace skill of the same name" / "overridden by …"; workspace and org skills open read-only here with a link to where they are edited.
-    (phase 4, P4-GSL, D-148) **Add from library…** (next to New skill, shown only when the org has an
-    active library): a picker of libraries → a searchable list of the library's skills at its current
+    (phase 4, P4-GSL, D-148; phase 5, P5-SKLIB-3, D-450(f)) **Add from library…** (next to New skill, shown
+    when the organization **or the instance** has an active library): a picker of libraries in two
+    groups, "Your organization" and "Shared with every organization" (library labels are data; a paused
+    library is not offered; an instance library is browsed with `?org=` for this organization) → a searchable list of the library's skills at its current
     commit (name, description, size, "already added" chips, invalid ones disabled with the reason) → a
     full preview of exactly what would be stored (`SKILL.md` and files, rendered as text) with the
     commit sha and the sentence "Pinned to this commit. Changes in the repository are not applied until
     someone with permission approves them." → **Add** (disabled when over budget, with the numbers).
-    A library skill carries the badge "Library · <repo> · <sha7>", opens **read-only** with the banner
+    A library skill carries the badge "Library · <host/path> · <sha7>" (the same for a skill from an
+    instance library, whose update this organization approves or rejects itself), opens **read-only** with the banner
     "Managed by a skill library; edit it in the repository or detach it" and the actions Enable/Disable,
     **Detach** (confirm: becomes an editable skill) and Remove; an **Update available** chip opens the
     review dialog: whole-content diff (no truncation), the new commit sha, kind (changed / removed /
@@ -2131,7 +2169,7 @@ table view; durations "3 h 20 min", "45 min", "under 1 min"; dates as the dashbo
 "UTC" in the opening sentence only.
 
 ### Instance administration (`/admin/*`, instance admins only)
-(phase 5, P5-REFINE-18, second part) **The rail in two halves** (`ADMIN_RAIL_GROUPS`, `lib/routes.ts`): **Overview**, then **POLICY FOR EVERYONE** (What agents may do = `/admin/internet-access`, Apps, Chat platforms, People & sign-in, Data) and **THIS INSTALLATION** (Health & runners = `/admin/platform`, AI endpoints = `/admin/ai-models`, **Set in Helm**, All settings). (Page merge, lane B) **What agents may do is one page with four tabs**, `?tab=internet-access|ai-keys|byo|defaults`: Internet access (the preset card first, then where organizations stand), AI keys and rules (the old AI models › Rules), Bring your own (the old Agents › BYO), Defaults (the old Agents › Defaults and Skills, as two groups). **Health & runners** has `?tab=health|runners|computers|secret-stores|email|limits`: Health is Overview's health view on its own page, Computers the old Agents › Computers. **AI endpoints** is the endpoints alone. The old Agents topic is gone from the rail. Old addresses redirect (`legacy-routes.ts`, a `LegacyGate` on the three pages that kept a path): `/admin/agents` (no tab, `defaults`, `skills`) → `…/internet-access?tab=defaults`, `?tab=byo` → `?tab=byo`, `?tab=computers` → `/admin/platform?tab=computers`; `/admin/ai-models?tab=rules` → `?tab=ai-keys`; `/admin/internet-access?tab=limits` → `?tab=internet-access`; `/admin/settings/<section>` follows the table above. **Set in Helm** (`/admin/set-in-helm`, `components/admin/set-in-helm-view.tsx`) lists every locked value from the settings index: the setting in words, its current value in words, "Set in your Helm values" with the key in `<code>`, and a link to where it is used; every "Set by the installation" pill (`LockPill`) links to its row (`#<key>`), the long "remove it from your values" text is gone from the pages, and the All settings notice is one line linking here.
+(phase 5, P5-REFINE-18, second part) **The rail in two halves** (`ADMIN_RAIL_GROUPS`, `lib/routes.ts`): **Overview**, then **POLICY FOR EVERYONE** (What agents may do = `/admin/internet-access`, Apps, Chat platforms, People & sign-in, Data) and **THIS INSTALLATION** (Health & runners = `/admin/platform`, AI endpoints = `/admin/ai-models`, **Set in Helm**, All settings). (Page merge, lane B) **What agents may do is one page with four tabs**, `?tab=internet-access|ai-keys|byo|defaults`: Internet access (the preset card first, then where organizations stand), AI keys and rules (the old AI models › Rules), Bring your own (the old Agents › BYO), Defaults (the old Agents › Defaults and Skills, as two groups). (P5-SKLIB-3, D-450(b), C-1129) **The Skills group is now "Skill libraries"** ("Git repositories of skills that organizations and this instance offer to agents.") and starts with a row "Skill libraries — <n> shared with every organization" with **Manage**, which opens the sub-page **`/admin/skill-libraries`** (`adminRoutes.skillLibraries()`; instance admins, others get the admin guard's answer; the rail keeps What agents may do selected): breadcrumb "What agents may do › Skill libraries", the description "Libraries here are offered to every organization. People add skills from them with the same permissions as any skill, and each organization approves its own updates.", **Add a library**, and the same `LibrariesTable` and add/edit dialogs as the organization's page (`scope="instance"`, with one more column, **Organizations using it**, the count only, never which skills), "No libraries yet" with the button when there are none. All settings lists sections, not sub-pages, so it has no entry of its own. **Health & runners** has `?tab=health|runners|computers|secret-stores|email|limits`: Health is Overview's health view on its own page, Computers the old Agents › Computers. **AI endpoints** is the endpoints alone. The old Agents topic is gone from the rail. Old addresses redirect (`legacy-routes.ts`, a `LegacyGate` on the three pages that kept a path): `/admin/agents` (no tab, `defaults`, `skills`) → `…/internet-access?tab=defaults`, `?tab=byo` → `?tab=byo`, `?tab=computers` → `/admin/platform?tab=computers`; `/admin/ai-models?tab=rules` → `?tab=ai-keys`; `/admin/internet-access?tab=limits` → `?tab=internet-access`; `/admin/settings/<section>` follows the table above. **Set in Helm** (`/admin/set-in-helm`, `components/admin/set-in-helm-view.tsx`) lists every locked value from the settings index: the setting in words, its current value in words, "Set in your Helm values" with the key in `<code>`, and a link to where it is used; every "Set by the installation" pill (`LockPill`) links to its row (`#<key>`), the long "remove it from your values" text is gone from the pages, and the All settings notice is one line linking here.
 (phase 5, P5-REFINE-18, second part) **Organization presets**: `OrgPolicyPresets` (`components/policy/org-policy-presets.tsx`) shows the same three cards on **organization AI models** (key posture, outside agents) and **organization Internet access** (posture, browser connections). Choosing one writes the organization's governance document (one PUT); a card looser than what the instance admin set is disabled with "Set by the instance admin". The checklist carries one line under its five rows, "What agents may do · Open · Change" (not counted), linking to the card (`/admin/internet-access#presets`).
 (phase 5, P5-REFINE-18, second part) **Errors and saving in words**: a refused save puts each message under its field in the field's own unit ("Enter 5 minutes or more.", "Row 1: that isn't a website name. Try docs.example.org.", "That isn't a valid address range. Use a form like 10.0.0.0/24."), scrolls to the first bad field, and lists the config and environment names only under **Technical details** (`fieldErrorWords`, `technicalNames` in `lib/settings-words.ts`); a private-address refusal says "Aurora can't reach private addresses. Ask whoever installed Aurora to allow it." The saved sentence names what changed ("Saved. New agents use these defaults." on Agent defaults).
 (phase 5, P5-REFINE-18, second part) **Chat platforms** lead with the platforms: Mattermost "Available" (Add, or Added with Manage), Slack and Microsoft Teams "Not available yet" (`lib/chat-platforms.ts`); connector hosts, tokens and replicas sit in one closed **Advanced** fold on the same page. **App review** opens on the tile, "App package, version", Approve and "What this app does" (up to three sentences from the manifest, `lib/app-summary.ts`); hooks, egress, host claims, the digest and `{instance}` are in a closed **Technical details** (the agent guide stays visible). **Add AI endpoint** is two steps, **Connect and test** (Name, Address, Test connection with its result beside it, "Skip the test", Advanced options) then **Models and roles**; editing shows both on one page. **Audit log** (Administration) reads as stacked sentences ("Alice changed the web terminal settings" / "20 Nov, 14:20 · Instance settings") and hides the system's install events behind **Show system events** with the count of hidden rows (client side, from the loaded pages). **Health** says only what a real call proved, by display name ("Company AI gateway answered 2 min ago", "has not been asked yet", "did not answer at 14:02"), and lists the web terminal when it is off ("Off. People see “not available” on their agent's Computer tab." with **Turn on**); the terminal switch says "Off: people see that the terminal isn't available" beside it, neutral. **Users** show the display name, "alice · Instance admin", a **Manage** button and, when no one has any, "Roles from sign-in: none". The checklist's **Try it** comes from the server (`try_it`): it ticks itself, is not offered without an AI key ("Comes after the AI key"), and **Open chat** goes to the agent's chat with "Hello Daneel! What can you help me with?" typed and not sent; after adding the key the row says "Given to Daneel and 1 other agent already in Acme." The add-key dialog names its select **Provider**.

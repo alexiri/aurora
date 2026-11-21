@@ -163,3 +163,29 @@ redirect lists), `web/tests/labels.test.ts`, `web/tests/settings-in-words.test.t
 Files changed, test commands and results, screenshots kept out of git, and anything left undecided.
 Always name: the primitives added or changed, the admin search/index entry (added or not needed), and
 every test file changed.
+
+## Completion report (lane B, Sonnet, 2026-11-21)
+
+Merged `master` and `b99fedec` (lane A's P5-SKLIB-1 + -2; schemas used as generated, nothing regenerated or hand-edited). No API change was needed.
+
+**Built (all of Work 1–8, D-450 / C-1129):**
+- `components/skills/libraries/`: `libraries-table.tsx` (`LibrariesTable`, `scope`, `rows`, `canManage`, DataTable with `stackBelow={900}` cards), `add-library-dialog.tsx` (two steps, **Back** keeps every field, token fold closed unless a token was typed, values sent only when filled, found names as plain text), `edit-library-dialog.tsx` (Replace / Remove with confirm / Add a token / Set address / read-only address), `library-status.tsx` (`LibraryStatus`, "Needs an access token", "Can't be read" + reason, migrated row without an address), `words.ts` (one sentence per `library_url_invalid` reason, rate-limit sentence), `instance-libraries-page.tsx`.
+- Organization page rewritten (two sections, Browse in read mode; shared section only when there is one; no Hide, https only). Instance page `/admin/skill-libraries` (`adminRoutes.skillLibraries()`, `app/admin/skill-libraries/page.tsx`, breadcrumb back to Defaults, rail keeps What agents may do selected). `SKILLS_PAGE` group renamed "Skill libraries" with the lead row (`<n> shared with every organization`, **Manage**).
+- `library.tsx`: `AddFromLibrary` now offers both kinds (grouped picker "Your organization" / "Shared with every organization", `?org=` always passed), new `LibraryBrowserDialog` (read mode for Browse), badge unchanged (`Library · host/path · sha7`); review/approve unchanged and tested for an instance-library skill. `org-skills.tsx` link says "Add a library". `labels.ts`: `LIBRARY_STATUS`. `errors.ts`: "Connect a narrower folder" → "Choose a narrower folder".
+- Hooks (`lib/api/skill-libraries.ts`): `useInstanceSkillLibraries`, `useCheckLibrary`, create/patch/delete/check-now take an owner (`orgId` or `null` = instance); an instance change also invalidates every organization's list.
+- **Primitives added or changed:** `ui/fold.tsx` gained `defaultOpen`; `SettingsGroup` gained an optional `lead` row (`settings-section-form.tsx`). No other new primitive (the table's "Copy address" is a small button on `useCopy`, not `CopyValue`, whose label+box block does not fit a cell).
+- **Found while testing at 768 px (not in the brief):** `skills-view.tsx` laid its list and editor side by side from a viewport breakpoint (`md:`), so inside Agents › Skills (sub-nav rail) the editor got ~224 px and the page scrolled sideways. Now `@container` + `@3xl:`. Fixes Agents › Skills, Organization skills and workspace Skills at 768 px.
+- **Admin search / All settings index:** not needed (it lists settings sections, not sub-pages).
+- Docs: `14` (Organization › Skill libraries rewritten; Add from library's two groups and badge; instance sub-page under §Instance administration; settings table row), `docs/operator/skill-libraries.md` (where the pages are, the dialog's steps). `15` untouched (no setting text changed).
+
+**Not done / for the Orchestrator:** no screenshots taken (none in git); I could not compare against the design canvas visually from here, only by the shared primitives and the axe/overflow specs. The Edit dialog has a User name field next to a new token (not in the brief; the API accepts `token_username`, Bitbucket needs it).
+
+**Tests changed:** new `web/tests/skill-libraries-ui.test.tsx` (36 tests: both sections, columns and words, every status, actions, Browse, empty/off, add dialog steps/Back/token/each `library_url_invalid` reason/unreachable/429/failed add, edit dialog, instance page, picker groups + `?org=`, approve for an instance-library skill). Edited: `web/tests/skill-library.test.tsx` (the old libraries-page and Connect-dialog tests removed because the screens they drove no longer exist; their behaviour is re-tested in the new file), `admin-settings-operational.test.tsx` (lead row), `labels.test.ts`, `routes.test.ts`, `e2e/skill-libraries.spec.ts` (screens at 1280/768/390, light+dark, axe; journeys at 1280 and 390), `e2e/support/skill-libraries.ts` (stateful mocks, both levels), `e2e/support/mock-api.ts` (`/v1/admin/skill-libraries`, `/v1/admin/settings/skills`, route `admin-skill-libraries` in the sweep). No test deleted to get green, none skipped. Production (`*.prod.spec.ts`) specs: none reference these screens (searched `web/e2e`, `scripts/e2e`).
+
+**Commands (all through `heavy.sh p5-polish-b`):**
+- `pnpm typecheck`: passes. eslint on touched src and tests: clean.
+- Whole `vitest run`: 3462 passed, 2 failed on the first run: `arbitrary-values` (my `@md:grid-cols-[8rem_…]`, fixed, passes) and `connect-dialog.test.tsx` "a failed result shows the error…" (an 11 s timeout under load; passes alone, untouched by this change). Re-ran the touched files after the fix: 50 passed.
+- Playwright mocked (`AURORA_E2E_WEB_PORT=4123`): `e2e/skill-libraries.spec.ts` 66 passed; `stage4-routes` + `stage4-axe` filtered to the skills, Defaults and new admin routes: 20 passed.
+- `bash scripts/guards/run-all.sh`: all guards passed.
+
+I edited three one-line import/test lines with `sed -i` by mistake (labels.test import, an e2e helper call) and deleted the old test block with `sed -i '72,215d'`; everything else with Edit/Write.
