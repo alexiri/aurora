@@ -236,6 +236,18 @@ describe("model readiness on the Access tab", () => {
     expect(await screen.findByTestId("cant-answer")).toHaveTextContent("Can't answer");
     expect(screen.queryByRole("list", { name: "AI keys this agent uses" })).toBeNull();
   });
+
+  it("access-3: with the organization's key to give, the Access page has the card and not also the 'Can't answer' line", async () => {
+    routes["GET /v1/agents/a1/model-readiness"] = () => readiness([], null);
+    routes["GET /v1/agents/a1/answer-readiness"] = () =>
+      json(200, { can_answer: false, reason: "no_ai_key", usable_keys: 0, fix: { action: "give_key", key: { secret_id: "s1", name: "Company key", scope: "organization" } } });
+    wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn hosted base="/o/acme/w/ops" />);
+    expect(await screen.findByText("Daneel can't answer yet: it has no AI key.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Give Daneel the Company key" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose another" })).toBeInTheDocument();
+    expect(screen.queryByTestId("cant-answer")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Choose a model" })).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------------------

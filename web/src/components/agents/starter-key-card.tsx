@@ -1,37 +1,27 @@
 "use client";
 
+import { useAnswerFix } from "@/components/agents/answer-fix";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorNotice } from "@/components/ui/notice";
 import { showUndoToast } from "@/components/ui/undo-toast";
-import { useAccounts } from "@/lib/api/accounts";
-import { useAddCredentialGrants, useModelReadiness } from "@/lib/api/credential-grants";
-import { useOrg } from "@/lib/api/queries";
+import { useAddCredentialGrants } from "@/lib/api/credential-grants";
 
 /**
- * (P5-REFINE-12, access-3, priority 10) The organization's starter AI key, when it is what this agent is missing: the
- * agent cannot answer, the organization has a starter key, and the agent was never given it (it was created before the
- * key was set). One click gives it. Words use the key's own name. Nothing shows when the agent can answer, when the
- * organization has no starter key, or once the key is given (P5-REFINE-5 gives a later-added starter key to existing
- * agents itself, so this card is then never needed).
+ * (P5-REFINE-12, access-3, priority 10) The organization's starter AI key, when it is what this agent is missing: the agent
+ * has no AI key at all and the answer check (C-1062 `fix`, the same source as the header's action) says `give_key`. One click
+ * gives it. Words use the key's own name. Nothing shows when the agent can answer, when the fix is another one (add a key,
+ * ask an admin), or once the key is given.
  */
-export function useStarterKeyOffer(agentId: string, orgId: string, enabled: boolean) {
-  const readiness = useModelReadiness(agentId, enabled);
-  // `GET /v1/orgs/{org}/accounts` is for owners and admins (403 for anyone else): a member is never asked (no console error).
-  const org = useOrg(enabled ? orgId : undefined);
-  const isAdmin = org.data?.my_role === "owner" || org.data?.my_role === "admin";
-  const accounts = useAccounts({ kind: "organization", id: orgId }, enabled && isAdmin);
-  const add = useAddCredentialGrants({ kind: "secret", id: accounts.data?.items.find((a) => a.kind === "ai_key" && a.starter)?.ref.id ?? "" });
-  const d = readiness.data;
-  const starter = accounts.data?.items.find((a) => a.kind === "ai_key" && a.starter === true);
-  const canAnswer = !!d && d.keys.some((k) => k.usable) && !!d.default;
-  const given = !!d && !!starter && d.keys.some((k) => k.secret_id === starter.ref.id);
-  const offer = !!d && !!starter && !canAnswer && !given ? { keyName: starter.name } : null;
-  return { offer, add };
+export function useStarterKeyOffer(agentId: string, enabled: boolean) {
+  const { noKey, fix } = useAnswerFix(agentId, enabled);
+  const key = noKey && fix?.action === "give_key" ? fix.key : null;
+  const add = useAddCredentialGrants({ kind: "secret", id: key?.secret_id ?? "" });
+  return { offer: key ? { keyName: key.name } : null, add };
 }
 
-export function StarterKeyCard({ agentId, agentName, orgId }: { agentId: string; agentName: string; orgId: string }) {
-  const { offer, add } = useStarterKeyOffer(agentId, orgId, true);
+export function StarterKeyCard({ agentId, agentName }: { agentId: string; agentName: string }) {
+  const { offer, add } = useStarterKeyOffer(agentId, true);
   if (!offer) return null;
   return (
     <Card role="region" aria-label={`${agentName} has no AI key`} data-testid="starter-key-card" className="space-y-3">

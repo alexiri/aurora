@@ -60,15 +60,18 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByTestId("agent-state")).toContainText("Can't answer: no AI key");
         expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
-        // The header's action and the card's are the same one-click grant; on a phone only the card has it (the header's
-        // line has no room beside Status and Settings).
-        const headerGive = page.getByTestId("agent-state").getByRole("button", { name: "Give Daneel the Company key" });
-        if (width === 390) {
-          await expect(headerGive).toHaveCount(0);
-          await card.getByRole("button", { name: "Give Daneel the Company key" }).click();
-        } else {
-          await headerGive.click();
-        }
+        // The header's action (its own row under the name and state, at both widths) and the card's are the same one-click
+        // grant. The name stays visible and nothing runs under Status and Settings.
+        const header = page.locator("header").filter({ has: page.getByTestId("agent-state") });
+        const headerGive = header.getByRole("button", { name: "Give Daneel the Company key" });
+        await expect(headerGive).toBeVisible();
+        await expect(header.getByRole("heading", { name: "Daneel", level: 1 })).toBeVisible();
+        const nameBox = (await header.getByRole("heading", { name: "Daneel", level: 1 }).boundingBox())!;
+        const stateBox = (await page.getByTestId("agent-state").boundingBox())!;
+        const settingsBox = (await header.getByRole("button", { name: "Settings" }).boundingBox())!;
+        expect(stateBox.x + stateBox.width, "the state line stays left of Settings").toBeLessThanOrEqual(settingsBox.x + 1);
+        expect(nameBox.width, "the name is not squeezed out").toBeGreaterThan(30);
+        await headerGive.click();
         // The header leaves "Can't answer" (the shared mock has approvals waiting, so it then reads "Needs you", not Ready).
         await expect(page.getByTestId("agent-state")).not.toContainText("Can't answer");
         await expect(card).toHaveCount(0);

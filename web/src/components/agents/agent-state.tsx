@@ -1,7 +1,5 @@
 "use client";
 
-import type { ReactNode } from "react";
-
 import { StatusLine, type StatusTone } from "@/components/ui/status-line";
 import { useAgentPendingActionApprovals, useAgentPendingApprovals } from "@/lib/api/approvals";
 import { useAnswerReadiness } from "@/lib/api/answer-readiness";
@@ -51,15 +49,14 @@ export function agentStateOf(s: {
 /**
  * (P5-REFINE-11, D-408) The one state in the agent's header: **Ready** (only when the computer answers), **Starting its
  * computer…** (a spinner, `aria-live` polite), **Asleep** (it wakes on the next message), **Working**, **Needs you** or
- * **Can't answer: <reason>**. A hosted agent only; a BYO agent shows no computer states. `action` is the slot of the primary
- * fix next to "Can't answer" (P5-REFINE-12 fills it).
+ * **Can't answer: <reason>**. A hosted agent only; a BYO agent shows no computer states. The primary fix is `AnswerFixAction`,
+ * on its own row of the agent page's header.
  */
 export function AgentState({
   agentId,
   wsId,
   canApprove,
   hosted,
-  action,
 }: {
   agentId: string;
   wsId: string;
@@ -67,7 +64,6 @@ export function AgentState({
   canOwn?: boolean;
   canApprove: boolean;
   hosted: boolean;
-  action?: ReactNode;
 }) {
   const readiness = useAnswerReadiness(agentId, hosted);
   const sandbox = useSandbox(agentId);
@@ -96,15 +92,10 @@ export function AgentState({
       ? "its computer couldn't start"
       : null;
   return (
-    // On a phone the line wraps inside the header's name column, and the header's copy of the fix stays out: it did not fit
-    // beside Status and Settings and lay under them (no-model.spec at 390 px); the empty chat's card and the no-model bar
-    // carry the same one-click action there.
-    <StatusLine
-      tone={tone}
-      className="min-w-0 leading-4 md:whitespace-nowrap"
-      data-testid="agent-state"
-      action={word === "Can't answer" && action ? <span className="hidden md:inline-flex">{action}</span> : undefined}
-    >
+    // The line wraps inside the header's name column on a phone. The one-click fix is not inside this line: it did not fit
+    // beside Status and Settings (no-model.spec at 390 px) and pushed the name out at 1256; the agent page puts it on its
+    // own row under the header (`AnswerFixAction`).
+    <StatusLine tone={tone} className="min-w-0 leading-4 md:whitespace-nowrap" data-testid="agent-state">
       <span aria-live="polite">
         {starting ? <span aria-hidden="true" className="mr-1.5 inline-block size-3.5 animate-spin rounded-full border-2 border-line-strong border-t-accent align-middle motion-reduce:animate-none" /> : null}
         {word === "Can't answer" ? (reason ? `Can't answer: ${reason}` : "Can't answer") : word}

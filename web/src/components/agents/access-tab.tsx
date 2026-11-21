@@ -7,7 +7,7 @@ import { StatusLine } from "@/components/ui/status-line";
 import { useModelReadiness } from "@/lib/api/credential-grants";
 
 import { AgentSummary } from "./agent-summary";
-import { StarterKeyCard } from "./starter-key-card";
+import { StarterKeyCard, useStarterKeyOffer } from "./starter-key-card";
 import { REASON_COPY } from "./model-readiness";
 
 /**
@@ -17,8 +17,10 @@ import { REASON_COPY } from "./model-readiness";
  */
 function CantAnswerLine({ agentId, base, enabled }: { agentId: string; base: string; enabled: boolean }) {
   const readiness = useModelReadiness(agentId, enabled);
+  // The starter-key card above says it (and gives the key): no second line for the same problem.
+  const { offer } = useStarterKeyOffer(agentId, enabled);
   const d = readiness.data;
-  if (!d) return null;
+  if (!d || offer) return null;
   const usable = d.keys.some((k) => k.usable);
   if (usable && d.default) return null;
   const firstBad = d.keys.find((k) => !k.usable);
@@ -67,7 +69,7 @@ export function AccessTab({
   return (
     <div className="space-y-6">
       {/* (P5-REFINE-12, access-3) The organization's starter key, one click, when it is what this agent is missing. */}
-      {canOwn && hosted ? <StarterKeyCard agentId={agentId} agentName={agentName} orgId={orgId} /> : null}
+      {hosted ? <StarterKeyCard agentId={agentId} agentName={agentName} /> : null}
       {/* The agent's summary (C-986): the same sentences as Welcome and the Overview, above the list they come from. */}
       <section aria-label={`What ${agentName} can do`} className="rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
         <h2 className="font-display text-base font-semibold text-ink">What {agentName} can do</h2>
