@@ -415,7 +415,12 @@ the check jobs: it only fills the cache and never pushes. The publishing jobs (`
 `images-api-pr`, `images-web`, `images-sandbox`) still need every check job. When a check job fails, a
 background watchdog in `images-builder` (`scripts/ci/stop-builder-on-failed-check.sh`, polling the run's jobs
 once a minute) stops the build, so a red run doesn't spend ~18 min compiling. GitHub can't cancel one job,
-and cancelling the run would hide the other checks' results. Before the change, run
+and cancelling the run would hide the other checks' results. Because the image jobs now start ~15 min after
+their builder, a newer run's builder could overwrite `services` in between, and then every image job
+recompiled the workspace (run 44887166876: 13-18 min each). So the builder also exports a per-commit index
+`services-<sha>`, which the image jobs read first, with `services` as the fallback. Layers are stored as
+`buildkit-blob-1-<digest>` entries whatever the scope, so the extra index costs only its small
+`index-services-<sha>-…` entry. Before the change, run
 44875380182 took 54 min wall time: `web` 30 min, then `images-builder` 18 min, then the service/api images 5 min.
 `target/` is deliberately kept in image layers, not a `--mount=type=cache`: `cache-to type=gha` exports layers
 only, so a cache-mounted `target/` would be lost between CI runs. The cargo registry/git use cache mounts.

@@ -453,7 +453,14 @@ jobs:
           target: builder
           push: false
           cache-from: type=gha,scope=services
-          cache-to: type=gha,scope=services,mode=max
+          # Two indexes over the same layers. `services` (newest builder) warms the next run's builder.
+          # `services-<sha>` is what THIS run's image jobs read: they start ~15 min after the builder ends,
+          # and a newer run's builder overwriting `services` in between made all nine recompile the
+          # workspace (run 44887166876: 13-18 min each). Layers are `buildkit-blob-1-<digest>` entries
+          # whatever the scope, so the second index costs only its small `index-services-<sha>-…` entry.
+          cache-to: |
+            type=gha,scope=services,mode=max
+            type=gha,scope=services-${{ github.sha }},mode=max
       - name: why the builder stopped
         if: failure()
         run: |
@@ -536,7 +543,10 @@ jobs:
           push: ${{ steps.prep.outputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=services
+          # This run's builder index first (see images-builder), the newest one as a fallback.
+          cache-from: |
+            type=gha,scope=services-${{ github.sha }}
+            type=gha,scope=services
           provenance: mode=max
           sbom: true
 
@@ -595,7 +605,10 @@ jobs:
           push: ${{ steps.prep.outputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=services
+          # This run's builder index first (see images-builder), the newest one as a fallback.
+          cache-from: |
+            type=gha,scope=services-${{ github.sha }}
+            type=gha,scope=services
           secret-files: |
             aurora_project_signing_key=${{ steps.sign.outputs.keyfile }}
           provenance: mode=max
