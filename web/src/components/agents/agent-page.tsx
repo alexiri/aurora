@@ -148,8 +148,9 @@ export function AgentPage() {
     <AltitudeScope>
     <div className="min-w-0 space-y-2">
       <HiddenPages availability={availability} allows={altitude.allows} />
-      {/* One line at md and up (breadcrumb above the name beside the avatar · section switcher · Agent actions); on a phone
-          one compact row (back, avatar, name + status, actions) with the section switcher as the row under it (14 §Agent page). */}
+      {/* One line at xl (1280) and up (the longest state does not fit beside the tabs at 1024) (breadcrumb above the name beside the avatar · section switcher · Agent actions); below it
+          the name, state and Settings are one row and the section switcher the row under it, so the name is never squeezed out
+          (on a phone: back, avatar, name + status, actions, then the switcher; 14 §Agent page). */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 md:gap-x-4">
         <div className="order-1 flex min-w-0 flex-1 items-center gap-2 md:gap-3">
           <Link href={`${base}/agents`} aria-label="Back to agents" className="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:text-ink md:hidden">
@@ -168,10 +169,11 @@ export function AgentPage() {
               </Link>{" "}
               <span aria-hidden="true">/</span>
             </nav>
-            <div className="flex min-w-0 flex-col md:flex-row md:items-center md:gap-x-3">
+            <div className="flex min-w-0 flex-col xl:flex-row xl:items-center xl:gap-x-3">
               <h1 className="min-w-0 truncate font-display text-base font-semibold leading-5 text-ink md:text-xl md:leading-7">{agent.name}</h1>
-              {/* Each item keeps its words on one line; at 390 px the items wrap between themselves, never off the screen. */}
-              <span className="flex min-w-0 flex-wrap items-center gap-x-2 whitespace-nowrap text-sm text-ink-2 md:shrink-0 md:flex-nowrap">
+              {/* Each item keeps its words on one line, except a state with a reason ("Can't answer: no AI key"): it wraps inside the
+                  name column so all of it shows and nothing runs under the buttons (one line from xl, where the tabs share the row). */}
+              <span className="flex min-w-0 flex-wrap items-center gap-x-2 whitespace-nowrap text-sm text-ink-2 xl:shrink-0 xl:flex-nowrap">
                 <Altitude id="agent.handle" level="expert">
                   <span className="hidden font-mono text-muted md:inline">@{agent.handle}</span>
                 </Altitude>
@@ -191,7 +193,7 @@ export function AgentPage() {
             </div>
           </div>
         </div>
-        <div className="order-2 flex shrink-0 items-center gap-2 md:order-3">
+        <div className="order-2 flex shrink-0 items-center gap-2 xl:order-3">
           {chatPage ? (
             <Button type="button" variant="outline" size="sm" className="min-h-11 md:hidden" onClick={() => setStatusOpen(true)}>
               Status
@@ -212,11 +214,11 @@ export function AgentPage() {
             own row under the name and state, so the name is never pushed out at 1256 and nothing runs under Status at 390.
             Empty (no row) unless the agent cannot answer. */}
         {byo || !wsId ? null : (
-          <div className="order-3 w-full min-w-0 max-w-full basis-full empty:hidden md:order-4">
+          <div className="order-3 w-full min-w-0 max-w-full basis-full empty:hidden xl:order-4">
             <AnswerFixAction agentId={agent.id} agentName={agent.name} wsId={wsId} base={base} />
           </div>
         )}
-        <div className="order-3 w-full min-w-0 md:order-2 md:w-auto md:shrink-0">
+        <div className="order-3 w-full min-w-0 xl:order-2 xl:w-auto xl:shrink-0">
           <Tabs
             items={barSections.map((s) => ({ value: s.id, label: s.label }))}
             value={isConfig ? "" : sectionId}

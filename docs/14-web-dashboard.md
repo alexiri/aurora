@@ -514,8 +514,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - **Agent page (phase 5)** (P5-AGENT-2, D-200, D-201; design: the "Agent page
   redesign" canvas, boards "Chosen · Rail expanded", "Chosen · Rail collapsed"
   and "A · Phone"; its "New conversation" button is not part of the design).
-  - **Header**, one row of about 56 px from 768 px up (it does not wrap; the
-    chat card below fills the rest of the window height); on a phone one
+  - **Header**, one row of about 56 px from 1280 px up (it does not wrap; the
+    chat card below fills the rest of the window height); (P5-REFINE-20 batch 9) from 768 to 1279 px
+    the name, state and Settings are one row and the section switcher the row under it, so the name
+    is never squeezed out and the state ("Can't answer: no AI key" is the longest) shows whole;
+    at every width from 390 px there is no sideways scroll; on a phone one
     compact row (back arrow, 32 px avatar, name with the state under it, the
     44 px Status and Agent actions buttons) with the section switcher as a
     44 px-tall strip under it, like the board "A · Phone": 40 px avatar; "Agents /" breadcrumb above

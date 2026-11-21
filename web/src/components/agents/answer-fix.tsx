@@ -40,7 +40,7 @@ export function orgSlugOf(base: string): string | null {
 export function GiveKeyButton({ agentId, agentName, fix, size = "sm" }: { agentId: string; agentName: string; fix: Extract<AnswerFix, { action: "give_key" }>; size?: "sm" | "default" }) {
   const add = useAddCredentialGrants({ kind: "secret", id: fix.key.secret_id });
   return (
-    <span className="inline-flex max-w-full flex-col items-start gap-1">
+    <span className="flex w-full min-w-0 max-w-full flex-col items-start gap-1">
       <Button
         type="button"
         size={size}
