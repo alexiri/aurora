@@ -14,7 +14,7 @@ import { useInstance, useMe, useResolve, useWorkspaces } from "@/lib/api/queries
 import { lastScope, readRecent, writeRecent } from "@/lib/nav/recent-scopes";
 import { orgRoutes, topicHref, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
-import { workspaceDisplayName } from "@/lib/workspace-name";
+import { personName, workspaceDisplayName } from "@/lib/workspace-name";
 
 /** How many of an organization's workspaces the menu lists before "All n in <Org>" (D-389). */
 const RECENT_LIMIT = 5;
@@ -127,7 +127,7 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
 
   const label = (w: WsItem) => workspaceDisplayName(w, viewer);
   // (P5-POLISH-8, D4) The avatar of a personal workspace is its owner's initial ("B"), not the "Y" of "Your workspace".
-  const chipName = (w: WsItem) => (w.personal_of ? w.personal_of.name : w.personal === true ? (viewer?.display_name ?? label(w)) : label(w));
+  const chipName = (w: WsItem) => (w.personal_of ? personName(w.personal_of.name) : w.personal === true ? (viewer?.display_name ? personName(viewer.display_name) : label(w)) : label(w));
   const current = orgs.find((o) => o.slug === orgSlug);
   const currentWs = current?.workspaces.find((w) => w.slug === wsSlug);
   useEffect(() => {

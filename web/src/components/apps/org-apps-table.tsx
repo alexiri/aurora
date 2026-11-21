@@ -20,6 +20,7 @@ import { api } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 import { unwrap } from "@/lib/api/unwrap";
 import { orgRoutes } from "@/lib/routes";
+import { firstNameOf } from "@/lib/workspace-name";
 
 type Filter = "all" | "setup" | "off";
 
@@ -87,7 +88,7 @@ export function nextAvailability(cur: AppAvailability, allIds: string[], appId: 
 }
 
 function askersText(r: AppSetupRequest): string {
-  const names = r.askers.map((a) => a.display_name.split(/\s+/)[0]!).filter(Boolean);
+  const names = r.askers.flatMap((a) => firstNameOf(a.display_name) ?? []);
   return `${listWords(names)} asked`;
 }
 

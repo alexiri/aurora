@@ -40,6 +40,7 @@ import { SignInStep, WebsiteStep, type SignInResult } from "./sign-in-step";
 import { useDeleteConnection } from "@/lib/api/apps";
 import { WebhookAddressStep, WebhookMessageStep, useWebhookDraft } from "@/components/webhook/webhook-connect-step";
 import { WebhookDoneTest } from "@/components/webhook/webhook-done-test";
+import { personName } from "@/lib/workspace-name";
 
 type AgentRef = { id: string; name: string; handle?: string };
 
@@ -375,7 +376,7 @@ export function ConnectJourney({
           options={[
             ...existing.map((a, i) => ({
               value: a.ref.id,
-              label: `Use ${a.name}${a.connected_by ? ` (connected by ${a.connected_by.name})` : ""}`,
+              label: `Use ${a.name}${a.connected_by ? ` (connected by ${personName(a.connected_by.name)})` : ""}`,
               badge: i === 0 ? "Recommended" : undefined,
             })),
             { value: "new", label: "Connect another account" },

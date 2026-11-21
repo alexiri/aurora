@@ -13,6 +13,7 @@ import { useChannelLinkPreview, useConfirmChannelLink } from "@/lib/api/channels
 import { useSession } from "@/lib/api/queries";
 import { isUnauthorized, loginUrl } from "@/lib/auth/use-unauthorized-redirect";
 
+import { personName } from "@/lib/workspace-name";
 import { channelError } from "./shared";
 
 const PATH = "/link/channel";
@@ -103,7 +104,7 @@ export function LinkConfirmView() {
     return (
       <AuthCard title="Account linked">
         <Notice>
-          <code>{l.platform_user_ref}</code> on {l.tenant_label} is now linked to {l.user.display_name}.
+          <code>{l.platform_user_ref}</code> on {l.tenant_label} is now linked to {personName(l.user.display_name)}.
         </Notice>
         <Link href="/account/channels" className="text-sm text-link underline">
           Manage chat links
@@ -137,7 +138,7 @@ export function LinkConfirmView() {
   return (
     <AuthCard title="Link your chat account">
       <p className="text-sm">
-        Link this chat account to <strong>{session.data.user.display_name}</strong> ({session.data.user.email}) so
+        Link this chat account to <strong>{personName(session.data.user.display_name)}</strong> ({session.data.user.email}) so
         agents know who you are in chat:
       </p>
       <dl data-testid="link-account" className="space-y-1 rounded-card border border-line bg-subtle p-3 text-sm">

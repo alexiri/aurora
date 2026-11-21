@@ -34,6 +34,7 @@ import { useOrg, useSession } from "@/lib/api/queries";
 import { ConnectorBlocked, NoConnectorsYet } from "./connector-blocked";
 import { IntegrationDialog } from "./integration-dialog";
 import { IntegrationStepper } from "./integration-stepper";
+import { firstNameOf, personName } from "@/lib/workspace-name";
 import { MutationError, StatusChip } from "./shared";
 
 function UserLinks({ integration }: { integration: ChannelIntegration }) {
@@ -54,7 +55,7 @@ function UserLinks({ integration }: { integration: ChannelIntegration }) {
               </Button>
             }
           >
-            <span className="text-sm font-medium text-ink">{l.user.display_name}</span>
+            <span className="text-sm font-medium text-ink">{personName(l.user.display_name)}</span>
             <code className="font-mono text-xs text-ink-2">{l.platform_user_ref}</code>
             <span className="text-xs text-muted">{l.method.replace(/_/g, " ")}</span>
           </ListRow>
@@ -199,13 +200,13 @@ function IntegrationRow({
 
 /** "Carol Member", "Bob Builder and Carol Member", "Bob Builder, Carol Member and 2 others" (SEC-135: display names only). */
 function askerNames(r: AppSetupRequest): string {
-  const { who } = askersPhrase(r.askers.map((a) => a.display_name));
+  const { who } = askersPhrase(r.askers.map((a) => personName(a.display_name)));
   return who;
 }
 
 /** "Carol gets" for one asker (by first name), "they get" for several. */
 function gets(r: AppSetupRequest): string {
-  return r.askers.length === 1 ? `${r.askers[0]!.display_name.split(/\s+/)[0]} gets` : "they get";
+  return r.askers.length === 1 ? `${firstNameOf(r.askers[0]!.display_name) ?? "They"} gets` : "they get";
 }
 
 export function ChannelsView({ orgId }: { orgId: string }) {

@@ -13,7 +13,7 @@ import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { ApiError } from "@/lib/api/client";
 import { lastScope } from "@/lib/nav/recent-scopes";
-import { workspaceDisplayName } from "@/lib/workspace-name";
+import { personName, workspaceDisplayName } from "@/lib/workspace-name";
 import { pickRailWorkspace, useRailWorkspace, writeRailWorkspace } from "@/lib/nav/manage-return";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, ADMIN_RAIL_GROUPS, ADMIN_RAIL_LABEL, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
@@ -127,7 +127,7 @@ function SearchButton() {
 function UserMenu() {
   const me = useMe();
   const router = useRouter();
-  const name = me.data?.user.display_name;
+  const name = me.data ? personName(me.data.user.display_name) : undefined;
   const more = useMoreControls();
   // The tour points at the workspace navigation: from a page without it (Account, Admin) go to the landing page first.
   function onTour() {
@@ -166,9 +166,9 @@ function UserMenu() {
       <MenuContent align="start" side="top" className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-60">
         {me.data ? (
           <div className="flex items-center gap-2.5 px-2 py-2">
-            <Avatar name={me.data.user.display_name} tintKey={me.data.user.email} size={32} />
+            <Avatar name={personName(me.data.user.display_name)} tintKey={me.data.user.email} size={32} />
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-ink">{me.data.user.display_name}</p>
+              <p className="truncate text-sm font-semibold text-ink">{personName(me.data.user.display_name)}</p>
               <p className="truncate text-xs text-muted">{me.data.user.email}</p>
             </div>
           </div>

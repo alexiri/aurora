@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { useDecideHostClaim, useHostClaims, type HostClaimConflict } from "@/lib/api/plugins";
+import { personName } from "@/lib/workspace-name";
 
 export function ConflictGroup({ c }: { c: HostClaimConflict }) {
   const decide = useDecideHostClaim();
@@ -20,7 +21,7 @@ export function ConflictGroup({ c }: { c: HostClaimConflict }) {
       {d ? (
         <p className="text-sm text-ink-2">
           Winner: {d.winner_package_id} / {d.winner_app_id}
-          {d.decided_by ? ` (decided by ${d.decided_by.display_name})` : ""}
+          {d.decided_by ? ` (decided by ${personName(d.decided_by.display_name)})` : ""}
           {d.stale ? (
             <span className="ml-2 font-medium text-pending-ink">
               Stale: claims changed since this decision. Choose a winner again.

@@ -4,6 +4,7 @@ import { Loading } from "@/components/states";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import type { GroupImpact } from "@/lib/api/groups";
+import { personName } from "@/lib/workspace-name";
 
 /** What a group deletion, unbinding or member removal would take away (`GET /v1/groups/{id}/impact`). */
 export function ImpactSummary({
@@ -32,7 +33,7 @@ export function ImpactSummary({
             <ul className="mt-1 list-disc pl-5">
               {w.users_losing_access.map((u) => (
                 <li key={u.id}>
-                  {u.display_name} <span className="text-muted">({u.email})</span>
+                  {personName(u.display_name)} <span className="text-muted">({u.email})</span>
                 </li>
               ))}
               {w.total > w.users_losing_access.length ? (

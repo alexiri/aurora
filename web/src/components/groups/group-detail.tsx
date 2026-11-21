@@ -39,6 +39,7 @@ import { orgRoutes } from "@/lib/routes";
 import { WORKSPACE_ROLE_OPTIONS } from "@/lib/labels";
 import { useWorkspaces } from "@/lib/api/queries";
 
+import { personName } from "@/lib/workspace-name";
 import { ImpactSummary } from "./impact-summary";
 
 const ROLE_HELP = "Owner manages the workspace; Approver also decides approvals; Member chats with agents.";
@@ -207,7 +208,7 @@ function Members({ g, orgId }: { g: Group; orgId: string }) {
               {items.map((m) => (
                 <tr key={m.user.id}>
                   <Td>
-                    <div className="font-medium">{m.user.display_name}</div>
+                    <div className="font-medium">{personName(m.user.display_name)}</div>
                     <div className="text-xs text-muted">{m.user.email}</div>
                   </Td>
                   <Td>
@@ -223,7 +224,7 @@ function Members({ g, orgId }: { g: Group; orgId: string }) {
                         variant="outline"
                         size="sm"
                         aria-label={`Remove ${m.user.email}`}
-                        onClick={() => setTarget({ id: m.user.id, label: m.user.display_name || m.user.email })}
+                        onClick={() => setTarget({ id: m.user.id, label: personName(m.user.display_name) })}
                       >
                         Remove
                       </Button>

@@ -10,6 +10,7 @@ import { formatWhen } from "@/lib/format-date";
 import { useAttentionFeed, type AttentionFeedState, type AttentionItem, type AttentionLevel } from "@/lib/api/attention";
 import { cn } from "@/lib/utils";
 
+import { personName } from "@/lib/workspace-name";
 import { DeclineRequestDialog } from "./decline-dialog";
 
 /** What was asked for, in a phrase, from a request item's title ("Bob Builder wants Jira" → "Jira"). */
@@ -38,10 +39,10 @@ export function AttentionRow({
 }) {
   const [open, setOpen] = useState(false);
   const who = item.actors[0];
-  const names = item.actors.map((a) => a.display_name);
+  const names = item.actors.map((a) => personName(a.display_name));
   return (
     <li data-kind={item.kind} data-testid={`attention-item-${item.id}`} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control bg-surface px-3 py-2.5 text-sm">
-      {who ? <Avatar name={who.display_name} tintKey={who.user_id} size={32} /> : null}
+      {who ? <Avatar name={personName(who.display_name)}tintKey={who.user_id} size={32} /> : null}
       <span className="min-w-0 flex-1 basis-56">
         <span className="block font-semibold text-ink">{item.title}</span>
         <span className="block text-ink-2">{item.detail}</span>
@@ -141,7 +142,7 @@ export function NeedsYouCard({
 /** "Declined" / "Done" with when, who by role (D-407) and the decline message: one closed item of the 30-day history. */
 function HistoryRow({ item }: { item: AttentionItem }) {
   const role = item.closed_by_role === "instance_admin" ? "an instance admin" : item.closed_by_role === "org_admin" ? "an organization admin" : null;
-  const by = item.closed_by?.display_name ?? role;
+  const by = item.closed_by ? personName(item.closed_by.display_name) : role;
   const verb = item.state === "declined" ? "Declined" : "Done";
   return (
     <li data-testid={`attention-history-${item.id}`} className="rounded-control bg-surface px-3 py-2 text-sm">

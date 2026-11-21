@@ -15,6 +15,7 @@ import { chatApi, useConversations, type Conversation, type ConversationFolder }
 import { useStoppedTurns } from "@/lib/chat/stopped";
 import { conversationTitle, folderRunsLabel, isOwnDirect, isWorking, kindLabel, listTime, type ListGroups } from "@/lib/chat/layout";
 import { cn } from "@/lib/utils";
+import { personName } from "@/lib/workspace-name";
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -205,7 +206,7 @@ export function ConversationRow({
           aria-current={selected ? "true" : undefined}
           className="flex min-h-14 min-w-0 flex-1 items-center gap-3 rounded-control px-2.5 py-2 text-left">
           {memberDirect ? (
-            <Avatar name={c.direct_user?.display_name || "?"} tintKey={c.direct_user?.id} size={36} />
+            <Avatar name={c.direct_user ? personName(c.direct_user.display_name) : "?"} tintKey={c.direct_user?.id} size={36} />
           ) : (
             <span aria-hidden="true" className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-full", kind.tint)}>
               <Glyph width={18} height={18} />

@@ -198,7 +198,7 @@ function Row({
   const [promote, setPromote] = useState(false);
   const saved = useSaveBar();
   const offboarding = useWorkspaceOffboarding(wsId, confirm ? b.user_id : null);
-  const who = b.display_name || b.email;
+  const who = personName(b.display_name);
   // (P5-APIGAP-4, C-1051) An implicit row's access comes from the organization: a stored suspension does not apply to it.
   const suspended = b.status === "suspended" && !b.implicit;
   return (
@@ -352,7 +352,7 @@ function Row({
           open={confirm}
           title="Remove access?"
           description={`${b.email} will lose access to this workspace.`}
-          who={b.display_name || b.email}
+          who={personName(b.display_name)}
           confirmLabel="Remove access"
           query={offboarding}
           candidates={candidates}
@@ -418,13 +418,13 @@ export function AccessTab({
   const items = [...access.data.items].sort(
     (a, b) =>
       Number(b.user_id === meId) - Number(a.user_id === meId) ||
-      (a.display_name || a.email).localeCompare(b.display_name || b.email),
+      personName(a.display_name).localeCompare(personName(b.display_name)),
   );
   const bound = new Set(items.map((b) => b.user_id));
   const inherited = (access.data.derived_members?.items ?? []).filter((d) => !bound.has(d.user.id));
   const directOwners = items.filter((b) => b.role === "owner" && !b.implicit && b.status !== "suspended").length;
   const picked = items.filter((b) => sel.selected.has(b.user_id));
-  const targets = picked.map((b) => ({ id: b.user_id, name: b.display_name || b.email }));
+  const targets = picked.map((b) => ({ id: b.user_id, name: personName(b.display_name) }));
   const n = picked.length;
   const count = `${n} ${n === 1 ? "person" : "people"}`;
   const workspace = wsName ?? "this workspace";
@@ -514,7 +514,7 @@ export function AccessTab({
                 canOwn={canOwn}
                 candidates={items
                   .filter((x) => x.user_id !== b.user_id)
-                  .map((x) => ({ id: x.user_id, label: `${x.display_name} (${x.email})` }))}
+                  .map((x) => ({ id: x.user_id, label: `${personName(x.display_name)} (${x.email})` }))}
                 onError={setErr}
               />
             ))}
@@ -523,7 +523,7 @@ export function AccessTab({
               <tr key={`via-${d.user.id}`} data-testid="inherited-row">
                 <Td cell="title">
                   <div className="flex items-center gap-3">
-                    <Avatar name={d.user.display_name || d.user.email} tintKey={d.user.id} size={32} />
+                    <Avatar name={personName(d.user.display_name)} tintKey={d.user.id} size={32} />
                     <div className="min-w-0">
                       <div className="font-medium">
                         {personName(d.user.display_name)}

@@ -8,6 +8,7 @@ import { ScopeGroups } from "@/components/grants/scope-groups";
 import { Button } from "@/components/ui/button";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { useApp, useConnections, usePatchConnection, type Connection, type CredScope } from "@/lib/api/apps";
+import { personName } from "@/lib/workspace-name";
 
 /**
  * What the old Connections list showed per connection and an account row keeps under **Technical details**: why it
@@ -35,7 +36,7 @@ export function ConnectionDetails({ scope, id, canManage }: { scope: Exclude<Cre
       ) : null}
       <p className="text-xs text-muted">
         {c.scopes.length ? `Scopes: ${c.scopes.join(", ")} · ` : ""}
-        {c.connected_by ? `Connected by ${c.connected_by.display_name} · ` : ""}
+        {c.connected_by ? `Connected by ${personName(c.connected_by.display_name)} ·` : ""}
         {c.last_used_at ? `Last used ${formatWhen(c.last_used_at)}` : "Never used"}
         {c.instance ? ` · Self-hosted: ${c.instance.base_url}` : ""}
       </p>

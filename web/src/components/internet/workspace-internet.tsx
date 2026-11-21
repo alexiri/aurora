@@ -7,6 +7,7 @@ import { useAccess } from "@/lib/api/account";
 import { useEffectiveGovernance } from "@/lib/api/governance";
 import { useAgents, useOrg, useSession, type Workspace } from "@/lib/api/queries";
 import { whoCanFromContacts } from "@/lib/who-can";
+import { personName } from "@/lib/workspace-name";
 
 /** (P5-IA-2, C-965) A workspace's Internet access: owners edit it; members read the limits and see who to ask. */
 export function WorkspaceInternet({ workspace: w, orgSlug, wsSlug }: { workspace: Workspace; orgSlug: string; wsSlug: string }) {
@@ -18,7 +19,7 @@ export function WorkspaceInternet({ workspace: w, orgSlug, wsSlug }: { workspace
   const session = useSession();
   if (eff.isPending || (canOwn && agents.isPending)) return <Loading />;
   if (eff.isError) return <ErrorState error={eff.error} onRetry={() => eff.refetch()} />;
-  const users = (access.data?.items ?? []).map((b) => ({ id: b.user_id, label: `${b.display_name} (${b.email})` }));
+  const users = (access.data?.items ?? []).map((b) => ({ id: b.user_id, label: `${personName(b.display_name)} (${b.email})` }));
   return (
     <AltitudeScope>
     <InternetLevel

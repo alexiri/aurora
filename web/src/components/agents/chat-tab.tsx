@@ -27,6 +27,7 @@ import { conversationTitle, filterConversations, groupConversations, isOwnDirect
 import type { AgentPageId } from "./sections";
 import { useRailExpanded } from "./status-rail/rail-state";
 import { StatusRail, StatusSheet, type RailContext } from "./status-rail/status-rail";
+import { personName } from "@/lib/workspace-name";
 import { useAgentStatus, type OpenTurn } from "./status-rail/status-data";
 
 /** Keeps the pending approvals live (the stream refetches the agent-scoped lists); approvers only. */
@@ -415,7 +416,7 @@ export function ChatTab({
             convId={convId}
             direct={ownDirect ? conv : null}
             conversation={conv}
-            ownerView={memberDirect ? (memberDirect.direct_user?.display_name ?? "") : null}
+            ownerView={memberDirect ? (memberDirect.direct_user?.display_name ? personName(memberDirect.direct_user.display_name) : "") : null}
             ownDirect={ownDirect}
             archived={archived || !!conv?.archived_at}
             retentionDays={retention.data?.conversations_days ?? null}

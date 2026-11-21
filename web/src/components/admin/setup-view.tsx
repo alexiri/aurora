@@ -43,6 +43,7 @@ import { NeedsYouRow, AttentionHistory } from "@/components/attention/needs-you-
 import { SignInGaps, SignInGapRows, gapsFromChecks } from "./sign-in-gaps";
 import { PreviewsLine } from "./previews-line";
 import { PushLine } from "./push-line";
+import { personName } from "@/lib/workspace-name";
 import { SshLine } from "./ssh-line";
 
 /** How many steps there are (D-391): builtin apps arrive approved, so there is no approval step. */
@@ -143,7 +144,7 @@ function useTryIt(server: SetupStatus["try_it"] | undefined, hasKey: boolean) {
     // (P5-REFINE-20 b1#2) The server names the agent (the one that answered, once done): never "Your agent" because the
     // agent list did not have it.
     agentName: server?.agent_name ?? agent?.name ?? null,
-    person: me.data?.user.display_name ?? null,
+    person: me.data?.user.display_name?.trim() ? personName(me.data.user.display_name) : null,
     ready: !me.isPending,
   };
 }

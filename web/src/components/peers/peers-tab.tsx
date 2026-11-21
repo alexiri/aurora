@@ -36,6 +36,7 @@ import {
 } from "@/lib/api/peers";
 import { formatExact } from "@/lib/format-date";
 import { LINK_POLICY, PEER_TASK_STATUS, label } from "@/lib/labels";
+import { personName } from "@/lib/workspace-name";
 
 /** A failed link call in words (C-1085): the API's own message is for the log, not for the person. */
 function linkErrorMessage(error: unknown): string {
@@ -190,7 +191,7 @@ function LinkRow({ agentId, agentName, link, canApprove }: { agentId: string; ag
   };
   const by =
     link.created_by.kind === "person"
-      ? `Linked by ${link.created_by.display_name ?? "someone who has left"}`
+      ? `Linked by ${link.created_by.display_name ? personName(link.created_by.display_name) : "someone who has left"}`
       : `Opened by ${agentName}`;
   return (
     <li className="space-y-2 p-3 sm:px-4">
@@ -298,7 +299,7 @@ function Tasks({ agentId, agentName, peers }: { agentId: string; agentName: stri
               <p className="text-ink">
                 {sentence} · {label(PEER_TASK_STATUS, t.status)} · {formatExact(t.created_at)}
               </p>
-              {t.requester ? <p className="text-xs text-muted">Asked for by {t.requester.display_name}</p> : null}
+              {t.requester ? <p className="text-xs text-muted">Asked for by {personName(t.requester.display_name)}</p> : null}
               {t.report ? <p className="whitespace-pre-wrap text-ink-2">{t.report}</p> : null}
             </div>
           </ListRow>

@@ -8,6 +8,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { type AppSetupRequest, useDeclineSetup } from "@/lib/api/app-setup-requests";
 import { cn } from "@/lib/utils";
+import { personName } from "@/lib/workspace-name";
 
 /** "Bob wants", "Bob and Carol want", "Bob, Carol and 2 others want" (SEC-135: display names only). */
 export function askersPhrase(names: string[]): { who: string; verb: "wants" | "want" } {
@@ -39,7 +40,7 @@ export function SetupDeclineButton({ request, orgId, noun }: { request: AppSetup
       <DeclineRequestDialog
         open={open}
         onOpenChange={setOpen}
-        names={request.askers.map((a) => a.display_name)}
+        names={request.askers.map((a) => personName(a.display_name))}
         noun={noun}
         busy={decline.isPending}
         error={decline.error}
@@ -57,7 +58,7 @@ export function SetupDeclineButton({ request, orgId, noun }: { request: AppSetup
 export function SetupRequestItem({ request, orgBase, orgId }: { request: AppSetupRequest; orgBase: string; orgId: string }) {
   const decline = useDeclineSetup(orgId);
   const [open, setOpen] = useState(false);
-  const names = request.askers.map((a) => a.display_name);
+  const names = request.askers.map((a) => personName(a.display_name));
   const { who, verb } = askersPhrase(names);
   // (P5-APIGAP-2, C-1047) A chat platform or an AI key: the noun in a sentence, and the action that fixes it.
   const subject = request.subject;

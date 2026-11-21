@@ -179,6 +179,12 @@ describe("conversation list", () => {
     expect(conversationTitle(all[2])).toBe("Direct chat");
   });
 
+  it("names a person's direct chat by their name, never by their address (batch 9)", () => {
+    const direct = (display_name: string) => conv("d", { kind: "direct", direct_user: { id: "u", display_name } } as Partial<Conversation>);
+    expect(conversationTitle(direct("Bob Builder"))).toBe("Bob Builder");
+    expect(conversationTitle(direct("dave@example.test"))).toBe("Dave");
+  });
+
   it("shows the Working dot only while a turn is active", () => {
     expect(isWorking(conv("1"))).toBe(false);
     expect(isWorking(conv("2", { active_turn: { id: "t" } as never }))).toBe(true);
