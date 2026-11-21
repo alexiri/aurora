@@ -280,6 +280,61 @@ async fn render_content(integ: &Integ, content: &Value) -> R<(String, Vec<Value>
     Ok((message, attachments))
 }
 
+/// (FIX-203) Debug aid: the button and menu fields of `attachments` (as sent to Mattermost, or as
+/// Mattermost returned them): action id, type, callback URL and integration id. The action token
+/// and its signature are never logged, only their lengths; labels and text are not logged.
+fn action_summary(attachments: &[Value]) -> Vec<Value> {
+    attachments
+        .iter()
+        .filter_map(|a| a.get("actions").and_then(Value::as_array))
+        .flatten()
+        .map(|a| {
+            let integration = a.get("integration");
+            let ctx = integration.and_then(|i| i.get("context"));
+            let len = |k: &str| {
+                ctx.and_then(|c| c.get(k))
+                    .and_then(Value::as_str)
+                    .map(str::len)
+            };
+            json!({
+                "id": a.get("id"),
+                "type": a.get("type"),
+                "url": integration.and_then(|i| i.get("url")),
+                "iid": ctx.and_then(|c| c.get("iid")),
+                "token_len": len("token"),
+                "sig_len": len("sig"),
+            })
+        })
+        .collect()
+}
+
+/// (FIX-203) Logs, at debug, the actions of a card going to Mattermost and of the post Mattermost
+/// answered with (`returned`), so an operator can see the exact callback URL the buttons carry.
+fn log_actions(op: &str, channel_id: &str, sent: &[Value], returned: Option<&Value>) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+    let sent = action_summary(sent);
+    if sent.is_empty() {
+        return;
+    }
+    let post_id = returned.and_then(|p| p.get("id")).and_then(Value::as_str);
+    let stored = returned
+        .and_then(|p| p.pointer("/props/attachments"))
+        .and_then(Value::as_array)
+        .map_or(Value::Null, |a| Value::Array(action_summary(a)))
+        .to_string();
+    let sent = Value::Array(sent).to_string();
+    tracing::debug!(
+        op,
+        channel_id,
+        post_id,
+        sent = %sent,
+        returned = %stored,
+        "card actions posted to Mattermost"
+    );
+}
+
 fn props(marker: Option<&str>, attachments: Vec<Value>) -> Value {
     let mut p = serde_json::Map::new();
     if let Some(m) = marker {
@@ -398,6 +453,7 @@ async fn message_post(
     } else {
         String::new()
     };
+    let sent_attachments = attachments.clone();
     let body = json!({
         "channel_id": channel_id,
         "message": message,
@@ -405,6 +461,11 @@ async fn message_post(
         "file_ids": file_ids,
         "props": props(Some(&m.op_marker), attachments),
     });
+    let op_name = if m.ephemeral_to.is_some() && ephemeral_token.is_some() {
+        "message.post (ephemeral)"
+    } else {
+        "message.post"
+    };
     let created = match (&m.ephemeral_to, ephemeral_token) {
         (Some(user), Some(admin)) => {
             need_id(user, "user")?;
@@ -419,6 +480,7 @@ async fn message_post(
         }
         _ => integ.mm.post(&token, "/posts", &body).await?,
     };
+    log_actions(op_name, &channel_id, &sent_attachments, Some(&created));
     let post: MmPost = serde_json::from_value(created).map_err(bad_shape)?;
     let channel = integ.channel(&channel_id).await.ok();
     Ok(json!({
@@ -443,7 +505,8 @@ async fn message_update(integ: &Arc<Integ>, m: MessageUpdateOp) -> R<Value> {
     }
     let (message, attachments) = render_content(integ, &m.content).await?;
     let marker = existing.props.get("aurora_op").and_then(Value::as_str);
-    integ
+    let sent_attachments = attachments.clone();
+    let patched = integ
         .mm
         .json::<Value>(
             &token,
@@ -453,6 +516,12 @@ async fn message_update(integ: &Arc<Integ>, m: MessageUpdateOp) -> R<Value> {
             Some(&json!({"message": message, "props": props(marker, attachments)})),
         )
         .await?;
+    log_actions(
+        "message.update",
+        &m.space_ref,
+        &sent_attachments,
+        Some(&patched),
+    );
     Ok(json!({}))
 }
 
@@ -756,5 +825,30 @@ pub async fn execute(
         )),
         OpPayload::UserTokenVerify(_) => user_verify(integ, op).await,
         OpPayload::Other => Err(err(ErrorCode::Unsupported, "unknown operation kind")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (FIX-203) The debug summary carries the callback URL and never the token or its signature.
+    #[test]
+    fn action_summary_shows_the_url_and_hides_the_token() {
+        let attachments = vec![json!({
+            "text": "secret text",
+            "actions": [{
+                "id": "act1", "name": "Allow once", "type": "button",
+                "integration": {"url": "https://aurora.example/connectors/mattermost/mm/actions",
+                    "context": {"token": "tok-SECRET", "sig": "sig-SECRET", "iid": "i-1"}}
+            }]
+        })];
+        let s = Value::Array(action_summary(&attachments)).to_string();
+        assert!(s.contains("https://aurora.example/connectors/mattermost/mm/actions"));
+        assert!(s.contains("\"act1\"") && s.contains("\"i-1\""));
+        assert!(s.contains("\"token_len\":10"));
+        for hidden in ["tok-SECRET", "sig-SECRET", "secret text", "Allow once"] {
+            assert!(!s.contains(hidden), "{hidden} leaked: {s}");
+        }
     }
 }
