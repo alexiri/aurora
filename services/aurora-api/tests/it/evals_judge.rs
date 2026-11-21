@@ -80,6 +80,10 @@ async fn world() -> W {
         c.governance.allowed_key_scopes = vec!["organization".into()];
         c.llm.endpoints.push(endpoint("judge1", &ju));
         c.llm.endpoints.push(endpoint("judge2", &ou));
+        // An endpoint that lists its models (the judge's model must be one of them).
+        let mut listed = endpoint("listed", &ju);
+        listed.models = vec!["judge-1".into()];
+        c.llm.endpoints.push(listed);
     })
     .await;
     let agent = r.agent("evaluee", true).await;
@@ -534,6 +538,23 @@ async fn a_judge_that_cannot_be_used_is_an_error_and_no_request_is_sent() {
         1,
         "only question 1 reached the provider"
     );
+}
+
+#[tokio::test]
+async fn a_judge_model_the_key_does_not_list_is_refused_as_the_model_not_the_key() {
+    let w = world().await;
+    let key = w.judge_key("listed").await;
+    let (s, v) = w
+        .call(
+            &w.owner,
+            Method::PUT,
+            &format!("/v1/agents/{}/eval-settings", w.agent),
+            Some(json!({"judge": {"secret_id": key, "model_id": "claude-mock-nope"}, "regression_notify": false})),
+        )
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "eval_judge_not_usable", "{v}");
+    assert_eq!(v["error"]["details"]["cause"], "model", "{v}");
 }
 
 #[tokio::test]

@@ -82,6 +82,10 @@ const EVAL_MESSAGES: Record<string, string> = {
 
 /** A message for an eval refusal (C-872), otherwise the app-wide wording. */
 export function evalErrorMessage(err: unknown): string {
+  // (batch 8, behaviour-4) The key works but does not list the model: say it is the model, not the key.
+  if (err instanceof ApiError && err.code === "eval_judge_not_usable" && (err.details as { cause?: string } | null)?.cause === "model") {
+    return "This key can't use that model. Check the model name.";
+  }
   if (err instanceof ApiError && EVAL_MESSAGES[err.code]) return EVAL_MESSAGES[err.code]!;
   return errorMessage(err);
 }
