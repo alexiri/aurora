@@ -47,6 +47,8 @@ export const ACTION_PHRASE: Record<string, string> = {
   add_people: "add people",
   set_up: "set this up",
   add_instance: "add the app's instance again",
+  register_oauth_client: "set up sign-in for apps",
+  register_instance: "register a self-hosted app",
 };
 
 export function actionPhrase(action: string): string {

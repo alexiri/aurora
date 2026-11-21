@@ -107,7 +107,11 @@ export function WaysToConnect({
                     {needsClient && actions.registerClient && view === "workspace" ? (
                       <p className="text-xs text-muted">For everyone in {orgName}</p>
                     ) : null}
-                    <WhoCan value={m.who_can} className="text-xs" />
+                    {m.who_can.you_can && (needsClient ? actions.registerClient : actions.registerInstance) ? null : (
+                      <WhoCan value={m.who_can} className="text-xs">
+                        {needsClient ? `Set up sign-in for ${appName}` : undefined}
+                      </WhoCan>
+                    )}
                   </div>
                 ) : null}
               </div>
