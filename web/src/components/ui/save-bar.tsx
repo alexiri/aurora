@@ -69,6 +69,7 @@ export function SaveBar({
   savedMessage = "Saved",
   unsavedLabel = "Unsaved changes",
   saveLabel = "Save",
+  saveDisabled = false,
   children,
 }: {
   dirty: boolean;
@@ -84,6 +85,8 @@ export function SaveBar({
   savedMessage?: string;
   unsavedLabel?: string;
   saveLabel?: string;
+  /** The form cannot be saved as it is (a value its own field already says is wrong): the field says why, the bar only holds Save. */
+  saveDisabled?: boolean;
   children?: ReactNode;
 }) {
   // After a failed save, go to the first bad field.
@@ -125,7 +128,7 @@ export function SaveBar({
         <Button type="button" variant="outline" size="sm" onClick={onDiscard} disabled={saving}>
           Discard
         </Button>
-        <Button type={onSave ? "button" : "submit"} size="sm" onClick={onSave} disabled={saving}>
+        <Button type={onSave ? "button" : "submit"} size="sm" onClick={onSave} disabled={saving || saveDisabled}>
           {saving ? "Saving…" : saveLabel}
         </Button>
       </span>

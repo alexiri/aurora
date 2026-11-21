@@ -75,8 +75,11 @@ describe("organization policy presets (P5-REFINE-18 #2)", () => {
     // An endpoint that is not permitted, or whose scopes the instance set, is left alone.
     const fixed = form({ endpoints: [endpoint(["organization"], { locked: { permitted: false, key_scopes: true, allowed_models: false } }), endpoint([], { allowed: false })] as never });
     expect(applyOrgPreset("open", fixed, "models").endpoints.map((e) => e.key_scopes)).toEqual([["organization"], []]);
-    expect(orgPresetForbidden("open", floors, "models", fixed)).toBe("Set by the instance admin");
-    expect(orgPresetForbidden("balanced", floors, "models", fixed)).toBeNull();
+    // (batch 6) Key scopes the instance set (the starter key's endpoint takes organization keys only) are the instance's decision:
+    // they neither forbid Open ("Set by the instance admin" on an Open instance) nor make the card Custom.
+    expect(orgPresetForbidden("open", floors, "models")).toBeNull();
+    expect(orgPresetForbidden("balanced", floors, "models")).toBeNull();
+    expect(detectOrgPreset(fixed, floors, "models")).toBe("open");
   });
 
   it("disables a card that is looser than what the instance admin set, with the reason", () => {

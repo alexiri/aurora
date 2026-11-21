@@ -255,14 +255,19 @@ function orgKeyMatches(id: PresetId, key: keyof OrgPresetValues, held: string): 
  * Whether people may add their own AI key, from the endpoints' key scopes (the same value the page's switch shows):
  * true when every permitted endpoint takes workspace keys, `null` when no endpoint is permitted (nothing to say).
  */
-export function peopleMayAddOwnKey(endpoints: { allowed: boolean; key_scopes: string[] }[]): boolean | null {
+export function peopleMayAddOwnKey(endpoints: { allowed: boolean; key_scopes: string[]; locked?: { key_scopes: boolean } }[]): boolean | null {
   const live = endpoints.filter((e) => e.allowed);
   return live.length === 0 ? null : live.every((e) => e.key_scopes.includes("workspace"));
 }
 
-/** Open says "people may add their own AI keys"; Balanced and Locked down say organization keys only. */
+/**
+ * Open says "people may add their own AI keys"; Balanced and Locked down say organization keys only. Only what the
+ * organization can change counts: an endpoint whose key scopes the instance set (the starter Company key's endpoint is
+ * organization-keys-only) is the instance's decision, not this card's, so it never turns Open into "Custom" and never
+ * greys Open out (the same question reads the same preset on AI models and on Internet access).
+ */
 function peopleKeysMatch(id: PresetId, form: GovForm): boolean {
-  const may = peopleMayAddOwnKey(form.endpoints);
+  const may = peopleMayAddOwnKey(form.endpoints.filter((e) => !e.locked.key_scopes));
   return may === null || may === (id === "open");
 }
 
@@ -288,10 +293,10 @@ export function applyOrgPreset(id: PresetId, form: GovForm, part: OrgPart): GovF
 }
 
 /**
- * Why a card cannot be chosen: its value is looser than what the instance set, or an endpoint's key scopes the instance
- * set say the opposite of the card; `null` when it can.
+ * Why a card cannot be chosen: its value is looser than what the instance set; `null` when it can. Open is never greyed
+ * out while the instance is Open (key scopes the instance set are left as they are, they do not forbid a card).
  */
-export function orgPresetForbidden(id: PresetId, floors: OrgFloors, part: OrgPart, form?: GovForm): string | null {
+export function orgPresetForbidden(id: PresetId, floors: OrgFloors, part: OrgPart): string | null {
   const why = "Set by the instance admin";
   for (const k of ORG_KEYS[part]) {
     const want = ORG_PRESETS[id][k];
@@ -303,6 +308,6 @@ export function orgPresetForbidden(id: PresetId, floors: OrgFloors, part: OrgPar
     const rank = rankOf(k);
     if (rank.indexOf(want) < rank.indexOf(floors[k])) return why;
   }
-  if (part === "models" && form?.endpoints.some((e) => e.allowed && e.locked.key_scopes && e.key_scopes.includes("workspace") !== (id === "open"))) return why;
+  // An endpoint whose key scopes the instance set does not forbid a card: those scopes are the instance's, and the card leaves them as they are.
   return null;
 }

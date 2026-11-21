@@ -186,13 +186,16 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
   });
 
   it("(org-7) opens with the summary sentence and plain rows, endpoints and Advanced collapsed, origin as names", async () => {
+    // An admin reads the organization's own list; the first workspace (here one the admin is not in: 404) is not needed.
     mockFetch(routes({
-      "GET /v1/workspaces/w1/accounts": () =>
-        json(200, { items: [{ kind: "ai_key", scope: "organization", name: "Company key", ref: { type: "secret", id: "k1" }, agents: [], levels: [] }], next_cursor: null }),
+      "GET /v1/workspaces/w1/accounts": () => json(404, { error: { code: "not_found", message: "nf" } }),
+      "GET /v1/orgs/o1/accounts": () =>
+        json(200, { items: [{ kind: "ai_key", scope: "organization", name: "Company key", ref: { type: "secret", id: "k1" }, agents: [], levels: [], starter: true }], next_cursor: null }),
     }));
     wrap(<OrgAiModels org={ORG} />);
     await waitFor(() => expect(screen.getByTestId("models-summary").textContent).toBe("Agents in Acme use Company key. People may not add their own."));
     expect(screen.getByText("Key agents use")).toBeTruthy();
+    expect(screen.queryByText("No company key yet")).toBeNull();
     // (axe definition-list, dlitem) Every row is one div directly under the dl holding only dt and dd, the switch and the
     // team picker inside a dd.
     const dl = screen.getByText("Key agents use").closest("dl")!;
@@ -228,16 +231,19 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
       },
     }));
     wrap(<OrgAiModels org={ORG} />);
-    const save = (await screen.findByRole("button", { name: "Save" })) as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
+    await screen.findByLabelText("Allowed models");
+    // (the shared save bar) There is no Save until something changed; then the bar offers Discard and Save.
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Discard changes" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Allowed models"), { target: { value: "m1\nm2" } });
+    const save = (await screen.findByRole("button", { name: "Save" })) as HTMLButtonElement;
     expect(save.disabled).toBe(false);
     fireEvent.click(save);
     expect(await screen.findByRole("button", { name: "Reload latest" })).toBeTruthy();
     expect(body!.revision).toBe(4);
   });
 
-  it("an admin narrows the allowed models and saves them in the document; Discard changes puts them back", async () => {
+  it("an admin narrows the allowed models and saves them in the document; Discard puts them back", async () => {
     let body: { document: { llm: { endpoints: { anthropic: { allowed_models: string[] } } } } } | null = null;
     let revision = 4;
     mockFetch(routes({
@@ -251,7 +257,7 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     wrap(<OrgAiModels org={ORG} />);
     const models =(await screen.findByLabelText("Allowed models")) as HTMLTextAreaElement;
     fireEvent.change(models, { target: { value: "mx" } });
-    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect((screen.getByLabelText("Allowed models") as HTMLTextAreaElement).value).toBe("m1");
     fireEvent.change(screen.getByLabelText("Allowed models"), { target: { value: "m2" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
