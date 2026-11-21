@@ -26,6 +26,14 @@ export function label<Key extends string>(table: Record<Key, LabelEntry<never>>,
   return entry.label;
 }
 
+/** (P5-SKLIB-3, D-450(e)) A skill library's status (`SkillLibrary.status`); "Can't be read" carries the reason beside it. */
+export const LIBRARY_STATUS = {
+  active: { label: "Active" },
+  paused: { label: "Paused" },
+  error: { label: "Can't be read" },
+  over_budget: { label: "Pending updates over budget" },
+} satisfies LabelTable;
+
 /** Gateway decisions of the request log (`request_log.decision`, docs/03). */
 export const GATEWAY_DECISION = {
   allow: { label: "Allowed" },

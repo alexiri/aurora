@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
 import { formatExact } from "@/lib/format-date";
@@ -20,7 +21,9 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { SettingField, SettingsCard, settingControlId } from "@/components/ui/setting-field";
 import { Unavailable } from "@/components/ui/unavailable";
+import { useInstanceSkillLibraries } from "@/lib/api/skill-libraries";
 import { useSettingsSection, useSettingsSections, type SettingsSection } from "@/lib/api/settings";
+import { adminRoutes } from "@/lib/routes";
 import { personName } from "@/lib/workspace-name";
 
 /*
@@ -93,12 +96,36 @@ export const RETENTION_PAGE: OperationalPage = {
   ],
 };
 
+/** (P5-SKLIB-3, D-450(b)) The first row of the Skill libraries group: how many the instance shares, and the way to manage them. */
+function SkillLibrariesRow() {
+  const libs = useInstanceSkillLibraries();
+  const n = libs.data?.items.length;
+  return (
+    <div id="skill-libraries" className="grid min-w-0 scroll-mt-24 gap-x-6 gap-y-2 py-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <div className="min-w-0 space-y-1">
+        <p className="text-sm font-medium text-ink">Skill libraries</p>
+        <p className="text-xs text-muted" data-testid="skill-libraries-count">
+          {n === undefined ? (libs.isError ? "Not available" : "Loading…") : `${n} shared with every organization`}
+        </p>
+      </div>
+      <div className="min-w-0">
+        <Button asChild variant="outline" size="sm">
+          <Link href={adminRoutes.skillLibraries()} aria-label="Manage skill libraries">
+            Manage
+          </Link>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export const SKILLS_PAGE: OperationalPage = {
   groups: [
     {
-      title: "Git skill libraries",
-      description: "Skill libraries organizations register from git. Read at each refresh and fetch.",
+      title: "Skill libraries",
+      description: "Git repositories of skills that organizations and this instance offer to agents.",
       keys: ["skills.library.enabled", "skills.library.refresh_interval_secs", "skills.library.bytes_per_agent"],
+      lead: <SkillLibrariesRow />,
     },
   ],
 };

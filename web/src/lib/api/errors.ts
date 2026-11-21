@@ -94,12 +94,13 @@ export const ERROR_MESSAGES: Record<string, string> = {
   library_limit: "This organization has reached its limit of libraries.",
   // (P5-SKLIB-1, C-1122, C-1123) Libraries are git addresses now; the reason of `library_url_invalid` is in `details.reason`.
   library_url_invalid: "That is not a repository address Aurora can use. Paste the https address of the repository, or its page in a browser.",
-  library_url_fixed: "The address of a library cannot be changed. Add a new library for another repository.",  library_check_too_soon: "This library was checked a moment ago. Try again in a minute.",
+  library_url_fixed: "The address of a library cannot be changed. Add a new library for another repository.",
+  library_check_too_soon: "This library was checked a moment ago. Try again in a minute.",
   library_paused: "Resume the library before checking it.",
   library_skill_readonly: "This skill is managed by a skill library. Detach it to edit it.",
   update_superseded: "This update changed or was decided in the meantime. Reload and review it again.",
   commit_required: "Reload the library list so the page knows which commit you are adding.",
-  library_tree_too_large: "This repository is too large to list. Connect a narrower folder.",
+  library_tree_too_large: "This repository is too large to list. Choose a narrower folder.",
   skill_libraries_disabled: "Skill libraries are turned off on this instance.",
   // (P5-UX-1, C-915, C-958, C-980) Refusals the connect journey and the access choices show in words.
   connect_probe_failed: "The app did not accept these details. Check them and try again.",

@@ -15,6 +15,7 @@ describe("route helper (C-960)", () => {
     expect(adminRoutes.advanced("publishers")).toBe("/admin/apps?tab=advanced#publishers");
     expect(adminRoutes.package("p/1")).toBe("/admin/apps/packages/p%2F1");
     expect(adminRoutes.organization("o1")).toBe("/admin/people/organizations/o1");
+    expect(adminRoutes.skillLibraries()).toBe("/admin/skill-libraries");
     expect(orgRoutes("acme").people("members")).toBe("/o/acme/people?tab=members");
     expect(orgRoutes("acme").group("g1")).toBe("/o/acme/people/groups/g1");
     expect(orgRoutes("acme").accounts({ kind: "ai-key" })).toBe("/o/acme/apps?tab=accounts&kind=ai-key");

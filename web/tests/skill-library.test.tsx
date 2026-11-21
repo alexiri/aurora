@@ -1,16 +1,16 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { SkillLibrariesPage } from "@/components/skills/libraries-page";
 import { SkillsEditor } from "@/components/skills/skills-view";
 import { diffLines } from "@/lib/api/skill-libraries";
 import type { Skill } from "@/lib/api/skills";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
 
-// P4-GSL (D-148; docs/14 Skill libraries, Add from library, update review; docs/18 Dashboard): the
-// libraries page and connect dialog, Add from library, library badges and read-only skills, detach and
-// remove, the update review with the whole diff, and repository text rendered as data.
+// P4-GSL (D-148; docs/14 Skill libraries, Add from library, update review; docs/18 Dashboard): Add from
+// library, library badges and read-only skills, detach and remove, the update review with the whole diff,
+// and repository text rendered as data. The libraries pages and their dialogs (P5-SKLIB-3) are in
+// skill-libraries-ui.test.tsx.
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme" }),
@@ -33,9 +33,6 @@ const T = "2026-01-01T00:00:00Z";
 const SHA_A = "0123456789abcdef0123456789abcdef01234567";
 const SHA_B = "89abcdef0123456789abcdef0123456789abcdef";
 const HOSTILE = "Evil <img src=x onerror=alert(1)> [click](javascript:alert(1))";
-
-const org = { id: "o1", slug: "acme", name: "Acme", my_role: "owner" };
-const resolve = () => json(200, { org: { id: "o1", slug: "acme", name: "Acme" } });
 
 // (P5-SKLIB-1, C-1122) A library is a git address: `url` and its display form `repo`; no app, no connection.
 const library = (over: Record<string, unknown> = {}) => ({
@@ -68,150 +65,6 @@ const source = (over: Record<string, unknown> = {}) => ({
 });
 const libSkill = (over: Partial<Skill> = {}) =>
   skill({ id: "s1", name: "code-review", tier: "org", source: source() as Skill["source"], ...over });
-
-// ---- the libraries page ---------------------------------------------------------------------
-
-describe("skill libraries page", () => {
-  const base = (extra: Record<string, Handler> = {}) => ({
-    "GET /v1/resolve": resolve,
-    "GET /v1/orgs/o1": () => json(200, org),
-    ...extra,
-  });
-
-  it("lists libraries with their address, status, last error in words, counts and pending updates", async () => {
-    mockFetch(
-      base({
-        "GET /v1/orgs/o1/skill-libraries": () =>
-          json(200, {
-            items: [
-              library(),
-              library({ id: "l2", label: "Broken", status: "error", last_error: "The repository needs an access token", repo: "git.example.org/acme/private", skill_counts: { agent: 0, workspace: 0, org: 0 }, pending_updates: 0 }),
-            ],
-          }),
-      }),
-    );
-    wrap(<SkillLibrariesPage />);
-    const table = await screen.findByRole("table", { name: "Skill libraries" });
-    const rows = within(table).getAllByRole("row");
-    expect(within(rows[1]).getByText("git.example.org/acme/agent-skills")).toBeTruthy();
-    expect(within(rows[1]).getByText("1 agent · 2 workspace · 3 org")).toBeTruthy();
-    expect(within(rows[1]).getByText("Active")).toBeTruthy();
-    expect(within(rows[2]).getByText("Error")).toBeTruthy();
-    expect(within(rows[2]).getByText("The repository needs an access token")).toBeTruthy();
-    // no app connection any more: nothing to reconnect
-    expect(within(table).queryByRole("link", { name: "Reconnect" })).toBeNull();
-  });
-
-  it("shows an instance library read-only with its badge, and no action on it (P5-SKLIB-2)", async () => {
-    mockFetch(
-      base({
-        "GET /v1/orgs/o1/skill-libraries": () =>
-          json(200, {
-            items: [
-              library(),
-              library({ id: "l9", scope: "instance", org_id: null, label: "Company skills", repo: "git.example.org/it/skills", token_updated_at: null, skill_counts: { agent: 0, workspace: 0, org: 1 }, pending_updates: 0 }),
-            ],
-          }),
-      }),
-    );
-    wrap(<SkillLibrariesPage />);
-    const table = await screen.findByRole("table", { name: "Skill libraries" });
-    const rows = within(table).getAllByRole("row");
-    expect(within(rows[1]).queryByText("Shared with every organization")).toBeNull();
-    expect(within(rows[1]).getByRole("button", { name: "Delete Team skills" })).toBeTruthy();
-    expect(within(rows[2]).getByText("Company skills")).toBeTruthy();
-    expect(within(rows[2]).getByText("Shared with every organization")).toBeTruthy();
-    expect(within(rows[2]).getByText("0 agent · 0 workspace · 1 org")).toBeTruthy();
-    expect(within(rows[2]).queryByRole("button")).toBeNull();
-  });
-
-  it("connect dialog: the repository address, branch, folder and a secret access token; the reader's reason in words", async () => {
-    let posts = 0;
-    let body: Record<string, unknown> = {};
-    mockFetch(
-      base({
-        "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [] }),
-        "POST /v1/orgs/o1/skill-libraries": async (r) => {
-          posts += 1;
-          body = (await r.json()) as Record<string, unknown>;
-          return posts === 1
-            ? json(422, { error: { code: "library_unreachable", message: "The repository could not be read: The repository needs an access token." } })
-            : json(201, library());
-        },
-      }),
-    );
-    wrap(<SkillLibrariesPage />);
-    fireEvent.click((await screen.findAllByRole("button", { name: "Connect a repository" }))[0]);
-    // no account to pick, no GitHub notice: any git address works
-    expect(screen.queryByLabelText("Account")).toBeNull();
-    expect(screen.queryByText(/Connect GitHub/)).toBeNull();
-    fireEvent.change(await screen.findByLabelText("Label"), { target: { value: "Team" } });
-    fireEvent.change(screen.getByLabelText("Repository address"), { target: { value: "https://git.example.org/acme/skills" } });
-    const token = screen.getByLabelText("Access token") as HTMLInputElement;
-    expect(token.type, "the token is a secret field").toBe("password");
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    expect(await screen.findByText(/The repository needs an access token/)).toBeTruthy();
-    expect(body).toMatchObject({ label: "Team", url: "https://git.example.org/acme/skills", ref: null, path: null, token: null });
-    expect(Object.keys(body)).not.toContain("connection_id");
-    fireEvent.change(token, { target: { value: "ghp_secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await waitFor(() => expect(posts).toBe(2));
-    expect(body).toMatchObject({ url: "https://git.example.org/acme/skills", token: "ghp_secret" });
-  });
-
-  it("asks for a label and an address before sending anything", async () => {
-    const posts = vi.fn();
-    mockFetch(
-      base({
-        "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [] }),
-        "POST /v1/orgs/o1/skill-libraries": () => {
-          posts();
-          return json(201, library());
-        },
-      }),
-    );
-    wrap(<SkillLibrariesPage />);
-    fireEvent.click((await screen.findAllByRole("button", { name: "Connect a repository" }))[0]);
-    fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
-    expect(await screen.findByText("Enter a label and the repository's address.")).toBeTruthy();
-    expect(posts).not.toHaveBeenCalled();
-  });
-
-  it("delete confirms how many skills keep their content; check now and pause call the API", async () => {
-    const calls: string[] = [];
-    mockFetch(
-      base({
-        "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [library()] }),
-        "POST /v1/skill-libraries/l1/refresh": () => {
-          calls.push("refresh");
-          return json(202, null);
-        },
-        "PATCH /v1/skill-libraries/l1": async (r) => {
-          calls.push(`patch ${JSON.stringify(await r.json())}`);
-          return json(200, library({ status: "paused" }));
-        },
-        "DELETE /v1/skill-libraries/l1": () => {
-          calls.push("delete");
-          return json(204, null);
-        },
-      }),
-    );
-    wrap(<SkillLibrariesPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Check now Team skills" }));
-    fireEvent.click(screen.getByRole("button", { name: "Pause Team skills" }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete Team skills" }));
-    expect(await screen.findByText("6 skills keep their content and become editable skills.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Delete library" }));
-    await waitFor(() => expect(calls).toEqual(["refresh", 'patch {"status":"paused"}', "delete"]));
-  });
-
-  it("is a calm empty state when the feature is switched off", async () => {
-    mockFetch(base({ "GET /v1/orgs/o1/skill-libraries": () => json(404, { error: { code: "skill_libraries_disabled", message: "off" } }) }));
-    wrap(<SkillLibrariesPage />);
-    expect(await screen.findByText("Skill libraries are turned off on this instance")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Connect a repository" })).toBeNull();
-  });
-});
 
 // ---- library skills in the editor --------------------------------------------------------------
 

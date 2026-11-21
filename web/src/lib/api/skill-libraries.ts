@@ -28,8 +28,15 @@ export const LIBRARY_BUDGET = {
 /** The tiers that have a library budget. */
 export type BudgetTier = keyof typeof LIBRARY_BUDGET;
 
+export type CheckLibraryRequest = components["schemas"]["CheckSkillLibraryRequest"];
+export type LibraryCheck = components["schemas"]["LibraryCheck"];
+
+/** Where a library lives: an organization's id, or `null` for the instance's own (P5-SKLIB-3, C-1129). */
+export type LibraryOwner = string | null;
+
 export const libraryKeys = {
   list: (org: string) => ["orgs", org, "skill-libraries"] as const,
+  instance: () => ["admin", "skill-libraries"] as const,
   one: (id: string) => ["skill-libraries", id] as const,
   catalogue: (id: string, q: string, org: string) => ["skill-libraries", id, "skills", q, org] as const,
   content: (id: string, path: string, commit: string, org: string) => ["skill-libraries", id, "skill", path, commit, org] as const,
@@ -47,20 +54,43 @@ export function useSkillLibraries(org: string | undefined) {
   });
 }
 
-function useInvalidateLibraries(org: string) {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: libraryKeys.list(org) });
+/** The instance's own libraries with `orgs_using` (instance admins, session only; C-1128). */
+export function useInstanceSkillLibraries() {
+  return useQuery({
+    queryKey: libraryKeys.instance(),
+    queryFn: () => unwrap(api.GET("/v1/admin/skill-libraries")),
+    retry: false,
+  });
 }
 
-export function useCreateSkillLibrary(org: string) {
+/** An organization's list and the instance's own: one change can show in either (an instance library is in every organization's list). */
+function useInvalidateLibraries(org: LibraryOwner) {
+  const qc = useQueryClient();
+  return async () => {
+    await qc.invalidateQueries({ queryKey: org ? libraryKeys.list(org) : libraryKeys.instance() });
+    // An instance library also sits in every organization's list.
+    if (!org) await qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "orgs" && q.queryKey[2] === "skill-libraries" });
+  };
+}
+
+/** Reads the repository first and stores nothing (C-1124). */
+export function useCheckLibrary(org: LibraryOwner) {
+  return useMutation({
+    mutationFn: (body: CheckLibraryRequest) =>
+      unwrap(org ? api.POST("/v1/orgs/{org}/skill-libraries/check", { params: { path: { org } }, body }) : api.POST("/v1/admin/skill-libraries/check", { body })),
+  });
+}
+
+export function useCreateSkillLibrary(org: LibraryOwner) {
   const inv = useInvalidateLibraries(org);
   return useMutation({
-    mutationFn: (body: CreateSkillLibraryRequest) => unwrap(api.POST("/v1/orgs/{org}/skill-libraries", { params: { path: { org } }, body })),
+    mutationFn: (body: CreateSkillLibraryRequest) =>
+      unwrap(org ? api.POST("/v1/orgs/{org}/skill-libraries", { params: { path: { org } }, body }) : api.POST("/v1/admin/skill-libraries", { body })),
     onSuccess: inv,
   });
 }
 
-export function usePatchSkillLibrary(org: string) {
+export function usePatchSkillLibrary(org: LibraryOwner) {
   const inv = useInvalidateLibraries(org);
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: PatchSkillLibraryRequest }) =>
@@ -69,7 +99,7 @@ export function usePatchSkillLibrary(org: string) {
   });
 }
 
-export function useDeleteSkillLibrary(org: string) {
+export function useDeleteSkillLibrary(org: LibraryOwner) {
   const qc = useQueryClient();
   const inv = useInvalidateLibraries(org);
   return useMutation({
@@ -82,7 +112,7 @@ export function useDeleteSkillLibrary(org: string) {
   });
 }
 
-export function useCheckLibraryNow(org: string) {
+export function useCheckLibraryNow(org: LibraryOwner) {
   const inv = useInvalidateLibraries(org);
   return useMutation({
     mutationFn: (id: string) => unwrap(api.POST("/v1/skill-libraries/{id}/refresh", { params: { path: { id } } })),

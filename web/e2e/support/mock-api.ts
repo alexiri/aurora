@@ -510,7 +510,9 @@ export async function mockApi(
     }
     // (phase 5, SET-5) The operational pages: agents with the runners' sizes, a terminal the deployment does not
     // provide, and limits with a Helm rate class and the allowed-private list.
-    if (p === "/v1/admin/settings/agents" || p === "/v1/admin/settings/terminal" || p === "/v1/admin/settings/limits") {
+    // (P5-SKLIB-3) The instance's own skill libraries: none until a spec (e2e/support/skill-libraries.ts) adds some.
+    if (p === "/v1/admin/skill-libraries") return json({ items: [], next_cursor: null });
+    if (p === "/v1/admin/settings/agents" || p === "/v1/admin/settings/terminal" || p === "/v1/admin/settings/limits" || p === "/v1/admin/settings/skills") {
       const sch = (kind: string, o: Record<string, unknown> = {}) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null, ...o });
       const k = { locked: false, helm_key: "config.x", list: null, id_field: null, entries: null, source: "default", default: null, secret: null };
       const sec = (section: string, title: string, settings: unknown[], extra: unknown) => json({
@@ -530,6 +532,14 @@ export async function mockApi(
           ],
           offered_harnesses: ["claude-code", "codex", "goose"],
         });
+      }
+      if (p.endsWith("/skills")) {
+        // Defaults › Skill libraries: the group's settings; its first row (the libraries' count and Manage) is not a setting.
+        return sec("skills", "Skill libraries", [
+          { ...k, key: "skills.library.enabled", value: true, default: true, schema: sch("bool") },
+          { ...k, key: "skills.library.refresh_interval_secs", value: 900, default: 900, schema: sch("int") },
+          { ...k, key: "skills.library.bytes_per_agent", value: 1048576, default: 1048576, schema: sch("int") },
+        ], null);
       }
       if (p.endsWith("/terminal")) {
         return sec("terminal", "Terminal", [
@@ -962,6 +972,8 @@ const TOPIC_ROUTES: RouteEntry[] = [
   ...tab("/admin/platform", ["health", "runners", "computers", "secret-stores", "email", "limits"], "admin-platform"),
   ...tab("/o/acme/agents", ["agents", "byo", "skills"], "org-agents"),
   { name: "org-skill-libraries", path: "/o/acme/agents/skills/libraries" },
+  // (P5-SKLIB-3, D-450(b)) A sub-page of What agents may do › Defaults.
+  { name: "admin-skill-libraries", path: "/admin/skill-libraries" },
   ...tab("/o/acme/apps", ["accounts", "apps", "oauth-clients", "self-hosted"], "org-apps"),
   { name: "org-ai-models", path: "/o/acme/ai-models" },
   { name: "org-internet-access", path: "/o/acme/internet-access" },

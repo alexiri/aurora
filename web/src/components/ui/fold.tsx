@@ -10,15 +10,18 @@ export function Fold({
   summary,
   children,
   className,
+  defaultOpen,
   "data-testid": testId,
 }: {
   summary: ReactNode;
   children: ReactNode;
   className?: string;
+  /** Open when it first appears (a fold that holds something already filled in); closed otherwise. */
+  defaultOpen?: boolean;
   "data-testid"?: string;
 }) {
   return (
-    <details className={cn("rounded-card border border-line bg-surface px-5 py-3 text-sm", className)} data-testid={testId}>
+    <details open={defaultOpen || undefined} className={cn("rounded-card border border-line bg-surface px-5 py-3 text-sm", className)} data-testid={testId}>
       <summary className="cursor-pointer font-semibold text-ink">{summary}</summary>
       {children}
     </details>

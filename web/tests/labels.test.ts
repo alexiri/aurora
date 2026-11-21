@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { AUDIT_ACTION, AUDIT_SENTENCE, auditWords, COVERED, GATEWAY_DECISION, HARNESS, harnessVisible, label, SANDBOX_PHASE } from "@/lib/labels";
+import { AUDIT_ACTION, AUDIT_SENTENCE, auditWords, COVERED, GATEWAY_DECISION, HARNESS, harnessVisible, label, LIBRARY_STATUS, SANDBOX_PHASE } from "@/lib/labels";
 
 const SCHEMA = readFileSync(join(__dirname, "..", "src", "lib", "api", "schema.d.ts"), "utf8");
 
@@ -42,6 +42,10 @@ describe("labels (rec 13)", () => {
     expect(GATEWAY_DECISION.default_denied.sentence()).toMatch(/no rule/);
   });
 
+  it("says every skill library status in words (P5-SKLIB-3, D-450(e))", () => {
+    expect(["active", "paused", "error", "over_budget"].map((s) => label(LIBRARY_STATUS, s))).toEqual(["Active", "Paused", "Can't be read", "Pending updates over budget"]);
+  });
+
   it("has an audit sentence for every named audit action, and says so plainly when one is missing", () => {
     expect(Object.keys(AUDIT_ACTION).filter((a) => !(a in AUDIT_SENTENCE))).toEqual([]);
     const gone = { actor_label: "Bob", critical: true, metadata: {} };
@@ -62,7 +66,7 @@ describe("labels (rec 13)", () => {
   });
 
   it("has no label that is its own key or contains an underscore", () => {
-    for (const table of [GATEWAY_DECISION, SANDBOX_PHASE, AUDIT_ACTION, HARNESS, ...Object.values(COVERED)]) {
+    for (const table of [GATEWAY_DECISION, SANDBOX_PHASE, AUDIT_ACTION, HARNESS, LIBRARY_STATUS, ...Object.values(COVERED)]) {
       for (const [key, entry] of Object.entries(table)) {
         const text = (entry as { label: string }).label;
         // A brand written as its key ("goose") is fine; a key with a machine shape never is its own label.

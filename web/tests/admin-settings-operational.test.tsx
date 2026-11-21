@@ -120,6 +120,30 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
     expect(within(table).queryAllByRole("textbox")).toHaveLength(0);
   });
 
+  it("starts the Skill libraries group with a row that says how many the instance shares and links to Manage (P5-SKLIB-3)", async () => {
+    mockFetch({
+      "GET /v1/admin/settings/skills": () =>
+        json(
+          200,
+          section("skills", "Skill libraries", [
+            { ...base, key: "skills.library.enabled", value: true, source: "default", default: true, schema: schema("bool") },
+            { ...base, key: "skills.library.refresh_interval_secs", value: 900, source: "default", default: 900, schema: schema("int") },
+            { ...base, key: "skills.library.bytes_per_agent", value: 1048576, source: "default", default: 1048576, schema: schema("int") },
+          ]),
+        ),
+      "GET /v1/admin/skill-libraries": () => json(200, { items: [{ id: "l1", scope: "instance", label: "Company skills", status: "active" }, { id: "l2", scope: "instance", label: "Other", status: "paused" }], next_cursor: null }),
+    });
+    render(wrap("skills"));
+    const card = (await screen.findByRole("heading", { name: "Skill libraries", level: 3 })).closest("section") as HTMLElement;
+    expect(within(card).getByText("Git repositories of skills that organizations and this instance offer to agents.")).toBeTruthy();
+    // the first row of the group, before the settings
+    const row = card.querySelector("#skill-libraries") as HTMLElement;
+    expect(row).toBeTruthy();
+    expect(card.querySelector("div.divide-y")?.firstElementChild).toBe(row);
+    expect(await within(row).findByText("2 shared with every organization")).toBeTruthy();
+    expect(within(row).getByRole("link", { name: "Manage skill libraries" }).getAttribute("href")).toBe("/admin/skill-libraries");
+  });
+
   it("shows one Unavailable card, and no form, for a terminal the deployment does not provide; with it, saves the clocks", async () => {
     let put: Json | null = null;
     const terminal = (available: boolean) =>

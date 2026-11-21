@@ -7,7 +7,11 @@ An organization can add a git repository as a **skill library**: a catalogue of 
 ## What you need
 
 1. The API pods can reach the git host over https. The destination guard applies as for every API-side fetch: public addresses only. A server on a **private network** needs its address (or range) in `gateway.allowed_private`; without it the library cannot be read and says so ("The repository's address is not allowed").
-2. An organization **owner or admin** opens **Skills › Skill libraries › Add a library** (or `POST /v1/orgs/{org}/skill-libraries`) and pastes the repository's address (the browser page of the repository works too: a page inside a branch or folder fills the branch and folder). Aurora reads the repository first and fails with the reason if it cannot (`library_unreachable`). `POST /v1/orgs/{org}/skill-libraries/check` does the same read and stores nothing.
+2. An organization **owner or admin** opens **Agents › Skills › Libraries** (`/o/<org>/agents/skills/libraries`) and chooses **Add a library** (or `POST /v1/orgs/{org}/skill-libraries`). The dialog has two steps and saves nothing before the second:
+   1. **Where is it?** Paste the repository's address (the browser page of the repository works too: a page inside a branch or folder fills the branch and folder), optionally a branch or tag and the folder that holds the skill folders, and, for a private repository, open **This repository is private** and enter the access token (and the user name when the host needs one). Only `https://` addresses are accepted. Choose **Check**.
+   2. **What Aurora found.** The dialog shows the repository, the branch (or tag or commit) it read, the commit, how many skills can be added (and how many cannot), the first names, and says when it took the branch and folder from the address. Aurora reads the repository for this step and shows the reason if it cannot (`library_unreachable`), on the address when the address itself is refused. Choose **Add library** to save it (change the label first if you like), or **Back** to change something; nothing is lost going back. `POST /v1/orgs/{org}/skill-libraries/check` is the same read.
+
+   Later, **Edit** changes the label, branch or tag, folder and the token (Replace, Remove, Add a token); the address is fixed (to use another repository, add a new library; a library that came from before addresses existed shows **Set address**). The library's **status** reads Active, Paused, "Can't be read" with the reason, "Needs an access token" or "Pending updates over budget". Under the table, **Shared with every organization** lists the instance's libraries (read-only, with **Browse**) when there are any.
 3. For a **private** repository, a read-only access token (below). Aurora only ever reads, but a token that can write is more access than needed.
 
 ### Which token to create
@@ -27,6 +31,10 @@ Enter the user name in the "User name" field only when the host needs a particul
 (`POST /v1/admin/skill-libraries`, `POST /v1/admin/skill-libraries/check`; at most 20). It is for a catalogue
 the company wants everyone to draw from.
 
+- **Where.** **Administration › What agents may do › Defaults › Skill libraries › Manage** (`/admin/skill-libraries`):
+  the same table and the same two-step **Add a library** and **Edit** dialogs as the organization's page, with one more column,
+  **Organizations using it**. People pick from it in **Add from library**, under the heading "Shared with every organization".
+
 - **Who does what.** Only an instance admin's session manages it: the address, branch, folder, the access token,
   Pause, Check now, Delete (an API key never does, and an organization's owner or admin gets "not found" for its id).
   The token is the instance admin's: organizations are told only that one is saved.
@@ -45,7 +53,7 @@ the company wants everyone to draw from.
 
 ## Configuration
 
-(Phase 5, SET-5.) The three keys below are edited on **Administration › Agents › Skills** and read at each refresh and fetch;
+(Phase 5, SET-5.) The three keys below are edited on **Administration › What agents may do › Defaults › Skill libraries** and read at each refresh and fetch;
 setting one under `config.skills.library.*` in Helm locks it.
 
 | Key | Default | Meaning |
