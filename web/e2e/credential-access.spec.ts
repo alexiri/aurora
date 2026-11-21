@@ -90,7 +90,7 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByRole("menuitem", { name: "Add an AI key" }).click();
         // (P5-POLISH-7) The form is in the Add an AI key dialog.
         await expect(page.getByRole("dialog", { name: "Add an AI key" })).toBeVisible();
-        const form = page.getByRole("form", { name: "New LLM key" });
+        const form = page.getByRole("form", { name: "New AI key" });
         await chooseService(page.getByRole("dialog", { name: "Add an AI key" }), "AI gateway");
         await form.getByLabel("Name").fill("Team key");
         await form.getByLabel("API key", { exact: true }).fill("sk-not-a-real-key");

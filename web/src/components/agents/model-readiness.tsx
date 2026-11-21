@@ -129,9 +129,9 @@ export function ModelReadinessSection({ agentId, base }: { agentId: string; base
       {readiness.data ? (
         <div className="space-y-3">
           {readiness.data.keys.length === 0 ? (
-            <Notice role="status">No LLM key is granted to this agent. Grant one below, or add a key under Apps & accounts.</Notice>
+            <Notice role="status">This agent has no AI key. Give it one below, or add a key under Apps & accounts.</Notice>
           ) : (
-            <ItemList aria-label="Granted LLM keys">
+            <ItemList aria-label="AI keys this agent uses">
               {readiness.data.keys.map((k) => (
                 <KeyRow key={k.secret_id} k={k} base={base} orgBase={orgBase} />
               ))}

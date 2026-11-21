@@ -70,7 +70,7 @@ describe("error links", () => {
     expect(a.link).toMatchObject({ label: "Open AI keys", path: "credentials", tab: "llm" });
     expect(a.extra).toMatchObject({ label: "Agent access", path: "access", ownerOnly: true });
     const b = errorCopy("no_default_model");
-    expect(b.message).toBe("This agent has an LLM key, but Aurora could not pick a model for it.");
+    expect(b.message).toBe("This agent has an AI key, but Aurora could not pick a model for it.");
     expect(b.link).toMatchObject({ label: "Choose a model", path: "instructions" });
     expect(b.guideStep).toBeUndefined(); // (FIX-170) the direct link is the fix
     expect(a.guideStep).toBe("key");
@@ -150,7 +150,7 @@ describe("model readiness on the Access tab", () => {
   ])("explains %s in words with its fix", async (reason, text, fix) => {
     routes["GET /v1/agents/a1/model-readiness"] = () => readiness([key({ usable: false, reason })], null);
     tab();
-    const list = await screen.findByRole("list", { name: "Granted LLM keys" });
+    const list = await screen.findByRole("list", { name: "AI keys this agent uses" });
     expect(within(list).getByText("Not usable")).toBeTruthy();
     expect(within(list).getByText(text)).toBeTruthy();
     expect(list.textContent).toContain(fix);
@@ -212,7 +212,7 @@ describe("model readiness on the Access tab", () => {
   it("warns when the agent's model override would be dropped, and when no key is granted", async () => {
     routes["GET /v1/agents/a1/model-readiness"] = () => readiness([], null, { override_dropped: true });
     tab();
-    expect(await screen.findByText(/No LLM key is granted/)).toBeTruthy();
+    expect(await screen.findByText(/This agent has no AI key/)).toBeTruthy();
     expect(screen.getByText(/will ignore it/)).toBeTruthy();
     expect(screen.queryByText(/No model chosen/)).toBeNull();
   });
@@ -228,7 +228,7 @@ describe("model readiness on the Access tab", () => {
     cleanup();
     wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn hosted base="/o/acme/w/ops" />);
     expect(await screen.findByTestId("cant-answer")).toHaveTextContent("Can't answer");
-    expect(screen.queryByRole("list", { name: "Granted LLM keys" })).toBeNull();
+    expect(screen.queryByRole("list", { name: "AI keys this agent uses" })).toBeNull();
   });
 });
 
@@ -391,7 +391,7 @@ describe("Give agents access step", () => {
     expect(box).toBeChecked();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team key" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add AI key" }));
     expect(await screen.findByText("Saved Team key")).toBeTruthy();
     expect(screen.getByText("Verified (endpoint)")).toBeTruthy();
     expect(screen.queryByLabelText("API key")).toBeNull();
@@ -413,7 +413,7 @@ describe("Give agents access step", () => {
     expect(await screen.findByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team key" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add AI key" }));
     await screen.findByText("Saved Team key");
     expect(calls.find((c) => c.key === "POST /v1/workspaces/w1/secrets")?.body).not.toHaveProperty("grant");
     cleanup();
@@ -423,7 +423,7 @@ describe("Give agents access step", () => {
     expect(screen.queryByRole("checkbox", { name: /can use this key/ })).toBeNull();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Org key" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-2" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add AI key" }));
     expect(await screen.findByRole("region", { name: "Give agents access" })).toBeTruthy();
   });
 });

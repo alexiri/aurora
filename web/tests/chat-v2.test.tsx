@@ -230,7 +230,7 @@ describe("transcript", () => {
     mock();
     pane();
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("This agent has an LLM key, but Aurora could not pick a model for it.");
+    expect(alert.textContent).toContain("This agent has an AI key, but Aurora could not pick a model for it.");
     expect(within(alert).getByRole("link", { name: "Choose a model" }).getAttribute("href")).toBe("/o/x/w/y/agents/a1?tab=instructions#a-model");
   });
 

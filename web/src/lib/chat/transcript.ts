@@ -215,7 +215,7 @@ const ERROR_COPY: Record<string, ErrorCopy> = {
   // left for a key whose model list could not be read or serves no allowed chat model. The server message says which.
   // The guide link is dropped: the direct link opens this agent's Default model field, which is the fix.
   no_default_model: {
-    message: "This agent has an LLM key, but Aurora could not pick a model for it.",
+    message: "This agent has an AI key, but Aurora could not pick a model for it.",
     link: { label: "Choose a model", path: "instructions" },
     showServerMessage: true,
   },

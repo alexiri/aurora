@@ -160,7 +160,7 @@ describe("LLM key form per auth mode (C-811)", () => {
     fireEvent.change(screen.getByLabelText("Source access key id"), { target: { value: "AKIAEXAMPLE" } });
     fireEvent.change(screen.getByLabelText("Source secret access key"), { target: { value: "s3cr3t" } });
     fireEvent.change(screen.getByLabelText("Session length in seconds (optional)"), { target: { value: "1800" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add AI key" }));
     await waitFor(() => expect(body).not.toBeNull());
     expect(body!.llm).toEqual({ endpoint_id: "bed", auth_mode: "aws_assume_role" });
     expect(JSON.parse(body!.value)).toEqual({
@@ -182,7 +182,7 @@ describe("LLM key form per auth mode (C-811)", () => {
     await pick("bed");
     fireEvent.click(screen.getByLabelText(/Bedrock API key/));
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-typed-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add AI key" }));
     expect(await screen.findByText("The provider rejected this key. Check it and try again; what you typed is still here.")).toBeTruthy();
     expect(screen.getByLabelText("API key")).toHaveValue("sk-typed-key");
   });
@@ -218,7 +218,7 @@ describe("LLM key form per auth mode (C-811)", () => {
     const file = new File([JSON.stringify({ type: "service_account", project_id: "p" })], "key.json", { type: "application/json" });
     fireEvent.change(screen.getByLabelText("Choose a key file"), { target: { files: [file] } });
     await waitFor(() => expect((screen.getByLabelText("Service account key (JSON)") as HTMLTextAreaElement).value).toContain("service_account"));
-    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add AI key" }));
     await waitFor(() => expect(body).not.toBeNull());
     expect(JSON.parse(body!.value)).toEqual({ type: "service_account", project_id: "p" });
     expect(body!.llm.auth_mode).toBeUndefined();
@@ -227,7 +227,7 @@ describe("LLM key form per auth mode (C-811)", () => {
   it("refuses an incomplete structured value before any request", async () => {
     const fn = open();
     await pick("bed");
-    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add AI key" }));
     expect(await screen.findByText("Fill in every required field.")).toBeTruthy();
     expect(fn.mock.calls.some(([r]) => (r as Request).method === "POST")).toBe(false);
   });

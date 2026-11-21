@@ -45,7 +45,7 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   await expect(guide.getByText("0 of 2 done")).toBeVisible();
 
   // 2. Step 1 opens the LLM key form in place: add the key for the LiteLLM endpoint.
-  const form = guide.getByRole("form", { name: "New LLM key" });
+  const form = guide.getByRole("form", { name: "New AI key" });
   // The card of the endpoint (display_name in deploy/kind/values-llm-mock.yaml): its name starts the card's label.
   await chooseService(form, "LiteLLM (VidaiMock, dev only)");
   await form.getByLabel("Name").fill("Mock LLM");
@@ -54,7 +54,7 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   // with its access in one request. Key and access are done from the server's state (the mock endpoint has a default
   // model: no model step).
   await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
-  await form.getByRole("button", { name: "Add LLM key" }).click();
+  await form.getByRole("button", { name: "Add AI key" }).click();
   await expect(guide.getByText("1 of 2 done")).toBeVisible({ timeout: 60_000 });
 
   // 4. Step "Say hello" opens Chat with a suggested message; send it, the reply is the mock's scripted answer.
