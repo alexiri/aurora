@@ -311,6 +311,8 @@ describe("Tests wording, live run and Re-run (P5-REFINE-12)", () => {
     });
     wrap(<RunDetail agentId={A} runId="r1" canOwn={false} onBack={() => {}} />);
     expect(await screen.findByText(/^Test run, /)).toBeInTheDocument();
+    // (behaviour-7) formatWhen's short date and time with no second comma, never the long "Nov 10, 2026, 10:00 AM".
+    expect((screen.getByText(/^Test run, /).textContent ?? "").slice("Test run, ".length)).not.toMatch(/\d, \d|\d{4},/);
     expect(document.body.textContent).not.toMatch(/Run of /);
     expect(screen.getByText(/Started by Alice\./)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "All test runs" })).toBeInTheDocument();
@@ -320,6 +322,16 @@ describe("Tests wording, live run and Re-run (P5-REFINE-12)", () => {
     // The wrong answer in words, the key facts under Details.
     expect(screen.getAllByText('Answer was "pong", expected 42').length).toBeGreaterThan(0);
     expect(screen.getAllByText("Refused writes").length).toBeGreaterThan(0);
+  });
+
+  it("says Waiting to start, not Running, while the run is queued (behaviour-4)", async () => {
+    mockFetch({
+      "GET /v1/eval-runs/r1": () => json(200, detail({ status: "queued", pass_rate: null, finished_at: null, counts: { total: 1, passed: 0, failed: 0, errored: 0, not_scored: 0, refused_writes: 0 } }, [])),
+      "GET /v1/agents/a1/eval-runs": () => json(200, { items: [run("r1", { status: "queued" })], next_cursor: null }),
+    });
+    wrap(<RunDetail agentId={A} runId="r1" canOwn={false} onBack={() => {}} />);
+    expect(await screen.findByText("Waiting to start · 0 of 1 done · started by Alice")).toBeInTheDocument();
+    expect(screen.queryByText(/^Running ·/)).toBeNull();
   });
 
   it("says Matches for a pass and never blames the agent when the ANSWER line is missing", async () => {
@@ -382,6 +394,9 @@ describe("Tests wording, live run and Re-run (P5-REFINE-12)", () => {
     fireEvent.change(screen.getByLabelText("Grader model"), { target: { value: "m-2" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Grader saved, but the test failed: the model provider could not be reached. Questions the grader checks will not be scored until it works.")).toBeInTheDocument();
+    // (behaviour-4) The "Current grader" line stops saying Ready once the test failed.
+    expect(screen.getByText("Test failed")).toBeInTheDocument();
+    expect(screen.queryByText("Ready")).toBeNull();
   });
 
   it("explains the ANSWER line in the question dialog, never as a demand on the agent", async () => {

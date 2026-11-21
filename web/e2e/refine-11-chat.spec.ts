@@ -28,6 +28,7 @@ for (const scheme of ["light", "dark"] as const) {
       await page.addInitScript(() => window.localStorage.setItem("aurora.agent-status-rail", "collapsed"));
       await openChat(page, scheme, DEFAULT, `?c=${MINE.id}`);
       const rail = page.getByRole("complementary", { name: "Status" });
+      await expect(rail.getByText("Need", { exact: true })).toBeVisible();
       await expect(rail.getByText("Now", { exact: true })).toBeVisible();
       await expect(rail.getByText("Did", { exact: true })).toBeVisible();
     });

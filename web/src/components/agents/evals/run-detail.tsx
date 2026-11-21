@@ -12,7 +12,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { TechnicalDetails } from "@/components/ui/technical-details";
-import { formatExact, formatWhen } from "@/lib/format-date";
+import { formatWhen } from "@/lib/format-date";
 import {
   useCancelEvalRun,
   useDeleteEvalRun,
@@ -29,7 +29,10 @@ import { HashValue } from "./hash-value";
 import { RegressionNotice, StatusBadge } from "./runs-section";
 import { fmtRate, isActive } from "./run-state";
 
-const excerpt = (s: string | null | undefined, n = 160) => {
+/** A run's time in its title: `formatWhen` without the comma, "21 Nov 02:54" (behaviour-7). */
+const runWhen = (iso: string) => formatWhen(iso).replace(/, (?=\d)/, " ");
+
+const excerpt =(s: string | null | undefined, n = 160) => {
   if (!s) return "";
   const one = s.replace(/\s+/g, " ").trim();
   return one.length > n ? `${one.slice(0, n)}…` : one;
@@ -319,12 +322,12 @@ export function RunDetail({
         id="eval-run"
         title={
           <span className="flex flex-wrap items-center gap-2">
-            Test run, {formatExact(run.started_at ?? run.created_at)} <StatusBadge status={run.status} />
+            Test run, {runWhen(run.started_at ?? run.created_at)} <StatusBadge status={run.status} />
           </span>
         }
         description={
           isActive(run)
-            ? `Running · ${done} of ${c.total} done · started by ${startedBy}`
+            ? `${run.status === "queued" ? "Waiting to start" : "Running"} · ${done} of ${c.total} done · started by ${startedBy}`
             : `Started by ${startedBy}. ${run.finished_at ? `Finished ${formatWhen(run.finished_at).toLowerCase()}.` : ""}`
         }
         actions={

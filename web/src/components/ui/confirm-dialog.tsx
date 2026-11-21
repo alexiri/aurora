@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useId, useState, type FormEvent, type ReactNode } from "react";
 
 import { Button } from "./button";
 import { Dialog, DialogClose, DialogContent, type DialogSize } from "./dialog";
@@ -84,24 +84,35 @@ export function FormDialog({
   error?: unknown;
   children: ReactNode;
 }) {
+  // (P5-REFINE-20, channels-2) The actions are the dialog's pinned footer, so a tall form scrolls under them; the
+  // submit button belongs to the form by its `form` attribute.
+  const formId = useId();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title={title} description={description} size={size}>
-        <form onSubmit={onSubmit} className="space-y-4">
-          {children}
-          <div className="min-h-6" data-testid="form-error-slot">
-            <ErrorNotice error={error} />
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            <DialogClose asChild>
-              <Button type="button" variant="outline">
-                Cancel
+      <DialogContent
+        title={title}
+        description={description}
+        size={size}
+        footer={
+          <div className="space-y-2">
+            <div className="min-h-6" data-testid="form-error-slot">
+              <ErrorNotice error={error} />
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <DialogClose asChild>
+                <Button type="button" variant="outline">
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="submit" form={formId} variant={danger ? "danger" : "primary"} disabled={busy || submitDisabled}>
+                {submitLabel}
               </Button>
-            </DialogClose>
-            <Button type="submit" variant={danger ? "danger" : "primary"} disabled={busy || submitDisabled}>
-              {submitLabel}
-            </Button>
+            </div>
           </div>
+        }
+      >
+        <form id={formId} onSubmit={onSubmit} className="space-y-4">
+          {children}
         </form>
       </DialogContent>
     </Dialog>

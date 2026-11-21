@@ -45,7 +45,7 @@ function routes(extra: Record<string, Handler> = {}, a: Record<string, unknown> 
 
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  // The pages under test (Memory, Skills, Evals, Peers…) are Set up / Expert (D-406): the switch is on.
+  // The pages under test (Evals, Peers…) are Expert (D-406; Memory and Skills are Use): the switch is on.
   seedMoreControls(qc);
   return render(
     <QueryClientProvider client={qc}>

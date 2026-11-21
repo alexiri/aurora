@@ -187,9 +187,10 @@ export function ResultRow({
       className={cn("flex min-h-11 w-full items-start gap-2 rounded-control p-2 text-left hover:bg-subtle", selected && "bg-subtle")}>
       <KindTile kind={i.conversation.kind} size={28} className="mt-0.5" />
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">{i.conversation.title || kindTitle(i.conversation.kind)}</span>
-          {i.conversation.archived ? <Badge>Archived</Badge> : null}
+        <span className="flex items-start gap-2">
+          {/* (chat-3/chat-9) The title wraps over two lines beside the chip, never "Summar…". */}
+          <span className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold text-ink">{i.conversation.title || kindTitle(i.conversation.kind)}</span>
+          {i.conversation.archived ? <Badge className="shrink-0">Archived</Badge> : null}
           {/* (chat-9) The full date and time of the message ("19 Nov 23:50"), not "Wed" or a bare clock. */}
           <span className="shrink-0 text-xs tabular-nums text-muted">{searchTime(i.at, now)}</span>
         </span>

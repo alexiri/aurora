@@ -417,7 +417,7 @@ describe("conversation list and the URL (RFE-009)", () => {
     expect(names[0]).toMatch(/Direct chat/);
     expect(names[1]).toMatch(/Release notes/); // newest activity first
     expect(within(nav).getByText("Working")).toBeTruthy();
-    expect(within(nav).getByText("Direct chat", { selector: "span.block" }).closest("button")!.getAttribute("aria-current")).toBe("true");
+    expect(within(nav).getByText("Direct chat", { selector: "span.line-clamp-2" }).closest("button")!.getAttribute("aria-current")).toBe("true");
 
     fireEvent.change(within(nav).getByLabelText("Search conversations and messages"), { target: { value: "team" } });
     expect(within(nav).queryByText("Release notes")).toBeNull();

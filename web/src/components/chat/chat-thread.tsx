@@ -13,7 +13,7 @@ import { ApiError } from "@/lib/api/client";
 import { chatApi, type Conversation } from "@/lib/api/conversations";
 import { automationNotes, conversationTitle, kindLabel } from "@/lib/chat/layout";
 import { buildPermalink, permalinkSeq, withoutMessageParam } from "@/lib/chat/permalink";
-import { markStopped } from "@/lib/chat/stopped";
+import { markStopped, useStoppedTurns } from "@/lib/chat/stopped";
 import { activeTurnId } from "@/lib/chat/transcript";
 import { useTranscript } from "@/lib/chat/use-transcript";
 
@@ -115,9 +115,12 @@ export function ChatThread({
   const onMissing = useCallback(() => setMissing(true), []);
   const active = activeTurnId(state, conversation ?? direct);
   const line = active ? (state.activity[active] ?? null) : null;
+  // After Stop the rail's Now dot goes at once too (chat-4).
+  const stoppedTurns = useStoppedTurns();
+  const railActive = !!active && !stoppedTurns.has(active);
   useEffect(() => {
-    onTurn?.({ active: !!active, line });
-  }, [active, line, onTurn]);
+    onTurn?.({ active: railActive, line: railActive ? line : null });
+  }, [railActive, line, onTurn]);
   // A conversation switch unmounts this thread: the rail must not keep its last turn.
   useEffect(() => () => onTurn?.({ active: false, line: null }), [onTurn]);
   const agentName = agent?.name ?? "the agent";

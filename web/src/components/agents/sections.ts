@@ -136,13 +136,11 @@ export interface AvailableSection {
 }
 
 /**
- * (P5-REFINE-3, D-406) The altitude of the pages that are not Use: Memory and Skills are Set up, the rest of this table
- * Expert (registry ids in `lib/altitude-registry.ts`). Altitude hides a page from the navigation only: a direct
+ * (P5-REFINE-3, D-406; P5-REFINE-12 #8) The altitude of the pages that are not Use (Instructions, Apps & access, Memory
+ * and Skills are Use): this table is Expert (registry ids in `lib/altitude-registry.ts`). Altitude hides a page from the navigation only: a direct
  * `?tab=` still opens it (`resolvePage` does not look at it).
  */
 export const PAGE_ALTITUDE: Partial<Record<AgentPageId, { id: AltitudeId; level: "setup" | "expert" }>> = {
-  memory: { id: "agent.memory", level: "setup" },
-  skills: { id: "agent.skills", level: "setup" },
   evals: { id: "agent.tests", level: "expert" },
   peers: { id: "agent.otheragents", level: "expert" },
   terminal: { id: "agent.terminal", level: "expert" },

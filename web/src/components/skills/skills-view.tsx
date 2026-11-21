@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ChangeEvent, type FormEvent } from "react";
+import { useId, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { formatCount } from "@/lib/format-date";
 
@@ -106,7 +106,7 @@ export function SkillsEditor({ scope, readOnly = false, orgId, agentName }: { sc
               >
                 <span className="font-medium">{skillDisplayName(s.name)}</span>
                 {!s.enabled ? <span className="ml-1 text-xs text-muted">(off)</span> : null}
-                <span className="block truncate text-xs font-normal text-ink-2">{s.description}</span>
+                <span className="line-clamp-2 text-xs font-normal text-ink-2">{whenLine(s.description)}</span>
                 {s.source ? (
                   <span className="mt-1 flex flex-wrap gap-1">
                     <LibraryBadge source={s.source} />
@@ -117,7 +117,7 @@ export function SkillsEditor({ scope, readOnly = false, orgId, agentName }: { sc
           ))}
         </ul>
         <div className="min-w-0">
-          {creating ? <CreateSkill scope={scope} taken={items.map((s) => s.name)} onDone={(id) => { setCreating(false); setSelected(id); }} onCancel={() => setCreating(false)} /> : null}
+          {creating ? <CreateSkill scope={scope} agentName={agentName} taken={items.map((s) => s.name)} onDone={(id) => { setCreating(false); setSelected(id); }} onCancel={() => setCreating(false)} /> : null}
           {!creating && current ? (
             <SkillEditor key={`${current.id}:${current.updated_at}`} scope={scope} skill={current} readOnly={readOnly} agentName={agentName} onDeleted={() => setSelected(null)} />
           ) : null}
@@ -126,6 +126,12 @@ export function SkillsEditor({ scope, readOnly = false, orgId, agentName }: { sc
       </div>
     </div>
   );
+}
+
+/** The list row's second line: "Use it when asked for a weekly report" (a description that already says so stays as it is). */
+function whenLine(description: string): string {
+  const d = description.trim();
+  return /^use(?: it)? when\b/i.test(d) ? d : `Use it when ${d}`;
 }
 
 /** Who a skill is "on for" in words, by tier. */
@@ -138,8 +144,9 @@ function onFor(scope: SkillScope, agentName?: string): string {
  * (P5-REFINE-12, behaviour-2) A new skill: a name in words, "Use it when…" and the instructions. The folder name is
  * Aurora's: made from the Name, unique, never `aurora-…`; a 409 retries once with the next suffix.
  */
-function CreateSkill({ scope, taken, onDone, onCancel }: { scope: SkillScope; taken: string[]; onDone: (id: string) => void; onCancel: () => void }) {
+function CreateSkill({ scope, agentName, taken, onDone, onCancel }: { scope: SkillScope; agentName?: string; taken: string[]; onDone: (id: string) => void; onCancel: () => void }) {
   const create = useCreateSkill(scope);
+  const [enabled, setEnabled] = useState(true);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [body, setBody] = useState("");
@@ -156,7 +163,7 @@ function CreateSkill({ scope, taken, onDone, onCancel }: { scope: SkillScope; ta
     if (Object.keys(next).length) return;
     for (let attempt = 0; ; attempt++) {
       try {
-        const s = await create.mutateAsync({ name: newSkillName(name, taken, attempt), description: description.trim(), body });
+        const s = await create.mutateAsync({ name: newSkillName(name, taken, attempt), description: description.trim(), body, enabled });
         onDone(s.id);
         return;
       } catch (error) {
@@ -176,6 +183,7 @@ function CreateSkill({ scope, taken, onDone, onCancel }: { scope: SkillScope; ta
         <textarea id="sk-body" className={inputClass} rows={8} value={body} onChange={(e) => setBody(e.target.value)} />
       </Field>
       <SizeMeter label="Size" used={body.length} max={SKILL_BODY_MAX} />
+      <SwitchField id="skill-enabled" label={onFor(scope, agentName)} checked={enabled} onChange={setEnabled} />
       <ErrorNotice error={create.error} />
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={create.isPending}>Save</Button>
@@ -218,6 +226,7 @@ export function SkillReadOnly({ skill }: { skill: Skill }) {
 }
 
 function SkillEditor({ scope, skill, readOnly = false, agentName, onDeleted }: { scope: SkillScope; skill: Skill; readOnly?: boolean; agentName?: string; onDeleted: () => void }) {
+  const formId = useId();
   const update = useUpdateSkill(scope, skill.id);
   const del = useDeleteSkill(scope);
   const [description, setDescription] = useState(skill.description);
@@ -250,7 +259,8 @@ function SkillEditor({ scope, skill, readOnly = false, agentName, onDeleted }: {
         </p>
       ) : null}
       {managed ? <LibrarySkillActions skill={skill} tier={tier} canDecide={!readOnly} /> : null}
-      <form onSubmit={submit} noValidate className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+      <div className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+      <form id={formId} onSubmit={submit} noValidate className="space-y-4">
         <Field id="sk-name" label="Name" hint="The name cannot be changed.">
           <input id="sk-name" className={inputClass} value={skillDisplayName(skill.name)} readOnly />
         </Field>
@@ -263,9 +273,21 @@ function SkillEditor({ scope, skill, readOnly = false, agentName, onDeleted }: {
         <SizeMeter label="Size" used={body.length} max={SKILL_BODY_MAX} />
         <SwitchField id="skill-enabled" label={onFor(scope, agentName)} checked={enabled} disabled={readOnly} onChange={setEnabled} />
         <ErrorNotice error={failed} />
+      </form>
+      {/* (P5-REFINE-12, behaviour-2) Files, scripts and the folder name are Expert: the fold sits inside the card, above Save
+          (its own forms are outside the skill's form; Save names that form). */}
+      <Altitude id="skill.files" level="expert" label="Advanced: files and scripts">
+        <div className="space-y-3">
+          <h3 className="font-display text-base font-semibold text-ink">Advanced: files and scripts</h3>
+          <p className="text-xs text-muted">
+            Folder name: <code className="font-mono">{skill.name}</code>. The instructions above are its <code className="font-mono">SKILL.md</code>.
+          </p>
+          <SkillFiles scope={scope} skill={skill} readOnly={contentReadOnly} />
+        </div>
+      </Altitude>
         {readOnly ? null : (
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" disabled={bodyOver || update.isPending}>Save</Button>
+            <Button type="submit" form={formId} disabled={bodyOver || update.isPending}>Save</Button>
             <ConfirmAction
               label={managed ? "Remove" : "Delete"}
               title={`${managed ? "Remove" : "Delete"} the skill “${skillDisplayName(skill.name)}”?`}
@@ -279,17 +301,7 @@ function SkillEditor({ scope, skill, readOnly = false, agentName, onDeleted }: {
             />
           </div>
         )}
-      </form>
-      {/* (P5-REFINE-12) Files, scripts and the folder name are Expert: a collapsed line stands in below it. */}
-      <Altitude id="skill.files" level="expert" label="Advanced: files and scripts">
-        <div className="space-y-3">
-          <h3 className="font-display text-base font-semibold text-ink">Advanced: files and scripts</h3>
-          <p className="text-xs text-muted">
-            Folder name: <code className="font-mono">{skill.name}</code>. The instructions above are its <code className="font-mono">SKILL.md</code>.
-          </p>
-          <SkillFiles scope={scope} skill={skill} readOnly={contentReadOnly} />
-        </div>
-      </Altitude>
+      </div>
     </div>
   );
 }

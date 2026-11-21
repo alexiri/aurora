@@ -63,7 +63,12 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
       {current ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-2">
           Current grader: <span className="font-medium text-ink">{current.secret_label}</span> with <code className="font-mono text-xs">{current.model_id}</code>
-          <Badge tone={current.usable ? "accent" : "danger"}>{current.usable ? "Ready" : "Not usable"}</Badge>
+          {/* behaviour-4: a grader whose test just failed is not "Ready". */}
+          {tested?.result === "failed" ? (
+            <Badge tone="danger">Test failed</Badge>
+          ) : (
+            <Badge tone={current.usable ? "accent" : "danger"}>{current.usable ? "Ready" : "Not usable"}</Badge>
+          )}
         </p>
       ) : (
         <p className="text-sm text-ink-2">No grader key is set. Number and text questions do not need one; a graded question cannot be scored without it.</p>

@@ -53,9 +53,32 @@ describe("the skill form", () => {
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Weekly report" } });
     fireEvent.change(screen.getByLabelText("Use it when…"), { target: { value: "someone asks for a weekly status report" } });
     fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "List wins." } });
+    // (behaviour-2) A new skill has its switch too, on by default, named for the agent.
+    const sw = screen.getByRole("switch", { name: "On for Dani" });
+    expect(sw).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(posts).toHaveLength(1));
-    expect(posts[0]).toEqual({ name: "weekly-report", description: "someone asks for a weekly status report", body: "List wins." });
+    expect(posts[0]).toEqual({ name: "weekly-report", description: "someone asks for a weekly status report", body: "List wins.", enabled: true });
+  });
+
+  it("creates a skill that is off when the switch is turned off", async () => {
+    const posts: Record<string, unknown>[] = [];
+    mockFetch({
+      "GET /v1/agents/a1/skills": () => json(200, { items: [], next_cursor: null }),
+      "POST /v1/agents/a1/skills": async (r) => {
+        const b = (await r.json()) as Record<string, unknown>;
+        posts.push(b);
+        return json(201, skill({ name: b.name, enabled: false }));
+      },
+    });
+    wrap(<SkillsEditor scope={{ kind: "agent", id: "a1" }} agentName="Dani" />);
+    fireEvent.click(await screen.findByRole("button", { name: "New skill" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Weekly report" } });
+    fireEvent.change(screen.getByLabelText("Use it when…"), { target: { value: "asked" } });
+    fireEvent.click(screen.getByRole("switch", { name: "On for Dani" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toMatchObject({ enabled: false });
   });
 
   it("retries once with the next suffix when the folder name is taken", async () => {
@@ -79,9 +102,17 @@ describe("the skill form", () => {
   it("lists by display name and shows 'On for Dani' with Advanced: files and scripts only at Expert", async () => {
     mockFetch({ "GET /v1/agents/a1/skills": () => json(200, { items: [skill()], next_cursor: null }) });
     const { unmount } = wrap(<SkillsEditor scope={{ kind: "agent", id: "a1" }} agentName="Dani" />);
+    // The row's second line reads "Use it when …" (mockup behaviour-2).
+    expect(await screen.findByText("Use it when someone asks for a weekly status report")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /Weekly report/ }));
     expect(screen.getByRole("switch", { name: "On for Dani" })).toBeChecked();
-    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeInTheDocument();
+    // The Advanced fold sits inside the card, above Save, and Save still belongs to the skill's own form.
+    const fold = screen.getByText("Advanced: files and scripts");
+    expect(fold.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(fold.closest("form")).toBeNull();
+    expect(save.getAttribute("form")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
     expect(screen.getByText("Advanced: files and scripts")).toBeInTheDocument();
     expect(screen.getByLabelText("File path")).toBeInTheDocument();

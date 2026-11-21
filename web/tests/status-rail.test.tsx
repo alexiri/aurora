@@ -212,6 +212,7 @@ describe("collapsed strip", () => {
       const visible = (clone.textContent ?? "").trim().toLowerCase();
       if (visible) expect(b.getAttribute("aria-label")!.toLowerCase()).toContain(visible);
     }
+    expect(within(strip).getByText("Need")).toBeInTheDocument();
     expect(within(strip).getByText("Now")).toBeInTheDocument();
     expect(within(strip).getByText("Did")).toBeInTheDocument();
     // The count on the Needs you icon.

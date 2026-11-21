@@ -30,13 +30,6 @@ export const READINESS_WARNING_COPY: Record<string, string> = {
   override_not_served: "This agent's model is not in your key's model list. It is still used.",
 };
 
-/** What the next turn uses when no model is chosen, and where it comes from. */
-export function automaticModelText(source: string, modelId: string): string {
-  return source === "key_listing"
-    ? `Automatic: ${modelId} (the first model your key serves)`
-    : `Automatic: ${modelId} (${SOURCE_COPY[source] ?? source})`;
-}
-
 const SOURCE_COPY: Record<string, string> = {
   override: "the model chosen for this agent",
   endpoint_default: "the endpoint's default model",
