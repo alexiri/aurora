@@ -1,0 +1,171 @@
+package:
+  id: grafana
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Grafana
+  description: Dashboards, folders, annotations and alerting on your own Grafana server, and Prometheus, Mimir and Loki queries through Grafana's data source proxy, connected with a service account token; saving dashboards, annotations, silences and unified queries are approved
+  homepage: https://grafana.com
+apps:
+  - about:
+      id: grafana
+      name: Grafana
+      description: Search dashboards, read panels and alerts, and run Prometheus, Mimir and Loki queries through your Grafana server; annotate, save dashboards and silence alerts when you allow it
+      summary: Dashboards, metrics, logs and alerts on your Grafana server.
+      first_prompt: "Which Grafana alerts are firing right now, and since when?"
+      category: monitoring
+      # Legacy HTTP API (/api/…): deprecated from Grafana 13 but still served; the new /apis/… layer
+      # is not used. Routes checked against Grafana v13.3.1 (pkg/api/api.go, public/openapi3.json).
+      api_docs: https://grafana.com/docs/grafana/latest/developer-resources/api-reference/http-api/api-legacy/
+      api_spec: https://raw.githubusercontent.com/grafana/grafana/main/public/openapi3.json
+      connect_note:
+        text: "An administrator registers your Grafana server first (Self-hosted apps). Create a service account in Grafana (Administration, Users and access, Service accounts) and add a token. The service account's role and the folder and data source permissions decide what agents can see: Viewer is enough to read and query, Editor is needed to save dashboards, add annotations and silence alerts. A service account belongs to one Grafana organization."
+        url: https://grafana.com/docs/grafana/latest/administration/service-accounts/
+    instances:
+      label: Grafana server
+      probe: { method: GET, path: /api/health, expect_status: [200] }
+    credentials:
+      - { name: access_token, secret: true }
+    connect:
+      - id: token
+        kind: fields
+        label: Service account token
+        description: "A token of a Grafana service account. Its role (Viewer or Editor) and its folder and data source permissions decide what agents can read and change."
+        # The role to give the service account (grafana.com/docs/grafana/latest/administration/service-accounts/).
+        access_levels:
+          - { id: read, label: Viewer, permission_hints: ["Role · Viewer"] }
+          - { id: write, label: Editor, permission_hints: ["Role · Editor"] }
+        fields:
+          - name: name
+            label: Name
+            type: text
+            store: label
+            required: false
+            placeholder: "Grafana production"
+          - name: access_token
+            label: Service account token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "glsa_…"
+            help_url: https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana
+        probe:
+          method: GET
+          url: "https://{instance}/api/user"
+          expect_status: [200]
+    hosts:
+      # `/api/`: the paths below `/api`, never Grafana's newer `/apis/…` layer, which no tool here
+      # uses (a prefix matches whole path segments since FIX-215, so `/api` would not cover it
+      # either; the slash keeps that true on a core before FIX-215).
+      - match: { host: "{instance}", path_prefix: /api/ }
+        inject:
+          - bearer: "{credentials.access_token}"
+    # (Security review of P5-GRAFANA, 2026-11-21) Every request must match a tool below, under a
+    # `full` grant too: Grafana's data source proxy forwards any method and path to the backend
+    # with Grafana's own credentials, and the token's Grafana role does not limit that, so an
+    # untooled proxy request could reach a backend's admin API. Reads run, writes are held.
+    grants:
+      block_untooled: true
+    tools:
+      read:
+        items:
+          # Identity, search, folders and dashboards.
+          - { id: get_current_user, description: "Shows the Grafana service account Aurora is connected as.", name: Get the connected account, host: "{instance}", path: /api/user, methods: [GET] }
+          - { id: get_current_org, description: "Reads the Grafana organization the token belongs to.", name: Get the current organization, host: "{instance}", path: /api/org, methods: [GET] }
+          - { id: search, description: "Searches dashboards and folders by title, tag or folder.", name: Search dashboards and folders, host: "{instance}", path: /api/search, methods: [GET] }
+          - { id: list_folders, description: "Lists folders.", name: List folders, host: "{instance}", path: /api/folders, methods: [GET] }
+          - { id: get_folder, description: "Reads one folder.", name: Get a folder, host: "{instance}", path: "/api/folders/*", methods: [GET] }
+          - { id: list_dashboard_tags, description: "Lists the tags used on dashboards.", name: List dashboard tags, host: "{instance}", path: /api/dashboards/tags, methods: [GET] }
+          - { id: get_dashboard, description: "Reads a dashboard: its panels, their queries and variables.", name: Get a dashboard, host: "{instance}", path: "/api/dashboards/uid/*", methods: [GET] }
+          - { id: list_dashboard_versions, description: "Lists a dashboard's saved versions. Grafana requires edit permission on the dashboard for this.", name: List a dashboard's versions, host: "{instance}", path: "/api/dashboards/uid/*/versions", methods: [GET] }
+          # Data sources (no secrets: Grafana returns only which secure fields are set).
+          - { id: list_datasources, description: "Lists the data sources the token may read. Grafana's Viewer and Editor roles see none by default.", name: List data sources, host: "{instance}", path: /api/datasources, methods: [GET] }
+          - { id: get_datasource, description: "Reads one data source's settings. Stored passwords and keys are never returned.", name: Get a data source, host: "{instance}", path: "/api/datasources/uid/*", methods: [GET] }
+          - { id: check_datasource_health, description: "Checks whether Grafana can reach a data source.", name: Check a data source, host: "{instance}", path: "/api/datasources/uid/*/health", methods: [GET] }
+          # Prometheus and Mimir through the data source proxy: named backend paths only. Every
+          # other proxy path (the admin API, status, TSDB endpoints) selects no tool.
+          - { id: prometheus_query, description: "Runs a PromQL query at one instant on a Prometheus or Mimir data source.", name: Prometheus instant query, host: "{instance}", path: "/api/datasources/proxy/uid/*/api/v1/query", methods: [GET] }
+          - { id: prometheus_query_range, description: "Runs a PromQL query over a time range on a Prometheus or Mimir data source.", name: Prometheus range query, host: "{instance}", path: "/api/datasources/proxy/uid/*/api/v1/query_range", methods: [GET] }
+          - { id: prometheus_series, description: "Lists the series that match a selector on a Prometheus or Mimir data source.", name: Prometheus series, host: "{instance}", path: "/api/datasources/proxy/uid/*/api/v1/series", methods: [GET] }
+          - { id: prometheus_labels, description: "Lists label names on a Prometheus or Mimir data source.", name: Prometheus label names, host: "{instance}", path: "/api/datasources/proxy/uid/*/api/v1/labels", methods: [GET] }
+          - { id: prometheus_label_values, description: "Lists the values of one label on a Prometheus or Mimir data source.", name: Prometheus label values, host: "{instance}", path: "/api/datasources/proxy/uid/*/api/v1/label/*/values", methods: [GET] }
+          - { id: prometheus_metadata, description: "Reads metric types and help texts on a Prometheus or Mimir data source.", name: Prometheus metric metadata, host: "{instance}", path: "/api/datasources/proxy/uid/*/api/v1/metadata", methods: [GET] }
+          - { id: prometheus_rules, description: "Lists alerting and recording rules and their state on a Prometheus or Mimir data source.", name: Prometheus rules, host: "{instance}", path: "/api/datasources/proxy/uid/*/api/v1/rules", methods: [GET] }
+          - { id: prometheus_alerts, description: "Lists the active alerts of a Prometheus or Mimir data source.", name: Prometheus alerts, host: "{instance}", path: "/api/datasources/proxy/uid/*/api/v1/alerts", methods: [GET] }
+          - { id: prometheus_query_exemplars, description: "Reads exemplars (sample traces) for a PromQL query on a Prometheus or Mimir data source.", name: Prometheus exemplars, host: "{instance}", path: "/api/datasources/proxy/uid/*/api/v1/query_exemplars", methods: [GET] }
+          # Loki through the data source proxy: named backend paths only.
+          - { id: loki_query, description: "Runs a LogQL query at one instant on a Loki data source.", name: Loki instant query, host: "{instance}", path: "/api/datasources/proxy/uid/*/loki/api/v1/query", methods: [GET] }
+          - { id: loki_query_range, description: "Reads log lines or runs a LogQL metric query over a time range on a Loki data source.", name: Loki range query, host: "{instance}", path: "/api/datasources/proxy/uid/*/loki/api/v1/query_range", methods: [GET] }
+          - { id: loki_labels, description: "Lists label names on a Loki data source.", name: Loki label names, host: "{instance}", path: "/api/datasources/proxy/uid/*/loki/api/v1/labels", methods: [GET] }
+          - { id: loki_label_values, description: "Lists the values of one label on a Loki data source.", name: Loki label values, host: "{instance}", path: "/api/datasources/proxy/uid/*/loki/api/v1/label/*/values", methods: [GET] }
+          - { id: loki_series, description: "Lists the log streams that match a selector on a Loki data source.", name: Loki series, host: "{instance}", path: "/api/datasources/proxy/uid/*/loki/api/v1/series", methods: [GET] }
+          # Grafana alerting.
+          - { id: list_alert_rule_states, description: "Lists Grafana-managed alert rules with their current state.", name: Grafana alert rules and their state, host: "{instance}", path: /api/prometheus/grafana/api/v1/rules, methods: [GET] }
+          - { id: list_alert_rules, description: "Lists the definitions of Grafana-managed alert rules.", name: List alert rule definitions, host: "{instance}", path: /api/v1/provisioning/alert-rules, methods: [GET] }
+          - { id: get_alert_rule, description: "Reads one Grafana-managed alert rule's definition.", name: Get an alert rule definition, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [GET] }
+          - { id: list_alerts, description: "Lists the alerts in Grafana's Alertmanager: firing, silenced or inhibited.", name: List alerts, host: "{instance}", path: /api/alertmanager/grafana/api/v2/alerts, methods: [GET] }
+          - { id: list_silences, description: "Lists silences in Grafana's Alertmanager.", name: List silences, host: "{instance}", path: /api/alertmanager/grafana/api/v2/silences, methods: [GET] }
+          # Annotations.
+          - { id: list_annotations, description: "Lists annotations (deployments, incidents, notes) in a time range.", name: List annotations, host: "{instance}", path: /api/annotations, methods: [GET] }
+      write:
+        items:
+          - { id: create_annotation, description: "Adds an annotation to Grafana, on one dashboard or for the whole organization.", name: Add an annotation, host: "{instance}", path: /api/annotations, methods: [POST] }
+          - { id: update_dashboard, description: "Creates a dashboard or saves a new version of one.", name: Save a dashboard, host: "{instance}", path: /api/dashboards/db, methods: [POST] }
+          - { id: create_silence, description: "Silences matching alerts in Grafana's Alertmanager for a time, or changes a silence.", name: Silence alerts, host: "{instance}", path: /api/alertmanager/grafana/api/v2/silences, methods: [POST] }
+          - { id: delete_silence, description: "Ends a silence in Grafana's Alertmanager.", name: End a silence, host: "{instance}", path: "/api/alertmanager/grafana/api/v2/silence/*", methods: [DELETE] }
+          - { id: query_datasources, description: "Runs queries on any data source through Grafana. It only reads, but it is a POST, so it is held for approval.", name: Run a data source query (read only), host: "{instance}", path: /api/ds/query, methods: [POST] }
+    approvals:
+      create_annotation:
+        title: add an annotation
+        fields:
+          - { label: Text, source: body, steps: [ { json: /text } ] }
+          - { label: Tags, source: body, steps: [ { json: "/tags/*" } ] }
+          - { label: Dashboard UID, source: body, steps: [ { json: /dashboardUID } ] }
+          - { label: Panel, source: body, steps: [ { json: /panelId } ] }
+          - { label: Time, source: body, steps: [ { json: /time } ] }
+          - { label: End time, source: body, steps: [ { json: /timeEnd } ] }
+      update_dashboard:
+        title: save a dashboard
+        fields:
+          - { label: Dashboard, source: body, steps: [ { json: /dashboard/title } ] }
+          - { label: UID, source: body, steps: [ { json: /dashboard/uid } ] }
+          - { label: Folder UID, source: body, steps: [ { json: /folderUid } ] }
+          - { label: Overwrite, source: body, steps: [ { json: /overwrite } ] }
+          - { label: Message, source: body, steps: [ { json: /message } ] }
+      create_silence:
+        title: silence alerts
+        fields:
+          - { label: Matcher labels, source: body, steps: [ { json: "/matchers/*/name" } ] }
+          - { label: Matcher values, source: body, steps: [ { json: "/matchers/*/value" } ] }
+          - { label: Equal (false means not equal), source: body, steps: [ { json: "/matchers/*/isEqual" } ] }
+          - { label: Regular expression, source: body, steps: [ { json: "/matchers/*/isRegex" } ] }
+          - { label: Starts, source: body, steps: [ { json: /startsAt } ] }
+          - { label: Ends, source: body, steps: [ { json: /endsAt } ] }
+          - { label: Comment, source: body, steps: [ { json: /comment } ] }
+          - { label: Changes silence, source: body, steps: [ { json: /id } ] }
+      delete_silence:
+        title: end a silence
+        fields:
+          - { label: Silence, source: path, segment: 7 }
+      query_datasources:
+        title: run a data source query (read only)
+        fields:
+          - { label: Data source UIDs, source: body, steps: [ { json: "/queries/*/datasource/uid" } ] }
+          - { label: Expression, source: body, steps: [ { json: /queries/0/expr } ] }
+          - { label: SQL, source: body, steps: [ { json: /queries/0/rawSql } ] }
+          - { label: Query, source: body, steps: [ { json: /queries/0/query } ] }
+          - { label: From, source: body, steps: [ { json: /from } ] }
+          - { label: To, source: body, steps: [ { json: /to } ] }
+    agent:
+      summary: "Grafana dashboards, Prometheus/Mimir metrics, Loki logs and alerts: find a dashboard, run a query, see what fires."
+      instructions: |
+        The base URL is the account's address plus /api; Aurora adds the token, so send none and
+        never send this connection's requests to another host. Find a data source UID in a
+        dashboard's panels (or /api/datasources), then query Prometheus, Mimir or Loki with GET
+        through /api/datasources/proxy/uid/<uid>/… (only the paths in tools.md work). Keep time
+        ranges and step small, and use aurora-agent so large results are saved, not printed.
+      operations: operations.json
+      guide:
+        - { file: investigate-a-spike.md, title: "Find out why a metric jumped", kind: recipe }
+        - { file: api-notes.md, title: "API notes: search, dashboards, data source UIDs, proxy paths, alerting, annotations, errors" }

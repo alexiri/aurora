@@ -1,0 +1,156 @@
+# Write tools: each is classified, held for approval and summarised; negatives show the neighbours
+# that are not the tool. Bodies follow Grafana's documented request shapes (v13.3.1
+# public/openapi3.json, ngalert post.json). All credentials are fake.
+- name: "create_annotation: an annotation on a dashboard panel is summarised"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/annotations"
+    headers: { content-type: application/json }
+    body: '{"dashboardUID":"api-overview","panelId":4,"time":1763647200000,"timeEnd":1763647500000,"tags":["deploy","api"],"text":"Deployed api v2.14"}'
+  expect:
+    app: grafana
+    tool: create_annotation
+    summary:
+      title: "add an annotation"
+      fields:
+        Text: "Deployed api v2.14"
+        Tags: "deploy, api"
+        Dashboard UID: "api-overview"
+        Panel: "4"
+        Time: "1763647200000"
+        End time: "1763647500000"
+    upstream: { url: "https://grafana.example.org/api/annotations", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative create_annotation: a Graphite-format annotation (another path) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/annotations/graphite" }
+  expect: { app: grafana, no_tool: true }
+- name: "negative create_annotation: deleting an annotation selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://grafana.example.org/api/annotations/42" }
+  expect: { app: grafana, no_tool: true }
+- name: "update_dashboard: saving a dashboard shows its title, UID, folder, overwrite and message"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/dashboards/db"
+    headers: { content-type: application/json }
+    body: '{"dashboard":{"uid":"api-overview","title":"API overview","version":12,"panels":[]},"folderUid":"ops-folder","message":"Add the p99 latency panel","overwrite":false}'
+  expect:
+    app: grafana
+    tool: update_dashboard
+    summary:
+      title: "save a dashboard"
+      fields:
+        Dashboard: "API overview"
+        UID: "api-overview"
+        Folder UID: "ops-folder"
+        Overwrite: "false"
+        Message: "Add the p99 latency panel"
+- name: "negative update_dashboard: importing a dashboard (another path) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/dashboards/import" }
+  expect: { app: grafana, no_tool: true }
+- name: "create_silence: a silence shows its matchers, times and comment"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/alertmanager/grafana/api/v2/silences"
+    headers: { content-type: application/json }
+    body: '{"matchers":[{"name":"alertname","value":"HighErrorRate","isRegex":false,"isEqual":true},{"name":"env","value":"staging","isRegex":false,"isEqual":false}],"startsAt":"2026-11-21T14:00:00Z","endsAt":"2026-11-21T16:00:00Z","createdBy":"daneel","comment":"Planned load test"}'
+  expect:
+    app: grafana
+    tool: create_silence
+    summary:
+      title: "silence alerts"
+      fields:
+        Matcher labels: "alertname, env"
+        Matcher values: "HighErrorRate, staging"
+        Equal (false means not equal): "true, false"
+        Regular expression: "false, false"
+        Starts: "2026-11-21T14:00:00Z"
+        Ends: "2026-11-21T16:00:00Z"
+        Comment: "Planned load test"
+- name: "create_silence: changing an existing silence (a body id) shows which one"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/alertmanager/grafana/api/v2/silences"
+    headers: { content-type: application/json }
+    body: '{"id":"silence-fixture-1","matchers":[{"name":"alertname","value":".*","isRegex":true,"isEqual":true}],"startsAt":"2026-11-21T14:00:00Z","endsAt":"2026-11-28T14:00:00Z","createdBy":"daneel","comment":"Extend"}'
+  expect:
+    app: grafana
+    tool: create_silence
+    summary:
+      title: "silence alerts"
+      fields:
+        Matcher values: ".*"
+        Regular expression: "true"
+        Changes silence: "silence-fixture-1"
+        Ends: "2026-11-28T14:00:00Z"
+- name: "negative create_silence: a silence on an external Alertmanager data source selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/alertmanager/am-main/api/v2/silences" }
+  expect: { app: grafana, no_tool: true }
+- name: "delete_silence: ending a silence shows its id"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://grafana.example.org/api/alertmanager/grafana/api/v2/silence/silence-fixture-1" }
+  expect:
+    app: grafana
+    tool: delete_silence
+    summary: { title: "end a silence", fields: { Silence: "silence-fixture-1" } }
+- name: "negative delete_silence: reading one silence (GET) is not the deletion"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/alertmanager/grafana/api/v2/silence/silence-fixture-1" }
+  expect: { app: grafana, no_tool: true }
+- name: "query_datasources: a unified PromQL query is held and shows the data source and expression"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/ds/query"
+    headers: { content-type: application/json }
+    body: '{"from":"now-1h","to":"now","queries":[{"refId":"A","datasource":{"type":"prometheus","uid":"prom-main"},"expr":"sum(rate(http_requests_total[5m]))"},{"refId":"B","datasource":{"uid":"loki-main"},"expr":"count_over_time({app=\"api\"}[5m])"}]}'
+  expect:
+    app: grafana
+    tool: query_datasources
+    summary:
+      title: "run a data source query (read only)"
+      fields:
+        Data source UIDs: "prom-main, loki-main"
+        Expression: "sum(rate(http_requests_total[5m]))"
+        From: "now-1h"
+        To: "now"
+- name: "query_datasources: a SQL query shows the statement"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/ds/query"
+    headers: { content-type: application/json }
+    body: '{"from":"1763643600000","to":"1763650800000","queries":[{"refId":"A","datasource":{"uid":"pg-reports"},"rawSql":"SELECT count(*) FROM deployments","format":"table"}]}'
+  expect:
+    app: grafana
+    tool: query_datasources
+    summary:
+      title: "run a data source query (read only)"
+      fields:
+        Data source UIDs: "pg-reports"
+        SQL: "SELECT count(*) FROM deployments"
+- name: "query_datasources: an Elasticsearch query shows its query string"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/ds/query"
+    headers: { content-type: application/json }
+    body: '{"from":"now-6h","to":"now","queries":[{"refId":"A","datasource":{"uid":"es-logs"},"query":"level:error AND service:api","metrics":[{"type":"count","id":"1"}]}]}'
+  expect:
+    app: grafana
+    tool: query_datasources
+    summary:
+      title: "run a data source query (read only)"
+      fields:
+        Data source UIDs: "es-logs"
+        Query: "level:error AND service:api"
+- name: "negative query_datasources: a data source's resource call (any method, any path) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/datasources/uid/prom-main/resources/api/v1/query" }
+  expect: { app: grafana, no_tool: true }

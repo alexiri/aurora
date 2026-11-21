@@ -1,0 +1,79 @@
+# Dangerous endpoints no tool offers (FIX-118, SEC-145, D-429): each request is a Grafana request
+# but selects no tool, so the package's `grants.block_untooled` blocks it under every grant. Paths and methods are
+# Grafana v13.3.1's (pkg/api/api.go, pkg/services/serviceaccounts/api/api.go). All credentials are fake.
+- name: "refused service-account token creation: POST /api/serviceaccounts/<id>/tokens selects no tool (SEC-145)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/serviceaccounts/7/tokens"
+    headers: { content-type: application/json }
+    body: '{"name":"second-token"}'
+  expect: { app: grafana, no_tool: true }
+- name: "refused service-account token creation: listing a service account's tokens selects no tool either"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/serviceaccounts/7/tokens" }
+  expect: { app: grafana, no_tool: true }
+- name: "refused service-account creation: POST /api/serviceaccounts selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/serviceaccounts"
+    headers: { content-type: application/json }
+    body: '{"name":"agent-made","role":"Admin"}'
+  expect: { app: grafana, no_tool: true }
+- name: "refused API key creation: POST /api/auth/keys (removed in Grafana 12, still on older servers) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/auth/keys"
+    headers: { content-type: application/json }
+    body: '{"name":"agent-key","role":"Admin"}'
+  expect: { app: grafana, no_tool: true }
+- name: "refused user admin: creating a user (POST /api/admin/users) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/admin/users" }
+  expect: { app: grafana, no_tool: true }
+- name: "refused user admin: setting a user's password selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://grafana.example.org/api/admin/users/12/password" }
+  expect: { app: grafana, no_tool: true }
+- name: "refused organization admin: creating an organization (POST /api/orgs) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/orgs" }
+  expect: { app: grafana, no_tool: true }
+- name: "refused organization admin: adding a user to an organization selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/orgs/1/users" }
+  expect: { app: grafana, no_tool: true }
+- name: "refused datasource creation: POST /api/datasources selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/datasources"
+    headers: { content-type: application/json }
+    body: '{"name":"exfil","type":"prometheus","url":"https://collector.example.net","access":"proxy"}'
+  expect: { app: grafana, no_tool: true }
+- name: "refused datasource update: PUT /api/datasources/uid/<uid> selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://grafana.example.org/api/datasources/uid/prom-main" }
+  expect: { app: grafana, no_tool: true }
+- name: "refused datasource deletion: DELETE /api/datasources/uid/<uid> selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://grafana.example.org/api/datasources/uid/prom-main" }
+  expect: { app: grafana, no_tool: true }
+- name: "refused dashboard deletion: DELETE /api/dashboards/uid/<uid> selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://grafana.example.org/api/dashboards/uid/api-overview" }
+  expect: { app: grafana, no_tool: true }
+- name: "refused plugin install: POST /api/plugins/<id>/install selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/plugins/example-panel/install" }
+  expect: { app: grafana, no_tool: true }
+- name: "refused Prometheus admin API: a proxy POST to api/v1/admin/tsdb/delete_series selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/admin/tsdb/delete_series?match%5B%5D=up" }
+  expect: { app: grafana, no_tool: true }
+- name: "refused Prometheus admin API: a proxy POST to api/v1/admin/tsdb/snapshot selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/admin/tsdb/snapshot" }
+  expect: { app: grafana, no_tool: true }

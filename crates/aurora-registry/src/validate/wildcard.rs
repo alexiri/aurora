@@ -18,6 +18,7 @@
 use aurora_policy::{HostPattern, PathPattern};
 
 use crate::Violation;
+use crate::index::path_prefix_matches;
 use crate::manifest::{App, Manifest, ToolGroup};
 
 pub fn wildcards(m: &Manifest) -> Vec<Violation> {
@@ -40,11 +41,7 @@ fn covered(app: &App, host: &HostPattern, path: &str) -> bool {
         };
         let host_ok = c.as_str() == host.as_str()
             || (!host.as_str().contains('*') && c.matches(host.as_str(), 443));
-        host_ok
-            && h.matcher
-                .path_prefix
-                .as_deref()
-                .is_none_or(|p| path.starts_with(p))
+        host_ok && path_prefix_matches(h.matcher.path_prefix.as_deref(), path)
     })
 }
 

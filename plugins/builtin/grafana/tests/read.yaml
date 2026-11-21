@@ -1,0 +1,272 @@
+# Read tools: one positive and one negative case each. Grafana has no default host, so every case
+# registers the instance grafana.example.org. All credentials are fake.
+- name: "get_current_user: GET /api/user injects the bearer"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/user" }
+  expect:
+    app: grafana
+    tool: get_current_user
+    upstream: { url: "https://grafana.example.org/api/user", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative get_current_user: changing the signed-in user (PUT) is not the read"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://grafana.example.org/api/user" }
+  expect: { app: grafana, no_tool: true }
+- name: "get_current_org: GET /api/org"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/org" }
+  expect: { app: grafana, tool: get_current_org }
+- name: "negative get_current_org: updating the organization (PUT) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://grafana.example.org/api/org" }
+  expect: { app: grafana, no_tool: true }
+- name: "search: GET /api/search with a query"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/search?query=api%20errors&type=dash-db" }
+  expect:
+    app: grafana
+    tool: search
+    upstream: { url: "https://grafana.example.org/api/search?query=api%20errors&type=dash-db" }
+- name: "search: the trailing-slash form Grafana routes (/api/search/) is the same tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/search/?tag=prod" }
+  expect: { app: grafana, tool: search }
+- name: "negative search: the sort options list is another path"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/search/sorting" }
+  expect: { app: grafana, no_tool: true }
+- name: "list_folders: GET /api/folders"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/folders?limit=100" }
+  expect: { app: grafana, tool: list_folders }
+- name: "negative list_folders: creating a folder (POST) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/folders" }
+  expect: { app: grafana, no_tool: true }
+- name: "get_folder: GET /api/folders/<uid>"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/folders/ops-folder" }
+  expect: { app: grafana, tool: get_folder }
+- name: "negative get_folder: deleting a folder selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://grafana.example.org/api/folders/ops-folder" }
+  expect: { app: grafana, no_tool: true }
+- name: "list_dashboard_tags: GET /api/dashboards/tags"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/dashboards/tags" }
+  expect: { app: grafana, tool: list_dashboard_tags }
+- name: "negative list_dashboard_tags: the home dashboard is another path"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/dashboards/home" }
+  expect: { app: grafana, no_tool: true }
+- name: "get_dashboard: GET /api/dashboards/uid/<uid>"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/dashboards/uid/api-overview" }
+  expect: { app: grafana, tool: get_dashboard }
+- name: "negative get_dashboard: one saved version is not the dashboard read"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/dashboards/uid/api-overview/versions/3" }
+  expect: { app: grafana, no_tool: true }
+- name: "list_dashboard_versions: GET /api/dashboards/uid/<uid>/versions"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/dashboards/uid/api-overview/versions?limit=5" }
+  expect: { app: grafana, tool: list_dashboard_versions }
+- name: "negative list_dashboard_versions: restoring a version (POST) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/dashboards/uid/api-overview/restore" }
+  expect: { app: grafana, no_tool: true }
+- name: "list_datasources: GET /api/datasources"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources" }
+  expect: { app: grafana, tool: list_datasources }
+- name: "negative list_datasources: a data source by its numeric id (legacy route) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/7" }
+  expect: { app: grafana, no_tool: true }
+- name: "get_datasource: GET /api/datasources/uid/<uid>"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/uid/prom-main" }
+  expect: { app: grafana, tool: get_datasource }
+- name: "negative get_datasource: a data source by name selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/name/Prometheus" }
+  expect: { app: grafana, no_tool: true }
+- name: "check_datasource_health: GET /api/datasources/uid/<uid>/health"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/uid/prom-main/health" }
+  expect: { app: grafana, tool: check_datasource_health }
+- name: "negative check_datasource_health: the health route with POST (Grafana accepts any method) is not the read"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/datasources/uid/prom-main/health" }
+  expect: { app: grafana, no_tool: true }
+# Prometheus and Mimir through the data source proxy.
+- name: "prometheus_query: a proxy GET to api/v1/query selects the Prometheus query tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query?query=up" }
+  expect:
+    app: grafana
+    tool: prometheus_query
+    upstream:
+      url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query?query=up"
+      headers: { authorization: "Bearer tok-fixture-1" }
+- name: "negative prometheus_query: POST to api/v1/query (Prometheus accepts form posts) is not the read"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "query=up"
+  expect: { app: grafana, no_tool: true }
+- name: "prometheus_query_range: proxy GET api/v1/query_range"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query_range?query=up&start=1763643600&end=1763650800&step=60" }
+  expect: { app: grafana, tool: prometheus_query_range }
+- name: "negative prometheus_query_range: a longer variant of the name is another path"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query_range_extra" }
+  expect: { app: grafana, no_tool: true }
+- name: "prometheus_series: proxy GET api/v1/series"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/series?match%5B%5D=up" }
+  expect: { app: grafana, tool: prometheus_series }
+- name: "negative prometheus_series: deleting series through the admin API selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/admin/tsdb/delete_series?match%5B%5D=up" }
+  expect: { app: grafana, no_tool: true }
+- name: "prometheus_labels: proxy GET api/v1/labels"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/labels" }
+  expect: { app: grafana, tool: prometheus_labels }
+- name: "negative prometheus_labels: the singular label path without a name and values is not a tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/label" }
+  expect: { app: grafana, no_tool: true }
+- name: "prometheus_label_values: proxy GET api/v1/label/<name>/values"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/label/job/values" }
+  expect: { app: grafana, tool: prometheus_label_values }
+- name: "negative prometheus_label_values: an extra segment after values selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/label/job/values/extra" }
+  expect: { app: grafana, no_tool: true }
+- name: "prometheus_metadata: proxy GET api/v1/metadata"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/metadata?metric=up" }
+  expect: { app: grafana, tool: prometheus_metadata }
+- name: "negative prometheus_metadata: target metadata (another path) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/targets/metadata" }
+  expect: { app: grafana, no_tool: true }
+- name: "prometheus_rules: proxy GET api/v1/rules"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/mimir-prod/api/v1/rules?type=alert" }
+  expect: { app: grafana, tool: prometheus_rules }
+- name: "negative prometheus_rules: changing a ruler rule group (POST) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/datasources/proxy/uid/mimir-prod/api/v1/rules/team-a" }
+  expect: { app: grafana, no_tool: true }
+- name: "prometheus_alerts: proxy GET api/v1/alerts"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/alerts" }
+  expect: { app: grafana, tool: prometheus_alerts }
+- name: "negative prometheus_alerts: the Alertmanager list behind the proxy is not this tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/am-main/api/v2/alerts" }
+  expect: { app: grafana, no_tool: true }
+- name: "prometheus_query_exemplars: proxy GET api/v1/query_exemplars"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query_exemplars?query=up" }
+  expect: { app: grafana, tool: prometheus_query_exemplars }
+- name: "negative prometheus_query_exemplars: the TSDB status selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/status/tsdb" }
+  expect: { app: grafana, no_tool: true }
+# Loki through the data source proxy.
+- name: "loki_query: proxy GET loki/api/v1/query"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/loki-main/loki/api/v1/query?query=count_over_time(%7Bapp%3D%22api%22%7D%5B5m%5D)" }
+  expect: { app: grafana, tool: loki_query }
+- name: "negative loki_query: Loki's tail (a websocket stream) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/loki-main/loki/api/v1/tail" }
+  expect: { app: grafana, no_tool: true }
+- name: "loki_query_range: proxy GET loki/api/v1/query_range"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/loki-main/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&limit=50" }
+  expect: { app: grafana, tool: loki_query_range }
+- name: "negative loki_query_range: pushing log lines (POST) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/datasources/proxy/uid/loki-main/loki/api/v1/push" }
+  expect: { app: grafana, no_tool: true }
+- name: "loki_labels: proxy GET loki/api/v1/labels"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/loki-main/loki/api/v1/labels" }
+  expect: { app: grafana, tool: loki_labels }
+- name: "negative loki_labels: the Prometheus labels path is not the Loki one"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/loki-main/api/v1/labels" }
+  expect: { app: grafana, tool: prometheus_labels }
+- name: "loki_label_values: proxy GET loki/api/v1/label/<name>/values"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/loki-main/loki/api/v1/label/app/values" }
+  expect: { app: grafana, tool: loki_label_values }
+- name: "negative loki_label_values: deleting log lines (Loki's delete API) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/loki-main/loki/api/v1/delete" }
+  expect: { app: grafana, no_tool: true }
+- name: "loki_series: proxy GET loki/api/v1/series"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/loki-main/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D" }
+  expect: { app: grafana, tool: loki_series }
+- name: "negative loki_series: Loki's index stats selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/loki-main/loki/api/v1/index/stats" }
+  expect: { app: grafana, no_tool: true }
+# Grafana alerting and annotations.
+- name: "list_alert_rule_states: GET /api/prometheus/grafana/api/v1/rules"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/prometheus/grafana/api/v1/rules?state=firing" }
+  expect: { app: grafana, tool: list_alert_rule_states }
+- name: "negative list_alert_rule_states: another data source's rules through the ruler route selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/prometheus/mimir-prod/api/v1/rules" }
+  expect: { app: grafana, no_tool: true }
+- name: "list_alert_rules: GET /api/v1/provisioning/alert-rules"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/v1/provisioning/alert-rules" }
+  expect: { app: grafana, tool: list_alert_rules }
+- name: "negative list_alert_rules: creating an alert rule (POST) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/alert-rules" }
+  expect: { app: grafana, no_tool: true }
+- name: "get_alert_rule: GET /api/v1/provisioning/alert-rules/<uid>"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/v1/provisioning/alert-rules/rule-high-errors" }
+  expect: { app: grafana, tool: get_alert_rule }
+- name: "negative get_alert_rule: exporting a rule (provisioning file format) is another path"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/v1/provisioning/alert-rules/rule-high-errors/export" }
+  expect: { app: grafana, no_tool: true }
+- name: "list_alerts: GET the Grafana Alertmanager's alerts"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/alertmanager/grafana/api/v2/alerts?active=true" }
+  expect: { app: grafana, tool: list_alerts }
+- name: "negative list_alerts: posting alerts to the Alertmanager selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/alertmanager/grafana/api/v2/alerts" }
+  expect: { app: grafana, no_tool: true }
+- name: "list_silences: GET the Grafana Alertmanager's silences"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/alertmanager/grafana/api/v2/silences" }
+  expect: { app: grafana, tool: list_silences }
+- name: "negative list_silences: an external Alertmanager's silences select no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/alertmanager/am-main/api/v2/silences" }
+  expect: { app: grafana, no_tool: true }
+- name: "list_annotations: GET /api/annotations in a time range"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/annotations?from=1763643600000&to=1763650800000&dashboardUID=api-overview" }
+  expect: { app: grafana, tool: list_annotations }
+- name: "negative list_annotations: mass deletion of annotations selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/annotations/mass-delete" }
+  expect: { app: grafana, no_tool: true }

@@ -398,6 +398,16 @@ hosts:
                              session_token: "{credentials.session_token}" } }
 ```
 
+**`path_prefix` matches whole path segments** (phase 5, FIX-215, SEC-04/SEC-59). A request path
+(the normalized path of `06` step 3, below the base path on a registered instance, without the
+query) matches a prefix `P` when it equals `P` or starts with `P` followed by `/`; a `P` that ends
+in `/` means "this directory and below" (the path starts with `P`). `/rest` matches `/rest`,
+`/rest/` and `/rest/api/2`, not `/restricted` or `/rest%2Fx`; `/api/` matches `/api/x`, not `/api`
+or `/apis`; no prefix (or `/`) matches every path. Among the entries of one host that match, the
+longest prefix wins. One function decides it (`aurora_registry::index::path_prefix_matches`), used
+by the gateway, the policy simulator, the connect probe and the package linter. Claim overlap
+(`§7`) stays a plain string comparison, which can only report more conflicts, never fewer.
+
 #### Instance-bound hosts: self-hosted apps (phase 2, D-74)
 
 A `tenant` zone covers SaaS subdomains (`acme.zendesk.com`). A **self-hosted**
