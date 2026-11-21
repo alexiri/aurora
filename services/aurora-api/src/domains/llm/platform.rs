@@ -58,6 +58,8 @@ pub enum Failure {
     /// Transport failure, a non-2xx answer, an unsupported provider or an unreadable body.
     Unavailable,
     Timeout,
+    /// The provider answered 429 (C-1101): reached, and asking for less.
+    RateLimited,
 }
 
 impl Failure {
@@ -68,6 +70,7 @@ impl Failure {
             Self::NotUsable => "not_usable",
             Self::Unavailable => "unavailable",
             Self::Timeout => "timeout",
+            Self::RateLimited => "rate_limited",
         }
     }
 }
@@ -215,6 +218,9 @@ pub async fn complete(
             Failure::Unavailable
         }
     })?;
+    if resp.status() == http::StatusCode::TOO_MANY_REQUESTS {
+        return Err(Failure::RateLimited);
+    }
     if !resp.status().is_success() {
         return Err(Failure::Unavailable);
     }

@@ -2279,3 +2279,57 @@ async fn refine5_a_rejected_key_leaves_nothing_behind() {
             .unwrap();
     assert_eq!(sealed, 0, "no sealed value");
 }
+
+/// P5-REFINE-20 batch 6 item 1 (regression of batch 3 b1#1): `GET …/accounts` never runs or waits for a key check or
+/// a model listing. A workspace with several keys on an endpoint that never answers lists in well under a second (it
+/// took about 10 s per key: the default model's listing was read from the endpoint inline).
+#[tokio::test]
+async fn refine20_listing_accounts_never_waits_for_an_endpoint_that_does_not_answer() {
+    use std::time::{Duration, Instant};
+    let w = world().await;
+    for n in 0..3 {
+        let (s, v) = w
+            .call(
+                Method::POST,
+                &w.ws_url(),
+                &w.owner,
+                Some(json!({
+                    "name": format!("silent-{n}"), "kind": "llm", "llm": {"endpoint_id": "silent"},
+                    "value": format!("sk-silent-{n}")})),
+            )
+            .await;
+        assert_eq!(s, 201, "{v}");
+    }
+    for uri in [
+        format!("/v1/workspaces/{}/accounts", w.ws),
+        format!("/v1/workspaces/{}/accounts?kind=ai_key", w.ws),
+        format!("/v1/orgs/{}/accounts", w.org),
+    ] {
+        let started = Instant::now();
+        let (s, v) = w.call(Method::GET, &uri, &w.owner, None).await;
+        let took = started.elapsed();
+        assert_eq!(s, 200, "{v}");
+        assert!(
+            took < Duration::from_secs(1),
+            "{uri} waited {took:?} for an endpoint that does not answer"
+        );
+    }
+    let (_, v) = w
+        .call(
+            Method::GET,
+            &format!("/v1/workspaces/{}/accounts?kind=ai_key", w.ws),
+            &w.owner,
+            None,
+        )
+        .await;
+    let names: Vec<&str> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"silent-0") && names.contains(&"silent-2"),
+        "{names:?}"
+    );
+}

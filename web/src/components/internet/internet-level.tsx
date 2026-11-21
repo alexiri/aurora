@@ -21,6 +21,7 @@ import { inputClass } from "@/components/ui/field";
 import { MainAction } from "@/components/ui/main-action";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { ShieldIcon } from "@/components/ui/icons";
 import { ScopeLadder, type LadderBelow } from "@/components/ui/scope-ladder";
 import { Section } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
@@ -107,7 +108,14 @@ function HistorySection({ scope, description }: { scope: PolicyScope; descriptio
           {rows.map((g) => (
             <li key={g.id} className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-ink">
               <span className="flex min-w-0 items-center gap-3">
-                <Avatar name={g.actor?.display_name ?? g.published_by?.display_name ?? "?"} tintKey={g.actor?.display_name ?? g.id} size={32} />
+                {g.actor || g.published_by ? (
+                  <Avatar name={g.actor?.display_name ?? g.published_by?.display_name ?? "?"} tintKey={g.actor?.display_name ?? g.id} size={32} />
+                ) : (
+                  // No one to show (the seeded first version, or a person who has left): a neutral tile, never a "?" avatar.
+                  <span aria-hidden="true" className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-subtle text-ink-2">
+                    <ShieldIcon width={16} height={16} />
+                  </span>
+                )}
                 <span className="min-w-0">
                   {/* (org-14, C-1087) Who changed what, in a sentence from the generation's change list. */}
                   <span className="block break-words font-medium">{historySentence(g)}</span>
@@ -165,9 +173,11 @@ export function historySentence(g: {
   changes?: { kind: "added" | "removed" | "edited"; rule_name: string }[];
   more?: number;
 }): string {
-  const who = g.actor?.display_name ?? g.published_by?.display_name ?? "Someone";
   const changes = g.changes ?? [];
   const total = changes.length + (g.more ?? 0);
+  // The seeded first version has no author and no change list: it is the starting rules, not "Someone".
+  if (g.number === 1 && !g.actor && !g.published_by && total === 0) return "The starting rules, version 1";
+  const who = g.actor?.display_name ?? g.published_by?.display_name ?? "Someone";
   if (total === 0) return `${who} published version ${g.number}`;
   if (total > 2) return `${who} changed ${total} rules`;
   const [a, b] = changes;

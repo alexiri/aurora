@@ -24,6 +24,7 @@ import {
   useAgentLinks,
   useCreateLink,
   useDeleteLink,
+  OTHER_AGENT,
   useLinkableAgents,
   usePeerTasks,
   useSetLinkDirection,
@@ -166,7 +167,7 @@ function LinkDialog({ agentId, agentName, agentsHref, open, onOpenChange }: { ag
         </Field>
       ) : null}
       {linkable.data && items.length > 0 ? (
-        <DirectionCards agentName={agentName} peerName={peer?.name ?? "the other agent"} value={direction} onChange={setDirection} />
+        <DirectionCards agentName={agentName} peerName={peer?.name ?? OTHER_AGENT} value={direction} onChange={setDirection} />
       ) : null}
     </FormDialog>
   );

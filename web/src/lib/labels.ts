@@ -455,7 +455,13 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "workspace.freeze": named("paused", "the workspace", "the workspace", "important"),
   "workspace.unfreeze": named("resumed", "the workspace", "the workspace"),
   "workspace_access.set": {
-    sentence: (actor, t, m) => (role(m) ? `${actor} changed ${t ?? "a person"} to ${role(m)}` : `${actor} changed the role of ${t ?? "a person"}`),
+    // (batch 6) A person with no earlier binding (`previous_role: null`) was added, not changed; no row is written when nothing changed.
+    sentence: (actor, t, m) =>
+      role(m) && m.previous_role === null
+        ? `${actor} added ${t ?? "a person"} as ${role(m)}`
+        : role(m)
+          ? `${actor} changed ${t ?? "a person"} to ${role(m)}`
+          : `${actor} changed the role of ${t ?? "a person"}`,
     weight: "important",
   },
   "workspace_access.remove": { sentence: (actor, t) => `${actor} removed ${t ?? "a person"} from the workspace`, weight: "important" },
@@ -490,8 +496,9 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "secret.update": named("changed", "the secret", "a secret"),
   "secret.value_update": named("changed the value of", "the secret", "a secret", "important"),
   "secret.delete": named("deleted", "the secret", "a secret", "important"),
-  "grant.create": named("gave access to", "the account", "an account", "important"),
-  "grant.delete": named("took back access to", "the account", "an account"),
+  // The row's target is the agent that got (or lost) the access, never the account: an agent is never called an account.
+  "grant.create": { sentence: (actor, t) => `${actor} gave ${t ?? "an agent"} access to an account`, weight: "important" },
+  "grant.delete": { sentence: (actor, t) => `${actor} took away ${t ? `${t}'s` : "an agent's"} access to an account`, weight: "routine" },
   "policy.publish": { sentence: (actor) => `${actor} published a new set of internet rules`, weight: "important" },
   "policy.rollback": { sentence: (actor) => `${actor} went back to earlier internet rules`, weight: "important" },
   "ssh_key.create": { sentence: (actor, t) => `${actor} added ${t ? `the SSH key ${t}` : "an SSH key"}`, weight: "routine" },
@@ -702,16 +709,17 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "webhook.update": named("changed", "the webhook", "a webhook"),
   "webhook.rotate_secret": named("made a new secret for", "the webhook", "a webhook", "important"),
   "webhook.test_sent": named("sent a test to", "the webhook", "a webhook"),
-  "eval.question.create": plain("added an eval question"),
-  "eval.question.update": plain("changed an eval question"),
-  "eval.question.delete": plain("deleted an eval question"),
-  "eval.run.start": plain("started an eval run"),
-  "eval.run.cancel": plain("stopped an eval run"),
-  "eval.run.delete": plain("deleted an eval run"),
-  "eval.schedule.create": plain("scheduled eval runs"),
-  "eval.schedule.update": plain("changed the schedule of eval runs"),
-  "eval.schedule.delete": plain("stopped scheduled eval runs"),
-  "eval.settings.update": plain("changed the eval settings", "important"),
+  // (glossary) "eval" is retired: the page says Tests, test run, question and grader.
+  "eval.question.create": plain("added a test question"),
+  "eval.question.update": plain("changed a test question"),
+  "eval.question.delete": plain("deleted a test question"),
+  "eval.run.start": plain("started a test run"),
+  "eval.run.cancel": plain("stopped a test run"),
+  "eval.run.delete": plain("deleted a test run"),
+  "eval.schedule.create": plain("scheduled test runs"),
+  "eval.schedule.update": plain("changed the schedule of test runs"),
+  "eval.schedule.delete": plain("stopped scheduled test runs"),
+  "eval.settings.update": plain("changed the grader settings", "important"),
 };
 
 /** A settings section id in words for a sentence: "terminal" → "web terminal", an unknown one reads as its id with spaces. */
@@ -837,7 +845,7 @@ const MACHINE_ACTORS: Record<string, string> = {
   placement: "New-user placement",
   retention: "Data retention",
   "attachment-sweep": "Attachment clean-up",
-  evals: "Scheduled evals",
+  evals: "Scheduled test runs",
   "governance-reevaluation": "Rules re-check",
   "agent-token-max-age": "Token age limit",
   "registry-compiler": "App registry",

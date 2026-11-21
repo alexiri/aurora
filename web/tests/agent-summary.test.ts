@@ -166,6 +166,20 @@ describe("the agent's summary: a table of conditions", () => {
       says: ["Daneel can read GitHub (work) and GitHub (personal).", "It can reach any website."],
     },
     {
+      when: "send-only apps say can send to, never can read, with the account name alone",
+      accounts: [
+        { ...acct("Outgoing webhook", { level: "ask" }), name: "Ops alerts 3", app: { app_id: "webhook", name: "Outgoing webhook", custom_only: false, send_only: true } },
+        { ...acct("Outgoing webhook", { level: "ask" }), name: "Ops alerts 2", app: { app_id: "webhook", name: "Outgoing webhook", custom_only: false, send_only: true } },
+        acct("US holidays", { level: "read" }),
+      ],
+      says: ["Daneel can read US holidays.", "It can send to Ops alerts 3 and Ops alerts 2, and asks you first.", "It can reach any website."],
+    },
+    {
+      when: "a send-only app set to send without asking",
+      accounts: [{ ...acct("Outgoing webhook", { level: "act" }), name: "Ops alerts", app: { app_id: "webhook", name: "Outgoing webhook", custom_only: false, send_only: true } }],
+      says: ["Daneel can send to Ops alerts without asking.", "It can reach any website."],
+    },
+    {
       when: "websites are restricted to the allow-list",
       accounts: [acct("GitHub", { level: "read" })],
       internet: { withoutAccount: "block", allowlist: 2, rules: [] },

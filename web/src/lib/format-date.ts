@@ -30,28 +30,17 @@ export function displayTimeZone(): string | undefined {
   return zone;
 }
 
-let workspaceZone: string | undefined;
-
-/** (P5-REFINE-20, item 18) The current workspace's time zone, set once by the app shell; `null` clears it. */
-export function setWorkspaceTimeZone(tz: string | null | undefined): void {
-  if (!tz) {
-    workspaceZone = undefined;
-    return;
-  }
-  try {
-    new Intl.DateTimeFormat(undefined, { timeZone: tz });
-    workspaceZone = tz;
-  } catch {
-    workspaceZone = undefined;
-  }
-}
-
 /**
- * The zone of what a workspace's automations did: schedule rows, run-thread titles and the delivery message all say their
- * times in the workspace's zone (never the browser's), falling back to the person's own when no workspace is known.
+ * (P5-REFINE-20, b2#18) The zone as a name every formatter accepts: the person's, else the browser's, else UTC. One zone on
+ * a screen: a schedule's own zone is said only where it is the schedule's setting ("runs at 09:00 Zurich time").
  */
-export function automationTimeZone(): string | undefined {
-  return workspaceZone ?? zone;
+export function personTimeZone(): string {
+  if (zone) return zone;
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
 }
 
 function parse(date: string | number | Date | null | undefined): Date | null {
@@ -82,6 +71,12 @@ export function formatWhen(
     timeZone: zone,
   }).format(d);
   return `${dayPart}, ${formatTime(d)}`;
+}
+
+/** `formatWhen` inside a sentence ("last just now", "Since just now"): the only word with a capital of its own is lower-cased. */
+export function whenInSentence(date: string | number | Date | null | undefined, opts?: { now?: number; empty?: string }): string {
+  const when = formatWhen(date, opts);
+  return when === "Just now" ? "just now" : when;
 }
 
 /** A 24-hour clock time ("23:50") in the person's zone, or in `timeZone` when given; `empty` when missing. */

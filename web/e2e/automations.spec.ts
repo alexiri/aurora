@@ -90,7 +90,8 @@ async function check(page: Page) {
 for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
   for (const width of [1280, 390]) {
     test.describe(`Automations (${width} px, ${scheme})`, () => {
-      test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
+      // One zone on a screen (b2#18): what a schedule did is shown in the person's zone, here the browser's.
+      test.use({ viewport: { width, height: width === 1280 ? 900 : 844 }, timezoneId: "Europe/Zurich" });
 
       test("the empty page, then a schedule by preset with the next runs", async ({ page }) => {
         const errors: string[] = [];

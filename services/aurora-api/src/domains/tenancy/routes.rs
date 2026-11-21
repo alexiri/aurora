@@ -718,12 +718,27 @@ async fn put_access(
     if aurora_db::repo::idp_roles::ws_is_managed(&mut *tx, ws, user).await? {
         return Err(crate::domains::admin::service::managed_by_idp());
     }
+    // (P5-REFINE-20 batch 6) A role that changes nothing writes nothing (no "changed Carol to Member" for a Member who is
+    // already a Member); a person with no direct binding yet is being added, which the audit says with a null `previous_role`.
+    let prev = workspaces::get_access(&mut *tx, ws, user)
+        .await?
+        .filter(|r| !r.implicit);
+    if prev
+        .as_ref()
+        .is_some_and(|r| r.role == req.role.as_str() && r.status == "active")
+    {
+        drop(tx);
+        let row = workspaces::get_access(&s.pool, ws, user)
+            .await?
+            .ok_or_else(|| ApiError::internal("Internal error."))?;
+        return Ok(Json(row.into()));
+    }
     workspaces::bind_user(&mut *tx, ws, user, req.role.as_str()).await?;
     let ev = event(&c, "workspace_access.set")
         .org(a.org_id)
         .workspace(ws)
         .target("user", user)
-        .metadata(json!({"role": req.role.as_str()}));
+        .metadata(json!({"role": req.role.as_str(), "previous_role": prev.as_ref().map(|r| r.role.clone())}));
     audit::commit_critical(tx, &ev).await?;
     let row = workspaces::get_access(&s.pool, ws, user)
         .await?

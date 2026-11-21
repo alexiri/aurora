@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { automationTimeZone, displayTimeZone, formatCount, formatDay, formatExact, formatTime, formatWhen, setDisplayTimeZone, setWorkspaceTimeZone } from "@/lib/format-date";
+import { displayTimeZone, formatCount, formatDay, formatExact, formatTime, formatWhen, personTimeZone, setDisplayTimeZone, whenInSentence } from "@/lib/format-date";
 
 const now = new Date(2026, 10, 19, 12, 0, 0).getTime();
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -41,13 +41,17 @@ describe("formatWhen", () => {
     expect(formatExact(at)).not.toMatch(/AM|PM/i);
   });
 
-  it("the automations' zone is the workspace's, else the person's", () => {
+  it("inside a sentence 'Just now' loses its capital ('last just now', 'Since just now'); other forms are unchanged", () => {
+    expect(whenInSentence(new Date().toISOString())).toBe("just now");
+    expect(whenInSentence(new Date(Date.now() - 5 * 60_000).toISOString())).toBe("5 min ago");
+    expect(whenInSentence(null)).toBe("—");
+  });
+
+  it("there is one zone: the person's, else the browser's (b2#18)", () => {
     setDisplayTimeZone("Asia/Tokyo");
-    expect(automationTimeZone()).toBe("Asia/Tokyo");
-    setWorkspaceTimeZone("Europe/Zurich");
-    expect(automationTimeZone()).toBe("Europe/Zurich");
-    setWorkspaceTimeZone(null);
-    expect(automationTimeZone()).toBe("Asia/Tokyo");
+    expect(personTimeZone()).toBe("Asia/Tokyo");
+    setDisplayTimeZone(null);
+    expect(personTimeZone()).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   });
 
   it("shows times in the person's time zone", () => {

@@ -11,6 +11,7 @@ import { SearchIcon } from "@/components/ui/icons";
 import { useCreateOrg, useInstance, useMe } from "@/lib/api/queries";
 import { lastScope } from "@/lib/nav/recent-scopes";
 import { orgRoutes, wsRoutes } from "@/lib/routes";
+import { nameInSentence } from "@/lib/workspace-name";
 
 export type NotFoundKind = "organization" | "workspace" | "page";
 
@@ -49,7 +50,7 @@ export function NotFoundState({ kind = "page", slug }: { kind?: NotFoundKind; sl
       <p className="mt-2 text-sm text-ink-2">{text}</p>
       <div className="mt-5 flex flex-wrap gap-2">
         <Link href={home} className={buttonVariants({ variant: "primary" })}>
-          {kind === "page" ? "Go home" : last ? `Go to ${last.wsName && kind === "workspace" ? last.wsName : last.orgName}` : "Go home"}
+          {kind === "page" ? "Go home" : last ? `Go to ${nameInSentence(last.wsName && kind === "workspace" ? last.wsName : last.orgName)}` : "Go home"}
         </Link>
         {kind !== "page" && canCreate ? (
           <Button type="button" variant="outline" onClick={() => setCreating(true)}>

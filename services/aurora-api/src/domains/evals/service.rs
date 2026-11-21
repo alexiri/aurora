@@ -441,11 +441,30 @@ async fn settings_view(s: &AppState, a: &AgentRow) -> Result<EvalSettings, ApiEr
         }
         _ => None,
     };
+    let test = match (&judge, row.judge_test_result, row.judge_tested_at) {
+        (Some(_), Some(result), Some(tested_at)) => Some(EvalJudgeTest {
+            result,
+            took_ms: row.judge_test_ms.unwrap_or(0),
+            reason: row.judge_test_reason,
+            tested_at,
+        }),
+        _ => None,
+    };
     Ok(EvalSettings {
         judge,
         regression_notify: row.regression_notify,
-        test: None,
+        test,
     })
+}
+
+/// The fixed word for a failed judge test (C-1101): an endpoint that did not answer in the test's
+/// budget is `unreachable` (never "took too long"), a 429 is `rate_limited`.
+fn test_reason(f: platform::Failure) -> &'static str {
+    match f {
+        platform::Failure::Timeout | platform::Failure::Unavailable => "unreachable",
+        platform::Failure::RateLimited => "rate_limited",
+        _ => "rejected",
+    }
 }
 
 /// One minimal model call with the new judge (C-872): says whether the key and model answer, never
@@ -457,20 +476,18 @@ async fn test_judge(s: &AppState, a: &AgentRow, secret: Uuid, model_id: &str) ->
         system: "Reply with the single word: ok",
         user: "ok?".to_owned(),
         max_tokens: 8,
-        timeout: limits::EVAL_JUDGE_TIMEOUT,
+        // (C-1101) A short budget: an endpoint the API cannot reach is "unreachable" after this, not after
+        // the 60 s a judge call gets (the same path as the key check's budget, C-1065).
+        timeout: limits::EVAL_JUDGE_TEST_TIMEOUT,
     };
     let res = platform::complete(s, platform::Purpose::EvalJudge, a, secret, req).await;
     let took_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-    let reason = match res {
-        Ok(_) => None,
-        Err(platform::Failure::Timeout) => Some("timeout"),
-        Err(platform::Failure::Unavailable) => Some("unreachable"),
-        Err(_) => Some("rejected"),
-    };
+    let reason = res.err().map(test_reason);
     EvalJudgeTest {
         result: if reason.is_none() { "ok" } else { "failed" }.to_owned(),
         took_ms,
         reason: reason.map(str::to_owned),
+        tested_at: chrono::Utc::now(),
     }
 }
 
@@ -529,6 +546,19 @@ pub async fn put_settings(
         b.regression_notify,
     )
     .await?;
+    // (C-1101) The test is kept with the judge it tested; a changed or cleared judge replaces it.
+    if judge_changed {
+        repo::set_judge_test(
+            &mut tx,
+            a.id,
+            test.as_ref().map(|t| repo::JudgeTestRow {
+                result: &t.result,
+                reason: t.reason.as_deref(),
+                took_ms: t.took_ms,
+            }),
+        )
+        .await?;
+    }
     // Ids only, never a secret value (SEC-115, SEC-116).
     audit::commit_critical(
         tx,
@@ -547,9 +577,7 @@ pub async fn put_settings(
         })),
     )
     .await?;
-    let mut view = settings_view(s, &a).await?;
-    view.test = test;
-    Ok(view)
+    settings_view(s, &a).await
 }
 
 // ---- fingerprint ----
@@ -623,4 +651,17 @@ pub async fn get_fingerprint(
 ) -> Result<EvalFingerprint, ApiError> {
     let a = visible_agent(s, c, agent).await?;
     current_fingerprint(s, &a).await
+}
+
+#[cfg(test)]
+mod test_reason_tests {
+    use super::*;
+
+    #[test]
+    fn a_429_is_rate_limited_and_a_hang_is_unreachable() {
+        assert_eq!(test_reason(platform::Failure::RateLimited), "rate_limited");
+        assert_eq!(test_reason(platform::Failure::Timeout), "unreachable");
+        assert_eq!(test_reason(platform::Failure::Unavailable), "unreachable");
+        assert_eq!(test_reason(platform::Failure::NotUsable), "rejected");
+    }
 }

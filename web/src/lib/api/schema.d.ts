@@ -9439,10 +9439,19 @@ export interface components {
         };
         /** @description The one real model call made when the judge is saved (C-872). */
         EvalJudgeTest: {
-            /** @description `rejected` | `unreachable` | `timeout` when failed, else null. Never the provider's text. */
+            /**
+             * @description `rejected` | `unreachable` | `rate_limited` | `timeout` when failed, else null. Never the
+             *     provider's text. `unreachable` includes an endpoint that did not answer within
+             *     `EVAL_JUDGE_TEST_TIMEOUT` (C-1101); `timeout` is no longer produced.
+             */
             reason?: string | null;
             /** @description `ok` | `failed`. */
             result: string;
+            /**
+             * Format: date-time
+             * @description (C-1101) When the test ran; the last one is kept and returned by `GET` too.
+             */
+            tested_at: string;
             /** Format: int64 */
             took_ms: number;
         };

@@ -79,8 +79,18 @@ describe("audit actions in words", () => {
     expect(auditActor({ actor_kind: "system", actor_label: "connector:0194-abc" })).toEqual({ name: "Aurora", full: "A chat platform" });
     expect(auditActor({ actor_kind: "system", actor_label: "some-new-job" })).toEqual({ name: "Aurora", full: "Aurora" });
     expect(auditWords({ action: "grant.create", actor_kind: "system", actor_label: "placement", critical: true, metadata: {} }, "Grumpy").sentence).toBe(
-      "Aurora gave access to the account Grumpy",
+      "Aurora gave Grumpy access to an account",
     );
+    // An agent is never called an account; the retired word "eval" is in no sentence.
+    const by = { actor_kind: "user", actor_label: "alice@example.test", actor_name: "Alice Admin", critical: false } as const;
+    expect(auditWords({ ...by, action: "grant.delete", metadata: {} }, "Rex").sentence).toBe("Alice took away Rex's access to an account");
+    for (const a of ["eval.question.create", "eval.run.start", "eval.schedule.update", "eval.settings.update"]) {
+      expect(auditWords({ ...by, action: a, metadata: {} }, null).sentence, a).not.toMatch(/eval/i);
+    }
+    expect(auditWords({ ...by, action: "eval.question.create", metadata: {} }, null).sentence).toBe("Alice added a test question");
+    // Adding a person (no earlier binding) is "added … as Member", never "changed Carol to Member".
+    expect(auditWords({ ...by, action: "workspace_access.set", metadata: { role: "member", previous_role: null } }, "Carol").sentence).toBe("Alice added Carol as Member");
+    expect(auditWords({ ...by, action: "workspace_access.set", metadata: { role: "owner", previous_role: "member" } }, "Carol").sentence).toBe("Alice changed Carol to Owner");
   });
 
   it("offers one 'All actions' filter in words, never a dotted key", () => {

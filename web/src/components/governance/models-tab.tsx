@@ -9,13 +9,20 @@ import { useGroups } from "@/lib/api/groups";
 import { useMe, useWorkspaces, type Org } from "@/lib/api/queries";
 import { peopleMayAddOwnKey } from "@/lib/policy-presets";
 
-/** The names of the organization's own AI keys, read from a workspace's accounts list (scope "organization"; members may read it). */
+/**
+ * The names of the organization's own AI keys, the starter Company key included: from the organization's accounts list
+ * (owners and admins), else, for a member (403), from a workspace's list where they carry `scope: "organization"`. The
+ * first workspace is no one's to rely on (an admin may not be a member of it), so it is only the fallback.
+ */
 export function useOrgKeyNames(orgId: string): { names: string[]; pending: boolean } {
+  const orgList = useAccounts({ kind: "organization", id: orgId });
   const workspaces = useWorkspaces(orgId);
   const first = workspaces.data?.items[0]?.id;
-  const accounts = useAccounts({ kind: "workspace", id: first ?? "" }, !!first);
-  const names = (accounts.data?.items ?? []).filter((a) => a.kind === "ai_key" && a.scope === "organization").map((a) => a.name);
-  return { names, pending: workspaces.isPending || (!!first && accounts.isPending) };
+  const fallback = orgList.isError;
+  const accounts = useAccounts({ kind: "workspace", id: first ?? "" }, fallback && !!first);
+  const items = fallback ? (accounts.data?.items ?? []) : (orgList.data?.items ?? []);
+  const names = items.filter((a) => a.kind === "ai_key" && a.scope === "organization").map((a) => a.name);
+  return { names, pending: fallback ? workspaces.isPending || (!!first && accounts.isPending) : orgList.isPending };
 }
 
 const listWords = (xs: string[]) => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);

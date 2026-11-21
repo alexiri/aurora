@@ -172,17 +172,18 @@ describe("governance page: BYO tab", () => {
     wrap(<OrgByo org={ORG} />);
     await screen.findByLabelText("Who may create BYO agents");
     const input = screen.getByLabelText("Maximum token age (days)");
-    const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    // (the shared save bar) Nothing to save yet: no bar.
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     fireEvent.change(input, { target: { value: "31" } });
     expect(screen.getByRole("alert").textContent).toMatch(/instance limit is 30/);
-    expect(save.disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(input, { target: { value: "0" } });
-    expect(save.disabled).toBe(true);
-    // Back to what is stored: nothing to save. A valid value turns Save on.
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    // Back to what is stored: nothing to save, the bar goes. A valid value turns Save on.
     fireEvent.change(input, { target: { value: "" } });
-    expect(save.disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     fireEvent.change(input, { target: { value: "7" } });
-    expect(save.disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(false);
     expect(put).not.toHaveBeenCalled();
   });
 

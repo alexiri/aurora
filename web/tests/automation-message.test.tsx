@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { automationDisplay } from "@/components/chat/automation-message";
 import { ChatActionsContext } from "@/components/chat/chat-actions";
 import { MessageGroup } from "@/components/chat/message-group";
-import { setWorkspaceTimeZone } from "@/lib/format-date";
+import { setDisplayTimeZone } from "@/lib/format-date";
 import type { Row } from "@/lib/chat/layout";
 import type { TranscriptState } from "@/lib/chat/transcript";
 import { json } from "./support/api";
@@ -88,14 +88,14 @@ describe("a webhook delivery's first message", () => {
     expect(automationDisplay(withV("bogus"))).toMatchObject({ verification: null });
   });
 
-  it("the time is 24-hour in the workspace's zone, not the browser's (webhooks-4)", () => {
-    setWorkspaceTimeZone("Asia/Tokyo");
+  it("the time is 24-hour in the person's zone, the one zone of the screen (webhooks-4, b2#18)", () => {
+    setDisplayTimeZone("Asia/Tokyo");
     try {
       show(webhookPayload);
       // 22:58 UTC is 07:58 the next morning in Tokyo; never "07:58 AM".
       expect(screen.getByText(/^07:58 · accepted$/)).toBeInTheDocument();
     } finally {
-      setWorkspaceTimeZone(null);
+      setDisplayTimeZone(null);
     }
   });
 

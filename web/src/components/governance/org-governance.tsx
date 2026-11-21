@@ -11,8 +11,8 @@ import { OrgPolicyPresets } from "@/components/policy/org-policy-presets";
 import { ErrorState, Loading } from "@/components/states";
 import { AiKeyTile } from "@/components/ui/ai-key-tile";
 import { Button } from "@/components/ui/button";
-import { FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
+import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { ScopeLadder, type LadderAbove } from "@/components/ui/scope-ladder";
 import { WhoCan } from "@/components/ui/who-can";
 import { useAccounts } from "@/lib/api/accounts";
@@ -62,7 +62,10 @@ function GovernanceForm({
   saved: string;
   children: (ctx: FormCtx) => ReactNode;
 }) {
-  const [saved, setSaved] = useState(false);
+  // The shared save bar's "Saved" flash lives here: a save re-keys the form body (a new revision), which would lose it.
+  const bar = useSaveBar();
+  const setSaved = (v: boolean) => (v ? bar.flash() : bar.clear());
+  const saved = bar.saved;
   const eff = useEffectiveGovernance(org.id);
   const doc = useGovernanceDoc(org.id, canEdit);
   const instance = useInstanceGovernance(canEdit);
@@ -131,7 +134,7 @@ function FormBody({
     <div className="space-y-4">
       {children({ form, patch, issues, readOnly: !canEdit, eff })}
       {canEdit ? (
-        <div className="space-y-3 border-t border-line pt-4">
+        <>
           {isStale(put.error) ? (
             <Notice tone="pending" role="alert">
               These rules were changed by someone else. Reload to see the latest version.{" "}
@@ -139,35 +142,27 @@ function FormBody({
                 Reload latest
               </Button>
             </Notice>
-          ) : put.isError ? (
+          ) : put.isError && issues.general.length > 0 ? (
             <Notice tone="danger" role="alert">
-              {errorMessage(put.error)}
               <Errors messages={issues.general} />
             </Notice>
           ) : null}
-          {saved ? <Notice tone="accent" role="status">{savedText}</Notice> : null}
-          <FormActions>
-            <Button
-              size="lg"
-              onClick={save}
-              disabled={put.isPending || !dirty || !!maxAgeDaysProblem(form.byo.maxAgeDays, form.byo.instanceMaxAgeDays)}
-            >
-              {put.isPending ? "Saving…" : "Save"}
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              disabled={put.isPending || !dirty}
-              onClick={() => {
-                put.reset();
-                setSaved(false);
-                setForm(JSON.parse(baseline) as GovForm);
-              }}
-            >
-              Discard changes
-            </Button>
-          </FormActions>
-        </div>
+          {/* The one save pattern of every settings form (P5-REFINE-2): a bar at the bottom, never a page-level Save / Discard pair. */}
+          <SaveBar
+            dirty={dirty}
+            saving={put.isPending}
+            saved={saved}
+            savedMessage={savedText}
+            error={put.isError && !isStale(put.error) ? errorMessage(put.error) : undefined}
+            saveDisabled={!!maxAgeDaysProblem(form.byo.maxAgeDays, form.byo.instanceMaxAgeDays)}
+            onSave={save}
+            onDiscard={() => {
+              put.reset();
+              setSaved(false);
+              setForm(JSON.parse(baseline) as GovForm);
+            }}
+          />
+        </>
       ) : null}
     </div>
   );

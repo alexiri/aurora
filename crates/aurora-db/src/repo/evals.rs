@@ -219,6 +219,38 @@ pub struct SettingsRow {
     pub regression_notify: bool,
     /// The judge secret's display name (for the owner's settings view only).
     pub judge_secret_name: Option<String>,
+    /// (C-1101) The last test of the judge: `ok` | `failed`, null when never tested or no judge.
+    pub judge_test_result: Option<String>,
+    pub judge_test_reason: Option<String>,
+    pub judge_test_ms: Option<i64>,
+    pub judge_tested_at: Option<DateTime<Utc>>,
+}
+
+/// The stored outcome of one judge test (C-1101).
+pub struct JudgeTestRow<'a> {
+    pub result: &'a str,
+    pub reason: Option<&'a str>,
+    pub took_ms: i64,
+}
+
+/// Replaces the stored test of the judge (`None` clears it). Called in the transaction that changes the judge.
+pub async fn set_judge_test(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    test: Option<JudgeTestRow<'_>>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE agents SET eval_judge_test_result = $2, eval_judge_test_reason = $3, \
+            eval_judge_test_ms = $4, eval_judge_tested_at = CASE WHEN $2::text IS NULL THEN NULL ELSE now() END \
+         WHERE id = $1",
+    )
+    .bind(agent)
+    .bind(test.as_ref().map(|t| t.result))
+    .bind(test.as_ref().and_then(|t| t.reason))
+    .bind(test.as_ref().map(|t| t.took_ms))
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 pub async fn get_settings<'e, E: PgExecutor<'e>>(
@@ -229,7 +261,11 @@ pub async fn get_settings<'e, E: PgExecutor<'e>>(
         "SELECT a.eval_judge_secret_id AS judge_secret_id, \
                 CASE WHEN a.eval_judge_secret_id IS NULL THEN NULL ELSE a.eval_judge_model_id END \
                     AS judge_model_id, \
-                a.eval_regression_notify AS regression_notify, s.name AS judge_secret_name \
+                a.eval_regression_notify AS regression_notify, s.name AS judge_secret_name, \
+                CASE WHEN a.eval_judge_secret_id IS NULL THEN NULL ELSE a.eval_judge_test_result END \
+                    AS judge_test_result, \
+                a.eval_judge_test_reason AS judge_test_reason, a.eval_judge_test_ms AS judge_test_ms, \
+                a.eval_judge_tested_at AS judge_tested_at \
          FROM agents a LEFT JOIN secrets s ON s.id = a.eval_judge_secret_id \
          WHERE a.id = $1",
     )

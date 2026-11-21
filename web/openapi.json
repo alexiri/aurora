@@ -49828,7 +49828,8 @@
         "description": "The one real model call made when the judge is saved (C-872).",
         "required": [
           "result",
-          "took_ms"
+          "took_ms",
+          "tested_at"
         ],
         "properties": {
           "reason": {
@@ -49836,11 +49837,16 @@
               "string",
               "null"
             ],
-            "description": "`rejected` | `unreachable` | `timeout` when failed, else null. Never the provider's text."
+            "description": "`rejected` | `unreachable` | `rate_limited` | `timeout` when failed, else null. Never the\nprovider's text. `unreachable` includes an endpoint that did not answer within\n`EVAL_JUDGE_TEST_TIMEOUT` (C-1101); `timeout` is no longer produced."
           },
           "result": {
             "type": "string",
             "description": "`ok` | `failed`."
+          },
+          "tested_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "(C-1101) When the test ran; the last one is kept and returned by `GET` too."
           },
           "took_ms": {
             "type": "integer",
@@ -50465,7 +50471,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/EvalJudgeTest",
-                "description": "Set only on the response of a `PUT` that changed the judge; null otherwise."
+                "description": "The last test of the current judge (C-1101): the one a `PUT` that changed the judge just made,\nkept and returned by `GET` and later `PUT`s; null with no judge or never tested."
               },
               {
                 "type": "null"

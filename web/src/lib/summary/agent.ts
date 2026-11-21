@@ -56,6 +56,8 @@ function labels(accounts: Account[]): Map<Account, string> {
   const count = new Map<string, number>();
   for (const a of accounts) count.set(base(a), (count.get(base(a)) ?? 0) + 1);
   const label = (a: Account) => {
+    // A send-only app's accounts are destinations: the name alone says where it sends ("Ops alerts 2"), never "Outgoing webhook (Ops alerts 2)".
+    if (a.app?.send_only === true && a.name) return a.name;
     if ((count.get(base(a)) ?? 0) > 1 && a.name !== base(a)) return `${base(a)} (${a.name})`;
     // A name that does not carry the app's own ("Team calendar", not "GitHub account") is what people know it by.
     return a.app && a.name && !a.name.toLowerCase().includes(a.app.name.toLowerCase()) ? a.name : base(a);
@@ -79,16 +81,25 @@ export function agentSummary({ agent, agentId, accounts, internet, welcome }: Ag
   const usable = given.filter((a) => !needsAttention(a));
 
   const level = (a: Account) => entry(a)?.level ?? "use";
-  const reads = usable.filter((a) => level(a) !== "custom");
-  const asking = usable.filter((a) => level(a) === "ask");
-  const acting = usable.filter((a) => level(a) === "act");
-  const custom = usable.filter((a) => level(a) === "custom");
+  // (access summary) A send-only app (the Outgoing webhook) has nothing to read: it is "can send to …", never "can read".
+  const isSend = (a: Account) => a.app?.send_only === true && (level(a) === "ask" || level(a) === "act");
+  const sending = usable.filter(isSend);
+  const rest = usable.filter((a) => !isSend(a));
+  const reads = rest.filter((a) => level(a) !== "custom");
+  const asking = rest.filter((a) => level(a) === "ask");
+  const acting = rest.filter((a) => level(a) === "act");
+  const custom = rest.filter((a) => level(a) === "custom");
 
   const out: string[] = [];
   // The first sentence names the agent; the rest say "It".
   const subject = () => (out.length === 0 ? agent : "It");
 
   if (reads.length > 0) out.push(`${agent} can read ${nameList(unique(reads.map((a) => name.get(a)!)))}.`);
+
+  const sendAsk = sending.filter((a) => level(a) === "ask");
+  if (sendAsk.length > 0) out.push(`${subject()} can send to ${nameList(unique(sendAsk.map((a) => name.get(a)!)))}, and asks you first.`);
+  const sendAct = sending.filter((a) => level(a) === "act");
+  if (sendAct.length > 0) out.push(`${subject()} can send to ${nameList(unique(sendAct.map((a) => name.get(a)!)))} without asking.`);
 
   // Ask before changes: one sentence for the accounts with nothing always allowed, one for each with exceptions.
   const plainAsk = asking.filter((a) => (entry(a)?.always_allowed ?? []).length === 0);

@@ -1,7 +1,8 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { describeCron, firesMoreThanHourly } from "@/components/agents/evals/cron-words";
+import { judgeTestMessage } from "@/components/agents/evals/copy";
+import { describeCron,firesMoreThanHourly } from "@/components/agents/evals/cron-words";
 import { diffFingerprints } from "@/components/agents/evals/fingerprint-diff";
 import { JudgeSection, JUDGE_OWNER_ONLY } from "@/components/agents/evals/judge-section";
 import { QuestionsSection } from "@/components/agents/evals/questions-section";
@@ -361,6 +362,17 @@ describe("Tests wording, live run and Re-run (P5-REFINE-12)", () => {
     expect(rerun).toHaveAttribute("title", "A run is in progress. Wait for it to finish or cancel it.");
   });
 
+  it("a run waiting to start says Waiting to start in its rows, never Running…", async () => {
+    mockFetch({
+      "GET /v1/eval-runs/r1": () =>
+        json(200, detail({ status: "queued", pass_rate: null, finished_at: null, counts: { total: 2, passed: 0, failed: 0, errored: 0, not_scored: 2, refused_writes: 0 } }, [result(1, { outcome: "not_scored", finished_at: null, answer: null, extracted_value: null }), result(2, { outcome: "not_scored", finished_at: null, answer: null, extracted_value: null })])),
+      "GET /v1/agents/a1/eval-runs": () => json(200, { items: [run("r1", { status: "queued" })], next_cursor: null }),
+    });
+    wrap(<RunDetail agentId={A} runId="r1" canOwn={false} onBack={() => {}} />);
+    expect((await screen.findAllByText("Waiting to start")).length).toBeGreaterThan(2);
+    expect(screen.queryByText("Running…")).not.toBeInTheDocument();
+  });
+
   it("Re-run starts a run of just that question and opens it", async () => {
     const opened: string[] = [];
     const calls = mockFetch({
@@ -393,10 +405,45 @@ describe("Tests wording, live run and Re-run (P5-REFINE-12)", () => {
     test = { result: "failed", took_ms: 900, reason: "unreachable" };
     fireEvent.change(screen.getByLabelText("Grader model"), { target: { value: "m-2" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Grader saved, but the test failed: the model provider could not be reached. Questions the grader checks will not be scored until it works.")).toBeInTheDocument();
+    expect(await screen.findByText("Grader saved, but the test failed: Aurora couldn't reach the model provider. Questions the grader checks will not be scored until it works.")).toBeInTheDocument();
     // (behaviour-4) The "Current grader" line stops saying Ready once the test failed.
     expect(screen.getByText("Test failed")).toBeInTheDocument();
     expect(screen.queryByText("Ready")).toBeNull();
+  });
+
+  it("a 429 in the grader test is rate limited, not 'took too long'", () => {
+    expect(judgeTestMessage({ result: "failed", took_ms: 80, reason: "rate_limited" })).toBe(
+      "Grader saved, but the test failed: the model provider is rate limiting (try again in a minute). Questions the grader checks will not be scored until it works.",
+    );
+  });
+
+  it("after a reload the kept failed test is still shown, and the row is not Ready (C-1101)", async () => {
+    mockFetch({
+      "GET /v1/agents/a1/eval-settings": () =>
+        json(200, {
+          judge: { secret_id: "s9", secret_label: "Org key", model_id: "m-1", usable: true },
+          regression_notify: true,
+          test: { result: "failed", took_ms: 8000, reason: "unreachable", tested_at: "2026-11-21T04:00:00Z" },
+        }),
+    });
+    wrap(<JudgeSection agentId={A} canOwn={false} />);
+    expect(await screen.findByText("Test failed")).toBeInTheDocument();
+    expect(screen.queryByText("Ready")).toBeNull();
+    expect(screen.getByTestId("judge-test-result")).toHaveTextContent("Aurora couldn't reach the model provider");
+  });
+
+  it("after a reload a passing test is quiet and the row says Ready", async () => {
+    mockFetch({
+      "GET /v1/agents/a1/eval-settings": () =>
+        json(200, {
+          judge: { secret_id: "s9", secret_label: "Org key", model_id: "m-1", usable: true },
+          regression_notify: true,
+          test: { result: "ok", took_ms: 900, reason: null, tested_at: "2026-11-21T04:00:00Z" },
+        }),
+    });
+    wrap(<JudgeSection agentId={A} canOwn={false} />);
+    expect(await screen.findByText("Ready")).toBeInTheDocument();
+    expect(screen.queryByTestId("judge-test-result")).toBeNull();
   });
 
   it("explains the ANSWER line in the question dialog, never as a demand on the agent", async () => {

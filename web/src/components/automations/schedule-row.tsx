@@ -25,6 +25,7 @@ import { cronToSpec, whenWords } from "@/lib/cron";
 import { label, RUN_RESULT, runReason } from "@/lib/labels";
 import { clockIn, dayMonthIn, onceInstantWords, onceLocalWords } from "@/lib/schedule-words";
 import { zoneCity } from "@/lib/cron";
+import { personTimeZone } from "@/lib/format-date";
 
 /** (D-407) "Answered", "Skipped by the gate · nothing to report", "Failed · the check could not run". */
 export function runOutcomeWords(r: Pick<ScheduleRun, "result" | "reason">): string {
@@ -109,7 +110,7 @@ export function Runs({ agentId, id, agentBase, name }: { agentId: string; id: st
 const DONE_RETENTION_MS = 30 * 86_400_000;
 
 /** (P5-SCHED-ONCE, D-407) A one-time schedule that ran: "Ran on Sat 21 Nov at 09:00 · removed on 21 Dec". */
-export function doneWords(completedAt: string, timezone: string): string {
+export function doneWords(completedAt: string, timezone: string = personTimeZone()): string {
   const removed = dayMonthIn(new Date(new Date(completedAt).getTime() + DONE_RETENTION_MS), timezone);
   return `Ran on ${onceInstantWords(completedAt, timezone)}${removed ? ` · removed on ${removed}` : ""}`;
 }
@@ -124,14 +125,16 @@ function isWaiting(s: Schedule, agentFrozen: boolean, now: number = Date.now()):
 function whenLine(s: Schedule): string {
   if (!s.cron) {
     // A one-time schedule (P5-SCHED-ONCE, D-407): "Once · Sat 21 Nov at 09:00 (Zurich time)", or what it did when Done.
-    if (s.completed_at) return doneWords(s.completed_at, s.timezone);
+    // What it did is a moment: the person's zone. When it was set to run is the schedule's setting: its own zone.
+    if (s.completed_at) return doneWords(s.completed_at);
     const at = s.run_at ? onceLocalWords(s.run_at) : "";
     return at ? `Once · ${at} (${zoneCity(s.timezone)} time)` : "Once";
   }
   const base = whenWords(s.cron, s.timezone);
   if (!s.enabled) return `${base} · paused, won't run until resumed`;
   const next = s.next_runs?.[0] ?? s.next_fire_at;
-  return next ? `${base} · next at ${clockIn(next, s.timezone)} (${zoneCity(s.timezone)} time)` : base;
+  // The cadence ("Every day at 09:00 Zurich time") is the schedule's setting, in its own zone; the next run is a moment in the person's.
+  return next ? `${base} · next at ${clockIn(next, personTimeZone())}` : base;
 }
 
 export function ScheduleRow({

@@ -35,6 +35,7 @@ export const REASON: Record<string, string> = {
   judge_not_usable: "The judge key or its model cannot be used right now.",
   judge_unavailable: "The judge's model provider could not be reached.",
   judge_timeout: "The judge took too long to answer.",
+  judge_rate_limited: "The judge's model provider is rate limiting. Try the run again in a minute.",
   judge_unparseable: "The judge's answer could not be read.",
 };
 
@@ -51,7 +52,8 @@ export function judgeTestMessage(test: { result: string; took_ms: number; reason
   if (test.result === "ok") return `Grader saved and tested: it answered in ${Math.max(1, Math.round(test.took_ms / 1000))} s.`;
   const why: Record<string, string> = {
     rejected: "the key or model was refused",
-    unreachable: "the model provider could not be reached",
+    unreachable: "Aurora couldn't reach the model provider",
+    rate_limited: "the model provider is rate limiting (try again in a minute)",
     timeout: "it took too long to answer",
   };
   return `Grader saved, but the test failed: ${why[test.reason ?? ""] ?? "it did not answer"}. Questions the grader checks will not be scored until it works.`;

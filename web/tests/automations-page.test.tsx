@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AutomationsTab } from "@/components/automations/automations-tab";
 import { runThreadName } from "@/components/automations/schedule-row";
 import { dismissUndoToast, UndoToastHost } from "@/components/ui/undo-toast";
+import { setDisplayTimeZone } from "@/lib/format-date";
 import { json, err, type Handler } from "./support/api";
 import { seedMoreControls } from "./support/render";
 
@@ -617,6 +618,27 @@ describe("Chats", () => {
     await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ subject: "chat_platform", reason: "For #ops" }));
   });
 
+  it("a personal-workspace owner who is only an org member sees the chat-platform ask on the empty page (channels-3)", async () => {
+    mockApi({
+      "GET /v1/agents/a1/schedules": page([]),
+      "GET /v1/agents/a1/webhooks": page([]),
+      "GET /v1/orgs/o1": () => json(200, { id: "o1", slug: "acme", name: "Acme", my_role: "member" }),
+    });
+    mount({ canOwn: true });
+    expect(await screen.findByRole("heading", { name: "Daneel isn't in any chat yet" })).toBeInTheDocument();
+  });
+
+  it("an org admin with no platform does not get the ask on the empty page", async () => {
+    mockApi({
+      "GET /v1/agents/a1/schedules": page([]),
+      "GET /v1/agents/a1/webhooks": page([]),
+      "GET /v1/orgs/o1": () => json(200, { id: "o1", slug: "acme", name: "Acme", my_role: "admin" }),
+    });
+    mount({ canOwn: true });
+    expect(await screen.findByRole("heading", { name: "No automations yet" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Daneel isn't in any chat yet" })).not.toBeInTheDocument());
+  });
+
   it("with no chat platform the Chats filter shows Ask an admin with the platforms and a reason", async () => {
     const calls = mockApi({ "GET /v1/agents/a1/schedules": page([]), "GET /v1/agents/a1/webhooks": page([]), "POST /v1/workspaces/w1/requests": () => json(200, { id: "r1" }) });
     mount({ initialFilter: "chats" });
@@ -730,16 +752,37 @@ describe("one-time and yearly schedules", () => {
     expect(screen.queryByText(/Waiting:/)).toBeNull();
   });
 
+  it("a schedule row's next run is a moment in the person's zone, with no zone words; the cadence keeps the schedule's own (b2#18)", async () => {
+    mockApi({
+      "GET /v1/agents/a1/schedules": page([sched({ next_runs: ["2026-11-22T08:00:00Z"], next_fire_at: "2026-11-22T08:00:00Z" })]),
+      "GET /v1/agents/a1/webhooks": page([]),
+    });
+    setDisplayTimeZone("Asia/Tokyo");
+    try {
+      mount();
+      await screen.findByText("Morning summary");
+      // 08:00 UTC is 17:00 in Tokyo; the cadence line still says Zurich, the schedule's setting.
+      expect((await screen.findAllByText(/next at 17:00$/)).length).toBeGreaterThan(0);
+      expect(screen.queryByText(/next at .*\(.* time\)/)).toBeNull();
+      expect(screen.getAllByText(/Every day at 09:00 · Zurich · next at 17:00/).length).toBeGreaterThan(0);
+    } finally {
+      setDisplayTimeZone(null);
+    }
+  });
+
   it("Done: badge Done, 'Ran on … · removed on …', Run again and Delete, no Pause or Edit; Run again opens Once on a new date", async () => {
     const calls = mockApi({
       "GET /v1/agents/a1/schedules": page([once({ completed_at: "2026-11-21T08:00:00Z", next_fire_at: null, next_runs: [] }), sched({ id: "s3", name: "Recurring" })]),
       "GET /v1/agents/a1/webhooks": page([]),
       "PATCH /v1/schedules/s1": () => json(200, once()),
     });
+    // What it did is a moment, in the person's zone (b2#18); the schedule's own zone (Zurich too here) is only its setting.
+    setDisplayTimeZone("Europe/Zurich");
     mount();
     await screen.findByText("Water the plants");
     expect(screen.getByText("Done")).toBeInTheDocument();
     expect(screen.getByText("Ran on Sat 21 Nov at 09:00 · removed on 21 Dec")).toBeInTheDocument();
+    setDisplayTimeZone(null);
     // Done counts as neither On nor Paused: the recurring one is the only On.
     expect(screen.getAllByText("On")).toHaveLength(1);
     expect(screen.queryByText("Paused")).toBeNull();

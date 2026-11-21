@@ -16,7 +16,24 @@ export function workspaceDisplayName(ws: NamedWorkspace, viewer: { id?: string }
   const owner = ws.personal_of;
   if (!owner) return ws.name;
   if (viewer?.id !== undefined && owner.id === viewer.id) return "Your workspace";
-  const parts = owner.name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return ws.name;
-  return `${parts[0]}'s workspace`;
+  const first = firstNameOf(owner.name);
+  // A person with no display name is stored by their address: never an e-mail as a name ("dave@example.test's workspace").
+  if (first === null) return "Workspace of a person without a name";
+  return `${first}'s workspace`;
+}
+
+/** A workspace's name after a verb ("Back to your workspace", "Go to your workspace"): only "Your workspace" changes its capital. */
+export function nameInSentence(name: string): string {
+  return name === "Your workspace" ? "your workspace" : name;
+}
+
+/** "Bob Builder" → "Bob"; an address → the capitalised local part ("dave@example.test" → "Dave"); nothing usable → null. */
+export function firstNameOf(name: string | null | undefined): string | null {
+  const text = (name ?? "").trim();
+  if (!text) return null;
+  if (text.includes("@")) {
+    const local = (text.split("@")[0] ?? "").trim();
+    return local ? `${local.charAt(0).toUpperCase()}${local.slice(1)}` : null;
+  }
+  return text.split(/\s+/)[0] ?? null;
 }

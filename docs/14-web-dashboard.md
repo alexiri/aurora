@@ -3015,6 +3015,7 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   | Ask before changes | "It asks you before changing anything in Linear." |
   | with always-allowed changes | "It asks you before changing anything in Linear, except creating issues." (more than two: "except 3 kinds of change you always allow") |
   | Change without asking | "It can change AWS without asking." |
+  | a send-only app (Outgoing webhook; its level is Ask before each send or Send without asking) | "It can send to Ops alerts, and asks you first." / "It can send to Ops alerts without asking." (the account's own name, never "Outgoing webhook (Ops alerts)"; never "can read") |
   | Custom | "In Notion it has custom access." |
   | websites with a token, AI key | counted among the accounts it can use; the AI key is not listed |
   | an account needs attention | "It can't use AWS right now: the sign-in expired." (the health line of §7) |
@@ -3171,8 +3172,9 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 ### 10. People (P5-UX-5, D-325, D-328, C-919, C-920)
 
 - A workspace's **People** page has **Add people** for workspace owners: an e-mail and a role. The roles
-  offered are **Member** and **Owner** (Owner only for someone already in the organization). **Approver**
-  is offered only in a workspace that already has one.
+  offered are **Member**, **Approver** and **Owner** (Owner only for someone already in the organization;
+  Approver is always offered, P5-REFINE-20 batch 6, which amends D-352's "only in a workspace that already
+  has one").
 - Someone already in the organization gets access at once: "<name> can now use this workspace." Anyone
   else is listed under "Waiting for first sign-in": access starts at their first sign-in into this
   organization with a verified matching e-mail, and the entry expires after 30 days.

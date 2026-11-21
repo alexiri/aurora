@@ -87,6 +87,9 @@ describe("setup copy: names and actions", () => {
     expect(clientLabel("GitHub", [{ label: "Sign in with GitHub" }])).toBe("GitHub — for Sign in with GitHub");
     expect(clientLabel("GitHub", [{ label: "Sign in with GitHub" }, { label: "GitHub App" }])).toBe("GitHub — for Sign in with GitHub and GitHub App");
     expect(clientLabel("GitHub", [])).toBe("GitHub");
+    // A method that is only "OAuth" adds nothing to the app's name.
+    expect(clientLabel("GitHub · github.com", [{ label: "OAuth" }])).toBe("GitHub · github.com");
+    expect(clientLabel("GitHub", [{ label: "OAuth" }, { label: "GitHub App" }])).toBe("GitHub — for GitHub App");
     expect(clientLabel("GitHub", undefined)).toBe("GitHub");
   });
 

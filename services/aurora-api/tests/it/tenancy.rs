@@ -615,6 +615,39 @@ async fn sec32_role_changes_and_removal_are_audited() {
     assert_eq!(audit_n(&h, "member.remove").await, 1);
 }
 
+/// P5-REFINE-20 batch 6 item 3: adding a person to a workspace is audited once, with a null `previous_role`; saving the
+/// same role again changes nothing and writes no row; a real change says what it was.
+#[tokio::test]
+async fn a_role_that_changes_nothing_writes_no_audit_row() {
+    let h = Harness::new().await;
+    let (_, ot) = Who::new(&h, "o@x.io", true).await;
+    let v = setup_org(&h, &ot, "Org").await;
+    let org = id(&v["org"]["id"]);
+    let ws = id(&v["workspace"]["id"]);
+    let (m, _) = Who::new(&h, "m@x.io", false).await;
+    h.member(org, m, "member", "active").await;
+    let uri = format!("/v1/workspaces/{ws}/access/{m}");
+    let body = |role: &str| Some(json!({ "role": role }));
+    let (s, b) = call(&h, &ot, Method::PUT, &uri, body("member")).await;
+    assert_eq!((s, b["role"].as_str()), (200, Some("member")), "{b}");
+    assert_eq!(audit_n(&h, "workspace_access.set").await, 1);
+    let (s, b) = call(&h, &ot, Method::PUT, &uri, body("member")).await;
+    assert_eq!((s, b["role"].as_str()), (200, Some("member")), "{b}");
+    let (s, _) = call(&h, &ot, Method::PUT, &uri, body("owner")).await;
+    assert_eq!(s, 200);
+    let rows: Vec<Value> = sqlx::query_scalar(
+        "SELECT metadata FROM audit_log WHERE action = 'workspace_access.set' ORDER BY id",
+    )
+    .fetch_all(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2, "the repeat wrote nothing: {rows:?}");
+    assert_eq!(rows[0]["previous_role"], Value::Null);
+    assert_eq!(rows[0]["role"], "member");
+    assert_eq!(rows[1]["previous_role"], "member");
+    assert_eq!(rows[1]["role"], "owner");
+}
+
 // ---------------------------------------------------------------- FIX-097: deletion completeness
 
 /// A harness whose vault keeps managed values in an inspectable memory store.
