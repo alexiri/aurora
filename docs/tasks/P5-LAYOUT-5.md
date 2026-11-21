@@ -145,3 +145,10 @@ show/hide rule and the shared save need care.
 
 Files changed; screenshots of the Agents page (owner, member) and Settings › General (owner with a choice, owner without,
 member) in both themes; test files changed; commands and results; production specs not run.
+
+### Done (lane B, 5debd221)
+
+- Files: `agents-view.tsx` (BYO block removed), `workspace-byo.tsx` → `settings/byo-field.tsx` (`BYO_WORDS`, `useByoChoice`, `ByoField`), `general-tab.tsx` (field after Time zone, one PATCH), docs/14 (General bullet, `agent.byo` row), API_CONTRACTS C-967.
+- Tests: `tests/byo.test.tsx` (P5-IA-4 describe replaced: owner with a choice, instance wording, one PATCH with the other fields, clear to null, no choice, own value left, member, Agents page without a block, 422 under the field); `e2e/ia-4.spec.ts` (Agents page has no ladder; Settings field saves and reads back).
+- Run: whole web vitest 247 files / 3419 tests passed; mocked Playwright `ia-4`, `refine-16`, `workspace-pages`, `approvals-question` 88 passed (light and dark, 1280 and 390); tsc, eslint on touched files, `scripts/guards/run-all.sh` clean. Production specs: none reference the old ladder.
+- Not captured: a member's Settings screenshot (covered by the vitest case).

@@ -110,3 +110,9 @@ The owner: "I don't want a ton of broken tests because a button was renamed and 
 
 Files changed; screenshots of Approvals with nothing waiting (fold closed, fold open) in both themes and at 390 px; test
 files changed; commands and results; production specs not run.
+
+### Done (lane B, 48f12815)
+
+- Files: new `components/ui/fold.tsx` (shared closed fold, used by Skills' "How skills combine" and the approvals example), `approval-example.tsx` (closed fold, intro line, neutral border, inner section keeps `aria-label="Example approval"`), `workspace-skills.tsx`, docs/14.
+- Tests: `tests/approvals.test.tsx` (closed first, opens to line and sample, neutral border, no fold when something waits); `e2e/refine-16.spec.ts` (open the fold, click Block). `skills-combine` tests unchanged and pass.
+- Run: whole web vitest 247 files / 3419 tests passed; mocked Playwright as in LAYOUT-5, 88 passed; tsc, eslint, guards clean. Production specs: none touch the example.
