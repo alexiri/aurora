@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "./client";
+import { ApiError, api } from "./client";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -165,6 +165,16 @@ export function useDeleteSkill(scope: SkillScope) {
  */
 function skillFilePathParams(id: string, path: string) {
   return { id, "*path": path } as unknown as { id: string; path: string };
+}
+
+/** One file of a skill as stored (C-1099): the bytes, for the agent export. */
+export async function readSkillFile(id: string, path: string): Promise<Uint8Array> {
+  const { data, error, response } = await api.GET("/v1/skills/{id}/files/{*path}", {
+    params: { path: skillFilePathParams(id, path) },
+    parseAs: "arrayBuffer",
+  });
+  if (!response.ok) throw ApiError.fromBody(error, response.status);
+  return new Uint8Array(data as ArrayBuffer);
 }
 
 /** Raw-body upload; `executable` omitted keeps the current bit. */

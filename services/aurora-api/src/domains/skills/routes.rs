@@ -10,7 +10,8 @@ use aurora_core::ApiError;
 use aurora_db::repo::{agents, skills::SkillRow};
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderName, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
@@ -22,7 +23,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_org_skills, create_org_skill))
         .routes(routes!(list_workspace_skills, create_workspace_skill))
         .routes(routes!(get_skill, update_skill, delete_skill))
-        .routes(routes!(put_skill_file, delete_skill_file))
+        .routes(routes!(get_skill_file, put_skill_file, delete_skill_file))
 }
 
 /// Agent skills need `can_use` on the agent's workspace.
@@ -385,6 +386,37 @@ async fn put_skill_file(
         workspace_of(&s, &v.row).await?,
     );
     Ok(Json(service::dto(&s.pool, v).await?))
+}
+
+/// Read one skill file: the stored bytes (C-1099).
+#[utoipa::path(get, path = "/skills/{id}/files/{*path}", operation_id = "getSkillFile",
+    tag = "skills",
+    params(("id" = Uuid, Path, description = "Skill id"),
+        ("path" = String, Path, description = "Relative file path")),
+    responses((status = 200, description = "The file's bytes; X-Skill-File-Executable says whether the executable bit is set",
+            body = Vec<u8>, content_type = "application/octet-stream"),
+        (status = 400, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn get_skill_file(
+    c: Caller,
+    State(s): State<AppState>,
+    Path((id, path)): Path<(Uuid, String)>,
+) -> Result<Response, ApiError> {
+    let cur = service::row(&s.pool, id).await?;
+    authorize(&c, &s, &cur, false).await?;
+    let f = service::file(&s.pool, id, &path).await?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream"),
+            (
+                HeaderName::from_static("x-skill-file-executable"),
+                if f.executable { "true" } else { "false" },
+            ),
+        ],
+        f.content,
+    )
+        .into_response())
 }
 
 /// Delete one skill file.

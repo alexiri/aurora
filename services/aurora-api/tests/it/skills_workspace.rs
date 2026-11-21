@@ -266,6 +266,45 @@ async fn names_tier_local_reserved_and_check_constraint() {
     assert_eq!(s, 400, "{v}");
 }
 
+/// C-1099: reading a workspace skill's file needs what reading the skill needs (`can_use`), not `can_own`.
+#[tokio::test]
+async fn workspace_skill_file_read_follows_the_item_route() {
+    let r = rig().await;
+    let org_admin = actor(&r, "adm@x.io", "admin", None).await;
+    let member = actor(&r, "m@x.io", "member", Some("member")).await;
+    let outsider = {
+        let org2 = r.h.org().await;
+        let u = r.h.user("out@x.io", false).await;
+        r.h.member(org2, u, "owner", "active").await;
+        let (_, st) = r.h.good_session(u).await;
+        cookie(&st)
+    };
+    let (s, v) = r
+        .call(
+            &org_admin,
+            Method::POST,
+            &format!("/v1/workspaces/{}/skills", r.ws),
+            Some(json!({"name": "ws-skill", "description": "d", "body": "b"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    let uri = format!("/v1/skills/{id}/files/ref/a.txt");
+    assert_eq!(r.raw_put(&org_admin, &uri, b"ws bytes").await.0, 200);
+    for who in [&member, &org_admin, &r.cookie] {
+        let (s, _, b) = r.raw_get(who, &uri).await;
+        assert_eq!((s, b.as_slice()), (200, &b"ws bytes"[..]));
+    }
+    // Someone with no reach into the workspace gets what the item route gives them: never the bytes.
+    let (item, _) = r
+        .call(&outsider, Method::GET, &format!("/v1/skills/{id}"), None)
+        .await;
+    assert_ne!(item, 200);
+    let (s, _, b) = r.raw_get(&outsider, &uri).await;
+    assert_eq!(s, item);
+    assert_ne!(b.as_slice(), b"ws bytes");
+}
+
 /// Authorization matrix per tier: list / create / edit / delete / files.
 #[tokio::test]
 async fn workspace_skill_authorization_matrix() {
