@@ -27,6 +27,12 @@ describe("field errors in the field's own words (P5-REFINE-18 #4, admin-4)", () 
     expect(fieldErrorWords("gateway.allowed_private[0]", "`10.0.0.0/33`: prefix too long")).toBe("Row 1: That isn't a valid address range. Use a form like 10.0.0.0/24.");
   });
 
+  it("says Send as is needed when a mail server is set, without a broken sentence (setup-6)", () => {
+    const m = "required (an email address) when email.smtp_url is set";
+    expect(fieldErrorWords("email.from", m)).toBe("Enter an email address when the mail server address is set.");
+    expect(technicalNames("email.from", m)).toEqual(expect.arrayContaining(["email.smtp_url", "email.from"]));
+  });
+
   it("names the row of an allow-list entry", () => {
     expect(fieldErrorWords("governance.egress.baseline_allowlist[0].host", "not a valid host pattern")).toBe("Row 1: that isn't a website name. Try docs.example.org.");
     expect(fieldErrorWords("governance.egress.baseline_allowlist[2].path", "must start with `/`")).toBe("Row 3: the path must start with a slash, like /docs.");

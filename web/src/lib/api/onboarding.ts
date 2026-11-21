@@ -47,5 +47,13 @@ export function useAdminSetup(enabled = true) {
     queryFn: () => unwrap(api.GET("/v1/admin/setup")),
     retry: false,
     refetchOnWindowFocus: true,
+    // (P5-REFINE-20) An AI key exists but its agent cannot answer yet (the key is still being checked): read the status again
+    // every few seconds, so Try it appears without a reload.
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      const keyOk = d?.steps.find((s) => s.id === "llm")?.checks.find((c) => c.id === "org_key")?.status === "ok";
+      const t = d?.try_it;
+      return keyOk && t && !t.available && !t.done ? 5_000 : false;
+    },
   });
 }

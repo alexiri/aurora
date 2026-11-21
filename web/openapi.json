@@ -67092,6 +67092,13 @@
             "type": "string",
             "description": "Stable id, e.g. `endpoint:litellm`, `default_model:litellm`, `gateway`."
           },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The code of the newest failed real call: `rejected`, `unreachable`, `unexpected` or `expired`."
+          },
           "last_error_at": {
             "type": [
               "string",
@@ -67380,6 +67387,14 @@
           "done": {
             "type": "boolean",
             "description": "The calling admin has one finished turn of their own in a hosted agent they own."
+          },
+          "done_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the newest such finished turn ended; null while `done` is false."
           },
           "workspace_id": {
             "type": [

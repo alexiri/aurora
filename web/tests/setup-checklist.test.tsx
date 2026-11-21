@@ -77,7 +77,7 @@ function world(opts: { status?: ReturnType<typeof setupStatus>; replied?: boolea
   // (C-1063) Try it comes from the server: done on the first finished turn, offered only once an agent can answer.
   const status = opts.status ?? setupStatus();
   const hasKey = status.steps.find((x) => x.id === "llm")?.status === "ok";
-  const served = { ...status, try_it: (status as unknown as { try_it?: unknown }).try_it ?? { available: hasKey, done: !!opts.replied, agent_id: "a1", workspace_id: "w1" } };
+  const served = { ...status, try_it: (status as unknown as { try_it?: unknown }).try_it ?? { available: hasKey, done: !!opts.replied, done_at: opts.replied ? new Date(Date.now() - 120_000).toISOString() : null, agent_id: "a1", workspace_id: "w1" } };
   routes["GET /v1/admin/setup"] = () => json(200, served);
   routes["GET /v1/admin/placement"] = () => json(200, placement());
   routes["GET /v1/me"] = () => json(200, ME);
@@ -86,6 +86,7 @@ function world(opts: { status?: ReturnType<typeof setupStatus>; replied?: boolea
     json(200, { items: opts.replied ? [{ id: "c1", agent_id: "a1", kind: "direct", last_seq: 3, created_at: "2026-11-10T09:00:00Z", last_activity_at: "2026-11-10T09:01:00Z" }] : [], next_cursor: null });
   routes["GET /v1/conversations/c1/events"] = () => json(200, { items: [{ seq: 2, type: "text", ts: "2026-11-10T09:00:05Z", payload: {} }], last_seq: 3 });
   routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: opts.keys ?? [] });
+  routes["GET /v1/agents/a1/answer-readiness"] = () => json(200, hasKey ? { can_answer: true, reason: null, usable_keys: 1, fix: null } : { can_answer: false, reason: "no_ai_key", usable_keys: 0, fix: null });
   routes["GET /v1/admin/plugins"] = () => json(200, { items: opts.uploaded ?? [], next_cursor: null });
   routes["GET /v1/llm/providers"] = () =>
     json(200, { providers: [{ id: "litellm", display_name: "LiteLLM", auth_modes: ["bearer"] }], endpoints: [{ id: "litellm", provider: "litellm", display_name: "AIGW", permitted: true, key_scopes: [] }] });
@@ -116,6 +117,9 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     const tryRow = document.querySelector<HTMLElement>('[data-step="try"]')!;
     expect(within(tryRow).getByText("Comes after the AI key")).toBeInTheDocument();
     expect(within(tryRow).queryByRole("link", { name: "Open chat" })).toBeNull();
+    // (D-414, setup-3) Step 3 says what the key is for; no agent card without a key.
+    expect(within(document.querySelector<HTMLElement>('[data-step="key"]')!).getByText("Add an AI key so agents can answer")).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-agent-card")).toBeNull();
   });
 
   it("shows what agents may do under the checklist, with a Change link to the preset card (not counted)", async () => {
@@ -163,7 +167,7 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     world();
     wrap(<SetupView />);
     const key = await row("key");
-    expect(await within(key).findByText("Add an organization AI key")).toBeInTheDocument();
+    expect(await within(key).findByText("Add an AI key so agents can answer")).toBeInTheDocument();
     expect(within(key).getByRole("button", { name: "Add key" })).toBeEnabled();
     expect(key.dataset.done).toBe("false");
     cleanup();
@@ -188,7 +192,9 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     wrap(<SetupView />);
     const tryIt = await row("try");
     await waitFor(() => expect(tryIt.dataset.done).toBe("true"));
-    await waitFor(() => expect(within(tryIt).getByText("Daneel answered Ada")).toBeInTheDocument());
+    // (P5-REFINE-20, setup-1) "Daneel answered Ada 2 min ago", with Open chat on the done row.
+    await waitFor(() => expect(tryIt).toHaveTextContent("Daneel answered Ada 2 min ago"));
+    expect(within(tryIt).getByRole("link", { name: "Open chat" })).toHaveAttribute("href", expect.stringContaining("/agents/daneel?tab=chat"));
     // The web no longer probes the agent's conversations itself.
     expect(calls.some((c) => c.key === "GET /v1/agents/a1/conversations")).toBe(false);
     cleanup();
@@ -232,16 +238,20 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     expect(within(line).getByRole("link", { name: "Open Apps" })).toHaveAttribute("href", "/admin/apps?tab=apps");
   });
 
-  it("adding the AI key keeps the checklist, shows a toast with the count, and refetches the status", async () => {
+  it("adding the AI key keeps the checklist, toasts who can use it, says who was given it, offers Try it and shows the agent (setup-2)", async () => {
     world();
     let added = false;
-    routes["GET /v1/admin/setup"] = () => json(200, added ? keyOk() : setupStatus());
+    const tryIt = (available: boolean) => ({ available, done: false, done_at: null, agent_id: "a1", workspace_id: "w1" });
+    routes["GET /v1/admin/setup"] = () => json(200, added ? { ...keyOk(), try_it: tryIt(true) } : { ...setupStatus(), try_it: tryIt(false) });
     routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: added ? [llmSecret("k10", "AIGW")] : [] });
+    routes["GET /v1/agents/a1/answer-readiness"] = () =>
+      json(200, added ? { can_answer: true, reason: null, usable_keys: 1, fix: null } : { can_answer: false, reason: "no_ai_key", usable_keys: 0, fix: null });
     routes["POST /v1/orgs/o1/secrets"] = () => {
       added = true;
       return json(201, llmSecret("k10", "AIGW"));
     };
-    routes["PUT /v1/admin/placement"] = () => json(200, placement());
+    // The placement answers that the new key went to Daneel and two other agents already in the organization (brief 5).
+    routes["PUT /v1/admin/placement"] = () => json(200, placement({ starter_applied: [{ id: "k10", kind: "secret", agents_granted: 3, agent_names: ["Daneel", "Rex", "Mo"] }] }));
     wrap(<SetupView />);
     const key = await row("key");
     await waitFor(() => expect(within(key).getByRole("button", { name: "Add key" })).toBeEnabled());
@@ -254,7 +264,15 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Add key" }));
     const toast = await screen.findByTestId("setup-toast");
-    expect(toast).toHaveTextContent("AIGW added. 3 of 5 done.");
+    expect(toast).toHaveTextContent("AIGW added. Daneel can use it now.");
+    // The checklist is read again behind the toast: key done, Given-to line, Try it offered, the agent card Ready.
+    expect(await screen.findByTestId("key-given")).toHaveTextContent("Given to Daneel and 2 other agents already in Users.");
+    expect(await screen.findByRole("link", { name: "Open chat" })).toBeInTheDocument();
+    const card = await screen.findByTestId("setup-agent-card");
+    expect(card).toHaveTextContent("Daneel");
+    expect(card).toHaveTextContent("@daneel");
+    expect(card).toHaveTextContent("Uses AIGW · no setup left");
+    expect(within(card).getByText("Ready")).toBeInTheDocument();
     // Still the checklist, with the starter grant saved (C-922).
     expect(screen.getByRole("list", { name: "Setup steps" })).toBeInTheDocument();
     expect(screen.queryByTestId("admin-health")).toBeNull();
@@ -284,12 +302,46 @@ describe("Administration › Overview: the health view", () => {
     wrap(<SetupView />);
     const health = await screen.findByTestId("admin-health");
     expect(within(health).getByText(/Aurora is running\. E-mail is not set up\./)).toBeInTheDocument();
-    expect(within(health).getAllByText("E-mail isn't set up. Aurora can't send approval or invitation e-mails.")).toHaveLength(1);
+    // (setup-5) One Needs you list: the setup gap is a row of it, not a second card with its own heading.
+    expect(screen.getAllByRole("heading", { name: /^Needs you/ })).toHaveLength(1);
+    const needs = screen.getByTestId("admin-attention");
+    expect(needs.querySelector('[data-reason="email_not_configured"]')).toHaveTextContent("E-mail isn't set up");
+    expect(needs.querySelector('[data-reason="email_not_configured"]')).toHaveTextContent("Aurora can't send approval or invitation e-mails.");
     expect(within(health).getByRole("link", { name: "Set up e-mail" })).toHaveAttribute("href", "/admin/platform?tab=email");
     const lines = within(health).getByRole("list", { name: "Health" });
     expect(within(lines).getByText("1 runner online.")).toBeInTheDocument();
     expect(await within(lines).findByText(/2\.0 KiB in 4 stored files/)).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Setup steps" })).toBeNull();
+  });
+
+  it("keeps the requests and the setup gaps in one Needs you list, and History under it, never first (setup-5)", async () => {
+    world({ status: keyOk(), replied: true });
+    routes["GET /v1/admin/attention"] = () =>
+      json(200, {
+        count: 1,
+        items: [
+          {
+            id: "r1", kind: "chat_platform_request", topic: "chat-platforms", subject_id: "r1", title: "Carol Member wants a chat platform",
+            detail: "Your organization has no chat platform connected.", since: "2026-11-20T10:00:00Z", href: "/admin/chat-platforms", decision: true, own: false,
+            actors: [{ user_id: "u-carol", display_name: "Carol Member" }], actors_total: 1, can_decline: true, action: { label: "Connect", href: "/admin/chat-platforms" },
+          },
+        ],
+      });
+    wrap(<SetupView />);
+    const health = await screen.findByTestId("admin-health");
+    const needs = await screen.findByTestId("admin-attention");
+    // The request and the e-mail gap are rows of the same list under one heading.
+    expect(within(needs).getByText("Carol Member wants a chat platform")).toBeInTheDocument();
+    expect(needs.querySelector('[data-reason="email_not_configured"]')).not.toBeNull();
+    expect(screen.getAllByRole("heading", { name: /^Needs you/ })).toHaveLength(1);
+    // Order: the headline, the Needs you list, the Health card, and History last.
+    const headline = within(health).getByText(/Aurora is running\./);
+    const history = screen.getByText("History").closest("details")!;
+    const healthCard = within(health).getByRole("list", { name: "Health" });
+    const before = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(before(headline, needs)).toBe(true);
+    expect(before(needs, healthCard)).toBe(true);
+    expect(before(healthCard, history)).toBe(true);
   });
 
   it("says what real calls returned, by display name, and the terminal being off (P5-REFINE-18 #15, #10)", async () => {
@@ -301,7 +353,9 @@ describe("Administration › Overview: the health view", () => {
           check("org_key", "ok", "org_key_present", "Users has an LLM key."),
           check("endpoint:a", "ok", "endpoint_reachable", "Company AI gateway answers.", { evidence: "call", last_ok_at: new Date(Date.now() - 120_000).toISOString() }),
           check("endpoint:b", "ok", "endpoint_reachable", "Users AI gateway answers.", { evidence: "probe" }),
-          check("endpoint:c", "warning", "endpoint_unreachable", "Edge gateway did not answer.", { evidence: "call", last_ok_at: "2026-11-19T10:00:00Z", last_error_at: "2026-11-20T14:02:00Z" }),
+          check("endpoint:c", "warning", "endpoint_unreachable", "Edge gateway did not answer.", { evidence: "call", last_ok_at: "2026-11-19T10:00:00Z", last_error_at: "2026-11-20T14:02:00Z", last_error: "unreachable" }),
+          // The probe alone did not reach it, and no real call has failed: it has not been asked, never "did not answer" (setup-4).
+          check("endpoint:d", "warning", "endpoint_unreachable", "Dev gateway did not answer.", { evidence: "probe" }),
         ],
       })(),
     );
@@ -317,7 +371,9 @@ describe("Administration › Overview: the health view", () => {
     const line = ai.closest("li")!;
     expect(line.textContent).toMatch(/Company AI gateway answered .*\./);
     expect(line.textContent).toContain("Users AI gateway has not been asked yet.");
-    expect(line.textContent).toMatch(/Edge gateway did not answer at /);
+    expect(line.textContent).toMatch(/Edge gateway did not answer at .+?: the endpoint could not be reached\./);
+    expect(line.textContent).toContain("Dev gateway has not been asked yet.");
+    expect(line.textContent).not.toContain("Dev gateway did not answer");
     expect(line.textContent).not.toMatch(/AIGW|VidaiMock|from the API/);
     const terminal = await within(health).findByText("Web terminal");
     const row = terminal.closest("li")!;

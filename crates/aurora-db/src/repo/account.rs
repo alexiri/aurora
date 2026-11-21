@@ -332,9 +332,18 @@ pub async fn upsert_bootstrap_admin<'e, E: PgExecutor<'e>>(
 /// `last_error_at` over the endpoint's active keys, written by the gateway for agent calls.
 pub async fn endpoint_call_evidence<'e, E: PgExecutor<'e>>(
     exec: E,
-) -> Result<Vec<(String, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>, DbError> {
+) -> Result<
+    Vec<(
+        String,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+        Option<String>,
+    )>,
+    DbError,
+> {
     Ok(sqlx::query_as(
-        "SELECT llm_endpoint_id, max(last_ok_at), max(last_error_at)
+        "SELECT llm_endpoint_id, max(last_ok_at), max(last_error_at),
+                (array_agg(last_error ORDER BY last_error_at DESC NULLS LAST))[1]
          FROM secrets
          WHERE kind = 'llm' AND status = 'active' AND llm_endpoint_id IS NOT NULL
          GROUP BY llm_endpoint_id",
@@ -363,18 +372,24 @@ pub async fn try_it_agent<'e, E: PgExecutor<'e>>(
 }
 
 /// Has `user` one finished turn of their own in a conversation of a hosted agent in a workspace
-/// they own (C-1063 `try_it.done`)?
-pub async fn try_it_done<'e, E: PgExecutor<'e>>(exec: E, user: Uuid) -> Result<bool, DbError> {
-    Ok(sqlx::query_scalar(
-        "SELECT EXISTS (
-           SELECT 1 FROM turns t
+/// they own (C-1063 `try_it.done`)? `Some(when)` is when the newest such turn ended (`done_at`),
+/// `None` when there is none.
+pub async fn try_it_done<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, DbError> {
+    // A finished turn with no `finished_at` (older rows) still counts: it falls back to its start.
+    let row: Option<(Option<chrono::DateTime<chrono::Utc>>,)> = sqlx::query_as(
+        "SELECT max(COALESCE(t.finished_at, t.started_at)) FROM turns t
            JOIN agents a ON a.id = t.agent_id AND a.kind = 'hosted'
            WHERE t.speaker_user_id = $1 AND t.status = 'done' AND t.role = 'turn'
              AND EXISTS (SELECT 1 FROM effective_workspace_access ea
                           WHERE ea.workspace_id = a.workspace_id AND ea.user_id = $1
-                            AND ea.role = 'owner'))",
+                            AND ea.role = 'owner')
+          HAVING count(*) > 0",
     )
     .bind(user)
-    .fetch_one(exec)
-    .await?)
+    .fetch_optional(exec)
+    .await?;
+    Ok(row.map(|r| r.0.unwrap_or_else(chrono::Utc::now)))
 }

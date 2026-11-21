@@ -48,7 +48,7 @@ const WORDS: Record<string, [label: string, help: string, kind: string, defaultD
   "auth.session_absolute_secs": ["Longest a sign-in lasts", "Everyone signs in again after this long.", "duration", "30 days", "days"],
   "auth.cli_key_ttl_days": ["How long a command-line key lasts", "0 means they never expire.", "int", "90 days", "days"],
   "auth.oidc_providers": ["How people sign in", "The identity providers people sign in with.", "keyed_list", "None"],
-  "email.smtp_url": ["Mail server", "The address of the server that sends Aurora's e-mails.", "text", "Not set"],
+  "email.smtp_url": ["Mail server address", "For example smtp://mail.example.com:587", "text", "Not set"],
   "email.from": ["Send as", "The address e-mails come from.", "text", "Not set"],
   "email.smtp_username": ["User name", "The account Aurora signs in with on the mail server.", "text", "Not set"],
   "email.smtp_password": ["Password", "Sent only to the mail server and never shown again once set.", "secret", "Not set"],

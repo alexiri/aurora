@@ -497,8 +497,8 @@ pub static FIELDS: &[FieldMeta] = &[
     // ---------------------------------------------------------------- email
     f(
         "email.smtp_url",
-        "Mail server",
-        "The address of the server that sends Aurora's e-mails; Aurora checks it can reach it before saving.",
+        "Mail server address",
+        "For example smtp://mail.example.com:587",
         K::Text,
         "Not set",
         None,

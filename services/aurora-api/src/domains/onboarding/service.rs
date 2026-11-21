@@ -111,6 +111,7 @@ fn check(
         evidence: None,
         last_ok_at: None,
         last_error_at: None,
+        last_error: None,
     }
 }
 
@@ -296,10 +297,10 @@ pub async fn setup(
         };
         // (C-1063, D-383) Real calls through a key of this endpoint decide first; the
         // unauthenticated probe only when no real call speaks.
-        let (ok_at, err_at) = evidence
+        let (ok_at, err_at, err_code) = evidence
             .iter()
-            .find(|(id, _, _)| id == &e.id)
-            .map_or((None, None), |(_, o, r)| (*o, *r));
+            .find(|(id, _, _, _)| id == &e.id)
+            .map_or((None, None, None), |(_, o, r, code)| (*o, *r, code.clone()));
         let (status, via) = endpoint_status(ok_at, err_at, up, now);
         let mut c = if status == SetupState::Ok {
             check(
@@ -322,6 +323,8 @@ pub async fn setup(
         c.evidence = Some(via.to_owned());
         c.last_ok_at = ok_at;
         c.last_error_at = err_at;
+        // Only when that failed call is the newest evidence: an older failure after a success is not the reason.
+        c.last_error = err_code.filter(|_| err_at.is_some_and(|e| ok_at.is_none_or(|o| e > o)));
         llm.push(c);
         // (FIX-170, D-372) A LiteLLM endpoint without a default model is fine: agents use the first allowed chat
         // model each key serves, unless one is set. (The old warning code `no_default_model` is no longer used here.)
@@ -574,7 +577,7 @@ pub async fn setup(
 
     let try_it = {
         let target = aurora_db::repo::account::try_it_agent(&state.pool, admin).await?;
-        let done = aurora_db::repo::account::try_it_done(&state.pool, admin).await?;
+        let done_at = aurora_db::repo::account::try_it_done(&state.pool, admin).await?;
         let mut available = false;
         if let Some((agent_id, _)) = target
             && let Some(agent) = aurora_db::repo::agents::get(&state.pool, agent_id).await?
@@ -585,7 +588,8 @@ pub async fn setup(
         }
         SetupTryIt {
             available,
-            done,
+            done: done_at.is_some(),
+            done_at,
             agent_id: target.map(|t| t.0),
             workspace_id: target.map(|t| t.1),
         }

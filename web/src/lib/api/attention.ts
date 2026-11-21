@@ -49,7 +49,7 @@ export function useAttentionFeed(level: AttentionLevel, id: string | undefined, 
 
 /**
  * (P5-REFINE-8, C-1082) The rails' numbers for the scopes asked for: each is `null` when the caller cannot act there
- * (never an error). Refetched on window focus and every 5 minutes; deciding, declining or resolving an item
+ * (never an error). Refetched on window focus and every 30 seconds; deciding, declining or resolving an item
  * invalidates `attentionKeys.all`.
  */
 export function useAttentionCounts(
@@ -88,8 +88,8 @@ export function useWorkspaceCounts(wsId: string | undefined): { count: number; t
   return { count: w?.count ?? 0, topics: w?.topics ?? {} };
 }
 
-/** The badge refetches on window focus and at this interval (FIX-167, D-370). */
-export const ATTENTION_REFETCH_MS = 5 * 60_000;
+/** The badge refetches on window focus and at this interval, like the workspace ones (P5-REFINE-20 G4, was 5 minutes in FIX-167). */
+export const ATTENTION_REFETCH_MS = 30_000;
 
 /**
  * (P5-REFINE-18 #18, P5-REFINE-17 #17) The count drops without a reload: any mutation that succeeds may have resolved an

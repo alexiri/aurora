@@ -955,6 +955,8 @@ pub async fn verify(state: &AppState, row: &SecretRow) -> Result<StoredOrigin, A
         ApiError::internal("Internal error.")
     })?;
     tx.commit().await.map_err(DbError::from)?;
+    // The endpoint answered: a listing remembered as failed is stale now.
+    crate::domains::hosted::model::forget_listing(row.id);
     Ok(o.into())
 }
 

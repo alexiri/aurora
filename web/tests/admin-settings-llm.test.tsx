@@ -378,7 +378,7 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove team" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Acme — 2 LLM keys stop working")).toBeTruthy();
+    expect(within(dialog).getByText("Acme — 2 AI keys stop working")).toBeTruthy();
     expect(within(dialog).getByText(/would stop being usable/)).toBeTruthy();
     expect(puts).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Yes, save" }));
