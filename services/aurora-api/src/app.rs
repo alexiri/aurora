@@ -79,6 +79,8 @@ pub struct AppState {
     pub llm_http: reqwest::Client,
     /// Shared `aurora_approval` fan-out (SSE, long-poll).
     pub approval_bus: Arc<crate::domains::approvals::bus::ApprovalBus>,
+    /// (P5-REFINE-9, C-1084) Shared `aurora_timeline` fan-out and the per-person stream slots.
+    pub timeline_bus: Arc<crate::domains::timeline::stream::TimelineBus>,
     /// (phase 2, RFE-011a) Open approvals streams / long-polls of this replica (watchers).
     pub approval_watch: Arc<crate::domains::approvals::notify::WatchRegistry>,
     /// Shared `aurora_conversation`/`aurora_delta` fan-out (transcript SSE) and delta coalescer.
@@ -248,6 +250,7 @@ impl AppState {
             gov_live,
             llm_http,
             approval_bus: Arc::default(),
+            timeline_bus: Arc::default(),
             approval_watch: Arc::default(),
             conversation_bus,
             connector_bus: Arc::default(),
@@ -684,6 +687,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::agent_links::router())
         .merge(domains::evals::router())
         .merge(domains::peer_tasks::router())
+        .merge(domains::timeline::router())
         .merge(domains::connect::router())
         .merge(domains::oauth_clients::router())
         .merge(domains::app_instances::router())

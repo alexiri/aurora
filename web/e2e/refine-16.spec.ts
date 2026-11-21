@@ -32,31 +32,28 @@ async function check(page: Page, errors: string[]) {
   expect(errors, "page threw").toEqual([]);
 }
 
-const entry = (n: number, over: Record<string, unknown>) => ({
-  id: id(500 + n), ts: now, agent_id: id(20), method: "POST", host: "api.github.com", path: "/repos", decision: "allow", status: 200,
-  rule_name: null, app_id: null, tool_id: null, llm_model: null, context_label: null, approval_id: null, ...over,
-});
-
 for (const scheme of ["light", "dark"] as const) {
   for (const width of [1280, 390]) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("Activity reads as sentences, with the raw request under Details", async ({ page }) => {
+      test("Activity reads as sentences from the agent's timeline, with the recorded fields under Details", async ({ page }) => {
         const errors = await open(page, "/o/acme/w/main/activity", scheme, {
-          [`${WS}/activity`]: () => ({
+          [`/v1/agents/${id(11)}/timeline`]: () => ({
             items: [
-              entry(1, { path: "/v1/messages", host: "litellm.svc", llm_model: "default" }),
-              entry(2, { decision: "blocked", status: 403, rule_name: "Block evil.example.org", app_id: "github" }),
+              { id: "turn:1", at: now, state: "done", kind: "answered", outcome: "answered", agent: { id: id(11), name: "Daneel" }, model: "Workspace default", count: 1 },
+              { id: "call:1", at: now, state: "blocked", kind: "called", outcome: "blocked_by_rule", agent: { id: id(11), name: "Daneel" }, app: { id: "github", name: "GitHub" }, rule: { logical_id: id(70), name: "Block evil.example.org" }, count: 1 },
             ],
             next_cursor: null,
           }),
         });
         const list = page.getByTestId("activity-sentences");
-        await expect(list.getByText(/answered you/)).toBeVisible();
-        await expect(list).not.toContainText("litellm");
+        await expect(list.getByText("Daneel answered you")).toBeVisible();
+        await expect(list.getByText("Daneel called GitHub")).toBeVisible();
+        await expect(list.getByText(/Blocked by your rule ‘Block evil.example.org’/)).toBeVisible();
         await list.getByRole("button", { name: "Details" }).first().click();
-        await expect(page.getByTestId("activity-raw")).toContainText("POST litellm.svc/v1/messages");
+        await expect(page.getByTestId("activity-raw")).toContainText("Details · what was recorded");
+        await expect(page.getByTestId("activity-raw")).toContainText("model Workspace default");
         await check(page, errors);
       });
 

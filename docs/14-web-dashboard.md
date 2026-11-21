@@ -563,14 +563,18 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     `triggers`, `computer`, `settings`. The computer's secondary tabs (Terminal, Files, …) collapse into a **More** menu rather
     than scrolling sideways.
   - **The header state** (D-408) is one `StatusLine`: **Can't answer: <reason>** (`no AI key`, `the key stopped working`,
-    `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; an action slot
-    beside it is P5-REFINE-12's) → **Needs you** → **Working** → **Starting its computer…** (spinner, `aria-live` polite) →
+    `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; beside it
+    the one action the API chose for the viewer (`fix`): **Give <Agent> the <key name>** (one click, "<Agent> can answer now",
+    the header turns Ready), **Add a key** (organization owners and admins: the organization's AI keys) or **Ask an admin**
+    (subject `ai_key`, with the optional reason, C-1081); with **no AI key at all** the empty chat says **"<Agent> has no AI
+    model yet"** with the same action and the composer is off (access-3, D-414)) → **Needs you** → **Working** → **Starting its computer…** (spinner, `aria-live` polite) →
     **Asleep** → **Ready**; **Ready only when the computer answers** (`SandboxView.computer.ready`, C-1059). Without computer
     data (not loaded, BYO) the older words apply.
   - **The rail** (D-201, D-415, P5-REFINE-11) has three headings: **Needs you · Doing now · What <Agent> did**. The Computer is
     one line under Doing now ("On its computer · Awake / Asleep / Starting its computer… · Open"); About moved into Settings;
-    "What <Agent> did" is today's list of recent requests with an "All" link to Activity until the agent timeline
-    (P5-REFINE-9, C-1083) feeds it live. Collapsed, each icon has a visible three-letter word (Need · Now · Did). The expanded
+    "What <Agent> did" is the agent's last five timeline rows as sentences (`timelineWords` in `lib/labels.ts`), each a link to
+    its target (`lib/timeline-links.ts`), live over the timeline stream (C-1083, C-1084: a new row on top, a running row
+    turning into its outcome in place; one stream per agent page), with "All" to Activity filtered to the agent. Collapsed, each icon has a visible three-letter word (Need · Now · Did). The expanded
     panel **overlays the transcript below 1400 px** (it no longer squeezes the chat), pushes from 1400 px up.
   - **Chat** (P5-REFINE-11): the composer is **one row until Aa** opens the formatting toolbar (the choice is kept) and Preview grows
     with its content; after sending, the transcript **always scrolls to the bottom** (and again when an image finishes loading),
@@ -672,11 +676,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     - **Doing now** (`ActivityIcon`): each conversation with an `active_turn`
       ("<title> · working", selects it), plus, for the open conversation, the
       running tool from its stream; none → "Idle".
-    - **Recent tool calls** (`WrenchIcon`): the last five request-log rows of the
-      agent (`GET …/activity?agent_id=&limit=5`): decision `Badge` (Allow, Held,
-      Deny; an `error_code` reads "Failed"), `tool_id` or method and host in
-      mono, latency; link "All activity" to the workspace Activity page filtered
-      to the agent. Refetched when a turn ends and every 30 s while visible.
+    - **What <Agent> did** (`WrenchIcon`; phase 5, P5-REFINE-11, D-415): the last five
+      rows of the agent's timeline (`GET /v1/agents/{agent}/timeline?limit=5`) as
+      sentences with their time, each a link to its target; link "All activity" to the
+      workspace Activity page filtered to the agent. Live over the timeline stream.
     - **Computer** (`MonitorIcon`): the sandbox state (same labels and tooltip as
       the header), "Open computer" (Computer section) and, where the Terminal page
       is available, "Terminal" and (phase 5, P5-FILES-2) "Files".
@@ -1282,7 +1285,15 @@ five tabs.
 | Settings | `/admin/settings`: **All settings** (index, search, Export, Import) | `/o/<org>/settings?tab=general\|api-keys\|danger` | `…/settings?tab=general\|api-keys\|audit\|danger` |
 
 The workspace also has **Approvals** and **Activity** (daily pages, not settings); (phase 5, P5-USAGE-2,
-D-360, C-1004) Activity has two tabs, `?tab=requests|usage` (§Usage). Notes on the table:
+D-360, C-1004) Activity has two tabs, `?tab=requests|usage` (§Usage). (phase 5, P5-REFINE-16, D-415) The requests
+tab is **sentence rows from the agents' timelines** (`GET /v1/agents/{agent}/timeline`; "Any agent" merges the
+workspace's agents' feeds, 20 at most), filters **Everything · Answers · Calls to apps · Approvals · Automations**,
+Any agent, **Any outcome · Answered · Blocked · Waited for you · Failed**, a **Details** line with the fields the row
+recorded (never a request path) and an Open link; it is **live**: the first four agents are streamed
+(`TIMELINE_STREAMS_PER_USER` is five), the others polled; a new row appears on top, a running or waiting row turns into
+its outcome in place, and while the page is scrolled new rows wait behind "3 new · Show". The Technical view (Expert)
+is the request-log table of `GET /workspaces/{ws}/activity`; it reads again on each `request` event of the streams
+(opened with `technical=true`). Notes on the table:
 - **Accounts** is the same list everywhere (§Agents, accounts and access §1). A workspace's shows its own
   accounts and the organization's shared ones. An agent's **Access** tab is that list filtered to the
   agent. The organization's shows the accounts shared with the whole organization.
@@ -2863,6 +2874,13 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 - A test never returns anything the app sent back, and is audited (SEC-129).
 
 ### 8. What an agent can do, in one place (P5-IA-2, P5-UX-7, P5-UX-10, FIX-159, D-346, D-350, C-986, C-934, C-930)
+
+- **"Did" comes from one feed (P5-REFINE-9, D-415).** What an agent did, is doing and asked is the
+  agent timeline (`GET /v1/agents/{agent}/timeline` and its stream, C-1083, C-1084, `10 §The agent
+  timeline`): structured kinds and names that the web turns into sentences from `lib/labels.ts`. The
+  screens that draw it are P5-REFINE-11 (the rail's "What <Agent> did") and P5-REFINE-16 (the
+  workspace Activity page and its Technical view); the web client is `web/src/lib/api/timeline.ts`
+  (`useAgentTimeline`, `useTimelineStream`).
 
 - **One summary, said the same way everywhere.** A few sentences, computed from the agent's accounts,
   its access and the limits above:

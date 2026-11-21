@@ -255,7 +255,7 @@ export function ChatTab({
   // (D-409) New chat: a fresh conversation, opened at once with the composer focused (an empty thread focuses it).
   const [newChatBusy, setNewChatBusy] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
-  const status = useAgentStatus({ wsId, agentId, canApprove, conversations: activeConvs, open: openTurn });
+  const status = useAgentStatus({ wsId, agentId, canApprove, conversations: activeConvs });
   const waitingIds = useMemo(
     () => (canApprove ? new Set(status.needs.flatMap((n) => (n.conversationId ? [n.conversationId] : []))) : undefined),
     [canApprove, status.needs],
@@ -299,6 +299,7 @@ export function ChatTab({
     open: openTurn,
     wsId,
     base,
+    agentBase: `${base}/agents/${agent?.handle ?? agentId}`,
     agentId,
     agent: { name: agent?.name, kind: agentKind, isDefault, brief: agent?.brief },
     terminalAvailable,
