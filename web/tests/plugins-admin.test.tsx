@@ -207,20 +207,33 @@ describe("UploadForm", () => {
         },
       }),
     );
-    wrap(<UploadForm />);
+    const onCancel = vi.fn();
+    wrap(<UploadForm onCancel={onCancel} />);
     const file = new File(["x"], "notes.txt");
     fireEvent.change(screen.getByLabelText("App package"), { target: { files: [file] } });
     expect(screen.getByTestId("chosen-package")).toHaveTextContent("notes.txt");
     expect(screen.getByRole("button", { name: "Choose another" })).toBeInTheDocument();
+    // The native input no longer shows (and prints) the name a second time.
+    expect(screen.getByLabelText("App package").className).toContain("sr-only");
     fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     // (admin-12, C-1071) The sentence is shown; the code and the validator's words are under Technical details.
     // (P5-REFINE-20 #15) Said once: the one problem's sentence is the message, so no list repeats it.
     expect(await screen.findAllByText(/That isn't an app package/)).toHaveLength(1);
+    // (batch 7) The backticked command is set as code, not printed with its backticks; Upload waits for another file; Cancel closes.
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).not.toContain("`");
+    expect(alert.querySelector("code")?.textContent).toBe("aurora plugin pack");
+    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCancel).toHaveBeenCalled();
     expect(screen.queryByRole("list", { name: "Violations" })).toBeNull();
     const fold = screen.getByText("Technical details").closest("details")!;
     expect(fold.textContent).toContain("archive_corrupt");
     expect(fold.textContent).toContain("invalid gzip header");
     expect((calls[0].body as FormData).get("package")).toBeTruthy();
+    // Another file clears the error and enables Upload again.
+    fireEvent.change(screen.getByLabelText("App package"), { target: { files: [new File(["y"], "b.tar.gz")] } });
+    expect(screen.getByRole("button", { name: "Upload" })).toBeEnabled();
   });
 
   it("several problems: the message, then one sentence per problem, codes under Technical details", async () => {
