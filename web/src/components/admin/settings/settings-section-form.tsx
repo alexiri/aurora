@@ -524,8 +524,7 @@ export function SettingsStackForm({
         {confirm
           ? confirm.map((c) => (
               <div key={c.part.section.section} className="space-y-1">
-                <p className="text-sm font-semibold text-ink">{c.part.section.title}</p>
-                <ConfirmDetails preview={c.preview} fields={c.part.section.fields} />
+                <ConfirmDetails preview={c.preview} fields={c.part.section.fields} groups={c.part.groups} title={c.part.section.title} />
               </div>
             ))
           : null}
@@ -580,18 +579,45 @@ export function looseningSentences(preview: SettingsPreview, fields: FieldInfo[]
   });
 }
 
-export function ConfirmDetails({ preview, fields }: { preview: SettingsPreview; fields?: FieldInfo[] }) {
+export function ConfirmDetails({
+  preview,
+  fields,
+  groups,
+  title,
+}: {
+  preview: SettingsPreview;
+  fields?: FieldInfo[];
+  /** The titled groups of the section: each change is named by the group its setting sits in ("Internet access"). */
+  groups?: SettingsGroup[];
+  /** The heading of a change whose setting is in no group (the section's own title). */
+  title?: string;
+}) {
   const sentences = looseningSentences(preview, fields);
+  // (batch 7, admin-3) Each change sits under the name of the part of the page it belongs to, in the amber callout.
+  const named: { heading: string | undefined; sentences: string[] }[] = [];
+  preview.loosening.forEach((l, i) => {
+    const heading = groups?.find((g) => g.keys?.includes(l.key))?.title ?? title;
+    const slot = named.find((n) => n.heading === heading) ?? (named.push({ heading, sentences: [] }), named[named.length - 1]!);
+    slot.sentences.push(sentences[i] ?? "");
+  });
   return (
     <div className="space-y-3 text-sm">
+      {preview.loosening.length === 0 && title ? <p className="font-semibold text-ink">{title}</p> : null}
       {preview.loosening.length > 0 ? (
-        <div>
-          <ul className="list-disc pl-5 text-ink-2" data-testid="loosening-sentences">
-            {sentences.map((s, i) => (
-              <li key={i}>{s}</li>
+        <div className="space-y-3">
+          <div className="space-y-3" data-testid="loosening-sentences">
+            {named.map((n, gi) => (
+              <div key={gi} className="space-y-1.5">
+                {n.heading ? <p className="text-xs font-semibold uppercase tracking-wide text-muted">{n.heading}</p> : null}
+                {n.sentences.map((s, i) => (
+                  <Notice key={i} tone="pending" className="font-medium">
+                    {s}
+                  </Notice>
+                ))}
+              </div>
             ))}
-          </ul>
-          <TechnicalDetails title="Technical details" className="mt-2">
+          </div>
+          <TechnicalDetails title="Technical details">
             <ul className="space-y-0.5">
               {preview.loosening.map((l, i) => (
                 <li key={i}>

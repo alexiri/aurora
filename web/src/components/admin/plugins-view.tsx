@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { AppIcon } from "@/components/ui/app-icon";
 import { AttentionChip } from "@/components/ui/attention-chip";
@@ -60,10 +60,36 @@ export function statusTone(status: string): "neutral" | "accent" | "danger" {
   return "neutral";
 }
 
-export function UploadForm({ onDone }: { onDone?: () => void }) {
+/** (admin-12) A sentence from the API: the first sentence in bold, `backticked` words set as code (never literal backticks). */
+function SentenceText({ text }: { text: string }) {
+  const m = /^(.*?[.!?])(\s.*)?$/s.exec(text.trim());
+  const lead = m?.[1] ?? "";
+  const rest = m?.[2] ?? "";
+  const code = (s: string) =>
+    s.split(/`([^`]+)`/).map((part, i) =>
+      i % 2 === 1 ? (
+        <code key={i} className="font-mono">
+          {part}
+        </code>
+      ) : (
+        part
+      ),
+    );
+  if (!lead) return <>{code(text)}</>;
+  return (
+    <>
+      <strong className="font-semibold">{code(lead)}</strong>
+      {code(rest)}
+    </>
+  );
+}
+
+export function UploadForm({ onDone, onCancel }: { onDone?: () => void; onCancel?: () => void }) {
   const upload = useUploadPlugin();
   const [file, setFile] = useState<File | null>(null);
-  const [pick, setPick] = useState(0);
+  const input = useRef<HTMLInputElement>(null);
+  // After an error the same file would fail the same way: Upload waits for another file (the mockup disables it).
+  const failed = upload.isError || upload.data?.status === "invalid";
   return (
     <form
       className="space-y-4"
@@ -77,28 +103,31 @@ export function UploadForm({ onDone }: { onDone?: () => void }) {
         <label className="block text-sm font-medium text-ink" htmlFor="plugin-package">
           App package
         </label>
+        {/* Once a file is chosen its name is shown once, in the row below: the native input (which prints it too) stays for the picker only. */}
         <input
-          key={pick}
+          ref={input}
           id="plugin-package"
           type="file"
-          className={`${inputClass} file:mr-3 file:rounded-control file:border-0 file:bg-subtle file:px-3 file:py-1 file:text-sm file:font-medium file:text-ink`}
+          className={file ? "sr-only" : `${inputClass} file:mr-3 file:rounded-control file:border-0 file:bg-subtle file:px-3 file:py-1 file:text-sm file:font-medium file:text-ink`}
           onChange={(e) => {
             upload.reset();
             setFile(e.target.files?.[0] ?? null);
           }}
         />
         {file ? (
-          <p className="flex flex-wrap items-center gap-2 text-sm text-ink-2" data-testid="chosen-package">
-            <span className="break-all">{file.name}</span>
-            <Button type="button" variant="ghost" size="sm" onClick={() => { setFile(null); setPick((n) => n + 1); upload.reset(); }}>
+          <div className="flex items-center justify-between gap-2 rounded-control border border-line bg-subtle px-3 py-2 text-sm text-ink" data-testid="chosen-package">
+            <span className="break-all font-mono">{file.name}</span>
+            <Button type="button" variant="ghost" size="sm" onClick={() => input.current?.click()}>
               Choose another
             </Button>
-          </p>
+          </div>
         ) : null}
       </div>
       {upload.isError ? (
         <Notice tone="danger" role="alert" className="space-y-1">
-          <p>{errorMessage(upload.error)}</p>
+          <p>
+            <SentenceText text={errorMessage(upload.error)} />
+          </p>
           <ViolationList violations={violationsOf(upload.error)} said={errorMessage(upload.error)} />
         </Notice>
       ) : null}
@@ -108,8 +137,13 @@ export function UploadForm({ onDone }: { onDone?: () => void }) {
           <ViolationList violations={upload.data.violations} />
         </Notice>
       ) : null}
-      <div className="flex justify-end">
-        <Button type="submit" size="lg" disabled={!file || upload.isPending}>
+      <div className="flex justify-end gap-2">
+        {onCancel ? (
+          <Button type="button" variant="ghost" size="lg" onClick={onCancel}>
+            Cancel
+          </Button>
+        ) : null}
+        <Button type="submit" size="lg" disabled={!file || upload.isPending || failed}>
           {upload.isPending ? "Uploading…" : "Upload"}
         </Button>
       </div>
@@ -259,7 +293,7 @@ export function PluginsView() {
               <Button>Upload app</Button>
             </DialogTrigger>
             <DialogContent title="Upload an app" description="Upload an app package for review.">
-              <UploadForm onDone={() => setOpen(false)} />
+              <UploadForm onDone={() => setOpen(false)} onCancel={() => setOpen(false)} />
             </DialogContent>
           </Dialog>
         }

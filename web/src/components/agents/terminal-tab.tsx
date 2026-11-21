@@ -286,9 +286,12 @@ export function TerminalPane({
   // were stopped. One muted line goes into the scrollback, once per restart, in the person's time. Never inferred from
   // anything but `boot_id`.
   const bootId = sandbox.data?.boot_id ?? null;
+  const bootRunning = sandbox.data?.state === "running";
   const bootRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!bootId) return;
+    // Only a running computer's boot id is a baseline: a sleeping computer reports the boot it stopped in, and its wake
+    // is not a restart under an open session.
+    if (!bootId || !bootRunning) return;
     if (bootRef.current === null) {
       bootRef.current = bootId;
       return;
@@ -296,7 +299,7 @@ export function TerminalPane({
     if (bootRef.current === bootId) return;
     bootRef.current = bootId;
     write(encoder.encode(`\r\n\x1b[2m— The computer restarted at ${formatTime(Date.now())}; your running commands were stopped. —\x1b[0m\r\n`));
-  }, [bootId, write]);
+  }, [bootId, bootRunning, write]);
   // The phone key row's Ctrl latch (a ref for the keystroke handler, state for the pressed look).
   const ctrlRef = useRef(false);
   const [ctrl, setCtrl] = useState(false);

@@ -110,8 +110,7 @@ export function PolicyPresets({ children }: { children?: ReactNode }) {
       >
         {confirm ? (
           <div className="space-y-1">
-            <p className="text-sm font-semibold text-ink">{section.title}</p>
-            <ConfirmDetails preview={confirm.preview} fields={section.fields} />
+            <ConfirmDetails preview={confirm.preview} fields={section.fields} title={section.title} />
           </div>
         ) : null}
       </ConfirmDialog>

@@ -80,6 +80,9 @@ pub struct HostedAgentRow {
     pub name: String,
     pub harness: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// When the agent last lost an AI key (the newest `grant.delete` of a secret grant on it), else when it was created:
+    /// "Since" of the "can't answer" item is when the agent stopped being able to answer, not when it was made.
+    pub since: DateTime<Utc>,
 }
 
 /// The workspace's hosted agents that are not paused (the agent, its workspace and its organization
@@ -90,7 +93,12 @@ pub async fn hosted_agents_running<'e, E: PgExecutor<'e>>(
     limit: i64,
 ) -> Result<Vec<HostedAgentRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT a.id, a.name, a.harness, a.created_at FROM agents a \
+        "SELECT a.id, a.name, a.harness, a.created_at, \
+                GREATEST(a.created_at, COALESCE((SELECT max(l.created_at) FROM audit_log l \
+                   WHERE l.workspace_id = a.workspace_id AND l.action = 'grant.delete' AND l.outcome = 'success' \
+                     AND l.target_kind = 'agent' AND l.target_id = a.id::text AND l.metadata ? 'secret_id'), \
+                   a.created_at)) AS since \
+         FROM agents a \
          JOIN workspaces w ON w.id = a.workspace_id JOIN organizations o ON o.id = a.org_id \
          WHERE a.workspace_id = $1 AND a.kind = 'hosted' \
            AND a.frozen_at IS NULL AND w.frozen_at IS NULL AND o.frozen_at IS NULL \

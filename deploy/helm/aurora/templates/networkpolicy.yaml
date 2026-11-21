@@ -101,6 +101,9 @@ spec:
     {{- with (include "aurora.countersEgress" .) }}{{ . | nindent 4 }}{{ end }}
     {{- with (include "aurora.pushEgress" .) }}{{ . | nindent 4 }}{{ end }}
     {{- include "aurora.external" . | nindent 4 }}
+    {{- with .Values.networkPolicy.apiExtraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 {{- if .Values.devIdp.enabled }}
 ---
 # dev-idp (development only): ingress from the edge (browser) and the api (discovery/token/JWKS).

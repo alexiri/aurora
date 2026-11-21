@@ -17,8 +17,8 @@ vi.mock("@wterm/react", () => ({
     return <div data-testid="wterm-pane" />;
   },
 }));
-const sandbox = vi.hoisted(() => ({ boot: "boot-1" }));
-vi.mock("@/lib/api/conversations", () => ({ useSandbox: () => ({ data: { state: "running", boot_id: sandbox.boot } }) }));
+const sandbox = vi.hoisted(() => ({ boot: "boot-1", state: "running" }));
+vi.mock("@/lib/api/conversations", () => ({ useSandbox: () => ({ data: { state: sandbox.state, boot_id: sandbox.boot } }) }));
 
 class Socket {
   static OPEN = 1;
@@ -44,6 +44,7 @@ class Socket {
 
 beforeEach(() => {
   sandbox.boot = "boot-1";
+  sandbox.state = "running";
   write.mockClear();
   vi.stubGlobal("WebSocket", Socket as unknown as typeof WebSocket);
   Socket.instances = [];
@@ -68,6 +69,17 @@ describe("the restart line (C-1058)", () => {
     await waitFor(() => expect(decoded()).toMatch(/— The computer restarted at \d{1,2}:\d{2}.*; your running commands were stopped\. —/));
     fireEvent.click(screen.getByRole("button", { name: "Ctrl" }));
     expect(write.mock.calls).toHaveLength(1);
+  });
+
+  it("does not take a sleeping computer's boot as the baseline: opening it and its wake print no restart line", async () => {
+    sandbox.state = "stopped";
+    sandbox.boot = "boot-old";
+    await mount();
+    sandbox.state = "running";
+    sandbox.boot = "boot-new";
+    fireEvent.click(screen.getByRole("button", { name: "Ctrl" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ctrl" }));
+    expect(decoded()).not.toContain("restarted");
   });
 });
 

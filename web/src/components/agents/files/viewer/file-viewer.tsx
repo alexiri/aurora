@@ -18,7 +18,6 @@ import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import {
   IMAGE_PREVIEW_MAX,
-  WAKE_ATTEMPTS,
   baseName,
   downloadUrl,
   fetchContent,
@@ -28,6 +27,7 @@ import {
   getFileText,
   humanSize,
   isTransient,
+  shouldRetry,
   putFile,
   type FileText,
 } from "@/lib/api/files";
@@ -70,7 +70,7 @@ function ExistingFile(props: FileViewerProps) {
     queryKey: [...filesKeys.all(agent), "text", path],
     // (C-1060) `preview=1`: a text file over 1 MiB answers its first 256 KiB with `truncated`, never an etag (read-only).
     queryFn: () => getFileText(agent, path, { preview: true }),
-    retry: (count, err) => isTransient(err) && count < WAKE_ATTEMPTS,
+    retry: shouldRetry,
     retryDelay: filesTiming.retryDelayMs,
     staleTime: Infinity,
     gcTime: 0,
@@ -353,7 +353,7 @@ function NonText({ agent, path, size, onBack, reason }: FileViewerProps & { reas
     queryKey: [...filesKeys.all(agent), "content", path],
     queryFn: () => fetchContent(agent, path),
     enabled: !tooBig,
-    retry: (count, e) => isTransient(e) && count < WAKE_ATTEMPTS,
+    retry: shouldRetry,
     retryDelay: filesTiming.retryDelayMs,
     staleTime: Infinity,
     gcTime: 0,

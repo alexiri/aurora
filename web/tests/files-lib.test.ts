@@ -10,6 +10,7 @@ import {
   filesErrorMessage,
   humanSize,
   isTransient,
+  shouldRetry,
   joinPath,
   nameProblem,
   nextFreeName,
@@ -146,6 +147,14 @@ describe("error sentences (C-898..C-901)", () => {
     expect(uploadFailure(err("path_read_only", 403))).toMatch(/Read-only/);
     expect(uploadFailure(err("permission_denied", 403))).toMatch(/Not allowed/);
     expect(uploadFailure(err("path_outside_workspace", 403))).toMatch(/outside the workspace/);
+  });
+
+  it("(computer-2) a computer that does not answer is tried 4 times in all, like the terminal; a waking sandbox keeps its longer budget", () => {
+    expect([0, 1, 2].map((n) => shouldRetry(n, err("files_unavailable", 503)))).toEqual([true, true, true]);
+    expect(shouldRetry(3, err("files_unavailable", 503))).toBe(false);
+    expect(shouldRetry(5, err("sandbox_waking", 503))).toBe(true);
+    expect(shouldRetry(12, err("sandbox_waking", 503))).toBe(false);
+    expect(shouldRetry(0, err("frozen", 423))).toBe(false);
   });
 
   it("retries only a parked or restarting sandbox", () => {

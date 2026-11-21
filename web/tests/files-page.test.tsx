@@ -220,6 +220,20 @@ describe("states", () => {
     expect(await screen.findByText("a.txt")).toBeInTheDocument();
   });
 
+  it("(computer-2) a runner that never answers ends after 4 tries, like the terminal, with Try again", async () => {
+    let calls = 0;
+    mockApi((r) => {
+      if (r.path !== "/v1/agents/a1/files") return undefined;
+      calls += 1;
+      return err(503, "files_unavailable");
+    });
+    renderTab();
+    expect(await screen.findByText("Couldn't connect to the computer")).toBeInTheDocument();
+    expect(screen.getByText("Tried 4 times. The computer didn't answer.")).toBeInTheDocument();
+    expect(calls).toBe(4);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
   it("shows the reason for files_not_supported as a notice, never a raw code", async () => {
     mockApi((r) => (r.path === "/v1/agents/a1/files" ? err(422, "files_not_supported", { reason: "image" }) : undefined));
     renderTab();

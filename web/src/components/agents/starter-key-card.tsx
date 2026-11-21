@@ -2,7 +2,6 @@
 
 import { useAnswerFix } from "@/components/agents/answer-fix";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { ErrorNotice } from "@/components/ui/notice";
 import { showUndoToast } from "@/components/ui/undo-toast";
 import { useAddCredentialGrants } from "@/lib/api/credential-grants";
@@ -24,15 +23,21 @@ export function StarterKeyCard({ agentId, agentName }: { agentId: string; agentN
   const { offer, add } = useStarterKeyOffer(agentId, true);
   if (!offer) return null;
   return (
-    <Card role="region" aria-label={`${agentName} has no AI key`} data-testid="starter-key-card" className="space-y-3">
-      <h2 className="font-display text-base font-semibold text-ink">
-        {agentName} can&apos;t answer yet: it has no AI key.
-      </h2>
-      <p className="text-sm text-ink-2">
-        Your organization&apos;s {offer.keyName} goes to every new agent automatically, and {agentName} was created before it was set.
+    // (access-3 mockup) The amber callout with its dot: the sentence on the left, the two actions on the right.
+    <section
+      aria-label={`${agentName} has no AI key`}
+      data-testid="starter-key-card"
+      className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-card border border-pending-line bg-pending-panel p-4 text-pending-ink sm:p-5"
+    >
+      <span aria-hidden="true" className="inline-block size-2 shrink-0 rounded-full bg-pending-ink" />
+      <p className="min-w-0 flex-1 basis-60 text-sm">
+        <strong className="font-semibold">
+          {agentName} can&apos;t answer yet: it has no AI key.
+        </strong>{" "}
+        Your organization&apos;s {offer.keyName} goes to every new agent automatically. {agentName} doesn&apos;t have it.
       </p>
-      <ErrorNotice error={add.error} />
-      <div className="flex flex-wrap gap-2">
+      <ErrorNotice error={add.error} className="basis-full" />
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           disabled={add.isPending}
@@ -42,7 +47,7 @@ export function StarterKeyCard({ agentId, agentName }: { agentId: string; agentN
         </Button>
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           onClick={() => {
             const target = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.trim() === "Add an AI key");
             target?.scrollIntoView?.({ block: "center" });
@@ -52,6 +57,6 @@ export function StarterKeyCard({ agentId, agentName }: { agentId: string; agentN
           Choose another
         </Button>
       </div>
-    </Card>
+    </section>
   );
 }

@@ -243,6 +243,20 @@ export function uploadFailure(err: unknown): string {
   return filesErrorMessage(err);
 }
 
+/** (computer-2) A computer that does not answer (`files_unavailable`) gets as many tries as the terminal's reconnect: 4. */
+export const UNAVAILABLE_ATTEMPTS = 4;
+
+/**
+ * The retry rule of every Files read: a parked sandbox that is waking (`sandbox_waking`) is retried for the wake budget;
+ * a runner that does not answer (`files_unavailable`) stops after `UNAVAILABLE_ATTEMPTS` tries in all, like the terminal.
+ * `failures` is the number of failed tries so far.
+ */
+export function shouldRetry(failures: number, err: unknown): boolean {
+  if (!isTransient(err)) return false;
+  if (err instanceof ApiError && err.code === "files_unavailable") return failures + 1 < UNAVAILABLE_ATTEMPTS;
+  return failures < WAKE_ATTEMPTS;
+}
+
 /** A parked or restarting sandbox: the page retries (C-900, C-901). */
 export function isTransient(err: unknown): boolean {
   return err instanceof ApiError && err.status === 503 && (err.code === "sandbox_waking" || err.code === "files_unavailable");
@@ -259,7 +273,7 @@ export function useFileList(agent: string, path: string, opts: { enabled?: boole
     queryKey: filesKeys.list(agent, path),
     queryFn: () => unwrap(api.GET("/v1/agents/{agent}/files", { params: { path: { agent }, query: { path } } })),
     enabled: opts.enabled ?? true,
-    retry: (count, err) => isTransient(err) && count < WAKE_ATTEMPTS,
+    retry: shouldRetry,
     retryDelay: opts.retryDelayMs ?? filesTiming.retryDelayMs,
     staleTime: 0,
     refetchOnWindowFocus: false,
