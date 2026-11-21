@@ -469,6 +469,24 @@ Fill in per pass (the owner reads this):
   - UX review 4 regressions: none found.
   - The cluster stays up for pass 6.
 
+- **Pass 6** (2026-11-21, master `0ddd06b3` (all of batch 9); cluster `aurora-r20` on :4720, lane `p5-platform`; rebuilt
+  `dev web` only, batch 9 changed no Rust):
+  - Counts (119 findings): Match 119 / Minor 0 / Needs changes 0 / Not checked 0 / Accepted 0. access-3 is Match: at 390 the
+    state wraps inside the name column (2 lines on Apps & access, 4 beside Status on Chat), whole and covered by nothing.
+  - Outside the 119: the agent header at 768/820/900/1024/1280 Match for an agent with a long state (Nokey) and one without
+    (Daneel); the Apps & access starter-key card's button still leaves its card at 768–810 (page scrolls at 768) — Needs
+    changes; Chat at 768–~950 squeezes the thread to 158–290 px (Live on the privacy line, Send outside the composer, the
+    callout's buttons on its sentence) — Needs changes, pre-existing; "Paused by Erin ·Last run" lost its space (batch 9) —
+    Minor; the agent pause banner and Admin › Settings "Last change" show an address (`by_label`, `updated_by_label`) — Minor,
+    needs a contract change. The account button, Paused by, decided by and linked chat people show names (b9#3 Match).
+  - Smoke at 390 and 1280, both themes: the agent page's tabs, Computer, Chat, workspace Settings, Account: no overflow, no axe
+    violation, no console error.
+  - Report path: `docs/audit/ux-review-5-verify/REPORT-pass6.md` (screenshots in `docs/audit/ux-review-5-verify/pass6/`, not in git).
+  - Change list sent: batch 10 (4 items, with the worker_done message): 1, 2 to lane A; 3, 4 to lane B (4: contract first).
+  - Fixed in this lane (Scope 7): none (every difference is in a file a lane owns).
+  - UX review 4 regressions: none found.
+  - Exit not reached (outside-the-119 items open); the cluster stays up for pass 7.
+
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
   - Report path: `UXR5/verify/REPORT-pass<N>.md`
