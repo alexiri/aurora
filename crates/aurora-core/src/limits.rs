@@ -673,6 +673,9 @@ pub const EVAL_REGRESSION_DROP: f64 = 10.0;
 /// (P4-EVAL-3, D-292, C-869) one judge call (the request through `PlatformLlm`) is abandoned after
 /// this long: `judge_timeout`, an `error` for that question.
 pub const EVAL_JUDGE_TIMEOUT: Duration = Duration::from_secs(60);
+/// (P5-REFINE-20, C-1101) the test call made when a judge is saved: an endpoint the API cannot reach
+/// reports `unreachable` after this long, not after `EVAL_JUDGE_TIMEOUT` (the key-check budget's twin).
+pub const EVAL_JUDGE_TEST_TIMEOUT: Duration = Duration::from_secs(8);
 /// (P4-EVAL-3, C-869) `max_tokens` of a judge request.
 pub const EVAL_JUDGE_MAX_TOKENS: u32 = 512;
 /// (P4-EVAL-3, SEC-115) bytes of the question's own answer sent to the judge; the rest is cut.
@@ -818,6 +821,7 @@ mod tests {
         assert_eq!(EVAL_RUN_RETENTION, Duration::from_secs(90 * 24 * 3600));
         assert!((EVAL_REGRESSION_DROP - 10.0).abs() < f64::EPSILON);
         assert_eq!(EVAL_JUDGE_TIMEOUT, Duration::from_secs(60));
+        assert_eq!(EVAL_JUDGE_TEST_TIMEOUT, Duration::from_secs(8));
         assert_eq!(EVAL_JUDGE_MAX_TOKENS, 512);
         assert_eq!(EVAL_JUDGE_INPUT_MAX, 8192);
         assert_eq!(EVAL_RATIONALE_CHARS, 300);

@@ -104,15 +104,20 @@ pub struct EvalJudgeTest {
     /// `ok` | `failed`.
     pub result: String,
     pub took_ms: i64,
-    /// `rejected` | `unreachable` | `timeout` when failed, else null. Never the provider's text.
+    /// `rejected` | `unreachable` | `rate_limited` | `timeout` when failed, else null. Never the
+    /// provider's text. `unreachable` includes an endpoint that did not answer within
+    /// `EVAL_JUDGE_TEST_TIMEOUT` (C-1101); `timeout` is no longer produced.
     pub reason: Option<String>,
+    /// (C-1101) When the test ran; the last one is kept and returned by `GET` too.
+    pub tested_at: DateTime<Utc>,
 }
 
 #[derive(Serialize, ToSchema)]
 pub struct EvalSettings {
     pub judge: Option<EvalJudge>,
     pub regression_notify: bool,
-    /// Set only on the response of a `PUT` that changed the judge; null otherwise.
+    /// The last test of the current judge (C-1101): the one a `PUT` that changed the judge just made,
+    /// kept and returned by `GET` and later `PUT`s; null with no judge or never tested.
     pub test: Option<EvalJudgeTest>,
 }
 

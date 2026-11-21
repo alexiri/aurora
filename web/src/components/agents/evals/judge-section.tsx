@@ -25,8 +25,12 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
   const [modelId, setModelId] = useState(settings.judge?.model_id ?? "");
   const [notify, setNotify] = useState(settings.regression_notify);
   const bar = useSaveBar();
-  const [tested, setTested] = useState<EvalSettings["test"]>(null);
-  const testedText = judgeTestMessage(tested);
+  const [fresh, setTested] = useState<EvalSettings["test"]>(null);
+  // (C-1101) The server keeps the last test: after a reload a failed test is still said, and "Ready" is not. A passing
+  // test is said only right after saving.
+  const stored = settings.judge ? settings.test : null;
+  const tested = fresh ?? stored;
+  const testedText = fresh || stored?.result === "failed" ? judgeTestMessage(tested) : null;
   const current = settings.judge;
   const keys = readiness.data?.keys ?? [];
   const known = keys.some((k) => k.secret_id === secretId);
@@ -52,7 +56,8 @@ function JudgeForm({ agentId, settings, canOwn }: { agentId: string; settings: E
       {
         onSuccess: (saved) => {
           bar.flash();
-          setTested(saved.test ?? null);
+          // Only a changed judge was just tested; a save of the notice alone keeps the stored test quiet.
+          setTested(judge?.secret_id !== current?.secret_id || judge?.model_id !== current?.model_id ? (saved.test ?? null) : null);
         },
       },
     );

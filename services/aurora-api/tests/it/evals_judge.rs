@@ -736,15 +736,16 @@ async fn a_changed_judge_is_tested_once_and_saved_whether_or_not_it_answers() {
     assert_eq!(v["judge"]["secret_id"], json!(key));
     assert_eq!(w.test_calls(&w.judge).await, 1);
 
-    // GET and an unchanged PUT carry no test and make no call.
+    // (C-1101) GET and an unchanged PUT return the kept test and make no call.
     let uri = format!("/v1/agents/{}/eval-settings", w.agent);
     let (s, v) = w.call(&w.member, Method::GET, &uri, None).await;
-    assert_eq!((s, &v["test"]), (200, &Value::Null), "{v}");
+    assert_eq!((s, &v["test"]["result"]), (200, &json!("ok")), "{v}");
+    assert!(v["test"]["tested_at"].is_string(), "{v}");
     let (s, v) = w
         .call(&w.owner, Method::PUT, &uri,
             Some(json!({"judge": {"secret_id": key, "model_id": "judge-1"}, "regression_notify": true})))
         .await;
-    assert_eq!((s, &v["test"]), (200, &Value::Null), "{v}");
+    assert_eq!((s, &v["test"]["result"]), (200, &json!("ok")), "{v}");
     assert_eq!(w.test_calls(&w.judge).await, 1, "unchanged: no new call");
 
     // A judge whose provider fails: reported, never a refusal, and still saved.
@@ -766,6 +767,9 @@ async fn a_changed_judge_is_tested_once_and_saved_whether_or_not_it_answers() {
         json!(key2),
         "saved although the test failed"
     );
+    // (C-1101) The failure is kept: a reload still says it.
+    assert_eq!(v["test"]["result"], "failed", "{v}");
+    assert_eq!(v["test"]["reason"], "unreachable", "{v}");
     // The audit row says how the test went, and clearing the judge makes no call.
     let n: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM audit_log WHERE action = 'eval.settings.update'

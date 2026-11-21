@@ -125,6 +125,9 @@ function Results({ run, rerun }: { run: EvalRunDetail; rerun: Rerun }) {
   if (run.results.length === 0) return <EmptyState title="No results yet">Results appear here as each question finishes.</EmptyState>;
   // A row that has not finished while the run is active says what it waits for.
   const pending = (r: EvalResult) => active && !r.finished_at;
+  // (behaviour-4) A run that has not started is "Waiting to start" in its rows too, never "Running…".
+  const waiting = run.status === "queued";
+  const pendingText = waiting ? "Waiting to start" : "Running…";
   return (
     <>
       <div className="hidden md:block">
@@ -147,7 +150,7 @@ function Results({ run, rerun }: { run: EvalRunDetail; rerun: Rerun }) {
                   {excerpt(r.question.text, 120)}
                 </Td>
                 <Td className="max-w-sm whitespace-normal break-words text-ink-2">
-                  {pending(r) ? <span>Running…</span> : <OutcomeBadge outcome={r.outcome} />}
+                  {pending(r) ? <span>{pendingText}</span> : <OutcomeBadge outcome={r.outcome} />}
                   <span className="mt-1 block">{excerpt(r.answer) || "—"}</span>
                   <ResultDetails r={r} />
                 </Td>
@@ -166,7 +169,7 @@ function Results({ run, rerun }: { run: EvalRunDetail; rerun: Rerun }) {
             <div className="min-w-0 flex-1 space-y-1.5 text-sm">
               <p className="flex flex-wrap items-center gap-2">
                 <span className="tabular-nums text-ink-2">{r.position}.</span>
-                {pending(r) ? <span className="text-xs text-ink-2">Running…</span> : <OutcomeBadge outcome={r.outcome} />}
+                {pending(r) ? <span className="text-xs text-ink-2">{pendingText}</span> : <OutcomeBadge outcome={r.outcome} />}
               </p>
               <p className="break-words text-ink">{excerpt(r.question.text, 120)}</p>
               {r.answer ? <p className="break-words text-xs text-ink-2">{excerpt(r.answer)}</p> : null}
