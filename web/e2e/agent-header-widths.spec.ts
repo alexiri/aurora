@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { AGENT_ROUTE, DEFAULT, MINE, mockChat } from "./support/chat-mock";
-import { id, mockApi } from "./support/mock-api";
+import { AGENT_ROUTE, ANN_DIRECT, DEFAULT, MINE, conv, mockChat } from "./support/chat-mock";
+import { id, mockApi, user } from "./support/mock-api";
 import { overflow } from "./support/open";
 
 // P5-REFINE-20 batch 9 (access-3 at 390, the agent header at tablet widths): at every width from 390 up the agent's name is
@@ -177,11 +177,12 @@ for (const scheme of ["light", "dark"] as const) {
           if (!(await line.isVisible())) continue;
           const lb = await box(line);
           expect(within(lb, hb), `"${await line.innerText()}" is inside the header`).toBe(true);
-          expect(lb.y + lb.height, "the line is above the border").toBeLessThanOrEqual(hb.y + hb.height - 1);
         }
         const railHeader = page.getByRole("complementary", { name: "Status" }).locator("xpath=./div[1]");
         const rb = await box(railHeader);
-        expect(Math.abs(rb.y + rb.height - (hb.y + hb.height)), "the header's border is level with the rail's").toBeLessThanOrEqual(1);
+        // (batch 12) Below 1280 the meta line is its own row under the 64 px title row: that row's top border is level with the rail's.
+        const metaTop = (await box(header.getByTestId("thread-meta"))).y + 1;
+        expect(Math.abs(rb.y + rb.height - metaTop), "the title row's border is level with the rail's").toBeLessThanOrEqual(1);
         expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
       });
 
@@ -213,6 +214,67 @@ for (const scheme of ["light", "dark"] as const) {
         expect(db.y, "the dot is level with the first line").toBeGreaterThanOrEqual(sb.y - 1);
         expect(db.y + db.height, "the dot is within the first line").toBeLessThanOrEqual(sb.y + 24);
       });
+    });
+  }
+}
+
+// P5-REFINE-20 batch 12: the thread header's meta line is readable without hover. Below 1280 it is its own full-width row under
+// the title row, so the whole privacy note and "Archived <date> · read only" are in the DOM and visible (no title tooltip, no
+// clipping) on an archived direct chat and on another member's chat, at every width; every line lies inside the header and the
+// card, and nothing scrolls sideways.
+const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+const ARCHIVED_DIRECT = conv(7, "direct", { direct_user_id: user.id, archived_at: minutesAgo(60 * 24 * 3), last_activity_at: minutesAgo(60 * 24 * 4) });
+const META_CASES = [
+  { name: "an archived direct chat", fx: { ...DEFAULT, archived: [ARCHIVED_DIRECT], events: { [ARCHIVED_DIRECT.id]: [] } }, conv: ARCHIVED_DIRECT.id, archived: true, texts: ["Only you and workspace owners can see this conversation", "Archived", "read only"] },
+  { name: "another member's chat", fx: { ...DEFAULT, events: { [ANN_DIRECT.id]: [] } }, conv: ANN_DIRECT.id, archived: false, texts: ["Only Grace Hopper and workspace owners can see this conversation"] },
+];
+
+for (const scheme of ["light", "dark"] as const) {
+  for (const width of [390, 768, 820, 900, 960, 1023, 1024, 1100, 1280]) {
+    test.describe(`thread meta line, ${scheme} theme, ${width} px`, () => {
+      test.use({ viewport: { width, height: 900 } });
+
+      for (const c of META_CASES) {
+        test(`${c.name}: the whole line is visible inside the header and the card`, async ({ page }) => {
+          await mockApi(page);
+          await mockChat(page, c.fx);
+          await page.emulateMedia({ colorScheme: scheme });
+          await page.goto(c.archived ? AGENT_ROUTE : `${AGENT_ROUTE}?c=${c.conv}`);
+          await page.getByRole("tab", { name: "Chat" }).click();
+          if (c.archived) {
+            // An archived chat opens from the list's Archived tab (below 1024 the list is one tap back).
+            if (width < 1024) await page.getByRole("button", { name: "Back to conversations" }).click();
+            await page.getByRole("tab", { name: "Archived" }).click();
+            await page.locator("#chat-list-panel-archived").getByRole("button").first().click();
+          }
+          const thread = page.getByRole("region", { name: "Chat" });
+          const header = thread.locator("header").first();
+          const meta = header.getByTestId("thread-meta");
+          await expect(meta).toBeVisible();
+          for (const t of c.texts) await expect(meta).toContainText(t);
+          // Nothing lives only in a tooltip, and nothing is clipped.
+          expect(await header.locator("[title]").count(), "no title tooltip carries text").toBe(0);
+          expect(await meta.evaluate((e) => e.scrollWidth - e.clientWidth), "the meta line is not clipped sideways").toBeLessThanOrEqual(0);
+          expect(await meta.evaluate((e) => e.scrollHeight - e.clientHeight), "the meta line is not clipped vertically").toBeLessThanOrEqual(0);
+          const hb = await box(header);
+          const cb = await box(card(header));
+          expect(within(hb, cb), "the header is inside the card").toBe(true);
+          if (width < 1280) {
+            // (batch 13) The meta row's borders run edge to edge: both ends sit on the header's.
+            const mb = await box(meta);
+            expect(Math.abs(mb.x - hb.x), "the meta row starts at the header's left edge").toBeLessThanOrEqual(1);
+            expect(Math.abs(mb.x + mb.width - (hb.x + hb.width)), "the meta row ends at the header's right edge").toBeLessThanOrEqual(1);
+          }
+          for (const line of await header.locator("h2, p, button").all()) {
+            if (!(await line.isVisible())) continue;
+            expect(within(await box(line), hb), `"${(await line.innerText()).slice(0, 40)}" is inside the header`).toBe(true);
+          }
+          expect(await header.evaluate((e) => e.scrollWidth - e.clientWidth), "the header does not scroll").toBeLessThanOrEqual(0);
+          if (width >= 1280) expect(hb.height, "the header is the 64 px one").toBeLessThanOrEqual(64);
+          expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
+          expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(await page.evaluate(() => document.documentElement.clientWidth));
+        });
+      }
     });
   }
 }

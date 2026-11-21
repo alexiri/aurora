@@ -44,9 +44,23 @@ field: it is a core-owned integration setting stored in
 `channel_integrations.config` and edited by org admins (`13 §5.9`).
 
 (FIX-127, C-715) Labels and flags in the manifest: `server_url` is "Your Mattermost server";
-`team` is "Team" and declares `choices: "from_validate"`; `public_url` (instance setup) is "Address
-Mattermost uses to reach Aurora" with the help "Leave empty unless Mattermost reaches Aurora under
-another name", and it, `catchup_window_secs` and `token_check_secs` are `advanced: true`.
+`team` is "Team" and declares `choices: "from_validate"`; `public_url` (instance setup) is "Aurora's
+address for Mattermost" (FIX-209; it had read "Address Mattermost uses to reach Aurora" and was filled
+in with the Mattermost server's own address) with the help "Leave empty. Set it only if the
+Mattermost server must reach this Aurora under a different name. It is Aurora's address, never the
+Mattermost server's, followed by /connectors/<this connector's id>, for example
+https://aurora.example.org/connectors/mattermost.", and it, `catchup_window_secs` and
+`token_check_secs` are `advanced: true`.
+
+(FIX-209, D-446) The API refuses a `public_url` that is not `<origin>/connectors/<id>` (`13 §3.1`).
+The connector also never uses a callback address whose **origin equals the integration's
+`server_url`**: that integration renders cards as if no public URL were set (the core's card
+fallback, no buttons or menus) and does not register `/aurora`; it logs once at start, at `warn`,
+"callback address points at the Mattermost server itself: buttons and /aurora are disabled"
+(`actions_url`, integration id). `credentials.validate` in probe mode adds the warning "Aurora's
+callback address (…) is this Mattermost server's own address: buttons and /aurora will not work.
+Clear "Aurora's address for Mattermost" in Administration › Connectors › Mattermost." The standalone
+binary (`connector.public_url`) gets the origin rule too, not the path rule.
 
 `credentials.validate` with `mode: "probe"` (C-710): `GET /api/v4/users/me` (bot token) then
 `GET /api/v4/users/me/teams` → `choices.team = [{ value: <team URL name>, label: <display name> }]` (create resolves a name or an

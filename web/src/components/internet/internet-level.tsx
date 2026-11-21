@@ -66,7 +66,7 @@ function ReadOnlyRules({ rules }: { rules: PublishedInternetAccess["rules"] }) {
   if (rules.length === 0) {
     return (
       <p className="rounded-card border border-dashed border-line-strong bg-surface p-6 text-sm text-ink-2">
-        No rules yet. Requests follow the limits and defaults below.
+        No rules yet. The sentence at the top says what agents here may reach.
       </p>
     );
   }

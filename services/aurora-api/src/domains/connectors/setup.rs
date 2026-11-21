@@ -210,6 +210,42 @@ pub fn validate_settings(
     }
 }
 
+/// D-446: a managed connector's `public_url`, when set, is `<origin>/connectors/<id>` (trailing
+/// `/` allowed; no credentials, query or fragment). The host serves callbacks only there, so any
+/// other path cannot work. Keyed on the setting name only; no platform is named here. Run after
+/// `validate_settings`; a value that already has an error on the field is skipped.
+pub fn validate_public_url(
+    settings: &Map<String, Value>,
+    id: &str,
+    external_url: &str,
+    errs: &mut Vec<FieldError>,
+) {
+    let path = "/settings/public_url";
+    let Some(s) = settings.get("public_url").and_then(Value::as_str) else {
+        return;
+    };
+    if errs.iter().any(|e| e.path == path) {
+        return;
+    }
+    let ok = reqwest::Url::parse(s).is_ok_and(|u| {
+        u.query().is_none()
+            && u.fragment().is_none()
+            && u.username().is_empty()
+            && u.password().is_none()
+            && u.path().trim_end_matches('/') == format!("/connectors/{id}")
+    }) && !s.contains('?')
+        && !s.contains('#');
+    if !ok {
+        errs.push(FieldError::new(
+            path,
+            format!(
+                "must be this Aurora's address followed by /connectors/{id}, e.g. {}/connectors/{id}",
+                external_url.trim_end_matches('/')
+            ),
+        ));
+    }
+}
+
 /// Validates secret values an admin supplied: keys must be `secret` fields, values non-empty and
 /// at most 8 KiB. A supplied `generated_secret` is always an error.
 pub fn validate_secrets<'a>(
@@ -265,4 +301,57 @@ pub fn refs_of(v: &Value) -> BTreeMap<String, String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod public_url_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn run(id: &str, v: Value) -> Vec<FieldError> {
+        let mut s = Map::new();
+        s.insert("public_url".to_owned(), v);
+        let mut errs = Vec::new();
+        validate_public_url(&s, id, "https://aurora.example/", &mut errs);
+        errs
+    }
+
+    #[test]
+    fn accepts_any_origin_with_the_connector_path() {
+        assert!(run("mm", json!("https://other.example/connectors/mm")).is_empty());
+        assert!(run("mm", json!("https://other.example/connectors/mm/")).is_empty());
+        assert!(run("mm", json!("http://aurora.test:4100/connectors/mm")).is_empty());
+    }
+
+    #[test]
+    fn refuses_anything_else_with_one_field_error() {
+        for bad in [
+            "https://platform.example",
+            "https://platform.example/mm/actions",
+            "https://other.example/connectors/other",
+            "https://other.example/connectors/mm/extra",
+            "https://other.example/connectors/mm?x=1",
+            "https://other.example/connectors/mm#f",
+            "https://u:p@other.example/connectors/mm",
+        ] {
+            let e = run("mm", json!(bad));
+            assert_eq!(e.len(), 1, "{bad}");
+            assert_eq!(e[0].path, "/settings/public_url");
+            assert!(
+                e[0].message
+                    .contains("https://aurora.example/connectors/mm"),
+                "{}",
+                e[0].message
+            );
+        }
+    }
+
+    #[test]
+    fn other_settings_are_not_affected() {
+        let mut s = Map::new();
+        s.insert("other_url".to_owned(), json!("https://x.example"));
+        let mut errs = Vec::new();
+        validate_public_url(&s, "mm", "https://aurora.example", &mut errs);
+        assert!(errs.is_empty());
+    }
 }

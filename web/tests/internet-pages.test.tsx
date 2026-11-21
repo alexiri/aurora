@@ -151,6 +151,17 @@ describe("a workspace's Internet access page", () => {
     expect(screen.queryByRole("region", { name: "Unsaved changes" })).toBeNull();
   });
 
+  it("(D-444) a member with no published rules is not pointed at limits below: the summary at the top says what is in force", async () => {
+    mockFetch({
+      "GET /v1/workspaces/w1/internet-access": () =>
+        json(200, { number: 1, default_action: "none", uncredentialed_default: "none", uncredentialed_allowlist: [], open_lane_posture: "enabled", rules: [] }),
+    });
+    wrap(<InternetLevel level="workspace" scope={scope} orgId="o1" orgSlug="acme" wsSlug="main" canEdit={false} eff={EFF as never} whoCanHere={WHO} whoCanOrg={WHO} />);
+    expect((await screen.findByTestId("internet-summary")).textContent).toBe("Agents here can reach any website. Nothing asks you first.");
+    expect(screen.getByText("No rules yet. The sentence at the top says what agents here may reach.")).toBeInTheDocument();
+    expect(screen.queryByText(/below/)).toBeNull();
+  });
+
   it("FIX-164: a member reads the summary and the published rules as text, with no controls, from the member route only", async () => {
     const fn = mockFetch({
       "GET /v1/workspaces/w1/internet-access": () =>
