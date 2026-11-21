@@ -8,3 +8,5 @@ cc 02af42e08582e5bf29b382e7fc82c98233a4c79d548c2021b8b480c154b35712 # FIX-182: a
 cc 0bee1d64f95d04e972d251cd0e3eee62f9766c25e0bdb75685b0a6ee85a76f55 # FIX-195: an anchor's label held a table whose extra cell (dropped by GFM) kept a raw <a href> (CI run 44731990142)
 cc 0d813d5a422d0a59f7efa89c0fc76783265f4f2f4cfb6f69d27a32dc45cb3870 # shrinks to s = "$![x](https://e.example/?d=S)$ <a href=\"https://a.example\">    [https://cern.ch](http:e.example/l) <a href=\"https://a.example\">t</a> </a>"
 cc 76b6e3b216857e6fddcdc9200b3b0e82e6145cbd8b8ed70bc0e73492ca50f110 # shrinks to s = "[https://cern&#46;ch][r]\n\n[r]: https://e.example/ ( ftp://e.example/x and <www.e.example/y> )"
+cc 88d0f684cf81c5a2a2aae085d42bfaec6921abc22965020859d80d232692b503 # FIX-197: a dropped <b> made the core's paragraph a table; its extra cells (dropped by GFM) kept an image opener (CI run 44835421666)
+cc 0bd2ab2dc350131c9e3d4837700ac9f32a524e95bf03412ea84d68eeb9796b9d # FIX-198: a <details> converted in a table cell ended the table; the triple-backtick spans re-paired and a URL was prose (CI run 44819722564)

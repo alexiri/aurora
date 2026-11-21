@@ -695,6 +695,21 @@ fn convert_parsed(neutral: &str) -> String {
     let evs: Vec<(Event<'_>, Range<usize>)> = Parser::new_ext(neutral, options())
         .into_offset_iter()
         .collect();
+    // FIX-198: a tag converted inside a table cell stays on the row's line. A line break there
+    // (`<details>`, `<p>`, `<br>`, `<li>` …) would end the table, and the rest of the row would be
+    // read as a paragraph, where code spans pair differently than the core saw them.
+    let cells: Vec<Range<usize>> = evs
+        .iter()
+        .filter(|(e, _)| matches!(e, Event::Start(Tag::TableCell)))
+        .map(|(_, r)| r.clone())
+        .collect();
+    let one_line = |at: usize, c: String| -> String {
+        if cells.iter().any(|r| r.contains(&at)) {
+            c.replace(['\r', '\n'], " ")
+        } else {
+            c
+        }
+    };
     for (i, (ev, r)) in evs.iter().enumerate() {
         let (ev, r) = (ev.clone(), r.clone());
         if r.start < consumed {
@@ -795,7 +810,7 @@ fn convert_parsed(neutral: &str) -> String {
                     let rep = closers.remove(&r.start).unwrap_or_default();
                     edits.push((r.start, r.end, rep));
                 } else if closing {
-                    let c = html.convert(raw);
+                    let c = one_line(r.start, html.convert(raw));
                     edits.push((r.start, r.end, c));
                 } else if matches!(name.as_str(), "code" | "kbd" | "pre") {
                     // (`<pre>` inside a line is code too: D-271(e) — nothing in code notifies.)
@@ -855,7 +870,7 @@ fn convert_parsed(neutral: &str) -> String {
                         None => edits.push((r.start, r.end, String::new())),
                     }
                 } else {
-                    let c = html.convert(raw);
+                    let c = one_line(r.start, html.convert(raw));
                     edits.push((r.start, r.end, c));
                 }
             }

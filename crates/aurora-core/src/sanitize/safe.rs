@@ -1043,6 +1043,34 @@ fn def_title_edits(
 
 /// One pass of the exceptions 1–3 (byte-range edits), then exception 4.
 fn rewrite(src: &str) -> String {
+    rewrite_pass(src, true)
+}
+
+/// FIX-197/FIX-198 (D-270): the prose rules of [`markdown_safe`] applied to text that a connector
+/// has already converted for its platform. Wherever the text, as it is now read, is not code,
+/// image openers, link joints and definition look-alikes are broken, images become links, links
+/// outside the schemes become text, bare URLs become labelled links, and table cells beyond the
+/// header's width become text of the last cell. Code is read the one way every check reads it
+/// (pulldown-cmark, the dialect of `13 §4.3`: CommonMark code spans by backtick-run length, fences
+/// only at a line start, GFM table cells), so a conversion that changes the block structure the
+/// core read (a dropped tag that turns a paragraph into a table, a converted block tag that ends
+/// a table row) cannot leave as code what the platform shows as prose. Raw HTML (a connector has
+/// converted it) and the neutral mention tokens are left as they are. Run to a fixed point.
+pub fn defang_prose(src: &str) -> String {
+    let mut out = rewrite_pass(src, false);
+    for _ in 0..3 {
+        let next = rewrite_pass(&out, false);
+        if next == out {
+            break;
+        }
+        out = next;
+    }
+    out
+}
+
+/// One pass of the rewrite. `html`: raw HTML is sanitized and typed tokens are defanged (the
+/// core's own pass); without it only prose is rewritten ([`defang_prose`]).
+fn rewrite_pass(src: &str, html: bool) -> String {
     let evs: Vec<(Event<'_>, Range<usize>)> =
         Parser::new_ext(src, options()).into_offset_iter().collect();
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
@@ -1137,6 +1165,7 @@ fn rewrite(src: &str) -> String {
                     consumed = r.end;
                 }
             }
+            Event::Start(Tag::HtmlBlock) | Event::InlineHtml(_) if !html => {}
             Event::Start(Tag::HtmlBlock) => {
                 let raw = &src[r.clone()];
                 let clean = sanitize_html(raw);
@@ -1189,7 +1218,7 @@ fn rewrite(src: &str) -> String {
         at = b;
     }
     out.push_str(&src[at..]);
-    defang_tokens(&out)
+    if html { defang_tokens(&out) } else { out }
 }
 
 /// Removing markup (a comment, a stripped tag) can change how the rest parses, exposing text the
