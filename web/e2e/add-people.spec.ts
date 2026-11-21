@@ -63,7 +63,8 @@ for (const scheme of ["light", "dark"] as const) {
         await check(page);
         await dialog.getByLabel("Who").fill("Carol@Example.org");
         await dialog.getByRole("button", { name: "Add", exact: true }).click();
-        expect(posted).toEqual([{ email: "Carol@Example.org", role: "member" }]);
+        // The mock records the POST when it arrives, a moment after the click (CI read [] once): poll.
+        await expect.poll(() => posted).toEqual([{ email: "Carol@Example.org", role: "member" }]);
         await expect(dialog.getByText("Carol@Example.org will have access as Member after they first sign in.")).toBeVisible();
         await expect(dialog.getByText("Aurora does not e-mail them. Send them this link:")).toBeVisible();
         await expect(dialog.getByText(/\/o\/acme\/w\/main$/)).toBeVisible();
@@ -92,7 +93,9 @@ for (const scheme of ["light", "dark"] as const) {
         await mockPeople(page, scheme, "open_signup");
         await page.goto("/o/acme/w/main/welcome");
         await page.getByRole("link", { name: "Add people" }).click();
-        await expect(page).toHaveURL(/\/o\/acme\/w\/main\/people\?add=1$/);
+        // The App Router changes the URL once the People route has loaded; the first visit in `next dev` compiles it (the
+        // other specs that warm it may not have run yet), which can take longer than the default 5 s.
+        await expect(page).toHaveURL(/\/o\/acme\/w\/main\/people\?add=1$/, { timeout: 30_000 });
         await expect(page.getByRole("dialog", { name: "Add people" })).toBeVisible();
         await check(page);
       });
