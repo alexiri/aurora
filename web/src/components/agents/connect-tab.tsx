@@ -70,7 +70,7 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
   }
 
   return (
-    <div className="max-w-3xl space-y-8">
+    <div className="space-y-8">
       <ByoSettings agent={agent} wsId={wsId} canOwn={canOwn} />
       <Section
         id="tok"

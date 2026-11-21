@@ -55,7 +55,7 @@ function Organizations() {
 /** (P5-IA-2, C-965) Administration's Internet access: the limits no organization can go below, and where organizations stand. */
 export function AdminInternet() {
   return (
-    <div className="max-w-page space-y-8">
+    <div className="space-y-8">
       <PageHeader title="What agents may do" description="Which websites agents can reach. Organizations and workspaces can only restrict further what you set here." className="mb-2" />
       {/* (P5-REFINE-18 #2, D-410) The preset first; today's fields behind Customise. */}
       <PolicyPresets>

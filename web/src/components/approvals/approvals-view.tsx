@@ -443,7 +443,7 @@ export function ApprovalsView({ wsId }: { wsId: string }) {
   const [tab, setTab] = useState<"pending" | "history">("pending");
   const agent = useAgentLabel(wsId);
   return (
-    <div className="max-w-5xl">
+    <div>
       <PageHeader title="Approvals" description={agent.many ? "Your agents ask you here before they change something." : `${agent.name} asks you here before it changes something.`} />
       <Tabs
         items={[

@@ -351,12 +351,14 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   content, inside the shell.
 - **Page header** on every shell page: breadcrumb (org/workspace/section
   links), title, one-line description where the page has one, primary actions
-  right-aligned (wrapping on narrow screens). **Page widths are theme tokens**,
-  never arbitrary values: `max-w-page` (1160 px) for list and detail pages,
-  `max-w-page-narrow` (880 px) for single-column pages such as Approvals; the
-  agent page uses neither (FIX-129: the full content width). The shell's
-  `<main>` has no max width of its own (owner 2026-11-14): each page sets its
-  width, so a page without one spans the whole content area. Other one-off sizes
+  right-aligned (wrapping on narrow screens). **No page caps its own width** (D-439,
+  owner 2026-11-21; `max-w-page` is retired): a page spans the shell's content
+  area, as the agent page does (FIX-129). What must stay readable caps itself:
+  running text uses `max-w-prose` (`PageHeader`'s description and `EmptyState`
+  do it for every page), a single form or a reading column uses the
+  `max-w-page-narrow` token (880 px) on the form, never on a page that holds a
+  list, a table or cards; card grids add columns with the width (`CardGrid`).
+  The shell's `<main>` has no max width of its own (owner 2026-11-14). Other one-off sizes
   that recur are tokens too: `tracking-label`/`text-label` (caps labels),
   `max-w-bubble`/`max-w-chat-card`/`max-w-chat-notice` and `rounded-*-tail`
   (chat), `layout-aside-sm|md|lg` (a fixed aside next to a fluid column from
@@ -396,6 +398,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   field is disabled. Every secret field uses it, and a test fails on any other password input.
 - **Avatar**: initial on a tinted tile when there is no image.
 - **AppIcon** (`ui/app-icon.tsx`) and **AiKeyTile**: App icons are 64 px (`size-16`) everywhere; the monogram tile (letter `text-2xl`) and the AI key tile follow the same size (owner 2026-11-21, FIX-211). Rows centre the icon against their text block; tiles and cards grow to fit. Agent avatars, the Aurora logo and chat-platform icons are not app icons.
+- **CardGrid** (`ui/card-grid.tsx`, D-439): the one grid for lists of cards (Apps, Accounts, Agents): a `<ul>` of `<li>` cards, 1 column below `sm`, 2 from `sm`, 3 from `lg`, 4 from `2xl`. A card is `rounded-card border border-line bg-surface p-4 shadow-card sm:p-5`, fills its cell, and puts its actions at the foot (`mt-auto`).
 - **EmptyState**, **ErrorState**, **Loading**.
 - **Focus**: `:focus-visible` shows a 2 px `accent` ring with a 3 px
   `focus-halo`.

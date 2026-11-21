@@ -136,7 +136,7 @@ export function AvailabilityView({ orgId, orgSlug, canEdit }: { orgId: string; o
   if (avail.isError) return <ErrorState error={avail.error} onRetry={() => avail.refetch()} />;
   if (apps.isError) return <ErrorState error={apps.error} onRetry={() => apps.refetch()} />;
   return (
-    <div className="max-w-page-narrow">
+    <div>
       <PageHeader
         title="Apps"
         description="The installed apps, and which of them people in this organization can connect."

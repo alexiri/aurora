@@ -155,7 +155,7 @@ export function AdminUsersView() {
   if (!isAdmin) return <NotFoundPage />;
 
   return (
-    <div className="max-w-page space-y-4">
+    <div className="space-y-4">
       <PageHeader title="Users" description="Everyone on this instance. Admins can promote or disable accounts." className="mb-2" />
       <form
         role="search"

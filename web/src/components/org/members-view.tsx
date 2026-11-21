@@ -524,7 +524,7 @@ export function expiresIn(iso: string, now: number): string {
 export function MembersView({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   const instance = useInstance();
   return (
-    <div className="max-w-page space-y-8">
+    <div className="space-y-8">
       <PageHeader
         title="Members"
         description="People in this organization and the invitations still waiting."

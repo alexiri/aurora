@@ -21,6 +21,7 @@ import { useAppHref } from "./app-link";
 import { ConnectJourney } from "./connect-journey/connect-journey";
 import { signInProvider } from "./connect-journey/logic";
 import { matchesFilter } from "@/components/ui/picker-filter";
+import { CardGrid } from "@/components/ui/card-grid";
 import { useUrlDialog } from "./use-url-dialog";
 
 /**
@@ -245,7 +246,7 @@ export function AppsTab({ workspaceId, orgId, canOwn }: { workspaceId: string; o
         {groups.map((g) => (
           <section key={g.title} aria-label={g.title} className="space-y-3">
             <h3 className="text-label font-semibold uppercase tracking-wide text-muted">{g.title}</h3>
-            <ul aria-label={`Apps: ${g.title}`} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <CardGrid aria-label={`Apps: ${g.title}`}>
               {g.products.map((members) => (
                 <AppCard
                   key={productKey(members[0]!)}
@@ -256,7 +257,7 @@ export function AppsTab({ workspaceId, orgId, canOwn }: { workspaceId: string; o
                   onConnect={() => connectCard(members)}
                 />
               ))}
-            </ul>
+            </CardGrid>
           </section>
         ))}
       </div>
@@ -292,7 +293,7 @@ function AppsSkeleton() {
   return (
     <div role="status" aria-live="polite" aria-busy="true">
       <span className="sr-only">Loading your apps…</span>
-      <ul aria-hidden="true" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <CardGrid aria-hidden="true">
         {Array.from({ length: 6 }, (_, i) => (
           <li key={i} data-testid="skeleton-card" className="flex flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
             <div className="flex items-center gap-3">
@@ -303,7 +304,7 @@ function AppsSkeleton() {
             <span className="h-3 w-2/3 animate-pulse rounded bg-subtle motion-reduce:animate-none" />
           </li>
         ))}
-      </ul>
+      </CardGrid>
       <p className="mt-3 text-xs text-muted">Loading your apps…</p>
     </div>
   );

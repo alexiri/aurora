@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // docs/14 §Visual design: tokens only, no one-off values. Arbitrary Tailwind values (`max-w-[1160px]`,
-// `tracking-[0.06em]`, `w-[min(40rem,…)]`) are replaced by theme tokens (`max-w-page`, `tracking-label`), by a
+// `tracking-[0.06em]`, `w-[min(40rem,…)]`) are replaced by theme tokens (`max-w-page-narrow`, `tracking-label`), by a
 // `size` prop (`DialogContent`), or by the shared primitives. The few that remain are listed here, each with the
 // reason it cannot be a token. Adding to this list needs a reason a reviewer accepts.
 
