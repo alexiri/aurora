@@ -9,6 +9,7 @@ import { FromYourTerminal } from "@/components/ui/from-your-terminal";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Section } from "@/components/ui/section";
+import { StatusLine, type StatusTone } from "@/components/ui/status-line";
 import { Segmented } from "@/components/ui/segmented";
 import { askSentence } from "@/lib/who-can";
 import { useSandbox, useStartFailures } from "@/lib/api/conversations";
@@ -162,6 +163,28 @@ function StartLog({ agentId, log }: { agentId: string; log: StartLogEntry[] }) {
   );
 }
 
+type Word = ReturnType<typeof computerOf>["word"];
+
+const FACT_TONE: Record<Word, StatusTone> = { on: "ok", off: "idle", starting: "idle", stopping: "idle", failed: "fail" };
+
+/** (D-412, computer-7) What a member reads in Details: "Started 23:55 · running" while it runs, else the phase in words. */
+function factLine(word: Word, startedAt: string | null | undefined): string {
+  if (word === "on") return startedAt ? `Started ${clockTime(startedAt)} · running` : "Running";
+  if (word === "starting") return "Starting…";
+  if (word === "stopping") return "Stopping…";
+  if (word === "failed") return "Couldn't start";
+  return label(COMPUTER_WORD, word);
+}
+
+/** Raw phases the word already says: no secondary line repeats them ("On" over a raw "ready", computer-7). */
+const PHASE_SAID: Record<Word, readonly string[]> = {
+  on: ["ready", "running"],
+  off: ["stopped", "unprovisioned", "off"],
+  starting: ["starting"],
+  stopping: ["stopping"],
+  failed: ["failed"],
+};
+
 /** "A", "A and B", "A, B and C". */
 function listWords(items: string[]): string {
   return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
@@ -222,12 +245,12 @@ export function ComputerTab({
       {/* (D-412) What a member reads: the phase in words and when it started; nothing else. */}
       <section aria-label={`${name}'s computer`} className="space-y-1 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" data-testid="computer-facts">
         <h2 className="font-display text-base font-semibold text-ink">{name}&apos;s computer</h2>
-        <p className="text-sm text-ink-2" data-testid="computer-started">
-          {c.started_at ? `Started ${clockTime(c.started_at)} · ` : ""}
-          {label(COMPUTER_WORD, c.word).toLowerCase() === "on" ? "running" : label(COMPUTER_WORD, c.word).toLowerCase()}
-        </p>
+        {/* (P5-REFINE-20 #12, computer-7) "Started 23:55 · running" only while it runs: an off computer is not "Started … · off". */}
+        <StatusLine tone={FACT_TONE[c.word]} data-testid="computer-started">
+          {factLine(c.word, c.started_at)}
+        </StatusLine>
         <Altitude id="computer.phase" level="expert">
-          {c.phase ? (
+          {c.phase && !PHASE_SAID[c.word].includes(c.phase) ? (
             <p className="font-mono text-xs text-muted" data-testid="computer-phase">
               {c.phase}
             </p>

@@ -79,6 +79,38 @@ fn origin_of(
     }
 }
 
+/// (C-1065, P5-REFINE-20) The origin of a key whose endpoint did not answer the check while no
+/// origin rule applies: `pending` (usable, unproven), with why and when it was tried.
+pub fn unanswered(version: i64) -> StoredOrigin {
+    let mut o = origin_of(OriginStatus::Pending, "endpoint", None, version);
+    o.detail = Some(origin::detail_of(&LlmError::Unreachable(String::new())));
+    o
+}
+
+/// [`check_key`] that gives up after `budget` when no origin rule applies (C-1065, amended by
+/// P5-REFINE-20): an endpoint that does not answer leaves the key `pending` (the background
+/// re-check goes on) instead of holding the caller for the HTTP timeout. With a rule the proof is
+/// required, so the check runs to its end as before.
+#[allow(clippy::too_many_arguments)]
+pub async fn check_key_within(
+    budget: std::time::Duration,
+    http: &reqwest::Client,
+    provider: &dyn LlmProvider,
+    ep: &Endpoint,
+    check: &KeyCheck,
+    eff: &EffectiveEndpoint,
+    key: &Secret<String>,
+    version: i64,
+) -> Result<StoredOrigin, KeyFail> {
+    let run = check_key(http, provider, ep, check, eff, key, version);
+    if eff.origin_rule.is_some() {
+        return run.await;
+    }
+    tokio::time::timeout(budget, run)
+        .await
+        .unwrap_or_else(|_| Ok(unanswered(version)))
+}
+
 /// Validate the key (list models) and verify its origin against the effective rule.
 /// The returned origin may carry any status; callers refuse `mismatch`/`unverifiable`.
 pub async fn check_key(
@@ -91,7 +123,6 @@ pub async fn check_key(
     version: i64,
 ) -> Result<StoredOrigin, KeyFail> {
     let rule = eff.origin_rule.as_ref();
-    let default_method = rule.map_or("endpoint", |r| r.method.as_str());
     // (P4-LLM-2) A provider whose origin proof is the validation (Vertex: the mint) is called once, here.
     let prefetched = if provider.validates_by_origin() {
         Some(
@@ -116,14 +147,7 @@ pub async fn check_key(
         Err(LlmError::InvalidKey) => return Err(KeyFail::InvalidKey),
         Err(LlmError::MintRejected) => return Err(KeyFail::MintRejected),
         Err(LlmError::AssumeRoleDenied) => return Err(KeyFail::AssumeRoleDenied),
-        Err(_) if rule.is_none() => {
-            return Ok(origin_of(
-                OriginStatus::Pending,
-                default_method,
-                None,
-                version,
-            ));
-        }
+        Err(_) if rule.is_none() => return Ok(unanswered(version)),
         Err(_) => return Err(KeyFail::Unreachable),
     }
     let Some(rule) = rule else {

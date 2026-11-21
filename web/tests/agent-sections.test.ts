@@ -32,6 +32,7 @@ describe("agent sections", () => {
       channels: "triggers",
       peers: "settings",
       computer: "computer",
+      details: "computer",
       terminal: "computer",
       files: "computer",
       previews: "computer",
@@ -108,8 +109,16 @@ describe("agent sections by altitude (D-406)", () => {
   it("opens the Computer on Files when there are Files, else on Overview (D-408)", () => {
     const pages = (av: PageAvailability) => availableSections(av).find((x) => x.id === "computer")!.pages;
     expect(sectionLanding("computer", pages(all))).toBe("files");
-    expect(sectionLanding("computer", pages({ ...all, terminal: false }))).toBe("computer");
+    expect(sectionLanding("computer", pages({ ...all, terminal: false }))).toBe("details");
     expect(sectionLanding("chat", [{ id: "chat" }])).toBe("chat");
+  });
+  it("?tab=computer opens on Files whenever Files exist, else Overview; Details has its own id (P5-REFINE-20 #11, rec 11)", () => {
+    expect(resolvePage("computer", all)).toBe("files");
+    expect(resolvePage("computer", { ...all, terminal: false })).toBe("details");
+    expect(resolvePage("details", all)).toBe("details");
+    expect(resolvePage("computer", byo)).toBe("instructions");
+    // `computer` is the tab, not a page of the sub-nav.
+    expect(availableSections(all).find((x) => x.id === "computer")!.pages.map((p) => p.id)).not.toContain("computer");
   });
   it("at Set up lists the same settings pages as Use; at Expert everything", () => {
     expect(labels(availableSections(all, at("setup")), "settings")).toEqual(["Instructions", "Apps & access", "Memory", "Skills"]);

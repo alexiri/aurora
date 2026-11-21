@@ -84,7 +84,8 @@ pub enum VerificationState {
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
 pub struct Verification {
     pub state: VerificationState,
-    /// When the evidence behind `state` was recorded; null for `checking` / `not_checked`.
+    /// When the evidence behind `state` was recorded; null for `checking`. For `not_checked`, the
+    /// last check that got no answer (null when none ran).
     pub checked_at: Option<DateTime<Utc>>,
 }
 

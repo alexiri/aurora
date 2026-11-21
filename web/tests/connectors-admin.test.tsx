@@ -634,9 +634,29 @@ describe("Readiness from the host (admin-5, C-1068)", () => {
     });
     wrap(<ConnectorsAdminView />);
     const list = within(await screen.findByRole("list", { name: "Chat platforms" }));
-    expect(await list.findByText(/Next: an organization owner connects/)).toBeInTheDocument();
+    // "Next:" is bold (the mockup), so the sentence is read across its elements.
+    expect(await list.findByTestId("connector-next")).toHaveTextContent("Next: an organization owner connects Mattermost in their Chat platforms page.");
     expect(await list.findByRole("link", { name: "Open Acme's Chat platforms" })).toHaveAttribute("href", "/o/acme/chat-platforms");
     expect(list.getByText(/1 replica · Ready/)).toBeInTheDocument();
     expect(screen.queryByText("Waiting for the chat platform host")).toBeNull();
+  });
+
+  it("the platform's own page after Add: the Next line with its link, and the host list does not contradict 'Connector host running' (P5-REFINE-20 #14)", async () => {
+    // An instance admin who also owns an organization gets `connect` (C-1068): the line still says who connects next.
+    const registering = { ...mmConnector, status: "awaiting_registration", host_running: true, next_step: "connect", host_status: [], replicas: [] };
+    mockFetch({
+      "GET /v1/admin/connectors": () => json(200, { items: [registering] }),
+      "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, added: true }])),
+      "GET /v1/me": () => json(200, { user: { id: "u", display_name: "A", email: "a@x.io", is_instance_admin: true }, memberships: [{ org: { id: "o", slug: "acme", name: "Acme" }, role: "owner", status: "active", workspaces: [] }] }),
+    });
+    wrap(<ConnectorsAdminView />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Manage / }));
+    await screen.findByRole("heading", { level: 1, name: /Mattermost/ });
+    expect(screen.getAllByText("Connector host running").length).toBeGreaterThan(0);
+    const next = await screen.findByTestId("connector-next");
+    expect(next).toHaveTextContent("Next: an organization owner connects Mattermost in their Chat platforms page.");
+    expect(await within(next).findByRole("link", { name: "Open Acme's Chat platforms" })).toHaveAttribute("href", "/o/acme/chat-platforms");
+    expect(screen.queryByText("No chat platform host has reported this chat platform yet.")).toBeNull();
+    expect(screen.getByText("A connector host is running and offers Mattermost. It is listed here after its first report.")).toBeInTheDocument();
   });
 });

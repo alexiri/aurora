@@ -10,8 +10,9 @@ const METHOD_LABEL: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = {
   mismatch: "The key belongs to a different account",
   unverifiable: "The account could not be verified",
-  // (P5-REFINE-13, access-8) The same words as the key's row: Checking…, then Works.
-  pending: "Checking…",
+  // (P5-REFINE-20 b1#1) A stored `pending` origin is a fact, not a check in progress (that is the key's
+  // `verification`, shown live by its row and by `SavedKeyCheck`): never "Checking…" forever.
+  pending: "Not checked yet",
 };
 
 /** `origin.detail` (C-502) in words. Unknown values are shown as sent (they are server-written, never key material). */

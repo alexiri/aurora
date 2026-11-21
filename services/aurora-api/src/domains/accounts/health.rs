@@ -123,9 +123,15 @@ pub fn verification(
             state,
             checked_at: Some(at),
         },
+        // (P5-REFINE-20) The re-checks are over and nothing answered: final, with when it was
+        // last tried (a pending origin's `checked_at` is its last attempt). A real call that
+        // succeeds later is evidence above and wins.
         None => Verification {
             state: VerificationState::NotChecked,
-            checked_at: None,
+            checked_at: match origin {
+                Some((OriginStatus::Pending, at)) => at,
+                _ => None,
+            },
         },
     }
 }
@@ -148,8 +154,22 @@ mod tests {
             verification(p, &none, false).state,
             VerificationState::NotChecked
         );
-        // A passed Test resolves a pending key; a verified origin works.
+        // (P5-REFINE-20) Once the re-checks are over a pending key is final: `not_checked` with
+        // the time of the last attempt, and a later real call makes it work.
         let t = Utc::now();
+        let tried = Some((OriginStatus::Pending, Some(t)));
+        let over = verification(tried, &none, false);
+        assert_eq!(over.state, VerificationState::NotChecked);
+        assert_eq!(over.checked_at, Some(t));
+        let called = Recorded {
+            last_ok_at: Some(t + Duration::minutes(1)),
+            ..Recorded::default()
+        };
+        assert_eq!(
+            verification(tried, &called, false).state,
+            VerificationState::Works
+        );
+        // A passed Test resolves a pending key; a verified origin works.
         let tested = Recorded {
             last_test_at: Some(t),
             last_test_result: Some("ok"),

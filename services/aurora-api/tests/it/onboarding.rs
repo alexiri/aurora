@@ -465,4 +465,39 @@ async fn refine5_health_reads_real_calls_and_try_it_completes_by_itself() {
         v["try_it"]["done_at"].is_string(),
         "when it was answered: {v}"
     );
+    assert_eq!(v["try_it"]["agent_name"], "Daneel", "{v}");
+    assert_eq!(v["try_it"]["agent_id"], json!(agent));
+
+    // (P5-REFINE-20 b1#2) The row names the agent that answered: a later finished turn with
+    // another agent the admin owns moves it there, with its name.
+    let rex = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, is_default) VALUES ($1,$2,$3,'rex','Rex','hosted','fake',false)")
+        .bind(rex)
+        .bind(org)
+        .bind(ws)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let rex_conv = Uuid::now_v7();
+    sqlx::query("INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, direct_user_id, last_activity_at) VALUES ($1,$2,$3,'direct',$4,$5, now())")
+        .bind(rex_conv)
+        .bind(rex)
+        .bind(ws)
+        .bind(format!("user:{admin}"))
+        .bind(admin)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_user_id, speaker_label, text, finished_at) VALUES ($1,$2,$3,'turn','done','{}','person',$4,'a','hello', now() + interval '1 minute')")
+        .bind(Uuid::now_v7())
+        .bind(rex_conv)
+        .bind(rex)
+        .bind(admin)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let v = setup().await;
+    assert_eq!(v["try_it"]["agent_name"], "Rex", "{v}");
+    assert_eq!(v["try_it"]["agent_id"], json!(rex));
+    assert_eq!(v["try_it"]["workspace_id"], json!(ws));
 }

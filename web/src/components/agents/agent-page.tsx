@@ -316,7 +316,7 @@ export function AgentPage() {
           ) : null}
           {tab === "automations" && !byo && workspace.isPending ? <Loading /> : null}
           {tab === "peers" && !byo ? <PeersTab agentId={agent.id} agentName={agent.name} agentsHref={`${base}/agents`} wsId={wsId} frozen={agent.frozen !== null} /> : null}
-          {tab === "computer" && !byo ? (
+          {tab === "details" && !byo ? (
             <ComputerTab agentId={agent.id} agentName={agent.name} agentHandle={agent.handle} workspaceId={workspace.data?.id} frozen={agent.frozen !== null} terminal={terminalEnabled} />
           ) : null}
           {tab === "terminal" && !byo && terminalEnabled ? <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}

@@ -434,3 +434,13 @@ Fill in when done (P5-REFINE-20 reads it).
 - Screenshots compared (Before / After / mine): none taken: the sandbox refuses Playwright, so no screenshots of my own; CI Watcher / P5-REFINE-20.
 - Open questions: public field for the terminal's awake cap; the terminator mapping handles to user names; whether a Playwright
   `computer.spec.ts` with axe in both themes should be added by the CI Watcher.
+- **P5-REFINE-20 send-back, batch 3 (lane A), items 11–13 done (2026-11-21):** (11, 687e164e) `?tab=computer` is the Computer tab
+  itself and opens on **Files** whenever Files exist, else Overview (`resolvePage`); Details has its own page id `details` (the
+  sub-nav, the Terminal's "Report it" link), so the rail's "Open computer" and a chat error's "Open Computer tab" land on Files
+  with the state line (a failed start says why there, with Try again). (12, 482e6f10) Details reads "Started 23:55 · running" as a
+  status line (the mockup) only while the computer runs, else Off / Starting… / Stopping… / Couldn't start; the Expert raw-phase
+  line is shown only when it says more than the word (no raw "ready" under On). (13, 41f218a0) the idle countdown is a hint: at 0
+  with the computer still on, the line says the rule ("sleeps after 20 minutes of quiet"), never a "sleeps in 0 s" that stays.
+  Tests: `agent-sections.test.ts` (SECTION_OF, landing, new resolvePage test), `computer-page.test.tsx` (phase rule, off line,
+  Starting…, countdown at 0); mocked specs moved from `?tab=computer` to `?tab=details` where they meant Details
+  (`agent-tabs.spec.ts`, which also checks `?tab=computer` lands on Files; `stage4-routes.spec.ts`; `usage.spec.ts`), not run here.

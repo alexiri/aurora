@@ -92,6 +92,13 @@ describe("the computer's state line", () => {
     await waitFor(async () => expect(await line()).toBe("Dani's computer is on · sleeps in 20 s when idle"));
   });
 
+  it("never stays on 'sleeps in 0 s': once the hint reaches 0 and the computer is still on, the line says the rule (P5-REFINE-20 #13)", async () => {
+    serve(() => view({ computer: computer({ sleeps_in_secs: 0 }) }));
+    mount(<ComputerStateLine agentId={AGENT} agentName="Dani" />);
+    expect(await line()).toBe("Dani's computer is on · sleeps after 20 minutes of quiet");
+    expect(await line()).not.toContain("0 s");
+  });
+
   it("offers Wake it now, Sleep now and Restart from Set up up, and none of them at Use", async () => {
     serve(() => view({ state: "stopped", computer: computer({ word: "off", ready: false, asleep: true }) }));
     mount(<ComputerStateLine agentId={AGENT} agentName="Dani" />, false);
@@ -131,11 +138,25 @@ describe("Details by role (D-412, SEC-141)", () => {
     for (const secret of ["aurora/agent:2026.11", "runner-1", "10.42.0.17", "waiting_supervisor", "Admin only"]) expect(document.body.textContent).not.toContain(secret);
   });
 
-  it("a member with the switch on reads the raw phase as a secondary line", async () => {
+  it("a member with the switch on reads a raw phase the word does not say as a secondary line; never a raw 'ready' under On (computer-7)", async () => {
     serve(() => view({ computer: computer({ phase: "ready" }) }));
     mount(<ComputerTab agentId={AGENT} agentName="Dani" terminal />, true);
-    expect((await screen.findByTestId("computer-phase")).textContent).toBe("ready");
+    expect((await screen.findByTestId("computer-started")).textContent).toMatch(/^Started .+ · running$/);
+    expect(screen.queryByTestId("computer-phase")).toBeNull();
+    expect(screen.queryByText("ready")).toBeNull();
+    cleanup();
+    serve(() => view({ state: "starting", computer: computer({ word: "starting", ready: false, phase: "pulling_image" }) }));
+    mount(<ComputerTab agentId={AGENT} agentName="Dani" terminal />, true);
+    expect((await screen.findByTestId("computer-phase")).textContent).toBe("pulling_image");
     expect(screen.queryByText("Admin only")).toBeNull();
+  });
+
+  it("an off computer reads Off, never 'Started … · off' (P5-REFINE-20 #12, computer-7)", async () => {
+    serve(() => view({ state: "stopped", computer: computer({ word: "off", ready: false, asleep: true, started_at: "2026-11-21T03:20:00Z" }) }));
+    mount(<ComputerTab agentId={AGENT} agentName="Dani" terminal />, false);
+    const line = await screen.findByTestId("computer-started");
+    expect(line.textContent).toBe("Off");
+    expect(line.textContent).not.toContain("Started");
   });
 
   it("an instance admin gets the Admin only fold with image, runner and state", async () => {
@@ -152,7 +173,7 @@ describe("Details by role (D-412, SEC-141)", () => {
     let now = view({ state: "starting", started_at: null, computer: computer({ word: "starting", ready: false, started_at: null }) });
     serve(() => now);
     const { qc } = mount(<ComputerTab agentId={AGENT} agentName="Dani" terminal />, false);
-    expect((await screen.findByTestId("computer-started")).textContent).toBe("starting");
+    expect((await screen.findByTestId("computer-started")).textContent).toBe("Starting…");
     now = view();
     await act(async () => {
       qc.setQueryData(["agents", AGENT, "sandbox"], now);

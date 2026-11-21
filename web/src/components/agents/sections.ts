@@ -18,6 +18,7 @@ export type AgentPageId =
   | "channels"
   | "peers"
   | "computer"
+  | "details"
   | "terminal"
   | "files"
   | "previews"
@@ -41,6 +42,7 @@ export const AGENT_PAGE_IDS: readonly AgentPageId[] = [
   "channels",
   "peers",
   "computer",
+  "details",
   "terminal",
   "files",
   "previews",
@@ -68,7 +70,10 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
   channels: "Channels",
   peers: "Other agents",
   // (P5-REFINE-15, D-408) The Computer's sub-nav reads Files · Terminal · Connect · Previews · Details.
-  computer: "Details",
+  // (P5-REFINE-20 #11, rec 11) `computer` is the Computer tab itself: it opens on Files whenever Files exist, else on
+  // Overview (`resolvePage`). Its Details sub-page has its own id, `details`.
+  computer: "Computer",
+  details: "Details",
   terminal: "Terminal",
   files: "Files",
   previews: "Previews",
@@ -82,7 +87,7 @@ export const SECTIONS: readonly { id: SectionId; label: string; pages: readonly 
   { id: "chat", label: "Chat", pages: ["chat"] },
   { id: "triggers", label: "Automations", pages: ["automations"] },
   // (P5-REFINE-15) Files first, then the Expert pages, then Details (the old Overview body); a BYO agent's `connect` stays alone.
-  { id: "computer", label: "Computer", pages: ["files", "terminal", "ssh", "previews", "computer", "connect"] },
+  { id: "computer", label: "Computer", pages: ["files", "terminal", "ssh", "previews", "details", "connect"] },
   // (D-408) One page with a sub-nav; Pause and Delete sit in its danger zone. `peers` (Other agents) moved here from Automations
   // with its page id kept (P5-REFINE-12 renames and fills it).
   { id: "settings", label: "Settings", pages: ["instructions", "access", "memory", "skills", "evals", "peers"] },
@@ -101,7 +106,8 @@ export const SETTINGS_LEAD: Partial<Record<AgentPageId, string>> = {
 /** Page id → its section (the one mapping). */
 export const SECTION_OF: Record<AgentPageId, SectionId> = {
   ...(Object.fromEntries(SECTIONS.flatMap((s) => s.pages.map((p) => [p, s.id] as const))) as Record<AgentPageId, SectionId>),
-  // The old ids open Automations (see `resolvePage`).
+  // The old ids open Automations, and `computer` the Computer's landing page (see `resolvePage`).
+  computer: "computer",
   schedules: "triggers",
   webhooks: "triggers",
   channels: "triggers",
@@ -178,12 +184,12 @@ export function availableSections(av: PageAvailability, allows?: PageAllows, cur
 
 /** The page's name in the sub-nav: Details, or Overview when the instance has no Files (terminal off), where it is the state card. */
 export function pageLabel(id: AgentPageId, av: PageAvailability): string {
-  return id === "computer" && !av.terminal ? "Overview" : PAGE_LABEL[id];
+  return id === "details" && !av.terminal ? "Overview" : PAGE_LABEL[id];
 }
 
 /** (P5-REFINE-15) Where the Computer section opens: Files when they exist, else Overview. Other sections open on their first page. */
 export function sectionLanding(section: SectionId, pages: readonly { id: AgentPageId }[]): AgentPageId | undefined {
-  if (section === "computer") return pages.find((p) => p.id === "files")?.id ?? pages.find((p) => p.id === "computer")?.id ?? pages[0]?.id;
+  if (section === "computer") return pages.find((p) => p.id === "files")?.id ?? pages.find((p) => p.id === "details")?.id ?? pages[0]?.id;
   return pages[0]?.id;
 }
 
@@ -194,6 +200,9 @@ export const defaultPage = (av: PageAvailability): AgentPageId => (av.byo ? "ins
 export function resolvePage(requested: string | null | undefined, av: PageAvailability): AgentPageId {
   const found = AGENT_PAGE_IDS.find((p) => p === requested);
   // (P5-REFINE-14) The old Schedules / Webhooks / Channels ids open the one Automations page.
-  const id = found && LEGACY_AUTOMATION_TAB[found] ? "automations" : found;
+  const legacy = found && LEGACY_AUTOMATION_TAB[found] ? "automations" : found;
+  // (P5-REFINE-20 #11, rec 11) `?tab=computer` (the tab itself, the rail's "Open computer", a chat error's "Open Computer tab")
+  // opens on Files whenever Files exist, else on Overview; never on Details over the Files.
+  const id = legacy === "computer" && !av.byo ? (isPageAvailable("files", av) ? "files" : "details") : legacy;
   return id && isPageAvailable(id, av) ? id : defaultPage(av);
 }

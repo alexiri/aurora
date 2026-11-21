@@ -14,6 +14,7 @@ import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { SettingField, settingControlId } from "@/components/ui/setting-field";
 import { StatusLine } from "@/components/ui/status-line";
+import { TechnicalDetails } from "@/components/ui/technical-details";
 import { useLlmEndpointWarnings, type EndpointWarnings } from "@/lib/api/llm-endpoint-warnings";
 import { ROLE_LABEL, ROLES } from "@/lib/model-roles";
 import { adminRoutes } from "@/lib/routes";
@@ -185,9 +186,12 @@ function RoleWarningLine({ id, helm, warnings, onSetRoles }: { id: string; helm:
     return (
       <div data-testid="endpoint-role-warning">
         <StatusLine tone="idle" className="text-xs">
-          Agents may ask for a model this endpoint doesn&apos;t serve. Set the {roles} {w.roles.length === 1 ? "role" : "roles"} in the Helm values under{" "}
-          <code className="font-mono">llm.endpoints.{id}.roles</code>.
+          Agents may ask for a model this endpoint doesn&apos;t serve. Set the {roles} {w.roles.length === 1 ? "role" : "roles"} in your Helm values.
         </StatusLine>
+        {/* (P5-REFINE-20 #16) The configuration key is a technical detail (priority 4), not part of the sentence. */}
+        <TechnicalDetails className="pl-4 text-xs">
+          Helm key: <code className="font-mono">llm.endpoints.{id}.roles</code>
+        </TechnicalDetails>
       </div>
     );
   }

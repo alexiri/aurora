@@ -214,12 +214,36 @@ describe("UploadForm", () => {
     expect(screen.getByRole("button", { name: "Choose another" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     // (admin-12, C-1071) The sentence is shown; the code and the validator's words are under Technical details.
-    expect((await screen.findAllByText(/That isn't an app package/)).length).toBeGreaterThan(0);
+    // (P5-REFINE-20 #15) Said once: the one problem's sentence is the message, so no list repeats it.
+    expect(await screen.findAllByText(/That isn't an app package/)).toHaveLength(1);
+    expect(screen.queryByRole("list", { name: "Violations" })).toBeNull();
     const fold = screen.getByText("Technical details").closest("details")!;
     expect(fold.textContent).toContain("archive_corrupt");
     expect(fold.textContent).toContain("invalid gzip header");
-    expect(screen.getByRole("list", { name: "Violations" }).textContent).not.toContain("archive_corrupt");
     expect((calls[0].body as FormData).get("package")).toBeTruthy();
+  });
+
+  it("several problems: the message, then one sentence per problem, codes under Technical details", async () => {
+    mockFetch(() =>
+      json(422, {
+        error: {
+          code: "package_invalid",
+          message: "That app package has 2 problems. The first: The package is missing manifest.yaml.",
+          details: {
+            violations: [
+              { code: "file_missing", path: "manifest.yaml", message: "missing", sentence: "The package is missing manifest.yaml." },
+              { code: "icon_not_png", path: "icon.png", message: "not a png", sentence: "The icon must be a square PNG." },
+            ],
+          },
+        },
+      }),
+    );
+    wrap(<UploadForm />);
+    fireEvent.change(screen.getByLabelText("App package"), { target: { files: [new File(["x"], "a.tar.gz")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    const list = await screen.findByRole("list", { name: "Violations" });
+    expect(list.textContent).toContain("The icon must be a square PNG.");
+    expect(list.textContent).not.toContain("icon_not_png");
   });
 });
 

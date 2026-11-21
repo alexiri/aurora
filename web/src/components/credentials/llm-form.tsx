@@ -40,6 +40,16 @@ import {
 } from "./llm-key-modes";
 import { OriginView } from "./origin-view";
 import { ValueInput } from "./value-input";
+import { SavedKeyCheck } from "@/components/accounts/key-check";
+
+/**
+ * What the saved key's check says. A `pending` origin is followed live (Checking… while the server re-checks it, then
+ * a final state, P5-REFINE-20 b1#1); a proven one shows the account it was verified against.
+ */
+function SavedOrigin({ secret, scope }: { secret: Secret; scope: SecretScope }) {
+  if (secret.origin?.status === "pending") return <SavedKeyCheck scope={scope} secretId={secret.id} />;
+  return <OriginView origin={secret.origin} />;
+}
 
 /** A service's logo tile: its initials (a logo is not served for AI endpoints). */
 function ServiceTile({ name }: { name: string }) {
@@ -222,7 +232,7 @@ export function LlmKeyForm({
         <p role="status" className="text-sm font-medium">
           Saved {saved.name}
         </p>
-        <OriginView origin={saved.origin} />
+        <SavedOrigin secret={saved} scope={scope} />
         <Button variant="outline" size="sm" onClick={() => setSaved(null)}>
           Add another
         </Button>
@@ -236,7 +246,7 @@ export function LlmKeyForm({
         savedLabel={saved.name}
         onDone={() => setSaved(null)}
       >
-        <OriginView origin={saved.origin} />
+        <SavedOrigin secret={saved} scope={scope} />
       </GiveAccessStep>
     );
 

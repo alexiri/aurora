@@ -666,7 +666,13 @@ pass or when the key is gone, disabled or no longer pending; a replica that dies
 the retries). The account list says what is known: `verification.state` is `checking`
 while a re-check is queued, `works` (origin verified, a real call succeeded or the last
 Test passed — the newest evidence wins), `rejected`, `unreachable` or `not_checked`.
-It is advisory; Test is authoritative. A key the provider **rejects** at save is
+It is advisory; Test is authoritative. (P5-REFINE-20, C-1065 amended) Without a rule the
+save's own check waits at most 3 s, then the key is saved `pending` with
+`detail: "endpoint_unreachable"` and the re-check takes over, so a save never waits for the
+HTTP timeout. An endpoint only the gateway can reach (the API has no egress to it) leaves the
+origin `pending` after the last re-check; `verification` is then final: `not_checked` with the
+time of the last attempt ("Not checked: the AI service didn't answer Aurora's check"), and
+`works` after the first real call that succeeds. A key the provider **rejects** at save is
 `422 llm_key_invalid` and nothing is stored (no row; the value is sealed only after
 the check passes).
 

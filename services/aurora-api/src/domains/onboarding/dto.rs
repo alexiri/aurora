@@ -130,6 +130,9 @@ pub struct SetupTryIt {
     pub done: bool,
     /// When the newest such finished turn ended; null while `done` is false.
     pub done_at: Option<DateTime<Utc>>,
+    /// The agent Try it talks to; once `done`, the agent that answered (the newest finished turn).
     pub agent_id: Option<Uuid>,
     pub workspace_id: Option<Uuid>,
+    /// That agent's name ("Daneel answered Alice Admin 1 h ago").
+    pub agent_name: Option<String>,
 }

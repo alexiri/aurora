@@ -22,6 +22,7 @@ const PAGES: [string, string][] = [
   ["peers", "Other agents"],
   ["channels", "Automations"],
   ["computer", "Computer"],
+  ["details", "Computer"],
   ["previews", "Computer"],
   ["terminal", "Computer"],
   ["access", "Apps & access"],
@@ -145,9 +146,12 @@ test.describe("agent page width", () => {
     await expect(pages.last()).toHaveText("Details");
     await expect(page.getByTestId("computer-state")).toBeVisible();
     await page.getByRole("tablist", { name: "Computer pages" }).getByRole("tab", { name: "Details" }).click();
-    await expect(page).toHaveURL(/tab=computer/);
+    await expect(page).toHaveURL(/tab=details/);
     await expect(page.getByTestId("computer-state")).toBeVisible();
     await expect(page.getByTestId("computer-facts")).toBeVisible();
+    // (P5-REFINE-20 #11, rec 11) ?tab=computer opens on Files whenever Files exist, never on Details.
+    await page.goto("/o/acme/w/main/agents/daneel?tab=computer");
+    await expect(page.getByRole("tablist", { name: "Computer pages" }).getByRole("tab", { name: "Files", selected: true })).toBeVisible();
     await page.goto("/o/acme/w/main/agents/daneel?tab=terminal");
     await expect(page.getByRole("tab", { name: "Terminal", selected: true })).toBeVisible();
   });

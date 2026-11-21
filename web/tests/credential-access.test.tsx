@@ -106,6 +106,12 @@ describe("origin view", () => {
     expect(originDetailText("endpoint_unreachable")).toBe("The endpoint could not be reached");
     expect(originDetailText(null)).toBeNull();
   });
+  it("a stored pending origin is a fact, never 'Checking…' (P5-REFINE-20 b1#1)", () => {
+    render(<OriginView origin={{ ...base, status: "pending", method: "endpoint", detail: "endpoint_unreachable" }} />);
+    expect(screen.getByText("Not checked yet")).toBeTruthy();
+    expect(screen.getByText("The endpoint could not be reached")).toBeTruthy();
+    expect(screen.queryByText("Checking…")).toBeNull();
+  });
   it("is not labelled 'Verified account: verified' any more", () => {
     render(<OriginView origin={{ ...base, status: "verified", method: "provider_account", organization_id: "org-1" }} />);
     expect(screen.queryByText("verified")).toBeNull();

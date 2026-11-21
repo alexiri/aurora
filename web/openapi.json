@@ -67385,7 +67385,15 @@
               "string",
               "null"
             ],
-            "format": "uuid"
+            "format": "uuid",
+            "description": "The agent Try it talks to; once `done`, the agent that answered (the newest finished turn)."
+          },
+          "agent_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That agent's name (\"Daneel answered Alice Admin 1 h ago\")."
           },
           "available": {
             "type": "boolean",
@@ -71188,7 +71196,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "When the evidence behind `state` was recorded; null for `checking` / `not_checked`."
+            "description": "When the evidence behind `state` was recorded; null for `checking`. For `not_checked`, the\nlast check that got no answer (null when none ran)."
           },
           "state": {
             "$ref": "#/components/schemas/VerificationState"

@@ -568,3 +568,13 @@ Done (the items that waited on brief 6): **admin-5** (a connector whose host run
   - **Test files changed:** `context-switcher` (badge on the rail), `admin-attention` (count follows a mutation), `admin-settings`, `-governance`, `-operational`, `-stacked`, `-sign-in`, `-llm` (new confirm wording and button, role names), `credential-access` (role names), `llm-key-form` (option text), `admin-apps-list` (A to Z, search). **New:** `describe-change.test.ts`, `policy-presets.test.tsx`. Specs: `e2e/admin-attention.spec.ts` (new count-drops-without-reload test), `e2e/admin-settings.spec.ts` (preset card, Customise before the locked egress value). **Not run** (Playwright rule): those two specs and the mocked specs that visit Administration › Internet access (`internet-access`, `stage4-axe`); **production specs** that look at the confirm button ("Save") or the add-key label: none found by search.
   - No test removed.
 - **Open questions:** (Balanced is answered by D-427.) Should the preset card also set `governance.llm.require_key_origin`? Left untouched.
+- **P5-REFINE-20 send-back, batch 3 (lane A), items 14–16 done (2026-11-21):** (14, 1f5c5c2e) one `ConnectorNextStep` (the
+  mockup's accent box: "**Next:** an organization owner connects Mattermost in their Chat platforms page." with "Open <org>'s Chat
+  platforms") on the platforms list **and** on the platform's own page, for `next_step` `owner_connects` and `connect` (an
+  instance admin who also owns an organization gets `connect`, C-1068, which is why the line was missing); with a host running
+  and no host report yet, "Chat platform hosts" says "A connector host is running and offers Mattermost. It is listed here after
+  its first report." instead of contradicting "Connector host running". (15, b5f086fd) a bad package's one problem is said once
+  (its sentence is the 422 message); several problems keep the message and one sentence each; codes under Technical details.
+  (16, d2ec5967) the Helm role warning on an AI endpoint card says "Set the … roles in your Helm values." and keeps
+  `llm.endpoints.<id>.roles` under Technical details. Tests: `connectors-admin.test.tsx` (1 new; the list test reads the bold
+  "Next:" sentence across elements), `plugins-admin.test.tsx` (exactly once, 1 new), `admin-settings-llm.test.tsx`. None removed.

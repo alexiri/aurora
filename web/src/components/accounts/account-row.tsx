@@ -9,7 +9,6 @@ import { AiKeyTile } from "@/components/ui/ai-key-tile";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { StatusLine } from "@/components/ui/status-line";
 import { Avatar } from "@/components/agent-avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ErrorState } from "@/components/states";
@@ -29,6 +28,7 @@ import { LimitControl } from "./limit-control";
 
 import { AccessControl } from "./access-control";
 import { AccountHealth } from "./account-health";
+import { KeyCheckLine } from "./key-check";
 import { AccountMenu } from "./account-menu";
 import { TechnicalDetails } from "@/components/ui/technical-details";
 import { ConnectionDetails } from "./connection-details";
@@ -212,30 +212,20 @@ export function AccountRow({
           />
           {/* (P5-REFINE-13, access-8) An AI key shows its check in place: Checking… then Works, or Failed with the reason and Try again. */}
           {/* A key that works and has a "Worked <when>" health line above says it once, not twice. */}
-          {account.kind === "ai_key" &&
-          account.verification &&
-          account.verification.state !== "not_checked" &&
-          !(account.verification.state === "works" && account.health.state === "working") ? (
-            <StatusLine
-              tone={account.verification.state === "works" ? "ok" : account.verification.state === "checking" ? "idle" : "fail"}
+          {/* (P5-REFINE-20 b1#1) The check always ends: after the re-checks a key the AI service never answered says "Not checked: …" with Check again. */}
+          {account.kind === "ai_key" && account.verification && !(account.verification.state === "works" && account.health.state === "working") ? (
+            <KeyCheckLine
+              verification={account.verification}
               action={
-                account.verification.state === "rejected" || account.verification.state === "unreachable" ? (
+                account.verification.state === "rejected" ||
+                account.verification.state === "unreachable" ||
+                (account.verification.state === "not_checked" && account.can.manage) ? (
                   <Button type="button" variant="outline" size="sm" disabled={test.isPending} onClick={runTest}>
-                    Try again
+                    {account.verification.state === "not_checked" ? "Check again" : "Try again"}
                   </Button>
                 ) : undefined
               }
-            >
-              <span data-testid="key-check">
-                {account.verification.state === "works"
-                  ? "Works"
-                  : account.verification.state === "checking"
-                    ? "Checking…"
-                    : account.verification.state === "rejected"
-                      ? "Failed: the provider rejected the key"
-                      : "Failed: the provider could not be reached"}
-              </span>
-            </StatusLine>
+            />
           ) : null}
           {account.status_reason === "instance_deleted" && account.health.state === "disabled" ? <InstanceRemoved orgId={orgId} /> : null}
           {test.isPending ? <p className="text-sm text-muted" role="status">Testing…</p> : null}

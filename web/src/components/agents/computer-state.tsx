@@ -77,7 +77,9 @@ export function ComputerStateLine({ agentId, agentName, frozen = false }: { agen
   const restartBlocked = RESTART_NOT_APPLICABLE.has(v.state) || (v.state === "failed" && frozen);
   // (C-1046) Idle stop in words; nothing when it is off.
   const after = v.idle_stop_after_secs ? `sleeps after ${durationWords(v.idle_stop_after_secs)} of quiet` : null;
-  const idleNow = word === "on" && countdown !== null;
+  // (P5-REFINE-20 #13, computer-13) The countdown is a hint (the stop arm decides): once it reaches 0 and the computer is still
+  // on, the line falls back to the rule ("sleeps after 20 min of quiet"), never a "sleeps in 0 s" that stays.
+  const idleNow = word === "on" && countdown !== null && countdown > 0;
   const reason = word === "failed" ? `${errorCopy(v.failure_code).message} ${v.failure_message ?? ""}`.trim() : null;
   return (
     <section aria-label="Computer state" className="space-y-2" data-testid="computer-state-line">

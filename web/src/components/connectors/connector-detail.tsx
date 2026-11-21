@@ -22,7 +22,7 @@ import {
 import { fmtDate, plural } from "@/lib/utils";
 
 import { ApprovalPanel } from "./approval-panel";
-import { ConnectorError, ConnectorIcon, ConnectorStatusChip, ManagedBadge, settingErrors } from "./shared";
+import { ConnectorError, ConnectorIcon, ConnectorNextStep, ConnectorStatusChip, ManagedBadge, settingErrors } from "./shared";
 import { initialValues, isSecretField, requiredErrors, settingText, typedValue } from "./setup-values";
 
 type Staged = "replace" | "clear";
@@ -30,8 +30,13 @@ type Staged = "replace" | "clear";
 function HostStatus({ c }: { c: ConnectorAdmin }) {
   return (
     <Section id="detail-hosts" title="Chat platform hosts" description="Hosts that reported this chat platform recently.">
+      {/* (P5-REFINE-20 #14, admin-5) One readiness (C-1068): with a host running, never "no host has reported". */}
       {c.host_status.length === 0 ? (
-        <p className="text-sm text-ink-2">No chat platform host has reported this chat platform yet.</p>
+        <p className="text-sm text-ink-2">
+          {c.host_running
+            ? `A connector host is running and offers ${c.display_name}. It is listed here after its first report.`
+            : "No chat platform host has reported this chat platform yet."}
+        </p>
       ) : (
         <ItemList aria-label="Chat platform hosts">
           {c.host_status.map((h) => (
@@ -294,6 +299,8 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
           </>
         }
       />
+      {/* (P5-REFINE-20 #14, admin-5) What happens next, on the platform's own page too (C-1068 `next_step`). */}
+      <ConnectorNextStep c={c} />
       <ConnectorError error={toggle.error} />
       {c.status === "pending_approval" || c.update_pending ? <ApprovalPanel key={c.manifest_digest ?? "none"} c={c} /> : null}
       {/* Keyed by what the form was built from, so a reloaded type or saved settings reset it. */}

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AccessControl } from "@/components/accounts/access-control";
 import { startingDecisions } from "@/components/accounts/actions-table";
 import { AccountsList } from "@/components/accounts/accounts-list";
+import { SavedKeyCheck } from "@/components/accounts/key-check";
 import { GiveAccessPanel } from "@/components/credentials/give-access";
 import { agentLabel, entryText, preselectAgents, splitGiven } from "@/lib/accounts";
 import type { Account, AgentAccess } from "@/lib/api/accounts";
@@ -149,6 +150,46 @@ describe("AccountsList: one row per kind", () => {
     expect(within(works).getByText(/^Worked/)).toBeInTheDocument();
     expect(within(works).queryByText("Works")).toBeNull();
     expect(within(screen.getByRole("listitem", { name: "New key" })).getByText("Checking…")).toBeInTheDocument();
+  });
+
+  it("a key whose re-checks are over leaves Checking…: Not checked with Check again, and a real call makes it work (P5-REFINE-20 b1#1)", async () => {
+    let state: Record<string, unknown> = { state: "not_checked", checked_at: new Date().toISOString() };
+    const key = () =>
+      ({
+        ref: { type: "secret", id: "k3" }, kind: "ai_key", name: "My gateway key", scope: "workspace", levels: [], health: { state: "not_used" },
+        verification: state, agents: [], can: OWNER,
+      }) as unknown as Account;
+    routes["GET /v1/workspaces/w1/accounts"] = () => json(200, { items: [key()], next_cursor: null });
+    routes["GET /v1/workspaces/w1/agents"] = () => json(200, { items: [], next_cursor: null });
+    routes["GET /v1/apps"] = () => json(200, { items: [], next_cursor: null });
+    routes["POST /v1/accounts/secret/k3/test"] = () => {
+      state = { state: "works", checked_at: new Date().toISOString() };
+      return json(200, { result: "ok", checked_at: new Date().toISOString() });
+    };
+    list();
+    const row = await screen.findByRole("listitem", { name: "My gateway key" });
+    expect(within(row).getByTestId("key-check")).toHaveTextContent(
+      "Not checked: the AI service didn't answer Aurora's check. It shows Works after its first answer.",
+    );
+    expect(within(row).queryByText("Checking…")).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(within(screen.getByRole("listitem", { name: "My gateway key" })).getByTestId("key-check")).toHaveTextContent("Works"));
+    expect(sent("POST /v1/accounts/secret/k3/test")).toHaveLength(1);
+  });
+
+  it("a key just saved follows the server's check, not its stored pending origin (Welcome's Saved panel)", async () => {
+    listWs([aiKey({ verification: { state: "not_checked", checked_at: new Date().toISOString() } })]);
+    wrap(<SavedKeyCheck scope={{ kind: "workspace", id: "w1" }} secretId="s2" />);
+    expect(await screen.findByTestId("key-check")).toHaveTextContent(/^Not checked: the AI service didn't answer/);
+    expect(screen.queryByText("Checking…")).toBeNull();
+  });
+
+  it("a member sees Not checked without Check again", async () => {
+    listWs([aiKey({ verification: { state: "not_checked", checked_at: null }, can: MEMBER })]);
+    list();
+    const row = await screen.findByRole("listitem", { name: "Team key" });
+    expect(within(row).getByTestId("key-check")).toHaveTextContent("Not checked yet. It shows Works after its first answer.");
+    expect(within(row).queryByRole("button", { name: "Check again" })).toBeNull();
   });
 
   it("every app row has the level pill, even with one level; a send-only app's levels are worded for sends (access-12, D-419)", async () => {
