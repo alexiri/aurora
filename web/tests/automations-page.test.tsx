@@ -115,8 +115,12 @@ describe("the page", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Daneel runs at set times.")).toBeInTheDocument();
     expect(within(dialog).getByText("An outside system sends Daneel a request.")).toBeInTheDocument();
-    // No chat platform: the sentence of the empty state instead of a choice.
-    expect(within(dialog).getByText(/Only organization owners and admins can connect a chat platform/)).toBeInTheDocument();
+    // No chat platform: the empty state with the ask (and its optional reason) instead of a choice (channels-3).
+    expect(within(dialog).getByText("Daneel isn't in any chat yet")).toBeInTheDocument();
+    expect(within(dialog).getByText("Only organization owners and admins can connect a chat platform.")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/Why do you need it\?/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Send request" })).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("Without one");
     fireEvent.click(within(dialog).getByRole("button", { name: /On a schedule/ }));
     expect(await screen.findByRole("form", { name: "New schedule" })).toBeInTheDocument();
   });
@@ -586,6 +590,16 @@ describe("Chats", () => {
     expect(dialog).toHaveTextContent("Daneel stops answering in chat.example.com");
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove from channel" }));
     await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.path === "/v1/presences/p1")).toBe(true));
+  });
+
+  it("a member on the empty page can ask for a chat platform, with a reason (channels-3)", async () => {
+    const calls = mockApi({ "GET /v1/agents/a1/schedules": page([]), "GET /v1/agents/a1/webhooks": page([]), "POST /v1/workspaces/w1/requests": () => json(200, { id: "r1" }) });
+    mount({ canOwn: false });
+    expect(await screen.findByRole("heading", { name: "No automations yet" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Daneel isn't in any chat yet" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Why do you need it\?/), { target: { value: "For #ops" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ subject: "chat_platform", reason: "For #ops" }));
   });
 
   it("with no chat platform the Chats filter shows Ask an admin with the platforms and a reason", async () => {
