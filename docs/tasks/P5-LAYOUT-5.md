@@ -87,8 +87,8 @@ All paths under `web/src/`, master 55b1bdb8.
 ## Out of scope
 
 - The organization's and Administration's BYO pages (ladders there stay).
-- Hiding other "Set for you by …" rows (Internet access, AI keys, Retention, app availability): the owner is asked
-  separately whether D-442's rule should apply to them.
+- Hiding other "Set for you by …" rows (Internet access, AI keys, Retention, app availability): FIX-206 (D-444, the
+  owner's answer: hidden for members and approvers).
 - The New agent dialog's BYO kind (unchanged; it already follows the effective posture).
 
 ## Acceptance criteria
