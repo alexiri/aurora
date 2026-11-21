@@ -22,7 +22,7 @@ export interface TourStop {
  */
 export const TOUR_STOPS: readonly TourStop[] = [
   { target: "overview", title: "Overview", text: "What your agents are doing, and what needs you." },
-  { target: "agents", title: "Agents", text: "Chat with an agent here. Open an agent, then **Apps & access** › **Give <Agent> an app** to let it use GitHub, Linear and more." },
+  { target: "agents", title: "Agents", text: "Chat with an agent here. To let it use GitHub, Linear and more, open the agent's **Settings › Apps & access**." },
   { target: "apps", title: "Apps & accounts", text: "The accounts your agents can use, and the apps you can connect." },
   { target: "internet-access", title: "Internet access", text: "Which websites agents can reach, and the rules that ask or block." },
   { target: "approvals", title: "Approvals", text: "When an agent asks before a change, you answer here." },

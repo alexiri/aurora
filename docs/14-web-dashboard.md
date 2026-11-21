@@ -2679,8 +2679,8 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
 - **Errors link to the guide step** that fixes them (`no_model_key`,
   `no_default_model`, missing grant).
 - (Phase 5, P5-UX-3, C-927) The **Agents** stop also says that the agent gets apps on its
-  Access tab ("Open an agent, then **Access** › **Give <Agent> an app** to let it use GitHub, Linear and
-  more").
+  Settings › Apps & access page ("To let it use GitHub, Linear and more, open the agent's **Settings › Apps & access**";
+  P5-REFINE-20 pass 2: the tour names no agent, so it never shows a "<Agent>" placeholder).
 
 ## Agents, accounts and access (phase 5, P5-UX, D-321..D-337, D-343..D-352)
 

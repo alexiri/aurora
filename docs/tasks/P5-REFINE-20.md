@@ -398,6 +398,24 @@ Fill in per pass (the owner reads this):
   - Carried to pass 2 (not checked): firstday-2/3/4, schedules-7, channels-1, computer-1/2 and the runner bug, workspace-5,
     org-4/10/14, admin-1/3/9, G1/G5 (need an approval). The cluster stays up for pass 2.
 
+- **Pass 2** (2026-11-21; part 1 on master `a84e93d0`, part 2 on `6d548b00`; cluster `aurora-r20` on :4720, lane `p5-platform`):
+  - Counts (119 findings): Match 103 / Minor 5 / Needs changes 7 / Not checked 4 / Accepted 0. Badges G1, G2, G4, G5, G6 Match
+    (the pending approval was made by `aurora-agent call` over SSH against an outgoing webhook at "Ask before each send"; recipe in
+    the report).
+  - Report path: `docs/audit/ux-review-5-verify/REPORT-pass2.md` (screenshots in `docs/audit/ux-review-5-verify/pass2/`, not in git).
+  - Change list sent: batch 5 (8 items, `msg_4e6735e57b3a`: computer-1 keep-awake for terminal and SSH, SSH to a sleeping computer,
+    admin-9, the failed grader not kept, two time zones, the empty Automations ask, "can read Outgoing webhook", minor words);
+    batch 6 (5 items, `msg_94d6bb094f30`: the 51 s accounts list after `ba6f4d8c`, org AI models, audit words, Approver, minor
+    words). Batches 1–4 re-checked: see the report's tables.
+  - Fixed in this lane (Scope 7): `web/src/components/onboarding/tour.tsx` — the tour's Agents stop showed a literal
+    "Give <Agent> an app"; now "To let it use GitHub, Linear and more, open the agent's Settings › Apps & access." Also
+    `docs/14-web-dashboard.md` (tour paragraph). Tests changed: `web/tests/onboarding.test.tsx` (asserts the new words and no
+    "<Agent>"); no Playwright spec asserts the tour text. Runs: `vitest run tests/onboarding.test.tsx` 23 passed; `pnpm typecheck`
+    clean; eslint on both files clean; `scripts/guards/run-all.sh` all passed.
+  - UX review 4 regressions: "Administration" twice in its rail is fixed (b4#5); none new.
+  - Not checked yet: firstday-3, computer-2, admin-3, admin-12, the runner bug live (needs a stack with Helm SSH off), batch 4 #1/#3
+    (blocked by b6#1). The cluster stays up for pass 3.
+
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
   - Report path: `UXR5/verify/REPORT-pass<N>.md`
