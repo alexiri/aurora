@@ -334,19 +334,25 @@ struct WsOpen {
     mine: Vec<RequestRow>,
 }
 
+/// Most agents checked per call (C-1080): the check is a few queries per agent and the counts are polled.
+const CANNOT_ANSWER_CHECKED: i64 = 50;
+
 /// The agents of the workspace that cannot answer, for the people who can give them a key (D-384).
+/// A poll: key listings come from the cache only, never from a provider (a miss is "listing unknown",
+/// no item), and at most [`CANNOT_ANSWER_CHECKED`] agents are checked.
 async fn cannot_answer_of(
     s: &AppState,
     auth: &WorkspaceAuth,
 ) -> Result<Vec<(HostedAgentRow, AnswerReason)>, ApiError> {
-    let agents = arepo::hosted_agents_running(&s.pool, auth.workspace_id, FEED_LIMIT).await?;
+    let agents =
+        arepo::hosted_agents_running(&s.pool, auth.workspace_id, CANNOT_ANSWER_CHECKED).await?;
     if agents.is_empty() {
         return Ok(Vec::new());
     }
     let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
     let mut out = Vec::new();
     for a in agents {
-        if let Some(r) = answer::reason_of(
+        if let Some(r) = answer::reason_of_cached(
             s,
             &mut conn,
             a.id,
