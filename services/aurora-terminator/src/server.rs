@@ -15,8 +15,10 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use aurora_core::limits::{
@@ -30,6 +32,7 @@ use russh::server::{Auth, Config, Handler, Msg, Session, VerifiedPublicKey};
 use russh::{
     Channel, ChannelId, ChannelOpenFailure, Disconnect, MethodKind, MethodSet, Preferred, Pty, Sig,
 };
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 
@@ -85,8 +88,10 @@ pub fn ssh_config(host_key: PrivateKey, s: &crate::state::Settings) -> Config {
         keys: vec![host_key],
         max_auth_attempts: SSH_AUTH_ATTEMPTS + 1,
         inactivity_timeout: None,
-        keepalive_interval: Some(s.keepalive),
-        keepalive_max: 3,
+        // No SSH keepalive of our own (D-434): a client's reply to it would count as activity
+        // for every live client; a dead peer is found by TCP keepalive (`set_tcp_keepalive`).
+        keepalive_interval: None,
+        keepalive_max: 0,
         window_size: WINDOW,
         maximum_packet_size: 32 * 1024,
         preferred: Preferred {
@@ -107,6 +112,71 @@ struct Ctl {
     session: OnceLock<Arc<Sess>>,
     /// Open SSH channels (the watcher writes goodbyes to them and waits for them to close).
     open: Mutex<HashSet<ChannelId>>,
+}
+
+/// (FIX-199, D-434) The connection's socket, watched for client traffic. russh 0.65.2 never
+/// shows its handler a client's `keepalive@openssh.com` (global or channel request: it answers
+/// them itself), so any byte read from the client restarts the session's idle clock instead:
+/// keepalives, window adjusts and every other packet count, exactly like channel data. Only
+/// reads count (never what the terminator writes), and the clock is touched at most once a
+/// second ([`crate::state::Stats::touch_client`]). Before authentication there is no session
+/// and nothing is counted.
+struct ClientActivity<S> {
+    inner: S,
+    ctl: Arc<Ctl>,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for ClientActivity<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let r = Pin::new(&mut self.inner).poll_read(cx, buf);
+        if matches!(r, Poll::Ready(Ok(())))
+            && buf.filled().len() > before
+            && let Some(sess) = self.ctl.session.get()
+        {
+            sess.stats.touch_client();
+        }
+        r
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for ClientActivity<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// TCP keepalive of an accepted socket (D-434): the terminator sends no SSH keepalive, so a
+/// dead peer is found here: first probe after 30 s of silence, then every 10 s, three
+/// unanswered probes close it (about 60 s), instead of the kernel's two hours.
+pub const TCP_KEEPALIVE_IDLE: Duration = Duration::from_secs(30);
+pub const TCP_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+pub const TCP_KEEPALIVE_PROBES: u32 = 3;
+
+pub fn set_tcp_keepalive(stream: &tokio::net::TcpStream) -> std::io::Result<()> {
+    socket2::SockRef::from(stream).set_tcp_keepalive(
+        &socket2::TcpKeepalive::new()
+            .with_time(TCP_KEEPALIVE_IDLE)
+            .with_interval(TCP_KEEPALIVE_INTERVAL)
+            .with_retries(TCP_KEEPALIVE_PROBES),
+    )
 }
 
 struct Chan {
@@ -844,6 +914,9 @@ pub async fn serve(
                     }
                 };
                 let _ = stream.set_nodelay(true);
+                if let Err(e) = set_tcp_keepalive(&stream) {
+                    tracing::warn!(error = %e, "could not set TCP keepalive on an SSH connection");
+                }
                 tokio::spawn(connection(shared.clone(), cfg.clone(), stream, peer, adm));
             }
         }
@@ -902,7 +975,11 @@ async fn connection(
             .increment(1);
     };
     let started = tokio::select! {
-        r = russh::server::run_stream(cfg, stream, handler) => r,
+        r = russh::server::run_stream(
+            cfg,
+            ClientActivity { inner: stream, ctl: ctl.clone() },
+            handler,
+        ) => r,
         () = &mut auth_timer => {
             timeout();
             return;
@@ -941,5 +1018,43 @@ async fn connection(
                 .increment(1);
         }
         None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (D-434) A dead peer is found in about a minute, not the kernel's two hours.
+    #[tokio::test]
+    async fn tcp_keepalive_is_set_with_explicit_timings() {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let c = tokio::net::TcpStream::connect(l.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (s, _) = l.accept().await.unwrap();
+        set_tcp_keepalive(&s).unwrap();
+        let sock = socket2::SockRef::from(&s);
+        assert!(sock.keepalive().unwrap());
+        assert_eq!(sock.tcp_keepalive_time().unwrap(), TCP_KEEPALIVE_IDLE);
+        assert_eq!(
+            sock.tcp_keepalive_interval().unwrap(),
+            TCP_KEEPALIVE_INTERVAL
+        );
+        assert_eq!(sock.tcp_keepalive_retries().unwrap(), TCP_KEEPALIVE_PROBES);
+        drop(c);
+    }
+
+    /// Only reads restart the clock, and at most once a second.
+    #[test]
+    fn client_traffic_touches_once_per_second() {
+        let st = crate::state::Stats::default();
+        assert_eq!(st.last_activity.load(Ordering::Relaxed), 0);
+        st.touch_client();
+        let t = st.last_activity.load(Ordering::Relaxed);
+        assert!(t > 0);
+        st.touch_client();
+        assert!(st.last_activity.load(Ordering::Relaxed) >= t);
+        assert_eq!(st.bytes_in.load(Ordering::Relaxed), 0, "no byte is counted");
     }
 }

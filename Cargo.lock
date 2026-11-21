@@ -1050,6 +1050,7 @@ dependencies = [
  "russh",
  "serde",
  "serde_json",
+ "socket2",
  "ssh-key",
  "thiserror 2.0.21",
  "tokio",

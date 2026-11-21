@@ -610,7 +610,7 @@ the differences. Off unless `ssh.enabled`.
   replica); key exchange `curve25519-sha256` (and `@libssh.org`), `sntrup761x25519-sha512@openssh.com`
   where the library offers it; ciphers `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`,
   `aes128-gcm@openssh.com`; MACs only for non-AEAD ciphers (none offered); no SHA-1, CBC, DSA or RSA.
-  Server keepalive every 30 s (keeps load-balancer idle timers from cutting a session); identification
+  No SSH-level server keepalive (FIX-199, D-434: russh does not show the handler a client's `keepalive@openssh.com`, so the terminator counts bytes read from the client's TCP connection, never bytes written, as activity, and a server keepalive's reply would count every live client as active). A dead peer is found by TCP keepalive on the accepted socket (idle 30 s, interval 10 s, 3 probes, about 60 s), which also keeps load-balancer idle timers fed; identification
   string `SSH-2.0-aurora` without a version number.
 - *Authentication*: the only method advertised and accepted is `publickey` with an OpenSSH **user
   certificate** of type `ssh-ed25519-cert-v01@openssh.com`. In the *query* phase (no signature) the
@@ -641,7 +641,7 @@ the differences. Off unless `ssh.enabled`.
   (`SSH_MSG_CHANNEL_OPEN_FAILURE`, `administratively prohibited`): `direct-tcpip` (`-L`, `-D`),
   `direct-streamlocal@openssh.com`, `x11`, `auth-agent@openssh.com`, every unknown type. Refused global
   requests: `tcpip-forward` and `cancel-tcpip-forward` (`-R`), `streamlocal-forward@openssh.com`;
-  `keepalive@openssh.com` gets the standard failure reply; `no-more-sessions@openssh.com` is honoured.
+  `keepalive@openssh.com` gets the standard failure reply (the client's liveness check; it counts as activity); `no-more-sessions@openssh.com` is honoured.
 - *Ending*: the child's exit status becomes `exit-status` (or `exit-signal` with the signal name),
   then `EOF` and `CLOSE`; a leg that ends before an exit status is `relay_error` (`exit-status` 255 and
   a one-line stderr notice). Notices are written to the channel's extended data (stderr) and the

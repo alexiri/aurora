@@ -1095,6 +1095,68 @@ async fn ssh_sessions_keep_awake_kind_ssh() {
     assert!(ssh.is_none());
 }
 
+/// (FIX-199, D-434, C-794) A heartbeat whose session was active within `SSH_AWAKE_GRACE` (client
+/// keepalives count) stamps `ssh_active_until` of the agent's running computer, and at most once
+/// per half grace: a second heartbeat right after changes nothing. A stale activity, or none,
+/// stamps nothing; a stopped computer is never stamped.
+#[tokio::test]
+async fn a_heartbeat_with_recent_client_activity_keeps_the_computer_awake_once_per_half_grace() {
+    let s = setup("running").await;
+    let id = open_ok(&s).await;
+    let beat = |ago_secs: Option<i64>| {
+        let mut b = json!({"id": id, "channels_open": 0, "channels_total": 0, "bytes_in": 0, "bytes_out": 0});
+        if let Some(a) = ago_secs {
+            b["last_activity_at"] = json!(
+                (chrono::Utc::now() - chrono::Duration::seconds(a))
+                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+            );
+        }
+        json!({"sessions": [b]})
+    };
+    let stamp = || async {
+        sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+            "SELECT ssh_active_until FROM sandboxes WHERE id = $1",
+        )
+        .bind(s.sb)
+        .fetch_one(s.r.h.pool())
+        .await
+        .unwrap()
+    };
+    // No activity, then a stale one: nothing is stamped.
+    for ago in [None, Some(600)] {
+        let (st, v) = plane(&s.r, "/v1/terminator/heartbeat", beat(ago), s.rep).await;
+        assert_eq!(st, 200, "{v}");
+        assert!(stamp().await.is_none(), "stamped for activity {ago:?}");
+    }
+    // A keepalive 5 s ago: stamped.
+    let (st, v) = plane(&s.r, "/v1/terminator/heartbeat", beat(Some(5)), s.rep).await;
+    assert_eq!(st, 200, "{v}");
+    let first = stamp()
+        .await
+        .expect("the heartbeat stamped ssh_active_until");
+    assert!(first > chrono::Utc::now() + chrono::Duration::seconds(100));
+    // The next heartbeat finds more than half a grace left: no write.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let (st, v) = plane(&s.r, "/v1/terminator/heartbeat", beat(Some(1)), s.rep).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(
+        stamp().await,
+        Some(first),
+        "a second stamp inside half a grace"
+    );
+    // With less than half a grace left it stamps again.
+    sqlx::query(
+        "UPDATE sandboxes SET ssh_active_until = now() + interval '30 seconds' WHERE id = $1",
+    )
+    .bind(s.sb)
+    .execute(s.r.h.pool())
+    .await
+    .unwrap();
+    let (st, v) = plane(&s.r, "/v1/terminator/heartbeat", beat(Some(1)), s.rep).await;
+    assert_eq!(st, 200, "{v}");
+    assert!(stamp().await.unwrap() > chrono::Utc::now() + chrono::Duration::seconds(100));
+}
+
 /// (Part B, C-796) The runner registration answer carries `ssh_enabled` only when the instance
 /// has `ssh.enabled` **and** the runner advertised `ssh`; otherwise the field is absent (false).
 #[tokio::test(flavor = "multi_thread")]

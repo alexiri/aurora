@@ -677,15 +677,14 @@ peer to the runner's existing listener and nothing to the sandboxes namespace.
   starts again at its `running` (`§Stop`, P5-REFINE-20 batch 5). While a channel carries bytes the runner stamps `ssh_active_until`
   (`SSH_AWAKE_GRACE` 120 s after the last byte, `POST /v1/runner/terminal/keep-awake` with
   `kind: "ssh"`, at most one stamp per grace per sandbox) and the sandbox is kept awake with the
-  reason **`ssh`**, capped at `SSH_AWAKE_CAP` (4 h per boot). An idle connection (client keepalives
-  only) does not hold the sandbox awake: it parks like any idle sandbox, its channels close
+  reason **`ssh`**, capped at `SSH_AWAKE_CAP` (4 h per boot). An open channel's leg also stamps while it is quiet (the leg heartbeat, C-1058, every half grace), and a connected client's keepalives count as activity (FIX-199, D-434): the API's session heartbeat (every 30 s) stamps `ssh_active_until` whenever the session's last activity is within `SSH_AWAKE_GRACE`, only when the stamp has less than half a grace left, so the computer stays awake for a connected client up to `SSH_AWAKE_CAP`; a keepalive itself costs no API call. A client that disconnects stops the stamps and the computer parks like any idle sandbox: its channels close
   (`4503`, the terminator writes `The agent's sandbox stopped.` to stderr), and the session stays open
   until idle timeout or lifetime, so a new channel wakes it again. An SSH session is never a turn, a
   conversation event or a `last_engaged_at` stamp.
 - **Lifecycle.** Frozen agent, lost access, deleted key, `ssh.enabled` off, disconnect by the person or
   an owner → revoked at the next heartbeat (≤ 30 s) and closed; restart/park/harness change/runner move
   → channels closed (4503), session kept; agent deleted → sessions closed (`agent_deleted`) and rows
-  cascade. Idle `SSH_IDLE_TIMEOUT` (600 s without channel bytes or client keepalive replies) and lifetime
+  cascade. Idle `SSH_IDLE_TIMEOUT` (600 s without any traffic from the client: channel bytes, OpenSSH keepalives and any other client packet all count; D-434) and lifetime
   `SSH_MAX_LIFETIME` (4 h) are enforced by the terminator; the lease (90 s) bounds a crashed terminator:
   the stale-session sweep closes its rows (`lease_expired`). Every session closes **exactly once**
   (`03 §ssh_sessions` `state`) with one `agent.ssh.close` audit row.

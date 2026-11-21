@@ -263,7 +263,8 @@ function SshContent({ agentId, agentName, agentHandle }: { agentId: string; agen
           <li>
             Port forwarding, agent forwarding and X11 are not available; use the <strong>Previews</strong> page for web apps.
           </li>
-          <li>Sessions end after 10 minutes without activity or after 4 hours, and when you lose access to the agent.</li>
+          <li>A session with no output stays open while your SSH client is connected, up to 4 hours.</li>
+          <li>A session also ends when you lose access to the agent, or after 10 minutes in which your client sends nothing at all.</li>
         </ul>
       </Section>
     </div>

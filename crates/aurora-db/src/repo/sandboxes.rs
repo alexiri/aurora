@@ -319,6 +319,30 @@ pub async fn keep_ssh_awake<'e, E: PgExecutor<'e>>(
         == 1)
 }
 
+/// (FIX-199, D-434, C-794) The `ssh` stamp of a live client, from the terminator's heartbeat:
+/// the same column and cap clock as [`keep_ssh_awake`], for the agent's running sandbox, and
+/// only when the current stamp has less than half a grace left. A heartbeat every 30 s per
+/// session therefore costs at most one write per half grace per computer. `true` when stamped.
+pub async fn keep_ssh_awake_for_agent<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent: Uuid,
+    grace_secs: i64,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE sandboxes SET ssh_active_until = now() + make_interval(secs => $2), \
+             ssh_awake_since = coalesce(ssh_awake_since, now()), updated_at = now() \
+           WHERE agent_id = $1 AND state = 'running' \
+             AND (ssh_active_until IS NULL \
+                  OR ssh_active_until < now() + make_interval(secs => $2 / 2))",
+    )
+    .bind(agent)
+    .bind(grace_secs)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        >= 1)
+}
+
 /// (P5-FILES-1, C-900) The keep-awake stamp of reason `files`: the API stamps it on a Files
 /// request on a running sandbox. `now() + grace`; the cap clock (`files_awake_since`) starts at
 /// the boot's first stamp. Never a turn, never an engagement stamp.

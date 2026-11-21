@@ -204,6 +204,13 @@ describe("SshPage", () => {
     );
     expect(screen.getByRole("button", { name: "Copy command" })).toBeInTheDocument();
     expect(screen.getByText(/Port forwarding, agent forwarding and X11 are not available/)).toBeInTheDocument();
+    // D-434, FIX-199: a quiet session stays open while the client is connected (its keepalives count).
+    expect(
+      screen.getByText("A session with no output stays open while your SSH client is connected, up to 4 hours."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("A session also ends when you lose access to the agent, or after 10 minutes in which your client sends nothing at all."),
+    ).toBeInTheDocument();
   });
 
   it("copies the full command, with the id, from Copy command", async () => {
