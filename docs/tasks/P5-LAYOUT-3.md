@@ -117,3 +117,14 @@ The owner: "I don't want a ton of broken tests because a button was renamed and 
 
 Files changed; screenshots of Overview and Agents at 1920, 1280 and 390 px in both themes, with one agent and with four;
 test files changed; commands and results; production specs not run.
+
+### Report (lane A, 2026-11-21)
+
+- **Commits:** fe5c897e (AgentCard, Overview, AgentsList, tests, docs/14); f5a77aae (agents-view.tsx: passes `wsId`/`orgId`, its own commit so LAYOUT-5's BYO removal rebases cleanly).
+- **Files:** new `components/agents/agent-card.tsx`; changed `agents-list.tsx`, `overview/overview-view.tsx`, `agents/agents-view.tsx`, docs/14 (Overview bullet, Agents list).
+- **Overview and the Agents page show the same card**: Overview now also shows the needs-you chip (via `useAgentNeedsCounts`) and owners' token badges, which its old rows lacked.
+- **768 px:** the grid's container beside the sidebar is ~450 px, below `@2xl`, so 768 shows one column (the container rule, 3f196cde), not the brief's "2 at 768". 4 / 3 / 1 / 1 at 1920 / 1280 / 768 / 390.
+- **Tests:** new `tests/agent-card.test.tsx`, `e2e/agent-cards.spec.ts` (both pages, both themes, 1920/1280/768/390, four agents and one agent, no sideways scroll); `e2e/workspace-pages.spec.ts` test title. Other specs (`m1`, `agent-needs`, onboarding, first-run, try-it-in-chat) use `list "Agents"`, `agent-needs-count`, `Chat with`: unchanged and still valid.
+- **Run:** whole web vitest 3421/3422 (the one failure, `connect-journey.test.tsx`, timed out under load and passes alone, 33/33); `pnpm typecheck` clean; eslint on touched files clean; mocked Playwright agent-cards, agent-needs, workspace-pages: 70 passed; `m1.spec` real-stack project can't run here (no API).
+- **Production specs not run:** `first-run.sh`, `kind.sh` (read: use `list "Agents"` / Chat links, unaffected).
+- **Screenshots (not in git):** /tmp/claude-1000/-home-alex-orca-workspaces-aurora-p5-polish-a/5907c2a7-eb59-474f-a6e9-cd042563b3b4/scratchpad/shots/ (`<overview|agents>-<1|4>-<light|dark>-<1920|1280|768|390>.png`, 32 files).
