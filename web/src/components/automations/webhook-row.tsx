@@ -128,7 +128,7 @@ export function WebhookRow({
       body={w.instructions}
       meta={
         <>
-          {w.paused_by ? `Paused by ${personName(w.paused_by.display_name)} ·` : ""}
+          {w.paused_by ? `Paused by ${personName(w.paused_by.display_name)} · ` : ""}
           Last delivery: {w.last_delivery_at ? <When value={w.last_delivery_at} /> : "never"} · <OwnerLabel anchor={w.anchor} creator={w.created_by} />
         </>
       }

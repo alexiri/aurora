@@ -215,7 +215,7 @@ export function ScheduleRow({
       body={s.prompt}
       meta={
         <>
-          {s.paused_by ? `Paused by ${personName(s.paused_by.display_name)} ·` : ""}
+          {s.paused_by ? `Paused by ${personName(s.paused_by.display_name)} · ` : ""}
           {last} · <OwnerLabel anchor={s.anchor} creator={s.created_by} />
           {s.origin_conversation_id ? " · Also posts in the chat it was made in" : ""}
         </>
