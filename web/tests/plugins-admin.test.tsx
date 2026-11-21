@@ -202,8 +202,8 @@ describe("UploadForm", () => {
       json(422, {
         error: {
           code: "package_invalid",
-          message: "That isn't an app package. Upload the .tar.gz that `aurora plugin pack` makes.",
-          details: { violations: [{ code: "archive_corrupt", path: "/hooks/0", message: "invalid gzip header", sentence: "That isn't an app package. Upload the .tar.gz that `aurora plugin pack` makes." }] },
+          message: "That isn't an app package. Use a `.tar.gz` made with `aurora plugin pack`.",
+          details: { violations: [{ code: "archive_corrupt", path: "/hooks/0", message: "invalid gzip header", sentence: "That isn't an app package. Use a `.tar.gz` made with `aurora plugin pack`." }] },
         },
       }),
     );
@@ -222,7 +222,8 @@ describe("UploadForm", () => {
     // (batch 7) The backticked command is set as code, not printed with its backticks; Upload waits for another file; Cancel closes.
     const alert = screen.getByRole("alert");
     expect(alert.textContent).not.toContain("`");
-    expect(alert.querySelector("code")?.textContent).toBe("aurora plugin pack");
+    expect(Array.from(alert.querySelectorAll("code")).map((c) => c.textContent)).toEqual([".tar.gz", "aurora plugin pack"]);
+    expect(alert.textContent).toContain("Use a .tar.gz made with aurora plugin pack.");
     expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onCancel).toHaveBeenCalled();

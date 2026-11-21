@@ -5,7 +5,7 @@
 use aurora_core::limits::PACKAGE_MAX;
 
 const NOT_A_PACKAGE: &str =
-    "That isn't an app package. Upload the .tar.gz that `aurora plugin pack` makes.";
+    "That isn't an app package. Use a `.tar.gz` made with `aurora plugin pack`.";
 
 /// The sentence for one violation. Never the raw error text of the archive reader (e.g.
 /// "invalid gzip header") nor the code word itself.

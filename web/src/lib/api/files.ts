@@ -184,7 +184,7 @@ export const FILES_ERROR_SENTENCES: Record<string, string> = {
   sandbox_unavailable: "The agent's computer is not running and cannot be started right now.",
   wake_limited: "The computer was woken too many times this hour. Try again later.",
   too_many_transfers: "Too many transfers at once. Wait for one to finish and try again.",
-  files_unavailable: "The computer restarted; retrying…",
+  files_unavailable: "The computer isn't answering; trying again…",
   rate_limited: "Too many requests. Please wait a moment and try again.",
   forbidden: "You do not have permission to use this agent's files.",
   not_found: "This agent's files are not available.",

@@ -159,7 +159,7 @@ async fn a_bad_package_says_so_in_words() {
     assert_eq!((s, code(&v)), (422, "package_invalid"), "{v}");
     assert_eq!(
         v["error"]["message"],
-        "That isn't an app package. Upload the .tar.gz that `aurora plugin pack` makes."
+        "That isn't an app package. Use a `.tar.gz` made with `aurora plugin pack`."
     );
     let first = &v["error"]["details"]["violations"][0];
     assert_eq!(first["code"], "archive_corrupt");

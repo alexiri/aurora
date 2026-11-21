@@ -212,7 +212,7 @@ export function AgentPage() {
             own row under the name and state, so the name is never pushed out at 1256 and nothing runs under Status at 390.
             Empty (no row) unless the agent cannot answer. */}
         {byo || !wsId ? null : (
-          <div className="order-3 min-w-0 max-w-full empty:hidden md:order-4 md:basis-full">
+          <div className="order-3 w-full min-w-0 max-w-full basis-full empty:hidden md:order-4">
             <AnswerFixAction agentId={agent.id} agentName={agent.name} wsId={wsId} base={base} />
           </div>
         )}
