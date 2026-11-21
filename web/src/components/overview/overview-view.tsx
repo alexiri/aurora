@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
-import { Avatar } from "@/components/agent-avatar";
-import { AgentSummary } from "@/components/agents/agent-summary";
+import { AgentCard } from "@/components/agents/agent-card";
+import { CardGrid } from "@/components/ui/card-grid";
+import { useAgentNeedsCounts } from "@/lib/api/agent-needs";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { decisionTone } from "@/components/approvals/activity-view";
 import { ErrorState, Loading } from "@/components/states";
@@ -15,7 +16,6 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { StatusDot } from "@/components/ui/status-dot";
 import { useWorkspaceCounts } from "@/lib/api/attention";
-import { buttonVariants } from "@/components/ui/button";
 import { useMeOnboarding } from "@/lib/api/onboarding";
 import { useActivity, useApprovalsStream, useCanApprove, useNow } from "@/lib/api/approvals";
 import { actionsOnly } from "@/components/agents/status-rail/status-data";
@@ -90,6 +90,8 @@ function OverviewBody({
 }) {
   const agents = useAgents(wsId);
   const workspace = useWorkspace(wsId);
+  // (P5-LAYOUT-3) The same needs-you chip as the Agents page's cards.
+  const agentNeeds = useAgentNeedsCounts(wsId);
   const canApprove = useCanApprove(wsId);
   const activity = useActivity(wsId, { agent: "", decision: "", host: "" });
   const now = useNow(30_000);
@@ -124,24 +126,20 @@ function OverviewBody({
         {agents.isPending ? <Loading /> : null}
         {agents.isError ? <ErrorState error={agents.error} onRetry={() => agents.refetch()} /> : null}
         {agents.data ? (
-          <ul aria-label="Agents" className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface shadow-card">
+          <CardGrid aria-label="Agents">
             {list.map((a) => (
-              <li key={a.id} className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-                <Link href={`${base}/agents/${a.handle}`} className="flex min-w-0 flex-1 basis-60 items-center gap-3">
-                  <Avatar name={a.name} url={a.avatar_url} tintKey={a.id} size={40} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-semibold text-ink">{a.name}</span>
-                    {/* The agent's summary (C-986): the same sentences as Welcome and the Access page. */}
-                    <AgentSummary wsId={wsId} orgId={orgId} agent={a} className="space-y-0.5 text-sm text-ink-2" />
-                    {a.byo?.posture === "disabled" ? <Badge tone="danger">BYO disabled by {a.byo.posture_level}</Badge> : null}
-                  </span>
-                </Link>
-                <Link href={`${base}/agents/${a.handle}`} className={buttonVariants({ variant: "outline", size: "sm" })} aria-label={`Chat with ${a.name}`}>
-                  Chat
-                </Link>
-              </li>
+              <AgentCard
+                key={a.id}
+                agent={a}
+                href={`${base}/agents/${a.handle}`}
+                needs={agentNeeds.counts[a.id] ?? 0}
+                showTokenBadges={workspace.data?.my_role === "owner"}
+                wsId={wsId}
+                orgId={orgId}
+                chat
+              />
             ))}
-          </ul>
+          </CardGrid>
         ) : null}
       </Section>
 
