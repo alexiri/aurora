@@ -453,6 +453,22 @@ Fill in per pass (the owner reads this):
   - Dev stack: `kind-dev.sh dev` does not accept `terminator` (an untracked copy with it added was used and deleted).
   - The cluster stays up for pass 5.
 
+- **Pass 5** (2026-11-21, master `ccc56fdd` (all of batch 8); cluster `aurora-r20` on :4720, lane `p5-platform`; rebuilt
+  `dev api terminator web`: `dev` accepts `terminator` and its migrate step layered `values-llm-mock.yaml`, revision 9, values
+  unchanged):
+  - Counts (119 findings): Match 118 / Minor 0 / Needs changes 1 (access-3: at 390 the state "Can't answer: no AI key" runs
+    under Settings, and under Status on Chat) / Not checked 0 / Accepted 0. org-7 and the five Minor rows of pass 4
+    (firstday-3, schedules-7, admin-12, computer-2, behaviour-4) are Match.
+  - Outside the 119: the agent header at 768–~950 px hides the name (h1 0 px) for every agent and the access-3 card overflows
+    at 768 (Needs changes); the shell's account button still shows an address as a name (Minor); the dev-stack fixes Match.
+  - firstday-3 live with a new person (Frank): only key `not_checked` → "…open the key and press Check again", the row's button
+    is Check again.
+  - Report path: `docs/audit/ux-review-5-verify/REPORT-pass5.md` (screenshots in `docs/audit/ux-review-5-verify/pass5/`, not in git).
+  - Change list sent: batch 9 (3 items, with the worker_done message): 1, 2 to lane A; 3 to lane B.
+  - Fixed in this lane (Scope 7): none (every difference is in a file a lane owns).
+  - UX review 4 regressions: none found.
+  - The cluster stays up for pass 6.
+
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
   - Report path: `UXR5/verify/REPORT-pass<N>.md`
