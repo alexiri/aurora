@@ -72,7 +72,7 @@ describe("workspace skills page", () => {
     fireEvent.change(screen.getByLabelText("Use it when…"), { target: { value: "Write release notes" } });
     fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "steps" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(created).toEqual({ name: "release-notes", description: "Write release notes", body: "steps" }));
+    await waitFor(() => expect(created).toEqual({ name: "release-notes", description: "Write release notes", body: "steps", enabled: true }));
   });
 
   it("opens with what a skill is, keeps the precedence in a closed fold, and never says home sync (workspace-10)", async () => {
