@@ -88,10 +88,10 @@ test.describe("1280×800", () => {
     const strip = rail(page);
     await expect(strip.getByRole("button", { name: "Expand status panel" })).toBeVisible();
     await expect(strip.getByRole("button")).toHaveCount(4); // expand + the three parts
-    await expect(strip.getByRole("button", { name: "Needs you: 2 approvals waiting" })).toBeVisible();
+    await expect(strip.getByRole("button", { name: "Need: 2 approvals waiting for you" })).toBeVisible();
     await expect(strip.getByRole("button", { name: /^What Daneel did: some requests were denied or failed/ })).toBeVisible();
     // (rec 3) Each part has a visible word under its icon.
-    await expect(strip.getByRole("button", { name: "Needs you: 2 approvals waiting" })).toContainText("2");
+    await expect(strip.getByRole("button", { name: "Need: 2 approvals waiting for you" })).toContainText("2");
     await expect(strip.getByText("Now", { exact: true })).toBeVisible();
     await expect(strip.getByText("Did", { exact: true })).toBeVisible();
     expect(await fits(page), "the page scrolls").toBeLessThanOrEqual(0);
@@ -125,7 +125,7 @@ test.describe("1280×800", () => {
 
   test("the Needs you icon opens a pop-over; Esc closes it and focus returns to the icon", async ({ page }) => {
     await open(page, "light");
-    const icon =rail(page).getByRole("button", { name: "Needs you: 2 approvals waiting" });
+    const icon =rail(page).getByRole("button", { name: "Need: 2 approvals waiting for you" });
     await icon.click();
     const pop = page.getByRole("dialog", { name: "Needs you" });
     await expect(pop).toBeVisible();
@@ -165,7 +165,7 @@ test.describe("1280×800", () => {
 
   test("non-approvers see no Needs you part, icon, banner or Waiting on you line", async ({ page }) => {
     await open(page, "light", { role: "member" });
-    await expect(rail(page).getByRole("button", { name: /Needs you/ })).toHaveCount(0);
+    await expect(rail(page).getByRole("button", { name: /^Need: / })).toHaveCount(0);
     await rail(page).getByRole("button", { name: "Expand status panel" }).click();
     await expect(rail(page).getByRole("heading", { name: /Needs you/ })).toHaveCount(0);
     await expect(page.getByText("Waiting on you")).toHaveCount(0);

@@ -90,7 +90,9 @@ export function stripLabels(ctx: RailContext): Record<PartId, string> {
   const working = status.working.length > 0 || ctx.open.active;
   const name = ctx.agent.name ?? "the agent";
   return {
-    needs: n === 0 ? "Needs you: nothing waiting" : `Needs you: ${n} ${n === 1 ? "approval" : "approvals"} waiting`,
+    // The name begins with the visible label "Need" and its count (WCAG 2.5.3, axe label-content-name-mismatch counts the
+    // aria-hidden label too: "Needs you: 2 …" did not contain "Need 2").
+    needs: n === 0 ? "Need: nothing waiting for you" : `Need: ${n} ${n === 1 ? "approval" : "approvals"} waiting for you`,
     doing: working ? "Doing now: working" : "Doing now: idle",
     did: status.problem ? `What ${name} did: some requests were denied or failed` : `What ${name} did: none denied or failed`,
   };
@@ -203,9 +205,10 @@ export function StatusRail({
           <PopoverTrigger asChild>
             <button type="button" aria-label={labels.needs} className={partButton}>
               <CheckCircleIcon width={20} height={20} />
-              {/* The visible text is only the count, which the accessible name ("Needs you: 2 approvals waiting") contains
-                  (WCAG 2.5.3 label in name); no cut-off word. With nothing waiting there is just the icon. */}
-              <PartLabel>Need</PartLabel>
+              {/* The visible "Need" and the count open the accessible name ("Need: 2 approvals waiting for you", WCAG 2.5.3
+                  label in name). With nothing waiting there is no count. The space matters: axe joins the label and the
+                  count as "Need2" without it. */}
+              <PartLabel>Need</PartLabel>{" "}
               <Tip>Needs you</Tip>
               {status.needs.length > 0 ? (
                 <span className="text-label font-semibold leading-none tabular-nums text-pending-ink">{status.needs.length}</span>
