@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 211 | 201 | 1 (P5-REFINE-20, batch 11 in lane A, then pass 8) | 5 (P5-GRAFANA, -FOREMAN, -RUNDECK, -SERVICENOW, -ZOOM, on hold until the owner says so) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 216 | 201 | 1 (P5-REFINE-20, batch 12 in lane A, then pass 9) | 10 (P5-LAYOUT-1..5, start when P5-REFINE-20 passes (owner); P5-GRAFANA, -FOREMAN, -RUNDECK, -SERVICENOW, -ZOOM, on hold until the owner says so) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 7 | 0 | 0 | 3 (P4-S3: specified and briefed, moved from phase 5, D-318; FIX-174 and FIX-175: briefed, moved from phase 5 by the owner 2026-11-19, P6-WARMPOOL companions) | 4 (P6-ORGTREE, P6-LIMITS, P6-WARMPOOL: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **535** | **512** | **2** | **7** | **4** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
+| **All** | **540** | **512** | **2** | **12** | **4** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
 
 ## Environment
 
