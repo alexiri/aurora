@@ -3015,6 +3015,7 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   | Ask before changes | "It asks you before changing anything in Linear." |
   | with always-allowed changes | "It asks you before changing anything in Linear, except creating issues." (more than two: "except 3 kinds of change you always allow") |
   | Change without asking | "It can change AWS without asking." |
+  | a send-only app (Outgoing webhook; its level is Ask before each send or Send without asking) | "It can send to Ops alerts, and asks you first." / "It can send to Ops alerts without asking." (the account's own name, never "Outgoing webhook (Ops alerts)"; never "can read") |
   | Custom | "In Notion it has custom access." |
   | websites with a token, AI key | counted among the accounts it can use; the AI key is not listed |
   | an account needs attention | "It can't use AWS right now: the sign-in expired." (the health line of §7) |
