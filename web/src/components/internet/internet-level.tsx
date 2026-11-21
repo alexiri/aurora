@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { inputClass } from "@/components/ui/field";
+import { Field, inputClass } from "@/components/ui/field";
 import { MainAction } from "@/components/ui/main-action";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
@@ -201,39 +201,48 @@ function PolicyDefaults({ state, edit, workspace, orgSlug }: { state: DraftState
   const list = state.uncredentialed_allowlist;
   return (
     <div className="space-y-4">
-      <label className="block max-w-md text-sm">
-        <span className="mb-1.5 block font-medium text-ink">Default rule</span>
-        <select aria-label="Default rule" aria-describedby="default-rule-llm-note" className={inputClass} value={state.default_action} onChange={(e) => edit({ ...state, default_action: e.target.value as DraftState["default_action"] })}>
-          <option value="none">{workspace ? "Let the organization decide" : "None: only rules decide"}</option>
-          <option value="allow">Allow</option>
-          <option value="block">Block</option>
-        </select>
+      <div className="max-w-md">
         {/* RFE-023 (D-66): the default rule skips governed LLM hosts; 07 §Why the Default Rule skips LLM hosts. */}
-        <span
-          id="default-rule-llm-note"
-          data-testid="default-rule-llm-note"
-          className="mt-1 block text-xs text-muted"
-          title="Agents call their model with an Aurora-injected key on every turn, so a default of Block would stop every agent. AI model traffic is controlled by the AI models rules instead. An explicit block rule that names an AI host still applies."
+        <Field
+          id="default-rule"
+          label="Default rule"
+          hint={
+            <span
+              data-testid="default-rule-llm-note"
+              title="Agents call their model with an Aurora-injected key on every turn, so a default of Block would stop every agent. AI model traffic is controlled by the AI models rules instead. An explicit block rule that names an AI host still applies."
+            >
+              Does not affect AI endpoints. See{" "}
+              <Link href={orgRoutes(orgSlug).aiModels()} className="font-medium text-link underline">
+                AI models
+              </Link>
+              . An explicit block rule that names an AI host still applies.
+            </span>
+          }
         >
-          Does not affect AI endpoints. See{" "}
-          <Link href={orgRoutes(orgSlug).aiModels()} className="font-medium text-link underline">
-            AI models
-          </Link>
-          . An explicit block rule that names an AI host still applies.
-        </span>
-      </label>
+          <Select
+            id="default-rule"
+            value={state.default_action}
+            onChange={(v) => edit({ ...state, default_action: v as DraftState["default_action"] })}
+            options={[
+              { value: "none", label: workspace ? "Let the organization decide" : "None: only rules decide" },
+              { value: "allow", label: "Allow" },
+              { value: "block", label: "Block" },
+            ]}
+          />
+        </Field>
+      </div>
       {workspace ? (
         <>
-          <label className="block max-w-md text-sm">
-            <span className="mb-1.5 block font-medium text-ink">Requests without an account</span>
-            <Select aria-label="Requests without an account" value={state.uncredentialed_default} onChange={(v) => edit({ ...state, uncredentialed_default: v as DraftState["uncredentialed_default"] })} options={[{ value: "none", label: "Let the organization decide" }, { value: "block", label: "Block" }]} />
-            <span className="mt-1 block text-xs text-muted">Websites on the allow-list stay reachable. A workspace can only restrict further what the organization sets.</span>
-          </label>
-          <label className="block max-w-md text-sm">
-            <span className="mb-1.5 block font-medium text-ink">Browser connections (not inspected)</span>
-            <Select aria-label="Browser connections (not inspected)" value={state.open_lane_posture} onChange={(v) => edit({ ...state, open_lane_posture: v as DraftState["open_lane_posture"] })} options={LANE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))} />
-            <span className="mt-1 block text-xs text-muted">Aurora can&apos;t see inside these. A workspace can only restrict further what the organization and an Aurora administrator set.</span>
-          </label>
+          <div className="max-w-md">
+            <Field id="uncredentialed-default" label="Requests without an account" hint="Websites on the allow-list stay reachable. A workspace can only restrict further what the organization sets.">
+              <Select id="uncredentialed-default" value={state.uncredentialed_default} onChange={(v) => edit({ ...state, uncredentialed_default: v as DraftState["uncredentialed_default"] })} options={[{ value: "none", label: "Let the organization decide" }, { value: "block", label: "Block" }]} />
+            </Field>
+          </div>
+          <div className="max-w-md">
+            <Field id="open-lane-posture" label="Browser connections (not inspected)" hint="Aurora can't see inside these. A workspace can only restrict further what the organization and an Aurora administrator set.">
+              <Select id="open-lane-posture" value={state.open_lane_posture} onChange={(v) => edit({ ...state, open_lane_posture: v as DraftState["open_lane_posture"] })} options={LANE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))} />
+            </Field>
+          </div>
           <section aria-label="Allow-list" className="space-y-2">
             <h3 className="text-sm font-medium text-ink">Allow-list</h3>
             {list.length === 0 ? <p className="text-sm text-ink-2">No websites listed.</p> : null}

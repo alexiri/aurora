@@ -21,7 +21,8 @@ export function Field({
   children,
 }: {
   id: string;
-  label: string;
+  /** Usually text; a node when the label carries a marker (a "Set by …" badge). */
+  label: ReactNode;
   error?: string;
   hint?: ReactNode;
   children: ReactNode;

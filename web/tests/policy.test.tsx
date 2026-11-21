@@ -206,7 +206,8 @@ describe("Internet access page (InternetLevel)", () => {
       expect(note.textContent).toMatch(/Does not affect AI endpoints\. See AI models/);
       expect(note.getAttribute("title")).toMatch(/explicit block rule that names an AI host still applies/);
       expect(screen.getByRole("link", { name: "AI models" })).toHaveAttribute("href", "/o/acme/ai-models");
-      expect(screen.getByLabelText("Default rule")).toHaveAttribute("aria-describedby", "default-rule-llm-note");
+      expect(screen.getByLabelText("Default rule")).toHaveAttribute("aria-describedby", "default-rule-hint");
+      expect(note.closest("p")).toHaveAttribute("id", "default-rule-hint");
       cleanup();
     }
   });

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ConflictGroup } from "@/components/admin/host-claims-view";
 import { PluginDetailView, PluginReview } from "@/components/admin/plugin-detail-view";
-import { UploadForm } from "@/components/admin/plugins-view";
+import { UploadDialog } from "@/components/admin/plugins-view";
 import type { HostClaimConflict, PluginPackage } from "@/lib/api/plugins";
 import { wrap } from "./support/render";
 
@@ -233,7 +233,7 @@ describe("PluginReview", () => {
   });
 });
 
-describe("UploadForm", () => {
+describe("UploadDialog", () => {
   it("renders violations from a 422", async () => {
     const calls = mockFetch(() =>
       json(422, {
@@ -245,7 +245,7 @@ describe("UploadForm", () => {
       }),
     );
     const onCancel = vi.fn();
-    wrap(<UploadForm onCancel={onCancel} />);
+    wrap(<UploadDialog open onOpenChange={(o) => !o && onCancel()} />);
     const file = new File(["x"], "notes.txt");
     fireEvent.change(screen.getByLabelText("App package"), { target: { files: [file] } });
     expect(screen.getByTestId("chosen-package")).toHaveTextContent("notes.txt");
@@ -289,7 +289,7 @@ describe("UploadForm", () => {
         },
       }),
     );
-    wrap(<UploadForm />);
+    wrap(<UploadDialog open onOpenChange={() => {}} />);
     fireEvent.change(screen.getByLabelText("App package"), { target: { files: [new File(["x"], "a.tar.gz")] } });
     fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     const list = await screen.findByRole("list", { name: "Violations" });

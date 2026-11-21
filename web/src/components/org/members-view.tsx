@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
 import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { inputClass } from "@/components/ui/field";
+import { Field, inputClass } from "@/components/ui/field";
 import { LoadMore } from "@/components/ui/load-more";
 import { ErrorNotice } from "@/components/ui/notice";
 import { copyToClipboard } from "@/components/agents/terminal-clipboard";
@@ -335,10 +335,9 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
         }}
       >
         <div className="space-y-3 text-sm">
-          <label className="block space-y-1">
-            <span className="font-medium text-ink">New role</span>
-            <Select value={bulkRole} onChange={(v) => setBulkRole(v as OrgRole)} options={roleOptions(viewer, "member").map((r) => ({ value: r, label: cap(r) }))} />
-          </label>
+          <Field id="bulk-org-role" label="New role">
+            <Select id="bulk-org-role" value={bulkRole} onChange={(v) => setBulkRole(v as OrgRole)} options={roleOptions(viewer, "member").map((r) => ({ value: r, label: cap(r) }))} />
+          </Field>
           {bulkRole !== "member" ? (
             <ul aria-label={`What ${cap(bulkRole)}s can do`} className="space-y-1">
               {ROLE_CAN.org[bulkRole].can.map((c) => (

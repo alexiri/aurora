@@ -13,6 +13,7 @@ import { api } from "@/lib/api/client";
 import { queryKeys, useAgents, useMe, useWorkspaces } from "@/lib/api/queries";
 import type { SecretScope } from "@/lib/api/secrets";
 import { unwrap } from "@/lib/api/unwrap";
+import { Field } from "@/components/ui/field";
 import { useBulk } from "@/lib/bulk";
 import { workspaceDisplayName } from "@/lib/workspace-name";
 
@@ -120,10 +121,9 @@ export function AccountsBulkBar({ picked, scope, orgId, onClear }: { picked: Acc
         }}
       >
         <div className="space-y-3 text-sm">
-          <label className="block space-y-1">
-            <span className="font-medium text-ink">Agent</span>
-            <Select value={agentId} onChange={setAgentId} disabled={loading} placeholder={loading ? "Loading…" : agents.length === 0 ? "No agents yet" : undefined} options={agents.map((a) => ({ value: a.id, label: a.label }))} />
-          </label>
+          <Field id="bulk-give-agent" label="Agent">
+            <Select id="bulk-give-agent" value={agentId} onChange={setAgentId} disabled={loading} placeholder={loading ? "Loading…" : agents.length === 0 ? "No agents yet" : undefined} options={agents.map((a) => ({ value: a.id, label: a.label }))} />
+          </Field>
           <p className="text-ink-2">Apps are given at the lowest level that exists (read only); websites and AI keys as they are.</p>
           {givable.length < n ? (
             <Notice tone="pending" role="status">

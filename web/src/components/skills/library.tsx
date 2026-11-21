@@ -8,7 +8,8 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
-import { inputClass } from "@/components/ui/field";
+import { Field, inputClass } from "@/components/ui/field";
+import { Select } from "@/components/ui/select";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
@@ -391,30 +392,23 @@ export function AddFromLibrary({
         <DialogContent title="Add from a library" description="Skills are pinned to the commit you see here." size="xl">
           <div className="space-y-4">
             {active.length > 1 ? (
-              <label className="block text-sm font-medium text-ink">
-                Library
-                <select
-                  className={`${inputClass} mt-1`}
+              <Field id="library-pick" label="Library">
+                <Select
+                  id="library-pick"
                   value={current}
-                  onChange={(e) => {
-                    setLibId(e.target.value);
+                  onChange={(v) => {
+                    setLibId(v);
                     setPicked(null);
                   }}
-                >
-                  {active.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  options={active.map((l) => ({ value: l.id, label: l.label }))}
+                />
+              </Field>
             ) : null}
             {!picked ? (
               <>
-                <label className="block text-sm font-medium text-ink">
-                  Search skills
-                  <input className={`${inputClass} mt-1`} value={q} onChange={(e) => setQ(e.target.value)} />
-                </label>
+                <Field id="library-search" label="Search skills">
+                  <input id="library-search" className={inputClass} value={q} onChange={(e) => setQ(e.target.value)} />
+                </Field>
                 {catalogue.isPending ? <Loading label="Reading the repository…" /> : null}
                 {catalogue.isError && !head ? <ErrorState error={catalogue.error} onRetry={() => catalogue.refetch()} /> : null}
                 {head ? (
