@@ -76,7 +76,6 @@ export function ModelsTab({
   const wsOptions: PickOption[] = (workspaces.data?.items ?? []).map((w) => ({ id: w.id, label: w.personal_of ? `${w.personal_of.name} (personal)` : w.name }));
   const teamOptions: PickOption[] = (groups.data?.items ?? []).map((g) => ({ id: g.id, label: g.name }));
 
-  const live = form.endpoints.filter((e) => e.allowed);
   // The one reading of "people may add their own key" (policy-presets.ts): the sentence and the row say where (every live
   // endpoint, some by name, none); the switch and the preset card act on the endpoints the organization can change.
   const where = whereKeysMayBeAdded(form.endpoints);
