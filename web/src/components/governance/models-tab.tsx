@@ -7,6 +7,7 @@ import { useAccounts } from "@/lib/api/accounts";
 import { issuesUnder, type EndpointForm, type GovForm, type GovIssues } from "@/lib/api/governance";
 import { useGroups } from "@/lib/api/groups";
 import { useMe, useWorkspaces, type Org } from "@/lib/api/queries";
+import { peopleMayAddOwnKey } from "@/lib/policy-presets";
 
 /** The names of the organization's own AI keys, read from a workspace's accounts list (scope "organization"; members may read it). */
 export function useOrgKeyNames(orgId: string): { names: string[]; pending: boolean } {
@@ -63,7 +64,8 @@ export function ModelsTab({
   const teamOptions: PickOption[] = (groups.data?.items ?? []).map((g) => ({ id: g.id, label: g.name }));
 
   const live = form.endpoints.filter((e) => e.allowed);
-  const peopleMayAdd = live.length > 0 && live.every((e) => e.key_scopes.includes("workspace"));
+  // The one reading of "people may add their own key": the switch, the sentence and the preset card all use it.
+  const peopleMayAdd = peopleMayAddOwnKey(form.endpoints) === true;
   const lead = form.endpoints[0];
   const chosenTeams = lead ? splitIds(lead.team_ids) : [];
   const chosenWs = lead ? splitIds(lead.workspace_ids) : [];

@@ -49,11 +49,34 @@ describe("organization policy presets (P5-REFINE-18 #2)", () => {
     expect(detectOrgPreset(f, orgFloors(eff(), f), "internet")).toBeNull();
   });
 
-  it("reads 'inherit' as the instance floor", () => {
+  it("reads 'inherit' as the instance floor, and Open never claims agents elsewhere under a floor of Disabled (org-7)", () => {
     const f = form({}, { posture: "", floor: "disabled" });
     const floors = orgFloors(eff(), f);
-    // Open's "inherit" matches whatever the floor is; Balanced (disabled) matches it too, Open comes first.
-    expect(detectOrgPreset(f, floors, "models")).toBe("open");
+    // Open's "inherit" would be Disabled here, which contradicts "owners may run agents elsewhere": Balanced is the match.
+    expect(detectOrgPreset(f, floors, "models")).toBe("balanced");
+    expect(orgPresetForbidden("open", floors, "models")).toBe("Set by the instance admin");
+    const free = form({}, { posture: "", floor: "owners_only" });
+    expect(detectOrgPreset(free, orgFloors(eff(), free), "models")).toBe("open");
+  });
+
+  const endpoint = (scopes: string[], over: Record<string, unknown> = {}) => ({ id: "anthropic", allowed: true, key_scopes: scopes, locked: { permitted: false, key_scopes: false, allowed_models: false }, ...over });
+
+  it("never claims Open while people may not add their own AI key, and the card writes what it says (org-7)", () => {
+    const orgKeysOnly = form({ endpoints: [endpoint(["organization"])] as never });
+    const floors = orgFloors(eff(), orgKeysOnly);
+    // The summary reads "People may not add their own": Open's sentence says they may.
+    // Not Open; and not Balanced either, since agents elsewhere are still allowed (the floor): Custom.
+    expect(detectOrgPreset(orgKeysOnly, floors, "models")).toBeNull();
+    const open = applyOrgPreset("open", orgKeysOnly, "models");
+    expect(open.endpoints[0]!.key_scopes).toEqual(["organization", "workspace"]);
+    expect(detectOrgPreset(open, floors, "models")).toBe("open");
+    const back = applyOrgPreset("balanced", open, "models");
+    expect(back.endpoints[0]!.key_scopes).toEqual(["organization"]);
+    // An endpoint that is not permitted, or whose scopes the instance set, is left alone.
+    const fixed = form({ endpoints: [endpoint(["organization"], { locked: { permitted: false, key_scopes: true, allowed_models: false } }), endpoint([], { allowed: false })] as never });
+    expect(applyOrgPreset("open", fixed, "models").endpoints.map((e) => e.key_scopes)).toEqual([["organization"], []]);
+    expect(orgPresetForbidden("open", floors, "models", fixed)).toBe("Set by the instance admin");
+    expect(orgPresetForbidden("balanced", floors, "models", fixed)).toBeNull();
   });
 
   it("disables a card that is looser than what the instance admin set, with the reason", () => {
