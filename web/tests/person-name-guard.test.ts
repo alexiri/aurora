@@ -21,6 +21,9 @@ const NOT_A_PERSON = /\b(connector|endpoint|harness|provider|shared_bot|existing
 /** A type declaration, a form field of a non-person, an API payload key. */
 const DECLARATION = /\bdisplay_name\??:|["']display_name["']|fe\.display_name|errors\.display_name|d\.display_name|set\("display_name"|put\("display_name"/;
 
+/** API labels that hold an e-mail address (`decided_by_label` is already a name). */
+const ADDRESS_LABEL = /\b(by_label|updated_by_label|created_by_label|started_by_label)\b/;
+
 /** File → text the line holds → why showing the field as it is stays. */
 const ALLOWED: { file: string; has: string; why: string }[] = [
   { file: "src/components/account/profile-view.tsx", has: "me.user.display_name", why: "the person's own name in the box where they edit it: the stored text, not a shown name" },
@@ -61,6 +64,24 @@ describe("person names are shown through personName", () => {
         });
     }
     expect(offenders, `show a person's name with personName(...) from "@/lib/workspace-name":\n${offenders.join("\n")}`).toEqual([]);
+  });
+
+  it("no component reads an API's address label (by_label, updated_by_label, created_by_label, started_by_label); it reads the person beside it (C-1102)", () => {
+    const offenders: string[] = [];
+    for (const f of files(join(WEB, "src"))) {
+      const rel = relative(WEB, f).replaceAll("\\", "/");
+      if (rel.endsWith("schema.d.ts")) continue;
+      readFileSync(f, "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          if (line.trimStart().startsWith("//") || line.trimStart().startsWith("*")) return;
+          if (ADDRESS_LABEL.test(line)) offenders.push(`${rel}:${i + 1}: ${line.trim()}`);
+        });
+    }
+    expect(offenders, `those fields hold an e-mail address; show the person ({ id, display_name }) with personName(...):\n${offenders.join("\n")}`).toEqual([]);
+    expect(ADDRESS_LABEL.test("Paused by {frozen.by_label} on")).toBe(true);
+    expect(ADDRESS_LABEL.test("{s.updated_by_label ? 1 : 2}")).toBe(true);
+    expect(ADDRESS_LABEL.test("frozen.by.display_name")).toBe(false);
   });
 
   it("the guard sees a raw name (self-check)", () => {

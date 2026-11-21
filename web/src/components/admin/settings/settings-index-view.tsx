@@ -16,6 +16,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { exportUrl, useSettingsIndex } from "@/lib/api/settings";
 import { adminRoutes, sectionHomes } from "@/lib/routes";
+import { personName } from "@/lib/workspace-name";
 
 function when(iso: string | null | undefined): string {
   if (!iso) return "never";
@@ -171,7 +172,7 @@ export function SettingsIndexView() {
                       {s.keys_total} setting{s.keys_total === 1 ? "" : "s"}
                       {s.keys_locked > 0 ? <> · <Badge>{s.keys_locked} in Helm</Badge></> : null}
                       {s.keys_dashboard > 0 ? <> · <Badge tone="accent">{s.keys_dashboard} in the dashboard</Badge></> : null}
-                      {" · "}Last change: {s.updated_by_label ? `${s.updated_by_label}, ` : ""}
+                      {" · "}Last change: {s.updated_by ? `${personName(s.updated_by.display_name)}, ` : ""}
                       {when(s.updated_at)}
                     </p>
                   </div>

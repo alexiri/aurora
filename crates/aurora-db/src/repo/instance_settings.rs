@@ -17,11 +17,14 @@ pub struct SettingsRow {
     pub generation: i64,
     pub updated_by: Option<Uuid>,
     pub updated_by_label: Option<String>,
+    /// (C-1102) The writer's display name now; null when the user is gone or unknown.
+    pub updated_by_name: Option<String>,
     pub updated_at: DateTime<Utc>,
 }
 
-const COLS: &str =
-    "section, schema_version, value, generation, updated_by, updated_by_label, updated_at";
+const COLS: &str = "section, schema_version, value, generation, updated_by, updated_by_label, \
+    (SELECT u.display_name FROM users u WHERE u.id = instance_settings.updated_by) \
+    AS updated_by_name, updated_at";
 
 pub async fn list_all<'e, E: PgExecutor<'e>>(exec: E) -> Result<Vec<SettingsRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(

@@ -401,6 +401,7 @@ export async function mockApi(
       return json({
         sections: titles.map(([section, title, description], i) => ({
           section, title, description, generation: i, updated_at: i === 0 ? null : now, updated_by_label: i === 0 ? null : "root@example.test",
+          updated_by: i === 0 ? null : { id: id(99), display_name: "Ada Lovelace" },
           keys_total: 4, keys_locked: i === 0 ? 1 : 0, keys_dashboard: i === 0 ? 0 : 2,
         })),
         locked: [{ section: "governance", key: "governance.egress.minimum_posture", entry_id: null, helm_key: "config.governance.egress.minimum_posture" }],

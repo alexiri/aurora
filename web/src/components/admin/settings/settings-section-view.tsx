@@ -23,6 +23,7 @@ import { SettingsSectionForm } from "@/components/admin/settings/settings-sectio
 import { ErrorState, Loading } from "@/components/states";
 import { PageHeader } from "@/components/ui/page-header";
 import { sectionFromSlug, useSettingsSection } from "@/lib/api/settings";
+import { personName } from "@/lib/workspace-name";
 
 const OPERATIONAL_VIEWS: Record<string, ReactNode> = {
   agents: <AgentsSettingsView />,
@@ -66,7 +67,7 @@ function GenericSectionView({ slug }: { slug: string }) {
       <PageHeader
         breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: section.title }]}
         title={section.title}
-        description={`${section.description} Last change: ${section.updated_by_label ? `${section.updated_by_label}, ` : ""}${when(section.updated_at)}.`}
+        description={`${section.description} Last change: ${section.updated_by ? `${personName(section.updated_by.display_name)}, ` : ""}${when(section.updated_at)}.`}
       />
       {/* Re-key on the generation so the form always starts from what the server holds. */}
       <SettingsSectionForm key={section.generation} section={section} onReload={() => void q.refetch()} />

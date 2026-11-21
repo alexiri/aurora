@@ -62,6 +62,8 @@ pub struct Frozen {
     pub at: DateTime<Utc>,
     pub by_user_id: Option<Uuid>,
     pub by_label: String,
+    /// (C-1102) The freezer's display name; null when the user is gone.
+    pub by_name: Option<String>,
     pub reason: String,
     pub authority: String,
 }
@@ -85,6 +87,7 @@ pub async fn get(
     let sql = format!(
         "SELECT t.frozen_at AS at, t.frozen_by_user_id AS by_user_id,
                 coalesce(u.email::text, '(deleted user)') AS by_label,
+                u.display_name AS by_name,
                 t.frozen_reason AS reason, t.frozen_authority AS authority
          FROM {} t LEFT JOIN users u ON u.id = t.frozen_by_user_id
          WHERE t.id = $1 AND t.frozen_at IS NOT NULL{}",
@@ -218,6 +221,7 @@ struct EffRow {
     at: DateTime<Utc>,
     by_user_id: Option<Uuid>,
     by_label: String,
+    by_name: Option<String>,
     reason: String,
     authority: String,
 }
@@ -232,6 +236,7 @@ impl From<EffRow> for (Uuid, Effective) {
                     at: r.at,
                     by_user_id: r.by_user_id,
                     by_label: r.by_label,
+                    by_name: r.by_name,
                     reason: r.reason,
                     authority: r.authority,
                 },
@@ -250,24 +255,27 @@ pub async fn effective_of_agents(
     }
     let rows: Vec<EffRow> = sqlx::query_as(
         "SELECT DISTINCT ON (x.agent_id) x.agent_id, x.lvl, x.at, x.by_user_id, x.by_label,
-                x.reason, x.authority
+                x.by_name, x.reason, x.authority
          FROM (
            SELECT a.id AS agent_id, 3 AS ord, 'org' AS lvl, o.frozen_at AS at,
                   o.frozen_by_user_id AS by_user_id,
                   coalesce(u.email::text, '(deleted user)') AS by_label,
+                  u.display_name AS by_name,
                   o.frozen_reason AS reason, o.frozen_authority AS authority
            FROM agents a JOIN organizations o ON o.id = a.org_id
                 LEFT JOIN users u ON u.id = o.frozen_by_user_id
            WHERE a.id = ANY($1) AND o.frozen_at IS NOT NULL
            UNION ALL
            SELECT a.id, 2, 'workspace', w.frozen_at, w.frozen_by_user_id,
-                  coalesce(u.email::text, '(deleted user)'), w.frozen_reason, w.frozen_authority
+                  coalesce(u.email::text, '(deleted user)'), u.display_name,
+                  w.frozen_reason, w.frozen_authority
            FROM agents a JOIN workspaces w ON w.id = a.workspace_id
                 LEFT JOIN users u ON u.id = w.frozen_by_user_id
            WHERE a.id = ANY($1) AND w.frozen_at IS NOT NULL
            UNION ALL
            SELECT a.id, 1, 'agent', a.frozen_at, a.frozen_by_user_id,
-                  coalesce(u.email::text, '(deleted user)'), a.frozen_reason, a.frozen_authority
+                  coalesce(u.email::text, '(deleted user)'), u.display_name,
+                  a.frozen_reason, a.frozen_authority
            FROM agents a LEFT JOIN users u ON u.id = a.frozen_by_user_id
            WHERE a.id = ANY($1) AND a.frozen_at IS NOT NULL
          ) x
@@ -318,6 +326,7 @@ struct WsRow {
     at: DateTime<Utc>,
     by_user_id: Option<Uuid>,
     by_label: String,
+    by_name: Option<String>,
     reason: String,
     authority: String,
 }
@@ -331,18 +340,20 @@ pub async fn effective_of_workspaces(
         return Ok(HashMap::new());
     }
     let rows: Vec<WsRow> = sqlx::query_as(
-        "SELECT DISTINCT ON (x.id) x.id, x.lvl, x.at, x.by_user_id, x.by_label, x.reason,
-                x.authority
+        "SELECT DISTINCT ON (x.id) x.id, x.lvl, x.at, x.by_user_id, x.by_label, x.by_name,
+                x.reason, x.authority
          FROM (
            SELECT w.id, 2 AS ord, 'org' AS lvl, o.frozen_at AS at, o.frozen_by_user_id AS by_user_id,
                   coalesce(u.email::text, '(deleted user)') AS by_label,
+                  u.display_name AS by_name,
                   o.frozen_reason AS reason, o.frozen_authority AS authority
            FROM workspaces w JOIN organizations o ON o.id = w.org_id
                 LEFT JOIN users u ON u.id = o.frozen_by_user_id
            WHERE w.id = ANY($1) AND o.frozen_at IS NOT NULL
            UNION ALL
            SELECT w.id, 1, 'workspace', w.frozen_at, w.frozen_by_user_id,
-                  coalesce(u.email::text, '(deleted user)'), w.frozen_reason, w.frozen_authority
+                  coalesce(u.email::text, '(deleted user)'), u.display_name,
+                  w.frozen_reason, w.frozen_authority
            FROM workspaces w LEFT JOIN users u ON u.id = w.frozen_by_user_id
            WHERE w.id = ANY($1) AND w.frozen_at IS NOT NULL
          ) x
@@ -362,6 +373,7 @@ pub async fn effective_of_workspaces(
                         at: r.at,
                         by_user_id: r.by_user_id,
                         by_label: r.by_label,
+                        by_name: r.by_name,
                         reason: r.reason,
                         authority: r.authority,
                     },
@@ -388,6 +400,7 @@ pub async fn frozen_of_orgs(
     let rows: Vec<OrgFrozenRow> = sqlx::query_as(
         "SELECT o.id, o.frozen_at AS at, o.frozen_by_user_id AS by_user_id,
                 coalesce(u.email::text, '(deleted user)') AS by_label,
+                u.display_name AS by_name,
                 o.frozen_reason AS reason, o.frozen_authority AS authority
          FROM organizations o LEFT JOIN users u ON u.id = o.frozen_by_user_id
          WHERE o.id = ANY($1) AND o.frozen_at IS NOT NULL",
@@ -516,6 +529,7 @@ pub struct AdminOrgRow {
     pub frozen_at: Option<DateTime<Utc>>,
     pub frozen_by_user_id: Option<Uuid>,
     pub by_label: Option<String>,
+    pub by_name: Option<String>,
     pub frozen_reason: Option<String>,
     pub frozen_authority: Option<String>,
     /// (P5-ADMDEL, C-733) No active owner.
@@ -538,7 +552,7 @@ pub struct AdminWorkspaceRow {
 }
 
 const ADMIN_ORG_COLS: &str = "o.id, o.slug, o.name, o.created_at, o.frozen_at, o.frozen_by_user_id,
-        u.email::text AS by_label, o.frozen_reason, o.frozen_authority,
+        u.email::text AS by_label, u.display_name AS by_name, o.frozen_reason, o.frozen_authority,
         NOT EXISTS (SELECT 1 FROM org_members m
                     WHERE m.org_id = o.id AND m.status = 'active' AND m.role = 'owner') AS ownerless,
         (SELECT count(*) FROM org_members m
@@ -608,6 +622,7 @@ impl AdminOrgRow {
                 .by_label
                 .clone()
                 .unwrap_or_else(|| "(deleted user)".into()),
+            by_name: self.by_name.clone(),
             reason: self.frozen_reason.clone().unwrap_or_default(),
             authority: self.frozen_authority.clone().unwrap_or_default(),
         })

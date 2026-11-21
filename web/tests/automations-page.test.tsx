@@ -189,6 +189,10 @@ describe("a schedule row", () => {
     expect(text).toContain("Paused by Carol Member");
     expect(text).toContain("Paused by Dana Admin");
     expect(text.match(/Paused by/g)).toHaveLength(2);
+    // The name, the dot and the next words are separated: no "Paused by Carol Member ·Last run" (batch 10 item 3).
+    expect(text).toMatch(/Paused by Carol Member · Last run: /);
+    expect(text).toMatch(/Paused by Dana Admin · Last delivery: /);
+    expect(text).not.toMatch(/·(Last|Never|\w)/);
   });
 
   it("Run now maps schedule_busy to words", async () => {

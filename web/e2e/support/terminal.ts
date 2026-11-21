@@ -39,7 +39,7 @@ export async function mockWithTerminal(page: Page, pty: MockPty, over: { frozen?
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
     if (over.frozen && p.endsWith("/agents")) {
       return json({
-        items: [{ ...agent, frozen: { at: "2026-01-02T00:00:00Z", authority: "workspace_owner", by_label: "ada@example.test", level: "agent", reason: "Runaway loop" } }],
+        items: [{ ...agent, frozen: { at: "2026-01-02T00:00:00Z", authority: "workspace_owner", by_label: "ada@example.test", by: { id: "00000000-0000-4000-8000-000000000099", display_name: "Ada Lovelace" }, level: "agent", reason: "Runaway loop" } }],
         next_cursor: null,
       });
     }

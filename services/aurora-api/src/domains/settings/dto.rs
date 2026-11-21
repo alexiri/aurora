@@ -22,6 +22,8 @@ pub struct SectionSummary {
     pub generation: i64,
     pub updated_at: Option<DateTime<Utc>>,
     pub updated_by_label: Option<String>,
+    /// (C-1102) The last writer by name; null when none or the user is gone.
+    pub updated_by: Option<crate::domains::freeze::dto::NamedPerson>,
     pub keys_total: i64,
     pub keys_locked: i64,
     pub keys_dashboard: i64,
@@ -143,6 +145,8 @@ pub struct SettingsSection {
     pub generation: i64,
     pub updated_at: Option<DateTime<Utc>>,
     pub updated_by_label: Option<String>,
+    /// (C-1102) The last writer by name; null when none or the user is gone.
+    pub updated_by: Option<crate::domains::freeze::dto::NamedPerson>,
     pub settings: Vec<Setting>,
     /// The words of every setting above, in the same order (C-972).
     pub fields: Vec<FieldInfo>,

@@ -486,6 +486,18 @@ Fill in per pass (the owner reads this):
   - Fixed in this lane (Scope 7): none (every difference is in a file a lane owns).
   - UX review 4 regressions: none found.
   - Exit not reached (outside-the-119 items open); the cluster stays up for pass 7.
+  - **Lane B, batch 10 items 3 and 4 (2026-11-21, branch `alexiri/p5-polish-b`):** item 3: the space after "Paused by <name> ·"
+    restored in `schedule-row.tsx` and `webhook-row.tsx`, a test on the rendered text in `automations-page.test.tsx`. Item 4
+    (C-1102, docs/05 and API_CONTRACTS first): `Frozen.by` and `SectionSummary`/`SettingsSection.updated_by` as
+    `{ id, display_name } | null` beside the kept labels; openapi.json and schema.d.ts regenerated (`spec_schema.json`
+    unchanged, no migration); ITs `freeze::frozen_records_name_the_person_beside_the_label` (agent, workspace, organization,
+    operator list) and `settings::last_writer_is_named_beside_the_label` (index, section, PUT); web uses `personName` (banner
+    says "Paused on <date>" with no person); the person-name guard now also bans reading `by_label`/`updated_by_label`/
+    `created_by_label`/`started_by_label`. Tests changed: `freeze.test.tsx`, `admin-settings.test.tsx`,
+    `automations-page.test.tsx`, `person-name-guard.test.ts`, e2e fixtures `support/terminal.ts`, `files.ts`, `mock-api.ts`.
+    Run: the new ITs and `agent_freeze_needs…` pass; `openapi_matches_checked_in` pass; 16 vitest files (161 tests) pass;
+    `pnpm typecheck`, eslint on touched dirs, `cargo fmt --check`, `extract-schema --check`, `guards/run-all.sh`, clippy
+    `-D warnings` on aurora-db and aurora-api all clean. Not run: Playwright, the full vitest suite.
 
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
