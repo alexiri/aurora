@@ -95,7 +95,7 @@ export function AgentState({
     // The line wraps inside the header's name column on a phone. The one-click fix is not inside this line: it did not fit
     // beside Status and Settings (no-model.spec at 390 px) and pushed the name out at 1256; the agent page puts it on its
     // own row under the header (`AnswerFixAction`).
-    <StatusLine tone={tone} className="min-w-0 leading-4 md:whitespace-nowrap" data-testid="agent-state">
+    <StatusLine tone={tone} className={`min-w-0 max-w-full leading-4 ${reason ? "whitespace-normal xl:whitespace-nowrap" : "whitespace-nowrap"}`} data-testid="agent-state">
       <span aria-live="polite">
         {starting ? <span aria-hidden="true" className="mr-1.5 inline-block size-3.5 animate-spin rounded-full border-2 border-line-strong border-t-accent align-middle motion-reduce:animate-none" /> : null}
         {word === "Can't answer" ? (reason ? `Can't answer: ${reason}` : "Can't answer") : word}
