@@ -88,7 +88,7 @@ impl W {
     }
 }
 
-fn of<'a>(items: &'a [Value], id: Uuid) -> &'a Value {
+fn of(items: &[Value], id: Uuid) -> &Value {
     items
         .iter()
         .find(|i| i["id"] == id.to_string())
