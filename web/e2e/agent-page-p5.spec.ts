@@ -24,11 +24,16 @@ const approvalOf = (n: number, conversation: string, title: string, m: number) =
 const IN_OPEN = approvalOf(42, MINE.id, "Merge pull request #42", 9);
 const ELSEWHERE = approvalOf(43, NIGHTLY.id, "Merge pull request #43", 4);
 
-const row = (n: number, decision: string, tool: string | null, over: Record<string, unknown> = {}) => ({
-  id: id(500 + n), agent_id: id(11), ts: new Date().toISOString(), decision, method: "GET", host: "api.github.com", path: "/x", status: 200,
-  latency_ms: 80 * n, bytes_up: 0, bytes_down: 0, injected: 0, lane: "mitm", credential_kind: "agent", tool_id: tool, ...over,
+// (P5-REFINE-11, D-415) The agent's timeline: "What Daneel did" shows its newest rows as sentences.
+const DANEEL = { id: id(11), name: "Daneel" };
+const tl = (n: number, over: Record<string, unknown>) => ({
+  id: `row:${n}`, at: new Date(Date.now() - n * 60_000).toISOString(), state: "done", agent: DANEEL, ...over,
 });
-const ACTIVITY = [row(1, "allow", "github.list_prs"), row(2, "blocked", "linear.create_issue"), row(3, "allow", null)];
+const TIMELINE = [
+  tl(1, { kind: "answered", outcome: "answered", model: "Workspace default", count: 1, link: { type: "conversation", id: MINE.id, seq: 3 } }),
+  tl(2, { kind: "called", state: "blocked", outcome: "blocked_by_rule", app: { id: "github", name: "GitHub" }, rule: { logical_id: id(70), name: "Block evil.example.org" }, count: 1, link: { type: "app", id: "github" } }),
+  tl(3, { kind: "asked_before", state: "waiting", outcome: null, host: "docs.example.org", link: { type: "approval", id: id(442) } }),
+];
 
 /** Pending approvals of the agent, the request log, and the decision route; records every decision. */
 async function mockRail(page: Page, opts: { approvals?: unknown[]; role?: string } = {}) {
@@ -40,7 +45,7 @@ async function mockRail(page: Page, opts: { approvals?: unknown[]; role?: string
     const json = (b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(b) });
     if (route.request().method() === "GET" && p === `/v1/workspaces/${ws.id}/approvals`) return json({ items: approvals, next_cursor: null });
     if (route.request().method() === "GET" && p === `/v1/workspaces/${ws.id}/action-approvals`) return json({ items: [], next_cursor: null });
-    if (route.request().method() === "GET" && p === `/v1/workspaces/${ws.id}/activity`) return json({ items: ACTIVITY, next_cursor: null });
+    if (route.request().method() === "GET" && p === `/v1/agents/${id(11)}/timeline`) return json({ items: TIMELINE, next_cursor: null });
     if (route.request().method() === "POST" && /^\/v1\/approvals\/[^/]+\/decision$/.test(p)) {
       decisions.push(p.split("/")[3]!);
       return json({ id: p.split("/")[3], status: "approved" });
@@ -101,6 +106,13 @@ test.describe("1280×800", () => {
     const panel = rail(page);
     await expect(panel.getByRole("heading", { name: "Status", level: 2 })).toBeVisible();
     await expect(panel.getByRole("heading", { level: 3 })).toHaveText(["Needs you2", "Doing now", "What Daneel did"]);
+    // (D-415) What Daneel did: the timeline's rows as sentences, each a link to its target, and All.
+    const did = panel.getByTestId("rail-did");
+    await expect(did.getByText("Daneel answered you")).toBeVisible();
+    await expect(did.getByText("Daneel called GitHub")).toBeVisible();
+    await expect(did.getByText(/Blocked by your rule ‘Block evil.example.org’/)).toBeVisible();
+    await expect(did.getByRole("link", { name: /Daneel asked before changing docs.example.org/ })).toHaveAttribute("href", /\/approvals$/);
+    await expect(panel.getByRole("link", { name: "All activity" })).toHaveAttribute("href", /\/activity\?agent=/);
     expect(await fits(page), "the page scrolls with the rail open").toBeLessThanOrEqual(0);
     expect(await page.evaluate((k) => window.localStorage.getItem(k), KEY)).toBe("expanded");
     expect(requests.filter((r) => r.startsWith("PUT ") || r.startsWith("PATCH ") || r.startsWith("POST "))).toEqual([]);

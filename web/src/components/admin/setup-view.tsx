@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -587,7 +587,7 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
           <HealthRow
             tone={endpoints.length === 0 ? "idle" : down.length > 0 ? "attention" : "ok"}
             title="AI models"
-            href={adminRoutes.aiModels("endpoints")}
+            href={adminRoutes.aiModels()}
             hrefLabel="Open AI models"
           >
             {endpoints.length === 0 ? (
@@ -622,6 +622,18 @@ function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () 
 }
 
 type View = "checklist" | "health";
+
+/**
+ * (P5-REFINE-18 #1) Health & runners › Health: the same health view as Overview's Health tab, on its own page.
+ * "Run setup again" opens Overview on the checklist.
+ */
+export function AdminHealthPanel() {
+  const setup = useAdminSetup();
+  const router = useRouter();
+  if (setup.isPending) return <Loading />;
+  if (setup.isError) return <ErrorState error={setup.error} onRetry={() => setup.refetch()} />;
+  return <HealthView setup={setup.data} onRunSetup={() => router.push(`${adminRoutes.home()}?setup=1`)} />;
+}
 
 /**
  * Administration › Overview (`14 §Agents, accounts and access` §9): the five-step checklist until the required steps are

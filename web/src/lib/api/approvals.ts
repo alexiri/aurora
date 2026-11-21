@@ -29,7 +29,6 @@ export const approvalKeys = {
   activity: (ws: string, agent: string, decision: string, host: string) =>
     ["activity", ws, agent, decision, host] as const,
   /** (P5-AGENT-2) The rail's last few request-log rows of one agent. */
-  recentActivity: (ws: string, agent: string) => ["activity", ws, "recent", agent] as const,
 };
 
 export interface PendingData {
@@ -125,18 +124,6 @@ export function useAgentPendingActionApprovals(wsId: string, agentId: string, en
       ),
     enabled: !!wsId && !!agentId && enabled,
     refetchInterval: ACTION_POLL_MS,
-    retry: false,
-  });
-}
-
-/** (P5-AGENT-2) The agent's last `limit` request-log rows; refetched every 30 s while the page is visible. */
-export function useAgentRecentActivity(wsId: string, agentId: string, limit = 5) {
-  return useQuery({
-    queryKey: approvalKeys.recentActivity(wsId, agentId),
-    queryFn: () =>
-      unwrap(api.GET("/v1/workspaces/{ws}/activity", { params: { path: { ws: wsId }, query: { agent_id: agentId, limit } } })),
-    enabled: !!wsId && !!agentId,
-    refetchInterval: 30_000,
     retry: false,
   });
 }

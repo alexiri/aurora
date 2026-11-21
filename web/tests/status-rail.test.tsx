@@ -10,7 +10,8 @@ import {
   useRailExpanded,
   writeRailPreference,
 } from "@/components/agents/status-rail/rail-state";
-import { actionsOnly, decisionBadge, hasProblem, mergeNeeds, sandboxLook, type AgentStatus } from "@/components/agents/status-rail/status-data";
+import { actionsOnly, hasProblem, mergeNeeds, sandboxLook, type AgentStatus } from "@/components/agents/status-rail/status-data";
+import type { TimelineItem } from "@/lib/api/timeline";
 import type { ActionApproval } from "@/lib/api/action-approvals";
 import type { Approval } from "@/lib/api/approvals";
 import { RAIL_OVERLAY_BELOW } from "@/components/chat/chat-panel";
@@ -38,9 +39,9 @@ const status = (over: Partial<AgentStatus> = {}): AgentStatus => ({
   needs: [],
   needsLoading: false,
   working: [],
-  recent: [],
-  recentLoading: false,
-  recentError: false,
+  did: [],
+  didLoading: false,
+  didError: false,
   problem: false,
   sandbox: undefined,
   ...over,
@@ -50,6 +51,7 @@ const ctxOf = (over: Partial<RailContext> = {}, s: Partial<AgentStatus> = {}): R
   open: { active: false, line: null },
   wsId: "w",
   base: "/o/x/w/y",
+  agentBase: "/o/x/w/y/agents/scout",
   agentId: "a1",
   agent: { name: "Scout", kind: "hosted", isDefault: true, brief: "Triage pull requests." },
   terminalAvailable: true,
@@ -57,6 +59,12 @@ const ctxOf = (over: Partial<RailContext> = {}, s: Partial<AgentStatus> = {}): R
   titleOf: (c) => c.title ?? "Untitled",
   onSelectConversation: vi.fn(),
   onNavigate: vi.fn(),
+  ...over,
+});
+const item = (over: Partial<TimelineItem> & Pick<TimelineItem, "id" | "kind">): TimelineItem => ({
+  at: new Date().toISOString(),
+  state: "done",
+  agent: { id: "a1", name: "Scout" },
   ...over,
 });
 const needs = (...n: Parameters<typeof mergeNeeds>[0]) => mergeNeeds(n, [], (id) => (id === "c1" ? "Direct chat" : null));
@@ -154,15 +162,10 @@ describe("rail data helpers", () => {
     expect(items[1]).toMatchObject({ kind: "action", requestLine: "slack.post_message", summary: "Post to #ops" });
     expect(items[0]!.title).toBeNull();
   });
-  it("labels request-log rows: an error_code reads Failed, a denial Deny", () => {
-    expect(decisionBadge({ decision: "allow", error_code: null })).toEqual({ label: "Allow", tone: "accent" });
-    expect(decisionBadge({ decision: "approved", error_code: null }).label).toBe("Allow");
-    expect(decisionBadge({ decision: "approval_expired", error_code: null })).toEqual({ label: "Held", tone: "neutral" });
-    expect(decisionBadge({ decision: "blocked", error_code: null }).label).toBe("Deny");
-    expect(decisionBadge({ decision: "default_denied", error_code: null }).label).toBe("Deny");
-    expect(decisionBadge({ decision: "allow", error_code: "upstream_timeout" })).toEqual({ label: "Failed", tone: "danger" });
-    expect(hasProblem([{ decision: "allow", error_code: null }])).toBe(false);
-    expect(hasProblem([{ decision: "allow", error_code: null }, { decision: "blocked", error_code: null }])).toBe(true);
+  it("a failed or blocked timeline row is a problem (the red dot on the collapsed icon); a waiting or done one is not", () => {
+    expect(hasProblem([{ state: "done" }, { state: "waiting" }, { state: "running" }, { state: "skipped" }])).toBe(false);
+    expect(hasProblem([{ state: "done" }, { state: "blocked" }])).toBe(true);
+    expect(hasProblem([{ state: "failed" }])).toBe(true);
   });
   it("lists only actions: the agent's own model calls are filtered out", () => {
     const rows = [{ llm_model: "claude-opus" }, { llm_model: null }, {}];
@@ -280,10 +283,12 @@ describe("expanded rail", () => {
           {
             needs: needs(gw("g1", FAR)),
             working: [{ id: "c1", title: "Direct chat", kind: "direct", external_ref: "c1", direct_user: null, active_turn: { id: "t1" } } as never],
-            recent: [
-              { id: "r1", decision: "allow", error_code: null, tool_id: "github.list_prs", method: "GET", host: "api.github.com", latency_ms: 120 },
-              { id: "r2", decision: "blocked", error_code: null, tool_id: null, method: "POST", host: "evil.test", latency_ms: 2400 },
-            ] as never,
+            did: [
+              item({ id: "turn:t1", kind: "answered", outcome: "answered", model: "Workspace default", count: 1, link: { type: "conversation", id: "c1", seq: 7 } }),
+              item({ id: "call:1", kind: "called", state: "blocked", outcome: "blocked_by_rule", app: { id: "gh", name: "GitHub" }, rule: { logical_id: "r", name: "Block evil.example.org" }, link: { type: "app", id: "gh" } }),
+              item({ id: "approval:1", kind: "asked_before", state: "waiting", outcome: null, host: "docs.example.org", link: { type: "approval", id: "p1" } }),
+              item({ id: "run:1", kind: "ran_schedule", state: "running", outcome: null, schedule: { id: "s1", name: "Morning summary" }, link: null }),
+            ],
             problem: true,
             sandbox: { state: "stopped", failure_message: null, failure_code: null } as never,
           },
@@ -294,18 +299,23 @@ describe("expanded rail", () => {
     expect(heads).toEqual(["Needs you1", "Doing now", "What Scout did"]);
     // Doing now: the open conversation's running tool from its stream.
     expect(screen.getByText("Direct chat · Running gh pr list")).toBeInTheDocument();
-    // Recent tool calls: badge, tool id or method + host, latency, link.
-    expect(screen.getByText("Allow")).toBeInTheDocument();
-    expect(screen.getByText("github.list_prs")).toBeInTheDocument();
-    expect(screen.getByText("Deny")).toBeInTheDocument();
-    expect(screen.getByText("POST evil.test")).toBeInTheDocument();
-    expect(screen.getByText("2.4 s")).toBeInTheDocument();
+    // What Scout did: the timeline's rows as sentences, each a link to its target (D-415).
+    const did = within(screen.getByTestId("rail-did"));
+    expect(did.getByRole("link", { name: /Scout answered you/ }).getAttribute("href")).toBe("/o/x/w/y/agents/scout?c=c1&m=7");
+    expect(did.getByText("Used Workspace default · 1 call · Just now")).toBeInTheDocument();
+    expect(did.getByRole("link", { name: /Scout called GitHub/ }).getAttribute("href")).toBe("/o/x/w/y/apps");
+    expect(did.getByText(/Blocked by your rule ‘Block evil.example.org’/)).toBeInTheDocument();
+    expect(did.getByRole("link", { name: /Scout asked before changing docs.example.org/ }).getAttribute("href")).toBe("/o/x/w/y/approvals");
+    expect(did.getByText(/Waiting for you in Approvals/)).toBeInTheDocument();
+    // A row with no target is plain text; a running row reads as in progress.
+    expect(did.getByText("Running ‘Morning summary’…")).toBeInTheDocument();
+    expect(did.queryByRole("link", { name: /Morning summary/ })).toBeNull();
+    expect(did.getAllByRole("listitem")).toHaveLength(4);
     expect(screen.getByRole("link", { name: "All activity" }).getAttribute("href")).toBe("/o/x/w/y/activity?agent=a1");
     expect(screen.getByRole("link", { name: "All activity" })).toHaveTextContent("All");
     // The computer is one line under Doing now, the state in words; About is gone (it lives in Settings).
     expect(screen.getByTestId("rail-computer-state")).toHaveTextContent("Asleep");
     expect(screen.getByText("On its computer")).toBeInTheDocument();
-    expect(screen.getByText("The latest things it did in apps and on websites.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Scout's computer" })).toHaveTextContent("Open");
     expect(screen.queryByRole("heading", { name: "About" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit instructions" })).toBeNull();

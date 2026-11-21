@@ -14775,6 +14775,213 @@
         ]
       }
     },
+    "/v1/agents/{agent}/timeline": {
+      "get": {
+        "tags": [
+          "timeline"
+        ],
+        "summary": "What an agent did, newest first: structured kinds and names, never sentences (C-1083).",
+        "operationId": "getAgentTimeline",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=100 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous page's `next_cursor` (older rows).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Comma-separated `TimelineKind`s.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "description": "Comma-separated outcome words.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelinePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/timeline/stream": {
+      "get": {
+        "tags": [
+          "timeline"
+        ],
+        "summary": "Server-sent events: `row` (`{op: \"upsert\", item}`), `request` (with `technical=true`) and\n`resync`; no SSE ids (C-1084).",
+        "operationId": "streamAgentTimeline",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "technical",
+            "in": "query",
+            "description": "Also send `request` events (the Technical view is open).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineStreamEvents"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/token": {
       "post": {
         "tags": [
@@ -69438,6 +69645,396 @@
           },
           "tier": {
             "type": "string"
+          }
+        }
+      },
+      "TimelineItem": {
+        "type": "object",
+        "description": "One row of an agent's timeline (C-1083).",
+        "required": [
+          "id",
+          "at",
+          "state",
+          "kind",
+          "agent"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/TimelineRef"
+          },
+          "app": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimelineRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`computer`: the first line of the command, at most 120 characters."
+          },
+          "count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`answered`, `ran_schedule`, `received_webhook`: tool calls; `called`: requests;\n`computer`: files written."
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "files": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "`computer`: at most five workspace-relative paths."
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable across the row's updates: `turn:<turn>`, `computer:<turn>:<seq>`,\n`call:<turn>:<app or host>:<outcome>`, `call:<request>`, `approval:<id>`,\n`action_approval:<id>`, `run:<id>`, `delivery:<id>`, `peer:<task>`, `access:<id>`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TimelineKind"
+          },
+          "link": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimelineLink"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The AI model's id (the turn's most used `request_log.llm_model`)."
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The kind's outcome word (C-1083); null while the row is `running` or `waiting`."
+          },
+          "peer": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimelineRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "person": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimelinePerson",
+                "description": "`answered`: who the agent answered; `asked_before`: who decided."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rule": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimelineRule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schedule": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimelineRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/TimelineState"
+          },
+          "tool": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webhook": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimelineRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "TimelineKind": {
+        "type": "string",
+        "description": "What a row says the agent did (C-1083).",
+        "enum": [
+          "answered",
+          "computer",
+          "asked_before",
+          "called",
+          "ran_schedule",
+          "received_webhook",
+          "handed_task",
+          "got_task",
+          "asked_for_access"
+        ]
+      },
+      "TimelineLink": {
+        "type": "object",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The conversation, approval, run, delivery, rule (logical id), app, peer task, or (for\n`file`) the agent."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`file`: the absolute path under `/workspace` (the Files page)."
+          },
+          "seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`conversation`: the event to scroll to."
+          },
+          "type": {
+            "$ref": "#/components/schemas/TimelineLinkType"
+          }
+        }
+      },
+      "TimelineLinkType": {
+        "type": "string",
+        "description": "What a row opens.",
+        "enum": [
+          "conversation",
+          "approval",
+          "action_approval",
+          "run",
+          "delivery",
+          "file",
+          "rule",
+          "app",
+          "peer_task"
+        ]
+      },
+      "TimelinePage": {
+        "type": "object",
+        "description": "`GET /v1/agents/{agent}/timeline`.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimelineItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TimelinePerson": {
+        "type": "object",
+        "required": [
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          }
+        }
+      },
+      "TimelineRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TimelineRequestEvent": {
+        "type": "object",
+        "description": "`event: request` of the timeline stream (C-1084, SEC-143): a new request-log row of the agent,\nsent only with `?technical=true` and only when the viewer may see its conversation (a row with\nnone is sent without its host). It carries **no path, no context label, no secret or connection\nid**: the Technical view reads the full row from `GET /workspaces/{ws}/activity`, which has its own\nauthorization, when it sees this event.",
+        "required": [
+          "id",
+          "ts",
+          "agent_id",
+          "method",
+          "decision",
+          "status"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "app_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "type": "string"
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only with a visible conversation."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "method": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "tool_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TimelineRowEvent": {
+        "type": "object",
+        "description": "`event: row` of the timeline stream (C-1084).",
+        "required": [
+          "op",
+          "item"
+        ],
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/TimelineItem"
+          },
+          "op": {
+            "type": "string",
+            "description": "Always `upsert`."
+          }
+        }
+      },
+      "TimelineRule": {
+        "type": "object",
+        "required": [
+          "logical_id",
+          "name"
+        ],
+        "properties": {
+          "logical_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TimelineState": {
+        "type": "string",
+        "description": "Where a row is now: `running` and `waiting` rows are updated in place by the stream.",
+        "enum": [
+          "running",
+          "waiting",
+          "done",
+          "failed",
+          "blocked",
+          "skipped"
+        ]
+      },
+      "TimelineStreamEvents": {
+        "type": "object",
+        "description": "The events of the timeline stream by their `event:` name (C-1084); `resync` carries `{}`.",
+        "required": [
+          "row",
+          "request"
+        ],
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/TimelineRequestEvent"
+          },
+          "row": {
+            "$ref": "#/components/schemas/TimelineRowEvent"
           }
         }
       },

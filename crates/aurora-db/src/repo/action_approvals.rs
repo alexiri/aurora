@@ -68,7 +68,20 @@ pub async fn insert(
     .bind(n.expires_in_secs)
     .execute(&mut *conn)
     .await?;
-    get(&mut *conn, id).await?.ok_or(DbError::NotFound)
+    get_hinted(conn, id).await?.ok_or(DbError::NotFound)
+}
+
+/// (P5-REFINE-9, C-1084) The row after a change, with its timeline hint queued.
+async fn get_hinted(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<ActionApprovalRow>, DbError> {
+    let row = get(&mut *conn, id).await?;
+    if let Some(r) = &row {
+        use super::timeline::{Source, hint};
+        hint(&mut *conn, r.agent_id, Source::ActionApproval, r.id).await?;
+    }
+    Ok(row)
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(
@@ -167,7 +180,7 @@ pub async fn decide(
     if done.rows_affected() == 0 {
         return Ok(None);
     }
-    get(conn, id).await
+    get_hinted(conn, id).await
 }
 
 /// `approved` -> `executed` (fenced).
@@ -185,7 +198,7 @@ pub async fn mark_executed(
     if done.rows_affected() == 0 {
         return Ok(None);
     }
-    get(conn, id).await
+    get_hinted(conn, id).await
 }
 
 /// `approved` -> `failed` with a bounded error (fenced).
@@ -206,7 +219,7 @@ pub async fn mark_failed(
     if done.rows_affected() == 0 {
         return Ok(None);
     }
-    get(conn, id).await
+    get_hinted(conn, id).await
 }
 
 /// `pending` -> `expired` (fenced).
@@ -224,7 +237,7 @@ pub async fn expire(
     if done.rows_affected() == 0 {
         return Ok(None);
     }
-    get(conn, id).await
+    get_hinted(conn, id).await
 }
 
 /// Ids of `pending` rows past `expires_at` (oldest first).

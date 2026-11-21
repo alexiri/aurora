@@ -1,18 +1,11 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 
 import type { ActionApproval } from "@/lib/api/action-approvals";
-import {
-  approvalKeys,
-  useAgentPendingActionApprovals,
-  useAgentPendingApprovals,
-  useAgentRecentActivity,
-  type Approval,
-  type RequestLogEntry,
-} from "@/lib/api/approvals";
+import { useAgentPendingActionApprovals, useAgentPendingApprovals, type Approval, type RequestLogEntry } from "@/lib/api/approvals";
 import { useSandbox, type Conversation, type SandboxView } from "@/lib/api/conversations";
+import { useAgentTimeline, useTimelineStream, type TimelineItem } from "@/lib/api/timeline";
 import { conversationTitle } from "@/lib/chat/layout";
 
 /** One thing waiting for a decision: a gateway hold or an action approval of this agent. */
@@ -65,22 +58,12 @@ export function actionsOnly<T extends Pick<RequestLogEntry, "llm_model">>(rows: 
   return rows.filter((r) => !r.llm_model);
 }
 
-export interface DecisionBadge {
-  label: "Allow" | "Held" | "Deny" | "Failed";
-  tone: "accent" | "neutral" | "danger";
-}
+/** How many timeline rows "What <Agent> did" shows (D-415). */
+export const DID_LIMIT = 5;
 
-/** The rail's badge for a request-log row: an `error_code` reads Failed; allow/approved Allow; an expired hold Held; the rest Deny. */
-export function decisionBadge(row: Pick<RequestLogEntry, "decision" | "error_code">): DecisionBadge {
-  if (row.error_code || row.decision === "error") return { label: "Failed", tone: "danger" };
-  if (row.decision === "allow" || row.decision === "approved") return { label: "Allow", tone: "accent" };
-  if (row.decision === "approval_expired") return { label: "Held", tone: "neutral" };
-  return { label: "Deny", tone: "danger" };
-}
-
-/** One of the rows was denied or failed (a `danger-ink` dot on the collapsed icon). */
-export const hasProblem = (rows: readonly Pick<RequestLogEntry, "decision" | "error_code">[]): boolean =>
-  rows.some((r) => decisionBadge(r).tone === "danger");
+/** One of the rows failed or was blocked (a `danger-ink` dot on the collapsed icon). */
+export const hasProblem = (rows: readonly Pick<TimelineItem, "state">[]): boolean =>
+  rows.some((r) => r.state === "failed" || r.state === "blocked");
 
 export interface SandboxLook {
   tone: "neutral" | "accent" | "danger";
@@ -122,36 +105,36 @@ export interface AgentStatus {
   needsLoading: boolean;
   /** Conversations with a turn in flight (from the list's `active_turn`). */
   working: Conversation[];
-  recent: RequestLogEntry[];
-  recentLoading: boolean;
-  recentError: boolean;
+  /** The last five timeline rows (D-415), newest first; updated in place by the timeline stream. */
+  did: TimelineItem[];
+  didLoading: boolean;
+  didError: boolean;
   problem: boolean;
   sandbox: SandboxView | undefined;
 }
 
 /**
  * The status rail's data (D-201), from existing routes: pending gateway approvals (C-700) and action approvals of
- * this agent (approvers only), the conversations' `active_turn`, the request log by agent, the sandbox endpoint.
+ * this agent (approvers only), the conversations' `active_turn`, the agent's timeline (D-415), the sandbox endpoint.
  * Refresh: approvals on stream events (the stream hook invalidates the agent-scoped list); action approvals every
- * 10 s; the request log when a turn ends and every 30 s while visible.
+ * 10 s; the timeline over its own stream (rows are upserted in place).
  */
 export function useAgentStatus({
   wsId,
   agentId,
   canApprove,
   conversations,
-  open,
 }: {
   wsId: string;
   agentId: string;
   canApprove: boolean;
   conversations: readonly Conversation[];
-  open: OpenTurn;
 }): AgentStatus {
-  const qc = useQueryClient();
   const gateway = useAgentPendingApprovals(wsId, agentId, canApprove);
   const actions = useAgentPendingActionApprovals(wsId, agentId, canApprove);
-  const activity = useAgentRecentActivity(wsId, agentId, 12);
+  // (P5-REFINE-11, D-415) One timeline feed and one stream per agent page; the rail's three surfaces read this.
+  const timeline = useAgentTimeline(agentId, {}, DID_LIMIT);
+  useTimelineStream(agentId);
   const sandbox = useSandbox(agentId);
 
   const byId = useMemo(() => new Map(conversations.map((c) => [c.id, c])), [conversations]);
@@ -166,27 +149,18 @@ export function useAgentStatus({
     [canApprove, gateway.data, actions.data, byId],
   );
   const working = useMemo(() => conversations.filter((c) => !!c.active_turn), [conversations]);
-  // (P5-POLISH-6) Only actions in apps and websites: the agent's own model calls (a request that carries the model it
-  // asked for, `llm_model`) are thinking, not an action, and are not listed.
-  const recent = useMemo(() => actionsOnly(activity.data?.items ?? []).slice(0, 5), [activity.data]);
-
-  // A turn ended (the open conversation's, or one fewer working conversation): its tool calls are now in the log.
-  const runningCount = Math.max(working.length, open.active ? 1 : 0);
-  const prev = useRef(runningCount);
-  useEffect(() => {
-    if (runningCount < prev.current) void qc.invalidateQueries({ queryKey: approvalKeys.recentActivity(wsId, agentId) });
-    prev.current = runningCount;
-  }, [runningCount, qc, wsId, agentId]);
+  // The newest five rows of the first page: the stream puts new rows on top and turns a running row into its outcome in place.
+  const did = useMemo(() => (timeline.data?.pages[0]?.items ?? []).slice(0, DID_LIMIT), [timeline.data]);
 
   return {
     canApprove,
     needs,
     needsLoading: canApprove && (gateway.isPending || actions.isPending),
     working,
-    recent,
-    recentLoading: activity.isPending,
-    recentError: activity.isError,
-    problem: hasProblem(recent),
+    did,
+    didLoading: timeline.isPending,
+    didError: timeline.isError,
+    problem: hasProblem(did),
     sandbox: sandbox.data,
   };
 }

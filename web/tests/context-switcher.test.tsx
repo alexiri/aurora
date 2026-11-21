@@ -308,7 +308,7 @@ describe("Administration rail", () => {
     const rail = screen.getByRole("navigation", { name: "Administration" });
     const groups = within(rail).getAllByRole("group");
     expect(groups.map((g) => g.getAttribute("aria-labelledby") && g.querySelector("p")?.textContent)).toEqual(["Policy for everyone", "This installation"]);
-    expect(within(groups[0]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["What agents may do", "Agent defaults", "Apps", "Chat platforms", "People & sign-in", "Data"]);
+    expect(within(groups[0]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["What agents may do", "Apps", "Chat platforms", "People & sign-in", "Data"]);
     expect(within(groups[1]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["Health & runners", "AI endpoints", "Set in Helm", "All settings"]);
     // The footer entry stays and is current.
     const shell = screen.getByRole("complementary", { name: "Sidebar" });

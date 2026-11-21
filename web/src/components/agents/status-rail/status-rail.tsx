@@ -10,7 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { Conversation } from "@/lib/api/conversations";
 import { cn } from "@/lib/utils";
 
-import { ComputerLine, DoingNow, NeedsYouList, PartHeading, RecentCalls, showApprovalInConversation } from "./parts";
+import { ComputerLine, DoingNow, NeedsYouList, PartHeading, WhatItDid, showApprovalInConversation } from "./parts";
 import type { AgentStatus, OpenTurn } from "./status-data";
 
 /** Everything the five parts need; shared by the expanded rail, the collapsed strip's pop-over and the phone sheet. */
@@ -19,6 +19,8 @@ export interface RailContext {
   open: OpenTurn;
   wsId: string;
   base: string;
+  /** The agent's own page (`${base}/agents/<handle>`): the rows of "What <Agent> did" link into it. */
+  agentBase: string;
   agentId: string;
   agent: { name?: string; kind: string; isDefault: boolean; brief: string | null | undefined };
   terminalAvailable: boolean;
@@ -76,7 +78,7 @@ function StatusParts({ ctx, idPrefix, onShow }: { ctx: RailContext; idPrefix: st
           <ComputerLine agentName={ctx.agent.name ?? "the agent"} sandbox={status.sandbox} onNavigate={ctx.onNavigate} />
         </div>,
       )}
-      {section("did", <WrenchIcon />, `What ${ctx.agent.name ?? "the agent"} did`, <RecentCalls status={status} activityHref={activityHref} />)}
+      {section("did", <WrenchIcon />, `What ${ctx.agent.name ?? "the agent"} did`, <WhatItDid status={status} activityHref={activityHref} base={ctx.base} agentBase={ctx.agentBase} />)}
     </div>
   );
 }

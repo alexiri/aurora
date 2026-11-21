@@ -57,7 +57,7 @@ export const GOVERNANCE_GROUPS: SettingsGroup[] = [
   },
 ];
 
-/** The governance section split over its topic pages (C-971): AI models › Rules, Internet access, Agents › BYO. */
+/** The governance section split over its topic pages (C-971): AI models › Rules, Internet access, Bring your own. */
 export const GOVERNANCE_PARTS = {
   rules: GOVERNANCE_GROUPS.filter((g) => g.title === "AI keys"),
   internet: GOVERNANCE_GROUPS.filter((g) => g.title === "Internet access"),

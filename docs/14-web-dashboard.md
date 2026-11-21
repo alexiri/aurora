@@ -563,14 +563,18 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     `triggers`, `computer`, `settings`. The computer's secondary tabs (Terminal, Files, …) collapse into a **More** menu rather
     than scrolling sideways.
   - **The header state** (D-408) is one `StatusLine`: **Can't answer: <reason>** (`no AI key`, `the key stopped working`,
-    `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; an action slot
-    beside it is P5-REFINE-12's) → **Needs you** → **Working** → **Starting its computer…** (spinner, `aria-live` polite) →
+    `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; beside it
+    the one action the API chose for the viewer (`fix`): **Give <Agent> the <key name>** (one click, "<Agent> can answer now",
+    the header turns Ready), **Add a key** (organization owners and admins: the organization's AI keys) or **Ask an admin**
+    (subject `ai_key`, with the optional reason, C-1081); with **no AI key at all** the empty chat says **"<Agent> has no AI
+    model yet"** with the same action and the composer is off (access-3, D-414)) → **Needs you** → **Working** → **Starting its computer…** (spinner, `aria-live` polite) →
     **Asleep** → **Ready**; **Ready only when the computer answers** (`SandboxView.computer.ready`, C-1059). Without computer
     data (not loaded, BYO) the older words apply.
   - **The rail** (D-201, D-415, P5-REFINE-11) has three headings: **Needs you · Doing now · What <Agent> did**. The Computer is
     one line under Doing now ("On its computer · Awake / Asleep / Starting its computer… · Open"); About moved into Settings;
-    "What <Agent> did" is today's list of recent requests with an "All" link to Activity until the agent timeline
-    (P5-REFINE-9, C-1083) feeds it live. Collapsed, each icon has a visible three-letter word (Need · Now · Did). The expanded
+    "What <Agent> did" is the agent's last five timeline rows as sentences (`timelineWords` in `lib/labels.ts`), each a link to
+    its target (`lib/timeline-links.ts`), live over the timeline stream (C-1083, C-1084: a new row on top, a running row
+    turning into its outcome in place; one stream per agent page), with "All" to Activity filtered to the agent. Collapsed, each icon has a visible three-letter word (Need · Now · Did). The expanded
     panel **overlays the transcript below 1400 px** (it no longer squeezes the chat), pushes from 1400 px up.
   - **Chat** (P5-REFINE-11): the composer is **one row until Aa** opens the formatting toolbar (the choice is kept) and Preview grows
     with its content; after sending, the transcript **always scrolls to the bottom** (and again when an image finishes loading),
@@ -672,11 +676,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     - **Doing now** (`ActivityIcon`): each conversation with an `active_turn`
       ("<title> · working", selects it), plus, for the open conversation, the
       running tool from its stream; none → "Idle".
-    - **Recent tool calls** (`WrenchIcon`): the last five request-log rows of the
-      agent (`GET …/activity?agent_id=&limit=5`): decision `Badge` (Allow, Held,
-      Deny; an `error_code` reads "Failed"), `tool_id` or method and host in
-      mono, latency; link "All activity" to the workspace Activity page filtered
-      to the agent. Refetched when a turn ends and every 30 s while visible.
+    - **What <Agent> did** (`WrenchIcon`; phase 5, P5-REFINE-11, D-415): the last five
+      rows of the agent's timeline (`GET /v1/agents/{agent}/timeline?limit=5`) as
+      sentences with their time, each a link to its target; link "All activity" to the
+      workspace Activity page filtered to the agent. Live over the timeline stream.
     - **Computer** (`MonitorIcon`): the sandbox state (same labels and tooltip as
       the header), "Open computer" (Computer section) and, where the Terminal page
       is available, "Terminal" and (phase 5, P5-FILES-2) "Files".
@@ -1271,18 +1274,26 @@ five tabs.
 | Topic | Administration (`/admin/…`) | Organization (`/o/<org>/…`) | Workspace (`/o/<org>/w/<ws>/…`) |
 |---|---|---|---|
 | Overview | `/admin`: setup checklist until done, then health | `/o/<org>`: Workspaces | `…/w/<ws>`: Overview |
-| Agents | `/admin/agents?tab=defaults\|byo\|computers\|skills` | `/o/<org>/agents?tab=byo\|skills\|previews` | `…/agents` (the list; each agent's page has Chat, Behaviour, Triggers, Computer, **Access**) and `…/skills` |
+| Agents | (Administration: **What agents may do**, below; Computers under Platform) | `/o/<org>/agents?tab=byo\|skills\|previews` | `…/agents` (the list; each agent's page has Chat, Behaviour, Triggers, Computer, **Access**) and `…/skills` |
 | Apps & accounts | `/admin/apps?tab=apps\|oauth-clients\|self-hosted\|advanced` | `/o/<org>/apps?tab=accounts\|apps\|oauth-clients\|self-hosted`, `/o/<org>/apps/<app>` | `…/apps?tab=accounts\|apps`, `…/apps/<app>` |
-| AI models | `/admin/ai-models?tab=endpoints\|rules` | `/o/<org>/ai-models` | — (AI keys are accounts) |
-| Internet access | `/admin/internet-access` | `/o/<org>/internet-access` | `…/internet-access` |
+| AI models | `/admin/ai-models` (the endpoints; the key rules are What agents may do › AI keys and rules) | `/o/<org>/ai-models` | — (AI keys are accounts) |
+| Internet access | `/admin/internet-access?tab=internet-access\|ai-keys\|byo\|defaults` (**What agents may do**: Internet access · AI keys and rules · Bring your own · Defaults) | `/o/<org>/internet-access` | `…/internet-access` |
 | People | `/admin/people?tab=users\|organizations\|sign-in\|new-users` | `/o/<org>/people?tab=members\|groups\|directory-sync` | `…/people` |
 | Chat platforms | `/admin/chat-platforms` | `/o/<org>/chat-platforms` | (agent › Triggers › Channels) |
 | Data | `/admin/data?tab=retention\|storage\|audit\|usage` | `/o/<org>/data?tab=retention\|storage\|audit\|usage` | (Settings › Audit) |
-| Platform | `/admin/platform?tab=runners\|secret-stores\|email\|limits` | — | — |
+| Platform | `/admin/platform?tab=health\|runners\|computers\|secret-stores\|email\|limits` (**Health & runners**) | — | — |
 | Settings | `/admin/settings`: **All settings** (index, search, Export, Import) | `/o/<org>/settings?tab=general\|api-keys\|danger` | `…/settings?tab=general\|api-keys\|audit\|danger` |
 
 The workspace also has **Approvals** and **Activity** (daily pages, not settings); (phase 5, P5-USAGE-2,
-D-360, C-1004) Activity has two tabs, `?tab=requests|usage` (§Usage). Notes on the table:
+D-360, C-1004) Activity has two tabs, `?tab=requests|usage` (§Usage). (phase 5, P5-REFINE-16, D-415) The requests
+tab is **sentence rows from the agents' timelines** (`GET /v1/agents/{agent}/timeline`; "Any agent" merges the
+workspace's agents' feeds, 20 at most), filters **Everything · Answers · Calls to apps · Approvals · Automations**,
+Any agent, **Any outcome · Answered · Blocked · Waited for you · Failed**, a **Details** line with the fields the row
+recorded (never a request path) and an Open link; it is **live**: the first four agents are streamed
+(`TIMELINE_STREAMS_PER_USER` is five), the others polled; a new row appears on top, a running or waiting row turns into
+its outcome in place, and while the page is scrolled new rows wait behind "3 new · Show". The Technical view (Expert)
+is the request-log table of `GET /workspaces/{ws}/activity`; it reads again on each `request` event of the streams
+(opened with `technical=true`). Notes on the table:
 - **Accounts** is the same list everywhere (§Agents, accounts and access §1). A workspace's shows its own
   accounts and the organization's shared ones. An agent's **Access** tab is that list filtered to the
   agent. The organization's shows the accounts shared with the whole organization.
@@ -1364,7 +1375,7 @@ Every setting that is inherited across levels is shown as a ladder on its topic 
 3. **Below** (Internet access only, C-964): what the levels below have tightened, as a table:
    organizations for Administration, workspaces for an organization.
 
-The ladder applies to Internet access, AI models, Agents › BYO, Data › Retention and app availability.
+The ladder applies to Internet access, AI keys and rules, Bring your own, Data › Retention and app availability.
 
 #### Who can fix this (D-349, C-981)
 
@@ -1386,14 +1397,14 @@ guide links, ladder rows and the organization's accounts.
 
   | Section | Topic page |
   |---|---|
-  | `governance` | AI key rules → AI models › Rules; egress and browser connections → Internet access; BYO agents and agent tokens → Agents › BYO |
-  | `llm` | AI models › Endpoints |
+  | `governance` | AI key rules → What agents may do › AI keys and rules; egress and browser connections → What agents may do › Internet access; BYO agents and agent tokens → What agents may do › Bring your own |
+  | `llm` | AI endpoints |
   | `sign_in`, `scim` | People › Sign-in (absorbs the Identity page) |
   | `email` | Platform › Email |
   | `secrets` | Platform › Secret stores |
-  | `agents`, `approvals` | Agents › Defaults |
-  | `terminal`, `previews` | Agents › Computers |
-  | `skills` | Agents › Skills |
+  | `agents`, `approvals` | What agents may do › Defaults |
+  | `terminal`, `previews` | Platform › Computers |
+  | `skills` | What agents may do › Defaults (the skills library refresh is its second group) |
   | `retention` | Data › Retention |
   | `limits` | Platform › Rate limits |
   | `outgoing_webhooks` (P5-WEBHOOK) | Apps & accounts › Advanced |
@@ -1670,7 +1681,7 @@ every other topic is owners/admins and is not listed for a member.)
     every conversation of this agent; the transcript is kept"; refused while a turn runs). With one
     harness enabled the field is its display name as read-only text (the id while the list loads),
     with "Your administrator chooses which programs agents can run." and, for instance admins, a
-    link to Administration › Agents › Defaults (FIX-172, D-374). **Create agent offers no harness**:
+    link to Administration › What agents may do › Defaults (FIX-172, D-374). **Create agent offers no harness**:
     a new agent gets `hosted.default_harness` and changing it is an advanced setting here (D-374).
     The agent also has a model (from
     `/v1/agents/{a}/models`), effort, proactive messaging mode.
@@ -2093,7 +2104,7 @@ table view; durations "3 h 20 min", "45 min", "under 1 min"; dates as the dashbo
 "UTC" in the opening sentence only.
 
 ### Instance administration (`/admin/*`, instance admins only)
-(phase 5, P5-REFINE-18, second part) **The rail in two halves** (`ADMIN_RAIL_GROUPS`, `lib/routes.ts`): **Overview**, then **POLICY FOR EVERYONE** (What agents may do = `/admin/internet-access`, Agent defaults = `/admin/agents`, Apps, Chat platforms, People & sign-in, Data) and **THIS INSTALLATION** (Health & runners = `/admin/platform`, AI endpoints = `/admin/ai-models`, **Set in Helm**, All settings). Route ids and tabs did not change, so no address redirects; the page titles follow the rail. The merge of the four policy topics into one tabbed "What agents may do" page and the move of Computers under Health & runners are not built (see the brief's report). **Set in Helm** (`/admin/set-in-helm`, `components/admin/set-in-helm-view.tsx`) lists every locked value from the settings index: the setting in words, its current value in words, "Set in your Helm values" with the key in `<code>`, and a link to where it is used; every "Set by the installation" pill (`LockPill`) links to its row (`#<key>`), the long "remove it from your values" text is gone from the pages, and the All settings notice is one line linking here.
+(phase 5, P5-REFINE-18, second part) **The rail in two halves** (`ADMIN_RAIL_GROUPS`, `lib/routes.ts`): **Overview**, then **POLICY FOR EVERYONE** (What agents may do = `/admin/internet-access`, Apps, Chat platforms, People & sign-in, Data) and **THIS INSTALLATION** (Health & runners = `/admin/platform`, AI endpoints = `/admin/ai-models`, **Set in Helm**, All settings). (Page merge, lane B) **What agents may do is one page with four tabs**, `?tab=internet-access|ai-keys|byo|defaults`: Internet access (the preset card first, then where organizations stand), AI keys and rules (the old AI models › Rules), Bring your own (the old Agents › BYO), Defaults (the old Agents › Defaults and Skills, as two groups). **Health & runners** has `?tab=health|runners|computers|secret-stores|email|limits`: Health is Overview's health view on its own page, Computers the old Agents › Computers. **AI endpoints** is the endpoints alone. The old Agents topic is gone from the rail. Old addresses redirect (`legacy-routes.ts`, a `LegacyGate` on the three pages that kept a path): `/admin/agents` (no tab, `defaults`, `skills`) → `…/internet-access?tab=defaults`, `?tab=byo` → `?tab=byo`, `?tab=computers` → `/admin/platform?tab=computers`; `/admin/ai-models?tab=rules` → `?tab=ai-keys`; `/admin/internet-access?tab=limits` → `?tab=internet-access`; `/admin/settings/<section>` follows the table above. **Set in Helm** (`/admin/set-in-helm`, `components/admin/set-in-helm-view.tsx`) lists every locked value from the settings index: the setting in words, its current value in words, "Set in your Helm values" with the key in `<code>`, and a link to where it is used; every "Set by the installation" pill (`LockPill`) links to its row (`#<key>`), the long "remove it from your values" text is gone from the pages, and the All settings notice is one line linking here.
 (phase 5, P5-REFINE-18, second part) **Organization presets**: `OrgPolicyPresets` (`components/policy/org-policy-presets.tsx`) shows the same three cards on **organization AI models** (key posture, outside agents) and **organization Internet access** (posture, browser connections). Choosing one writes the organization's governance document (one PUT); a card looser than what the instance admin set is disabled with "Set by the instance admin". The checklist carries one line under its five rows, "What agents may do · Open · Change" (not counted), linking to the card (`/admin/internet-access#presets`).
 (phase 5, P5-REFINE-18, second part) **Errors and saving in words**: a refused save puts each message under its field in the field's own unit ("Enter 5 minutes or more.", "Row 1: that isn't a website name. Try docs.example.org.", "That isn't a valid address range. Use a form like 10.0.0.0/24."), scrolls to the first bad field, and lists the config and environment names only under **Technical details** (`fieldErrorWords`, `technicalNames` in `lib/settings-words.ts`); a private-address refusal says "Aurora can't reach private addresses. Ask whoever installed Aurora to allow it." The saved sentence names what changed ("Saved. New agents use these defaults." on Agent defaults).
 (phase 5, P5-REFINE-18, second part) **Chat platforms** lead with the platforms: Mattermost "Available" (Add, or Added with Manage), Slack and Microsoft Teams "Not available yet" (`lib/chat-platforms.ts`); connector hosts, tokens and replicas sit in one closed **Advanced** fold on the same page. **App review** opens on the tile, "App package, version", Approve and "What this app does" (up to three sentences from the manifest, `lib/app-summary.ts`); hooks, egress, host claims, the digest and `{instance}` are in a closed **Technical details** (the agent guide stays visible). **Add AI endpoint** is two steps, **Connect and test** (Name, Address, Test connection with its result beside it, "Skip the test", Advanced options) then **Models and roles**; editing shows both on one page. **Audit log** (Administration) reads as stacked sentences ("Alice changed the web terminal settings" / "20 Nov, 14:20 · Instance settings") and hides the system's install events behind **Show system events** with the count of hidden rows (client side, from the loaded pages). **Health** says only what a real call proved, by display name ("Company AI gateway answered 2 min ago", "has not been asked yet", "did not answer at 14:02"), and lists the web terminal when it is off ("Off. People see “not available” on their agent's Computer tab." with **Turn on**); the terminal switch says "Off: people see that the terminal isn't available" beside it, neutral. **Users** show the display name, "alice · Instance admin", a **Manage** button and, when no one has any, "Roles from sign-in: none". The checklist's **Try it** comes from the server (`try_it`): it ticks itself, is not offered without an AI key ("Comes after the AI key"), and **Open chat** goes to the agent's chat with "Hello Daneel! What can you help me with?" typed and not sent; after adding the key the row says "Given to Daneel and 1 other agent already in Acme." The add-key dialog names its select **Provider**.
@@ -2156,7 +2167,7 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   `ItemList` of entries, each with a source `Badge` ("Managed by Helm" for locked entries, which open
   read-only), edited in a `FormDialog`; an id already used by a Helm entry is shown as an error on
   the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs) are one field edited as
-  a list, locked as a whole. **Harnesses** (FIX-172, D-374, C-1028) are never typed: Agents › Defaults › Hosted
+  a list, locked as a whole. **Harnesses** (FIX-172, D-374, C-1028) are never typed: What agents may do › Defaults › Hosted
   agents shows `hosted.enabled_harnesses` as a checkbox group by display name (a sentence under each), limited to
   what registered runners offer (`extra.offered_harnesses`; an unticked one no runner offers is disabled, a ticked
   one shows a warning, and with no runner registered a `Notice` says offers cannot be checked), and
@@ -2987,6 +2998,13 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 - A test never returns anything the app sent back, and is audited (SEC-129).
 
 ### 8. What an agent can do, in one place (P5-IA-2, P5-UX-7, P5-UX-10, FIX-159, D-346, D-350, C-986, C-934, C-930)
+
+- **"Did" comes from one feed (P5-REFINE-9, D-415).** What an agent did, is doing and asked is the
+  agent timeline (`GET /v1/agents/{agent}/timeline` and its stream, C-1083, C-1084, `10 §The agent
+  timeline`): structured kinds and names that the web turns into sentences from `lib/labels.ts`. The
+  screens that draw it are P5-REFINE-11 (the rail's "What <Agent> did") and P5-REFINE-16 (the
+  workspace Activity page and its Technical view); the web client is `web/src/lib/api/timeline.ts`
+  (`useAgentTimeline`, `useTimelineStream`).
 
 - **One summary, said the same way everywhere.** A few sentences, computed from the agent's accounts,
   its access and the limits above:

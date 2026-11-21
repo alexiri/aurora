@@ -23,17 +23,25 @@ const CASES: [string, string][] = [
   ["/admin/runners", "/admin/platform?tab=runners"],
   ["/admin/storage", "/admin/data?tab=storage"],
   ["/admin/audit", "/admin/data?tab=audit"],
-  ["/admin/settings/governance", "/admin/ai-models?tab=rules"],
-  ["/admin/settings/llm", "/admin/ai-models?tab=endpoints"],
+  ["/admin/settings/governance", "/admin/internet-access?tab=ai-keys"],
+  ["/admin/settings/llm", "/admin/ai-models"],
+  // (P5-REFINE-18 #1) What agents may do is one page with four tabs; Computers moved under Health & runners.
+  ["/admin/agents", "/admin/internet-access?tab=defaults"],
+  ["/admin/agents?tab=defaults", "/admin/internet-access?tab=defaults"],
+  ["/admin/agents?tab=skills", "/admin/internet-access?tab=defaults"],
+  ["/admin/agents?tab=byo", "/admin/internet-access?tab=byo"],
+  ["/admin/agents?tab=computers", "/admin/platform?tab=computers"],
+  ["/admin/ai-models?tab=rules", "/admin/internet-access?tab=ai-keys"],
+  ["/admin/internet-access?tab=limits", "/admin/internet-access?tab=internet-access"],
   ["/admin/settings/sign-in", "/admin/people?tab=sign-in"],
   ["/admin/settings/scim", "/admin/people?tab=sign-in"],
   ["/admin/settings/email", "/admin/platform?tab=email"],
   ["/admin/settings/secrets", "/admin/platform?tab=secret-stores"],
-  ["/admin/settings/agents", "/admin/agents?tab=defaults"],
-  ["/admin/settings/approvals", "/admin/agents?tab=defaults"],
-  ["/admin/settings/terminal", "/admin/agents?tab=computers"],
-  ["/admin/settings/previews", "/admin/agents?tab=computers"],
-  ["/admin/settings/skills", "/admin/agents?tab=skills"],
+  ["/admin/settings/agents", "/admin/internet-access?tab=defaults"],
+  ["/admin/settings/approvals", "/admin/internet-access?tab=defaults"],
+  ["/admin/settings/terminal", "/admin/platform?tab=computers"],
+  ["/admin/settings/previews", "/admin/platform?tab=computers"],
+  ["/admin/settings/skills", "/admin/internet-access?tab=defaults"],
   ["/admin/settings/retention", "/admin/data?tab=retention"],
   ["/admin/settings/limits", "/admin/platform?tab=limits"],
   ["/admin/settings/unknown", "/admin/settings"],
@@ -87,13 +95,18 @@ describe("legacyTarget (C-960)", () => {
     expect(legacyTarget("/o/acme/w/main/credentials", "tab=apps&connect=github")).toBe("/o/acme/w/main/apps?tab=apps&connect=github");
     expect(legacyTarget("/o/acme/credentials", "tab=connections&reconnect=c9")).toBe("/o/acme/apps?tab=accounts&reconnect=c9");
     expect(legacyTarget("/admin/plugins", "package=x", "top")).toBe("/admin/apps?tab=apps&package=x#top");
-    expect(legacyTarget("/admin/settings/governance", "", "#default_action")).toBe("/admin/ai-models?tab=rules#default_action");
+    expect(legacyTarget("/admin/settings/governance", "", "#default_action")).toBe("/admin/internet-access?tab=ai-keys#default_action");
   });
 
   it("answers null for a page that is not an old route", () => {
     for (const p of [
       "/admin",
       "/admin/people",
+      "/admin/ai-models",
+      "/admin/ai-models?tab=endpoints",
+      "/admin/internet-access",
+      "/admin/internet-access?tab=ai-keys",
+      "/admin/platform?tab=computers",
       "/admin/settings",
       "/o/acme",
       "/o/acme/apps?tab=accounts",

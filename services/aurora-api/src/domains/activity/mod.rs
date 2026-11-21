@@ -1,4 +1,5 @@
 //! Workspace activity (request-log read API).
 mod routes;
 
-pub use routes::router;
+/// (P5-REFINE-9, C-1084) The timeline stream's `request` events carry this entry.
+pub use routes::{RequestLogEntry, router};

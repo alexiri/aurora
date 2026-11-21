@@ -47,7 +47,7 @@ export function useMovedDefault() {
   return useState<MovedDefault | null>(null);
 }
 
-/** The two harness controls of Administration › Agents › Defaults, given the section they belong to. */
+/** The two harness controls of Administration › What agents may do › Defaults, given the section they belong to. */
 export function harnessControls(
   section: SettingsSection,
   moved: MovedDefault | null,

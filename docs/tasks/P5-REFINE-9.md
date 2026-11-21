@@ -293,16 +293,102 @@ verify without the integration tests listed; not Haiku.
 
 ## Completion report
 
-(Fill in when done; P5-REFINE-20 reads this.)
+(Filled 2026-11-20, lane F `p5-agent`, branch `alexiri/p5-agent`; placed here instead of lane E by the
+Orchestrator. One commit for the brief; its id is in the lane's worker_done and PROGRESS.)
 
-- **Items done** (scope items 1–6, with commit ids):
-- **Contract text changed from the draft, and why:**
-- **Deviations from this brief, and why:** (for example any source that could not be read cheaply)
-- **Computer classification:** the tool-name table per adapter, and any adapter whose summary was too poor to parse:
-- **Indexes added or needed** (with the `EXPLAIN` result):
-- **SEC number used for the visibility rule:**
-- **Performance:** p50/p95 of a 50-row page; events per second the stream sustained in the test:
-- **Screenshots compared:** none (backend brief); attach the three rows of `UXR5/after/workspace-2.png` as JSON from the
-  API:
-- **Gate counts:**
-- **Open questions for the owner:**
+- **Items done** (scope items 1–6, all in the one commit):
+  1. Contracts: C-1083 and C-1084 corrected in `docs/API_CONTRACTS.md` ("Corrections at build", "Computer rows at
+     build", pagination "At build"); `05` route rows and the `aurora_timeline` bus row; `10 §The agent timeline`;
+     `02 §Limits` (`TIMELINE_STREAMS_PER_USER`); `03` index rows; `14 §8` note; SEC-143 coverage row.
+  2. `domains/timeline/computer.rs`: the per-adapter table, command/path parsing, a credential filter, unit tests
+     per adapter (and "unknown name / unknown harness is never classified").
+  3. `GET /v1/agents/{agent}/timeline` (`domains/timeline/{routes,feed,dto}.rs`, `crates/aurora-db/src/repo/timeline.rs`):
+     eight sources, nine kinds, folding, SEC-143 visibility applied before a row is built, horizon paging.
+  4. `GET /v1/agents/{agent}/timeline/stream` (`domains/timeline/stream.rs`): `Channel::Timeline`
+     (`aurora_timeline`) in `bus.rs`; hints from `repo::{schedules::insert_run_with_id, webhooks::insert_delivery,
+     peer_tasks (insert/open/close), action_approvals (insert/decide/executed/failed/expire), access_requests
+     (open/given/dismissed/expired)}` and the gateway's `DbWriter::write` (one per agent per flush); the stream also
+     listens to `aurora_conversation` (turn steps; conversation→agent cached in the bus) and `aurora_approval`
+     (gateway approvals); in-place upserts by `id`, unchanged rows not re-sent, `technical` `request` events, 500 ms
+     coalescing, 200-event queue → `resync`, 30 s drift check → `resync`, access re-read before every batch and every
+     `STREAM_RECHECK` (losing `can_use` ends it), 5 per person (429), metrics `aurora_timeline_streams` and
+     `aurora_timeline_events_total{kind}`.
+  5. `web/src/lib/api/timeline.ts`: `useAgentTimeline` (infinite query on `next_cursor`), `useTimelineStream`
+     (`EventSource`, merge by id into every cached list of the agent that wants the row, `pendingNew` + `showNew`
+     while scrolled, refetch on `resync` and reconnect, `onRequest` for the Technical view), `mergeUpsert`,
+     `matchesFilters`, `parseRowEvent`; types from the regenerated schema. `web/openapi.json` and `schema.d.ts`
+     regenerated. No component changed.
+  6. `permission_matrix.rs`: both routes (`WsUse`; the stream session-only). SEC-143 row in
+     `docs/tests/security-coverage.md`.
+- **Contract text changed from the draft, and why:** no `newest_cursor` (nothing reads it; newer rows come from the
+  stream); `kind`/`outcome` comma-separated (the query extractor takes no repeated keys); `called` ids carry the
+  outcome (`call:<turn>:<app|host>:<outcome>`; a blocked call never hides in an allowed count) and a request without a
+  turn is `call:<request_id>`; `link.type` adds `action_approval`; outcomes add `abandoned` (asked_before) and
+  `not_approved` (called: `approval_denied`/`approval_expired`); `ran_schedule`/`received_webhook` use P5-REFINE-7's
+  actual words (`RunResult`, C-1079 `result`) via `schedules::results`; `model` is the model **id** (no per-model
+  display name exists without a provider call); automation-thread turns have no `answered` row (their run/delivery row
+  carries `model`, `count`, `duration_ms`, link to the thread); computer rows group a command with the writes after
+  it (acceptance 2's single row), `count` = files; hint `s` adds `action_approval`, gateway approvals come from
+  `aurora_approval` instead of a second hint, the request hint's `q` is the batch's oldest `ts` in µs.
+- **Deviations from this brief, and why:** the gateway listener's channel list is unchanged: the gateway only sends
+  `aurora_timeline`, it never needs to hear it. Approval create/decide needed no edit in `domains/approvals` (the
+  stream listens to the existing `aurora_approval`, which every transition already sends, from the gateway and the
+  API). `eval` conversations are not on the timeline (evaluation runs, not work). Rows of a conversation that is gone or
+  in another workspace are omitted (conservative). Requests without a turn are one row each (BYO agents, boot-time
+  requests), not folded: folding them would need an unstable id. `domains/activity/mod.rs` re-exports
+  `RequestLogEntry` (one line; `routes.rs` unchanged). No source was too costly to read once the indexes exist.
+- **Computer classification:** `claude-code` shell `Bash`, writes `Write`, `Edit`, `MultiEdit`, `NotebookEdit`; `pi`
+  `bash` | `write`, `edit`; `codex` `shell` | `apply_patch` (comma-separated paths); `goose` (1.59.2 developer) `shell`
+  | `write`, `edit`; `opencode` `bash` | `write`, `edit`, `patch`. Too poor to parse (row without files): claude-code
+  `NotebookEdit` (its summary is "NotebookEdit (N args)": `summarize` has no `notebook_path` key) and opencode `patch`
+  (no path key). Multi-line claude-code commands are cut to their first line here (its `summarize` keeps all lines).
+  Adapters unchanged.
+- **Indexes added or needed:** migration `20261201000267`: `turns (agent_id, created_at desc, id desc) where
+  role='turn'`; `transcript_events (turn_id, seq) where turn_id is not null`; `approvals`, `action_approvals`,
+  `agent_access_requests (agent_id, created_at desc, id desc)`; `peer_tasks (from_agent_id, …)`, `(to_agent_id, …)`;
+  `request_log (turn_id) where turn_id is not null`, `(agent_id, ts desc) where turn_id is null`. Schedule runs and
+  deliveries use the existing `(schedule_id, fired_at desc)` / `(webhook_id, created_at desc)` through a LATERAL per
+  automation. Chosen from the query shapes (before: turns had only `(agent_id)`, a turn's events were found by scanning
+  its conversation, the request log by workspace only). **`EXPLAIN` on realistic volume not run**: the lane's
+  throwaway databases are empty (a planner on empty tables picks sequential scans either way). Plain `CREATE INDEX`
+  inside the migration transaction: on a large `transcript_events`/`request_log` it holds a write lock while it
+  builds (noted for the upgrade).
+- **SEC number used for the visibility rule:** SEC-143.
+- **Performance:** not yet measured (other lanes were running; perf only on an idle machine). The stream test
+  delivered every event within its 2 s bound.
+- **Screenshots compared:** none (backend brief). The three rows of `UXR5/after/workspace-2.png` as the API returns
+  them (from `it/timeline.rs::every_kind_newest_first_with_structured_names`, ids shortened, null fields omitted):
+  - `{ "id": "turn:…", "kind": "answered", "state": "done", "outcome": "answered", "agent": {"name": "Dani"},
+    "person": {"display_name": "Bob Person"}, "model": "claude-sonnet-x", "count": 4, "link": {"type":
+    "conversation", …} }` ("Dani answered you · Used <model> · N calls");
+  - `{ "id": "call:…:evil.example.org:blocked_by_rule", "kind": "called", "state": "blocked", "outcome":
+    "blocked_by_rule", "host": "evil.example.org", "rule": {"logical_id": "…", "name": "Block evil.example.org"},
+    "count": 1, "link": {"type": "rule", …} }` ("Dani called … · Blocked by your rule 'Block evil.example.org'");
+  - `{ "id": "approval:…", "kind": "asked_before", "state": "waiting", "outcome": null, "host": "docs.example.org",
+    "link": {"type": "approval", …} }` ("Dani asked before changing docs.example.org · Waiting for you in Approvals").
+- **Tests changed:** new `services/aurora-api/tests/it/timeline.rs` (8 tests), `web/src/lib/api/timeline.test.ts`
+  (9); unit tests in `domains/timeline/{computer,feed}.rs`, `repo/timeline.rs`, `aurora-gateway/src/reqlog.rs`;
+  changed `crates/aurora-db/tests/it/db.rs` (`Channel::ALL` is 13), `it/permission_matrix.rs` (two rows),
+  `it/main.rs` (module). No test removed; no UI, label, route or error code changed, so no web/e2e/Playwright or
+  `scripts/e2e` file sees a change (searched: nothing references the new routes or channel). Production specs for the
+  nightly: none touched.
+- **Gate counts** (all through `heavy.sh`, throwaway Postgres `pg-p5-agent`): `cargo fmt --all --check` clean; clippy
+  `-D warnings` on aurora-api, aurora-db, aurora-gateway, aurora-core (`--all-targets`) clean; aurora-api it
+  `timeline::` 8/8 + `permission_matrix::` 3/3; touched writers' ITs (`agent_links_people`, `action_approvals`,
+  `apps_tools`, `automation_continuity`, `schedules`, `peer_tasks`, `webhooks`, `user_tokens`, `tools`, `freeze`)
+  128/128; aurora-api lib `timeline::` 17/17; aurora-db lib `timeline` 2/2 and it `oversize_payload_rejected` 1/1;
+  aurora-gateway lib `reqlog` 1/1; `openapi_matches_checked_in` regenerated then green; `pnpm gen:api` (schema.d.ts
+  regenerated); `scripts/guards/run-all.sh` all passed; `extract-schema.py --check` up to date; web `pnpm typecheck`
+  clean, eslint on the two files clean, vitest `src/lib/api/timeline.test.ts` 9/9. Not run: full suites, Playwright
+  (no UI changed), perf.
+- **Open questions for the owner:** none blocking. For P5-REFINE-11/16: a computer row folded from several commands
+  shows only its first command (the contract has no "N more commands" field); say so if the screen needs it.
+- **SEC-143 send-back (Orchestrator review, 2026-11-20), fixed on lane F in one commit, an IT or unit test per fix:**
+  1. *Peer tasks follow their origin conversation.* `peers_before`/`peer_by_id` join the origin and the task's own conversation; `peer_item` applies `sees()` on the origin when it is in this agent's workspace, else on the task's `peer` conversation (a cross-workspace `got_task` stays visible to `can_use`, as its `peer` conversation already is); fail closed without a conversation. IT `a_peer_task_from_a_direct_chat_is_seen_only_by_its_person_and_owners` (both agents' timelines and the stream).
+  2. *Peer name.* A task exists only while its link does, and `GET /agents/{agent}/links` names the peer (id, name, workspace) to any `can_use` viewer, so the timeline's peer is the same data; documented on `PeerItemRow`. IT `a_cross_workspace_peer_is_named_as_the_links_list_names_it` (viewer without access to the peer's workspace; equal to the links list).
+  3. *Technical `request` events.* `log_rows_by_ids` is removed; the event is the new `TimelineRequestEvent` (id, ts, agent id, method, host, decision, status, app, tool) built from the visibility-checked `CallRow`: `sees()` (evaluations and another member's direct chat excluded), no path, context label or ids, host only with a visible conversation. OpenAPI regenerated (`TimelineStreamEvents` documents `row` and `request`); the web client's `onRequest` now gets a `TimelineRequestEvent` and the Technical view reads the full row from the activity route. IT `technical_request_events_follow_the_visibility_rules_and_carry_no_path` (+ the existing stream test asserts no `secret-path`).
+  4. *Credential filter.* `computer.rs` now tokenizes with quotes, redacts `Authorization:`/`Cookie:`-style headers (glued or split), `Bearer`/`Basic`, `-u`/`--user`/…/`--cookie`, curl `-b`/`-d`/`-F` and `--data*`/`--json`/`--form`, `sshpass -p x`, `mysql -pSECRET`, env names ending `_PASS`/`_PW`/`_PWD`/`_PAT`/`_CREDENTIALS`/`_AUTH`/…, URLs with user information, quoted multi-word values; unit test `a_credential_in_any_common_form_never_reaches_the_row` (a canary per form) and `ordinary_commands_keep_their_flags`.
+  5. *Hosts without a conversation.* `approval_item` and `single_call_item` keep the row and drop the host (IT `a_host_is_shown_only_with_a_visible_conversation`; `filters_byo_and_refusals` updated: the BYO call row has no host).
+  6./7. *Docs:* the horizon note and the per-replica stream limit are in `10 §The agent timeline` and C-1084.
+  8. *Fail closed.* `refresh_access` ends the stream on any error; 403 added to both routes' OpenAPI responses; the comment on query extraction fixed. IT `the_stream_ends_when_its_access_cannot_be_checked` (verified to fail with the old behaviour).
+  Gates: `cargo fmt --check`, `cargo clippy -p aurora-api -p aurora-db --all-targets -- -D warnings`, `cargo test -p aurora-api --test it timeline` 13/13 (throwaway Postgres on :55433), `--lib timeline` 19/19, `openapi_matches_checked_in`, `extract-schema.py --check`, `scripts/guards/run-all.sh`, web `tsc --noEmit`.

@@ -64,7 +64,7 @@ for (const scheme of ["light", "dark"] as const) {
       await sidebar.getByRole("link", { name: "Administration" }).click();
       await expect(page).toHaveURL(/\/admin$/);
       await expect(page.getByRole("navigation", { name: "Administration" }).getByRole("link")).toHaveText([
-        "Overview", "What agents may do", "Agent defaults", "Apps", "Chat platforms", "People & sign-in", "Data", "Health & runners", "AI endpoints", "Set in Helm", "All settings",
+        "Overview", "What agents may do", "Apps", "Chat platforms", "People & sign-in", "Data", "Health & runners", "AI endpoints", "Set in Helm", "All settings",
       ]);
     });
 
@@ -104,7 +104,7 @@ const MOVED: [string, RegExp][] = [
   ["/admin/runners", /\/admin\/platform\?tab=runners$/],
   ["/admin/storage", /\/admin\/data\?tab=storage$/],
   ["/admin/audit", /\/admin\/data\?tab=audit$/],
-  ["/admin/settings/llm", /\/admin\/ai-models\?tab=endpoints$/],
+  ["/admin/settings/llm", /\/admin\/ai-models$/], // (P5-REFINE-18 item 1) AI models is one page, no tabs
   ["/admin/settings/email", /\/admin\/platform\?tab=email$/],
   ["/o/acme/members", /\/o\/acme\/people\?tab=members$/],
   ["/o/acme/groups", /\/o\/acme\/people\?tab=groups$/],
