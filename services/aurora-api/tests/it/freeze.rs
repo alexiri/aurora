@@ -596,3 +596,65 @@ async fn byo_agent_token_endpoints_answer_423_while_frozen() {
     );
     let _ = agent;
 }
+
+/// (P5-REFINE-20 batch 10, C-1102) Every pause record carries the person as `{ id, display_name }`
+/// beside `by_label` (the e-mail), on every route that returns one.
+#[tokio::test]
+async fn frozen_records_name_the_person_beside_the_label() {
+    let w = world().await;
+    sqlx::query("UPDATE users SET display_name = 'Alice Admin' WHERE id = $1")
+        .bind(w.ws_owner)
+        .execute(w.r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET display_name = 'Olive Owner' WHERE id = $1")
+        .bind(w.org_owner)
+        .execute(w.r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET display_name = 'Ida Instance' WHERE id = $1")
+        .bind(w.ia)
+        .execute(w.r.h.pool())
+        .await
+        .unwrap();
+    let agent = w.r.agent("named-pause", false).await;
+    let agent_uri = W::agent_uri(agent);
+    let ws_uri = format!("/v1/workspaces/{}", w.r.ws);
+    let org_uri = format!("/v1/orgs/{}", w.r.org);
+    let admin_uri = format!("/v1/admin/orgs/{}", w.r.org);
+    let person = |v: &Value, id: Uuid, name: &str, label: &str| {
+        assert_eq!(v["by"], json!({ "id": id, "display_name": name }), "{v}");
+        assert_eq!(v["by_label"], label, "{v}");
+    };
+
+    // Agent: the freeze result and the agent read.
+    let (s, v) = w.freeze(w.ws_owner, &agent_uri).await;
+    assert_eq!(s, 200, "{v}");
+    person(&v["frozen"], w.ws_owner, "Alice Admin", "wso@x.io");
+    let view = w.agent_view(w.member, agent).await;
+    person(&view["frozen"], w.ws_owner, "Alice Admin", "wso@x.io");
+
+    // Workspace: the freeze result and the workspace read.
+    let (s, v) = w.freeze(w.org_owner, &ws_uri).await;
+    assert_eq!(s, 200, "{v}");
+    person(&v["frozen"], w.org_owner, "Olive Owner", "oo@x.io");
+    let (s, v) = w.call(w.org_owner, Method::GET, &ws_uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    person(&v["frozen"], w.org_owner, "Olive Owner", "oo@x.io");
+
+    // Organization: the freeze result, the organization read and the operator list.
+    let (s, v) = w.freeze(w.org_owner, &org_uri).await;
+    assert_eq!(s, 200, "{v}");
+    person(&v["frozen"], w.org_owner, "Olive Owner", "oo@x.io");
+    let (s, v) = w.call(w.org_owner, Method::GET, &org_uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    person(&v["frozen"], w.org_owner, "Olive Owner", "oo@x.io");
+    let (s, v) = w.freeze(w.ia, &admin_uri).await;
+    assert_eq!(s, 200, "{v}");
+    person(&v["frozen"], w.ia, "Ida Instance", "ia@x.io");
+    let (s, v) = w
+        .call(w.ia, Method::GET, "/v1/admin/orgs?frozen=true", None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    person(&v["items"][0]["frozen"], w.ia, "Ida Instance", "ia@x.io");
+}

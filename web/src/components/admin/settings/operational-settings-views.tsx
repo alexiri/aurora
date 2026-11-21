@@ -21,6 +21,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { SettingField, SettingsCard, settingControlId } from "@/components/ui/setting-field";
 import { Unavailable } from "@/components/ui/unavailable";
 import { useSettingsSection, useSettingsSections, type SettingsSection } from "@/lib/api/settings";
+import { personName } from "@/lib/workspace-name";
 
 /*
  * The operational Admin › Settings pages (SET-5, C-782): agents & sandboxes, approvals, retention, skill
@@ -189,7 +190,7 @@ function OperationalView({
         <PageHeader
           breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: section.title }]}
           title={section.title}
-          description={`${section.description} Last change: ${section.updated_by_label ? `${section.updated_by_label}, ` : ""}${when(section.updated_at)}.`}
+          description={`${section.description} Last change: ${section.updated_by ? `${personName(section.updated_by.display_name)}, ` : ""}${when(section.updated_at)}.`}
         />
       )}
       {notice ? notice(section) : null}

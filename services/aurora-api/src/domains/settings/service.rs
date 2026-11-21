@@ -901,6 +901,13 @@ struct Plan {
     warnings: Vec<SettingWarning>,
 }
 
+/// (C-1102) The section's last writer as `{ id, display_name }`.
+fn named_writer(m: &super::handle::RowMeta) -> Option<crate::domains::freeze::dto::NamedPerson> {
+    m.updated_by
+        .clone()
+        .map(|(id, display_name)| crate::domains::freeze::dto::NamedPerson { id, display_name })
+}
+
 fn row_object(row: Option<&repo::SettingsRow>) -> (i64, Map<String, Value>) {
     match row {
         Some(r) => (
@@ -1722,6 +1729,7 @@ fn build_view_as(
         generation: m.map_or(0, |m| m.generation),
         updated_at: m.map(|m| m.updated_at),
         updated_by_label: m.and_then(|m| m.updated_by_label.clone()),
+        updated_by: m.and_then(named_writer),
         fields: aurora_config::section_fields(section)
             .into_iter()
             .map(field_info)
@@ -1841,6 +1849,7 @@ pub fn index(state: &AppState) -> SettingsIndex {
             generation: m.map_or(0, |m| m.generation),
             updated_at: m.map(|m| m.updated_at),
             updated_by_label: m.and_then(|m| m.updated_by_label.clone()),
+            updated_by: m.and_then(named_writer),
             keys_total: total,
             keys_locked: lockedn,
             keys_dashboard: dash,

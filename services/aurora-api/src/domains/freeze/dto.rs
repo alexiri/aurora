@@ -4,12 +4,21 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+/// A person as `{ id, display_name }` (C-1102; the shape of `Schedule.paused_by`).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct NamedPerson {
+    pub id: Uuid,
+    pub display_name: String,
+}
+
 /// A freeze record (phase 2, RFE-006).
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Frozen {
     pub at: DateTime<Utc>,
-    /// Who froze it (their e-mail at read time).
+    /// Who froze it (their e-mail at read time). Kept for compatibility: show `by`.
     pub by_label: String,
+    /// (C-1102) Who froze it, by name; null when the user is gone.
+    pub by: Option<NamedPerson>,
     pub reason: String,
     /// Highest authority of the freezer: `workspace_owner` | `org_admin` | `instance_admin`.
     /// Lifting needs at least this authority.
@@ -23,6 +32,11 @@ impl From<&Effective> for Frozen {
         Self {
             at: e.frozen.at,
             by_label: e.frozen.by_label.clone(),
+            by: e
+                .frozen
+                .by_user_id
+                .zip(e.frozen.by_name.clone())
+                .map(|(id, display_name)| NamedPerson { id, display_name }),
             reason: e.frozen.reason.clone(),
             authority: e.frozen.authority.clone(),
             level: e.level.as_str().to_owned(),

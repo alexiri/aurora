@@ -9852,7 +9852,8 @@ export interface components {
              *     Lifting needs at least this authority.
              */
             authority: string;
-            /** @description Who froze it (their e-mail at read time). */
+            by?: components["schemas"]["NamedPerson"] | null;
+            /** @description Who froze it (their e-mail at read time). Kept for compatibility: show `by`. */
             by_label: string;
             /** @description Where the flag is set: `agent` | `workspace` | `org`. */
             level: string;
@@ -10975,6 +10976,12 @@ export interface components {
         };
         MySpacesList: {
             items: components["schemas"]["MySpace"][];
+        };
+        /** @description A person as `{ id, display_name }` (C-1102; the shape of `Schedule.paused_by`). */
+        NamedPerson: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
         };
         NamedRef: {
             /** Format: uuid */
@@ -14694,6 +14701,7 @@ export interface components {
             title: string;
             /** Format: date-time */
             updated_at?: string | null;
+            updated_by?: components["schemas"]["NamedPerson"] | null;
             updated_by_label?: string | null;
         };
         SelectOption: {
@@ -14841,6 +14849,7 @@ export interface components {
             title: string;
             /** Format: date-time */
             updated_at?: string | null;
+            updated_by?: components["schemas"]["NamedPerson"] | null;
             updated_by_label?: string | null;
         };
         /** @description What the caller can do at this level (the page renders an action or the `who_can` sentence). */

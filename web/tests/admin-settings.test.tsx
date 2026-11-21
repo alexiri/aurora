@@ -63,6 +63,7 @@ function section(over: Record<string, unknown> = {}) {
     generation: 3,
     updated_at: "2026-11-15T10:00:00Z",
     updated_by_label: "root@x.io",
+    updated_by: { id: "u-root", display_name: "Alice Admin" },
     extra: null,
     editable: true,
     current: null,
@@ -120,7 +121,7 @@ describe("Admin › Settings index (SET-1)", () => {
         json(200, {
           sections: [
             { section: "governance", title: "Governance", description: "Floors.", generation: 0, updated_at: null, updated_by_label: null, keys_total: 4, keys_locked: 1, keys_dashboard: 2 },
-            { section: "sign_in", title: "Sign-in", description: "Providers.", generation: 2, updated_at: "2026-11-15T10:00:00Z", updated_by_label: "root@x.io", keys_total: 3, keys_locked: 0, keys_dashboard: 0 },
+            { section: "sign_in", title: "Sign-in", description: "Providers.", generation: 2, updated_at: "2026-11-15T10:00:00Z", updated_by_label: "root@x.io", updated_by: { id: "u-root", display_name: "root@x.io" }, keys_total: 3, keys_locked: 0, keys_dashboard: 0 },
           ],
           locked: [{ section: "governance", key: "governance.llm.minimum_posture", entry_id: null, helm_key: "config.governance.llm.minimum_posture" }],
         }),
@@ -128,6 +129,9 @@ describe("Admin › Settings index (SET-1)", () => {
     wrap(<SettingsIndexView />);
     expect(await screen.findByText("Governance")).toBeTruthy();
     expect(screen.getByText("Sign-in")).toBeTruthy();
+    // (C-1102) A writer stored by address is named like a person ("Root"); a section nobody wrote has no writer.
+    expect(document.body.textContent).toContain("Last change: Root, ");
+    expect(document.body.textContent).not.toContain("root@x.io");
     expect(screen.getByText("1 in Helm")).toBeTruthy();
     expect(screen.getByText("2 in the dashboard")).toBeTruthy();
     expect(screen.getByText(/1 setting is set in Helm\./)).toBeTruthy();
@@ -182,6 +186,9 @@ describe("Generic settings section form (SET-1)", () => {
     mockFetch({ "GET /v1/admin/settings/settings_test": () => json(200, section()) });
     wrap(<SettingsSectionView slug="settings-test" />);
     expect(await screen.findByText("Limit")).toBeTruthy();
+    // (C-1102) The last change names the person, never their address.
+    expect(document.body.textContent).toContain("Last change: Alice Admin, ");
+    expect(document.body.textContent).not.toContain("root@x.io");
     // Locked: read-only text, the Helm note, no control.
     expect(screen.getByTestId("t.limit-locked-value").textContent).toBe("5");
     // (P5-REFINE-18 #1) The Helm key is named once, in a short line; the long how-to lives on Set in Helm.

@@ -20,6 +20,8 @@ pub struct RowMeta {
     pub generation: i64,
     pub updated_at: DateTime<Utc>,
     pub updated_by_label: Option<String>,
+    /// (C-1102) The writer, null when the user is gone.
+    pub updated_by: Option<(uuid::Uuid, String)>,
 }
 
 /// A problem found while validating a merged view: a dotted configuration key and a message.
@@ -379,6 +381,7 @@ pub fn stored_from_rows(rows: &[repo::SettingsRow]) -> (Stored, BTreeMap<String,
                     generation: row.generation,
                     updated_at: row.updated_at,
                     updated_by_label: row.updated_by_label.clone(),
+                    updated_by: row.updated_by.zip(row.updated_by_name.clone()),
                 },
             )
         })

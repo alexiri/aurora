@@ -1184,3 +1184,43 @@ async fn a_write_refused_after_sealing_stores_nothing() {
         .unwrap();
     assert_eq!(rows, 1);
 }
+
+/// (P5-REFINE-20 batch 10, C-1102) The last writer is named beside the label, on the index, the
+/// section read and the `PUT` result; null when nothing was written.
+#[tokio::test]
+async fn last_writer_is_named_beside_the_label() {
+    let h = Harness::new().await;
+    let a = admin(&h, "root@x.io").await;
+    sqlx::query("UPDATE users SET display_name = 'Alice Admin' WHERE id = $1")
+        .bind(a.user)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let who = json!({ "id": a.user, "display_name": "Alice Admin" });
+    let untouched = get(&h, &a, "settings_test").await;
+    assert_eq!(untouched["updated_by"], Value::Null, "{untouched}");
+    let (s, v) = put(
+        &h,
+        &a,
+        "settings_test",
+        0,
+        json!({ "settings_test.flag": true }),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["updated_by"], who, "{v}");
+    assert_eq!(v["updated_by_label"], "root@x.io", "{v}");
+    let t = get(&h, &a, "settings_test").await;
+    assert_eq!(t["updated_by"], who, "{t}");
+    assert_eq!(t["updated_by_label"], "root@x.io", "{t}");
+    let (s, idx) = call(&h, &a.cookie, Method::GET, "/v1/admin/settings", None).await;
+    assert_eq!(s, 200, "{idx}");
+    let row = idx["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["section"] == "settings_test")
+        .unwrap_or_else(|| panic!("settings_test not in the index: {idx}"));
+    assert_eq!(row["updated_by"], who, "{row}");
+    assert_eq!(row["updated_by_label"], "root@x.io", "{row}");
+}

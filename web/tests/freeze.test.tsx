@@ -10,6 +10,7 @@ import { json, mockFetch } from "./support/api";
 const frozen = (over: Partial<Frozen> = {}): Frozen => ({
   at: "2026-01-02T03:04:05Z",
   by_label: "boss@example.com",
+  by: { id: "u1", display_name: "Alice Admin" },
   reason: "compromised token",
   authority: "workspace_owner",
   level: "agent",
@@ -51,9 +52,22 @@ describe("FreezeControl", () => {
 
   it("shows the banner and an enabled Resume when the caller's authority suffices", () => {
     wrap(<FreezeControl subject="agent" name="Bot" frozen={frozen()} callerRank={1} freeze={noop} unfreeze={noop} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Paused by boss@example.com on");
+    expect(screen.getByRole("status")).toHaveTextContent("Paused by Alice Admin on");
+    expect(screen.getByRole("status")).not.toHaveTextContent("boss@example.com");
     expect(screen.getByRole("status")).toHaveTextContent("compromised token");
     expect(screen.getByRole("button", { name: "Resume agent" })).toBeEnabled();
+  });
+
+  it("a pause by a person stored by address shows a name; a pause without a person says only when (C-1102)", () => {
+    const { unmount } = wrap(
+      <FreezeControl subject="agent" name="Bot" frozen={frozen({ by: { id: "u2", display_name: "erin@example.test" } })} callerRank={1} freeze={noop} unfreeze={noop} />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Paused by Erin on");
+    expect(screen.getByRole("status")).not.toHaveTextContent("@");
+    unmount();
+    wrap(<FreezeControl subject="agent" name="Bot" frozen={frozen({ by: null })} callerRank={1} freeze={noop} unfreeze={noop} />);
+    expect(screen.getByRole("status")).toHaveTextContent(/^Paused on \S/);
+    expect(screen.getByRole("status")).not.toHaveTextContent("boss@example.com");
   });
 
   it("disables Resume with the explanation when a higher authority paused it", () => {

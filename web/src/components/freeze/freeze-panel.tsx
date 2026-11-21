@@ -13,6 +13,7 @@ import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import { authorityRank, type Frozen } from "@/lib/api/freeze";
 import { useVerb } from "@/lib/palette-verb";
+import { personName } from "@/lib/workspace-name";
 
 export type FreezeSubject = "agent" | "workspace" | "org";
 
@@ -39,7 +40,7 @@ export function FrozenBanner({ frozen, subject, children }: { frozen: Frozen; su
         </p>
       ) : null}
       <p>
-        Paused by {frozen.by_label} on {date(frozen.at)}: {frozen.reason}
+        {frozen.by ? `Paused by ${personName(frozen.by.display_name)} on` : "Paused on"} {date(frozen.at)}: {frozen.reason}
       </p>
       {children}
     </Notice>

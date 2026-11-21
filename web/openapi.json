@@ -51116,9 +51116,20 @@
             "type": "string",
             "description": "Highest authority of the freezer: `workspace_owner` | `org_admin` | `instance_admin`.\nLifting needs at least this authority."
           },
+          "by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NamedPerson",
+                "description": "(C-1102) Who froze it, by name; null when the user is gone."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "by_label": {
             "type": "string",
-            "description": "Who froze it (their e-mail at read time)."
+            "description": "Who froze it (their e-mail at read time). Kept for compatibility: show `by`."
           },
           "level": {
             "type": "string",
@@ -54870,6 +54881,23 @@
             "items": {
               "$ref": "#/components/schemas/MySpace"
             }
+          }
+        }
+      },
+      "NamedPerson": {
+        "type": "object",
+        "description": "A person as `{ id, display_name }` (C-1102; the shape of `Schedule.paused_by`).",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -66512,6 +66540,17 @@
             ],
             "format": "date-time"
           },
+          "updated_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NamedPerson",
+                "description": "(C-1102) The last writer by name; null when none or the user is gone."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updated_by_label": {
             "type": [
               "string",
@@ -67025,6 +67064,17 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "updated_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NamedPerson",
+                "description": "(C-1102) The last writer by name; null when none or the user is gone."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "updated_by_label": {
             "type": [

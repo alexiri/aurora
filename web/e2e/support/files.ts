@@ -80,7 +80,7 @@ export async function mockFiles(page: Page, fs: Fs, over: { frozen?: boolean } =
     await page.route("**/v1/**", async (route) => {
       if (new URL(route.request().url()).pathname.endsWith("/agents")) {
         return ok(route, 200, {
-          items: [{ ...agent, frozen: { at: "2026-01-02T00:00:00Z", authority: "workspace_owner", by_label: "ada@example.test", level: "agent", reason: "Runaway loop" }, effective_frozen: true }],
+          items: [{ ...agent, frozen: { at: "2026-01-02T00:00:00Z", authority: "workspace_owner", by_label: "ada@example.test", by: { id: "00000000-0000-4000-8000-000000000099", display_name: "Ada Lovelace" }, level: "agent", reason: "Runaway loop" }, effective_frozen: true }],
           next_cursor: null,
         });
       }
