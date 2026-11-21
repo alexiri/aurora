@@ -11,8 +11,6 @@ const badgeVariants = cva(
         neutral: "bg-subtle text-ink-2",
         accent: "bg-accent-soft text-accent-ink",
         danger: "bg-danger-soft text-danger-ink",
-        // The amber state chip with no action beside it (the list row of a conversation whose schedule is gone, schedules-7).
-        pending: "bg-pending-soft text-pending-ink",
       },
     },
     defaultVariants: { tone: "neutral" },
@@ -21,8 +19,7 @@ const badgeVariants = cva(
 
 /**
  * A pill that always carries text, so meaning never depends on colour alone. Sentence case in every tone. There is no
- * amber tone for a need: amber is `AttentionChip` (something needs the viewer, with an action beside it); ownership is
- * `LockPill`. `pending` is only the amber of a settled state that is worth a look and has no action ("Schedule deleted").
+ * amber tone: amber is `AttentionChip` (something needs the viewer, with an action beside it); ownership is `LockPill`.
  */
 export function Badge({
   tone,

@@ -5,7 +5,7 @@ import { useState, type ComponentType, type KeyboardEvent, type ReactNode, type 
 
 import { Avatar } from "@/components/agent-avatar";
 import { ConversationActions, lifecycleError, refreshConversations } from "@/components/agents/conversation-actions";
-import { Badge } from "@/components/ui/badge";
+import { AttentionChip } from "@/components/ui/attention-chip";
 import { Button } from "@/components/ui/button";
 import { BotIcon, CalendarIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, LinkIcon, MessageIcon, PlugIcon, PlusIcon, UsersIcon } from "@/components/ui/icons";
 import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
@@ -64,11 +64,12 @@ function lineOf(c: Conversation, agentName: string | undefined, now: Date): stri
 }
 
 /** (schedules-7) The amber chip beside the title of a conversation whose schedule or webhook is gone. */
-function GoneChip({ kind }: { kind: string }) {
+function GoneChip({ kind, actionId }: { kind: string; actionId: string }) {
+  // Amber is AttentionChip (D-384): the row itself is the action beside it (open it, or delete it from its menu).
   return (
-    <Badge tone="pending" className="ml-2 align-middle">
+    <AttentionChip actionId={actionId} className="ml-2 align-middle">
       {kind === "webhook" ? "Webhook deleted" : "Schedule deleted"}
-    </Badge>
+    </AttentionChip>
   );
 }
 
@@ -199,6 +200,7 @@ export function ConversationRow({
       ) : (
         <button
           type="button"
+          id={`conversation-${c.id}`}
           onClick={onSelect}
           aria-current={selected ? "true" : undefined}
           className="flex min-h-14 min-w-0 flex-1 items-center gap-3 rounded-control px-2.5 py-2 text-left">
@@ -212,7 +214,7 @@ export function ConversationRow({
           <span className="min-w-0 flex-1">
             <span className={cn("line-clamp-2 break-words text-sm text-ink", selected ? "font-semibold" : "font-medium")}>
               {title}
-              {c.automation?.deleted ? <GoneChip kind={c.automation.kind} /> : null}
+              {c.automation?.deleted ? <GoneChip kind={c.automation.kind} actionId={`conversation-${c.id}`} /> : null}
             </span>
             {second}
             {saved.saved ? <InlineSaved show /> : null}
@@ -264,6 +266,7 @@ function FolderRow({
     <div role="group" aria-label={folderRunsLabel(folder.name, folder.thread_count)}>
       <button
         type="button"
+        id={`folder-${folder.id}`}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="flex min-h-14 w-full items-center gap-3 rounded-control px-2.5 py-2 text-left hover:bg-subtle">
@@ -274,7 +277,7 @@ function FolderRow({
           {/* A long automation name wraps to a second line; it never cuts the run count off. */}
           <span className="line-clamp-2 break-words text-sm font-medium text-ink">
             {folderRunsLabel(folder.name, folder.thread_count)}
-            {folder.deleted ? <GoneChip kind={folder.kind} /> : null}
+            {folder.deleted ? <GoneChip kind={folder.kind} actionId={`folder-${folder.id}`} /> : null}
           </span>
           <span className="line-clamp-2 break-words text-xs text-muted">
             {folder.deleted ? goneLine(folder.kind) : `${folder.kind === "webhook" ? "Webhook" : "Schedule"} · ${whenOf(folder.last_activity_at, now)}`}
