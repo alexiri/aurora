@@ -584,7 +584,7 @@ export function SecretStoresView() {
   const status = q.data;
   const reload = () => void q.refetch();
   return (
-    <div className="max-w-page space-y-8">
+    <div className="space-y-8">
       <PageHeader
         breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: "Secret stores" }]}
         title="Secret stores"

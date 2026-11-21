@@ -8,6 +8,7 @@ import { Section } from "@/components/ui/section";
 import { useProvisionConnector } from "@/lib/api/connectors";
 
 import { ConnectorError } from "./shared";
+import { cn } from "@/lib/utils";
 
 /** The phase 0..3 path: id and name, then a registration token shown once (13 §3). */
 export function SelfHostedProvision({
@@ -46,7 +47,7 @@ export function SelfHostedProvision({
         <Field id="conn-id" label="Connector id">
           <input
             id="conn-id"
-            className={`${inputClass} w-56 max-w-full`}
+            className={cn(inputClass, "w-56 max-w-full")}
             pattern="[a-z][a-z0-9\-]{1,31}"
             required
             value={id}
@@ -56,7 +57,7 @@ export function SelfHostedProvision({
         <Field id="conn-name" label="Display name">
           <input
             id="conn-name"
-            className={`${inputClass} w-64 max-w-full`}
+            className={cn(inputClass, "w-64 max-w-full")}
             maxLength={80}
             required
             value={name}

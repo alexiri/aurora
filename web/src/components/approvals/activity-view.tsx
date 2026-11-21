@@ -101,7 +101,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
   const agentBase = (id: string) => `${base}/agents/${byId.get(id)?.handle ?? id}`;
   return (
     <AltitudeScope>
-    <div className="max-w-page space-y-4">
+    <div className="space-y-4">
       <PageHeader title="Activity" description="What your agents did on the internet and through your apps." className="mb-2" />
       <div role="search" className="flex flex-wrap gap-3">
         <Select aria-label="Kind" value={kind} className="w-48 max-w-full" onChange={(v) => setKind(v as ActivityKind | "")} options={Object.entries(ACTIVITY_KIND).map(([v, e]) => ({ value: v, label: e.label }))} />

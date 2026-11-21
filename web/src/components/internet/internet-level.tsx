@@ -352,7 +352,7 @@ export function InternetLevel(p: InternetLevelProps) {
         )
       : null;
     return (
-      <div className="max-w-page space-y-6">
+      <div className="space-y-6">
         {header(
           memberSummary ? (
             <>
@@ -436,7 +436,7 @@ export function InternetLevel(p: InternetLevelProps) {
   }
 
   return (
-    <div className="max-w-page space-y-8">
+    <div className="space-y-8">
       {p.hideHeader ? null : header(
         workspace ? (
           <>

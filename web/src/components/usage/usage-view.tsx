@@ -480,7 +480,7 @@ export function UsageView({ level }: { level: UsageLevel }) {
   }
 
   return (
-    <div className="max-w-page space-y-5" data-testid="usage-view">
+    <div className="space-y-5" data-testid="usage-view">
       {agentName ? (
         <h2 className="font-display text-lg font-semibold text-ink">Usage of {agentName}</h2>
       ) : null}

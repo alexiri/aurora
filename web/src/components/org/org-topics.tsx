@@ -294,19 +294,20 @@ export function OrgSettingsPage() {
           idBase="org-settings"
           title="Settings"
           description="The organization's name and limits, its API keys, and deletion."
-          width="max-w-page-narrow"
           tabs={[
             {
               id: "general",
               label: "General",
               content: (
-                <Section id="org-general" title="General" card>
-                  <GeneralForm key={`${org.slug}:${org.name}`} org={org} isOwner={org.my_role === "owner"} />
-                </Section>
+                <div className="max-w-page-narrow">
+                  <Section id="org-general" title="General" card>
+                    <GeneralForm key={`${org.slug}:${org.name}`} org={org} isOwner={org.my_role === "owner"} />
+                  </Section>
+                </div>
               ),
             },
             { id: "api-keys", label: "API keys", content: <OrgKeysView orgId={org.id} /> },
-            { id: "danger", label: "Danger zone", content: <OrgDangerSections org={org} /> },
+            { id: "danger", label: "Danger zone", content: <div className="max-w-page-narrow"><OrgDangerSections org={org} /></div> },
           ]}
         />
       )}

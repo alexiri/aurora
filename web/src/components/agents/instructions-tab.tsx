@@ -176,13 +176,16 @@ export function InstructionsTab({
 
   return (
     <div className="space-y-6">
-      <form onSubmit={(e) => void submit(e)} noValidate className="space-y-5 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+      {/* (FIX-212) Fields share a line when the form itself is wide enough (`@container` + `@xl:`, 36 rem), not from a
+          viewport breakpoint: beside the sidebar and the Settings sub-nav the form is ~230 px at 768 px, and fixed md:w-80
+          columns made the page scroll 330 px sideways (agent-tabs.spec at 768 px). */}
+      <form onSubmit={(e) => void submit(e)} noValidate className="@container space-y-5 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
         {/* (FIX-212) Who it is: the picture and the name share a line from md. */}
-        <div className="space-y-5 md:flex md:items-start md:gap-6 md:space-y-0">
-          <div className="md:shrink-0">
+        <div className="space-y-5 @xl:flex @xl:items-start @xl:gap-6 @xl:space-y-0">
+          <div className="@xl:shrink-0">
             <AvatarField agent={agent} wsId={wsId} />
           </div>
-          <Field id="a-name" label="Name" error={clientErr || fe.name} className="md:min-w-0 md:flex-1">
+          <Field id="a-name" label="Name" error={clientErr || fe.name} className="@xl:min-w-0 @xl:flex-1">
             <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
           </Field>
         </div>
@@ -194,8 +197,8 @@ export function InstructionsTab({
           <textarea id="a-brief" className={`${inputClass} resize-y`} rows={14} value={brief} onChange={(e) => setBrief(e.target.value)} />
         </Field>
         {/* (FIX-212) How it runs: the model at a field width, the message-first switch beside it from md. */}
-        <div className="space-y-5 md:flex md:items-start md:gap-8 md:space-y-0">
-        <Field id="a-model" label="Model" error={roleErrors.model} hint={modelHint(agent.kind, models.data?.items.length, models.isError, agent.name)} className="md:w-80 md:shrink-0">
+        <div className="space-y-5 @xl:flex @xl:items-start @xl:gap-8 @xl:space-y-0">
+        <Field id="a-model" label="Model" error={roleErrors.model} hint={modelHint(agent.kind, models.data?.items.length, models.isError, agent.name)} className="@xl:w-80 @xl:shrink-0">
           <select
             id="a-model"
             className={`${inputClass} truncate`}
@@ -231,7 +234,7 @@ export function InstructionsTab({
             hint="For example when a schedule finds something."
             checked={proactive !== "off"}
             onChange={(on) => setProactive(on ? (agent.proactive_messaging !== "off" ? agent.proactive_messaging : "ask") : "off")}
-            className="md:min-w-0 md:flex-1 md:pt-7"
+            className="@xl:min-w-0 @xl:flex-1 @xl:pt-7"
           />
         </Altitude>
         </div>
@@ -250,11 +253,11 @@ export function InstructionsTab({
             <p className="text-sm font-medium text-ink">Advanced</p>
             <Notice role="status">Advanced is for admins and power users. Most people never need it.</Notice>
             {/* (FIX-212) Agent program and Effort share a line from md, each at its own width. */}
-            <div className="space-y-5 md:flex md:items-start md:gap-8 md:space-y-0">
+            <div className="space-y-5 @xl:flex @xl:items-start @xl:gap-8 @xl:space-y-0">
             <Field
               id="a-harness"
               label="Agent program"
-              className="md:w-80 md:shrink-0"
+              className="@xl:w-80 @xl:shrink-0"
               error={fe.harness}
               hint={
                 showPicker ? (
@@ -292,7 +295,7 @@ export function InstructionsTab({
                 </p>
               )}
             </Field>
-            <Field id="a-effort" label="Effort" error={fe.effort} className="md:w-48 md:shrink-0">
+            <Field id="a-effort" label="Effort" error={fe.effort} className="@xl:w-48 @xl:shrink-0">
               <Select id="a-effort" value={effort} placeholder="Default" onChange={setEffort} options={["low", "medium", "high", "max"].map((o) => ({ value: o, label: o }))} />
             </Field>
             </div>

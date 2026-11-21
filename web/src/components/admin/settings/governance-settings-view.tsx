@@ -90,7 +90,7 @@ export function GovernanceSettingsView() {
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const section = q.data;
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: section.title }]}
         title={section.title}
@@ -117,7 +117,7 @@ function OrgsStanding() {
   const cursor = cursors[cursors.length - 1];
   const q = useGovernanceOrgs(cursor);
   return (
-    <section aria-labelledby="orgs-standing" className="max-w-5xl space-y-3">
+    <section aria-labelledby="orgs-standing" className="space-y-3">
       <FormSection title="Where organizations stand" description="Each organization's effective postures under the settings above. Stricter: the organization's own value is tighter than the floor. Clamped: its own value is looser and the floor overrides it.">
         <span id="orgs-standing" className="sr-only">
           Where organizations stand
