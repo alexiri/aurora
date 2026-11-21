@@ -2,7 +2,7 @@
 //! FIX-123 (D-195(a), D-215, 09 §10 *Superseded apps*): `github-app` / `github-app-ghes` /
 //! `aws-role` became connect methods of `github` / `github-ghes` / `aws-keys`. Activating the
 //! version that has the method moves the old apps' connections (ids, credentials, grants kept),
-//! instances, skill libraries and availability, deletes the old pair's host-claim decisions and
+//! instances and availability, deletes the old pair's host-claim decisions and
 //! retires the old package; rerunning is a no-op.
 
 use crate::common::*;
@@ -211,8 +211,6 @@ async fn seed(h: &Harness) -> Seed {
     .await;
     sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools) VALUES ($1,$2,$3,$4,'custom','{get_repo,list_issues}','{}')")
         .bind(Uuid::now_v7()).bind(ws).bind(agent).bind(c_app).execute(p).await.unwrap();
-    sqlx::query("INSERT INTO skill_libraries (id, org_id, label, connection_id, app_id, repo) VALUES ($1,$2,'lib',$3,'github-app','example/skills')")
-        .bind(Uuid::now_v7()).bind(org).bind(c_app).execute(p).await.unwrap();
     sqlx::query("INSERT INTO org_app_availability (org_id, app_id, workspace_id) VALUES ($1,'github-app',NULL)")
         .bind(org).execute(p).await.unwrap();
     sqlx::query("INSERT INTO host_claim_decisions (id, claim_key, claim_fingerprint, winner_package_id, winner_app_id) VALUES ($1,'api.github.com|/','f','github-app','github-app')")
@@ -350,13 +348,8 @@ async fn approving_github_moves_the_github_app_connections_and_retires_the_packa
             vec!["get_repo".into(), "list_issues".into()]
         )
     );
-    // Libraries and availability follow the app; the decision between the old pair is gone.
-    let lib: String = sqlx::query_scalar("SELECT app_id FROM skill_libraries WHERE org_id = $1")
-        .bind(s.org)
-        .fetch_one(h.pool())
-        .await
-        .unwrap();
-    assert_eq!(lib, "github");
+    // Availability follows the app; the decision between the old pair is gone. (Skill libraries
+    // no longer belong to an app, P5-SKLIB-1: there is nothing of them to move.)
     let avail: Vec<String> =
         sqlx::query_scalar("SELECT app_id FROM org_app_availability WHERE org_id = $1")
             .bind(s.org)

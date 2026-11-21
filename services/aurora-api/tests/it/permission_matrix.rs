@@ -1057,6 +1057,13 @@ const ROWS: &[Row] = &[
     // (unknown owner scope here: authentication only) and approve/reject/detach are session-only
     r("GET", "/v1/orgs/{org}/skill-libraries", G::UseAny, false),
     r("POST", "/v1/orgs/{org}/skill-libraries", G::Admin, false),
+    // (P5-SKLIB-1, C-1124) the check before saving: the same authority as adding a library
+    r(
+        "POST",
+        "/v1/orgs/{org}/skill-libraries/check",
+        G::Admin,
+        false,
+    ),
     r("GET", "/v1/skill-libraries/{id}", G::Auth, false),
     r("PATCH", "/v1/skill-libraries/{id}", G::Auth, false),
     r("DELETE", "/v1/skill-libraries/{id}", G::Auth, false),
@@ -1751,7 +1758,10 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"name": "s", "description": "d", "body": "b"})
         }
         ("POST", "/v1/orgs/{org}/skill-libraries") => {
-            json!({"label": "matrix", "connection_id": Uuid::now_v7(), "repo": "a/b"})
+            json!({"label": "matrix", "url": "https://git.example/a/b"})
+        }
+        ("POST", "/v1/orgs/{org}/skill-libraries/check") => {
+            json!({"url": "https://git.example/a/b"})
         }
         ("POST", "/v1/skills/{id}/library/updates/{uid}/approve") => {
             json!({"content_sha256": "0".repeat(64)})
