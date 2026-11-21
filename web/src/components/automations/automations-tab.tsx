@@ -25,6 +25,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { type AutomationFilter } from "@/components/agents/sections";
 import { useDetachPresence, usePresenceOptions, usePresences, type Presence } from "@/lib/api/channels";
 import { useConnectors } from "@/lib/api/connectors";
+import { useOrg } from "@/lib/api/queries";
 import { useSchedules } from "@/lib/api/schedules";
 import { useWebhooks } from "@/lib/api/webhooks";
 import { useWhoCan } from "@/lib/api/who-can";
@@ -118,6 +119,9 @@ export function AutomationsTab({
   const options = usePresenceOptions(agentId);
   const connectors = useConnectors();
   const who = useWhoCan({ workspaceId: wsId }, "workspace_owner", "add_schedule");
+  // Who can connect a chat platform: the organization's owners and admins. Until the role is known, the workspace right stands in.
+  const orgRole = useOrg(orgId).data?.my_role;
+  const canConnect = orgRole ? orgRole === "owner" || orgRole === "admin" : canOwn;
   const [filter, setFilter] = useState<AutomationFilter>(initialFilter);
   const [choosing, setChoosing] = useState(false);
   const [creating, setCreating] = useState<"schedule" | "webhook" | null>(null);
@@ -238,8 +242,8 @@ export function AutomationsTab({
       ) : null}
 
       {/* The Chats set-up: with a chat platform (or a chat the agent is in) it is the presences, bindings and reach; without, the ask. */}
-      {/* A member cannot connect a platform, so with none the Chats group is where they ask for one (channels-3). */}
-      {show("chats") && (hasPlatform || filter === "chats" || !canOwn) ? (
+      {/* Only an organization owner or admin can connect a platform, so with none the Chats group is where everyone else (a personal-workspace owner included) asks for one (channels-3). */}
+      {show("chats") && (hasPlatform || filter === "chats" || !canConnect) ? (
         <div id="chats" ref={chatsRef} className="scroll-mt-4 space-y-3 pt-2">
           <h3 className="font-display text-base font-semibold text-ink">Chats</h3>
           {hasPlatform ? (

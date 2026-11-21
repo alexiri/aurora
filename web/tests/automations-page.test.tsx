@@ -617,6 +617,27 @@ describe("Chats", () => {
     await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ subject: "chat_platform", reason: "For #ops" }));
   });
 
+  it("a personal-workspace owner who is only an org member sees the chat-platform ask on the empty page (channels-3)", async () => {
+    mockApi({
+      "GET /v1/agents/a1/schedules": page([]),
+      "GET /v1/agents/a1/webhooks": page([]),
+      "GET /v1/orgs/o1": () => json(200, { id: "o1", slug: "acme", name: "Acme", my_role: "member" }),
+    });
+    mount({ canOwn: true });
+    expect(await screen.findByRole("heading", { name: "Daneel isn't in any chat yet" })).toBeInTheDocument();
+  });
+
+  it("an org admin with no platform does not get the ask on the empty page", async () => {
+    mockApi({
+      "GET /v1/agents/a1/schedules": page([]),
+      "GET /v1/agents/a1/webhooks": page([]),
+      "GET /v1/orgs/o1": () => json(200, { id: "o1", slug: "acme", name: "Acme", my_role: "admin" }),
+    });
+    mount({ canOwn: true });
+    expect(await screen.findByRole("heading", { name: "No automations yet" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Daneel isn't in any chat yet" })).not.toBeInTheDocument());
+  });
+
   it("with no chat platform the Chats filter shows Ask an admin with the platforms and a reason", async () => {
     const calls = mockApi({ "GET /v1/agents/a1/schedules": page([]), "GET /v1/agents/a1/webhooks": page([]), "POST /v1/workspaces/w1/requests": () => json(200, { id: "r1" }) });
     mount({ initialFilter: "chats" });
