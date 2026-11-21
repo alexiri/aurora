@@ -59,7 +59,7 @@ export function ThreadHeader({
         {hasMeta ? (
           <p
             data-testid="thread-meta"
-            className="order-2 -mx-3 mt-2 flex w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 border-y border-line px-3 py-2 text-xs text-muted md:-mx-5 md:-mt-px md:px-5 xl:m-0 xl:w-auto xl:border-0 xl:p-0">
+            className="order-2 -mx-3 mt-2 flex grow basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 border-y border-line px-3 py-2 text-xs text-muted md:-mx-5 md:-mt-px md:px-5 xl:m-0 xl:w-auto xl:border-0 xl:p-0">
             {visibility ? (
               <span className="inline-flex min-w-0 items-start gap-1">
                 <LockIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0" />

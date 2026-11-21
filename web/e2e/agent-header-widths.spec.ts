@@ -259,6 +259,12 @@ for (const scheme of ["light", "dark"] as const) {
           const hb = await box(header);
           const cb = await box(card(header));
           expect(within(hb, cb), "the header is inside the card").toBe(true);
+          if (width < 1280) {
+            // (batch 13) The meta row's borders run edge to edge: both ends sit on the header's.
+            const mb = await box(meta);
+            expect(Math.abs(mb.x - hb.x), "the meta row starts at the header's left edge").toBeLessThanOrEqual(1);
+            expect(Math.abs(mb.x + mb.width - (hb.x + hb.width)), "the meta row ends at the header's right edge").toBeLessThanOrEqual(1);
+          }
           for (const line of await header.locator("h2, p, button").all()) {
             if (!(await line.isVisible())) continue;
             expect(within(await box(line), hb), `"${(await line.innerText()).slice(0, 40)}" is inside the header`).toBe(true);
