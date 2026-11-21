@@ -425,12 +425,22 @@ jobs:
   # `images-builder` is the one image job that does NOT wait for the checks: it only fills the cache (no
   # login, no push, no packages:write, no secrets), so it runs alongside `web` and the Rust jobs (each
   # ~20-30 min) instead of after them. Every publishing job below still needs every check job, so
-  # nothing is pushed unless all of them are green.
+  # nothing is pushed unless all of them are green. When a check fails, the watchdog stops the build
+  # within a minute (scripts/ci/stop-builder-on-failed-check.sh); the other checks keep running.
   images-builder:
     concurrency: { group: "images-builder-${{ github.ref }}", cancel-in-progress: false }
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read   # the watchdog lists this run's jobs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: stop early when a check job fails (background watchdog)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          setsid nohup bash scripts/ci/stop-builder-on-failed-check.sh "$RUNNER_TEMP/failed-checks" \
+            > "$RUNNER_TEMP/watchdog.log" 2>&1 < /dev/null &
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # No sccache GitHub Actions backend here (OPS-023 measured it: 0 hits on consecutive runs and the builder
       # went from ~15 to ~32 min, because its entries compete with the layer cache for the repository's 10 GB
@@ -444,6 +454,13 @@ jobs:
           push: false
           cache-from: type=gha,scope=services
           cache-to: type=gha,scope=services,mode=max
+      - name: why the builder stopped
+        if: failure()
+        run: |
+          if [ -s "$RUNNER_TEMP/failed-checks" ]; then
+            echo "::error::images-builder stopped early because check job(s) failed: $(paste -sd, "$RUNNER_TEMP/failed-checks"). Fix those; this job is not the cause."
+          fi
+          cat "$RUNNER_TEMP/watchdog.log" 2>/dev/null || true
 
   images-services:
     # One group per image: a shared group lets only one matrix leg run and keeps a single pending
