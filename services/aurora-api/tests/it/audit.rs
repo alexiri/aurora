@@ -131,6 +131,94 @@ async fn system_events_can_be_hidden_and_are_counted() {
     );
 }
 
+/// (P5-REFINE-20, workspace-3) Every audit entry carries `actor_name`: the person's current display name for a person
+/// (and for a key, which acts as its owner), `null` for the platform's own jobs and for an actor that no longer exists.
+#[tokio::test]
+async fn entries_carry_the_actors_display_name() {
+    let h = Harness::new().await;
+    let owner = h.user("alice@example.test", false).await;
+    sqlx::query("UPDATE users SET display_name = 'Alice Admin' WHERE id = $1")
+        .bind(owner)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let org = h.org().await;
+    h.member(org, owner, "owner", "active").await;
+    let (_, ot) = h.good_session(owner).await;
+    let row =
+        |kind: &'static str, actor: Option<Uuid>, label: &'static str, action: &'static str| {
+            let meta = json!({});
+            let h = &h;
+            async move {
+                audit::insert(
+                    h.pool(),
+                    &NewAudit {
+                        org_id: Some(org),
+                        workspace_id: None,
+                        actor_kind: kind,
+                        actor_id: actor,
+                        actor_label: label,
+                        action,
+                        target_kind: None,
+                        target_id: None,
+                        outcome: "success",
+                        source: "api",
+                        ip: None,
+                        metadata: &meta,
+                    },
+                )
+                .await
+                .unwrap();
+            }
+        };
+    row("user", Some(owner), "alice@example.test", "org.update").await;
+    row(
+        "service",
+        Some(owner),
+        "alice@example.test",
+        "api_key.create",
+    )
+    .await;
+    row("system", None, "placement", "grant.create").await;
+    // A person who is gone: the row keeps its label, the name is null.
+    row(
+        "user",
+        Some(Uuid::now_v7()),
+        "gone@example.test",
+        "member.remove",
+    )
+    .await;
+    let (s, v) = call(&h, &ot, &format!("/v1/orgs/{org}/audit?limit=10")).await;
+    assert_eq!(s, 200, "{v}");
+    let name_of = |action: &str| -> Value {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["action"] == action)
+            .unwrap_or_else(|| panic!("no {action}: {v}"))["actor_name"]
+            .clone()
+    };
+    assert_eq!(name_of("org.update"), "Alice Admin");
+    assert_eq!(name_of("api_key.create"), "Alice Admin");
+    assert!(name_of("grant.create").is_null());
+    assert!(name_of("member.remove").is_null());
+    // The label is unchanged: the e-mail the row recorded.
+    assert_eq!(v["items"][3]["actor_label"], "alice@example.test");
+    // The instance list says it the same way.
+    let root = h.user("root@x.io", true).await;
+    let (_, rt) = h.good_session(root).await;
+    let (s, v) = call(&h, &rt, &format!("/v1/admin/audit?org={org}")).await;
+    assert_eq!(s, 200, "{v}");
+    let admin_row = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["action"] == "org.update")
+        .unwrap();
+    assert_eq!(admin_row["actor_name"], "Alice Admin");
+}
+
 #[tokio::test]
 async fn workspace_audit_requires_can_own() {
     let h = Harness::new().await;

@@ -19,6 +19,7 @@ const entry = (id: string, action: string, critical: boolean) => ({
   actor_kind: "user",
   actor_id: null,
   actor_label: "a@x.io",
+  actor_name: "Alice Admin",
   action,
   target_kind: null,
   target_id: null,
@@ -59,13 +60,17 @@ describe("OrgAuditView (RFE-008)", () => {
         <OrgAuditView orgId="o1" />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText("Created an agent")).toBeTruthy();
+    // The table row says it in words (the select offers the same words, so the row is found in the table).
+    expect(await screen.findByRole("cell", { name: /Created an agent/ })).toBeTruthy();
     // Only the critical row carries the badge.
     expect(screen.getAllByText("Critical")).toHaveLength(1);
+    // People by display name, never by e-mail.
+    expect(screen.getAllByRole("cell", { name: "Alice Admin" }).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("a@x.io");
 
     fireEvent.click(screen.getByLabelText("Security-critical only"));
     expect(await screen.findByText("policy.publish")).toBeTruthy();
-    await waitFor(() => expect(screen.queryByText("agent.create")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("cell", { name: /Created an agent/ })).toBeNull());
     expect(seen.some((s) => s.includes("critical=true"))).toBe(true);
     // FIX-171: the change is written to the URL.
     expect(nav.replace).toHaveBeenLastCalledWith("/o/acme/audit?critical=1", { scroll: false });
@@ -94,8 +99,10 @@ describe("OrgAuditView (RFE-008)", () => {
       </QueryClientProvider>,
     );
     // The organization page keeps its table ("Created an agent"); the workspace page reads as a sentence (workspace-3).
-    expect(await screen.findByText("Created an agent")).toBeTruthy();
-    expect(await screen.findByText("a@x.io created an agent")).toBeTruthy();
+    expect(await screen.findByRole("cell", { name: /Created an agent/ })).toBeTruthy();
+    expect(await screen.findByText("Alice created an agent")).toBeTruthy();
+    // The action from the address shows in the one "All actions" select, in words.
+    for (const select of screen.getAllByLabelText("Action") as HTMLSelectElement[]) expect(select.selectedOptions[0]!.textContent).toBe("Created an agent");
     const org = seen.find((s) => s.startsWith("/v1/orgs/o1/audit"))!;
     const ws = seen.find((s) => s.startsWith("/v1/workspaces/w1/audit"))!;
     for (const s of [org, ws]) {
