@@ -92,6 +92,19 @@ describe("Welcome (C-927)", () => {
     expect(document.body.textContent).not.toMatch(/asks you before risky actions/);
   });
 
+  it("(batch 8, b7#8c) a person whose display name is their address is welcomed by the address's first part", async () => {
+    world({ personal: true, name: "Bob's workspace" });
+    const base = routes["GET /v1/me"]!;
+    routes["GET /v1/me"] = async () => {
+      const r = await base();
+      const body = await r.json();
+      return json(200, { ...body, user: { ...body.user, display_name: "erin@example.test", email: "erin@example.test" } });
+    };
+    wrap(<WelcomeView />);
+    expect(await screen.findByRole("heading", { name: "Welcome, Erin" })).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("erin@example.test");
+  });
+
   it("a person's own personal workspace: 'Welcome, <name>'", async () => {
     world({ personal: true, name: "Bob's workspace" });
     wrap(<WelcomeView />);

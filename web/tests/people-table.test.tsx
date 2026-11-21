@@ -108,6 +108,18 @@ describe("People table", () => {
     expect(screen.getByText("What can each role do?")).toBeInTheDocument();
   });
 
+  it("(batch 8, b7#8c) a person stored by their address is named by it once, as the address: Erin, with erin@… under it", async () => {
+    mockFetch({
+      ...routes,
+      "GET /v1/workspaces/w/access": () => json(200, { ...access, items: [{ user_id: "e", email: "erin@example.test", display_name: "erin@example.test", role: "member", implicit: false }] }),
+    });
+    wrap(<AccessTab wsId="w" orgId="o" canOwn />);
+    const select = await screen.findByLabelText("Role for erin@example.test");
+    const row = select.closest("tr")!;
+    expect(row.textContent).toContain("Erin");
+    expect(row.textContent!.match(/erin@example\.test/g)).toHaveLength(1);
+  });
+
   it("does not offer a lower role for the last owner", async () => {
     mockFetch({
       ...routes,

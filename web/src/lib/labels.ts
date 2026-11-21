@@ -881,7 +881,9 @@ function nameFromAddress(label: string): string {
 export function auditActor(e: { actor_kind?: string; actor_label: string; actor_name?: string | null }): { name: string; full: string } {
   const kind = e.actor_kind ?? "user";
   if (kind === "system") return { name: "Aurora", full: MACHINE_ACTORS[e.actor_label] ?? (e.actor_label.startsWith("connector:") ? "A chat platform" : "Aurora") };
-  const person = e.actor_name?.trim() || (e.actor_label ? nameFromAddress(e.actor_label) : "Someone");
+  // A person with no display name is stored by their address (actor_name too): their name is then the address's local part.
+  const given = e.actor_name?.trim();
+  const person = given ? (given.includes("@") ? personName(given) : given) : e.actor_label ? nameFromAddress(e.actor_label) : "Someone";
   if (kind === "service") {
     // A key acts as its owner (an address label); the directory-sync and sign-in-provider services have labels of their own.
     if (e.actor_label.startsWith("scim")) return { name: "Directory sync", full: "Directory sync" };

@@ -69,6 +69,9 @@ describe("audit actions in words", () => {
     expect(auditActor({ actor_kind: "user", actor_label: "alice@example.test", actor_name: "Alice Admin" })).toEqual({ name: "Alice", full: "Alice Admin" });
     // No display name yet: the address's first part, never the address.
     expect(auditActor({ actor_kind: "user", actor_label: "alice@example.test", actor_name: null })).toEqual({ name: "Alice", full: "Alice" });
+    // (batch 8) A display name that is itself the address (a person who never set one): the address's first part, never the address.
+    expect(auditActor({ actor_kind: "user", actor_label: "erin@example.test", actor_name: "erin@example.test" })).toEqual({ name: "Erin", full: "Erin" });
+    expect(auditWords({ action: "user.login", actor_label: "erin@example.test", actor_kind: "user", actor_name: "erin@example.test", metadata: {} }, null).sentence).toBe("Erin signed in");
     expect(auditActor({ actor_kind: "instance_admin", actor_label: "root@example.test", actor_name: "Root Admin" }).name).toBe("Root");
     expect(auditActor({ actor_kind: "service", actor_label: "bob@example.test", actor_name: "Bob Builder" })).toEqual({ name: "Bob", full: "Bob Builder (through an API key)" });
     expect(auditActor({ actor_kind: "service", actor_label: "bob@example.test", actor_name: null })).toEqual({ name: "An API key", full: "An API key" });
