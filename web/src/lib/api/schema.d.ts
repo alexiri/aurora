@@ -14949,8 +14949,13 @@ export interface components {
         };
         /** @description (C-1063) The "Try it" card: whether it is offered and whether the admin has done it. */
         SetupTryIt: {
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description The agent Try it talks to; once `done`, the agent that answered (the newest finished turn).
+             */
             agent_id?: string | null;
+            /** @description That agent's name ("Daneel answered Alice Admin 1 h ago"). */
+            agent_name?: string | null;
             /** @description `false` while the agent cannot answer (no AI key yet): Try it is not offered. */
             available: boolean;
             /** @description The calling admin has one finished turn of their own in a hosted agent they own. */

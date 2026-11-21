@@ -372,24 +372,40 @@ pub async fn try_it_agent<'e, E: PgExecutor<'e>>(
 }
 
 /// Has `user` one finished turn of their own in a conversation of a hosted agent in a workspace
-/// they own (C-1063 `try_it.done`)? `Some(when)` is when the newest such turn ended (`done_at`),
-/// `None` when there is none.
+/// they own (C-1063 `try_it.done`)? `Some` is the newest such turn: when it ended (`done_at`) and
+/// the agent that answered (P5-REFINE-20: the row names it), `None` when there is none.
 pub async fn try_it_done<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,
-) -> Result<Option<chrono::DateTime<chrono::Utc>>, DbError> {
+) -> Result<Option<TryItDone>, DbError> {
     // A finished turn with no `finished_at` (older rows) still counts: it falls back to its start.
-    let row: Option<(Option<chrono::DateTime<chrono::Utc>>,)> = sqlx::query_as(
-        "SELECT max(COALESCE(t.finished_at, t.started_at)) FROM turns t
+    let row: Option<(Option<chrono::DateTime<chrono::Utc>>, Uuid, Uuid, String)> = sqlx::query_as(
+        "SELECT COALESCE(t.finished_at, t.started_at), a.id, a.workspace_id, a.name FROM turns t
            JOIN agents a ON a.id = t.agent_id AND a.kind = 'hosted'
            WHERE t.speaker_user_id = $1 AND t.status = 'done' AND t.role = 'turn'
              AND EXISTS (SELECT 1 FROM effective_workspace_access ea
                           WHERE ea.workspace_id = a.workspace_id AND ea.user_id = $1
                             AND ea.role = 'owner')
-          HAVING count(*) > 0",
+          ORDER BY COALESCE(t.finished_at, t.started_at) DESC NULLS LAST LIMIT 1",
     )
     .bind(user)
     .fetch_optional(exec)
     .await?;
-    Ok(row.map(|r| r.0.unwrap_or_else(chrono::Utc::now)))
+    Ok(
+        row.map(|(at, agent_id, workspace_id, agent_name)| TryItDone {
+            at: at.unwrap_or_else(chrono::Utc::now),
+            agent_id,
+            workspace_id,
+            agent_name,
+        }),
+    )
+}
+
+/// The newest finished turn of "Try it" (C-1063, [`try_it_done`]).
+#[derive(Debug, Clone)]
+pub struct TryItDone {
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub agent_id: Uuid,
+    pub workspace_id: Uuid,
+    pub agent_name: String,
 }

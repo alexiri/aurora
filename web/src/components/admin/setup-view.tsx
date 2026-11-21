@@ -140,7 +140,9 @@ function useTryIt(server: SetupStatus["try_it"] | undefined, hasKey: boolean) {
     repliedAt: server?.done_at ?? null,
     available: server ? server.available : hasKey,
     agent: agent ? { id: agent.id, name: agent.name, handle: agent.handle, avatarUrl: agent.avatar_url ?? null } : null,
-    agentName: agent?.name ?? null,
+    // (P5-REFINE-20 b1#2) The server names the agent (the one that answered, once done): never "Your agent" because the
+    // agent list did not have it.
+    agentName: server?.agent_name ?? agent?.name ?? null,
     person: me.data?.user.display_name ?? null,
     ready: !me.isPending,
   };

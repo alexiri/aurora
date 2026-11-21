@@ -577,21 +577,35 @@ pub async fn setup(
 
     let try_it = {
         let target = aurora_db::repo::account::try_it_agent(&state.pool, admin).await?;
-        let done_at = aurora_db::repo::account::try_it_done(&state.pool, admin).await?;
+        let done = aurora_db::repo::account::try_it_done(&state.pool, admin).await?;
         let mut available = false;
+        let mut target_name = None;
         if let Some((agent_id, _)) = target
             && let Some(agent) = aurora_db::repo::agents::get(&state.pool, agent_id).await?
         {
             available = crate::domains::hosted::answer::compute(state, caller, &agent)
                 .await?
                 .can_answer;
+            target_name = Some(agent.name.clone());
         }
-        SetupTryIt {
-            available,
-            done: done_at.is_some(),
-            done_at,
-            agent_id: target.map(|t| t.0),
-            workspace_id: target.map(|t| t.1),
+        // (P5-REFINE-20 b1#2) Once done, the row names the agent that answered.
+        match done {
+            Some(d) => SetupTryIt {
+                available,
+                done: true,
+                done_at: Some(d.at),
+                agent_id: Some(d.agent_id),
+                workspace_id: Some(d.workspace_id),
+                agent_name: Some(d.agent_name),
+            },
+            None => SetupTryIt {
+                available,
+                done: false,
+                done_at: None,
+                agent_id: target.map(|t| t.0),
+                workspace_id: target.map(|t| t.1),
+                agent_name: target_name,
+            },
         }
     };
 

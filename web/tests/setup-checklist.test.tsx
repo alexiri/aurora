@@ -204,6 +204,19 @@ describe("Administration › Overview: the five-step checklist (P5-POLISH-10, D-
     expect(again.dataset.done).toBe("false");
   });
 
+  it("the row names the agent the server says answered, even when the agent list does not have it (b1#2)", async () => {
+    world({
+      status: {
+        ...setupStatus(),
+        try_it: { available: true, done: true, done_at: new Date(Date.now() - 3_600_000).toISOString(), agent_id: "a9", workspace_id: "w9", agent_name: "Daneel" },
+      } as unknown as SetupStatus,
+    });
+    wrap(<SetupView />);
+    const tryIt = await row("try");
+    await waitFor(() => expect(tryIt).toHaveTextContent("Daneel answered Ada 1 h ago"));
+    expect(tryIt).not.toHaveTextContent("Your agent");
+  });
+
   it("the optional e-mail step is never done while it has an open item, and says optional", async () => {
     world();
     wrap(<SetupView />);
