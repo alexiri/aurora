@@ -108,7 +108,8 @@ function listAnd(items: string[]): string {
  * methods they are joined with " and "; a client no method uses (or an old API) falls back to "GitHub".
  */
 export function clientLabel(appName: string, usedBy: { label: string }[] | undefined): string {
-  const labels = (usedBy ?? []).map((m) => m.label);
+  // A method that is only called "OAuth" says nothing the app's name does not ("GitHub — for OAuth"): the name stands alone.
+  const labels = (usedBy ?? []).map((m) => m.label).filter((l) => l.trim().toLowerCase() !== "oauth");
   return labels.length > 0 ? `${appName} — for ${listAnd(labels)}` : appName;
 }
 

@@ -146,6 +146,9 @@ describe("sign-in app Test (org-10, C-1070)", () => {
     }));
     wrap(<OAuthClientsPanel scope={{ kind: "workspace", id: "w1" }} canOwn />);
     expect(await screen.findByTestId("oauth-state")).toHaveTextContent("Ready (not tested)");
+    // The stored field is said in words, never as the raw key (`client_id:`).
+    expect(screen.getByText("Client id:")).toBeInTheDocument();
+    expect(screen.queryByText("client_id:")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Test" }));
     expect(await screen.findByText(/Test passed .*the provider answered and the client ID was accepted/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Test again" })).toBeInTheDocument();

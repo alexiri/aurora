@@ -5,6 +5,7 @@ import { useState, type ComponentType, type KeyboardEvent, type ReactNode, type 
 
 import { Avatar } from "@/components/agent-avatar";
 import { ConversationActions, lifecycleError, refreshConversations } from "@/components/agents/conversation-actions";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BotIcon, CalendarIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, LinkIcon, MessageIcon, PlugIcon, PlusIcon, UsersIcon } from "@/components/ui/icons";
 import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
@@ -61,6 +62,18 @@ function lineOf(c: Conversation, agentName: string | undefined, now: Date): stri
   }
   return when ? `${kindLabel(c.kind)} · ${when}` : kindLabel(c.kind);
 }
+
+/** (schedules-7) The amber chip beside the title of a conversation whose schedule or webhook is gone. */
+function GoneChip({ kind }: { kind: string }) {
+  return (
+    <Badge tone="pending" className="ml-2 align-middle">
+      {kind === "webhook" ? "Webhook deleted" : "Schedule deleted"}
+    </Badge>
+  );
+}
+
+/** The row's second line when its automation is gone. */
+const goneLine = (kind: string): string => `It was started by a ${kind === "webhook" ? "webhook" : "schedule"} that no longer exists. No new runs.`;
 
 /**
  * A row (chat-3): the kind tile (36 px), the title (a **Rename** turns it into a field: Enter saves, Esc cancels), the
@@ -147,7 +160,7 @@ export function ConversationRow({
       Read-only
     </span>
   ) : c.automation?.deleted ? (
-    <span className="block truncate text-xs text-muted">{c.automation.kind === "webhook" ? "Webhook deleted" : "Schedule deleted"}</span>
+    <span className="line-clamp-2 break-words text-xs text-muted">{goneLine(c.automation.kind)}</span>
   ) : (
     <span className="block truncate text-xs text-muted">{lineOf(c, agentName, now)}</span>
   );
@@ -197,7 +210,10 @@ export function ConversationRow({
             </span>
           )}
           <span className="min-w-0 flex-1">
-            <span className={cn("line-clamp-2 break-words text-sm text-ink", selected ? "font-semibold" : "font-medium")}>{title}</span>
+            <span className={cn("line-clamp-2 break-words text-sm text-ink", selected ? "font-semibold" : "font-medium")}>
+              {title}
+              {c.automation?.deleted ? <GoneChip kind={c.automation.kind} /> : null}
+            </span>
             {second}
             {saved.saved ? <InlineSaved show /> : null}
           </span>
@@ -255,9 +271,13 @@ function FolderRow({
           <Glyph width={18} height={18} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-ink">{folderRunsLabel(folder.name, folder.thread_count)}</span>
-          <span className="block truncate text-xs text-muted">
-            {folder.deleted ? (folder.kind === "webhook" ? "Webhook deleted" : "Schedule deleted") : `${folder.kind === "webhook" ? "Webhook" : "Schedule"} · ${whenOf(folder.last_activity_at, now)}`}
+          {/* A long automation name wraps to a second line; it never cuts the run count off. */}
+          <span className="line-clamp-2 break-words text-sm font-medium text-ink">
+            {folderRunsLabel(folder.name, folder.thread_count)}
+            {folder.deleted ? <GoneChip kind={folder.kind} /> : null}
+          </span>
+          <span className="line-clamp-2 break-words text-xs text-muted">
+            {folder.deleted ? goneLine(folder.kind) : `${folder.kind === "webhook" ? "Webhook" : "Schedule"} · ${whenOf(folder.last_activity_at, now)}`}
           </span>
         </span>
         <Chevron aria-hidden="true" width={16} height={16} className="shrink-0 text-muted" />

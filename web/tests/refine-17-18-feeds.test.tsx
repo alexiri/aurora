@@ -79,6 +79,9 @@ describe("what a rule change changed (org-14, C-1087)", () => {
 
   it("falls back to the version when nothing changed, and to the publisher when there is no actor", () => {
     expect(historySentence({ number: 1, actor: { display_name: "Alice Admin" }, changes: [], more: 0 })).toBe("Alice Admin published version 1");
+    // The seeded first version has no author: the starting rules, not "Someone published version 1".
+    expect(historySentence({ number: 1, changes: [], more: 0 })).toBe("The starting rules, version 1");
+    expect(historySentence({ number: 2, changes: [], more: 0 })).toBe("Someone published version 2");
     expect(historySentence({ number: 2, published_by: { display_name: "Bob Builder" }, changes: [{ kind: "added", rule_name: "X" }], more: 0 })).toBe("Bob Builder added ‘X’");
   });
 });

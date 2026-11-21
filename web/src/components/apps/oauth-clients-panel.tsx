@@ -56,6 +56,14 @@ function definitionLabel(d: Definition): string {
   return clientLabel(d.app_name, d.def.used_by_methods);
 }
 
+/** A stored field in words: the manifest's own label ("Client ID"), else its key made readable (`client_id` → "Client id"), never the raw key. */
+function fieldLabel(key: string, def?: OAuthClientDefinition): string {
+  const own = def?.fields.find((f) => f.name === key)?.label;
+  if (own) return own;
+  const words = key.replace(/[_-]+/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : key;
+}
+
 function definitionsOf(detail: AppDetail, into: Map<string, Definition>): void {
   for (const d of detail.oauth_clients ?? [])
     into.set(`${detail.package_id}|${d.client_key}`, {
@@ -347,7 +355,7 @@ export function ClientRow({
       <ErrorNotice error={test.error} />
       <dl className="break-all text-xs text-ink-2">
         {Object.entries(c.fields).map(([k, v]) => (
-          <div key={k}><dt className="inline font-medium">{k}: </dt><dd className="inline">{v}</dd></div>
+          <div key={k}><dt className="inline font-medium">{fieldLabel(k, def)}: </dt><dd className="inline">{v}</dd></div>
         ))}
       </dl>
       {mode === "edit" ? (

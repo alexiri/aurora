@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { LINK_DIRECTION_CHOICES, directionSentence, directionTitle } from "@/lib/api/peers";
+import { LINK_DIRECTION_CHOICES, OTHER_AGENT, directionSentence, directionTitle } from "@/lib/api/peers";
 
 // P5-REFINE-10 (C-1085, channels-1): the "Link another agent" dialog's three choices, as the mockup words them.
 describe("link direction words", () => {
@@ -16,6 +16,13 @@ describe("link direction words", () => {
       "Rex only works on what Daneel sends.",
       "Daneel only works on what Rex sends.",
     ]);
+  });
+
+  it("with no agent chosen yet, a sentence or title that starts with 'the other agent' is capitalised", () => {
+    expect(directionSentence("Daneel", OTHER_AGENT, "outgoing")).toBe("The other agent only works on what Daneel sends.");
+    expect(directionTitle("Daneel", OTHER_AGENT, "incoming")).toBe("The other agent can hand tasks to Daneel");
+    expect(directionTitle("Daneel", OTHER_AGENT, "outgoing")).toBe("Daneel can hand tasks to the other agent");
+    expect(directionSentence("Daneel", OTHER_AGENT, "both")).toBe("Daneel and the other agent can each give the other tasks.");
   });
 
   it("reads a stored link's direction the same way (outgoing = to_peer, incoming = from_peer)", () => {

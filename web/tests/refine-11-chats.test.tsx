@@ -198,7 +198,24 @@ describe("run threads folded under their automation (D-409, C-1074)", () => {
     });
     tab();
     const nav = await screen.findByRole("navigation", { name: "Conversations" });
-    expect(await within(nav).findByText("Webhook deleted")).toBeTruthy();
+    // An amber chip beside the title and a sentence under it (schedules-7).
+    const chip = await within(nav).findByText("Webhook deleted");
+    expect(chip.className).toContain("bg-pending-soft");
+    expect(within(nav).getByText("It was started by a webhook that no longer exists. No new runs.")).toBeTruthy();
+  });
+
+  it("a long automation name wraps and keeps the run count (not cut to one line)", async () => {
+    mock({
+      "POST /v1/agents/a1/conversations/direct": () => json(200, chats[0]),
+      "GET /v1/agents/a1/conversations": () => json(200, { items: chats, next_cursor: null }),
+      "GET /v1/agents/a1/conversation-folders": () =>
+        json(200, { items: [{ kind: "schedule", id: "s9", name: "Ping every 5 minutes about the overnight build", deleted: false, thread_count: 12, last_activity_at: "2026-11-10T09:00:00Z", last_result: null }], next_cursor: null }),
+    });
+    tab();
+    const nav = await screen.findByRole("navigation", { name: "Conversations" });
+    const label = await within(nav).findByText("Ping every 5 minutes about the overnight build · 12 runs");
+    expect(label.className).toContain("line-clamp-2");
+    expect(label.className).not.toContain("truncate");
   });
 });
 

@@ -32,13 +32,19 @@ function oneWay(direction: LinkDirection | LinkDirectionChoice): "both" | "outgo
   return direction;
 }
 
+/** The words for an agent not chosen yet (the link dialog before a pick). */
+export const OTHER_AGENT = "the other agent";
+
+/** A name at the start of a sentence: the placeholder is capitalised ("The other agent"), a real name is left as it is. */
+const lead = (name: string): string => (name === OTHER_AGENT ? "The other agent" : name);
+
 /** The option title of a direction: "Both ways", "Daneel can hand tasks to Rex", "Rex can hand tasks to Daneel". */
 export function directionTitle(selfName: string, peerName: string, direction: LinkDirection | LinkDirectionChoice): string {
   switch (oneWay(direction)) {
     case "outgoing":
       return `${selfName} can hand tasks to ${peerName}`;
     case "incoming":
-      return `${peerName} can hand tasks to ${selfName}`;
+      return `${lead(peerName)} can hand tasks to ${selfName}`;
     default:
       return "Both ways";
   }
@@ -48,7 +54,7 @@ export function directionTitle(selfName: string, peerName: string, direction: Li
 export function directionSentence(selfName: string, peerName: string, direction: LinkDirection | LinkDirectionChoice): string {
   switch (oneWay(direction)) {
     case "outgoing":
-      return `${peerName} only works on what ${selfName} sends.`;
+      return `${lead(peerName)} only works on what ${selfName} sends.`;
     case "incoming":
       return `${selfName} only works on what ${peerName} sends.`;
     default:
