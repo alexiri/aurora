@@ -60,9 +60,17 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByTestId("agent-state")).toContainText("Can't answer: no AI key");
         expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
-        // The header's action and the card's are the same one-click grant.
-        await page.getByTestId("agent-state").getByRole("button", { name: "Give Daneel the Company key" }).click();
-        await expect(page.getByTestId("agent-state")).toContainText("Ready");
+        // The header's action and the card's are the same one-click grant; on a phone only the card has it (the header's
+        // line has no room beside Status and Settings).
+        const headerGive = page.getByTestId("agent-state").getByRole("button", { name: "Give Daneel the Company key" });
+        if (width === 390) {
+          await expect(headerGive).toHaveCount(0);
+          await card.getByRole("button", { name: "Give Daneel the Company key" }).click();
+        } else {
+          await headerGive.click();
+        }
+        // The header leaves "Can't answer" (the shared mock has approvals waiting, so it then reads "Needs you", not Ready).
+        await expect(page.getByTestId("agent-state")).not.toContainText("Can't answer");
         await expect(card).toHaveCount(0);
         await expect(page.getByLabel("Message", { exact: true })).toBeVisible();
         expect(errors, "page threw").toEqual([]);

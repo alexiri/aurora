@@ -96,7 +96,15 @@ export function AgentState({
       ? "its computer couldn't start"
       : null;
   return (
-    <StatusLine tone={tone} className="whitespace-nowrap leading-4" data-testid="agent-state" action={word === "Can't answer" ? action : undefined}>
+    // On a phone the line wraps inside the header's name column, and the header's copy of the fix stays out: it did not fit
+    // beside Status and Settings and lay under them (no-model.spec at 390 px); the empty chat's card and the no-model bar
+    // carry the same one-click action there.
+    <StatusLine
+      tone={tone}
+      className="min-w-0 leading-4 md:whitespace-nowrap"
+      data-testid="agent-state"
+      action={word === "Can't answer" && action ? <span className="hidden md:inline-flex">{action}</span> : undefined}
+    >
       <span aria-live="polite">
         {starting ? <span aria-hidden="true" className="mr-1.5 inline-block size-3.5 animate-spin rounded-full border-2 border-line-strong border-t-accent align-middle motion-reduce:animate-none" /> : null}
         {word === "Can't answer" ? (reason ? `Can't answer: ${reason}` : "Can't answer") : word}
