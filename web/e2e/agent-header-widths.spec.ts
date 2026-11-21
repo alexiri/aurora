@@ -11,7 +11,7 @@ import { overflow } from "./support/open";
 
 const GIVE = { action: "give_key", key: { secret_id: id(60), name: "Company key", scope: "organization" } };
 
-async function open(page: Page, scheme: "light" | "dark") {
+async function open(page: Page, scheme: "light" | "dark", query = "") {
   await mockApi(page);
   await mockChat(page, { ...DEFAULT, events: { [MINE.id]: [] } });
   await page.route("**/v1/**", (route) => {
@@ -26,14 +26,84 @@ async function open(page: Page, scheme: "light" | "dark") {
     return route.fallback();
   });
   await page.emulateMedia({ colorScheme: scheme });
-  await page.goto(AGENT_ROUTE);
-  await page.getByRole("tab", { name: "Chat" }).click();
+  await page.goto(`${AGENT_ROUTE}${query}`);
+  if (!query) await page.getByRole("tab", { name: "Chat" }).click();
   await page.waitForLoadState("networkidle");
 }
 
 const box = async (l: Locator) => (await l.boundingBox())!;
 const overlaps = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>
   a.x < b.x + b.width - 1 && b.x < a.x + a.width - 1 && a.y < b.y + b.height - 1 && b.y < a.y + a.height - 1;
+
+// P5-REFINE-20 batch 10: the Apps & access tab's starter-key card ("Daneel has no AI key") keeps its button in the card at
+// 768 and 790 too, and the Chat tab with a thread open (first answer done, so the callout shows) keeps the composer, Send,
+// the callout's buttons and the Live badge inside their boxes from 768 up: the list sits beside the thread only from 1024.
+const at = (agoMs: number) => new Date(Date.now() - agoMs).toISOString();
+const ANSWERED = [
+  { seq: 1, type: "turn.queued", ts: at(120_000), payload: { turn_id: "t1", speaker_label: "Ada Lovelace", door: "dashboard", text: "Hello", attachments: [] } },
+  { seq: 2, type: "text", ts: at(110_000), payload: { turn_id: "t1", message_id: "m2", text: "Hi, I can help." } },
+  { seq: 3, type: "turn.finished", ts: at(100_000), payload: { turn_id: "t1", status: "done", ai_key: "organization" } },
+];
+const inside = (inner: { x: number; y: number; width: number; height: number }, outer: typeof inner) =>
+  inner.x >= outer.x - 1 && inner.x + inner.width <= outer.x + outer.width + 1;
+
+for (const scheme of ["light", "dark"] as const) {
+  for (const width of [390, 768, 790, 820, 900, 1024]) {
+    test.describe(`access tab card, ${scheme} theme, ${width} px`, () => {
+      test.use({ viewport: { width, height: 900 } });
+
+      test("the give-key button stays in its card and the page does not scroll sideways", async ({ page }) => {
+        await open(page, scheme, "?tab=access");
+        const card = page.getByTestId("starter-key-card");
+        const give = card.getByRole("button", { name: "Give Daneel the Company key" });
+        await expect(give).toBeVisible();
+        expect(inside(await box(give), await box(card)), "the button is inside its card").toBe(true);
+        expect(await card.evaluate((e) => e.scrollWidth - e.clientWidth), "the card does not scroll").toBeLessThanOrEqual(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(await page.evaluate(() => document.documentElement.clientWidth));
+      });
+    });
+  }
+
+  for (const width of [390, 768, 820, 900, 1024]) {
+    test.describe(`chat thread, ${scheme} theme, ${width} px`, () => {
+      test.use({ viewport: { width, height: 900 } });
+
+      test("the composer, Send, the callout and the Live badge fit; the back arrow shows below 1024", async ({ page }) => {
+        await mockApi(page);
+        await mockChat(page, { ...DEFAULT, events: { [MINE.id]: ANSWERED } });
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.goto(`${AGENT_ROUTE}?c=${MINE.id}`);
+        await page.getByRole("tab", { name: "Chat" }).click();
+        const thread = page.getByRole("region", { name: "Chat" });
+        const send = thread.getByRole("button", { name: "Send", exact: true });
+        await expect(send).toBeVisible();
+        const callout = page.getByTestId("first-success-first-answer");
+        await expect(callout).toBeVisible();
+        const composer = page.getByTestId("composer-hint").locator("xpath=ancestor::div[contains(@class,'border-t')][1]");
+        const cBox = await box(composer);
+        expect(inside(await box(send), cBox), "Send is inside the composer").toBe(true);
+        const calloutBox = await box(callout);
+        for (const b of await callout.getByRole("button").all()) {
+          const bb = await box(b);
+          expect(inside(bb, calloutBox), "the callout's buttons are inside it").toBe(true);
+          expect(overlaps(bb, await box(callout.locator("p"))), "the callout's buttons are off its sentence").toBe(false);
+        }
+        const header = thread.locator("header").first();
+        const live = header.getByText("Live", { exact: true });
+        await expect(live).toBeVisible();
+        const lb = await box(live);
+        expect(inside(lb, await box(header)), "the badge is inside the header").toBe(true);
+        const privacy = header.locator("p").last();
+        expect(overlaps(lb, await box(privacy)), "the badge is off the privacy line").toBe(false);
+        const back = page.getByRole("button", { name: "Back to conversations" });
+        if (width < 1024) await expect(back).toBeVisible();
+        else await expect(back).toBeHidden();
+        expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(await page.evaluate(() => document.documentElement.clientWidth));
+      });
+    });
+  }
+}
 
 for (const scheme of ["light", "dark"] as const) {
   for (const width of [390, 768, 820, 900, 1024, 1280]) {
