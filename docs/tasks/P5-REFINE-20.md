@@ -382,6 +382,22 @@ walk across two reviewers by area but keeping one report and one send-back list.
 
 Fill in per pass (the owner reads this):
 
+- **Pass 1** (2026-11-21, commits walked 6ec943c0 → 4fad882a → 82f47c39, cluster `aurora-r20` on :4720, lane `p5-platform`):
+  - Counts (119 findings): Match 68 / Minor 23 / Needs changes 14 / Not checked 14 / Accepted 0. Sections B–H have verdicts in
+    the report (5 batch-1 items re-checked as fixed on 82f47c39).
+  - Report path: `docs/audit/ux-review-5-verify/REPORT-pass1.md` (screenshots in `docs/audit/ux-review-5-verify/pass1/`; the
+    `UXR5/` folder is read-only, so the report lives in this worktree).
+  - Change list sent: batch 1 (16 items, ~02:25, msg_d3b2ffe58ac8) → lanes A/B, merged 993ffaa2, 9abb2281, 97940131; batch 2 (18,
+    ~03:30, msg_055cf098415e) → lanes A/B, merged fb1d6258, 08051118; batch 3 (16 + batch-1 re-check, ~04:15, msg_aa505ab13469) →
+    lanes A/B; batch 4 (4 items) with the worker_done message. SendMessage to the Orchestrator session was held by its permission
+    mode, so every batch went through `orca orchestration send`.
+  - Fixed in this lane (Scope 7): 7c5b3d55 (retired "LLM key", "Judge", "Behaviour page" in visible text; altitude.spec's
+    old-or-new assertion) and 517de2d4 ("Current grader:"), merged as aadf9e27.
+  - UX review 4 regressions found: "Administration" twice in the Administration rail; org AI models still opens with the limits
+    list; "mm/dd/yyyy" audit date filters.
+  - Carried to pass 2 (not checked): firstday-2/3/4, schedules-7, channels-1, computer-1/2 and the runner bug, workspace-5,
+    org-4/10/14, admin-1/3/9, G1/G5 (need an approval). The cluster stays up for pass 2.
+
 - **Pass N** (date, commit checked, cluster name/port):
   - Counts: Match / Minor difference / Needs changes / Accepted:
   - Report path: `UXR5/verify/REPORT-pass<N>.md`
