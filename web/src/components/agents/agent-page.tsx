@@ -38,7 +38,7 @@ import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
 import { AGENT_PAGE_IDS, availableSections, hiddenPageCount, LEGACY_AUTOMATION_TAB, resolvePage, sectionLanding, SECTION_OF, type AgentPageId, type PageAllows, type PageAvailability, type SectionId } from "./sections";
 import { AgentState } from "./agent-state";
-import { AgentExportImport } from "./export-import";
+import { ManagePage } from "./manage-page";
 import { AnswerFixAction } from "./answer-fix";
 import { SettingsFrame } from "./settings-shell";
 import { SshPage } from "./ssh-page";
@@ -107,7 +107,7 @@ export function AgentPage() {
 
   const byo = agent.kind === "byo";
   const chip = agentChip(agent);
-  const availability = { byo, previews: previewsEnabled, terminal: terminalEnabled, ssh: sshEnabled };
+  const availability = { byo, previews: previewsEnabled, terminal: terminalEnabled, ssh: sshEnabled, owner: workspace.data?.my_role === "owner" };
   const tab = resolvePage(requestedTab, availability);
   // The viewer's altitude leaves pages out of the navigation; the open page stays listed (a direct `?tab=` still opens).
   const sections = availableSections(availability, altitude.allows, tab);
@@ -250,18 +250,12 @@ export function AgentPage() {
           shell={
             isConfig
               ? {
-                  agentId: agent.id,
                   agentName: agent.name,
-                  orgId: workspace.data?.org_id,
                   page: tab,
                   pages: section.pages,
                   onPage: choosePage,
                   onBack: () => choosePage(backPage),
                   backLabel: backPage === "chat" ? "Chat" : "Computer",
-                  canOwn,
-                  frozen: agent.frozen,
-                  onDelete: () => setDeleteOpen(true),
-                  extra: byo ? null : <AgentExportImport agent={agent} />,
                 }
               : null
           }>
@@ -343,7 +337,8 @@ export function AgentPage() {
             <AccessTab agentId={agent.id} agentName={agent.name} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} agentBase={`${base}/agents/${agent.handle}`} />
           ) : null}
           {tab === "access" && workspace.isPending ? <Loading /> : null}
-          {tab === "connect" && byo ? <ConnectTab agent={agent} wsId={wsId} canOwn={canOwn} /> : null}
+          {tab === "manage" && workspace.data ? <ManagePage agent={agent} orgId={workspace.data.org_id} byo={byo} onDelete={() => setDeleteOpen(true)} /> : null}
+          {tab === "connect" && byo ?<ConnectTab agent={agent} wsId={wsId} canOwn={canOwn} /> : null}
         </div>
         </SettingsFrame>
       </div>

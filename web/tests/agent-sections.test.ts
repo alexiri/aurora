@@ -23,6 +23,7 @@ describe("agent sections", () => {
     expect(SECTION_OF).toEqual({
       chat: "chat",
       instructions: "settings",
+      manage: "settings",
       memory: "settings",
       skills: "settings",
       evals: "settings",
@@ -137,5 +138,19 @@ describe("agent sections by altitude (D-406)", () => {
   it("lists a BYO agent's Computer: Connect only at Expert", () => {
     expect(availableSections(byo, at("use")).map((x) => x.id)).toEqual(["settings"]);
     expect(availableSections(byo, at("expert")).map((x) => x.id)).toEqual(["computer", "settings"]);
+  });
+  it("(D-447) Manage is the last Settings page, for owners only, hosted and BYO; anyone else lands on the default page", () => {
+    const settings = (av: PageAvailability) => availableSections(av).find((x) => x.id === "settings")!.pages.map((p) => p.label);
+    expect(settings({ ...hosted, owner: true })).toEqual(["Instructions", "Apps & access", "Memory", "Skills", "Tests", "Other agents", "Manage"]);
+    expect(settings({ ...byo, owner: true })).toEqual(["Instructions", "Apps & access", "Manage"]);
+    expect(settings(hosted)).not.toContain("Manage");
+    expect(settings({ ...hosted, owner: false })).not.toContain("Manage");
+    expect(resolvePage("manage", { ...hosted, owner: true })).toBe("manage");
+    expect(resolvePage("manage", { ...byo, owner: true })).toBe("manage");
+    expect(resolvePage("manage", hosted)).toBe("chat");
+    expect(resolvePage("manage", byo)).toBe("instructions");
+    expect(SECTION_OF.manage).toBe("settings");
+    // Pause is Use: the altitude never hides the page.
+    expect(availableSections({ ...hosted, owner: true }, at("use")).find((x) => x.id === "settings")!.pages.map((p) => p.label)).toContain("Manage");
   });
 });

@@ -85,10 +85,11 @@ for (const scheme of ["light", "dark"] as const) {
         expect(bad).toEqual([]);
       });
 
-      test("a confirm dialog (Delete this agent, from Settings) opens and closes without a console error or ring", async ({ page }) => {
+      test("a confirm dialog (Delete this agent, from Settings › Manage) opens and closes without a console error or ring", async ({ page }) => {
         const bad = watchConsole(page);
         await openRoute(page, "/o/acme/w/main/agents/daneel", scheme);
         await page.getByRole("button", { name: "Settings" }).click();
+        await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Manage" }).click();
         await page.getByRole("button", { name: "Delete Daneel…" }).click();
         const dialog = page.getByRole("dialog", { name: "Delete this agent" });
         await checkDialog(page, dialog);

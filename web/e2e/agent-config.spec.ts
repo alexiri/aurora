@@ -14,17 +14,22 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("the tab bar is Chat · Automations · Computer; the labelled Settings button opens Settings with Pause and Delete at its bottom", async ({ page }) => {
+      test("the tab bar is Chat · Automations · Computer; the labelled Settings button opens Settings; Pause and Delete are on its last page, Manage, and under no other page", async ({ page }) => {
         await openRoute(page, AGENT, scheme);
         const tabs = page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab");
         await expect(tabs).toHaveText(["Chat", "Automations", "Computer"]);
         await page.getByRole("button", { name: "Settings" }).click();
         await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
-        await expect(page.getByRole("button", { name: "Pause Daneel" })).toBeVisible();
-        await expect(page.getByRole("button", { name: "Delete Daneel…" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Pause Daneel" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Delete Daneel…" })).toHaveCount(0);
         await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Apps & access" }).click();
         await expect(page.getByRole("heading", { name: "Apps & access", level: 2 })).toBeVisible();
         await expect(page.getByText("Apps, accounts and the AI key it uses")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Pause Daneel" })).toHaveCount(0);
+        await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Manage" }).click();
+        await expect(page.getByRole("heading", { name: "Manage", level: 2 })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Pause Daneel" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Delete Daneel…" })).toBeVisible();
         await expect(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { selected: true })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);

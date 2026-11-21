@@ -51,6 +51,7 @@ export function usePaletteContext(): PaletteContext {
       previews: instance.data?.features?.previews === true && org.data?.settings?.previews_enabled === true,
       terminal: instance.data?.features?.terminal === true,
       ssh: instance.data?.features?.ssh === true,
+      owner: role === "owner",
     };
     const pages = open ? availableSections(av, altitude.allows).flatMap((s) => s.pages) : [];
     return {

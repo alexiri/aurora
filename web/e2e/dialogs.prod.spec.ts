@@ -22,6 +22,7 @@ for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.goto("/o/acme/w/main/agents/daneel");
     await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Manage" }).click();
     await page.getByRole("button", { name: /^Delete .*…$/ }).click();
     const dialog = page.getByRole("dialog", { name: "Delete this agent" });
     await expect(dialog).toBeVisible();

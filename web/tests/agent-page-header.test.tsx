@@ -116,7 +116,7 @@ describe("agent page frame (D-200)", () => {
     expect(screen.getByText("Name, instructions, model")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
     // At Set up and Expert (the switch is on in this test) the sub-nav lists every page.
-    expect(settingsPages()).toEqual(["Instructions", "Apps & access", "Memory", "Skills", "Tests", "Other agents"]);
+    expect(settingsPages()).toEqual(["Instructions", "Apps & access", "Memory", "Skills", "Tests", "Other agents", "Manage"]);
     const pages = screen.getByRole("tablist", { name: "Settings pages" });
     fireEvent.click(within(pages).getByRole("tab", { name: "Memory" }));
     expect(await screen.findByTestId("memory-tab")).toBeInTheDocument();
@@ -180,28 +180,60 @@ describe("agent page frame (D-200)", () => {
   });
 });
 
-describe("Settings danger zone (D-408)", () => {
-  it("offers Pause Scout and Delete Scout… to owners at the bottom of every Settings page, never as a menu and not on Chat", async () => {
+/** Opens Settings, then the owner's last page, Manage (D-447). */
+async function openManage() {
+  await openSettings();
+  await screen.findByTestId("instructions-tab");
+  fireEvent.click(within(screen.getByRole("tablist", { name: "Settings pages" })).getByRole("tab", { name: "Manage" }));
+  await screen.findByRole("heading", { name: "Delete", level: 2 });
+}
+
+describe("Settings Manage page (D-447)", () => {
+  it("offers Pause Scout and Delete Scout… to owners on Manage only: no other Settings page, not Chat, never a menu", async () => {
     mockFetch(routes());
     renderPage();
     await screen.findByTestId("chat-tab");
     expect(screen.queryByRole("button", { name: "Pause Scout" })).toBeNull();
     await openSettings();
     await screen.findByTestId("instructions-tab");
-    expect(screen.getByRole("heading", { name: "Pause or delete" })).toBeInTheDocument();
+    const pages = () => within(screen.getByRole("tablist", { name: "Settings pages" }));
+    for (const [name, testId] of [["Instructions", "instructions-tab"], ["Memory", "memory-tab"], ["Skills", "skills-tab"], ["Tests", "evals-tab"], ["Other agents", "peers-tab"], ["Apps & access", "access-tab"]] as const) {
+      fireEvent.click(pages().getByRole("tab", { name }));
+      await screen.findByTestId(testId);
+      expect(screen.queryByRole("button", { name: "Pause Scout" }), name).toBeNull();
+      expect(screen.queryByRole("button", { name: "Delete Scout…" }), name).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Export Scout/ }), name).toBeNull();
+      expect(screen.queryByRole("heading", { name: "Pause or delete" }), name).toBeNull();
+    }
+    fireEvent.click(pages().getByRole("tab", { name: "Manage" }));
+    expect(await screen.findByRole("heading", { name: "Manage", level: 2 })).toBeInTheDocument();
+    expect(screen.getByText("Pause, export, import or delete Scout")).toBeInTheDocument();
+    expect(window.location.search).toBe("?tab=manage");
+    expect(screen.getByRole("heading", { name: "Pause", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pause Scout" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export Scout…" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import into Scout…" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete Scout…" })).toBeInTheDocument();
     expect(screen.getByText("Stops it until you resume it")).toBeInTheDocument();
-    fireEvent.click(within(screen.getByRole("tablist", { name: "Settings pages" })).getByRole("tab", { name: "Memory" }));
-    await screen.findByTestId("memory-tab");
-    expect(screen.getByRole("button", { name: "Pause Scout" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem")).toBeNull();
+  });
+
+  it("opens ?tab=manage for an owner, and lands a member on the default page", async () => {
+    window.history.replaceState(null, "", "/?tab=manage");
+    mockFetch(routes());
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Delete Scout…" })).toBeInTheDocument();
+    cleanup();
+    mockFetch(routes({ "GET /v1/workspaces/w1": () => json(200, { id: "w1", org_id: "o1", my_role: "member", timezone: "Europe/Zurich" }) }));
+    renderPage();
+    expect(await screen.findByTestId("chat-tab")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Scout…" })).toBeNull();
   });
 
   it("keeps Pause behind its confirm dialog", async () => {
     const fn = mockFetch(routes({ "POST /v1/agents/a1/freeze": () => json(200, { frozen: null, effective_frozen: true }) }));
     renderPage();
-    await openSettings();
+    await openManage();
     fireEvent.click(await screen.findByRole("button", { name: "Pause Scout" }));
     expect(await screen.findByRole("dialog", { name: /Pause Scout\?/ })).toBeInTheDocument();
     expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method === "POST")).toBe(false);
@@ -217,7 +249,7 @@ describe("Settings danger zone (D-408)", () => {
   it("deletes only after the handle is typed, then leaves for the agents list", async () => {
     const fn = mockFetch(routes({ "DELETE /v1/agents/a1": () => json(204, null) }));
     renderPage();
-    await openSettings();
+    await openManage();
     fireEvent.click(await screen.findByRole("button", { name: "Delete Scout…" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete this agent" });
     const submit = within(dialog).getByRole("button", { name: "Delete agent" });
@@ -231,12 +263,12 @@ describe("Settings danger zone (D-408)", () => {
     expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method === "DELETE" && r.url.endsWith("/v1/agents/a1"))).toBe(true);
   });
 
-  it("a paused agent keeps its banner (with Resume) and Settings offers Resume Scout and Delete, not Pause", async () => {
+  it("a paused agent keeps its banner (with Resume) and Manage offers Resume Scout and Delete, not Pause", async () => {
     const frozen = { at: "2026-01-02T00:00:00Z", authority: "workspace_owner", by_label: "Ada", level: "agent", reason: "Runaway loop" };
     mockFetch(routes({}, { ...agent, frozen }));
     renderPage();
     expect(await screen.findByRole("button", { name: "Resume agent" })).toBeInTheDocument();
-    await openSettings();
+    await openManage();
     expect(await screen.findByRole("button", { name: "Resume Scout" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete Scout…" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pause Scout" })).toBeNull();
@@ -251,6 +283,7 @@ describe("Settings danger zone (D-408)", () => {
     await openSettings();
     expect(await screen.findByTestId("instructions-tab")).toBeInTheDocument();
     expect(settingsPages()).toContain("Apps & access");
+    expect(settingsPages()).not.toContain("Manage");
     expect(screen.queryByRole("button", { name: /^Pause/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Pause or delete" })).toBeNull();

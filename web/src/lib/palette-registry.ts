@@ -110,12 +110,12 @@ export function paletteVerbs(c: PaletteContext): PaletteItem[] {
         if (!a.byo) {
           verb(`schedule:${a.id}`, `New schedule for ${a.name}`, ws.agent(a.handle, { tab: "schedules" }), "new-schedule", "Automations › Schedules");
           verb(`webhook:${a.id}`, `New webhook for ${a.name}`, ws.agent(a.handle, { tab: "webhooks" }), "new-webhook", "Automations › Webhooks");
-          verb(`export:${a.id}`, `Export ${a.name}`, ws.agent(a.handle, { tab: "instructions" }), "export-agent", "A zip of what it knows and does");
-          verb(`import:${a.id}`, `Import into ${a.name}`, ws.agent(a.handle, { tab: "instructions" }), "import-agent", "From an Aurora export (.zip)");
+          verb(`export:${a.id}`, `Export ${a.name}`, ws.agent(a.handle, { tab: "manage" }), "export-agent", "A zip of what it knows and does");
+          verb(`import:${a.id}`, `Import into ${a.name}`, ws.agent(a.handle, { tab: "manage" }), "import-agent", "From an Aurora export (.zip)");
         }
-        // Pause opens the button's confirm; Resume goes to the danger zone, where the button is.
-        if (a.paused) verb(`resume:${a.id}`, `Resume ${a.name}`, `${ws.agent(a.handle, { tab: "instructions" })}#agent-danger`, undefined, "Settings");
-        else verb(`pause:${a.id}`, `Pause ${a.name}`, ws.agent(a.handle, { tab: "instructions" }), "pause-agent", "Asks first");
+        // (D-447) Pause opens the button's confirm; Resume goes to Manage, where the button is.
+        if (a.paused) verb(`resume:${a.id}`, `Resume ${a.name}`, ws.agent(a.handle, { tab: "manage" }), undefined, "Settings › Manage");
+        else verb(`pause:${a.id}`, `Pause ${a.name}`, ws.agent(a.handle, { tab: "manage" }), "pause-agent", "Asks first");
       }
     }
     if (canApprove) verb("approvals", "Open Approvals", ws.approvals());

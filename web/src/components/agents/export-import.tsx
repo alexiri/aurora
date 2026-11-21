@@ -56,7 +56,6 @@ export function AgentExportImport({ agent }: { agent: ExportAgent }) {
         id="agent-export-import"
         title="Export and import"
         description={`Take ${agent.name} somewhere else, or bring what another agent knows. Secrets, accounts and conversations are not included.`}
-        className="md:ml-58"
       >
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => setExporting(true)}>
