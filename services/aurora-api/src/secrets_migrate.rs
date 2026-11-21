@@ -145,7 +145,17 @@ struct Source {
     update: &'static str,
 }
 
-const SOURCES: [Source; 11] = [
+const SOURCES: [Source; 12] = [
+    // (phase 5, P5-SKLIB-1, D-448(c), C-1126) A skill library's read-only access token; an
+    // instance library (no org) seals under the nil UUID.
+    Source {
+        purpose: Purpose::SkillLibraryToken,
+        select: "SELECT id, coalesce(org_id, '00000000-0000-0000-0000-000000000000'::uuid), \
+                 NULL::uuid, token_ref FROM skill_libraries \
+                 WHERE token_ref IS NOT NULL AND id > $1 ORDER BY id LIMIT $2",
+        update: "UPDATE skill_libraries SET token_ref = $2, updated_at = now() \
+                 WHERE id = $1 AND token_ref = $3",
+    },
     // (phase 5, P4-UTOK, D-282) A person's chat-platform token (set only while `active`) and the
     // per-op copy a queued send or verify holds; the copy's org is kept in the op's payload.
     Source {

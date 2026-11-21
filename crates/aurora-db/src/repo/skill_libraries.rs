@@ -9,19 +9,21 @@ use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-const LIB_COLS: &str = "id, org_id, label, connection_id, app_id, repo, ref, path, status, \
+const LIB_COLS: &str = "id, org_id, label, url, repo, ref, path, status, \
     last_head_sha, last_refresh_at, next_refresh_at, refresh_failures, last_error, \
     refresh_lease_until, lease_owner, check_requested_at, created_by_user_id, created_at, \
-    updated_at, head_epoch";
+    updated_at, head_epoch, token_ref, token_updated_at";
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Clone, sqlx::FromRow)]
 pub struct LibraryRow {
     pub id: Uuid,
     pub org_id: Uuid,
     pub label: String,
-    pub connection_id: Option<Uuid>,
-    pub app_id: String,
-    pub repo: String,
+    /// (P5-SKLIB-1, C-1122) The normalized https clone URL; null only for a library migrated
+    /// without one (C-1127).
+    pub url: Option<String>,
+    /// The display form `host/path` (null only with `url`).
+    pub repo: Option<String>,
     #[sqlx(rename = "ref")]
     pub reference: Option<String>,
     pub path: String,
@@ -40,16 +42,35 @@ pub struct LibraryRow {
     /// Bumped whenever `last_head_sha` is cleared by an add (FIX-096): a refresh that read an
     /// older epoch must not write its head back.
     pub head_epoch: i32,
+    /// (P5-SKLIB-1, C-1126) The sealed token's reference: opened only by the repository
+    /// reader, never returned (the `Debug` below leaves it out).
+    pub token_ref: Option<String>,
+    pub token_updated_at: Option<DateTime<Utc>>,
+}
+
+impl std::fmt::Debug for LibraryRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LibraryRow")
+            .field("id", &self.id)
+            .field("org_id", &self.org_id)
+            .field("label", &self.label)
+            .field("url", &self.url)
+            .field("status", &self.status)
+            .field("token_set", &self.token_ref.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 pub struct NewLibrary<'a> {
+    /// The new row's id (chosen first: the token is sealed with it as owner).
+    pub id: Uuid,
     pub org_id: Uuid,
     pub label: &'a str,
-    pub connection_id: Uuid,
-    pub app_id: &'a str,
+    pub url: &'a str,
     pub repo: &'a str,
     pub reference: Option<&'a str>,
     pub path: &'a str,
+    pub token_ref: Option<&'a str>,
     pub head_sha: &'a str,
     pub created_by: Uuid,
     pub next_refresh_in_secs: f64,
@@ -60,22 +81,46 @@ pub async fn insert_library(
     n: &NewLibrary<'_>,
 ) -> Result<LibraryRow, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO skill_libraries (id, org_id, label, connection_id, app_id, repo, ref, path,
-            last_head_sha, last_refresh_at, next_refresh_at, created_by_user_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), now() + make_interval(secs => $10), $11)
+        "INSERT INTO skill_libraries (id, org_id, label, url, repo, ref, path, token_ref,
+            token_updated_at, last_head_sha, last_refresh_at, next_refresh_at, created_by_user_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $8::text IS NULL THEN NULL ELSE now() END,
+                 $9, now(), now() + make_interval(secs => $10), $11)
          RETURNING {LIB_COLS}"
     )))
-    .bind(Uuid::now_v7())
+    .bind(n.id)
     .bind(n.org_id)
     .bind(n.label)
-    .bind(n.connection_id)
-    .bind(n.app_id)
+    .bind(n.url)
     .bind(n.repo)
     .bind(n.reference)
     .bind(n.path)
+    .bind(n.token_ref)
     .bind(n.head_sha)
     .bind(n.next_refresh_in_secs)
     .bind(n.created_by)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// Whether the organization already has a library of this url + ref + path (C-1122's 409).
+pub async fn url_taken(
+    conn: &mut PgConnection,
+    org: Uuid,
+    url: &str,
+    reference: Option<&str>,
+    path: &str,
+    except: Option<Uuid>,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM skill_libraries WHERE org_id = $1 AND url = $2
+           AND coalesce(ref, '') = coalesce($3, '') AND path = $4
+           AND id IS DISTINCT FROM $5)",
+    )
+    .bind(org)
+    .bind(url)
+    .bind(reference)
+    .bind(path)
+    .bind(except)
     .fetch_one(conn)
     .await?)
 }
@@ -122,15 +167,19 @@ pub async fn count_libraries(conn: &mut PgConnection, org: Uuid) -> Result<i64, 
     )
 }
 
-/// Changes an admin may make; `None` keeps the value. `reference`/`path`: `Some(None)` clears.
+/// Changes an admin may make; `None` keeps the value. `reference`/`token_ref`: `Some(None)`
+/// clears.
 #[derive(Default)]
 pub struct LibraryPatch<'a> {
     pub label: Option<&'a str>,
     pub status: Option<&'a str>,
-    pub connection_id: Option<Uuid>,
+    /// Only while the stored url is null (C-1122); with `repo`.
+    pub url: Option<(&'a str, &'a str)>,
     pub reference: Option<Option<&'a str>>,
     pub path: Option<&'a str>,
-    /// Set with a re-resolve (connection, ref or path change): the new head and a clean state.
+    /// A new sealed token (`Some(Some)`) or its removal (`Some(None)`).
+    pub token_ref: Option<Option<&'a str>>,
+    /// Set with a re-read (url, ref, path or token change): the new head and a clean state.
     pub head_sha: Option<&'a str>,
 }
 
@@ -143,13 +192,22 @@ pub async fn patch_library(
         Some(v) => (true, v),
         None => (false, None),
     };
+    let (set_token, token_val) = match p.token_ref {
+        Some(v) => (true, v),
+        None => (false, None),
+    };
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE skill_libraries SET
             label = COALESCE($2, label),
-            status = COALESCE($3, status),
-            connection_id = COALESCE($4, connection_id),
-            ref = CASE WHEN $5 THEN $6 ELSE ref END,
-            path = COALESCE($7, path),
+            status = CASE WHEN $8 IS NOT NULL AND COALESCE($3, status) <> 'paused' THEN 'active'
+                          ELSE COALESCE($3, status) END,
+            url = COALESCE($4, url),
+            repo = COALESCE($5, repo),
+            ref = CASE WHEN $6 THEN $7 ELSE ref END,
+            path = COALESCE($9, path),
+            token_ref = CASE WHEN $10 THEN $11 ELSE token_ref END,
+            token_updated_at = CASE WHEN $10 THEN (CASE WHEN $11::text IS NULL THEN NULL ELSE now() END)
+                                    ELSE token_updated_at END,
             last_head_sha = COALESCE($8, last_head_sha),
             last_error = CASE WHEN $8 IS NOT NULL OR $3 = 'active' THEN NULL ELSE last_error END,
             refresh_failures = CASE WHEN $8 IS NOT NULL OR $3 = 'active' THEN 0
@@ -162,11 +220,14 @@ pub async fn patch_library(
     .bind(id)
     .bind(p.label)
     .bind(p.status)
-    .bind(p.connection_id)
+    .bind(p.url.map(|u| u.0))
+    .bind(p.url.map(|u| u.1))
     .bind(set_ref)
     .bind(ref_val)
-    .bind(p.path)
     .bind(p.head_sha)
+    .bind(p.path)
+    .bind(set_token)
+    .bind(token_val)
     .fetch_one(conn)
     .await?)
 }
@@ -197,29 +258,6 @@ pub async fn request_check(
     .await?
     .rows_affected()
         > 0)
-}
-
-/// The org's connection row as the dashboard shows it.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct ConnectionBrief {
-    pub id: Uuid,
-    pub org_id: Uuid,
-    pub workspace_id: Option<Uuid>,
-    pub app_id: String,
-    pub label: String,
-    pub status: String,
-}
-
-pub async fn connection_brief(
-    conn: &mut PgConnection,
-    id: Uuid,
-) -> Result<Option<ConnectionBrief>, DbError> {
-    Ok(sqlx::query_as(
-        "SELECT id, org_id, workspace_id, app_id, label, status FROM app_connections WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(conn)
-    .await?)
 }
 
 /// Per tier, the number of skills added from the library.
@@ -791,8 +829,8 @@ pub async fn release_lease(conn: &mut PgConnection, id: Uuid, owner: Uuid) -> Re
     Ok(())
 }
 
-/// Daily retention: prune decided proposals older than 90 days, expire stale leases and mark
-/// libraries whose connection vanished `error`. Returns `(pruned, marked)`.
+/// Daily retention: prune decided proposals older than 90 days and expire stale leases.
+/// Returns `(pruned, 0)` (P5-SKLIB-1: libraries no longer have a connection to lose).
 pub async fn retention(conn: &mut PgConnection) -> Result<(u64, u64), DbError> {
     let pruned = sqlx::query(
         "DELETE FROM skill_library_updates
@@ -805,16 +843,7 @@ pub async fn retention(conn: &mut PgConnection) -> Result<(u64, u64), DbError> {
         "UPDATE skill_libraries SET refresh_lease_until = NULL, lease_owner = NULL
          WHERE refresh_lease_until < now()",
     )
-    .execute(&mut *conn)
-    .await?;
-    let marked = sqlx::query(
-        "UPDATE skill_libraries SET status = 'error', last_error = 'connection_deleted',
-            updated_at = now()
-         WHERE connection_id IS NULL AND status <> 'paused'
-           AND last_error IS DISTINCT FROM 'connection_deleted'",
-    )
     .execute(conn)
-    .await?
-    .rows_affected();
-    Ok((pruned, marked))
+    .await?;
+    Ok((pruned, 0))
 }

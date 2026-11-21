@@ -1,29 +1,31 @@
 //! Library management, browse and content reads (docs/10 §Git skill library, docs/05 §Skill
-//! libraries; phase 4, P4-GSL).
+//! libraries; phase 4, P4-GSL; phase 5, P5-SKLIB-1, D-448: a library is an https git URL with an
+//! optional sealed read-only token, C-1122..C-1127).
 
 use std::sync::Arc;
 use std::time::Instant;
 
+use aurora_core::git_url::{self, GitAddress, UrlError};
 use aurora_core::sanitize::{label as clean_label, one_line};
-use aurora_core::{ApiError, limits};
+use aurora_core::{ApiError, Secret, limits};
 use aurora_db::DbError;
 use aurora_db::repo::skill_libraries::{self as repo, LibraryPatch, LibraryRow, NewLibrary};
 use aurora_registry::library;
-use aurora_registry::manifest::Library;
+use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
 use axum::http::StatusCode;
 use base64::Engine as _;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::content::{self, Candidate, LoadError, LoadedSkill, ReadError, Reader};
+use super::content::{self, Candidate, LoadError, LoadedSkill, ReadError, Reader, Resolved};
 use super::dto::{
-    ConnectionRef, CreateSkillLibraryRequest, LibraryFile, LibrarySkillContent,
-    PatchSkillLibraryRequest, SkillCounts, SkillLibrary,
+    CheckSkillLibraryRequest, CheckSkills, CreateSkillLibraryRequest, LibraryCheck, LibraryFile,
+    LibrarySkillContent, PatchSkillLibraryRequest, ResolvedRef, SkillCounts, SkillLibrary,
 };
+use super::git::{self, GitRepo, Token};
 use super::{CachedListing, LibraryEnv};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
-use crate::domains::plugins::registry;
 use crate::http::auth::Caller;
 
 #[derive(Debug)]
@@ -74,17 +76,6 @@ pub fn read_failure(e: &ReadError) -> ApiError {
     }
 }
 
-/// The package's `library` block of `app_id` in the active snapshot.
-pub async fn block_for(state: &AppState, app_id: &str) -> Result<Library, String> {
-    let snap = registry::active_typed(state)
-        .await
-        .map_err(|_| "the registry is unavailable".to_owned())?
-        .ok_or_else(|| "no plugin registry is active".to_owned())?;
-    snap.app(app_id)
-        .and_then(|a| a.library.clone())
-        .ok_or_else(|| "the package no longer supports skill libraries".to_owned())
-}
-
 /// Validated library path: at most 4 plain segments, no `.`/`..`.
 pub fn normalize_path(p: &str) -> Result<String, ApiError> {
     let p = p.trim().trim_matches('/');
@@ -128,46 +119,179 @@ fn check_ref(r: &str) -> Result<(), ApiError> {
     })
 }
 
-/// The org-scoped, active connection of an app with a `library` block.
-async fn check_connection(
+// ---- the address and the token (C-1122, C-1123) ---------------------------------------------
+
+/// A parsed, normalized source: what a library stores and reads.
+#[derive(Debug, Clone)]
+pub struct SourceAddr {
+    pub url: String,
+    pub repo: String,
+    pub reference: Option<String>,
+    pub path: String,
+    pub address: GitAddress,
+}
+
+fn url_invalid(e: UrlError) -> ApiError {
+    ApiError::unprocessable("library_url_invalid", e.message())
+        .with_details(json!({"reason": e.reason()}))
+}
+
+/// Parses `url` (C-1123); `ref`/`path` from a page URL only when the fields are absent.
+pub fn address(
     state: &AppState,
-    org: Uuid,
-    connection_id: Uuid,
-) -> Result<(repo::ConnectionBrief, Library), ApiError> {
-    let mut c = state.pool.acquire().await.map_err(DbError::from)?;
-    let brief = repo::connection_brief(&mut c, connection_id)
-        .await?
-        .filter(|b| b.org_id == org)
-        .ok_or_else(|| bad("/connection_id", "no such connection in this organization"))?;
-    if brief.workspace_id.is_some() {
-        return Err(ApiError::unprocessable(
-            "connection_not_org_scoped",
-            "A skill library needs an organization-level connection, not a workspace one.",
+    url: &str,
+    reference: Option<&str>,
+    path: Option<&str>,
+) -> Result<SourceAddr, ApiError> {
+    let a = git_url::parse(url).map_err(url_invalid)?;
+    // An IP-literal host is checked against the destination guard now (and again at dial time).
+    if let Some(ip) = a.ip_literal() {
+        let host = ip.to_string();
+        if !state.connect.allow.load().permits(ip, &host) {
+            return Err(ApiError::unprocessable(
+                "library_unreachable",
+                format!("The repository could not be reached: {}.", git::reason::ADDRESS_REFUSED),
+            ));
+        }
+    }
+    let reference = match reference {
+        Some(r) => Some(r.to_owned()),
+        None => a.ref_hint.clone(),
+    }
+    .filter(|r| !r.is_empty());
+    if let Some(r) = &reference {
+        check_ref(r)?;
+    }
+    let path = normalize_path(path.or(a.path_hint.as_deref()).unwrap_or(""))?;
+    Ok(SourceAddr {
+        url: a.url.clone(),
+        repo: a.repo_display.clone(),
+        reference,
+        path,
+        address: a,
+    })
+}
+
+/// The token of a request (C-1122): 1..1024 printable ASCII without whitespace; the user name
+/// 1..100 of `[A-Za-z0-9._@-]`, default `x-access-token`; a user name needs a token.
+pub fn token_input(token: Option<&str>, username: Option<&str>) -> Result<Option<Token>, ApiError> {
+    let Some(t) = token else {
+        if username.is_some() {
+            return Err(bad("/token_username", "a user name needs a token"));
+        }
+        return Ok(None);
+    };
+    if t.is_empty() || t.len() > 1024 || !t.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
+        return Err(bad(
+            "/token",
+            "1 to 1024 printable characters without spaces",
         ));
     }
-    let block = block_for(state, &brief.app_id).await.map_err(|_| {
-        ApiError::unprocessable(
-            "app_without_library",
-            "This connection's app cannot serve a skill library.",
-        )
-    })?;
-    if brief.status != "active" {
-        return Err(ApiError::unprocessable(
-            "library_unreachable",
-            "The connection is not active; reconnect it first.",
+    let username = username.unwrap_or("x-access-token");
+    if username.is_empty()
+        || username.len() > 100
+        || !username
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'@' | b'-'))
+    {
+        return Err(bad(
+            "/token_username",
+            "1 to 100 letters, digits, `.`, `_`, `@` or `-`",
         ));
     }
-    Ok((brief, block))
+    Ok(Some(Token {
+        username: username.to_owned(),
+        token: Secret::new(t.to_owned()),
+    }))
+}
+
+/// The seal context of a library's token (C-1126).
+fn token_ctx(library: Uuid, org: Option<Uuid>) -> SealContext {
+    SealContext {
+        purpose: Purpose::SkillLibraryToken,
+        owner_id: library,
+        org_id: org.unwrap_or(Uuid::nil()),
+        workspace_id: None,
+    }
+}
+
+fn store_unavailable() -> ApiError {
+    ApiError::unavailable(
+        "secret_store_unavailable",
+        "The secret store is unavailable; nothing was saved. Try again shortly.",
+    )
+}
+
+async fn seal_token(
+    state: &AppState,
+    library: Uuid,
+    org: Option<Uuid>,
+    t: &Token,
+) -> Result<String, ApiError> {
+    let plain = json!({"username": t.username, "token": t.token.expose()}).to_string();
+    let r = state
+        .vault
+        .seal(&token_ctx(library, org), Secret::new(plain.into_bytes()))
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "skill library token not sealed");
+            store_unavailable()
+        })?;
+    Ok(r.to_column())
+}
+
+/// Best effort: a sealed value in an external store is deleted (inline values live in the row).
+async fn discard_token(state: &AppState, library: Uuid, org: Option<Uuid>, token_ref: &str) {
+    if let Ok(r) = token_ref.parse::<SecretRef>()
+        && let Err(e) = state
+            .vault
+            .discard(&token_ctx(library, org), &r, ValueSource::Managed)
+            .await
+    {
+        tracing::warn!(library = %library, error = %e, "a skill library token was not discarded");
+    }
+}
+
+/// (SEC-148) Opens a library's token for one read. Only the repository reader uses the value.
+pub(crate) async fn open_token(state: &AppState, row: &LibraryRow) -> Result<Option<Token>, String> {
+    let Some(tr) = row.token_ref.as_deref() else {
+        return Ok(None);
+    };
+    let fail = || "the access token could not be opened; try again later".to_owned();
+    let r: SecretRef = tr.parse().map_err(|_| fail())?;
+    let plain = state
+        .vault
+        .open(&token_ctx(row.id, Some(row.org_id)), &r)
+        .await
+        .map_err(|_| fail())?;
+    let v: serde_json::Value = serde_json::from_slice(plain.expose()).map_err(|_| fail())?;
+    let username = v["username"].as_str().ok_or_else(fail)?.to_owned();
+    let token = v["token"].as_str().ok_or_else(fail)?.to_owned();
+    Ok(Some(Token {
+        username,
+        token: Secret::new(token),
+    }))
+}
+
+/// The stored URL of a row (a migrated row without one cannot be read).
+pub(crate) fn row_url(row: &LibraryRow) -> Result<&str, ReadError> {
+    row.url
+        .as_deref()
+        .ok_or_else(|| ReadError::Unreachable(git::reason::ENTER_URL.into()))
 }
 
 fn unreachable_on_create(e: &ReadError) -> ApiError {
-    ApiError::unprocessable(
-        "library_unreachable",
-        format!(
-            "The repository could not be reached: {}.",
-            one_line(&e.reason(), 200)
-        ),
-    )
+    match e {
+        ReadError::TreeTooLarge => ApiError::unprocessable("library_tree_too_large", e.reason()),
+        _ => ApiError::unprocessable(
+            "library_unreachable",
+            format!(
+                "The repository could not be reached: {}.",
+                one_line(&e.reason(), 200)
+            ),
+        )
+        .with_details(json!({"reason": one_line(&e.reason(), 200)})),
+    }
 }
 
 fn refresh_interval(state: &AppState) -> f64 {
@@ -191,6 +315,33 @@ async fn check_library_cap(conn: &mut sqlx::PgConnection, org: Uuid) -> Result<(
     Ok(())
 }
 
+fn exists() -> ApiError {
+    ApiError::conflict(
+        "library_exists",
+        "A library with this label, or this repository, branch and folder, already exists.",
+    )
+}
+
+/// The read before saving (C-1122, C-1125): resolve the ref and list the tree at `path`.
+async fn probe(
+    state: &AppState,
+    src: &SourceAddr,
+    token: Option<&Token>,
+) -> Result<Resolved, ApiError> {
+    let git = GitRepo::new(&state.connect, &src.url, token, state.library.fetch_timeout)
+        .map_err(|e| unreachable_on_create(&e))?;
+    let reader = Reader::new(&git, &src.path);
+    let resolved = reader
+        .resolve_full(src.reference.as_deref())
+        .await
+        .map_err(|e| unreachable_on_create(&e))?;
+    reader
+        .tree(&resolved.sha)
+        .await
+        .map_err(|e| unreachable_on_create(&e))?;
+    Ok(resolved)
+}
+
 pub async fn create(
     state: &AppState,
     caller: &Caller,
@@ -198,76 +349,129 @@ pub async fn create(
     req: &CreateSkillLibraryRequest,
 ) -> Result<LibraryRow, ApiError> {
     let label = clean_label_field(&req.label)?;
-    let (brief, block) = check_connection(state, org, req.connection_id).await?;
-    library::check_repo(&block, &req.repo).map_err(|_| {
-        bad(
-            "/repo",
-            "does not match the repository format of this git host",
-        )
-    })?;
-    let reference = req.reference.as_deref().filter(|r| !r.is_empty());
-    if let Some(r) = reference {
-        check_ref(r)?;
-    }
-    let path = normalize_path(req.path.as_deref().unwrap_or(""))?;
-    // Early refusal before the slow read of the repository; the authoritative check is made
+    let src = address(state, &req.url, req.reference.as_deref(), req.path.as_deref())?;
+    let token = token_input(req.token.as_deref(), req.token_username.as_deref())?;
+    // Early refusals before the slow read of the repository; the authoritative checks run
     // under the org's advisory lock right before the insert (below).
-    let mut c = state.pool.acquire().await.map_err(DbError::from)?;
-    check_library_cap(&mut c, org).await?;
-    drop(c);
-    let reader = Reader {
-        gw: state.library.gateway.as_ref(),
-        lib: &block,
-        org,
-        conn: brief.id,
-        repo: &req.repo,
+    {
+        let mut c = state.pool.acquire().await.map_err(DbError::from)?;
+        check_library_cap(&mut c, org).await?;
+        if repo::url_taken(&mut c, org, &src.url, src.reference.as_deref(), &src.path, None)
+            .await?
+        {
+            return Err(exists());
+        }
+    }
+    let head = probe(state, &src, token.as_ref()).await?.sha;
+    let id = Uuid::now_v7();
+    // Seal first; a failed insert deletes the sealed value again.
+    let token_ref = match &token {
+        Some(t) => Some(seal_token(state, id, Some(org), t).await?),
+        None => None,
     };
-    let head = reader
-        .resolve(reference)
+    let result = async {
+        let mut tx = audit::begin(state).await?;
+        // Serialise creates per organization: without the lock, concurrent creates at 9
+        // libraries all pass the count and exceed `LIBRARIES_PER_ORG`.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("skill_library_count:{org}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(DbError::from)?;
+        check_library_cap(&mut tx, org).await?;
+        let row = repo::insert_library(
+            &mut tx,
+            &NewLibrary {
+                id,
+                org_id: org,
+                label: &label,
+                url: &src.url,
+                repo: &src.repo,
+                reference: src.reference.as_deref(),
+                path: &src.path,
+                token_ref: token_ref.as_deref(),
+                head_sha: &head,
+                created_by: caller.user_id,
+                next_refresh_in_secs: refresh_interval(state),
+            },
+        )
+        .await
+        .map_err(|e| match e {
+            DbError::UniqueViolation { .. } => exists(),
+            e => e.into(),
+        })?;
+        repo::record_head(&mut tx, row.id, &head).await?;
+        let mut meta = json!({"label": row.label, "url": row.url, "repo": row.repo,
+            "ref": row.reference, "path": row.path});
+        if token.is_some() {
+            meta["token"] = json!("set");
+        }
+        let ev = AuditEvent::by(caller, "skill_library.create")
+            .org(org)
+            .target("skill_library", row.id)
+            .metadata(meta);
+        audit::commit_critical(tx, &ev).await?;
+        Ok::<_, ApiError>(row)
+    }
+    .await;
+    if result.is_err()
+        && let Some(r) = &token_ref
+    {
+        discard_token(state, id, Some(org), r).await;
+    }
+    result
+}
+
+/// `POST …/skill-libraries/check` (C-1124): the create read, answered; nothing is stored.
+pub async fn check(
+    state: &AppState,
+    req: &CheckSkillLibraryRequest,
+) -> Result<LibraryCheck, ApiError> {
+    let src = address(state, &req.url, req.reference.as_deref(), req.path.as_deref())?;
+    let token = token_input(req.token.as_deref(), req.token_username.as_deref())?;
+    let git = GitRepo::new(&state.connect, &src.url, token.as_ref(), state.library.fetch_timeout)
+        .map_err(|e| unreachable_on_create(&e))?;
+    let reader = Reader::new(&git, &src.path);
+    let resolved = reader
+        .resolve_full(src.reference.as_deref())
         .await
         .map_err(|e| unreachable_on_create(&e))?;
-    let mut tx = audit::begin(state).await?;
-    // Serialise creates per organization: without the lock, concurrent creates at 9 libraries
-    // all pass the count and exceed `LIBRARIES_PER_ORG`.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(format!("skill_library_count:{org}"))
-        .execute(&mut *tx)
+    let listing = catalogue(&reader, &src.path, resolved.sha.clone())
         .await
-        .map_err(DbError::from)?;
-    check_library_cap(&mut tx, org).await?;
-    let row = repo::insert_library(
-        &mut tx,
-        &NewLibrary {
-            org_id: org,
-            label: &label,
-            connection_id: brief.id,
-            app_id: &brief.app_id,
-            repo: &req.repo,
-            reference,
-            path: &path,
-            head_sha: &head,
-            created_by: caller.user_id,
-            next_refresh_in_secs: refresh_interval(state),
+        .map_err(|e| unreachable_on_create(&e))?;
+    let mut names: Vec<String> = listing
+        .items
+        .iter()
+        .filter(|i| i.valid)
+        .map(|i| i.name.clone())
+        .collect();
+    names.sort();
+    let valid = names.len();
+    names.truncate(20);
+    let mut suggested = clean_label(src.address.last_segment());
+    if suggested.is_empty() {
+        suggested = "Skills".to_owned();
+    }
+    let suggested_label: String = suggested.chars().take(80).collect();
+    Ok(LibraryCheck {
+        url: src.url,
+        repo: src.repo,
+        reference: src.reference,
+        resolved: ResolvedRef {
+            kind: resolved.kind.as_str(),
+            name: one_line(&resolved.name, 200),
+            default: resolved.default,
         },
-    )
-    .await
-    .map_err(|e| match e {
-        DbError::UniqueViolation { .. } => ApiError::conflict(
-            "library_exists",
-            "A library with this label already exists in this organization.",
-        ),
-        e => e.into(),
-    })?;
-    repo::record_head(&mut tx, row.id, &head).await?;
-    let ev = AuditEvent::by(caller, "skill_library.create")
-        .org(org)
-        .target("skill_library", row.id)
-        .metadata(
-            json!({"label": row.label, "repo": row.repo, "ref": row.reference,
-            "path": row.path, "connection_id": brief.id, "app_id": row.app_id}),
-        );
-    audit::commit_critical(tx, &ev).await?;
-    Ok(row)
+        commit_sha: resolved.sha,
+        path: src.path,
+        skills: CheckSkills {
+            found: listing.found,
+            valid,
+            names,
+        },
+        truncated: listing.truncated,
+        suggested_label,
+    })
 }
 
 pub async fn get(state: &AppState, id: Uuid) -> Result<LibraryRow, ApiError> {
@@ -282,7 +486,7 @@ pub async fn list(state: &AppState, org: Uuid) -> Result<Vec<LibraryRow>, ApiErr
     Ok(repo::list_libraries(&mut c, org).await?)
 }
 
-/// The dashboard view. `full == false` (a member's picker): `id`, `label`, `status` only.
+/// The dashboard view. `full == false` (a member's picker): `id`, `label`, `status`, `scope`.
 pub async fn view(
     state: &AppState,
     row: &LibraryRow,
@@ -291,13 +495,16 @@ pub async fn view(
     if !full {
         return Ok(SkillLibrary {
             id: row.id,
+            scope: "org",
+            org_id: None,
             label: row.label.clone(),
             status: row.status.clone(),
-            app_id: None,
-            connection: None,
+            url: None,
             repo: None,
             reference: None,
             path: None,
+            token_set: None,
+            token_updated_at: None,
             last_head_sha: None,
             last_refresh_at: None,
             last_error: None,
@@ -307,27 +514,20 @@ pub async fn view(
         });
     }
     let mut c = state.pool.acquire().await.map_err(DbError::from)?;
-    let connection = match row.connection_id {
-        Some(id) => repo::connection_brief(&mut c, id)
-            .await?
-            .map(|b| ConnectionRef {
-                id: b.id,
-                label: one_line(&b.label, 100),
-                status: b.status,
-            }),
-        None => None,
-    };
     let (a, w, o) = repo::skill_counts(&mut c, row.id).await?;
     let pending = repo::pending_count(&mut c, row.id).await?;
     Ok(SkillLibrary {
         id: row.id,
+        scope: "org",
+        org_id: Some(row.org_id),
         label: row.label.clone(),
         status: row.status.clone(),
-        app_id: Some(row.app_id.clone()),
-        connection,
-        repo: Some(row.repo.clone()),
+        url: row.url.clone(),
+        repo: row.repo.clone(),
         reference: row.reference.clone(),
         path: Some(row.path.clone()),
+        token_set: Some(row.token_ref.is_some()),
+        token_updated_at: row.token_updated_at,
         last_head_sha: row.last_head_sha.clone(),
         last_refresh_at: row.last_refresh_at,
         last_error: row.last_error.clone(),
@@ -363,8 +563,28 @@ pub async fn patch(
         p.status = Some(s);
         changed.push("status");
     }
-    let new_ref;
+    // (C-1122) The address is fixed once set: another repository is a new library.
+    let new_src = match &req.url {
+        Some(_) if cur.url.is_some() => {
+            return Err(ApiError::conflict(
+                "library_url_fixed",
+                "The repository address cannot change; add a new library for another repository.",
+            ));
+        }
+        Some(u) => Some(address(
+            state,
+            u,
+            req.reference.as_deref(),
+            req.path.as_deref(),
+        )?),
+        None => None,
+    };
+    if let Some(s) = &new_src {
+        p.url = Some((&s.url, &s.repo));
+        changed.push("url");
+    }
     let mut effective_ref = cur.reference.clone();
+    let new_ref;
     if let Some(r) = &req.reference {
         if r.is_empty() {
             p.reference = Some(None);
@@ -376,74 +596,151 @@ pub async fn patch(
             effective_ref = Some(new_ref.clone());
         }
         changed.push("ref");
+    } else if let Some(s) = &new_src
+        && s.reference.is_some()
+    {
+        effective_ref.clone_from(&s.reference);
+        p.reference = Some(s.reference.as_deref());
+        changed.push("ref");
     }
+    let mut effective_path = cur.path.clone();
     let new_path;
     if let Some(path) = &req.path {
         new_path = normalize_path(path)?;
+        effective_path.clone_from(&new_path);
         p.path = Some(&new_path);
         changed.push("path");
+    } else if let Some(s) = &new_src
+        && !s.path.is_empty()
+    {
+        effective_path.clone_from(&s.path);
+        p.path = Some(&s.path);
+        changed.push("path");
     }
-    let mut connection_id = cur.connection_id;
-    if let Some(c) = req.connection_id {
-        connection_id = Some(c);
-        p.connection_id = Some(c);
-        changed.push("connection_id");
-    }
-    // A change of connection, ref or path re-resolves and never touches stored skills.
-    let head;
-    if req.connection_id.is_some() || req.reference.is_some() || req.path.is_some() {
-        let Some(conn) = connection_id else {
-            return Err(bad(
-                "/connection_id",
-                "the library has no connection; pick one",
-            ));
-        };
-        let (brief, block) = check_connection(state, cur.org_id, conn).await?;
-        if brief.app_id != cur.app_id {
-            return Err(bad(
-                "/connection_id",
-                "the connection must be of the same app",
-            ));
+    // `token`: a value sets or replaces, null removes, absent keeps.
+    let new_token = match &req.token {
+        Some(Some(t)) => token_input(Some(t), req.token_username.as_deref())?,
+        Some(None) | None => {
+            if req.token_username.is_some() {
+                return Err(bad("/token_username", "a user name needs a token"));
+            }
+            None
         }
-        let reader = Reader {
-            gw: state.library.gateway.as_ref(),
-            lib: &block,
-            org: cur.org_id,
-            conn,
-            repo: &cur.repo,
+    };
+    let token_change = match &req.token {
+        Some(Some(_)) if cur.token_ref.is_some() => Some("replaced"),
+        Some(Some(_)) => Some("set"),
+        Some(None) if cur.token_ref.is_some() => Some("removed"),
+        _ => None,
+    };
+    if token_change.is_some() {
+        changed.push("token");
+    }
+    let effective_url = new_src
+        .as_ref()
+        .map(|s| s.url.clone())
+        .or_else(|| cur.url.clone());
+    let source_changed = new_src.is_some() || req.reference.is_some() || req.path.is_some();
+    if source_changed && let Some(u) = &effective_url {
+        let mut c = state.pool.acquire().await.map_err(DbError::from)?;
+        if repo::url_taken(
+            &mut c,
+            cur.org_id,
+            u,
+            effective_ref.as_deref(),
+            &effective_path,
+            Some(id),
+        )
+        .await?
+        {
+            return Err(exists());
+        }
+    }
+    // A change of url, ref, path or token re-reads (with the token that will be stored) and
+    // never touches stored skills; a failed read keeps everything as it was.
+    let head;
+    if source_changed || new_token.is_some() || token_change == Some("removed") {
+        let Some(u) = &effective_url else {
+            return Err(bad("/url", "enter the repository's git address first"));
         };
-        head = reader
-            .resolve(effective_ref.as_deref())
-            .await
-            .map_err(|e| unreachable_on_create(&e))?;
+        let kept;
+        let token: Option<&Token> = if new_token.is_some() {
+            new_token.as_ref()
+        } else if token_change == Some("removed") {
+            None
+        } else {
+            kept = open_token(state, &cur)
+                .await
+                .map_err(|_| store_unavailable())?;
+            kept.as_ref()
+        };
+        let src = SourceAddr {
+            url: u.clone(),
+            repo: String::new(),
+            reference: effective_ref.clone(),
+            path: effective_path.clone(),
+            address: git_url::parse(u).map_err(url_invalid)?,
+        };
+        head = probe(state, &src, token).await?.sha;
         p.head_sha = Some(&head);
     }
-    let mut tx = audit::begin(state).await?;
-    repo::get_library_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Skill library not found."))?;
-    let row = repo::patch_library(&mut tx, id, &p)
-        .await
-        .map_err(|e| match e {
-            DbError::UniqueViolation { .. } => ApiError::conflict(
-                "library_exists",
-                "A library with this label already exists in this organization.",
-            ),
-            e => e.into(),
-        })?;
-    if let Some(h) = p.head_sha {
-        repo::record_head(&mut tx, id, h).await?;
+    let sealed = match &new_token {
+        Some(t) => Some(seal_token(state, id, Some(cur.org_id), t).await?),
+        None => None,
+    };
+    match (&sealed, token_change) {
+        (Some(s), _) => p.token_ref = Some(Some(s)),
+        (None, Some("removed")) => p.token_ref = Some(None),
+        _ => {}
     }
-    let ev = AuditEvent::by(caller, "skill_library.update")
-        .org(cur.org_id)
-        .target("skill_library", id)
-        .metadata(json!({"change": changed, "label": row.label}));
-    audit::commit_critical(tx, &ev).await?;
+    let result = async {
+        let mut tx = audit::begin(state).await?;
+        repo::get_library_for_update(&mut tx, id)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Skill library not found."))?;
+        let row = repo::patch_library(&mut tx, id, &p)
+            .await
+            .map_err(|e| match e {
+                DbError::UniqueViolation { .. } => exists(),
+                e => e.into(),
+            })?;
+        if let Some(h) = p.head_sha {
+            repo::record_head(&mut tx, id, h).await?;
+        }
+        let mut meta = json!({"change": changed, "label": row.label, "url": row.url,
+            "ref": row.reference, "path": row.path});
+        if let Some(t) = token_change {
+            meta["token"] = json!(t);
+        }
+        let ev = AuditEvent::by(caller, "skill_library.update")
+            .org(cur.org_id)
+            .target("skill_library", id)
+            .metadata(meta);
+        audit::commit_critical(tx, &ev).await?;
+        Ok::<_, ApiError>(row)
+    }
+    .await;
+    match &result {
+        Ok(_) => {
+            // The replaced or removed value is gone from the row: discard it from its store.
+            if token_change.is_some_and(|t| t != "set")
+                && let Some(old) = &cur.token_ref
+            {
+                discard_token(state, id, Some(cur.org_id), old).await;
+            }
+        }
+        Err(_) => {
+            if let Some(s) = &sealed {
+                discard_token(state, id, Some(cur.org_id), s).await;
+            }
+        }
+    }
     state.library.forget(id);
-    Ok(row)
+    result
 }
 
-/// Deletes the library; every skill added from it is detached (keeps its content).
+/// Deletes the library; every skill added from it is detached (keeps its content); the sealed
+/// token is deleted.
 pub async fn delete(state: &AppState, caller: &Caller, id: Uuid) -> Result<u64, ApiError> {
     let cur = get(state, id).await?;
     let mut tx = audit::begin(state).await?;
@@ -457,6 +754,9 @@ pub async fn delete(state: &AppState, caller: &Caller, id: Uuid) -> Result<u64, 
         .target("skill_library", id)
         .metadata(json!({"label": cur.label, "repo": cur.repo, "skills_detached": detached}));
     audit::commit_critical(tx, &ev).await?;
+    if let Some(t) = &cur.token_ref {
+        discard_token(state, id, Some(cur.org_id), t).await;
+    }
     state.library.forget(id);
     Ok(detached)
 }
@@ -484,27 +784,25 @@ pub async fn check_now(state: &AppState, id: Uuid) -> Result<(), ApiError> {
 
 // ---- reading ------------------------------------------------------------------------------
 
-/// What a read needs: the package's block and the connection id (never a credential).
-pub async fn read_ctx(state: &AppState, row: &LibraryRow) -> Result<(Library, Uuid), ApiError> {
-    let block = block_for(state, &row.app_id).await.map_err(|r| {
-        ApiError::bad_gateway(
-            "library_unavailable",
-            format!("The repository could not be read: {r}."),
-        )
-    })?;
-    let conn = row.connection_id.ok_or_else(|| {
-        ApiError::bad_gateway(
-            "library_unavailable",
-            "The repository could not be read: the connection was deleted.",
-        )
-    })?;
-    Ok((block, conn))
+/// The token of a read (503 when the store cannot open it).
+async fn read_token(state: &AppState, row: &LibraryRow) -> Result<Option<Token>, ApiError> {
+    open_token(state, row).await.map_err(|_| store_unavailable())
+}
+
+fn git_for<'a>(
+    state: &'a AppState,
+    row: &LibraryRow,
+    token: Option<&'a Token>,
+) -> Result<GitRepo<'a>, ApiError> {
+    let url = row_url(row).map_err(|e| read_failure(&e))?;
+    GitRepo::new(&state.connect, url, token, state.library.fetch_timeout)
+        .map_err(|e| read_failure(&e))
 }
 
 fn fingerprint(row: &LibraryRow) -> String {
     format!(
-        "{:?}|{:?}|{}|{}",
-        row.connection_id, row.reference, row.path, row.repo
+        "{:?}|{:?}|{}|{:?}",
+        row.url, row.reference, row.path, row.token_updated_at
     )
 }
 
@@ -514,7 +812,7 @@ pub async fn listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>,
         return Ok(l);
     }
     // (FIX-096) One cold read per library at a time, under a deadline: twenty members opening
-    // the picker cost one tree read and one read per SKILL.md, not twenty times that.
+    // the picker cost one read, not twenty.
     let flight = state.library.flight(row.id);
     let cold = async {
         let _turn = flight.lock().await;
@@ -542,8 +840,8 @@ async fn record_head(state: &AppState, library: Uuid, sha: &str) -> Result<(), A
 }
 
 /// (D-178 Q-R5-3) Browse and add accept only the ref's current head and heads this library has
-/// recorded (refresh, browse, create): not a force-pushed or unmerged commit, nor one that only
-/// another repository of the fork network holds. Unknown ids answer 422 `commit_not_in_library`.
+/// recorded (refresh, browse, create): not a force-pushed or unmerged commit. Unknown ids answer
+/// 422 `commit_not_in_library`.
 async fn ensure_known_commit(
     state: &AppState,
     row: &LibraryRow,
@@ -581,33 +879,57 @@ fn cached_listing(env: &LibraryEnv, row: &LibraryRow) -> Option<Arc<Listing>> {
         .then(|| e.listing.clone())
 }
 
+/// A listing plus how many skill directories were found (the check route's `found`).
+pub(crate) struct Catalogue {
+    pub items: Vec<ListItem>,
+    pub found: usize,
+    pub truncated: bool,
+    pub commit_sha: String,
+}
+
+/// Reads the tree at `sha` and the `SKILL.md` of the first `LIBRARY_BROWSE_MAX` skill
+/// directories (one blob request).
+async fn catalogue(reader: &Reader<'_>, path: &str, sha: String) -> Result<Catalogue, ReadError> {
+    let entries = reader.tree(&sha).await?;
+    let cands = content::assemble(path, &entries);
+    let truncated = cands.len() > limits::LIBRARY_BROWSE_MAX;
+    let listed: Vec<&Candidate> = cands.iter().take(limits::LIBRARY_BROWSE_MAX).collect();
+    let ids: Vec<String> = listed
+        .iter()
+        .filter(|c| c.problem().is_none())
+        .filter_map(|c| c.skill_md.as_ref().map(|s| s.blob.clone()))
+        .collect();
+    reader.prefetch(&ids).await?;
+    let mut items = Vec::with_capacity(listed.len());
+    for c in listed {
+        items.push(list_item(reader, c).await?);
+    }
+    Ok(Catalogue {
+        items,
+        found: cands.len(),
+        truncated,
+        commit_sha: sha,
+    })
+}
+
 async fn read_listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>, ApiError> {
     let env: &LibraryEnv = &state.library;
     let fp = fingerprint(row);
-    let (block, conn) = read_ctx(state, row).await?;
-    let reader = Reader {
-        gw: env.gateway.as_ref(),
-        lib: &block,
-        org: row.org_id,
-        conn,
-        repo: &row.repo,
-    };
+    let token = read_token(state, row).await?;
+    let git = git_for(state, row, token.as_ref())?;
+    let reader = Reader::new(&git, &row.path);
     let sha = reader
         .resolve(row.reference.as_deref())
         .await
         .map_err(|e| read_failure(&e))?;
     record_head(state, row.id, &sha).await?;
-    let entries = reader.tree(&sha).await.map_err(|e| read_failure(&e))?;
-    let cands = content::assemble(&block, &row.path, &entries);
-    let truncated = cands.len() > limits::LIBRARY_BROWSE_MAX;
-    let mut items = Vec::new();
-    for c in cands.iter().take(limits::LIBRARY_BROWSE_MAX) {
-        items.push(list_item(&reader, c).await.map_err(|e| read_failure(&e))?);
-    }
+    let cat = catalogue(&reader, &row.path, sha)
+        .await
+        .map_err(|e| read_failure(&e))?;
     let l = Arc::new(Listing {
-        commit_sha: sha,
-        items,
-        truncated,
+        commit_sha: cat.commit_sha,
+        items: cat.items,
+        truncated: cat.truncated,
     });
     if let Ok(mut c) = env.cache.lock() {
         c.insert(
@@ -623,28 +945,32 @@ async fn read_listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>
 }
 
 async fn list_item(reader: &Reader<'_>, c: &Candidate) -> Result<ListItem, ReadError> {
-    let base = |valid: bool, description: Option<String>, reason: Option<String>| ListItem {
-        path: c.dir.clone(),
-        name: c.dir.clone(),
-        description,
-        valid,
-        reason: reason.map(|r| one_line(&r, 200)),
-        size: c.tree_size(),
-        files: c.files.len() + usize::from(c.skill_md.is_some()),
+    let base = |valid: bool, description: Option<String>, reason: Option<String>, extra: u64| {
+        ListItem {
+            path: c.dir.clone(),
+            name: c.dir.clone(),
+            description,
+            valid,
+            reason: reason.map(|r| one_line(&r, 200)),
+            size: c.tree_size() + extra,
+            files: c.files.len() + usize::from(c.skill_md.is_some()),
+        }
     };
     if let Some(p) = c.problem() {
-        return Ok(base(false, None, Some(p)));
+        return Ok(base(false, None, Some(p), 0));
     }
     let Some(sm) = &c.skill_md else {
-        return Ok(base(false, None, Some("SKILL.md is missing".into())));
+        return Ok(base(false, None, Some("SKILL.md is missing".into()), 0));
     };
     let raw = reader.blob(&sm.blob).await?;
+    // The tree of a filtered fetch has no blob sizes: count the SKILL.md just read.
+    let extra = if sm.size.is_none() { raw.len() as u64 } else { 0 };
     if raw.len() > limits::LIBRARY_FILE_MAX {
-        return Ok(base(false, None, Some("SKILL.md is too large".into())));
+        return Ok(base(false, None, Some("SKILL.md is too large".into()), extra));
     }
     Ok(match content::parse_skill_md(&raw, &c.dir) {
-        Ok((d, _)) => base(true, Some(d), None),
-        Err(r) => base(false, None, Some(r)),
+        Ok((d, _)) => base(true, Some(d), None, extra),
+        Err(r) => base(false, None, Some(r), extra),
     })
 }
 
@@ -667,17 +993,12 @@ pub async fn load_for_add(
     dir: &str,
     commit: &str,
 ) -> Result<LoadedSkill, ApiError> {
-    let (block, conn) = read_ctx(state, row).await?;
-    let reader = Reader {
-        gw: state.library.gateway.as_ref(),
-        lib: &block,
-        org: row.org_id,
-        conn,
-        repo: &row.repo,
-    };
+    let token = read_token(state, row).await?;
+    let git = git_for(state, row, token.as_ref())?;
+    let reader = Reader::new(&git, &row.path);
     ensure_known_commit(state, row, &reader, commit).await?;
     let entries = reader.tree(commit).await.map_err(|e| read_failure(&e))?;
-    let cands = content::assemble(&block, &row.path, &entries);
+    let cands = content::assemble(&row.path, &entries);
     let Some(c) = cands.iter().find(|c| c.dir == dir) else {
         return Err(ApiError::unprocessable(
             "library_skill_invalid",
@@ -695,14 +1016,9 @@ pub async fn skill_content(
     dir: &str,
     commit: Option<&str>,
 ) -> Result<LibrarySkillContent, ApiError> {
-    let (block, conn) = read_ctx(state, row).await?;
-    let reader = Reader {
-        gw: state.library.gateway.as_ref(),
-        lib: &block,
-        org: row.org_id,
-        conn,
-        repo: &row.repo,
-    };
+    let token = read_token(state, row).await?;
+    let git = git_for(state, row, token.as_ref())?;
+    let reader = Reader::new(&git, &row.path);
     let sha = match commit {
         Some(c) => {
             library::check_hex_id(c, "sha")
@@ -720,7 +1036,7 @@ pub async fn skill_content(
         }
     };
     let entries = reader.tree(&sha).await.map_err(|e| read_failure(&e))?;
-    let cands = content::assemble(&block, &row.path, &entries);
+    let cands = content::assemble(&row.path, &entries);
     let Some(c) = cands.iter().find(|c| c.dir == dir) else {
         return Err(ApiError::not_found(
             "No skill with that name at this commit.",

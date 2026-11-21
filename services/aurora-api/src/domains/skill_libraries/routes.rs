@@ -16,6 +16,7 @@ use uuid::Uuid;
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_libraries, create_library))
+        .routes(routes!(check_library))
         .routes(routes!(get_library, patch_library, delete_library))
         .routes(routes!(refresh_library))
         .routes(routes!(browse_library))
@@ -92,7 +93,47 @@ async fn list_libraries(
     }))
 }
 
-/// Connect a repository as a skill library (org owner/admin).
+/// (P5-SKLIB-1, C-1124) 10 checks per minute per person.
+pub(crate) const CHECKS_PER_MINUTE: u32 = 10;
+
+/// The check rate (per person, per replica) and its 429.
+pub(crate) fn check_rate(c: &Caller, s: &AppState) -> Result<(), ApiError> {
+    s.rate_limiter.check_quota(
+        "skill_library_check",
+        &c.user_id.to_string(),
+        crate::http::ratelimit::Quota {
+            capacity: CHECKS_PER_MINUTE,
+            per: std::time::Duration::from_secs(60),
+        },
+    )
+}
+
+/// Read a repository like a create would and say what was found; nothing is stored
+/// (org owner/admin).
+#[utoipa::path(post, path = "/orgs/{org}/skill-libraries/check", operation_id = "checkSkillLibrary",
+    tag = "skill-libraries", params(("org" = Uuid, Path, description = "Organization id")),
+    request_body = CheckSkillLibraryRequest,
+    responses((status = 200, body = LibraryCheck), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope), (status = 429, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn check_library(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+    Json(req): Json<CheckSkillLibraryRequest>,
+) -> Result<Response, ApiError> {
+    service::ensure_enabled(&s)?;
+    c.org(&s, org).await?.require_admin()?;
+    check_rate(&c, &s)?;
+    let body = service::check(&s, &req).await?;
+    let mut resp = Json(body).into_response();
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(resp)
+}
+
+/// Add a git repository as a skill library (org owner/admin).
 #[utoipa::path(post, path = "/orgs/{org}/skill-libraries", operation_id = "createSkillLibrary",
     tag = "skill-libraries", params(("org" = Uuid, Path, description = "Organization id")),
     request_body = CreateSkillLibraryRequest,
@@ -130,8 +171,8 @@ async fn get_library(
     Ok(Json(service::view(&s, &row, true).await?))
 }
 
-/// Rename, pause or resume, or change connection, ref or path (re-resolves; stored skills are
-/// never touched).
+/// Rename, pause or resume, change ref, path or token (re-reads; stored skills are never
+/// touched), or set the address of a migrated library that has none.
 #[utoipa::path(patch, path = "/skill-libraries/{id}", operation_id = "updateSkillLibrary",
     tag = "skill-libraries", params(("id" = Uuid, Path, description = "Library id")),
     request_body = PatchSkillLibraryRequest,

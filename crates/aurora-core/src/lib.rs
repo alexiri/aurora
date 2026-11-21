@@ -8,6 +8,7 @@ pub mod audit;
 pub mod cidr;
 pub mod dash_paths;
 pub mod error;
+pub mod git_url;
 pub mod ids;
 pub mod limits;
 pub mod llm_classify;

@@ -205,7 +205,7 @@ pub async fn add(
     let src = Source {
         library_id: lib.id,
         label: &lib.label,
-        repo: &lib.repo,
+        repo: lib.repo.as_deref().unwrap_or(""),
         path: &from.path,
         commit_sha: commit,
         blobs: &blobs,

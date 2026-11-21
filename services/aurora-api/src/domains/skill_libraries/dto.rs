@@ -3,17 +3,9 @@
 //! dashboard renders it as data.
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
-
-#[derive(Serialize, ToSchema, Clone)]
-pub struct ConnectionRef {
-    pub id: Uuid,
-    pub label: String,
-    /// `active`, `reauth_required`, `disabled`, …
-    pub status: String,
-}
 
 #[derive(Serialize, ToSchema, Clone, Copy, Default)]
 pub struct SkillCounts {
@@ -22,21 +14,29 @@ pub struct SkillCounts {
     pub org: i64,
 }
 
-/// A skill library. Org owners/admins see every field; other members who can use a workspace of
-/// the org get `id`, `label` and `status` of the active libraries (the browse picker).
+/// A skill library (C-1122). Managers see every field; other members who can use a workspace of
+/// the org get `id`, `label`, `status` and `scope` of the active libraries (the browse picker).
+/// The access token is never returned: only whether one is set and when.
 #[derive(Serialize, ToSchema)]
 pub struct SkillLibrary {
     pub id: Uuid,
+    /// `org` | `instance`.
+    pub scope: &'static str,
+    /// Null for an instance library (and for members).
+    pub org_id: Option<Uuid>,
     pub label: String,
     /// `active` | `paused` | `error` | `over_budget`.
     pub status: String,
-    pub app_id: Option<String>,
-    /// Null when the connection was deleted.
-    pub connection: Option<ConnectionRef>,
+    /// The normalized https clone URL; null for a library migrated without one.
+    pub url: Option<String>,
+    /// The display form `host/path` (without `.git`).
     pub repo: Option<String>,
     #[serde(rename = "ref")]
     pub reference: Option<String>,
     pub path: Option<String>,
+    /// Whether an access token is saved (never the token).
+    pub token_set: Option<bool>,
+    pub token_updated_at: Option<DateTime<Utc>>,
     pub last_head_sha: Option<String>,
     pub last_refresh_at: Option<DateTime<Utc>>,
     /// Sanitized, at most 200 characters; never a token or a URL with credentials.
@@ -50,15 +50,72 @@ pub struct SkillLibrary {
 pub struct CreateSkillLibraryRequest {
     /// 1 to 80 characters, unique in the organization.
     pub label: String,
-    /// An **org-scoped**, active connection of an app that declares a `library` block.
-    pub connection_id: Uuid,
-    /// `owner/name` (the package's `repo_pattern`).
-    pub repo: String,
-    /// Branch, tag or commit; default the repository's default branch.
+    /// The repository's https address or its web page (C-1123).
+    pub url: String,
+    /// Branch, tag or commit; default: from a page URL, else the default branch.
     #[serde(rename = "ref")]
     pub reference: Option<String>,
-    /// Directory that holds the skill directories (at most 4 segments); default the root.
+    /// Directory that holds the skill directories (at most 4 segments); default: from a page
+    /// URL, else the root.
     pub path: Option<String>,
+    /// A read-only access token for a private repository (1..1024 printable ASCII).
+    pub token: Option<String>,
+    /// The Basic-auth user name sent with the token; default `x-access-token`.
+    pub token_username: Option<String>,
+}
+
+/// `POST …/skill-libraries/check` (C-1124): the create body without `label`.
+#[derive(Deserialize, ToSchema)]
+pub struct CheckSkillLibraryRequest {
+    pub url: String,
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+    pub path: Option<String>,
+    /// Used for this one read and dropped.
+    pub token: Option<String>,
+    pub token_username: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ResolvedRef {
+    /// `branch` | `tag` | `commit`.
+    pub kind: &'static str,
+    pub name: String,
+    /// Whether this is the repository's default branch.
+    pub default: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct CheckSkills {
+    pub found: usize,
+    pub valid: usize,
+    /// The first 20 valid names, sorted (untrusted text).
+    pub names: Vec<String>,
+}
+
+/// What a check found (C-1124); nothing was stored.
+#[derive(Serialize, ToSchema)]
+pub struct LibraryCheck {
+    pub url: String,
+    pub repo: String,
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+    pub resolved: ResolvedRef,
+    pub commit_sha: String,
+    pub path: String,
+    pub skills: CheckSkills,
+    /// More than `LIBRARY_BROWSE_MAX` skill directories: only the first were read.
+    pub truncated: bool,
+    pub suggested_label: String,
+}
+
+/// Distinguishes an absent field (`None`) from an explicit `null` (`Some(None)`).
+fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
 }
 
 #[derive(Deserialize, ToSchema, Default)]
@@ -66,11 +123,17 @@ pub struct PatchSkillLibraryRequest {
     pub label: Option<String>,
     /// `active` | `paused`.
     pub status: Option<String>,
-    pub connection_id: Option<Uuid>,
-    /// `null` is not distinguishable from absent; send an empty string to clear the ref.
+    /// Send an empty string to clear the ref.
     #[serde(rename = "ref")]
     pub reference: Option<String>,
     pub path: Option<String>,
+    /// A new token (set or replace; the repository is read with it first) or `null` (remove).
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<String>)]
+    pub token: Option<Option<String>>,
+    pub token_username: Option<String>,
+    /// Only while the stored address is null (a migrated library); else 409 `library_url_fixed`.
+    pub url: Option<String>,
 }
 
 /// Where a library skill is already added (the same `{ id, tier }` shape as the skills' `TierRef`).

@@ -684,22 +684,6 @@ pub async fn move_instances(
     Ok(merged + moved)
 }
 
-/// Skill libraries that name `old_app` now name `new_app`.
-pub async fn move_skill_libraries(
-    conn: &mut PgConnection,
-    old_app: &str,
-    new_app: &str,
-) -> Result<u64, DbError> {
-    Ok(
-        sqlx::query("UPDATE skill_libraries SET app_id = $2, updated_at = now() WHERE app_id = $1")
-            .bind(old_app)
-            .bind(new_app)
-            .execute(conn)
-            .await?
-            .rows_affected(),
-    )
-}
-
 /// An organization (or workspace) that had `old_app` available gets `new_app` available; the old
 /// rows go.
 pub async fn move_availability(

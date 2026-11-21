@@ -15,7 +15,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::content::{self, Candidate, LoadError, ReadError, Reader};
-use super::service::block_for;
+use super::git::GitRepo;
+use super::service::{open_token, row_url};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 
@@ -54,8 +55,7 @@ pub fn spawn(state: AppState) {
     });
 }
 
-/// Daily retention (singleton): prune decided proposals older than 90 days, expire leases, mark
-/// libraries whose connection vanished `error`.
+/// Daily retention (singleton): prune decided proposals older than 90 days, expire leases.
 pub async fn retention(state: &AppState) -> Result<Option<(u64, u64)>, aurora_core::ApiError> {
     let ran = aurora_db::jobs::try_singleton(&state.pool, RETENTION_JOB, || async {
         let mut c = state.pool.acquire().await?;
@@ -123,8 +123,8 @@ pub async fn refresh_library(state: &AppState, lib: LibraryRow, owner: Uuid) {
     refresh_library_within(state, lib, owner, limits::LIBRARY_REFRESH_BUDGET).await;
 }
 
-/// [`refresh_library`] with an explicit overall bound. A read of a library is many gateway
-/// calls (tree pages, up to 50 blobs per skill, each with its own timeout and busy retries);
+/// [`refresh_library`] with an explicit overall bound. A read of a library is several git
+/// requests (discovery, refs, the tree pack, the blob pack, each with its own timeout);
 /// the whole pass must end — and record its outcome, releasing the lease — before
 /// `LIBRARY_LEASE` runs out, or another replica claims the library and repeats the work. On the
 /// bound the pass is recorded as a failure (backoff) and the next run starts from scratch.
@@ -257,30 +257,13 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
     fn db<E>(_: E) -> Fail {
         "the database is unavailable".into()
     }
-    let conn = lib.connection_id.ok_or("connection_deleted")?;
+    // (P5-SKLIB-1, C-1125) The API reads the repository itself, with the library's token when
+    // it has one (opened for this pass only).
+    let url = row_url(lib)?;
+    let token = open_token(state, lib).await?;
+    let git = GitRepo::new(&state.connect, url, token.as_ref(), state.library.fetch_timeout)?;
+    let reader = Reader::new(&git, &lib.path);
     let mut c = state.pool.acquire().await.map_err(db)?;
-    let brief = repo::connection_brief(&mut c, conn)
-        .await
-        .map_err(db)?
-        .ok_or("connection_deleted")?;
-    if brief.workspace_id.is_some() {
-        return Err("the connection is not organization-scoped".into());
-    }
-    match brief.status.as_str() {
-        "active" => {}
-        "reauth_required" => {
-            return Err("reauth_required: the connection needs to be reconnected".into());
-        }
-        _ => return Err("the connection is not active".into()),
-    }
-    let block = block_for(state, &lib.app_id).await?;
-    let reader = Reader {
-        gw: state.library.gateway.as_ref(),
-        lib: &block,
-        org: lib.org_id,
-        conn,
-        repo: &lib.repo,
-    };
     let head = reader.resolve(lib.reference.as_deref()).await?;
     repo::record_head(&mut c, lib.id, &head).await.map_err(db)?;
     // An unchanged head costs this one call (a library over budget re-checks: space may be free).
@@ -293,8 +276,20 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
     }
     let skills = repo::library_skills(&mut c, lib.id).await.map_err(db)?;
     let entries = reader.tree(&head).await?;
-    let cands = content::assemble(&block, &lib.path, &entries);
+    let cands = content::assemble(&lib.path, &entries);
     let by_dir: BTreeMap<&str, &Candidate> = cands.iter().map(|c| (c.dir.as_str(), c)).collect();
+    // One blob request for every skill whose files changed (C-1125).
+    let mut wanted: Vec<String> = Vec::new();
+    for s in &skills {
+        let dir = s.library_path.clone().unwrap_or_default();
+        if let Some(cand) = by_dir.get(dir.as_str())
+            && cand.problems.is_empty()
+            && cand.blobs() != blobs_of(&s.library_blobs)
+        {
+            wanted.extend(cand.blob_ids());
+        }
+    }
+    reader.prefetch(&wanted).await?;
     let mut done = Done {
         head: head.clone(),
         over_budget: false,

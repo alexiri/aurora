@@ -1,20 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! P4-GSL (D-148, D-149; SEC-83, SEC-84): the git skill library API against the fake git host
-//! (`aurora_testkit::git_host`) through a gateway stand-in that builds the same requests from the
-//! package's `library` block (`18 §Git skill library`). Real Postgres.
+//! P4-GSL (D-148; SEC-83) and P5-SKLIB-1 (D-448; SEC-148): the git skill library API against a
+//! real git server (`aurora_testkit::git_server`: `git http-backend`), read by the API's own git
+//! reader through the guarded client's test override (`18 §Git skill library`). Real Postgres.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use async_trait::async_trait;
-use aurora_api::domains::skill_libraries::gateway::{
-    FetchOk, FetchRequest, GatewayError, LibraryGateway,
-};
 use aurora_api::domains::skill_libraries::refresh;
 use aurora_db::repo::skill_libraries as repo;
-use aurora_registry::library::{self, Params};
-use aurora_registry::manifest::Library;
-use aurora_testkit::git_host::{Change, FakeGitHost};
+use aurora_testkit::git_server::{Change, GitServer};
 use axum::body::Body;
 use http::{Method, Request};
 use serde_json::{Value, json};
@@ -23,200 +14,44 @@ use uuid::Uuid;
 
 use crate::common::*;
 
-const YAML: &str = r#"package: { id: forge, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: Forge }
-apps:
-  - about: { id: forge, name: Forge, description: D, category: development }
-    credentials: [ { name: access_token, secret: true } ]
-    connect:
-      - id: token
-        kind: fields
-        fields: [ { name: access_token, label: Token, type: secret, required: true } ]
-    hosts:
-      - match: { host: api.forge.example }
-        inject:
-          - bearer: "{credentials.access_token}"
-    library:
-      repo_pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
-      request_host: api.forge.example
-      resolve_ref:
-        path: "/repos/{repo}/commits/{ref}"
-        default_path: "/repos/{repo}"
-        sha: "$.sha"
-        default_branch: "$.default_branch"
-      list_tree:
-        path: "/repos/{repo}/git/trees/{sha}?recursive=1"
-        entries: "$.tree[*]"
-        fields: { path: "$.path", type: "$.type", mode: "$.mode", blob: "$.sha", size: "$.size" }
-        file_type: blob
-        truncated: "$.truncated"
-        paginate: none
-      get_blob:
-        path: "/repos/{repo}/git/blobs/{blob}"
-        content: "$.content"
-        encoding: "$.encoding"
-  - about: { id: forgelab, name: ForgeLab, description: D, category: development }
-    credentials: [ { name: access_token, secret: true } ]
-    connect:
-      - id: token
-        kind: fields
-        fields: [ { name: access_token, label: Token, type: secret, required: true } ]
-    hosts:
-      - match: { host: lab.forge.example, path_prefix: /api/v4 }
-        inject:
-          - bearer: "{credentials.access_token}"
-    library:
-      repo_pattern: "^[A-Za-z0-9_.-]{1,100}(/[A-Za-z0-9_.-]{1,100}){1,19}$"
-      request_host: lab.forge.example
-      resolve_ref:
-        path: "/api/v4/projects/{repo|urlencode}/repository/commits/{ref|urlencode}"
-        default_path: "/api/v4/projects/{repo|urlencode}"
-        sha: "$.id"
-        default_branch: "$.default_branch"
-      list_tree:
-        path: "/api/v4/projects/{repo|urlencode}/repository/tree?recursive=true&per_page=100&ref={sha}"
-        entries: "$[*]"
-        fields: { path: "$.path", type: "$.type", mode: "$.mode", blob: "$.id" }
-        file_type: blob
-        paginate: link_header
-        max_pages: 50
-      get_blob:
-        path: "/api/v4/projects/{repo|urlencode}/repository/blobs/{blob}/raw"
-        encoding: raw
-  - about: { id: plain, name: Plain, description: D, category: development }
-    credentials: [ { name: access_token, secret: true } ]
-    connect:
-      - id: token
-        kind: fields
-        fields: [ { name: access_token, label: Token, type: secret, required: true } ]
-    hosts:
-      - match: { host: plain.forge.example }
-        inject:
-          - bearer: "{credentials.access_token}"
-"#;
+/// The https origin every library URL uses; the test override maps it to the git server.
+pub(crate) const ORIGIN: &str = "https://git.example";
 
-/// The gateway stand-in: the same checks and the same request building as the real route, sent
-/// to the fake git host with a fixed token.
-struct Direct {
-    pool: sqlx::PgPool,
-    base: String,
-    blocks: HashMap<String, Library>,
+pub(crate) fn url(repo: &str) -> String {
+    format!("{ORIGIN}/{repo}")
 }
 
-#[async_trait]
-impl LibraryGateway for Direct {
-    async fn fetch(&self, r: &FetchRequest) -> Result<FetchOk, GatewayError> {
-        let row: Option<(Option<Uuid>, String, String)> = sqlx::query_as(
-            "SELECT workspace_id, app_id, status FROM app_connections WHERE id = $1 AND org_id = $2",
-        )
-        .bind(r.connection_id)
-        .bind(r.org_id)
-        .fetch_optional(&self.pool)
-        .await
-        .unwrap();
-        let Some((ws, app, status)) = row else {
-            return Err(GatewayError::ConnectionNotFound);
-        };
-        if ws.is_some() {
-            return Err(GatewayError::Unavailable);
-        }
-        match status.as_str() {
-            "active" => {}
-            "reauth_required" => return Err(GatewayError::Reauth),
-            _ => return Err(GatewayError::Unavailable),
-        }
-        let Some(block) = self.blocks.get(&app) else {
-            return Err(GatewayError::Unavailable);
-        };
-        let p = Params {
-            repo: r.params.repo.clone(),
-            reference: r.params.reference.clone(),
-            sha: r.params.sha.clone(),
-            blob: r.params.blob.clone(),
-            page: r.params.page,
-        };
-        let target = library::build(block, r.step, &p).map_err(|_| GatewayError::Param)?;
-        let resp = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap()
-            .get(format!("{}{target}", self.base))
-            .bearer_auth("tok")
-            .send()
-            .await
-            .map_err(|_| GatewayError::Upstream("the git host could not be reached"))?;
-        let status = resp.status().as_u16();
-        let link = resp
-            .headers()
-            .get("link")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
-        let retry_after = resp
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
-        let body = resp.bytes().await.unwrap().to_vec();
-        if body.len() > r.max_bytes {
-            return Err(GatewayError::Upstream(
-                "the git host's response was too large",
-            ));
-        }
-        Ok(FetchOk {
-            status,
-            link,
-            retry_after,
-            body,
-        })
-    }
+pub(crate) struct W {
+    pub(crate) h: Harness,
+    pub(crate) git: GitServer,
+    pub(crate) org: Uuid,
+    pub(crate) ws: Uuid,
+    pub(crate) agent: Uuid,
+    pub(crate) root: String,
+    pub(crate) owner: String,
+    pub(crate) admin: String,
+    pub(crate) wsowner: String,
+    pub(crate) member: String,
+    pub(crate) unbound: String,
+    pub(crate) nonmember: String,
 }
 
-struct W {
-    h: Harness,
-    git: FakeGitHost,
-    org: Uuid,
-    ws: Uuid,
-    agent: Uuid,
-    root: String,
-    owner: String,
-    admin: String,
-    wsowner: String,
-    member: String,
-    unbound: String,
-    nonmember: String,
-    /// Org-scoped connection of `forge` (GitHub-shaped).
-    conn: Uuid,
-    /// Org-scoped connection of `forgelab` (GitLab-shaped).
-    lab: Uuid,
-}
-
-async fn upload(h: &Harness, admin: &str, yaml: &str) {
-    crate::plugins_lifecycle::Admin::trust(h, admin.to_owned())
-        .await
-        .install(yaml)
-        .await;
-}
-
-fn blocks() -> HashMap<String, Library> {
-    let m = aurora_registry::Manifest::parse(YAML, "0.1.0").unwrap();
-    m.apps
-        .iter()
-        .filter_map(|a| a.library.clone().map(|l| (a.about.id.clone(), l)))
-        .collect()
-}
-
-async fn world_with(mutate: impl FnOnce(&mut aurora_config::ApiConfig) + Send + 'static) -> W {
+pub(crate) async fn world_with(
+    mutate: impl FnOnce(&mut aurora_config::ApiConfig) + Send + 'static,
+) -> W {
     let mut h = Harness::with_config(mutate).await;
-    let git = FakeGitHost::start().await;
-    let state = h.state.clone().with_library_gateway(Arc::new(Direct {
-        pool: h.pool().clone(),
-        base: git.base(),
-        blocks: blocks(),
-    }));
+    let git = GitServer::start().await;
+    // Every https origin is mapped to the git server (the reader still decides by the logical
+    // URL which origin gets the token and which addresses are allowed).
+    let state = h
+        .state
+        .clone()
+        .with_connect_override(&git.base())
+        .with_library_fetch_timeout(std::time::Duration::from_secs(5));
     h.app = test_router(state.clone());
     h.state = state;
     let root = h.user("root@x.io", true).await;
     let root_cookie = cookie(&h.good_session(root).await.1);
-    upload(&h, &root_cookie, YAML).await;
     let org = h.org().await;
     let ws = h.workspace(org).await;
     let mk = |email: &'static str, role: &'static str, ws_role: Option<&'static str>| {
@@ -249,8 +84,6 @@ async fn world_with(mutate: impl FnOnce(&mut aurora_config::ApiConfig) + Send + 
     .execute(h.pool())
     .await
     .unwrap();
-    let conn = connection(&h, org, None, "forge", "active").await;
-    let lab = connection(&h, org, None, "forgelab", "active").await;
     W {
         h,
         git,
@@ -264,37 +97,11 @@ async fn world_with(mutate: impl FnOnce(&mut aurora_config::ApiConfig) + Send + 
         member,
         unbound,
         nonmember,
-        conn,
-        lab,
     }
 }
 
-async fn world() -> W {
+pub(crate) async fn world() -> W {
     world_with(|_| {}).await
-}
-
-async fn connection(h: &Harness, org: Uuid, ws: Option<Uuid>, app: &str, status: &str) -> Uuid {
-    let id = Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref)
-         VALUES ($1,$2,$3,$4,'forge','1.0.0','c','active','x')",
-    )
-    .bind(id)
-    .bind(org)
-    .bind(ws)
-    .bind(app)
-    .execute(h.pool())
-    .await
-    .unwrap();
-    if status != "active" {
-        sqlx::query("UPDATE app_connections SET status = $2 WHERE id = $1")
-            .bind(id)
-            .bind(status)
-            .execute(h.pool())
-            .await
-            .unwrap();
-    }
-    id
 }
 
 fn md(desc: &str, body: &str) -> Vec<u8> {
@@ -334,10 +141,7 @@ impl W {
                 &self.admin,
                 Method::POST,
                 &format!("/v1/orgs/{}/skill-libraries", self.org),
-                Some(
-                    json!({"label": label, "connection_id": self.conn, "repo": "acme/skills",
-                    "path": path}),
-                ),
+                Some(json!({"label": label, "url": url("acme/skills"), "path": path})),
             )
             .await;
         assert_eq!(s, 201, "{v}");
@@ -477,7 +281,7 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
     w.seed();
     let org = w.org;
     let list = format!("/v1/orgs/{org}/skill-libraries");
-    let body = json!({"label": "Team skills", "connection_id": w.conn, "repo": "acme/skills"});
+    let body = json!({"label": "Team skills", "url": url("acme/skills")});
     // org owner/admin only
     for who in [&w.member, &w.wsowner, &w.unbound] {
         let (s, v) = w.call(who, Method::POST, &list, Some(body.clone())).await;
@@ -492,9 +296,13 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
         .await;
     assert_eq!(s, 201, "{v}");
     assert_eq!(v["status"], "active");
-    assert_eq!(v["repo"], "acme/skills");
+    assert_eq!(v["scope"], "org");
+    assert_eq!(v["url"], url("acme/skills"));
+    assert_eq!(v["repo"], "git.example/acme/skills");
+    assert_eq!(v["token_set"], false);
+    assert!(v["token_updated_at"].is_null());
     assert_eq!(v["last_head_sha"], w.git.head("acme/skills", "main"));
-    assert_eq!(v["connection"]["id"], w.conn.to_string());
+    assert!(v.get("connection").is_none() && v.get("app_id").is_none(), "{v}");
     assert_eq!(
         v["skill_counts"],
         json!({"agent": 0, "workspace": 0, "org": 0})
@@ -503,9 +311,18 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
     let id = v["id"].as_str().unwrap().to_owned();
     assert_eq!(w.audit_critical("skill_library.create").await, 1);
 
-    // duplicate label
+    // duplicate label; (C-1122) the same url + ref + path under another label
     let (s, v) = w
         .call(&w.admin, Method::POST, &list, Some(body.clone()))
+        .await;
+    assert_eq!((s, code(&v)), (409, "library_exists"), "{v}");
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &list,
+            Some(json!({"label": "Other label", "url": format!("{}/", url("acme/skills"))})),
+        )
         .await;
     assert_eq!((s, code(&v)), (409, "library_exists"), "{v}");
 
@@ -513,12 +330,17 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
     let (s, v) = w.call(&w.owner, Method::GET, &list, None).await;
     assert_eq!(
         (s, v["items"][0]["repo"].as_str()),
-        (200, Some("acme/skills"))
+        (200, Some("git.example/acme/skills"))
     );
     let (s, v) = w.call(&w.member, Method::GET, &list, None).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["items"][0]["label"], "Team skills");
-    assert!(v["items"][0]["repo"].is_null() && v["items"][0]["connection"].is_null());
+    assert_eq!(v["items"][0]["scope"], "org");
+    assert!(
+        v["items"][0]["repo"].is_null()
+            && v["items"][0]["url"].is_null()
+            && v["items"][0]["token_set"].is_null()
+    );
     let (s, v) = w.call(&w.unbound, Method::GET, &list, None).await;
     assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
     let (s, _) = w
@@ -579,122 +401,108 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
 }
 
 #[tokio::test]
-async fn create_refusals_scope_app_repo_reach_and_limit() {
+async fn create_refusals_address_reach_and_limit() {
     let w = world().await;
     w.seed();
     let list = format!("/v1/orgs/{}/skill-libraries", w.org);
-    let mk = |conn: Uuid, repo: &str, label: &str| json!({"label": label, "connection_id": conn, "repo": repo});
-    // workspace-scoped connection
-    let ws_conn = connection(&w.h, w.org, Some(w.ws), "forge", "active").await;
+    let mk = |u: &str, label: &str| json!({"label": label, "url": u});
+    // (C-1123) every refused address form gives its reason; nothing is read
+    w.git.clear_requests();
+    for (u, reason) in [
+        ("http://git.example/acme/skills", "not_https"),
+        ("git://git.example/acme/skills", "not_https"),
+        ("ssh://git@git.example/acme/skills", "ssh_url"),
+        ("git@git.example:acme/skills.git", "ssh_url"),
+        ("https://u:p@git.example/acme/skills", "credentials_in_url"),
+        ("https://git.example/acme/skills?x=1", "query_or_fragment"),
+        ("https://git.example/", "not_a_repository_path"),
+        ("https://git.example/acme/../x", "not_a_repository_path"),
+    ] {
+        let (s, v) = w.call(&w.admin, Method::POST, &list, Some(mk(u, "a"))).await;
+        assert_eq!((s, code(&v)), (422, "library_url_invalid"), "{u}: {v}");
+        assert_eq!(v["error"]["details"]["reason"], reason, "{u}: {v}");
+    }
+    let long = format!("https://git.example/{}", "a".repeat(500));
+    let (s, v) = w.call(&w.admin, Method::POST, &list, Some(mk(&long, "a"))).await;
+    assert_eq!(
+        (s, code(&v), v["error"]["details"]["reason"].as_str()),
+        (422, "library_url_invalid", Some("too_long")),
+        "{v}"
+    );
+    // (SEC-148) an IP-literal host the destination guard refuses is never dialled
     let (s, v) = w
-        .call(
-            &w.admin,
-            Method::POST,
-            &list,
-            Some(mk(ws_conn, "acme/skills", "a")),
-        )
-        .await;
-    assert_eq!((s, code(&v)), (422, "connection_not_org_scoped"), "{v}");
-    // an app without a library block
-    let plain = connection(&w.h, w.org, None, "plain", "active").await;
-    let (s, v) = w
-        .call(
-            &w.admin,
-            Method::POST,
-            &list,
-            Some(mk(plain, "acme/skills", "b")),
-        )
-        .await;
-    assert_eq!((s, code(&v)), (422, "app_without_library"), "{v}");
-    // not active
-    let off = connection(&w.h, w.org, None, "forge", "disabled").await;
-    let (s, v) = w
-        .call(
-            &w.admin,
-            Method::POST,
-            &list,
-            Some(mk(off, "acme/skills", "c")),
-        )
+        .call(&w.admin, Method::POST, &list, Some(mk("https://10.1.2.3/acme/skills", "b")))
         .await;
     assert_eq!((s, code(&v)), (422, "library_unreachable"), "{v}");
-    // a connection of another organization
-    let other = w.h.org().await;
-    let foreign = connection(&w.h, other, None, "forge", "active").await;
-    let (s, v) = w
-        .call(
-            &w.admin,
-            Method::POST,
-            &list,
-            Some(mk(foreign, "acme/skills", "d")),
-        )
-        .await;
-    assert_eq!((s, code(&v)), (400, "invalid_request"), "{v}");
-    // repository grammar, ref grammar, path grammar
-    for (repo, reference, path) in [
-        ("../x", None, ""),
-        ("acme", None, ""),
-        ("acme/skills", Some("a..b"), ""),
-        ("acme/skills", Some("-x"), ""),
-        ("acme/skills", None, "../up"),
-        ("acme/skills", None, "a/b/c/d/e"),
+    assert_eq!(w.git.requests().len(), 0, "nothing was sent");
+    // ref grammar, path grammar, token and user name rules
+    for (reference, path, token, user) in [
+        (Some("a..b"), "", None, None),
+        (Some("-x"), "", None, None),
+        (None, "../up", None, None),
+        (None, "a/b/c/d/e", None, None),
+        (None, "", Some("has space"), None),
+        (None, "", Some(""), None),
+        (None, "", None, Some("x-access-token")),
+        (None, "", Some("tok"), Some("bad user")),
     ] {
-        let mut b = mk(w.conn, repo, "e");
+        let mut b = mk(&url("acme/skills"), "e");
         b["ref"] = json!(reference);
         b["path"] = json!(path);
+        if let Some(t) = token {
+            b["token"] = json!(t);
+        }
+        if let Some(u) = user {
+            b["token_username"] = json!(u);
+        }
         let (s, v) = w.call(&w.admin, Method::POST, &list, Some(b)).await;
         assert_eq!(
             (s, code(&v)),
             (400, "invalid_request"),
-            "{repo} {reference:?} {path}: {v}"
+            "{reference:?} {path} {token:?} {user:?}: {v}"
         );
     }
+    let mut b = mk(&url("acme/skills"), "e");
+    b["token"] = json!("x".repeat(1025));
+    let (s, v) = w.call(&w.admin, Method::POST, &list, Some(b)).await;
+    assert_eq!((s, code(&v)), (400, "invalid_request"), "{v}");
     // unreachable repository: the reason is shown, sanitized
     let (s, v) = w
-        .call(
-            &w.admin,
-            Method::POST,
-            &list,
-            Some(mk(w.conn, "acme/missing", "f")),
-        )
+        .call(&w.admin, Method::POST, &list, Some(mk(&url("acme/missing"), "f")))
         .await;
     assert_eq!((s, code(&v)), (422, "library_unreachable"), "{v}");
-    assert!(
-        !v["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("127.0.0.1")
-    );
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("The repository was not found, or the token cannot read it"), "{v}");
+    assert!(!msg.contains("127.0.0.1") && !msg.contains("git.example"), "{v}");
     // unknown ref
-    let mut b = mk(w.conn, "acme/skills", "g");
+    let mut b = mk(&url("acme/skills"), "g");
     b["ref"] = json!("nonexistent");
     let (s, v) = w.call(&w.admin, Method::POST, &list, Some(b)).await;
     assert_eq!((s, code(&v)), (422, "library_unreachable"), "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("The branch or tag was not found"),
+        "{v}"
+    );
     assert_eq!(w.count("SELECT count(*) FROM skill_libraries").await, 0);
-    // LIBRARIES_PER_ORG
+    assert_eq!(w.count("SELECT count(*) FROM skill_library_heads").await, 0);
+    // LIBRARIES_PER_ORG (each a different folder: the same url + ref + path is one library)
     for i in 0..10 {
-        let (s, v) = w
-            .call(
-                &w.admin,
-                Method::POST,
-                &list,
-                Some(mk(w.conn, "acme/skills", &format!("l{i}"))),
-            )
-            .await;
+        let mut b = mk(&url("acme/skills"), &format!("l{i}"));
+        b["path"] = json!(format!("p{i}"));
+        let (s, v) = w.call(&w.admin, Method::POST, &list, Some(b)).await;
         assert_eq!(s, 201, "{v}");
     }
     let (s, v) = w
-        .call(
-            &w.admin,
-            Method::POST,
-            &list,
-            Some(mk(w.conn, "acme/skills", "l10")),
-        )
+        .call(&w.admin, Method::POST, &list, Some(mk(&url("acme/skills"), "l10")))
         .await;
     assert_eq!((s, code(&v)), (409, "library_limit"), "{v}");
-    // a ref (branch) and a path are honoured; the GitLab shape works with a nested project
+    // (C-1123) a page URL fills ref and path; a nested GitLab-style project works
     w.git.add_repo("grp/sub/proj");
     w.git
-        .commit("grp/sub/proj", "main", &[put("s/SKILL.md", md("d", "b"))]);
+        .commit("grp/sub/proj", "dev", &[put("team/s/SKILL.md", md("d", "b"))]);
     let (s, v) = w
         .call(
             &w.admin,
@@ -712,10 +520,16 @@ async fn create_refusals_scope_app_repo_reach_and_limit() {
             &w.admin,
             Method::POST,
             &list,
-            Some(mk(w.lab, "grp/sub/proj", "gl")),
+            Some(mk(&format!("{ORIGIN}/grp/sub/proj/-/tree/dev/team"), "gl")),
         )
         .await;
     assert_eq!(s, 201, "{v}");
+    assert_eq!(
+        (v["url"].as_str(), v["ref"].as_str(), v["path"].as_str()),
+        (Some(url("grp/sub/proj").as_str()), Some("dev"), Some("team")),
+        "{v}"
+    );
+    assert_eq!(v["last_head_sha"], w.git.head("grp/sub/proj", "dev"));
 }
 
 #[tokio::test]

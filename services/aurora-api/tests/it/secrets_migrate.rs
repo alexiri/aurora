@@ -19,7 +19,11 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// Where each purpose's ref lives: `(purpose, "SELECT <ref> FROM … WHERE id = $1")`.
-const REF_SQL: [(Purpose, &str); 11] = [
+const REF_SQL: [(Purpose, &str); 12] = [
+    (
+        Purpose::SkillLibraryToken,
+        "SELECT token_ref FROM skill_libraries WHERE id = $1",
+    ),
     (
         Purpose::UserToken,
         "SELECT token_ref FROM user_tokens WHERE id = $1",
@@ -170,6 +174,11 @@ async fn world(vault: SecretVault) -> World {
                     .bind(id)
                     .bind(json!({"credentials_ref": r, "org_id": org}))
                     .execute(pool).await.unwrap();
+            }
+            // (P5-SKLIB-1, C-1126) A library's token, sealed under the library's org.
+            Purpose::SkillLibraryToken => {
+                sqlx::query("INSERT INTO skill_libraries (id, org_id, label, url, repo, path, token_ref, token_updated_at) VALUES ($1,$2,'lib','https://git.example/a/b','git.example/a/b','',$3, now())")
+                    .bind(id).bind(org).bind(&r).execute(pool).await.unwrap();
             }
             Purpose::UserToken => {
                 let user = h.user(&format!("tok-{id}@example.com"), false).await;
