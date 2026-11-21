@@ -41,6 +41,7 @@ import { useBulk } from "@/lib/bulk";
 import { Avatar } from "@/components/ui/avatar";
 import { CheckIcon } from "@/components/ui/icons";
 import { ROLE_CAN } from "@/lib/roles-explain";
+import { personName } from "@/lib/workspace-name";
 
 import { InviteDialog } from "./invite-dialog";
 import { OrgRoleHelp } from "./role-help";
@@ -89,7 +90,7 @@ export function MemberRow({
           {select ? <BulkCheckbox name={m.display_name || m.email} checked={select.checked} disabled={select.disabled} title={select.title} onChange={select.onChange} /> : null}
           <div className="min-w-0">
             <div className="font-medium">
-              {m.display_name}
+              {personName(m.display_name)}
               {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
             </div>
             <div className="break-all text-muted">{m.email}</div>

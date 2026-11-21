@@ -81,7 +81,8 @@ export function ModelsTab({
   // endpoint, some by name, none); the switch and the preset card act on the endpoints the organization can change.
   const where = whereKeysMayBeAdded(form.endpoints);
   const changeable = form.endpoints.filter((e) => !e.locked.key_scopes);
-  const peopleMayAdd = peopleMayAddOwnKey(changeable) === true;
+  // With nothing the organization can change (the instance set every scope), the switch shows what is in force.
+  const peopleMayAdd = changeable.some((e) => e.allowed) ? peopleMayAddOwnKey(changeable) === true : where?.kind === "all";
   const lead = form.endpoints[0];
   const chosenTeams = lead ? splitIds(lead.team_ids) : [];
   const chosenWs = lead ? splitIds(lead.workspace_ids) : [];

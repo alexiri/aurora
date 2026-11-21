@@ -14,7 +14,7 @@ import { useAgents, useOrg, useResolve, useSession, useWorkspace } from "@/lib/a
 import type { GuideStepId } from "@/lib/onboarding/guide";
 import { wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
-import { workspaceDisplayName } from "@/lib/workspace-name";
+import { personName, workspaceDisplayName } from "@/lib/workspace-name";
 
 import { GettingStarted, OptionalNext } from "./getting-started";
 import { startTour } from "./tour-events";
@@ -82,7 +82,7 @@ export function WelcomeView() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title={personal ? `Welcome, ${session.data?.user.display_name || workspace.name}` : `Welcome to ${workspaceDisplayName(workspace, viewer)}`}
+        title={personal ? `Welcome, ${personName(session.data?.user.display_name || workspace.name)}` : `Welcome to ${workspaceDisplayName(workspace, viewer)}`}
         description={role ?? "A few minutes from here to your agent's first answer."}
         className="mb-0"
       />

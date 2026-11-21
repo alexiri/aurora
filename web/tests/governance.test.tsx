@@ -220,6 +220,33 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     expect(within(row).getByRole("switch", { name: "People may add their own key" })).toBeChecked();
   });
 
+  it("(batch 8, org-7) reads the effective scopes the instance set: a stored [] under an instance value allowing workspace keys says people may add their own", async () => {
+    const ep = (id: string, name: string) => ({
+      id, provider: id, display_name: name,
+      permitted: { value: true, source: "instance" },
+      key_scopes: { value: ["organization", "workspace"], source: "instance" },
+      allowed_models: { value: [], source: "instance" },
+      origin_rule: null,
+    });
+    const e = eff({ llm: { posture: { value: "open", source: "org" }, endpoints: [ep("litellm", "LiteLLM"), ep("aigw", "AIGW"), ep("anthropic", "Anthropic")] } });
+    const d = { ...doc, llm: { posture: "open", endpoints: {
+      litellm: { allowed: true, key_scopes: [], allowed_models: [] },
+      aigw: { allowed: true, key_scopes: [], allowed_models: [] },
+      anthropic: { allowed: true, key_scopes: [], allowed_models: [] },
+    } } };
+    mockFetch(routes({
+      "GET /v1/orgs/o1/governance/effective": () => json(200, e),
+      "GET /v1/orgs/o1/governance": () => json(200, { document: d, revision: 0 }),
+    }));
+    wrap(<OrgAiModels org={ORG} />);
+    await waitFor(() => expect(screen.getByTestId("models-summary").textContent).toContain("People may add their own."));
+    expect(screen.getByTestId("models-summary").textContent).not.toContain("may not");
+    const row = screen.getByText("People may add their own key").closest("div")!;
+    expect(row.textContent).toContain("Allowed");
+    expect(row.textContent).not.toContain("Not allowed");
+    expect(within(row).getByRole("switch", { name: "People may add their own key" })).toBeChecked();
+  });
+
   it("(batch 7 c) the pick list names a person with no display name by their address's local part, never by e-mail", async () => {
     mockFetch(routes({
       "GET /v1/orgs/o1/workspaces": () =>

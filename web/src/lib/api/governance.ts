@@ -214,7 +214,9 @@ export function formFromDocument(
         provider: e.provider,
         display_name: e.display_name,
         allowed: d ? d.allowed : false,
-        key_scopes: d?.key_scopes ?? [],
+        // Where the instance sets the scopes they are locked and the effective value is the truth (the stored document
+        // holds [] there); otherwise the organization's own stored choice.
+        key_scopes: e.key_scopes.source === "instance" ? [...e.key_scopes.value] : (d?.key_scopes ?? []),
         allowed_models: joinList(d?.allowed_models),
         org_ids: joinList(d?.origin?.allowed_organization_ids),
         workspace_ids: joinList(d?.origin?.allowed_workspace_ids),

@@ -67,7 +67,7 @@ function lineOf(c: Conversation, agentName: string | undefined, now: Date): stri
 function GoneChip({ kind, actionId }: { kind: string; actionId: string }) {
   // Amber is AttentionChip (D-384): the row itself is the action beside it (open it, or delete it from its menu).
   return (
-    <AttentionChip actionId={actionId} className="shrink-0">
+    <AttentionChip actionId={actionId} className="min-w-0 max-w-full whitespace-normal break-words">
       {kind === "webhook" ? "Webhook deleted" : "Schedule deleted"}
     </AttentionChip>
   );

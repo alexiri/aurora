@@ -159,6 +159,28 @@ describe("judge control", () => {
     expect(await screen.findByText(/must be an AI key that is granted to this agent/)).toBeInTheDocument();
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ judge: { secret_id: "s9", model_id: "m-1" }, regression_notify: true });
   });
+
+  it("(batch 8, behaviour-4) a model the key does not list is called the model; a key that cannot be used is still the key", async () => {
+    let cause: string | null = "model";
+    mockFetch({
+      "GET /v1/agents/a1/eval-settings": () => json(200, { judge: null, regression_notify: true }),
+      "GET /v1/agents/a1/model-readiness": () =>
+        json(200, { harness: "h", override_dropped: false, default: null, keys: [{ secret_id: "s9", name: "Org key", scope: "organization", provider: "p", endpoint_id: "e", usable: true, reason: null }] }),
+      "PUT /v1/agents/a1/eval-settings": () =>
+        json(422, { error: { code: "eval_judge_not_usable", message: "x", ...(cause ? { details: { cause } } : {}) } }),
+    });
+    wrap(<JudgeSection agentId={A} canOwn />);
+    const select = await screen.findByLabelText("Grader key");
+    await screen.findByRole("option", { name: /Org key/ });
+    fireEvent.change(select, { target: { value: "s9" } });
+    fireEvent.change(screen.getByLabelText("Grader model"), { target: { value: "claude-mock-nope" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("This key can't use that model. Check the model name.")).toBeInTheDocument();
+    expect(screen.queryByText(/That key cannot be used right now/)).toBeNull();
+    cause = null;
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/That key cannot be used right now/)).toBeInTheDocument();
+  });
 });
 
 describe("fingerprint diff", () => {
