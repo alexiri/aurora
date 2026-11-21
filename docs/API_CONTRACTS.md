@@ -1776,7 +1776,7 @@ Briefs, in four fixed waves (D-352, order inside the waves per D-353; "→" mean
 - C-967 **Agents pages.**
   - **Administration:** Defaults (`agents`, `approvals`), BYO (the `governance` BYO and agent-token keys), Computers (`terminal`, `previews`), Skills (`skills`).
   - **Organization:** BYO (was Governance › BYO agents) under the Administration limits, Skills (and libraries), Previews.
-  - **Workspace:** the agents list; the workspace BYO setting (was Settings › General) is a ladder row in its header.
+  - **Workspace:** the agents list; the workspace BYO setting is a field of Settings › General, shown to owners when there is a choice (D-442; it was a ladder row in the Agents list header after P5-IA-4).
 - C-968 **People pages.**
   - **Administration:** Users, Organizations (and detail), Sign-in (`sign_in`, `scim`, and the role-mapping view that was Identity), New users (placement).
   - **Organization:** Members, Groups, Directory sync.
