@@ -104,7 +104,7 @@ export function LlmKeyForm({
   orgId,
   preselect,
   onSaved,
-  submitLabel = "Add LLM key",
+  submitLabel = "Add AI key",
   onCancel,
   footerTarget,
 }: {
@@ -250,7 +250,7 @@ export function LlmKeyForm({
         onSubmit={(e) => void submit(e)}
         noValidate
         className={footerTarget !== undefined ? "max-w-none" : "rounded-card border border-line bg-surface p-4 shadow-card sm:p-5"}
-        aria-label="New LLM key">
+        aria-label="New AI key">
         {step === "service" ? (
           // (P5-REFINE-13, access-9) First the question, one card per service (a logo tile, the name and one plain line:
           // "Anthropic — Claude models. Works with Claude Code."); no provider id, no scopes. Then the key.

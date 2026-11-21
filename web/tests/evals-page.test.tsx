@@ -377,11 +377,11 @@ describe("Tests wording, live run and Re-run (P5-REFINE-12)", () => {
     fireEvent.change(screen.getByLabelText("Grader key"), { target: { value: "s9" } });
     fireEvent.change(screen.getByLabelText("Grader model"), { target: { value: "m-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Judge saved and tested: it answered in 3 s.")).toBeInTheDocument();
+    expect(await screen.findByText("Grader saved and tested: it answered in 3 s.")).toBeInTheDocument();
     test = { result: "failed", took_ms: 900, reason: "unreachable" };
     fireEvent.change(screen.getByLabelText("Grader model"), { target: { value: "m-2" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Judge saved, but the test failed: the model provider could not be reached. Judged questions will not be scored until it works.")).toBeInTheDocument();
+    expect(await screen.findByText("Grader saved, but the test failed: the model provider could not be reached. Questions the grader checks will not be scored until it works.")).toBeInTheDocument();
   });
 
   it("explains the ANSWER line in the question dialog, never as a demand on the agent", async () => {

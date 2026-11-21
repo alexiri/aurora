@@ -88,7 +88,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("a direct link to ?tab=evals still opens the Tests page at Use", async ({ page }) => {
         await open(page, `${agentUrl}?tab=evals`, scheme, "member", "member", false);
-        await expect(page.getByRole("heading", { name: /Tests|Evals/ }).first()).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Tests", exact: true }).first()).toBeVisible();
       });
 
       test("an owner of a team workspace starts at Set up and a member with the switch on never sees owner-only topics", async ({ page }) => {

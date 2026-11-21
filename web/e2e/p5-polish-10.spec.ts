@@ -153,7 +153,7 @@ for (const scheme of ["light", "dark"] as const) {
 
         await steps.locator("#setup-key").getByRole("button", { name: "Add key" }).click();
         const dialog = page.getByRole("dialog", { name: "Add an organization AI key" });
-        const form = dialog.getByRole("form", { name: "New LLM key" });
+        const form = dialog.getByRole("form", { name: "New AI key" });
         await chooseService(dialog, "AIGW");
         await form.getByLabel("Name").fill("AIGW key");
         await form.getByLabel("API key", { exact: true }).fill("sk-test-key");

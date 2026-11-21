@@ -467,7 +467,7 @@ describe("Computer › Files (P5-REFINE-15)", () => {
     expect(screen.getByText("Your files")).toBeInTheDocument();
     expect(screen.getByText("Scout's own")).toBeInTheDocument();
     expect(screen.getByTestId("own-note").textContent).toBe(
-      "The grey files are Scout's instructions and memory. Aurora keeps them for you; edit them on the Behaviour page.",
+      "The grey files are Scout's instructions and memory. Aurora keeps them for you; edit them on the Instructions page.",
     );
     expect(screen.getAllByText("Managed")).toHaveLength(3);
     expect(screen.getAllByText("Instructions, kept by Aurora")).toHaveLength(2);

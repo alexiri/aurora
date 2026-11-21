@@ -68,13 +68,13 @@ for (const scheme of ["light", "dark"] as const) {
       test("no AI key: adding one goes straight to Say hello", async ({ page }) => {
         await openWelcome(page, scheme, { noAccounts: true, noKey: true });
         await expect(page.getByText("0 of 2 done")).toBeVisible();
-        const form = page.getByRole("form", { name: "New LLM key" });
+        const form = page.getByRole("form", { name: "New AI key" });
         await chooseService(form, "AIGW");
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
         await check(page);
         await form.getByLabel("Name").fill("Mock LLM");
         await form.getByLabel("API key", { exact: true }).fill("not-a-real-key");
-        await form.getByRole("button", { name: "Add LLM key" }).click();
+        await form.getByRole("button", { name: "Add AI key" }).click();
         await expect(page.getByText("1 of 2 done")).toBeVisible();
         await expect(page.getByRole("link", { name: "Say hello to Daneel" })).toBeVisible();
       });

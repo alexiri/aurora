@@ -88,7 +88,7 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
     fx: fixtures.noModel,
     query: () => `?c=${MINE.id}`,
     prepare: async (page) => {
-      await expect(page.getByText("This agent has an LLM key, but Aurora could not pick a model for it.")).toBeVisible();
+      await expect(page.getByText("This agent has an AI key, but Aurora could not pick a model for it.")).toBeVisible();
       // (FIX-170) The failing agent's own Default model field, not a path relative to the chat; the guide link is gone.
       await expect(page.getByRole("link", { name: "Choose a model" })).toHaveAttribute("href", /\/o\/[^/]+\/w\/[^/]+\/agents\/[^/?]+\?tab=instructions#a-model$/);
       await expect(page.getByRole("link", { name: "Fix it in the guide" })).toHaveCount(0);

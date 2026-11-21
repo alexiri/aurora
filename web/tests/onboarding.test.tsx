@@ -103,7 +103,7 @@ describe("getting-started guide: every state", () => {
     guide();
     expect(await screen.findByText("Your organization provides an AI key: AIGW")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Get Daneel talking" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("New LLM key")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("New AI key")).not.toBeInTheDocument();
     expect(screen.queryByText("Choose a model")).not.toBeInTheDocument();
     const hello = await screen.findByRole("link", { name: "Say hello to Daneel" });
     expect(hello).toHaveAttribute("href", expect.stringContaining("/o/acme/w/ops/agents/daneel?tab=chat&draft="));
@@ -116,7 +116,7 @@ describe("getting-started guide: every state", () => {
     world({ readiness: readiness([]) });
     guide();
     expect(await screen.findByText(/An AI key is the password to the AI service/)).toBeInTheDocument();
-    expect(await screen.findByLabelText("New LLM key")).toBeInTheDocument();
+    expect(await screen.findByLabelText("New AI key")).toBeInTheDocument();
     expect(screen.getByText("0 of 2 done")).toBeInTheDocument();
     expect(screen.getByText("Comes after the step above.")).toBeInTheDocument();
   });
@@ -179,7 +179,7 @@ describe("getting-started guide: every state", () => {
     guide({ isOwner: false });
     expect(await screen.findByText("Only workspace owners can add an account. Ask a workspace owner.")).toBeInTheDocument();
     expect(calls.some((c) => c.key === "GET /v1/workspaces/w1/access")).toBe(false);
-    expect(screen.queryByLabelText("New LLM key")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("New AI key")).not.toBeInTheDocument();
     expect(calls.some((c) => c.key === "GET /v1/agents/a1/model-readiness")).toBe(false);
     expect(screen.getAllByText("Needs an owner")).toHaveLength(1);
   });

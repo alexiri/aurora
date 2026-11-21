@@ -48,13 +48,13 @@ export const reasonText = (code: string | null | undefined, agentName?: string):
 /** The sentence after saving a judge (C-863 `test`): tested and answered, or saved but the test failed. */
 export function judgeTestMessage(test: { result: string; took_ms: number; reason?: string | null } | null | undefined): string | null {
   if (!test) return null;
-  if (test.result === "ok") return `Judge saved and tested: it answered in ${Math.max(1, Math.round(test.took_ms / 1000))} s.`;
+  if (test.result === "ok") return `Grader saved and tested: it answered in ${Math.max(1, Math.round(test.took_ms / 1000))} s.`;
   const why: Record<string, string> = {
     rejected: "the key or model was refused",
     unreachable: "the model provider could not be reached",
     timeout: "it took too long to answer",
   };
-  return `Judge saved, but the test failed: ${why[test.reason ?? ""] ?? "it did not answer"}. Judged questions will not be scored until it works.`;
+  return `Grader saved, but the test failed: ${why[test.reason ?? ""] ?? "it did not answer"}. Questions the grader checks will not be scored until it works.`;
 }
 
 /** Run-level `error_code` (a cancelled or failed run) in words. */

@@ -322,10 +322,10 @@ function FilesBrowser({ agentId, agentName, onOpenInstructions }: { agentId: str
                     The grey files are {name}&apos;s instructions and memory. Aurora keeps them for you; edit them on the{" "}
                     {onOpenInstructions ? (
                       <button type="button" className="text-accent-ink underline underline-offset-2" onClick={onOpenInstructions}>
-                        Behaviour page
+                        Instructions page
                       </button>
                     ) : (
-                      "Behaviour page"
+                      "Instructions page"
                     )}
                     .
                   </Notice>

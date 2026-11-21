@@ -54,9 +54,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
   llm_key_wrong_organization:
     "This key belongs to a different organization account than the one governance requires.",
   llm_key_unverifiable: "We could not verify which account this key belongs to, and governance requires it.",
-  llm_endpoint_unreachable: "The LLM endpoint could not be reached. Try again later.",
+  llm_endpoint_unreachable: "The AI endpoint could not be reached. Try again later.",
   llm_key_invalid: "The provider rejected this key as invalid.",
-  llm_host_requires_llm_key: "This host is an LLM endpoint; create an LLM key instead of a generic secret.",
+  llm_host_requires_llm_key: "This host is an AI endpoint; add an AI key instead of a generic secret.",
   reference_not_permitted: "Referencing an external secret store is not permitted here.",
   secret_store_unavailable: "The secret store is unavailable. Try again later.",
   name_taken: "That name is already in use.",

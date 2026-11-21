@@ -89,7 +89,7 @@ test("1. fresh instance: the admin walks the five-step checklist to a working ch
   await expect(steps.locator("#setup-placement")).toHaveAttribute("data-done", "true", { timeout: 30_000 });
   await steps.locator("#setup-key").getByRole("button", { name: /Add key|Add another/ }).click();
   const dialog = page.getByRole("dialog", { name: "Add an organization AI key" });
-  const form = dialog.getByRole("form", { name: "New LLM key" });
+  const form = dialog.getByRole("form", { name: "New AI key" });
   await chooseService(dialog, ENDPOINT_NAME);
   await form.getByLabel("Name").fill("Mock LLM");
   await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
@@ -119,7 +119,7 @@ test("2. new user with a starter grant: Welcome, no LLM step, first reply", asyn
   const guide = page.getByRole("region", { name: "Get Daneel talking" });
   // The organization's key came with the starter grant: step 1 is collapsed and says who provides it.
   await expect(guide.getByText(/Your organization provides an AI key: Mock LLM/)).toBeVisible({ timeout: 30_000 });
-  await expect(guide.getByRole("form", { name: "New LLM key" })).toHaveCount(0);
+  await expect(guide.getByRole("form", { name: "New AI key" })).toHaveCount(0);
   await expect(guide.getByText("1 of 2 done")).toBeVisible();
 
   await guide.getByRole("link", { name: "Say hello to Daneel" }).click();
