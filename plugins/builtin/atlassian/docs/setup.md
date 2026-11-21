@@ -55,8 +55,10 @@ stored as `cloud_id` and `site_url`). Limitations:
 
 1. An administrator registers the host once: open {{aurora.page:self_hosted}} (organization owners and
    admins for one organization, instance admins for all), choose Jira Data Center or Confluence Data Center and
-   enter the host name, for example `jira.example.com` (no `https://`, port or path). Aurora checks
-   `/rest/api/2/serverInfo` (Jira) or `/rest/api/server-information` (Confluence) first. Registering
+   enter the host name, for example `example.com` (no `https://` or port). If the server lives under a
+   path, fill **Path** too: for `https://example.com/jira`, Host is `example.com` and Path is `/jira`
+   (pasting the full address fills both). Aurora checks `/rest/api/2/serverInfo` (Jira, here
+   `/jira/rest/api/2/serverInfo`) or `/rest/api/server-information` (Confluence) first. Registering
    decides where the credentials may be sent, so only register hosts you trust.
 2. Each person creates a **personal access token** in their own profile (Jira 8.14+, Confluence
    7.9+; *Profile, Personal Access Tokens*) and pastes it when connecting. The token acts as that
@@ -64,9 +66,10 @@ stored as `cloud_id` and `site_url`). Limitations:
 3. If the server has a private address, the operator must allow it with `gateway.allowed_private`
    before registration and requests can reach it.
 
-Limits: the instance host must be a bare DNS name, so a context path (`https://example.com/jira`)
-is not supported. Jira Data Center is addressed through REST API v2, Confluence Data Center through
-its `/rest/api` resources.
+Limits: the host must be a DNS name without a port. A context path (`https://example.com/jira`) is
+supported: register it as the **Path** (`/jira`), and Aurora sends requests only to addresses under it.
+Jira Data Center is addressed through REST API v2, Confluence Data Center through its `/rest/api`
+resources.
 
 ## What agents can do
 

@@ -369,6 +369,61 @@ async fn upgrades_narrower_auto_activate_widening_waits() {
 }
 
 #[tokio::test]
+async fn list_filters_by_package_id() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let k = generate_signing_key().unwrap();
+    a.trust("acme", &k).await;
+    let (_, v1) = a
+        .upload(&signed(&yaml("acme", "1.0.0", &["api.acme.example"]), &k))
+        .await;
+    activate(&h, v1["id"].as_str().unwrap()).await;
+    // Narrower-or-equal upgrade activates itself; v1 becomes superseded.
+    let (_, v2) = a
+        .upload(&signed(&yaml("acme", "1.1.0", &["api.acme.example"]), &k))
+        .await;
+    assert_eq!(v2["status"], "active", "{v2}");
+
+    let (s, all) = a
+        .json(Method::GET, "/v1/admin/plugins?package_id=acme", None)
+        .await;
+    assert_eq!(s, 200, "{all}");
+    let items = all["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{all}");
+    assert!(items.iter().all(|i| i["package_id"] == "acme"));
+    assert_eq!(items[0]["id"], v2["id"], "newest first");
+
+    let (s, act) = a
+        .json(
+            Method::GET,
+            "/v1/admin/plugins?package_id=acme&status=active",
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{act}");
+    assert_eq!(act["items"].as_array().unwrap().len(), 1);
+    assert_eq!(act["items"][0]["id"], v2["id"]);
+
+    let (s, none) = a
+        .json(Method::GET, "/v1/admin/plugins?package_id=nope", None)
+        .await;
+    assert_eq!(s, 200, "{none}");
+    assert!(none["items"].as_array().unwrap().is_empty());
+
+    let plain = h.user("p2@x.io", false).await;
+    let (_, tok) = h.good_session(plain).await;
+    let (s, _, v) = h
+        .send(
+            Method::GET,
+            "/v1/admin/plugins?package_id=acme",
+            &[("cookie", &cookie(&tok))],
+            None,
+        )
+        .await;
+    assert_eq!((s.as_u16(), code(&v)), (403, "instance_admin_required"));
+}
+
+#[tokio::test]
 async fn key_revocation_disables_signed_packages() {
     let h = Harness::new().await;
     let a = setup(&h).await;

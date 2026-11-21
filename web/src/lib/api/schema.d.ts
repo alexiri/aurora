@@ -19129,6 +19129,8 @@ export interface operations {
             query?: {
                 /** @description Filter by package status. */
                 status?: string;
+                /** @description Exact match on the package id (C-1120); no match is an empty page. */
+                package_id?: string;
                 limit?: number;
                 cursor?: string;
             };
