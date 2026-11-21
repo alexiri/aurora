@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ByoSettings } from "@/components/agents/byo-settings";
-import { WorkspaceByoRow } from "@/components/agents/workspace-byo";
+import { AgentsView } from "@/components/agents/agents-view";
 import { ConnectTab } from "@/components/agents/connect-tab";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { AgentsList } from "@/components/agents-list";
@@ -161,44 +161,125 @@ const workspace = (over: Record<string, unknown> = {}) =>
     my_role: "owner", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", ...over,
   }) as never;
 
-describe("workspace BYO setting (P5-IA-4, C-967)", () => {
-  it("moved out of Settings › General", () => {
-    mockFetch({});
-    wrap(<GeneralTab workspace={workspace()} canOwn />);
-    expect(screen.queryByLabelText("BYO agent posture")).toBeNull();
+const orgGov = (value: string, source = "org") => () => json(200, eff({ posture: { value, source } as never }));
+
+describe("workspace BYO setting (P5-LAYOUT-5, D-442, C-967)", () => {
+  it("is a field of Settings › General for an owner with a choice, with the limit from above in its hint", async () => {
+    mockFetch({ "GET /v1/orgs/o1/governance/effective": orgGov("enabled") });
+    wrap(<GeneralTab workspace={workspace({ effective_byo_posture: { value: "enabled", level: "org" } })} canOwn />);
+    const sel = (await screen.findByLabelText("Bring-your-own agents")) as HTMLSelectElement;
+    expect([...sel.options].map((o) => o.value)).toEqual(["", "owners_only", "disabled"]);
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["Same as your organization", "Only owners can create them", "No one can create them"]);
+    expect([...sel.options].every((o) => (o.textContent ?? "").length <= 30)).toBe(true);
+    expect(screen.getByText("Your organization allows: members can create BYO agents. A workspace can only be stricter.")).toBeTruthy();
     expect(screen.getByLabelText("Time zone")).toBeTruthy();
     expect(screen.getByLabelText("Language agents remember in")).toBeTruthy();
   });
 
-  it("is a ladder row in the agents list header: the organization's value above, the choice behind Restrict further…", async () => {
-    const bodies: Record<string, unknown>[] = [];
-    mockFetch({
-      "GET /v1/orgs/o1/governance/effective": () => json(200, eff({ posture: { value: "owners_only", source: "org" } })),
-      "PATCH /v1/workspaces/w1": async (req) => {
-        bodies.push(await req.json());
-        return json(200, workspace({ byo_posture: "disabled" }));
-      },
-    });
-    wrap(<WorkspaceByoRow workspace={workspace({ effective_byo_posture: { value: "owners_only", level: "org" } })} />);
-    const above = await screen.findByRole("region", { name: "Set for you by your organization's admins" });
-    expect(above).toHaveTextContent("Only workspace owners can create BYO agents");
-    expect(above).toHaveTextContent("Set for you by your organization's admins");
-    expect(screen.queryByLabelText("In this workspace")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Restrict further…" }));
-    const sel = (await screen.findByLabelText("In this workspace")) as HTMLSelectElement;
-    expect([...sel.options].map((o) => o.value)).toEqual(["", "disabled"]);
-    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
-    fireEvent.change(sel, { target: { value: "disabled" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(bodies).toEqual([{ byo_posture: "disabled" }]));
+  it("names the administrators when the limit comes from the instance", async () => {
+    mockFetch({ "GET /v1/orgs/o1/governance/effective": orgGov("owners_only", "instance") });
+    wrap(<GeneralTab workspace={workspace()} canOwn />);
+    await screen.findByLabelText("Bring-your-own agents");
+    expect(screen.getByText("Aurora's administrators allow: only workspace owners can create BYO agents. A workspace can only be stricter.")).toBeTruthy();
   });
 
-  it("a workspace member reads the value as text, with no controls", async () => {
+  it("saves with the other changed fields in one PATCH, byo_posture included", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    mockFetch({
+      "GET /v1/orgs/o1/governance/effective": orgGov("enabled"),
+      "PATCH /v1/workspaces/w1": async (req) => {
+        bodies.push(await req.json());
+        return json(200, workspace({ name: "Renamed", byo_posture: "disabled" }));
+      },
+    });
+    wrap(<GeneralTab workspace={workspace({ effective_byo_posture: { value: "enabled", level: "org" } })} canOwn />);
+    const sel = await screen.findByLabelText("Bring-your-own agents");
+    fireEvent.change(sel, { target: { value: "disabled" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(bodies).toEqual([{ name: "Renamed", timezone: "UTC", memory_language: "english", byo_posture: "disabled" }]));
+  });
+
+  it("clears the own value with null", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    mockFetch({
+      "GET /v1/orgs/o1/governance/effective": orgGov("enabled"),
+      "PATCH /v1/workspaces/w1": async (req) => {
+        bodies.push(await req.json());
+        return json(200, workspace());
+      },
+    });
+    wrap(<GeneralTab workspace={workspace({ byo_posture: "disabled", effective_byo_posture: { value: "disabled", level: "workspace" } })} canOwn />);
+    const sel = (await screen.findByLabelText("Bring-your-own agents")) as HTMLSelectElement;
+    await waitFor(() => expect(sel.value).toBe("disabled"));
+    fireEvent.change(sel, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(bodies).toEqual([{ name: "Main", timezone: "UTC", memory_language: "english", byo_posture: null }]));
+  });
+
+  it("is not shown to an owner with nothing to choose (the limit is already the strictest)", async () => {
+    const calls = mockFetch({ "GET /v1/orgs/o1/governance/effective": orgGov("disabled", "instance") });
+    wrap(<GeneralTab workspace={workspace({ effective_byo_posture: { value: "disabled", level: "instance" } })} canOwn />);
+    await waitFor(() => expect(calls.mock.calls.some(([r]) => String((r as Request).url).includes("/governance/"))).toBe(true));
+    await screen.findByLabelText("Time zone");
+    expect(screen.queryByLabelText("Bring-your-own agents")).toBeNull();
+    expect(screen.queryByText(/Set for you by/)).toBeNull();
+  });
+
+  it("is shown with an own value left from before, to clear it", async () => {
+    mockFetch({ "GET /v1/orgs/o1/governance/effective": orgGov("disabled", "instance") });
+    wrap(<GeneralTab workspace={workspace({ byo_posture: "disabled", effective_byo_posture: { value: "disabled", level: "workspace" } })} canOwn />);
+    const sel = (await screen.findByLabelText("Bring-your-own agents")) as HTMLSelectElement;
+    expect([...sel.options].map((o) => o.value)).toEqual([""]);
+    expect(sel.options[0]).toHaveTextContent(/^Same as your organization$/);
+  });
+
+  it("shows the language by name, never as a code", async () => {
+    mockFetch({ "GET /v1/orgs/o1/governance/effective": orgGov("enabled") });
+    wrap(<GeneralTab workspace={workspace({ memory_language: "en", effective_byo_posture: { value: "enabled", level: "org" } })} canOwn />);
+    const sel = (await screen.findByLabelText("Language agents remember in")) as HTMLSelectElement;
+    expect(sel.selectedOptions[0]).toHaveTextContent("English");
+    expect([...sel.options].map((o) => o.textContent)).toContain("Any other language");
+    expect([...sel.options].every((o) => (o.textContent ?? "").length > 3)).toBe(true);
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
+
+  it("a member never sees it and nothing about governance is read", async () => {
     const calls = mockFetch({});
-    wrap(<WorkspaceByoRow workspace={workspace({ my_role: "member", effective_byo_posture: { value: "disabled", level: "org" } })} />);
-    expect(await screen.findByRole("region", { name: "Set for you by your organization's admins" })).toHaveTextContent("Nobody can create BYO agents");
-    expect(screen.queryByRole("button", { name: "Restrict further…" })).toBeNull();
+    wrap(<GeneralTab workspace={workspace({ my_role: "member", effective_byo_posture: { value: "enabled", level: "org" } })} canOwn={false} />);
+    await screen.findByLabelText("Time zone");
+    expect(screen.queryByLabelText("Bring-your-own agents")).toBeNull();
     expect(calls.mock.calls.some(([r]) => String((r as Request).url).includes("/governance/"))).toBe(false);
+  });
+
+  it("the Agents page has no BYO block, for an owner or a member", async () => {
+    for (const role of ["owner", "member"]) {
+      mockFetch({
+        "GET /v1/resolve": () => json(200, { org: ORG, workspace: workspace({ my_role: role }) }),
+        "GET /v1/workspaces/w1": () => json(200, workspace({ my_role: role, effective_byo_posture: { value: "enabled", level: "org" } })),
+        "GET /v1/workspaces/w1/agents": () => json(200, { items: [], next_cursor: null }),
+        "GET /v1/orgs/o1/governance/effective": orgGov("enabled"),
+      });
+      const { unmount } = wrap(<AgentsView />);
+      await screen.findByRole("heading", { name: "Agents" });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByText(/Set for you by/)).toBeNull();
+      expect(screen.queryByText("Bring-your-own agents")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Restrict further…" })).toBeNull();
+      unmount();
+    }
+  });
+
+  it("a 422 on /byo_posture shows under the field", async () => {
+    mockFetch({
+      "GET /v1/orgs/o1/governance/effective": orgGov("enabled"),
+      "PATCH /v1/workspaces/w1": () =>
+        json(422, { error: { code: "governance_below_instance_minimum", message: "too loose", details: { fields: [{ path: "/byo_posture", message: "Below the minimum" }] } } }),
+    });
+    wrap(<GeneralTab workspace={workspace({ effective_byo_posture: { value: "enabled", level: "org" } })} canOwn />);
+    fireEvent.change(await screen.findByLabelText("Bring-your-own agents"), { target: { value: "owners_only" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Below the minimum")).toBeTruthy();
   });
 });
 

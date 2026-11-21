@@ -141,8 +141,20 @@ describe("approvals", () => {
     expect(screen.getByText("When one of your agents needs a yes from you, it shows up here and in your notices.")).toBeInTheDocument();
     // (workspace-11) "Nothing is waiting for you." once, not twice; an example card shows what a question looks like.
     expect(screen.queryByTestId("approvals-sentence")).toBeNull();
+    // (P5-LAYOUT-4, D-441) The example is a closed fold: no button is visible until it is opened, and it is never amber.
     const example = screen.getByTestId("approval-example");
-    expect(example).toHaveTextContent("Example · this is what");
+    expect(example.tagName).toBe("DETAILS");
+    expect(example).not.toHaveAttribute("open");
+    expect(within(example).getByText("What an approval looks like")).toBeVisible();
+    expect(within(example).getByRole("button", { name: "Block" })).not.toBeVisible();
+    expect(screen.queryByText(/Example · this is what/)).toBeNull();
+    fireEvent.click(within(example).getByText("What an approval looks like"));
+    expect(example).toHaveAttribute("open");
+    expect(within(example).getByText(/This is what .* asks before it changes something\. Try the buttons: nothing is sent\./)).toBeVisible();
+    expect(within(example).getByRole("button", { name: "Block" })).toBeVisible();
+    const card = within(example).getByRole("region", { name: "Example approval" }).querySelector("div");
+    expect(card?.className).toContain("border-line");
+    expect(card?.className).not.toContain("pending-line");
     fireEvent.click(within(example).getByRole("button", { name: "Block" }));
     expect(screen.getByTestId("example-says")).toHaveTextContent("is told no, and carries on without it.");
     fireEvent.click(within(example).getByRole("button", { name: "Always allow" }));
@@ -153,6 +165,14 @@ describe("approvals", () => {
     expect(calls.filter((c) => c.key.startsWith("POST"))).toEqual([]);
     fireEvent.click(screen.getByRole("tab", { name: "History" }));
     expect(await screen.findByText("No questions have been answered yet.")).toBeInTheDocument();
+  });
+
+  it("with something waiting, neither the example fold nor its sample is on the page", async () => {
+    routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [mk("a1")], next_cursor: null });
+    show();
+    await screen.findByRole("button", { name: "Allow once" });
+    expect(screen.queryByTestId("approval-example")).toBeNull();
+    expect(screen.queryByText("What an approval looks like")).toBeNull();
   });
 
   it("batch decision posts agent_id", async () => {

@@ -107,6 +107,10 @@ for (const scheme of ["light", "dark"] as const) {
         });
         await expect(page.getByRole("heading", { name: "Nothing is waiting for you." })).toBeVisible();
         const example = page.getByTestId("approval-example");
+        // (P5-LAYOUT-4) A closed fold: nothing to press until it is opened.
+        await expect(example.getByText("What an approval looks like")).toBeVisible();
+        await expect(example.getByRole("button", { name: "Block" })).toBeHidden();
+        await example.getByText("What an approval looks like").click();
         await example.getByRole("button", { name: "Block" }).click();
         await expect(page.getByTestId("example-says")).toContainText("is told no, and carries on without it.");
         expect(posts.filter((u) => u.includes("approvals"))).toEqual([]);

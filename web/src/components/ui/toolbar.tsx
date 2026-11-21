@@ -21,13 +21,16 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
  * A hover/focus label above its trigger. The trigger keeps its own accessible name (which already includes the
  * shortcut), so the bubble is hidden from assistive technology.
  */
-export function Tooltip({ label, keys, children }: { label: string; keys?: string[]; children: ReactNode }) {
+export function Tooltip({ label, keys, bubbleClassName, children }: { label: string; keys?: string[]; bubbleClassName?: string; children: ReactNode }) {
   return (
     <span className="group/tip relative inline-flex">
       {children}
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 hidden -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-control border border-line bg-surface px-2 py-1 text-xs text-ink shadow-pop md:group-focus-within/tip:flex md:group-hover/tip:flex">
+        className={cn(
+          "pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 hidden -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-control border border-line bg-surface px-2 py-1 text-xs text-ink shadow-pop md:group-focus-within/tip:flex md:group-hover/tip:flex",
+          bubbleClassName,
+        )}>
         {label}
         {keys?.map((k) => (
           <Kbd key={k}>{k}</Kbd>

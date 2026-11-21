@@ -2051,7 +2051,7 @@ every other topic is owners/admins and is not listed for a member.)
   workspace's **open-lane posture** (locked with "enforced by org/instance"
   when a higher level is stricter). The simulate panel gets a lane switch
   (request / tunnel).
-- **Settings** — name, timezone, memory language (owners), (phase 2, RFE-025) **BYO posture** (tighten-only, shows the inherited value and its level), access bindings (phase 2,
+- **Settings** — name, timezone, memory language (owners), (phase 2, RFE-025; P5-LAYOUT-5, D-442) **Bring-your-own agents** in **General** (tighten-only, saved with the form's one Save, owners only, and only when there is a choice: a stricter value than the level above exists, or the workspace has its own value to clear; the limit from above is one sentence in the hint, never a locked row; the Agents page has no BYO block), access bindings (phase 2,
   RFE-012: roles Owner / Approver / Member with a one-line explanation of each;
   invitation dialogs offer Member or Approver per workspace; FIX-027: this
   **Access** section is where workspace people are managed — the workspace nav
@@ -2371,7 +2371,7 @@ which wraps it with the id given.
 | `agent.memory`, `agent.skills` | Memory, Skills pages | Use (P5-REFINE-12 #8; no row, no wrapper) | no wrapper |
 | `agent.tests`, `agent.otheragents` | Tests, Other agents pages | Expert | Now |
 | `agent.terminal`, `agent.ssh`, `agent.previews`, `agent.connect` | Terminal, SSH, Previews, Computer: Connect pages | Expert | Now (Files stays Use) |
-| `agent.byo` | BYO as a kind of agent: the kind select in New agent (Expert), the BYO row on the Agents list (Set up) | Expert / Set up | Now |
+| `agent.byo` | BYO as a kind of agent: the kind select in New agent (Expert), the BYO field in Settings › General (Set up; D-442) | Expert / Set up | Now |
 | `agent.roles`, `agent.effort`, `agent.harness`, `agent.program` | Model roles, Subagents use, Effort, Harness / agent program | Expert | Now (one group) |
 | `agent.proactive` | "<Agent> may message you first" | Set up | Now |
 | `agent.handle` | the agent's @handle line | Expert | Now |
@@ -3101,8 +3101,9 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 - **Apps** keeps its grid of square cards with **Search apps** and the groups **Connected**, **Ready to connect**, **Needs an
   admin first** (A to Z; empty groups not drawn); the line for an app that needs an admin is "An admin sets up <what>
   once" (a role, never a name). **Skills** opens with what a skill is and keeps the precedence in the closed **How skills
-  combine** fold. **Approvals** shows "Nothing is waiting for you." once and an **Example** card (built from the real
-  question, never counted or sent; each answer explains itself) only while nothing is waiting.
+  combine** fold (the shared `Fold` primitive, `components/ui/fold.tsx`). **Approvals** shows "Nothing is waiting for you."
+  once and, below it, a closed fold **What an approval looks like** holding the example card (built from the real question,
+  never counted or sent; each answer explains itself; never amber, D-441), only while nothing is waiting.
 - **Badges (item 19, G1/G2/G6):** one shared hook (`useWorkspaceCounts`, one query on `GET /v1/attention/counts?workspace=`,
   C-1082) feeds every workspace count. **Approvals** shows the `approvals` part (gateway and action approvals the viewer can
   decide), **Overview** the whole workspace count, and the phone drawer lists the same rail; the hamburger button shows a dot

@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect as baseExpect, test, type Page } from "@playwright/test";
 
+import { ws } from "./support/mock-api";
 import { openRoute, overflow } from "./support/open";
 
 // The first request of a route compiles it in `next dev`; on a loaded host that outlasts the default 5 s.
@@ -76,18 +77,39 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeClean(page)).toEqual([]);
       });
 
-      test("the workspace's agents list shows the organization's BYO value, and its Settings no longer has the setting", async ({ page }) => {
+      test("the Agents page has no BYO block; the owner chooses it in Settings › General (D-442) and it reads back", async ({ page }) => {
         await openRoute(page, "/o/acme/w/main/agents", scheme);
-        const byo = page.getByTestId("workspace-byo");
-        await expect(byo.getByRole("region", { name: /^Set for you by/ })).toContainText("Members can create BYO agents");
-        await byo.getByRole("button", { name: "Restrict further…" }).click();
-        await expect(byo.getByLabel("In this workspace")).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
+        await expect(page.getByText(/Set for you by/)).toHaveCount(0);
+        await expect(page.getByText("Bring-your-own agents")).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Restrict further…" })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
-        await openRoute(page, "/o/acme/w/main/settings", scheme);
+        // The workspace remembers its PATCH (the shared mock's workspace is read-only).
+        let own: string | null = null;
+        const patches: Record<string, unknown>[] = [];
+        await page.route(/\/v1\/workspaces\/[^/?]+$/, async (r) => {
+          if (r.request().method() === "PATCH") {
+            const body = r.request().postDataJSON() as Record<string, unknown>;
+            patches.push(body);
+            if ("byo_posture" in body) own = body.byo_posture as string | null;
+          }
+          await r.fulfill({ json: { ...ws, byo_posture: own, effective_byo_posture: own ? { value: own, level: "workspace" } : { value: "enabled", level: "org" } } });
+        });
+        await page.goto("/o/acme/w/main/settings");
         await expect(page.getByLabel("Time zone")).toBeVisible();
         await expect(page.getByLabel(/^Language .* remembers? in$/)).toBeVisible();
-        await expect(page.getByLabel("BYO agent posture")).toHaveCount(0);
+        const field = page.getByLabel("Bring-your-own agents");
+        await expect(field).toBeVisible();
+        await expect(page.getByText("Your organization allows: members can create BYO agents. A workspace can only be stricter.")).toBeVisible();
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+        await field.selectOption("disabled");
+        // At 390 px `next dev`'s own indicator can sit over Save and take the pointer, so the click is dispatched.
+        await page.getByRole("button", { name: "Save" }).dispatchEvent("click");
+        await expect.poll(() => patches).toEqual([expect.objectContaining({ byo_posture: "disabled" })]);
+        await page.reload();
+        await expect(page.getByLabel("Bring-your-own agents")).toHaveValue("disabled");
       });
     });
   }

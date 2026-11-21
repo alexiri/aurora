@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 
 import { AgentsList } from "@/components/agents-list";
 import { ErrorState, Loading } from "@/components/states";
-import { Altitude, AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
+import { AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
 import { MainAction } from "@/components/ui/main-action";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAgentNeedsCounts } from "@/lib/api/agent-needs";
@@ -13,7 +13,6 @@ import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 import { whoCanFromContacts } from "@/lib/who-can";
 
 import { CreateAgentDialog } from "./create-agent-dialog";
-import { WorkspaceByoRow } from "./workspace-byo";
 
 /** Keeps the pending approvals live (the stream refetches them), so a row's count drops when someone decides. */
 function ApprovalsStreamOpen({ wsId }: { wsId: string }) {
@@ -48,11 +47,6 @@ export function AgentsView() {
         }
         className="mb-2"
       />
-      {workspace.data ? (
-        <Altitude id="agent.byo" level="setup">
-          <WorkspaceByoRow workspace={workspace.data} />
-        </Altitude>
-      ) : null}
       {agents.isPending ? <Loading /> : null}
       {agents.isError ? <ErrorState error={agents.error} onRetry={() => agents.refetch()} /> : null}
       {agents.data ? (
