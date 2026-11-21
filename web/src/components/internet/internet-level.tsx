@@ -292,6 +292,8 @@ export interface InternetLevelProps {
   below?: LadderBelow;
   /** The "Tightened below" part of the organization: a heading and a link to show all. */
   belowNote?: ReactNode;
+  /** The caller draws the page heading itself (the preset card goes under it, never above it); the editable view then skips it. */
+  hideHeader?: boolean;
 }
 
 /**
@@ -416,7 +418,7 @@ export function InternetLevel(p: InternetLevelProps) {
 
   return (
     <div className="max-w-page space-y-8">
-      {header(
+      {p.hideHeader ? null : header(
         workspace ? (
           <>
             <span data-testid="internet-summary" className="block font-display text-xl text-ink">

@@ -272,6 +272,11 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     expect((await screen.findByTestId("internet-summary")).textContent).toMatch(/^What agents in .* may reach\.$/);
     expect(screen.getByRole("heading", { name: "Your rules" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Set above you" })).toBeInTheDocument();
+    // (P5-REFINE-20, org-8) The page heading is the first thing: the preset card sits under it, and there is one h1.
+    const h1 = screen.getAllByRole("heading", { level: 1, name: "Internet access" });
+    expect(h1).toHaveLength(1);
+    const presets = await screen.findByTestId("policy-presets");
+    expect(h1[0]!.compareDocumentPosition(presets) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // (org-14) The history is a page section, not a button.
     expect(screen.getByRole("heading", { name: "History of internet rules" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "History" })).toBeNull();
