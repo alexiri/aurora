@@ -6,7 +6,8 @@ import type { ActionApproval } from "@/lib/api/action-approvals";
 import { useAgentPendingActionApprovals, useAgentPendingApprovals, type Approval, type RequestLogEntry } from "@/lib/api/approvals";
 import { useSandbox, type Conversation, type SandboxView } from "@/lib/api/conversations";
 import { useAgentTimeline, useTimelineStream, type TimelineItem } from "@/lib/api/timeline";
-import { conversationTitle } from "@/lib/chat/layout";
+import { conversationTitle, isWorking } from "@/lib/chat/layout";
+import { useStoppedTurns } from "@/lib/chat/stopped";
 
 /** One thing waiting for a decision: a gateway hold or an action approval of this agent. */
 export interface NeedsItem {
@@ -148,7 +149,9 @@ export function useAgentStatus({
         : [],
     [canApprove, gateway.data, actions.data, byId],
   );
-  const working = useMemo(() => conversations.filter((c) => !!c.active_turn), [conversations]);
+  // A turn Stop was pressed on is not "working" any more, though the list has not refetched (chat-4).
+  const stoppedTurns = useStoppedTurns();
+  const working = useMemo(() => conversations.filter((c) => isWorking(c, stoppedTurns)), [conversations, stoppedTurns]);
   // The newest five rows of the first page: the stream puts new rows on top and turns a running row into its outcome in place.
   const did = useMemo(() => (timeline.data?.pages[0]?.items ?? []).slice(0, DID_LIMIT), [timeline.data]);
 

@@ -99,8 +99,13 @@ export function conversationTitle(
   return c.external_ref;
 }
 
-/** A Working dot is shown while the conversation has a turn in flight. */
-export const isWorking = (c: Pick<Conversation, "active_turn">): boolean => !!c.active_turn;
+/**
+ * A Working dot is shown while the conversation has a turn in flight. A turn the person pressed Stop on (`stopped`,
+ * `lib/chat/stopped.ts`) or whose abort was requested is not working any more, though the list has not refetched
+ * (P5-REFINE-11, chat-4).
+ */
+export const isWorking = (c: Pick<Conversation, "active_turn">, stopped?: ReadonlySet<string>): boolean =>
+  !!c.active_turn && !c.active_turn.abort_requested && !stopped?.has(c.active_turn.id);
 
 const activity = (c: Conversation): number => {
   const t = Date.parse(c.last_activity_at ?? c.created_at);

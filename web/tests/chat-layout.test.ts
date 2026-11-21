@@ -177,6 +177,13 @@ describe("conversation list", () => {
     expect(isWorking(conv("1"))).toBe(false);
     expect(isWorking(conv("2", { active_turn: { id: "t" } as never }))).toBe(true);
   });
+
+  it("is not working once Stop was pressed or the abort was requested, before the list refetches (chat-4)", () => {
+    const c = conv("2", { active_turn: { id: "t", abort_requested: false } as never });
+    expect(isWorking(c, new Set(["t"]))).toBe(false);
+    expect(isWorking(c, new Set(["other"]))).toBe(true);
+    expect(isWorking(conv("3", { active_turn: { id: "u", abort_requested: true } as never }))).toBe(false);
+  });
 });
 
 describe("tool call group summary", () => {

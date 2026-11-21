@@ -11,6 +11,7 @@ import { InlineSaved, useSaveBar } from "@/components/ui/save-bar";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs } from "@/components/ui/tabs";
 import { chatApi, useConversations, type Conversation, type ConversationFolder } from "@/lib/api/conversations";
+import { useStoppedTurns } from "@/lib/chat/stopped";
 import { conversationTitle, folderRunsLabel, isOwnDirect, isWorking, kindLabel, listTime, type ListGroups } from "@/lib/chat/layout";
 import { cn } from "@/lib/utils";
 
@@ -98,6 +99,7 @@ export function ConversationRow({
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const stoppedTurns = useStoppedTurns();
   const saved = useSaveBar();
   // Only the person's own chats can be renamed (a group's rename is for workspace owners, a run thread follows its automation).
   const canRename = isOwnDirect(c);
@@ -135,7 +137,7 @@ export function ConversationRow({
     <StatusDot tone="pending" className="whitespace-nowrap text-pending-ink">
       Waiting on you
     </StatusDot>
-  ) : isWorking(c) ? (
+  ) : isWorking(c, stoppedTurns) ? (
     <StatusDot tone="accent" className="text-accent-ink">
       Working
     </StatusDot>
@@ -195,7 +197,7 @@ export function ConversationRow({
             </span>
           )}
           <span className="min-w-0 flex-1">
-            <span className={cn("block truncate text-sm text-ink", selected ? "font-semibold" : "font-medium")}>{title}</span>
+            <span className={cn("line-clamp-2 break-words text-sm text-ink", selected ? "font-semibold" : "font-medium")}>{title}</span>
             {second}
             {saved.saved ? <InlineSaved show /> : null}
           </span>

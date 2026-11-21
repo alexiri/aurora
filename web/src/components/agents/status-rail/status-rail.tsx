@@ -205,6 +205,7 @@ export function StatusRail({
               <CheckCircleIcon width={20} height={20} />
               {/* The visible text is only the count, which the accessible name ("Needs you: 2 approvals waiting") contains
                   (WCAG 2.5.3 label in name); no cut-off word. With nothing waiting there is just the icon. */}
+              <PartLabel>Need</PartLabel>
               <Tip>Needs you</Tip>
               {status.needs.length > 0 ? (
                 <span className="text-label font-semibold leading-none tabular-nums text-pending-ink">{status.needs.length}</span>
