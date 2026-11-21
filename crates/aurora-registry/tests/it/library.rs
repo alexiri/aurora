@@ -92,6 +92,21 @@ fn a_valid_block_lints_clean_and_absent_means_no_library() {
     assert!(codes(HEAD).is_empty());
 }
 
+/// P5-SKLIB-1 (D-448): the block still parses and lints, but a manifest that carries it gets the
+/// `library_ignored` warning (and the built-in packages no longer carry it).
+#[test]
+fn a_manifest_that_still_has_the_block_gets_the_library_ignored_warning() {
+    let with = Manifest::parse(&manifest_with(BLOCK), "0.1.0").unwrap();
+    let w = aurora_registry::validate::warnings(&with);
+    assert_eq!(
+        w.iter().map(|x| x.code).collect::<Vec<_>>(),
+        ["library_ignored"],
+        "{w:?}"
+    );
+    let without = Manifest::parse(HEAD, "0.1.0").unwrap();
+    assert!(aurora_registry::validate::warnings(&without).is_empty());
+}
+
 #[test]
 fn linter_matrix() {
     let cases: Vec<(&str, String, &str)> = vec![
@@ -561,48 +576,52 @@ fn github_shaped_responses() {
 
 // ---- the built-in packages ------------------------------------------------------------------
 
-fn builtin(id: &str) -> Manifest {
-    let p = format!(
-        "{}/../../plugins/builtin/{id}/plugin.yaml",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    Manifest::parse(&std::fs::read_to_string(p).unwrap(), "9.9.9").unwrap()
-}
-
+/// (P5-SKLIB-1, D-448) The built-in GitHub and GitLab packages no longer carry a `library` block
+/// (their libraries are git URLs now); they stay valid and clean.
 #[test]
-fn builtin_github_and_gitlab_declare_a_valid_library() {
+fn builtin_github_and_gitlab_carry_no_library_block_and_stay_valid() {
     for id in ["github", "gitlab"] {
-        let m = builtin(id);
+        let p = format!(
+            "{}/../../plugins/builtin/{id}/plugin.yaml",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let m = Manifest::parse(&std::fs::read_to_string(p).unwrap(), "9.9.9").unwrap();
         let v = validate::manifest(&m);
         assert!(v.is_empty(), "{id}: {v:?}");
-        let with: Vec<_> = m
-            .apps
-            .iter()
-            .filter(|a| a.library.is_some())
-            .map(|a| a.about.id.as_str())
-            .collect();
-        assert!(!with.is_empty(), "{id} has no library block");
+        assert!(
+            m.apps.iter().all(|a| a.library.is_none()),
+            "{id} still has a library block"
+        );
+        assert!(validate::warnings(&m).is_empty(), "{id}");
     }
-    let gh = builtin("github");
-    assert_eq!(
-        gh.apps[0].library.as_ref().unwrap().request_host,
-        "api.github.com"
-    );
-    assert_eq!(
-        gh.apps[1].library.as_ref().unwrap().request_host,
-        "{instance}"
-    );
-    // widening versus a package without the block
-    let mut bare = gh.clone();
-    for a in &mut bare.apps {
-        a.library = None;
-    }
-    assert_eq!(widens(&bare, &gh).len(), 2);
 }
+
+/// The block's runtime still parses and builds (contract 1 is additive): GitLab's shape, kept
+/// here as a literal now that no built-in package carries it.
+const GITLAB_BLOCK: &str = r#"
+repo_pattern: "^[A-Za-z0-9_.-]{1,100}(/[A-Za-z0-9_.-]{1,100}){1,19}$"
+request_host: "{instance}"
+resolve_ref:
+  path: "/api/v4/projects/{repo|urlencode}/repository/commits/{ref|urlencode}"
+  default_path: "/api/v4/projects/{repo|urlencode}"
+  sha: "$.id"
+  default_branch: "$.default_branch"
+list_tree:
+  path: "/api/v4/projects/{repo|urlencode}/repository/tree?recursive=true&per_page=100&ref={sha}"
+  entries: "$[*]"
+  fields: { path: "$.path", type: "$.type", mode: "$.mode", blob: "$.id" }
+  file_type: blob
+  paginate: link_header
+  max_pages: 200
+get_blob:
+  path: "/api/v4/projects/{repo|urlencode}/repository/blobs/{blob}/raw"
+  encoding: raw
+required_access: read
+"#;
 
 #[test]
 fn gitlab_shape_paginated_tree_encoded_project_and_raw_blob() {
-    let l = builtin("gitlab").apps[0].library.clone().unwrap();
+    let l: Library = serde_yaml::from_str(GITLAB_BLOCK).unwrap();
     let mut p = params("group/sub/project");
     p.reference = Some("main".into());
     assert_eq!(
