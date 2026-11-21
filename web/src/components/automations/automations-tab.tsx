@@ -238,7 +238,8 @@ export function AutomationsTab({
       ) : null}
 
       {/* The Chats set-up: with a chat platform (or a chat the agent is in) it is the presences, bindings and reach; without, the ask. */}
-      {show("chats") && (hasPlatform || filter === "chats") ? (
+      {/* A member cannot connect a platform, so with none the Chats group is where they ask for one (channels-3). */}
+      {show("chats") && (hasPlatform || filter === "chats" || !canOwn) ? (
         <div id="chats" ref={chatsRef} className="scroll-mt-4 space-y-3 pt-2">
           <h3 className="font-display text-base font-semibold text-ink">Chats</h3>
           {hasPlatform ? (
@@ -271,7 +272,8 @@ export function AutomationsTab({
                 onPick={() => start("chat")}
               />
             ) : (
-              <p className="text-sm text-ink-2">Only organization owners and admins can connect a chat platform. Without one, {agentName} cannot join a chat.</p>
+              // (P5-REFINE-14, channels-3) No platform: the same ask as the Chats set-up, with its optional reason.
+              <NoChatYet agentName={agentName} wsId={wsId} />
             )}
           </div>
         </DialogContent>

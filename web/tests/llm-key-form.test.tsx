@@ -7,6 +7,7 @@ import {
   harnessHint,
   keyReasonMessage,
   modeLabel,
+  serviceInitials,
   shapeOf,
   trustPolicy,
   valueComplete,
@@ -308,5 +309,27 @@ describe("LLM key form: words (setup-7)", () => {
     fireEvent.click(card);
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByLabelText("Name")).toBeTruthy();
+    // (setup-7/access-9) Nothing is red the moment the key step opens, and the harness line sits under the chosen service.
+    expect(screen.queryByRole("alert")).toBeNull();
+    const line = screen.getByText("Works with Claude Code.");
+    expect(line.previousElementSibling?.textContent).toContain("Bedrock EU");
+  });
+
+  it("clears the required message as soon as the person types", async () => {
+    open();
+    fireEvent.click(await screen.findByRole("radio", { name: /^Bedrock EU/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    const name = await screen.findByLabelText("Name");
+    fireEvent.submit(name.closest("form")!);
+    expect((await screen.findByRole("alert")).textContent).toContain("Name and endpoint are required.");
+    fireEvent.change(name, { target: { value: "Prod" } });
+    await waitFor(() => expect(screen.queryByText(/Name and endpoint are required/)).toBeNull());
+  });
+
+  it("makes the logo tile's initials from letters only", () => {
+    expect(serviceInitials("LiteLLM (VidaiMock, dev only)")).toBe("LV");
+    expect(serviceInitials("Bedrock EU")).toBe("BE");
+    expect(serviceInitials("  Anthropic ")).toBe("A");
+    expect(serviceInitials("(( ))")).toBe("");
   });
 });

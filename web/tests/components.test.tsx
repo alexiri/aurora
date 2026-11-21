@@ -16,7 +16,10 @@ describe("AgentsList", () => {
     render(<AgentsList agents={[agent({}), agent({ id: "2", name: "Other", handle: "o", kind: "byo", is_default: false })]} />);
     expect(screen.getByText("Daneel")).toBeInTheDocument();
     expect(screen.getByText("@daneel")).toBeInTheDocument();
-    expect(screen.getByText("byo")).toBeInTheDocument();
+    // One chip at most, in a person's words: the default agent's, else "Bring your own"; never the raw kind.
+    expect(screen.getByText("Bring your own")).toBeInTheDocument();
+    expect(screen.queryByText("byo")).toBeNull();
+    expect(screen.queryByText("hosted")).toBeNull();
     expect(screen.getAllByText("Came with this workspace")).toHaveLength(1);
   });
   it("shows empty state", () => {

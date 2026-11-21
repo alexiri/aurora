@@ -78,7 +78,7 @@ export function WelcomeView() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title={personal ? `Welcome, ${workspace.name}` : `Welcome to ${workspace.name}`}
+        title={personal ? `Welcome, ${session.data?.user.display_name || workspace.name}` : `Welcome to ${workspace.name}`}
         description={role ?? "A few minutes from here to your agent's first answer."}
         className="mb-0"
       />

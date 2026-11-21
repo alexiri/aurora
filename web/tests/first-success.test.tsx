@@ -70,7 +70,7 @@ function renderCards(initialSeen: string[], over: Record<string, unknown> = {}) 
 describe("FirstSuccessCards", () => {
   it("shows the first-answer card with its words and remembers Got it on the server", async () => {
     const patches = renderCards([]);
-    expect(await screen.findByText("Daneel answered. It changed nothing outside this chat.")).toBeInTheDocument();
+    expect(await screen.findByText("Daneel answered. It thought with the Company key and changed nothing outside this chat.")).toBeInTheDocument();
     expect(screen.queryByText("Live")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Got it" }));
     await waitFor(() => expect(patches).toEqual([{ notice_seen: "first-answer" }]));

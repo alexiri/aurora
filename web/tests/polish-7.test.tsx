@@ -38,6 +38,7 @@ describe("apps: one status line and the button that follows it", () => {
 
   it("offers Connect, Connect another, or Ask an admin (then Asked and Undo)", async () => {
     const posts: string[] = [];
+    const bodies: unknown[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: Request | string | URL) => {
@@ -54,7 +55,10 @@ describe("apps: one status line and the button that follows it", () => {
             ],
           });
         }
-        if (req.method === "POST" && url.pathname.endsWith("/setup-request")) posts.push(url.pathname);
+        if (req.method === "POST" && url.pathname.endsWith("/setup-request")) {
+          posts.push(url.pathname);
+          bodies.push(await req.clone().json());
+        }
         return json(200, {});
       }),
     );
@@ -63,8 +67,13 @@ describe("apps: one status line and the button that follows it", () => {
     expect(screen.getByRole("button", { name: "Connect another Linear" })).toBeInTheDocument();
     expect(screen.queryByText("Switched off")).toBeNull();
     expect(screen.queryByText(/0 connections/)).toBeNull();
+    // (workspace-9, D-417) Ask opens the optional reason; nothing is sent until Send request.
     fireEvent.click(screen.getByRole("button", { name: /Ask an admin/ }));
+    expect(posts).toEqual([]);
+    fireEvent.change(await screen.findByLabelText(/Why do you need it\?/), { target: { value: "For the Friday report" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
     await vi.waitFor(() => expect(posts).toEqual(["/v1/workspaces/w1/apps/gdrive/setup-request"]));
+    expect(bodies).toEqual([{ reason: "For the Friday report" }]);
   });
 });
 

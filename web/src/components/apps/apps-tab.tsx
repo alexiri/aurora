@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { FormError } from "@/components/auth/form-error";
 import { EmptyState, ErrorState } from "@/components/states";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { inputClass } from "@/components/ui/field";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
@@ -77,6 +79,8 @@ function AppCard({
   const status = appStatus(members);
   const ask = useAskSetup(workspaceId);
   const withdraw = useWithdrawSetup(workspaceId);
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState("");
   const text = app.summary ?? app.description;
   return (
     <li className="flex flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
@@ -119,9 +123,41 @@ function AppCard({
               </Button>
             </>
           ) : (
-            <Button size="sm" variant="outline" disabled={ask.isPending} onClick={() => ask.mutate(app.app_id)} aria-label={`Ask an admin to set up ${name}`}>
-              Ask an admin
-            </Button>
+            // (D-417) The ask carries the optional "Why do you need it?", as everywhere else.
+            <Popover open={asking} onOpenChange={setAsking}>
+              <PopoverTrigger asChild>
+                <Button size="sm" variant="outline" aria-label={`Ask an admin to set up ${name}`}>
+                  Ask an admin
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 max-w-[90vw]">
+                <form
+                  className="space-y-3"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const text = reason.trim();
+                    ask.mutate({ app: app.app_id, ...(text ? { reason: text } : {}) }, { onSuccess: () => setAsking(false) });
+                  }}>
+                  <div className="space-y-1.5">
+                    <label htmlFor={`ask-reason-${app.app_id}`} className="block text-sm font-medium text-ink">
+                      Why do you need it? <span className="font-normal text-muted">(optional)</span>
+                    </label>
+                    <input
+                      id={`ask-reason-${app.app_id}`}
+                      className={inputClass}
+                      value={reason}
+                      maxLength={300}
+                      placeholder={`So I can use ${name}`}
+                      onChange={(e) => setReason(e.target.value)}
+                    />
+                  </div>
+                  <Button type="submit" size="sm" disabled={ask.isPending}>
+                    Send request
+                  </Button>
+                  {ask.isError ? <FormError error={ask.error} /> : null}
+                </form>
+              </PopoverContent>
+            </Popover>
           )
         ) : null}
       </div>

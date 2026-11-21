@@ -9,6 +9,7 @@ import { AgentFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
 import { Avatar } from "@/components/agent-avatar";
 import { Badge } from "@/components/ui/badge";
+import { agentChip } from "@/lib/agent-chip";
 import { Altitude, AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
 import { Button } from "@/components/ui/button";
 import { useAltitude, useHiddenControls } from "@/lib/altitude";
@@ -101,6 +102,7 @@ export function AgentPage() {
   if (!agent) return <ErrorState error={{ code: "not_found" }} />;
 
   const byo = agent.kind === "byo";
+  const chip = agentChip(agent);
   const availability = { byo, previews: previewsEnabled, terminal: terminalEnabled, ssh: sshEnabled };
   const tab = resolvePage(requestedTab, availability);
   // The viewer's altitude leaves pages out of the navigation; the open page stays listed (a direct `?tab=` still opens).
@@ -170,8 +172,7 @@ export function AgentPage() {
                   <span className="hidden font-mono text-muted md:inline">@{agent.handle}</span>
                 </Altitude>
                 {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
-                {byo ? <Badge>{agent.kind}</Badge> : null}
-                {byo && agent.is_default ? <Badge tone="accent">Default</Badge> : null}
+                {byo && chip ? <Badge tone={chip.tone}>{chip.text}</Badge> : null}
                 {byo || !wsId ? null : (
                   <AgentState
                     agentId={agent.id}
