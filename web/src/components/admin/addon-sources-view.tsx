@@ -358,7 +358,7 @@ export function AddonSourcesView() {
     0,
   );
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="Package sources"
         description="Third-party repositories of app packages. Each is trusted through its own signing key; every package still waits for your approval."

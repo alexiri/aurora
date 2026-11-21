@@ -204,3 +204,47 @@ for (const scheme of ["light", "dark"] as const) {
     });
   }
 }
+
+// P5-LAYOUT-2 (D-440): the Accounts tab is a CardGrid of cards like Apps: four to a row at 1920 px, one at 390 px; the
+// menu sits top-right of every card; Technical details (Expert) opens on one card and the neighbours keep their content.
+for (const scheme of ["light", "dark"] as const) {
+  for (const width of [1920, 1280, 768, 390]) {
+    test.describe(`accounts as cards, ${scheme} theme, ${width} px`, () => {
+      test.use({ viewport: { width, height: width === 1920 ? 1080 : 844 } });
+
+      test("cards per row, the menu top-right, Technical details grows one card only", async ({ page }) => {
+        await mockApi(page);
+        // Expert: the per-person "Show more controls" switch is on, so Technical details is shown.
+        await page.route("**/v1/me/onboarding", (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ welcome_seen: true, guide_dismissed: [], tour_completed_at: null, notices_seen: ["renames-2026-11"], more_controls: true }),
+          }),
+        );
+        await open(page, "/o/acme/w/main/apps?tab=accounts", scheme);
+        const list = page.getByRole("list", { name: "Accounts" });
+        const cards = list.locator(":scope > li");
+        await expect(cards.first()).toBeVisible();
+        const boxes = await cards.evaluateAll((els) => els.filter((el) => el.parentElement === els[0]!.parentElement).map((el) => {
+          const r = el.getBoundingClientRect();
+          return { top: Math.round(r.top), right: Math.round(r.right), width: Math.round(r.width) };
+        }));
+        const perRow = boxes.filter((b) => b.top === boxes[0]!.top).length;
+        expect(perRow).toBe(Math.min(boxes.length, { 1920: 4, 1280: 3, 768: 1, 390: 1 }[width]!));
+        // The menu is in the head, to the right of the card's content.
+        const first = cards.first();
+        const menu = (await first.getByRole("button", { name: /^More for/ }).boundingBox())!;
+        const card = (await first.boundingBox())!;
+        expect(menu.x + menu.width).toBeGreaterThan(card.x + card.width - 40);
+        expect(menu.y).toBeLessThan(card.y + 40);
+        // Technical details opens on one card; every card keeps its name.
+        const names = await cards.evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
+        await first.getByText("Technical details", { exact: true }).click();
+        for (const name of names) await expect(list.getByRole("listitem", { name: name! })).toBeVisible();
+        expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
+        await page.screenshot({ path: `${SHOTS}/accounts-cards-${scheme}-${width}.png` });
+      });
+    });
+  }
+}

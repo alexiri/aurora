@@ -82,7 +82,7 @@ function PeopleBody({ w, org, ws, addOpen }: { w: Workspace; org: string; ws: st
   const personal = !!w.personal_of || !!list.data?.items.find((x) => x.id === w.id)?.personal_of;
   // (P5-POLISH-11, D6) **Add people** is on the header's line.
   return (
-    <div className="max-w-page space-y-4">
+    <div className="space-y-4">
       <PageHeader
         title="People"
         description="Who can use this workspace."

@@ -77,7 +77,7 @@ function AppSetupView({
   const appsHref = workspace ? wsRoutes(orgSlug, wsSlug!).apps("apps") : orgRoutes(orgSlug).apps("apps");
 
   return (
-    <div className="max-w-page space-y-6" data-testid={view === "workspace" ? "ws-app-setup" : "org-app-setup"}>
+    <div className="space-y-6" data-testid={view === "workspace" ? "ws-app-setup" : "org-app-setup"}>
       <PageHeader
         title={
           <span className="flex min-w-0 items-center gap-3">
@@ -221,7 +221,7 @@ export function WorkspaceAppSetupPage() {
 function OwnersOnly({ workspaceId }: { workspaceId: string }) {
   const who = useWhoCan({ workspaceId }, "workspace_owner", "set_up");
   return (
-    <div className="max-w-page space-y-4">
+    <div className="space-y-4">
       <PageHeader title="Set up an app" />
       <WhoCan value={who} lead />
     </div>

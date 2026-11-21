@@ -161,6 +161,7 @@ describe("apps: groups, search and sort (workspace-9)", () => {
     const ready = await screen.findByRole("list", { name: "Apps: Ready to connect" });
     expect(names(ready).map((n) => n?.slice(0, 3))).toEqual(["AWS", "Zed"]);
     expect(ready.className).toMatch(/grid/);
+    expect(ready).toHaveClass("@2xl:grid-cols-2", "@4xl:grid-cols-3", "@7xl:grid-cols-4"); // the shared CardGrid (D-439)
     expect(within(screen.getByRole("list", { name: "Apps: Connected" })).getByText("Connected · main")).toBeInTheDocument();
     const blocked = screen.getByRole("list", { name: "Apps: Needs an admin first" });
     expect(within(blocked).getByText("An admin sets up Google sign-in once")).toBeInTheDocument();

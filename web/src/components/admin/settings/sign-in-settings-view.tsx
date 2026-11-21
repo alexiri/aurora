@@ -187,7 +187,7 @@ export function SignInSettingsView() {
   const extra = (section.extra ?? {}) as { signed_in_with?: unknown };
   const signedInWith = typeof extra.signed_in_with === "string" ? extra.signed_in_with : null;
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: section.title }]}
         title={section.title}

@@ -65,7 +65,7 @@ export function OrgDetailView({ orgId }: { orgId: string }) {
   if (org.isError) return <ErrorState error={org.error} onRetry={() => org.refetch()} />;
   const o = org.data;
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         breadcrumb={[{ label: "Organizations", href: adminRoutes.organizations() }, { label: o.name }]}
         title={

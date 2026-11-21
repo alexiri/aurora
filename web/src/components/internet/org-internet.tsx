@@ -153,7 +153,7 @@ export function OrgInternet({ org, slug }: { org: Org; slug: string }) {
   if (!admin) {
     const who = whoCanFromContacts("org_admin", org.contacts, "change_this");
     return (
-      <div className="max-w-page space-y-6">
+      <div className="space-y-6">
         <PageHeader
           title="Internet access"
           description={
@@ -178,7 +178,7 @@ export function OrgInternet({ org, slug }: { org: Org; slug: string }) {
   if (doc.isError) return <ErrorState error={doc.error} onRetry={() => doc.refetch()} />;
   // (P5-REFINE-18 #2) The preset card writes the document too: the page starts again from the new revision.
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       {/* (P5-REFINE-20, org-8) The page heading first, then the preset card. */}
       <PageHeader title="Internet access" description={<span data-testid="internet-summary">What agents in {org.name} may reach.</span>} className="mb-2" />
       <OrgPolicyPresets org={org} part="internet" />

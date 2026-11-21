@@ -30,7 +30,7 @@ export function SetInHelmView() {
     }
   }
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="Set in Helm"
         description="These values are set when Aurora is installed. To change one, change the Helm values and upgrade."

@@ -41,6 +41,7 @@ import { useMe } from "@/lib/api/queries";
 import { adminRoutes } from "@/lib/routes";
 import { unwrap } from "@/lib/api/unwrap";
 import { splitInstanceUrl } from "@/lib/instance-url";
+import { cn } from "@/lib/utils";
 
 /** Apps that declare `instances` (from the catalogue detail; no app knowledge lives in the bundle). */
 export function useInstanceBoundApps() {
@@ -374,7 +375,7 @@ function OrgFilter({ value, onChange }: { value: string; onChange: (v: string) =
   return (
     <select
       aria-label="Organization"
-      className={`${inputClass} w-auto max-w-56`}
+      className={cn(inputClass, "w-auto max-w-56")}
       value={value}
       onChange={(e) => onChange(e.target.value)}
     >

@@ -28,7 +28,7 @@ export function TopicPage<T extends string>({
   tabs,
   idBase,
   actions,
-  width = "max-w-page",
+  width = "",
   children,
 }: {
   title: string;
@@ -45,7 +45,7 @@ export function TopicPage<T extends string>({
   const [tab, setTab] = useTabParam<T>(ids, ids[0]!, { drop: () => TAB_SCOPED_PARAMS });
   const current = tabs.find((t) => t.id === tab) ?? tabs[0];
   return (
-    <div className={`${width} space-y-4`}>
+    <div className={`${width} space-y-4`.trim()}>
       <PageHeader title={title} description={description} level={level} actions={actions} className="mb-2" />
       {tabs.length > 1 ? (
         <Tabs
