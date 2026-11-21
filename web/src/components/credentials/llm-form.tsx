@@ -36,13 +36,14 @@ import {
   shapeOf,
   trustPolicy,
   valueComplete,
+  serviceInitials,
 } from "./llm-key-modes";
 import { OriginView } from "./origin-view";
 import { ValueInput } from "./value-input";
 
 /** A service's logo tile: its initials (a logo is not served for AI endpoints). */
 function ServiceTile({ name }: { name: string }) {
-  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
+  const initials = serviceInitials(name);
   return (
     <span aria-hidden="true" className="flex size-12 shrink-0 items-center justify-center rounded-control bg-subtle text-sm font-semibold text-ink">
       {initials}
@@ -136,6 +137,9 @@ export function LlmKeyForm({
   const [rejected, setRejected] = useState(false);
   const [step, setStep] = useState<"service" | "key">("service");
   const [saved, setSaved] = useState<Secret | null>(null);
+  // A "required" message is about what was typed when it was raised: it goes away as soon as that changes, or the step does.
+  const inputsKey = JSON.stringify([name, endpointId, value, fields, step]);
+  const [errKey, setErrKey] = useState("");
   // (C-988, C-925) A workspace's key is given to the ticked agents in the same request: the contextual agent, else the
   // only agent, else none. `picked` is what the person changed; until then the default applies.
   const wsId = scope.kind === "workspace" ? scope.id : undefined;
@@ -171,8 +175,14 @@ export function LlmKeyForm({
       if (endpointId && scopeOk) setStep("key");
       return;
     }
-    if (!name.trim() || !endpointId) return setClientErr("Name and endpoint are required.");
-    if (!valueComplete(shape, value, fields)) return setClientErr("Fill in every required field.");
+    if (!name.trim() || !endpointId) {
+      setErrKey(inputsKey);
+      return setClientErr("Name and endpoint are required.");
+    }
+    if (!valueComplete(shape, value, fields)) {
+      setErrKey(inputsKey);
+      return setClientErr("Fill in every required field.");
+    }
     setClientErr("");
     setSaved(null);
     setRejected(false);
@@ -230,6 +240,7 @@ export function LlmKeyForm({
       </GiveAccessStep>
     );
 
+  const shownErr = errKey === inputsKey ? clientErr : "";
   const harnessLine = endpoint ? harnessHint(endpoint.harnesses ?? []) : "";
   const noHarness = Boolean(endpoint) && endpoint?.harnesses !== undefined && endpoint.harnesses.length === 0;
   return (
@@ -264,17 +275,19 @@ export function LlmKeyForm({
           </div>
         ) : (
           <>
-        <p className="text-sm text-ink-2">
-          <span className="font-medium text-ink">{endpoint?.display_name}</span>
-          {" · "}
-          <button type="button" className="text-link underline" onClick={() => setStep("service")}>
-            Change service
-          </button>
-        </p>
+        <div className="space-y-0.5">
+          <p className="text-sm text-ink-2">
+            <span className="font-medium text-ink">{endpoint?.display_name}</span>
+            {" · "}
+            <button type="button" className="text-link underline" onClick={() => setStep("service")}>
+              Change service
+            </button>
+          </p>
+          {harnessLine ? <p className="text-xs text-muted">{harnessLine}.</p> : null}
+        </div>
         <Field id="l-name" label="Name">
           <input id="l-name" className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        {harnessLine ? <p className="text-xs text-muted">{harnessLine}.</p> : null}
         {noHarness ? (
           <Notice tone="pending" role="status">
             {NO_HARNESS}
@@ -386,9 +399,9 @@ export function LlmKeyForm({
         ) : null}
           </>
         )}
-        {clientErr || create.error ? (
+        {shownErr || create.error ? (
           <Notice tone="danger" role="alert">
-            {clientErr || keyReasonMessage(create.error) || errorMessage(create.error)}
+            {shownErr || keyReasonMessage(create.error) || errorMessage(create.error)}
           </Notice>
         ) : null}
         {footerTarget !== undefined ? (
@@ -402,11 +415,11 @@ export function LlmKeyForm({
                     </Button>
                   ) : null}
                   {step === "service" ? (
-                    <Button type="button" className="ml-auto" disabled={!endpointId || !scopeOk} onClick={() => setStep("key")}>
+                    <Button key="next" type="button" className="ml-auto" disabled={!endpointId || !scopeOk} onClick={() => setStep("key")}>
                       Next
                     </Button>
                   ) : (
-                    <Button type="submit" form={formId} className="ml-auto" disabled={create.isPending || !scopeOk}>
+                    <Button key="save" type="submit" form={formId} className="ml-auto" disabled={create.isPending || !scopeOk}>
                       {create.isPending ? "Verifying…" : submitLabel}
                     </Button>
                   )}
@@ -422,11 +435,11 @@ export function LlmKeyForm({
               </Button>
             ) : null}
             {step === "service" ? (
-              <Button type="button" size="lg" disabled={!endpointId || !scopeOk} onClick={() => setStep("key")}>
+              <Button key="next" type="button" size="lg" disabled={!endpointId || !scopeOk} onClick={() => setStep("key")}>
                 Next
               </Button>
             ) : (
-              <Button type="submit" size="lg" disabled={create.isPending || !scopeOk}>
+              <Button key="save" type="submit" size="lg" disabled={create.isPending || !scopeOk}>
                 {create.isPending ? "Verifying…" : submitLabel}
               </Button>
             )}

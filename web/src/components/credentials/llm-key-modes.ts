@@ -168,3 +168,14 @@ export const NO_HARNESS =
 export function harnessHint(harnesses: string[]): string {
   return harnesses.length === 0 ? "" : `Works with ${harnessNames(harnesses)}`;
 }
+
+/** The logo tile's initials: the first letter of each of the first two words that has one ("LiteLLM (VidaiMock, dev only)" is "LV", never "L("). */
+export function serviceInitials(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((w) => w.match(/\p{L}/u)?.[0])
+    .filter((c): c is string => Boolean(c))
+    .slice(0, 2)
+    .map((c) => c.toUpperCase())
+    .join("");
+}
