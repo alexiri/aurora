@@ -119,6 +119,9 @@ pub enum AttentionKind {
     AccessRequest,
     /// (C-1080) An account of the workspace that is failing or must sign in again.
     BrokenAccount,
+    /// (C-1080, P5-REFINE-20) A hosted agent of the workspace that cannot answer (no usable AI key or
+    /// model); shown to the people who can fix it (workspace owners).
+    AgentCannotAnswer,
     /// (C-1080) The caller's own waiting request (`own: true`, never counted).
     MyRequest,
 }
@@ -128,7 +131,11 @@ impl AttentionKind {
     pub fn is_decision(self) -> bool {
         !matches!(
             self,
-            Self::ConnectorDown | Self::OwnerlessOrg | Self::BrokenAccount | Self::MyRequest
+            Self::ConnectorDown
+                | Self::OwnerlessOrg
+                | Self::BrokenAccount
+                | Self::AgentCannotAnswer
+                | Self::MyRequest
         )
     }
 }

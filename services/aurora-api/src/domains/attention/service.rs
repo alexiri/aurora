@@ -22,13 +22,14 @@ use crate::domains::app_setup_requests::level;
 use crate::domains::app_setup_requests::service::{
     self as requests, REQUEST_HISTORY_DAYS, needs_of, thing_in,
 };
+use crate::domains::hosted::answer::{self, AnswerReason};
 use crate::http::auth::Caller;
 use aurora_core::{ApiError, dash_paths};
 use aurora_db::authz::WorkspaceAuth;
 use aurora_db::repo::action_approvals::{self, ActionApprovalRow};
 use aurora_db::repo::app_setup_requests::{self as repo, AskerRow, MineDone, RequestRow};
 use aurora_db::repo::approvals::{self, ApprovalRow};
-use aurora_db::repo::attention::{self as arepo, AccessRow, AccountHealthRow};
+use aurora_db::repo::attention::{self as arepo, AccessRow, AccountHealthRow, HostedAgentRow};
 use aurora_db::repo::contacts;
 use aurora_registry::snapshot::Snapshot;
 use serde::Serialize;
@@ -47,6 +48,7 @@ pub const TOPIC_AI: &str = "ai-models";
 pub const TOPIC_PEOPLE: &str = "people";
 pub const TOPIC_APPROVALS: &str = "approvals";
 pub const TOPIC_ACCOUNTS: &str = "accounts";
+pub const TOPIC_AGENTS: &str = "agents";
 
 /// `open` (default) or `done`; 400 otherwise.
 pub fn parse_state(state: Option<&str>) -> Result<bool, ApiError> {
@@ -327,7 +329,58 @@ struct WsOpen {
     actions: Vec<ActionApprovalRow>,
     access: Vec<AccessRow>,
     accounts: Vec<(AccountHealthRow, HealthState)>,
+    /// (C-1080 `agent_cannot_answer`) Hosted agents with no usable AI key or model; workspace owners only.
+    cannot_answer: Vec<(HostedAgentRow, AnswerReason)>,
     mine: Vec<RequestRow>,
+}
+
+/// The agents of the workspace that cannot answer, for the people who can give them a key (D-384).
+async fn cannot_answer_of(
+    s: &AppState,
+    auth: &WorkspaceAuth,
+) -> Result<Vec<(HostedAgentRow, AnswerReason)>, ApiError> {
+    let agents = arepo::hosted_agents_running(&s.pool, auth.workspace_id, FEED_LIMIT).await?;
+    if agents.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
+    let mut out = Vec::new();
+    for a in agents {
+        if let Some(r) = answer::reason_of(
+            s,
+            &mut conn,
+            a.id,
+            auth.org_id,
+            auth.workspace_id,
+            a.harness.as_deref(),
+        )
+        .await?
+        {
+            out.push((a, r));
+        }
+    }
+    Ok(out)
+}
+
+fn reason_key(r: AnswerReason) -> &'static str {
+    match r {
+        AnswerReason::NoAiKey => "no_ai_key",
+        AnswerReason::KeyNotUsable => "key_not_usable",
+        AnswerReason::NoModel => "no_model",
+    }
+}
+
+fn cannot_answer_item(a: &HostedAgentRow, r: AnswerReason, sl: &Slugs) -> AttentionItem {
+    let id = a.id.to_string();
+    ws_item(
+        AttentionKind::AgentCannotAnswer,
+        TOPIC_AGENTS,
+        id.clone(),
+        text::cannot_answer_text(&a.name, reason_key(r)),
+        a.created_at,
+        String::new(),
+    )
+    .action("Fix", dash_paths::ws_agent_access(&sl.org, &sl.ws, &id))
 }
 
 async fn ws_open(s: &AppState, c: &Caller, auth: &WorkspaceAuth) -> Result<WsOpen, ApiError> {
@@ -362,12 +415,18 @@ async fn ws_open(s: &AppState, c: &Caller, auth: &WorkspaceAuth) -> Result<WsOpe
             matches!(st, HealthState::Failing | HealthState::SignInExpired).then_some((a, st))
         })
         .collect();
+    let cannot_answer = if auth.can_own() {
+        cannot_answer_of(s, auth).await?
+    } else {
+        Vec::new()
+    };
     let mine = repo::open_of_asker(&s.pool, auth.org_id, c.user_id).await?;
     Ok(WsOpen {
         approvals,
         actions,
         access,
         accounts,
+        cannot_answer,
         mine,
     })
 }
@@ -620,6 +679,11 @@ pub async fn workspace_feed(
                 .iter()
                 .map(|(a, st)| account_item(a, *st, &auth, &sl)),
         );
+        items.extend(
+            o.cannot_answer
+                .iter()
+                .map(|(a, r)| cannot_answer_item(a, *r, &sl)),
+        );
         items.extend(o.mine.iter().map(|r| {
             let ask = my_asks
                 .iter()
@@ -786,7 +850,8 @@ pub async fn counts(
                         .map(|_| TOPIC_APPROVALS)
                         .chain(o.actions.iter().map(|_| TOPIC_APPROVALS))
                         .chain(o.access.iter().map(|_| TOPIC_ACCOUNTS))
-                        .chain(o.accounts.iter().map(|_| TOPIC_ACCOUNTS)),
+                        .chain(o.accounts.iter().map(|_| TOPIC_ACCOUNTS))
+                        .chain(o.cannot_answer.iter().map(|_| TOPIC_AGENTS)),
                 );
                 Some(WorkspaceCount {
                     workspace_id: w,

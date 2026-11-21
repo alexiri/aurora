@@ -165,3 +165,98 @@ async fn byo_agents_can_answer_and_strangers_see_nothing() {
     let (s, _) = get(&r, &stranger, byo).await;
     assert_eq!(s, 404);
 }
+
+async fn ws_attention(r: &Rig, ck: &str) -> Value {
+    let (s, _, v) =
+        r.h.send(
+            Method::GET,
+            &format!("/v1/workspaces/{}/attention", r.ws),
+            &[("cookie", ck), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    v
+}
+
+async fn ws_counts(r: &Rig, ck: &str) -> Value {
+    let (s, _, v) =
+        r.h.send(
+            Method::GET,
+            &format!("/v1/attention/counts?workspace={}", r.ws),
+            &[("cookie", ck), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    v["workspace"].clone()
+}
+
+fn cannot_answer_items(v: &Value) -> Vec<&Value> {
+    v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["kind"] == "agent_cannot_answer")
+        .collect()
+}
+
+/// (P5-REFINE-20 batch 4, C-1080) An agent that cannot answer is a workspace attention item for the
+/// people who can give it a key: the feed row, the count and the `agents` topic agree; a plain member
+/// sees and counts none (D-384); giving a usable key removes it.
+#[tokio::test]
+async fn an_agent_that_cannot_answer_is_counted_for_owners_only() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    let owner = person(&r, "owner@x.io", "member", Some("owner")).await;
+
+    let feed = ws_attention(&r, &owner).await;
+    let items = cannot_answer_items(&feed);
+    assert_eq!(items.len(), 1, "{feed}");
+    let it = items[0];
+    assert_eq!(it["id"], format!("agent_cannot_answer:{a}"));
+    assert_eq!(it["title"], "rex can't answer: no AI key");
+    assert_eq!(it["topic"], "agents");
+    assert_eq!(it["decision"], false);
+    assert_eq!(it["own"], false);
+    assert_eq!(it["action"]["label"], "Fix");
+    assert!(
+        it["action"]["href"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("/agents/{a}?tab=access")),
+        "{it}"
+    );
+    assert_eq!(feed["count"], 1, "{feed}");
+    let c = ws_counts(&r, &owner).await;
+    assert_eq!(c["count"], feed["count"], "{c}");
+    assert_eq!(c["topics"]["agents"], 1, "{c}");
+
+    // A plain member cannot fix it: no row, nothing counted.
+    let feed = ws_attention(&r, &r.cookie).await;
+    assert!(cannot_answer_items(&feed).is_empty(), "{feed}");
+    assert_eq!(feed["count"], 0, "{feed}");
+    let c = ws_counts(&r, &r.cookie).await;
+    assert_eq!(c["count"], 0, "{c}");
+
+    // A key the agent can use makes it answer again: the item goes.
+    org_key(&r, "Company key", "active", Some(a)).await;
+    let feed = ws_attention(&r, &owner).await;
+    assert!(cannot_answer_items(&feed).is_empty(), "{feed}");
+    assert_eq!(ws_counts(&r, &owner).await["count"], 0);
+}
+
+/// A paused (frozen) agent is not "can't answer": it is paused.
+#[tokio::test]
+async fn a_paused_agent_is_not_a_cannot_answer_item() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    let owner = person(&r, "owner@x.io", "member", Some("owner")).await;
+    sqlx::query("UPDATE agents SET frozen_at = now() WHERE id = $1")
+        .bind(a)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let feed = ws_attention(&r, &owner).await;
+    assert!(cannot_answer_items(&feed).is_empty(), "{feed}");
+}
