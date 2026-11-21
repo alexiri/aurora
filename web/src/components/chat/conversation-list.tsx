@@ -67,7 +67,7 @@ function lineOf(c: Conversation, agentName: string | undefined, now: Date): stri
 function GoneChip({ kind, actionId }: { kind: string; actionId: string }) {
   // Amber is AttentionChip (D-384): the row itself is the action beside it (open it, or delete it from its menu).
   return (
-    <AttentionChip actionId={actionId} className="ml-2 align-middle">
+    <AttentionChip actionId={actionId} className="shrink-0">
       {kind === "webhook" ? "Webhook deleted" : "Schedule deleted"}
     </AttentionChip>
   );
@@ -163,7 +163,7 @@ export function ConversationRow({
   ) : c.automation?.deleted ? (
     <span className="line-clamp-2 break-words text-xs text-muted">{goneLine(c.automation.kind)}</span>
   ) : (
-    <span className="block truncate text-xs text-muted">{lineOf(c, agentName, now)}</span>
+    <span className={cn("text-xs text-muted", nested ? "line-clamp-2 break-words" : "block truncate")}>{lineOf(c, agentName, now)}</span>
   );
 
   return (
@@ -212,8 +212,10 @@ export function ConversationRow({
             </span>
           )}
           <span className="min-w-0 flex-1">
-            <span className={cn("line-clamp-2 break-words text-sm text-ink", selected ? "font-semibold" : "font-medium")}>
-              {title}
+            {/* (schedules-7) The chip is beside the title when there is room and under it when there is not; it is never inside
+                the title's clamp, which cut it off in a fixed-width list. A run row keeps its whole title: its time is the point. */}
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className={cn("min-w-0 break-words text-sm text-ink", nested ? "" : "line-clamp-2", selected ? "font-semibold" : "font-medium")}>{title}</span>
               {c.automation?.deleted ? <GoneChip kind={c.automation.kind} actionId={`conversation-${c.id}`} /> : null}
             </span>
             {second}
@@ -275,8 +277,8 @@ function FolderRow({
         </span>
         <span className="min-w-0 flex-1">
           {/* A long automation name wraps to a second line; it never cuts the run count off. */}
-          <span className="line-clamp-2 break-words text-sm font-medium text-ink">
-            {folderRunsLabel(folder.name, folder.thread_count)}
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="line-clamp-2 min-w-0 break-words text-sm font-medium text-ink">{folderRunsLabel(folder.name, folder.thread_count)}</span>
             {folder.deleted ? <GoneChip kind={folder.kind} actionId={`folder-${folder.id}`} /> : null}
           </span>
           <span className="line-clamp-2 break-words text-xs text-muted">

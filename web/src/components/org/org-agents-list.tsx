@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { StatusDot } from "@/components/ui/status-dot";
 import { useOrganizationAgents, type OrgAgent, type OrgAgentWorkspace } from "@/lib/api/org";
 import { When } from "@/components/ui/when";
+import { personName } from "@/lib/workspace-name";
 
 export interface OrgAgentRow {
   agent: OrgAgent;
@@ -22,7 +23,7 @@ export interface OrgAgentGroup {
 
 /** The group header: "ACME TEAM" for a team workspace, "BOB BUILDER (PERSONAL)" for a person's own. */
 export function groupTitle(ws: Pick<OrgAgentWorkspace, "name" | "personal_of">): string {
-  return ws.personal_of ? `${ws.personal_of.name} (personal)` : ws.name;
+  return ws.personal_of ? `${personName(ws.personal_of.name)} (personal)` : ws.name;
 }
 
 /** Team workspaces first A to Z, then personal ones by owner name; workspaces without agents are left out. */

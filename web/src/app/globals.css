@@ -34,6 +34,8 @@
   --focus-halo: #c7ede6;
   --bubble: #0e1525;
   --bubble-ink: #ffffff;
+  /* Secondary text on the bubble (a fold's summary): 9.7:1 on --bubble. */
+  --bubble-muted: #b4bfd1;
   --avatar-lavender: #d6d8ff;
   --avatar-lavender-ink: #3b2a9e;
   --avatar-blue: #e8f0fe;
@@ -74,6 +76,8 @@
   --focus-halo: #134e48;
   --bubble: #23304a;
   --bubble-ink: #e8ecf3;
+  /* 7:1 on --bubble. */
+  --bubble-muted: #b4bfd1;
   --avatar-lavender: #2a2350;
   --avatar-lavender-ink: #c4b5fd;
   --avatar-blue: #172a4f;
@@ -113,6 +117,7 @@
   --color-focus-halo: var(--focus-halo);
   --color-bubble: var(--bubble);
   --color-bubble-ink: var(--bubble-ink);
+  --color-bubble-muted: var(--bubble-muted);
   --color-avatar-lavender: var(--avatar-lavender);
   --color-avatar-lavender-ink: var(--avatar-lavender-ink);
   --color-avatar-blue: var(--avatar-blue);

@@ -108,3 +108,46 @@ for (const scheme of ["light", "dark"] as const) {
     });
   });
 }
+
+// (P5-REFINE-20 batch 7 item 4, schedules-7) The amber "Schedule deleted" chip is always visible in the list, whatever the
+// width of the page and the length of the name, and a run's row shows its time.
+const withDeletedFolder = (): Fixture => ({
+  ...withFolder(),
+  folders: [
+    {
+      kind: "schedule",
+      id: MORNING.id,
+      name: "Morning summary that is named with enough words to need two lines in the list",
+      deleted: true,
+      thread_count: 3,
+      last_activity_at: new Date().toISOString(),
+      last_result: "answered",
+    },
+  ],
+});
+
+for (const width of [1256, 1600]) {
+  test.describe(`deleted automation, ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 } });
+
+    test("the chip is inside the list and the run rows show their time", async ({ page }) => {
+      await openChat(page, "light", withDeletedFolder(), `?c=${MINE.id}`);
+      const list = page.getByRole("navigation", { name: "Conversations" });
+      const chip = list.getByText("Schedule deleted", { exact: true });
+      await expect(chip).toBeVisible();
+      const [c, l] = [await chip.boundingBox(), await list.boundingBox()];
+      expect(c!.x).toBeGreaterThanOrEqual(l!.x);
+      expect(c!.x + c!.width).toBeLessThanOrEqual(l!.x + l!.width);
+      await list.getByRole("button", { name: /^Morning summary that is named/ }).click();
+      // Each run row's own title ends with its date and time ("… · 19 Nov 09:00"), never cut by a clamp.
+      const rows = list.getByRole("button", { name: /· \d{1,2} \w{3} \d\d:\d\d/ });
+      await expect(rows).toHaveCount(3);
+      for (let i = 0; i < 3; i++) {
+        const r = rows.nth(i);
+        await expect(r.getByText(/· \d{1,2} \w{3} \d\d:\d\d$/)).toBeVisible();
+        const title = r.locator("span.text-sm").first();
+        expect(await title.evaluate((el) => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
+      }
+    });
+  });
+}

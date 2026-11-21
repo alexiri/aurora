@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EffectiveGovernance, GovForm } from "@/lib/api/governance";
-import { applyOrgPreset, detectOrgPreset, orgAskRule, orgFloors, orgPresetForbidden, ORG_ASK_RULE_NAME, withAskRule } from "@/lib/policy-presets";
+import { applyOrgPreset, detectOrgPreset, orgAskRule, orgFloors, orgPresetForbidden, ORG_ASK_RULE_NAME, whereKeysMayBeAdded, withAskRule } from "@/lib/policy-presets";
 
 const sourced = (value: string, source = "org") => ({ value, source });
 const eff = (over: { llm?: [string, string]; egress?: [string, string]; lane?: [string, string] } = {}) =>
@@ -80,6 +80,15 @@ describe("organization policy presets (P5-REFINE-18 #2)", () => {
     expect(orgPresetForbidden("open", floors, "models")).toBeNull();
     expect(orgPresetForbidden("balanced", floors, "models")).toBeNull();
     expect(detectOrgPreset(fixed, floors, "models")).toBe("open");
+  });
+
+  it("says where people may add their own key: every live endpoint, some by name, none, or nothing to say (org-7, pass 3)", () => {
+    const e = (id: string, scopes: string[], allowed = true) => ({ id, display_name: id.toUpperCase(), allowed, key_scopes: scopes });
+    expect(whereKeysMayBeAdded([])).toBeNull();
+    expect(whereKeysMayBeAdded([e("a", [], false)])).toBeNull();
+    expect(whereKeysMayBeAdded([e("a", ["organization", "workspace"]), e("b", ["workspace"])])).toEqual({ kind: "all", names: ["A", "B"] });
+    expect(whereKeysMayBeAdded([e("a", ["organization"]), e("b", ["workspace"]), e("c", ["workspace"], false)])).toEqual({ kind: "some", names: ["B"] });
+    expect(whereKeysMayBeAdded([e("a", ["organization"])])).toEqual({ kind: "none", names: [] });
   });
 
   it("disables a card that is looser than what the instance admin set, with the reason", () => {

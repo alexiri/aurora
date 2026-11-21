@@ -23,9 +23,10 @@ export interface GuideKey {
   id: string;
   name: string;
   scope: "workspace" | "organization";
-  /** (C-1065) Whether the key works, as far as is known; only `checking` changes the guide. */
-  verification?: "checking" | "works" | "rejected" | "unreachable" | "not_checked";
 }
+
+/** (C-1065) What the check of an AI key said, from the accounts list; only `works` counts (firstday-3). */
+export type GuideVerification = "checking" | "works" | "rejected" | "unreachable" | "not_checked";
 
 export interface GuideInput {
   /** Owner of the workspace (an org owner or admin counts). Readiness is readable by owners only (C-500). */
@@ -34,6 +35,8 @@ export interface GuideInput {
   readiness?: ModelReadiness;
   /** Active AI keys the person can see in the workspace or its organization (granted or not). */
   keys: GuideKey[];
+  /** The accounts list's verification state by key (secret) id. A key with no entry has not answered. */
+  verification?: Record<string, GuideVerification>;
   /** A conversation of the agent has an answer from it. */
   replied: boolean;
 }
@@ -45,6 +48,8 @@ export interface GuideStep {
   provider?: string;
   /** A granted key that cannot be used: the first reason code (`not_active`, `origin_unverified`, …). */
   problem?: string;
+  /** `todo` for the key: a usable key exists, but it has not answered (`not_checked`, `unreachable`, `rejected`). */
+  unanswered?: { name: string; state: GuideVerification };
   /** `checking`: the name of the key that is being checked. */
   checkingName?: string;
   /** `todo` for access: the key to give the agent. */
@@ -62,7 +67,7 @@ export interface Guide {
 }
 
 export function computeGuide(input: GuideInput): Guide {
-  const { isOwner, readiness, keys, replied } = input;
+  const { isOwner, readiness, keys, replied, verification = {} } = input;
   let steps: GuideStep[];
 
   if (replied) {
@@ -91,12 +96,21 @@ export function computeGuide(input: GuideInput): Guide {
     const usable = granted.filter((k) => k.usable);
     const unusable = granted.find((k) => !k.usable);
 
-    // (firstday-3) Every usable key is still being checked: the step is open until one has answered.
-    const verdicts = usable.map((u) => keys.find((k) => k.id === u.secret_id)?.verification);
-    if (usable.length > 0 && verdicts.every((v) => v === "checking")) {
-      steps = [{ id: "key", state: "checking", checkingName: usable[0].name }, { id: "access", state: "skipped" }, { id: "hello", state: "waiting" }];
+    // (firstday-3, C-1065) Only a key that answered counts: `verification.state = works`. `checking` is a step of its own;
+    // `not_checked`, `unreachable`, `rejected` (and a state not known) leave the key step open with what is known.
+    const verdict = (u: (typeof usable)[number]): GuideVerification | undefined => verification[u.secret_id];
+    const answered = usable.filter((u) => verdict(u) === "works");
+    const checking = usable.find((u) => verdict(u) === "checking");
+    if (usable.length > 0 && answered.length === 0 && checking) {
+      steps = [{ id: "key", state: "checking", checkingName: checking.name }, { id: "access", state: "skipped" }, { id: "hello", state: "waiting" }];
+    } else if (usable.length > 0 && answered.length === 0) {
+      steps = [
+        { id: "key", state: "todo", unanswered: { name: usable[0].name, state: verdict(usable[0]) ?? "not_checked" } },
+        { id: "access", state: "skipped" },
+        { id: "hello", state: "waiting" },
+      ];
     } else if (usable.length > 0) {
-      const provider = providerText(usable[0].scope, usable[0].name);
+      const provider = providerText(answered[0].scope, answered[0].name);
       // The key works; without a default model the step stays open to pick one.
       steps = readiness.default
         ? [{ id: "key", state: "done", provider }, { id: "access", state: "skipped" }, { id: "hello", state: "todo" }]

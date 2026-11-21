@@ -282,6 +282,20 @@ function StepBody({
 
 function KeyStep({ step, wsId, orgId, agent, base, keysCount }: { step: GuideStep; wsId: string; orgId: string; agent: Agent; base: string; keysCount: number }) {
   const reason = step.problem ? (REASON_COPY[step.problem] ?? { text: step.problem, fix: "" }) : null;
+  const un = step.unanswered;
+  if (un) {
+    const what = un.state === "rejected" ? "was refused by the AI service" : un.state === "unreachable" ? "did not get an answer from the AI service" : "has not been checked yet";
+    return (
+      <Notice tone="pending" role="status">
+        <span data-testid="key-unanswered">
+          {un.name} {what}, so it does not count yet. It counts once a check says it works: open the key and use Test.
+        </span>{" "}
+        <Link href={`${base}/apps?tab=accounts&kind=ai-key`} className="font-semibold underline">
+          Open AI keys
+        </Link>
+      </Notice>
+    );
+  }
   return (
     <div className="space-y-3">
       {reason ? (

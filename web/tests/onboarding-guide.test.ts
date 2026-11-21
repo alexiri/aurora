@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ModelReadiness } from "@/lib/api/credential-grants";
 import { homeTarget, personalWorkspacePath } from "@/lib/nav/landing";
-import { computeGuide, type GuideKey } from "@/lib/onboarding/guide";
+import { computeGuide, type GuideKey, type GuideVerification } from "@/lib/onboarding/guide";
 import { repliedPollInterval } from "@/lib/onboarding/use-guide";
 
 const key = (over: Partial<ModelReadiness["keys"][number]> = {}): ModelReadiness["keys"][number] => ({
@@ -33,26 +33,46 @@ const readiness = (keys: ModelReadiness["keys"], withDefault = true): ModelReadi
     : null,
 });
 const ORG_KEY: GuideKey = { id: "k1", name: "AIGW", scope: "organization" };
+const WORKS = { k1: "works" } as const;
 
 const states = (g: ReturnType<typeof computeGuide>) => Object.fromEntries(g.steps.map((s) => [s.id, s.state]));
 
 describe("getting-started guide: computed from real state (D-141)", () => {
   it("key provided by the org: two steps, the key is done and says what provides it, hello is next (C-927)", () => {
-    const g = computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [ORG_KEY], replied: false });
+    const g = computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [ORG_KEY], verification: WORKS, replied: false });
     expect(states(g)).toEqual({ key: "done", access: "skipped", hello: "todo" });
     expect(g.steps[0].provider).toBe("Your organization provides an AI key: AIGW");
     expect(g).toMatchObject({ total: 2, done: 1, complete: false });
   });
 
   it("a key that is still being checked is a step in its own state; it counts once it has answered (firstday-3)", () => {
-    const checking: GuideKey = { ...ORG_KEY, verification: "checking" };
-    const g = computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [checking], replied: false });
+    const g = computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [ORG_KEY], verification: { k1: "checking" }, replied: false });
     expect(states(g)).toEqual({ key: "checking", access: "skipped", hello: "waiting" });
     expect(g.steps[0].checkingName).toBe("AIGW");
     expect(g).toMatchObject({ total: 2, done: 0, complete: false });
-    // Once it works, or when it was never checked, it counts as before.
-    expect(states(computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [{ ...ORG_KEY, verification: "works" }], replied: false })).key).toBe("done");
-    expect(states(computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [{ ...ORG_KEY, verification: "not_checked" }], replied: false })).key).toBe("done");
+    // Once it works, it counts.
+    expect(states(computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [ORG_KEY], verification: WORKS, replied: false })).key).toBe("done");
+  });
+
+  it("a key that never answered does not tick the step: not_checked, unreachable, rejected and not known stay open (firstday-3)", () => {
+    const cases: Record<string, GuideVerification>[] = [{ k1: "not_checked" }, { k1: "unreachable" }, { k1: "rejected" }, {}];
+    for (const verification of cases) {
+      const g = computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [ORG_KEY], verification, replied: false });
+      expect(states(g), JSON.stringify(verification)).toEqual({ key: "todo", access: "skipped", hello: "waiting" });
+      expect(g.steps[0].unanswered?.name).toBe("AIGW");
+      expect(g).toMatchObject({ total: 2, done: 0, complete: false });
+    }
+  });
+
+  it("one key that works is enough, whatever the other says", () => {
+    const g = computeGuide({
+      isOwner: true,
+      readiness: readiness([key(), key({ secret_id: "k2", name: "Second" })]),
+      keys: [ORG_KEY],
+      verification: { k1: "unreachable", k2: "works" },
+      replied: false,
+    });
+    expect(g.steps[0]).toMatchObject({ state: "done", provider: "Your organization provides an AI key: Second" });
   });
 
   it("key missing: the key step is the one to do, hello waits", () => {
@@ -82,14 +102,14 @@ describe("getting-started guide: computed from real state (D-141)", () => {
   });
 
   it("the key works but its endpoint has no default model: the key step stays open for a model picker; there is no third step", () => {
-    const g = computeGuide({ isOwner: true, readiness: readiness([key()], false), keys: [ORG_KEY], replied: false });
+    const g = computeGuide({ isOwner: true, readiness: readiness([key()], false), keys: [ORG_KEY], verification: WORKS, replied: false });
     expect(states(g)).toEqual({ key: "todo", access: "skipped", hello: "waiting" });
     expect(g.steps[0].needsModel).toBe(true);
     expect(g.total).toBe(2);
   });
 
   it("done: the agent answered, whatever readiness says", () => {
-    const g = computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [ORG_KEY], replied: true });
+    const g = computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [ORG_KEY], verification: WORKS, replied: true });
     expect(states(g)).toEqual({ key: "done", access: "skipped", hello: "done" });
     expect(g).toMatchObject({ total: 2, done: 2, complete: true });
   });

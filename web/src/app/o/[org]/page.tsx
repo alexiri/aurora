@@ -17,7 +17,7 @@ import { useAllMembers, useInvitations } from "@/lib/api/org";
 import { useMe, useOrg, useResolve, useWorkspaces } from "@/lib/api/queries";
 import { orgRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
-import { workspaceDisplayName } from "@/lib/workspace-name";
+import { personName, workspaceDisplayName } from "@/lib/workspace-name";
 
 function PeopleCard({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
   const members = useAllMembers(orgId);
@@ -87,7 +87,7 @@ export default function OrgPage() {
       <Link href={`/o/${org}/w/${w.slug}`} className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 hover:bg-subtle">
         <span className="font-medium text-ink">
           {workspaceDisplayName(w, me.data?.user)}
-          {w.personal_of ? <span className="ml-2 font-normal text-ink-2">{w.personal_of.name}</span> : null}
+          {w.personal_of ? <span className="ml-2 font-normal text-ink-2">{personName(w.personal_of.name)}</span> : null}
         </span>
       </Link>
     </ListRow>
