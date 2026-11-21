@@ -1,34 +1,14 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { useConnectorTypes, type ConnectorAdmin } from "@/lib/api/connectors";
 import { notAvailableYet } from "@/lib/chat-platforms";
 
-import { useMe } from "@/lib/api/queries";
-import { orgRoutes } from "@/lib/routes";
 import { plural } from "@/lib/utils";
-import Link from "next/link";
 
-import { ConnectorIcon, ConnectorStatusChip } from "./shared";
-
-/** (admin-5) "Next: an organization owner connects Mattermost in their Chat platforms page." with a way in. */
-function NextLine({ name }: { name: string }) {
-  const orgs = (useMe().data?.memberships ?? []).map((m) => m.org);
-  return (
-    <div className="mt-1 space-y-1.5 text-sm text-ink-2" data-testid="connector-next">
-      <p>Next: an organization owner connects {name} in their Chat platforms page.</p>
-      <div className="flex flex-wrap gap-2">
-        {orgs.map((o) => (
-          <Link key={o.slug} href={orgRoutes(o.slug).chatPlatforms()} className={buttonVariants({ variant: "outline", size: "sm" })}>
-            Open {o.name}&apos;s Chat platforms
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-}
+import { ConnectorIcon, ConnectorNextStep, ConnectorStatusChip } from "./shared";
 
 /**
  * (P5-REFINE-18 #7, admin-6) The platforms first: what Aurora can connect people through, with the ones it cannot yet.
@@ -75,7 +55,7 @@ export function PlatformsList({ connectors, onAdd, onManage }: { connectors: Con
                     </span>
                   ) : null}
                 </p>
-                {connector && connector.next_step === "owner_connects" ? <NextLine name={connector.display_name} /> : null}
+                {connector ? <ConnectorNextStep c={connector} /> : null}
               </div>
             </ListRow>
           );

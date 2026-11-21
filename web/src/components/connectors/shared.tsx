@@ -4,8 +4,12 @@ import { channelError } from "@/components/channels/shared";
 import { AppIcon } from "@/components/ui/app-icon";
 import { AttentionChip } from "@/components/ui/attention-chip";
 import { Badge } from "@/components/ui/badge";
-import { ErrorNotice } from "@/components/ui/notice";
+import { buttonVariants } from "@/components/ui/button";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
+import { useMe } from "@/lib/api/queries";
+import { orgRoutes } from "@/lib/routes";
+import Link from "next/link";
 import { connectorIconUrl, type ConnectorAdmin } from "@/lib/api/connectors";
 import { fieldErrors } from "@/lib/api/errors";
 
@@ -16,6 +20,32 @@ const MESSAGES: Record<string, string> = {
   connector_managed: "A managed chat platform has no token: Aurora runs it.",
   secret_store_unavailable: "The secret store is temporarily unavailable. Nothing was changed; try again in a moment.",
 };
+
+/**
+ * (admin-5, C-1068 `next_step`) "Next: an organization owner connects Mattermost in their Chat platforms page." with a way
+ * into each of the viewer's organizations, on the platforms list and on the platform's own page. Shown for `owner_connects`
+ * and for `connect` (the viewer is such an owner: the sentence still names the role, D-407).
+ */
+export function ConnectorNextStep({ c }: { c: Pick<ConnectorAdmin, "display_name" | "next_step"> }) {
+  const orgs = (useMe().data?.memberships ?? []).map((m) => m.org);
+  if (c.next_step !== "owner_connects" && c.next_step !== "connect") return null;
+  return (
+    <Notice tone="accent" role="status" className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="connector-next">
+      <p className="min-w-0 flex-1 basis-56">
+        <strong className="font-semibold">Next:</strong> an organization owner connects {c.display_name} in their Chat platforms page.
+      </p>
+      {orgs.length ? (
+        <span className="flex flex-wrap gap-2">
+          {orgs.map((o) => (
+            <Link key={o.slug} href={orgRoutes(o.slug).chatPlatforms()} className={buttonVariants({ variant: "outline", size: "sm" })}>
+              Open {o.name}&apos;s Chat platforms
+            </Link>
+          ))}
+        </span>
+      ) : null}
+    </Notice>
+  );
+}
 
 /** Plain-text message for a connector admin error. */
 export function connectorError(err: unknown): string {
