@@ -510,6 +510,23 @@ sandboxes:
     default: {cpu: "1", memory: 2Gi}
     max: {cpu: "8", memory: 16Gi}
 
+# (FIX-200, D-437) Internal-only hosts: names that resolve to private addresses (a self-hosted app on your
+# intranet, an internal service an addon reads). List each host name, or `*.suffix` for every name
+# under a domain, and the chart does both halves:
+#   - adds them to `config.gateway.allowed_private` (Aurora's own destination check, gateway and
+#     API). Anything you list there yourself is kept; the list becomes Helm-managed, so it is shown
+#     read-only in Administration › Limits;
+#   - with NetworkPolicies on, renders a CiliumNetworkPolicy that lets the gateway, API and hook
+#     host reach those names on `ports`, by name: Cilium follows DNS, so no IP addresses to keep
+#     up to date. Needs `networkPolicy.cilium.enabled` (a plain NetworkPolicy cannot match names;
+#     on another CNI, use `gatewayExtraEgress` ipBlocks instead).
+# In Cilium, `*` matches within one label: `*.example.org` covers `a.example.org`, not
+# `a.b.example.org`; list deeper names explicitly. If a name is a CNAME, list its target too.
+# Host names only: addresses and CIDRs go in `config.gateway.allowed_private` (no policy follows them).
+privateHosts:
+  names: []
+  ports: [443]
+
 networkPolicy:
   enabled: true
   # Namespace hosting the ingress controller / Gateway data plane (allowed to reach api:4101, web:4100, connector callbacks).

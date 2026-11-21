@@ -188,6 +188,48 @@ spec:
         {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
       ports: [{protocol: TCP, port: 4111}]
     {{- include "aurora.external" . | nindent 4 }}
+{{- with (default (dict) .Values.privateHosts).names }}
+{{- if not $np.cilium.enabled }}{{ fail "privateHosts.names needs networkPolicy.cilium.enabled: a NetworkPolicy cannot match host names (on another CNI, open the addresses with networkPolicy.gatewayExtraEgress / apiExtraEgress ipBlocks and list the names in config.gateway.allowed_private)" }}{{ end }}
+---
+# (FIX-200, D-437) privateHosts: the gateway (requests), the API (self-hosted app checks and connect
+# probes) and the hook host (hook egress) reach the listed internal names by name. The DNS rule
+# only routes their lookups through Cilium's DNS proxy so toFQDNs learns name -> address ("*":
+# it restricts nothing); Cilium unions this with the NetworkPolicies above. The names are also in
+# gateway.allowed_private (configmap.yaml), which Aurora's own destination check enforces.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: {{ $full }}-private-hosts, namespace: {{ $ns }}}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: aurora
+      app.kubernetes.io/instance: {{ $inst }}
+    matchExpressions:
+      - {key: app.kubernetes.io/component, operator: In, values: [gateway, api, hookhost]}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            {{- range $k, $v := $np.dnsNamespaceSelector }}
+            k8s:io.cilium.k8s.namespace.labels.{{ $k }}: {{ $v | quote }}
+            {{- end }}
+      toPorts:
+        - ports: [{port: "53", protocol: ANY}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    - toFQDNs:
+        {{- range . }}
+        {{- if hasPrefix "*." . }}
+        - matchPattern: {{ . | quote }}
+        {{- else }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      toPorts:
+        - ports:
+            {{- range ((default (dict) $.Values.privateHosts).ports | default (list 443)) }}
+            - {port: {{ . | quote }}, protocol: TCP}
+            {{- end }}
+{{- end }}
 {{- if .Values.runner.enabled }}
 ---
 apiVersion: networking.k8s.io/v1

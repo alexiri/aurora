@@ -373,3 +373,45 @@ fi
 # runner.image_harnesses is runner configuration, not a movable instance setting
 ! grep -qx 'runner.image_harnesses' deploy/helm/aurora/movable-keys.txt || fail "runner.image_harnesses must not be a movable key"
 echo "chart-ops: sandbox image harnesses ok"
+
+# --- (FIX-200, D-437) privateHosts: names join gateway.allowed_private (operator entries kept) and a
+# Cilium FQDN policy selects exactly gateway, api and hookhost; never without Cilium, never an address.
+private_hosts() { # <helm flags...> -> "<allowed_private>|<fqdn names>|<components>|<ports>" or "none"
+  "${H[@]}" "$@" | python3 -I -c '
+import sys, tomllib, yaml
+ap, names, comps, ports = None, None, None, None
+for d in yaml.safe_load_all(sys.stdin):
+    if not d:
+        continue
+    if d.get("kind") == "ConfigMap":
+        for n, t in (d.get("data") or {}).items():
+            if n == "aurora.toml":
+                ap = tomllib.loads(t).get("gateway", {}).get("allowed_private")
+    if d.get("kind") == "CiliumNetworkPolicy" and d["metadata"]["name"].endswith("-private-hosts"):
+        sel = d["spec"]["endpointSelector"]
+        comps = ",".join(sorted([e["values"] for e in sel["matchExpressions"] if e["key"] == "app.kubernetes.io/component"][0]))
+        fq = [r for r in d["spec"]["egress"] if "toFQDNs" in r][0]
+        names = ",".join(x.get("matchName") or x.get("matchPattern") for x in fq["toFQDNs"])
+        ports = ",".join(p["port"] for p in fq["toPorts"][0]["ports"])
+print("none" if ap is None and names is None else f"{",".join(ap or [])}|{names}|{comps}|{ports}")
+'
+}
+got="$(private_hosts)" || fail "privateHosts: default render failed"
+[ "$got" = "none" ] || fail "privateHosts: the default render must have no allowed_private and no private-hosts policy, got $got"
+got="$(private_hosts --set networkPolicy.cilium.enabled=true --set 'privateHosts.names={asm.example.org,*.intra.example.org}' --set 'config.gateway.allowed_private={10.9.9.9}')" || fail "privateHosts: render failed"
+want="10.9.9.9,asm.example.org,*.intra.example.org|asm.example.org,*.intra.example.org|api,gateway,hookhost|443"
+[ "$got" = "$want" ] || fail "privateHosts: got $got, want $want"
+got="$(private_hosts --set networkPolicy.enabled=false --set 'privateHosts.names={asm.example.org}')" || fail "privateHosts: render without NetworkPolicies failed"
+[ "$got" = "asm.example.org|None|None|None" ] || fail "privateHosts: without NetworkPolicies only allowed_private, got $got"
+if "${H[@]}" --set 'privateHosts.names={asm.example.org}' >/dev/null 2>&1; then
+  fail "privateHosts without networkPolicy.cilium.enabled must refuse to render"
+fi
+for bad in 10.0.0.1 10.0.0.0/8 '*.org' ASM.example.org asm.example.org:443; do
+  if "${H[@]}" --set networkPolicy.cilium.enabled=true --set "privateHosts.names={$bad}" >/dev/null 2>&1; then
+    fail "privateHosts.names accepted $bad"
+  fi
+done
+# the check bites: a wrong expectation must fail
+[ "$(private_hosts --set networkPolicy.cilium.enabled=true --set 'privateHosts.names={asm.example.org}')" != "none" ] \
+  || fail "self-test: private_hosts reported none for a render with a name"
+echo "chart-ops: privateHosts ok"

@@ -208,6 +208,19 @@
 {{- $_ := set $rl "counters" (merge $ctr (default (dict) $rl.counters)) -}}
 {{- $_ := set $cfg "ratelimit" $rl -}}
 {{- end -}}
+{{- /* (FIX-200, D-437) privateHosts: host names (or `*.suffix`) that resolve to private addresses join
+      `gateway.allowed_private` (kept: whatever the operator listed there); networkpolicy.yaml
+      renders the matching Cilium FQDN egress. Names only: an address or CIDR is refused here,
+      because no network policy can follow it by name. */ -}}
+{{- $phNames := (default (dict) .Values.privateHosts).names | default (list) -}}
+{{- range $phNames }}
+{{- if not (regexMatch "^(\\*\\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$" (toString .)) }}{{ fail (printf "privateHosts.names: %q must be a lower-case host name or *.suffix with at least two labels after the *. (addresses and CIDRs go in config.gateway.allowed_private)" (toString .)) }}{{ end -}}
+{{- end -}}
+{{- if $phNames }}
+{{- $gw := default (dict) $cfg.gateway -}}
+{{- $_ := set $gw "allowed_private" (uniq (concat (default (list) (get $gw "allowed_private")) $phNames)) -}}
+{{- $_ := set $cfg "gateway" $gw -}}
+{{- end -}}
 {{- /* Vault store: api and gateway each get their own config (their own Vault role). */ -}}
 {{- $gwCfg := deepCopy $cfg -}}
 {{- if .Values.vault.enabled }}
