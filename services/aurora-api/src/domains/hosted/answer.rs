@@ -95,6 +95,32 @@ pub async fn reason_of(
     Ok(decide_reason(r.keys.len(), usable, r.default.is_some()))
 }
 
+/// [`reason_of`] for a poll (the attention badge): reads key listings from the cache only and never calls
+/// a provider. A `litellm` key whose listing is not cached is "listing unknown": a missing default model
+/// is then not `NoModel` (the listing might supply one), so a cache miss never yields a reason by itself.
+pub async fn reason_of_cached(
+    s: &AppState,
+    conn: &mut sqlx::PgConnection,
+    agent: uuid::Uuid,
+    org: uuid::Uuid,
+    workspace: uuid::Uuid,
+    harness: Option<&str>,
+) -> Result<Option<AnswerReason>, ApiError> {
+    let harness = harness.map_or_else(|| s.ops().hosted.default_harness.clone(), str::to_owned);
+    let llm = s.llm();
+    let r = model::readiness_cached(s, &llm, conn, agent, org, workspace, &harness).await?;
+    let usable = r.keys.iter().filter(|k| k.reason.is_none()).count();
+    let listing_unknown = r.keys.iter().any(|k| {
+        k.reason.is_none() && k.listing.is_none() && k.ep.is_some_and(|ep| ep.provider == "litellm")
+    });
+    Ok(
+        match decide_reason(r.keys.len(), usable, r.default.is_some()) {
+            Some(AnswerReason::NoModel) if listing_unknown => None,
+            other => other,
+        },
+    )
+}
+
 /// What the caller can do and what exists (the inputs of [`choose_fix`]).
 pub struct FixInput {
     /// The caller owns the agent's workspace (the grant route's own check, `require_own`).

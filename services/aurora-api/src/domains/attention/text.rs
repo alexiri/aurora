@@ -181,9 +181,41 @@ pub fn broken_text(
     (title, detail)
 }
 
+/// (C-1080 `agent_cannot_answer`, D-408) "Daneel can't answer: no AI key" and what fixes it. `reason` is
+/// the answer check's `snake_case` reason (`no_ai_key`, `key_not_usable`, `no_model`).
+pub fn cannot_answer_text(agent: &str, reason: &str) -> (String, String) {
+    let (why, fix) = match reason {
+        "no_ai_key" => ("no AI key", "Give it an AI key so it can reply."),
+        "key_not_usable" => (
+            "the key stopped working",
+            "Its AI key does not work any more. Give it another or fix the key.",
+        ),
+        _ => ("choose a model", "No allowed AI model is chosen for it."),
+    };
+    (
+        format!("{} can't answer: {why}", name(agent)),
+        fix.to_owned(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cannot_answer_reads_in_words() {
+        let (t, d) = cannot_answer_text("Daneel", "no_ai_key");
+        assert_eq!(t, "Daneel can't answer: no AI key");
+        assert_eq!(d, "Give it an AI key so it can reply.");
+        assert_eq!(
+            cannot_answer_text("Daneel", "key_not_usable").0,
+            "Daneel can't answer: the key stopped working"
+        );
+        assert_eq!(
+            cannot_answer_text("Daneel", "no_model").0,
+            "Daneel can't answer: choose a model"
+        );
+    }
 
     fn n(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| (*s).to_owned()).collect()

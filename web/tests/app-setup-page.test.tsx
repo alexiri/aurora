@@ -218,6 +218,32 @@ describe("organization view (C-932)", () => {
     expect(within(screen.getByTestId("setup-where")).getByText("GitLab — for Sign in with GitLab")).toBeInTheDocument();
     expect(within(screen.getByTestId("setup-where")).getByText("Set up")).toBeInTheDocument();
   });
+
+  it("an admin who can register the sign-in app sees its one button, not a second link in machinery words (org-2)", async () => {
+    params.value = { org: "acme", app: "gitlab" };
+    const who = { ...WHO_ORG_ADMIN, you_can: true, path: "/o/acme/apps?tab=oauth-clients" };
+    mockFetch({
+      "GET /v1/resolve": () => json(200, { org: { ...org, my_role: "admin" } }),
+      "GET /v1/orgs/o1": () => json(200, { ...org, my_role: "admin" }),
+      "GET /v1/apps/gitlab": () => json(200, detail("gitlab", "GitLab", { package_id: "gitlab-pkg" })),
+      "GET /v1/apps/gitlab/setup": () =>
+        json(200, {
+          app_id: "gitlab", name: "GitLab", available: true, instances: [], suggested_method: null,
+          values: { callback_url: "https://aurora.test/v1/oauth/callback" },
+          can: can({ register_workspace_client: false, register_org_client: true, connect_org: true }),
+          clients: { workspace: null, organization: [], instance: { set_up: false } },
+          methods: [method({ id: "oauth", kind: "oauth2", label: "Sign in with GitLab", client_key: "gitlab", ready: false, needs: ["oauth_client"], who_can: who })],
+        }),
+      "GET /v1/apps/gitlab/guide": () => json(404, { error: { code: "not_found", message: "nf" } }),
+      "GET /v1/orgs/o1/accounts": () => json(200, { items: [], next_cursor: null }),
+      "GET /v1/orgs/o1/oauth-clients": () => json(200, { items: [] }),
+    });
+    wrap(<OrgAppSetupPage />);
+    const ways = await screen.findByTestId("setup-ways");
+    expect(within(ways).getByRole("button", { name: "Register a sign-in app for Users" })).toBeInTheDocument();
+    expect(within(ways).queryByRole("link")).toBeNull();
+    expect(screen.queryByText(/oauth client/i)).toBeNull();
+  });
 });
 
 describe("links to the setup page (C-933)", () => {

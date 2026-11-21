@@ -93,6 +93,28 @@ describe("Needs you reads the workspace feed", () => {
     expect(screen.getByRole("link", { name: "Review all approvals" }).getAttribute("href")).toBe("/o/acme/w/main/approvals");
   });
 
+  it("an agent that can't answer is a row with its one action, counted in the heading (C-1080 agent_cannot_answer)", async () => {
+    mockApi(
+      [
+        item({
+          id: "agent_cannot_answer:a1",
+          kind: "agent_cannot_answer",
+          topic: "agents",
+          title: "Daneel can't answer: no AI key",
+          detail: "Give it an AI key so it can reply.",
+          action: { label: "Fix", href: "/o/acme/w/main/agents/a1?tab=access" },
+          decision: false,
+        }),
+      ],
+      1,
+    );
+    wrap();
+    expect(await screen.findByText("Daneel can't answer: no AI key")).toBeTruthy();
+    expect(screen.getByText(/Give it an AI key so it can reply/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Fix" }).getAttribute("href")).toBe("/o/acme/w/main/agents/a1?tab=access");
+    expect(await screen.findByLabelText("1 waiting")).toBeTruthy();
+  });
+
   it("is absent when nothing waits", async () => {
     mockApi([], 0);
     const { container } = wrap();

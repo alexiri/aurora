@@ -424,3 +424,45 @@ async fn the_organization_list_marks_the_starter_key() {
     let (st, _) = accounts(&r, &member, &org_uri).await;
     assert_eq!(st, 403);
 }
+
+/// (C-1080) The attention badge is polled: it never calls a provider. An agent whose key listing is not
+/// cached (and which has no default model without it) is "listing unknown": no `agent_cannot_answer`
+/// item, and not one request reaches the gateway.
+#[tokio::test]
+async fn the_attention_poll_never_reads_a_key_listing_from_the_provider() {
+    let lite = litellm().await;
+    let r = rig(lite.uri(), None).await;
+    let owner = cookie_of(&r, "owner@x.io", "member", "owner").await;
+    let a = claude_agent(&r, "rex").await;
+    let sec = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO secrets (id, org_id, name, kind, llm_provider, llm_auth_mode, llm_endpoint_id,
+            host_pattern, injection, value_source, value_ref, status)
+         VALUES ($1,$2,'gw','llm','litellm','api_key','aigw','x','{}','managed','sk-a','active')",
+    )
+    .bind(sec)
+    .bind(r.org)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    grant(&r, a, sec).await;
+
+    for uri in [
+        format!("/v1/workspaces/{}/attention", r.ws),
+        format!("/v1/attention/counts?workspace={}", r.ws),
+    ] {
+        let (s, _, v) =
+            r.h.send(
+                Method::GET,
+                &uri,
+                &[("cookie", owner.as_str()), ("origin", ORIGIN)],
+                None,
+            )
+            .await;
+        assert_eq!(s.as_u16(), 200, "{v}");
+        assert!(!v.to_string().contains("agent_cannot_answer"), "{v}");
+        assert!(!v.to_string().contains("can't answer"), "{v}");
+    }
+    let calls = lite.received_requests().await.unwrap_or_default();
+    assert!(calls.is_empty(), "the poll called the provider: {calls:?}");
+}
