@@ -216,6 +216,9 @@ const unitWord = (field: FieldInfo | undefined, secs: number): string => {
   return `${n} ${n === 1 ? word.replace(/s$/, "") : word}`;
 };
 
+/** The setting a "required when X is set" message points at, in words (an a/an noun phrase after "when"). */
+const REQUIRED_WHEN: Record<string, string> = { "email.smtp_url": "the mail server address" };
+
 /**
  * (P5-REFINE-18 #4, admin-4) A validation message from the server in the field's own words and unit: "Enter 5 minutes or
  * more." for a minutes field the server states in seconds, "Row 1: that isn't a website name." for a list entry. No config
@@ -233,6 +236,12 @@ export function fieldErrorWords(path: string, message: string, field?: FieldInfo
     return rowed(rowPrefix, "that isn't a website name. Try docs.example.org.");
   }
   if (/\.path$/.test(path)) return rowed(rowPrefix, "the path must start with a slash, like /docs.");
+  // (setup-6) "required (an email address) when email.smtp_url is set": the other setting is named by what it is, never by its key.
+  const needed = /required \((an? [^)]+)\) when ([\w.]+) is set/i.exec(message);
+  if (needed) {
+    const other = REQUIRED_WHEN[needed[2]!] ?? "another setting";
+    return `Enter ${needed[1]} when ${other} is set.`;
+  }
   const atLeast = /at least (\d+)/.exec(message);
   if (field?.kind === "duration" && atLeast) {
     const floor = unitWord(field, Number(atLeast[1]));

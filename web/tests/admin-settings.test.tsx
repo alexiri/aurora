@@ -278,6 +278,22 @@ describe("Generic settings section form (SET-1)", () => {
   });
 });
 
+describe("field errors without a banner", () => {
+  it("shows no page-top banner when every problem sits under its own field (setup-6, priority 2)", async () => {
+    mockFetch({
+      "GET /v1/admin/settings/settings_test": () => json(200, section()),
+      "POST /v1/admin/settings/settings_test/preview": () =>
+        json(422, { error: { code: "settings_invalid", message: "bad", details: { fields: [{ path: "/t.count", code: "invalid_value", message: "must be between 1 and 100" }] } } }),
+    });
+    wrap(<SettingsSectionView slug="settings-test" />);
+    await screen.findByText("Limit");
+    fireEvent.click(document.getElementById("t.flag-c")!);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Enter a number from 1 to 100 things.")).toBeTruthy();
+    expect(screen.queryByText(/Some settings aren't valid yet/)).toBeNull();
+  });
+});
+
 // P5-REFINE-18 #16 (setup-6): a server address is one line, not a text area.
 describe("single-line string settings", () => {
   it("renders a 512-character address as an input and a 20 000-character document as a text area", async () => {

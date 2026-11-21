@@ -441,7 +441,8 @@ export function SettingsStackForm({
             {error && !["stale_revision", "setting_locked", "settings_invalid", "key_origin_required"].includes(code ?? "") ? (
               <ErrorNotice error={error} />
             ) : null}
-            {code === "settings_invalid" ? (
+            {/* (setup-6, priority 2) No banner at the top of the page when every problem is under its own field. */}
+            {code === "settings_invalid" && (Object.keys(rawErrs).length === 0 || otherErrs.length > 0) ? (
               <Notice tone="danger" role="alert">
                 <p>{Object.keys(rawErrs).length > 0 ? "Some settings aren't valid yet. Fix the marked fields, then save again." : errorMessage(error)}</p>
                 {otherErrs.length > 0 ? (
@@ -453,6 +454,8 @@ export function SettingsStackForm({
                 ) : null}
                 {names.size > 0 ? <TechnicalDetails title="Technical details">{[...names].join(", ")}</TechnicalDetails> : null}
               </Notice>
+            ) : code === "settings_invalid" && names.size > 0 ? (
+              <TechnicalDetails title="Technical details">{[...names].join(", ")}</TechnicalDetails>
             ) : null}
 
             {part.above ?? null}
