@@ -11,7 +11,8 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
-import { appDisplayName } from "@/lib/api/app-name";
+import { appDisplayName, usableChoices } from "@/lib/api/app-name";
+import { needsReason, signInProvider } from "./connect-journey/logic";
 import { useMe } from "@/lib/api/queries";
 import { adminRoutes } from "@/lib/routes";
 import {
@@ -59,15 +60,20 @@ export function DeploymentStep({
   const hosted = siblings.filter((a) => !a.family?.instance_bound);
   const bound = siblings.filter((a) => a.family?.instance_bound);
   const servers = (instances.data?.items ?? []).filter((i) => i.status === "active" && bound.some((a) => a.app_id === i.app_id));
+  // (FIX-202) A variant that needs an admin stays listed with its reason; the first usable option is preselected.
+  const blockedReason = (a: AppSummary) =>
+    a.readiness?.state === "needs_admin" ? needsReason(a.readiness.needs, signInProvider(a), false) : undefined;
   const options = [
-    ...hosted.map((a) => ({ value: `app:${a.app_id}`, label: a.family!.variant_label, description: undefined as string | undefined })),
+    ...hosted.map((a) => ({ value: `app:${a.app_id}`, label: a.family!.variant_label, description: blockedReason(a) as string | undefined })),
     ...servers.map((i) => {
       const a = bound.find((x) => x.app_id === i.app_id)!;
-      return { value: `inst:${i.app_id}:${i.id}`, label: `${a.family!.variant_label} · ${i.label}`, description: i.base_url };
+      return { value: `inst:${i.app_id}:${i.id}`, label: `${a.family!.variant_label} · ${i.label}`, description: blockedReason(a) ?? i.base_url };
     }),
   ];
-  const [value, setValue] = useState(options[0]?.value ?? "");
-  const chosen = options.find((o) => o.value === value) ?? options[0];
+  const usable = usableChoices(siblings, instances.data?.items).map((c) => (c.instanceId ? `inst:${c.appId}:${c.instanceId}` : `app:${c.appId}`));
+  const firstUsable = options.find((o) => usable.includes(o.value)) ?? options[0];
+  const [value, setValue] = useState("");
+  const chosen = options.find((o) => o.value === value) ?? firstUsable;
   function go() {
     if (!chosen) return;
     const [kind, app, inst] = chosen.value.split(":");

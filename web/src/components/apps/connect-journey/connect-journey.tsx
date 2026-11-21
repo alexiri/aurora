@@ -16,7 +16,7 @@ import { levelLabel, LEVEL_ORDER, preselectAgents } from "@/lib/accounts";
 import { savedButText } from "@/lib/account-health";
 import { accountKeys, useAccounts, usePutAccess, useTestAccount, type Account, type Level } from "@/lib/api/accounts";
 import { appDisplayName, productName } from "@/lib/api/app-name";
-import { useApp, useConnectPlan, type AppDetail } from "@/lib/api/apps";
+import { useApp, useConnectPlan, type AppDetail, type AppSummary } from "@/lib/api/apps";
 import { errorMessage } from "@/lib/api/errors";
 import { useAgents, useOrg as useOrgById } from "@/lib/api/queries";
 import { wsRoutes } from "@/lib/routes";
@@ -100,19 +100,28 @@ export function ConnectJourney({
   orgId,
   agent,
   appId,
+  instanceId,
+  where: initialWhere,
   onClose,
 }: {
   workspaceId: string;
   orgId: string;
   agent?: { id: string; name: string };
   appId?: string | null;
+  /** (FIX-202) The registered server the given app is connected to (a family's server variant). */
+  instanceId?: string;
+  /** (FIX-202) A family's apps: open on "Where does your <App> run?" (no App step before it). */
+  where?: AppSummary[] | null;
   onClose: () => void;
 }) {
   const { org, ws } = useParams<{ org: string; ws: string }>();
+  // The deployment question is asked again ("Use Jira Data Center"): the family's apps, and the given app no longer counts.
+  const [whereAgain, setWhereAgain] = useState<AppSummary[] | null>(null);
+  const reopened = whereAgain !== null;
   const qc = useQueryClient();
   const agents = useAgents(workspaceId);
   const orgRecord = useOrgById(orgId);
-  const [choice, setChoice] = useState<AppChoice | null>(appId ? { kind: "app", appId } : null);
+  const [choice, setChoice] = useState<AppChoice | null>(appId ? { kind: "app", appId, ...(instanceId ? { instanceId } : {}) } : null);
   const [stepState, setStepState] = useState<StepId>("app");
   // After the app is chosen the next step waits for what decides it (the app, the accounts, the agents).
   const [advancing, setAdvancing] = useState(!!appId);
@@ -178,7 +187,7 @@ export function ConnectJourney({
   const sendOnly = (target ? target.app?.send_only : app?.send_only) === true;
 
   const shape: JourneyShape = {
-    appGiven: !!appId,
+    appGiven: !!appId && !reopened,
     agentFixed: !!agent,
     noAgents: !agent && !agents.isPending && agentList.length === 0,
     website: choice?.kind === "website",
@@ -322,6 +331,7 @@ export function ConnectJourney({
         workspaceId={workspaceId}
         orgId={orgId}
         agent={agent}
+        initialWhere={whereAgain ?? initialWhere}
         onPick={(c) => {
           setChoice(c);
           setAccount(null);
@@ -461,6 +471,14 @@ export function ConnectJourney({
         agentIds={agentIds}
         agentName={agent?.name ?? chosenAgents[0]?.name}
         fixedInstanceId={choice.kind === "app" ? choice.instanceId : undefined}
+        onChooseDeployment={(members) => {
+          setWhereAgain(members);
+          setChoice(null);
+          setAccount(null);
+          setGive(false);
+          setAdvancing(false);
+          setStepState("app");
+        }}
         hasWriteTools={app.tools.some((t) => t.group === "write")}
         onBack={prevStep(shape, "signin") ? back : undefined}
         onResult={finishSignIn}
