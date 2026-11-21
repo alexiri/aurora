@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AppsTab } from "@/components/apps/apps-tab";
 import { DeploymentStep } from "@/components/apps/connect-dialog";
-import { appDisplayName, productKey, productName } from "@/lib/api/app-name";
+import { AppStep } from "@/components/apps/connect-journey/app-step";
+import { SignInStep } from "@/components/apps/connect-journey/sign-in-step";
+import { appDisplayName, isProductReady, productKey, productName, usableChoices } from "@/lib/api/app-name";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
 
@@ -27,7 +29,7 @@ const summary = (app_id: string, name: string, family: ReturnType<typeof fam> | 
 const field = { name: "access_token", label: "Token", type: "secret", store: "credentials", required: true };
 const detail = (s: ReturnType<typeof summary>, instances: unknown) => ({
   ...s, api_docs: null, connect_note: null, label_hint: null,
-  connect: [{ id: "token", kind: "fields", label: null, description: null, recommended: false, fields: [field], scopes: [], default_scopes: [], access_levels: [], probe_scopes: [], client_key: null, callback: null }],
+  connect: [{ id: "token", kind: "fields", label: null, description: null, recommended: false, fields: [field], scopes: [], default_scopes: [], access_levels: [], probe_scopes: [], client_key: null, callback: null, audience: "person", scope_presets: { read: [], write: [] }, show_context: [] }],
   tools: [], hosts: [], agent_instructions: null, credentials: [], metadata: [], oauth_clients: [], instances,
 });
 
@@ -152,5 +154,133 @@ describe("catalogue and connect window", () => {
     step();
     expect(await screen.findByText(/No self-hosted server is registered yet/)).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: /Register a server/ })).toHaveAttribute("href", "/admin/apps?tab=self-hosted");
+  });
+});
+
+// FIX-202 (owner 2026-11-21): a family is ready when any variant is usable; a registered self-hosted server can be connected.
+const jfam = (variant_label: string, instance_bound: boolean) => ({ id: "jira", name: "Jira", variant_label, instance_bound });
+const jira = (app_id: string, name: string, family: ReturnType<typeof jfam>, readiness: unknown) => ({
+  ...summary(app_id, name, family as never, 0),
+  package_id: "jira",
+  readiness,
+});
+const NEEDS = { state: "needs_admin", needs: ["oauth_client"], who_can: null, requested: null };
+const OK = { state: "ready", needs: [], who_can: null, requested: null };
+const JCLOUD = jira("jira", "Jira Cloud", jfam("Cloud", false), NEEDS);
+const JDC = jira("jira-dc", "Jira Data Center", jfam("Data Center", true), OK);
+const inst = (over: Record<string, unknown> = {}) => ({
+  id: "ji1", org_id: "o1", package_id: "jira", app_id: "jira-dc", host: "its.cern.ch", base_path: "/jira", base_url: "https://its.cern.ch/jira",
+  label: "CERN Jira", status: "active", created_by: null, created_at: "", updated_at: "", connections: 0, builtin: false, ...over,
+});
+
+describe("usableChoices (FIX-202)", () => {
+  it("hosted needs an admin and a server is registered: ready, one usable choice", () => {
+    expect(usableChoices([JCLOUD, JDC] as never, [inst()])).toEqual([{ appId: "jira-dc", instanceId: "ji1" }]);
+    expect(isProductReady([JCLOUD, JDC] as never, [inst()])).toBe(true);
+  });
+  it("hosted needs an admin and no server: needs an admin", () => {
+    expect(usableChoices([JCLOUD, JDC] as never, [])).toEqual([]);
+    expect(isProductReady([JCLOUD, JDC] as never, [])).toBe(false);
+  });
+  it("both usable: two choices, the hosted one first", () => {
+    const cloud = { ...JCLOUD, readiness: OK };
+    expect(usableChoices([cloud, JDC] as never, [inst()])).toEqual([{ appId: "jira" }, { appId: "jira-dc", instanceId: "ji1" }]);
+  });
+  it("an inactive or built-in registration does not count", () => {
+    expect(usableChoices([JCLOUD, JDC] as never, [inst({ status: "disabled" })])).toEqual([]);
+    expect(usableChoices([JCLOUD, JDC] as never, [inst({ builtin: true })])).toEqual([]);
+  });
+});
+
+describe("a registered self-hosted variant is connectable (FIX-202)", () => {
+  const jiraRoutes = (cloud: unknown = JCLOUD) => ({
+    "GET /v1/apps": () => json(200, { items: [cloud, JDC] }),
+    "GET /v1/apps/jira": () => json(200, detail(cloud as never, null)),
+    "GET /v1/apps/jira-dc": () => json(200, detail(JDC as never, { label: "Jira host", default_host: null })),
+    "GET /v1/apps/jira-dc/connect-plan": () =>
+      json(200, { app_id: "jira-dc", available: true, available_who_can: null, suggested_method: "token", methods: [{ id: "token", kind: "fields", label: "token", description: null, recommended: false, audience: "person", needs: [], ready: true, scope_presets: { read: [], write: [] } }] }),
+    "GET /v1/workspaces/w1/accounts": () => json(200, { items: [], next_cursor: null }),
+    "GET /v1/workspaces/w1/agents": () => json(200, { items: [{ id: "a1", name: "Daneel", handle: "daneel", kind: "hosted" }], next_cursor: null }),
+    "GET /v1/apps/jira/guide": () => json(404, { error: { code: "not_found", message: "x" } }),
+    "GET /v1/apps/jira-dc/guide": () => json(404, { error: { code: "not_found", message: "x" } }),
+    "GET /v1/orgs/o1/app-instances": () => json(200, { items: [inst()], next_cursor: null }),
+  });
+
+  it("App step: Jira is Ready (1) with no Needs-an-admin entry, and opens the server directly", async () => {
+    stub(jiraRoutes());
+    const onPick = vi.fn();
+    wrap(<AppStep workspaceId="w1" orgId="o1" onPick={onPick} />);
+    expect(await screen.findByRole("tab", { name: "Ready · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Needs an admin · 0" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Jira" }));
+    expect(onPick).toHaveBeenCalledWith({ kind: "app", appId: "jira-dc", instanceId: "ji1" });
+  });
+
+  it("App step: with no server registered Jira needs an admin", async () => {
+    stub({ ...jiraRoutes(), "GET /v1/orgs/o1/app-instances": () => json(200, { items: [], next_cursor: null }) });
+    wrap(<AppStep workspaceId="w1" orgId="o1" onPick={() => {}} />);
+    expect(await screen.findByRole("tab", { name: "Needs an admin · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Ready · 0" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Needs an admin · 1" }));
+    expect(await screen.findByText("An admin needs to set up Jira sign-in")).toBeInTheDocument();
+  });
+
+  it("App step: both usable asks where Jira runs, preselected on the first usable option", async () => {
+    stub(jiraRoutes({ ...JCLOUD, readiness: OK }));
+    const onPick = vi.fn();
+    wrap(<AppStep workspaceId="w1" orgId="o1" onPick={onPick} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Jira" }));
+    const where = await screen.findByRole("radiogroup", { name: "Where does your Jira run?" });
+    await waitFor(() => expect(within(where).getAllByRole("radio")).toHaveLength(2));
+    expect(within(where).getAllByRole("radio")[0]).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(onPick).toHaveBeenCalledWith({ kind: "app", appId: "jira" });
+  });
+
+  it("Deployment step: the unusable Cloud option shows its reason and the server is preselected", async () => {
+    stub(jiraRoutes());
+    const onPick = vi.fn();
+    wrap(<DeploymentStep family={{ id: "jira", name: "Jira", variant_label: "Cloud", instance_bound: false }} siblings={[JCLOUD, JDC] as never} orgId="o1" onPick={onPick} />);
+    const where = await screen.findByRole("radiogroup", { name: "Where does your Jira run?" });
+    await waitFor(() => expect(within(where).getAllByRole("radio")).toHaveLength(2));
+    const [cloud, server] = within(where).getAllByRole("radio");
+    expect(cloud!.closest("label")?.textContent).toContain("An admin needs to set up Jira sign-in");
+    expect(cloud).not.toBeChecked();
+    expect(server).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(onPick).toHaveBeenCalledWith({ appId: "jira-dc", instanceId: "ji1" });
+  });
+
+  it("Apps tab: Connect on the Jira card opens the Data Center sign-in with the server, not Cloud", async () => {
+    // jsdom has no `matchMedia`; the journey's frame asks whether the viewport is wide.
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+    stub(jiraRoutes());
+    wrap(<AppsTab workspaceId="w1" orgId="o1" canOwn />);
+    const list = await screen.findByRole("list", { name: "Apps: Ready to connect" });
+    fireEvent.click(await within(list).findByRole("button", { name: "Connect Jira" }));
+    // No question and no Cloud step: the journey goes on with the Data Center app (its name is on the Agent step).
+    expect(await screen.findByText(/Which agents can use Jira · Data Center\?/)).toBeInTheDocument();
+    expect(screen.queryByText(/Jira · Cloud/)).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Where does your Jira run?" })).toBeNull();
+  });
+
+  it("Sign in step: with no server registered, 'Use a self-hosted Jira' links to the Data Center app; with one it says 'Use Jira Data Center'", async () => {
+    const cloudReady = { ...JCLOUD, readiness: OK };
+    const none = { "GET /v1/orgs/o1/app-instances": () => json(200, { items: [], next_cursor: null }) };
+    stub({ ...jiraRoutes(cloudReady), ...none });
+    const plan = { suggested_method: "token", methods: [{ id: "token", kind: "fields", ready: true, audience: "member", who_can: null }], available_who_can: null };
+    const props = { app: detail(cloudReady as never, null) as never, plan: plan as never, workspaceId: "w1", orgId: "o1", level: null, agentIds: [], hasWriteTools: false, onResult: () => {} };
+    const first = wrap(<SignInStep {...props} />);
+    const more = await screen.findByText("More options");
+    fireEvent.click(more);
+    expect(await screen.findByRole("link", { name: "Use a self-hosted Jira" })).toHaveAttribute("href", "/o/acme/w/main/apps/jira-dc");
+    first.unmount();
+    stub(jiraRoutes(cloudReady));
+    const onChoose = vi.fn();
+    wrap(<SignInStep {...props} onChooseDeployment={onChoose} />);
+    fireEvent.click(await screen.findByText("More options"));
+    expect(screen.queryByRole("link", { name: "Use a self-hosted Jira" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Use Jira Data Center" }));
+    expect(onChoose).toHaveBeenCalled();
   });
 });

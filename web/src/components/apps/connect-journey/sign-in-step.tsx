@@ -28,6 +28,7 @@ import {
   useOAuthClients,
   validateFields,
   type AppDetail,
+  type AppSummary,
   type ConnectMethod,
   type ConnectPlan,
   type FieldValues,
@@ -42,6 +43,7 @@ import {
   type RecipeKind,
 } from "@/lib/api/secrets";
 import { useOrg } from "@/lib/api/queries";
+import { registeredServers } from "@/lib/api/app-name";
 import { wsRoutes } from "@/lib/routes";
 import type { WhoCanValue } from "@/lib/who-can";
 import { useParams } from "next/navigation";
@@ -113,7 +115,10 @@ function GenericSignInStep({
   agentName,
   onBack,
   onResult,
+  onChooseDeployment,
 }: {
+  /** (FIX-202) Back to "Where does your <App> run?" for this family's apps (the workspace journey). */
+  onChooseDeployment?: (members: AppSummary[]) => void;
   /** The agent the account is for, named in "…; Dani acts as you". */
   agentName?: string;
   app: AppDetail;
@@ -146,6 +151,22 @@ function GenericSignInStep({
   const instanceBound = !!app.instances;
   const instances = useAppInstances(instanceBound && !fixedInstanceId ? { kind: "organization", id: orgId } : undefined);
   const choices = (instances.data?.items ?? []).filter((i) => i.app_id === app.app_id && i.status === "active");
+  // (FIX-202, 14 §3) A hosted variant of a family: "Use a self-hosted <Family>" links to the bound sibling's page when no server is
+  // registered; with servers registered the way out is the deployment choice ("Use <Family> <variant>").
+  const familyHosted = !!app.family && !app.family.instance_bound;
+  const allApps = useApps(familyHosted ? workspaceId : undefined);
+  const familyInstances = useAppInstances(familyHosted ? { kind: "organization", id: orgId } : undefined);
+  const familyMembers = familyHosted ? (allApps.data?.items ?? []).filter((a) => a.family?.id === app.family!.id && a.available) : [];
+  const boundSibling = familyMembers.find((a) => a.family?.instance_bound);
+  const serverOf = boundSibling ? registeredServers(familyInstances.data?.items).some((i) => i.app_id === boundSibling.app_id) : false;
+  const selfHosted: SelfHosted | null =
+    !familyHosted || !boundSibling
+      ? null
+      : serverOf
+        ? onChooseDeployment
+          ? { kind: "choose", label: `Use ${app.family!.name} ${boundSibling.family!.variant_label}`, onClick: () => onChooseDeployment(familyMembers) }
+          : null
+        : { kind: "link", label: `Use a self-hosted ${app.family!.name}`, appId: boundSibling.app_id };
   const clients = useOAuthClients(orgMode ? { kind: "organization", id: orgId } : { kind: "workspace", id: workspaceId });
   const matching = (clients.data?.items ?? []).filter(
     (c) =>
@@ -300,12 +321,12 @@ function GenericSignInStep({
     (method && method.scopes.length > 0) ||
     (instanceBound && !fixedInstanceId) ||
     (method?.kind === "oauth2" && !!method.client_key) ||
-    (family && !family.instance_bound);
+    !!selfHosted;
   const needsInstance = instanceBound && !fixedInstanceId && !app.instances?.default_host;
 
   // A way in that nobody here can use yet: the same ask as the App step, not a disabled Connect (B2).
   if (!method)
-    return <NeedsAdmin app={app} who={blockedWho} workspaceId={workspaceId} onBack={onBack} />;
+    return <NeedsAdmin app={app} who={blockedWho} workspaceId={workspaceId} onBack={onBack} selfHosted={selfHosted} />;
 
   return (
     <Form id="journey-signin" onSubmit={(e) => void submit(e)} aria-label={`Sign in to ${app.name}`} noValidate>
@@ -404,13 +425,7 @@ function GenericSignInStep({
               />
             ) : null}
             {method.kind === "oauth2" && method.client_key ? <OAuthClientField value={clientId} onChange={setClientId} clients={matching} /> : null}
-            {family && !family.instance_bound ? (
-              <p className="text-sm">
-                <Link href={wsRoutes(org, ws).app(app.app_id)} className="font-medium text-link underline">
-                  Use a self-hosted {family.name}
-                </Link>
-              </p>
-            ) : null}
+            {selfHosted ? <SelfHostedAction action={selfHosted} org={org} ws={ws} /> : null}
           </div>
         </details>
       ) : null}
@@ -446,7 +461,38 @@ function GenericSignInStep({
  * (P5-POLISH-5, D-386, B2) The Sign in step of an app nobody here can sign in to yet (a deep link): the reason, who can fix
  * it and **Ask <Name>**; once asked, the asked state with **Undo**. Not a disabled Connect.
  */
-function NeedsAdmin({ app, who, workspaceId, onBack }: { app: AppDetail; who: WhoCanValue | null; workspaceId: string; onBack?: () => void }) {
+type SelfHosted = { kind: "link"; label: string; appId: string } | { kind: "choose"; label: string; onClick: () => void };
+
+function SelfHostedAction({ action, org, ws }: { action: SelfHosted; org: string; ws: string }) {
+  return (
+    <p className="text-sm">
+      {action.kind === "link" ? (
+        <Link href={wsRoutes(org, ws).app(action.appId)} className="font-medium text-link underline">
+          {action.label}
+        </Link>
+      ) : (
+        <button type="button" onClick={action.onClick} className="font-medium text-link underline">
+          {action.label}
+        </button>
+      )}
+    </p>
+  );
+}
+
+function NeedsAdmin({
+  app,
+  who,
+  workspaceId,
+  onBack,
+  selfHosted,
+}: {
+  app: AppDetail;
+  who: WhoCanValue | null;
+  workspaceId: string;
+  onBack?: () => void;
+  selfHosted?: SelfHosted | null;
+}) {
+  const { org, ws } = useParams<{ org: string; ws: string }>();
   const apps = useApps(workspaceId);
   const ask = useAskSetup(workspaceId);
   const withdraw = useWithdrawSetup(workspaceId);
@@ -462,6 +508,7 @@ function NeedsAdmin({ app, who, workspaceId, onBack }: { app: AppDetail; who: Wh
           <span>Asked{local === "now" ? " just now" : ""}. You&apos;ll get a notice when it&apos;s ready.</span>
         </p>
       ) : null}
+      {selfHosted ? <SelfHostedAction action={selfHosted} org={org} ws={ws} /> : null}
       <StepFooter>
         {onBack ? (
           <Button type="button" variant="ghost" onClick={onBack}>
