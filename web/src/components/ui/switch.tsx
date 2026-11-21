@@ -25,6 +25,8 @@ export function Switch({
         type="checkbox"
         role="switch"
         checked={checked}
+        // The state in the attribute too (P5-REFINE-20 batch 5, admin-9): tools and tests that read `aria-checked`.
+        aria-checked={checked}
         onChange={(e) => onCheckedChange(e.target.checked)}
         className="peer absolute inset-0 z-10 m-0 size-full cursor-pointer appearance-none rounded-full outline-offset-2 disabled:cursor-not-allowed"
       />

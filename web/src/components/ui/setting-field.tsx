@@ -150,7 +150,8 @@ export function SettingField({
               </p>
             ) : null}
             {source === "dashboard" && onReset ? (
-              <Button type="button" variant="ghost" size="sm" onClick={onReset}>
+              // A long default ("Follows what your deployment provides") wraps at 390 px instead of widening the page.
+              <Button type="button" variant="ghost" size="sm" className="h-auto max-w-full whitespace-normal py-1.5 text-left" onClick={onReset}>
                 Reset to default{defaultLabel ? ` (${defaultLabel})` : ""}
               </Button>
             ) : null}

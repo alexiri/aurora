@@ -206,6 +206,40 @@ describe("Administration › What agents may do › Defaults: stacked settings s
     expect(screen.queryByTestId("terminal.enabled-off")).toBeNull();
   });
 
+  it("draws the terminal switch from the effective value Helm provides, with aria-checked, and a Reset line that wraps (P5-REFINE-20 batch 5, admin-9)", async () => {
+    let row: Json = { ...base, key: "terminal.enabled", value: true, source: "helm", default: true, schema: schema("bool") };
+    const terminal = () => section("terminal", "Terminal", [row], { available: true });
+    const previews = () => section("previews", "Previews", [{ ...base, key: "previews.shares_per_agent", value: 5, source: "default", default: 5, schema: schema("int") }]);
+    mockFetch({
+      "GET /v1/admin/settings/terminal": () => json(200, terminal()),
+      "GET /v1/admin/settings/previews": () => json(200, previews()),
+    });
+    const { unmount } = view(<ComputersView />);
+    await screen.findByText("Words of previews.shares_per_agent");
+    // Helm provides the terminal (C-782): the switch is on, says so in aria-checked, and stays usable.
+    const sw = document.getElementById("terminal.enabled-c") as HTMLInputElement;
+    expect(sw.checked).toBe(true);
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    expect(sw).not.toBeDisabled();
+    expect(screen.queryByTestId("terminal.enabled-off")).toBeNull();
+    fireEvent.click(sw);
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("terminal.enabled-off")).toHaveTextContent("Off: people see that the terminal isn't available");
+    unmount();
+
+    // Turned off in the dashboard: off, and Reset returns to the deployment's value (on). The Reset line wraps.
+    row = { ...row, value: false, source: "dashboard" };
+    view(<ComputersView />);
+    await screen.findByText("Words of previews.shares_per_agent");
+    const off = document.getElementById("terminal.enabled-c") as HTMLInputElement;
+    expect(off).toHaveAttribute("aria-checked", "false");
+    const reset = screen.getByRole("button", { name: /^Reset to default/ });
+    expect(reset.className).toContain("whitespace-normal");
+    expect(reset.className).not.toContain("whitespace-nowrap");
+    fireEvent.click(reset);
+    expect(document.getElementById("terminal.enabled-c")).toHaveAttribute("aria-checked", "true");
+  });
+
   it("keeps a failing section's draft and shows its error there, after the ones that saved", async () => {
     mockFetch({
       "GET /v1/admin/settings/agents": () => json(200, agents()),

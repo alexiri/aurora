@@ -338,6 +338,21 @@ async fn switches_need_the_deployments_wiring() {
     ] {
         let sec = w.section(section).await;
         assert_eq!(sec["extra"]["available"], json!(false), "{sec}");
+        let k = sec["settings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["key"] == key)
+            .unwrap();
+        assert_eq!(
+            (
+                k["value"].clone(),
+                k["source"].clone(),
+                k["default"].clone()
+            ),
+            (json!(false), json!("default"), json!(false)),
+            "no wiring: the application's default: {sec}"
+        );
         let (s, v) = w.put(section, json!({ key: true })).await;
         assert_eq!(
             (s, v["error"]["code"].as_str()),
@@ -365,9 +380,16 @@ async fn the_terminal_and_scim_switches_apply_live() {
         .iter()
         .find(|s| s["key"] == "terminal.enabled")
         .unwrap();
+    // (P5-REFINE-20 batch 5, admin-9) The deployment's value: `source` helm, still switchable, and
+    // the default it resets to is the deployment's.
     assert_eq!(
-        (k["value"].clone(), k["source"].clone()),
-        (json!(true), json!("default")),
+        (
+            k["value"].clone(),
+            k["source"].clone(),
+            k["locked"].clone(),
+            k["default"].clone()
+        ),
+        (json!(true), json!("helm"), json!(false), json!(true)),
         "{sec}"
     );
     assert_eq!(sec["extra"]["available"], json!(true));
@@ -406,6 +428,22 @@ async fn the_terminal_and_scim_switches_apply_live() {
         .put("terminal", json!({ "terminal.enabled": false }))
         .await;
     assert_eq!(s, 200, "{v}");
+    let sec = w.section("terminal").await;
+    let k = sec["settings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == "terminal.enabled")
+        .unwrap();
+    assert_eq!(
+        (
+            k["value"].clone(),
+            k["source"].clone(),
+            k["default"].clone()
+        ),
+        (json!(false), json!("dashboard"), json!(true)),
+        "a stored value wins and the default stays the deployment's: {sec}"
+    );
     let (s, _, v) = get_files(files.clone()).await;
     assert_eq!(
         (s.as_u16(), v["error"]["code"].as_str()),

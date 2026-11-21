@@ -1765,6 +1765,7 @@ pub async fn section_view(
     let snap = state.settings.snapshot();
     let extra = super::sections::extra(state, section, caller).await?;
     let mut view = build_view(&snap.effective, &snap.stored, &snap.meta, section, extra)?;
+    follow_deployment(&state.settings.source, &mut view);
     if section == "llm" {
         mark_private_endpoints(&mut view, &snap.effective.raw.gateway.allowed_private).await;
     }
@@ -1788,6 +1789,29 @@ pub async fn section_view(
         }
     }
     Ok(view)
+}
+
+/// (P5-REFINE-20 batch 5, admin-9; C-782 note) A switch whose default follows a configuration-only
+/// key (`terminal.enabled` ← `terminal.available`, D-237(d)): when the configuration provides that
+/// key, its value is the setting's `default`, and while the dashboard stores nothing the value is
+/// the deployment's (`source: "helm"`). Never locked: only a configuration that sets the key itself
+/// locks it (that row is already `helm`/locked and is left alone).
+fn follow_deployment(source: &aurora_config::ConfigSource, view: &mut SettingsSection) {
+    for s in &mut view.settings {
+        let Some(from) = registry().get(&s.key).and_then(|d| d.default_from) else {
+            continue;
+        };
+        let Some(followed) = source.helm_value(from).and_then(Value::as_bool) else {
+            continue;
+        };
+        if s.locked {
+            continue;
+        }
+        s.default = Value::Bool(followed);
+        if s.source == "default" {
+            s.source = "helm".into();
+        }
+    }
 }
 
 pub fn index(state: &AppState) -> SettingsIndex {
