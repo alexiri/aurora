@@ -92,6 +92,13 @@ describe("the computer's state line", () => {
     await waitFor(async () => expect(await line()).toBe("Dani's computer is on · sleeps in 20 s when idle"));
   });
 
+  it("never stays on 'sleeps in 0 s': once the hint reaches 0 and the computer is still on, the line says the rule (P5-REFINE-20 #13)", async () => {
+    serve(() => view({ computer: computer({ sleeps_in_secs: 0 }) }));
+    mount(<ComputerStateLine agentId={AGENT} agentName="Dani" />);
+    expect(await line()).toBe("Dani's computer is on · sleeps after 20 minutes of quiet");
+    expect(await line()).not.toContain("0 s");
+  });
+
   it("offers Wake it now, Sleep now and Restart from Set up up, and none of them at Use", async () => {
     serve(() => view({ state: "stopped", computer: computer({ word: "off", ready: false, asleep: true }) }));
     mount(<ComputerStateLine agentId={AGENT} agentName="Dani" />, false);
