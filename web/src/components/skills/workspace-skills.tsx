@@ -23,7 +23,7 @@ export function WorkspaceSkills() {
   if (!wsId || !workspace.data) return <ErrorState error={{ code: "not_found" }} />;
   const canOwn = workspace.data.my_role === "owner";
   return (
-    <div className="max-w-page">
+    <div>
       <PageHeader
         title="Skills"
         description="A skill is a set of instructions that teaches an agent how to do one job your way, such as writing a release note or triaging an issue. Every agent in this workspace can use them."

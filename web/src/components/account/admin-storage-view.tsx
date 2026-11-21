@@ -24,7 +24,7 @@ export function AdminStorageView() {
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const s = q.data;
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="Storage"
         description="What people have stored in Aurora."

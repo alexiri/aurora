@@ -66,7 +66,7 @@ export function SettingsIndexView() {
   const showNotice = locked.length > 0;
 
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="All settings"
         description="Every instance-wide setting, grouped by the topic where you change it, applied live. A setting configured in Helm is shown read-only."

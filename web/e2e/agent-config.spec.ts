@@ -54,7 +54,7 @@ for (const scheme of ["light", "dark"] as const) {
         const model = (await page.locator("#a-model").boundingBox())!;
         const proactive = (await page.locator("#a-proactive").boundingBox())!;
         const brief = (await page.locator("#a-brief").boundingBox())!;
-        if (width >= 768) {
+        if (width === 1280) {
           expect(Math.abs(name.y - picture.y)).toBeLessThan(80);
           expect(name.x).toBeGreaterThan(picture.x);
           expect(model.x + model.width).toBeLessThan(proactive.x);
@@ -82,3 +82,16 @@ for (const scheme of ["light", "dark"] as const) {
     });
   }
 }
+
+// (FIX-212) At 768 px the sidebar and the Settings sub-nav leave the form narrow: its fields stack, and nothing pushes the
+// page sideways (fixed md:w-80 columns once made it scroll 330 px; the rows now follow the form's own width).
+test.describe("Instructions at 768 px", () => {
+  test.use({ viewport: { width: 768, height: 900 } });
+  test("the fields stack inside the narrow form and the page does not scroll sideways", async ({ page }) => {
+    await openRoute(page, `${AGENT}?tab=instructions`, "light");
+    const model = (await page.locator("#a-model").boundingBox())!;
+    const proactive = (await page.locator("#a-proactive").boundingBox())!;
+    expect(proactive.y).toBeGreaterThan(model.y + model.height);
+    expect(await overflow(page)).toBeLessThanOrEqual(0);
+  });
+});

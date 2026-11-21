@@ -277,7 +277,7 @@ export function PluginsView() {
   const updates = items.filter((p) => p.update_available).length;
   const shown = showAll ? fromAurora : fromAurora.slice(0, FIRST_AURORA);
   return (
-    <div className="max-w-page space-y-5">
+    <div className="space-y-5">
       <PageHeader
         title="Apps"
         description="The apps and chat platforms people can add."

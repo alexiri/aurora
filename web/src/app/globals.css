@@ -136,9 +136,8 @@
   --radius-card: 14px;
   /* The flat corner of a chat bubble next to its speaker (docs/14 §Visual design, chat). */
   --radius-tail: 4px;
-  /* Page widths (docs/14 §Visual design, page patterns): `max-w-page` for list/detail pages, `max-w-page-narrow`
-     for single-column pages such as Approvals. The agent page uses neither (the full content width). */
-  --container-page: 72.5rem;
+  /* Page widths (D-439, docs/14 §Visual design): a page spans the content area and has no cap. Only a form or a
+     reading column caps itself, with `max-w-page-narrow`; running text uses `max-w-prose`. */
   --container-page-narrow: 55rem;
   /* Chat thread widths: a bubble, a card in the thread, a centred notice. */
   --container-bubble: 80%;

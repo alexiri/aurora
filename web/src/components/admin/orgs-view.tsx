@@ -121,7 +121,7 @@ export function AdminOrgsView() {
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="Organizations"
         description="Pause or delete an organization as the operator, for an incident such as a compromised account. You see counts and names, never the organization's data."

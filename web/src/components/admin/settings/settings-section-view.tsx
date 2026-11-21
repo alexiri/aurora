@@ -63,7 +63,7 @@ function GenericSectionView({ slug }: { slug: string }) {
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const section = q.data;
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: section.title }]}
         title={section.title}

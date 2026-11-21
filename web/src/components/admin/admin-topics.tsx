@@ -37,7 +37,7 @@ const section = (slug: string) => <SettingsSectionView slug={slug} />;
 export function AdminOverviewPage() {
   return (
     <AdminGuard>
-      <div className="max-w-page">
+      <div>
         <SetupView />
       </div>
     </AdminGuard>

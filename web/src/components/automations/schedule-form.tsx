@@ -33,6 +33,7 @@ import {
 } from "@/lib/cron";
 import { browserTimeZone } from "@/lib/timezone";
 import { nextWords, onceLocalWords, tomorrowIn } from "@/lib/schedule-words";
+import { cn } from "@/lib/utils";
 
 /** The wait before a changed cadence is previewed by the API (rate class `check`, 10 a minute); the answer is cached 60 s. */
 export const PREVIEW_DEBOUNCE_MS = 1000;
@@ -91,8 +92,8 @@ function timeOptions(hour: number, minute: number): { value: string; label: stri
 
 /**
  * (P5-REFINE-14, schedules-1, -2, -5; D-405) The schedule form: Name, Prompt, **When** (presets from Every 5 minutes, a time
- * picker, the workspace's time zone) and **Advanced**. There is no preset shorter than five minutes; Custom keeps the
- * 5-field cron for the Expert altitude and flags a too-frequent one as you type. The API stays the authority.
+ * picker, the workspace's time zone) and **Advanced**. There is no preset shorter than five minutes; Custom takes a
+ * 5-field cron and flags a too-frequent one as you type. The API stays the authority.
  */
 export function ScheduleForm({
   agentId,
@@ -280,7 +281,7 @@ export function ScheduleForm({
             <input
               id="sch-cron"
               aria-label="Cron (5 fields)"
-              className={`${inputClass} w-64 max-w-full font-mono`}
+              className={cn(inputClass, "w-64 max-w-full font-mono")}
               value={customCron}
               required
               spellCheck={false}

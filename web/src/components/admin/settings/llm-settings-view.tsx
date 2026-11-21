@@ -53,7 +53,7 @@ export function LlmSettingsView() {
   const enabledEffective = byKey(ENABLED)?.value;
   const pref = byKey(PREFERENCE);
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: section.title }]}
         title={section.title}

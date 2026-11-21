@@ -63,7 +63,7 @@ export function EmailSettingsView() {
   const url = section.settings.find((s) => s.key === "email.smtp_url");
   const logOnly = url === undefined || url.value === null || url.value === undefined || url.value === "";
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       <PageHeader
         breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: section.title }]}
         title={section.title}

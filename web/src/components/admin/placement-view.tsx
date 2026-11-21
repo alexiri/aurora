@@ -137,7 +137,7 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
   const connections = choices.data?.connections ?? [];
 
   return (
-    <div className="max-w-page space-y-6">
+    <div className="space-y-6">
       {embedded ? null : (
         <PageHeader
           title="Sign-up & placement"

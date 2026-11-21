@@ -103,7 +103,7 @@ export function AdminRunnersView() {
   if (runners.isError) return <ErrorState error={runners.error} onRetry={() => void runners.refetch()} />;
   const items = runners.data.items;
   return (
-    <div className="max-w-4xl space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="Runners"
         description="Runners host the agents' computers. Capacity shows what each runner is running; a start failure lists why the last start attempts failed (kept 30 days). Adding and removing runners is done with Helm or the CLI: see “Runners” in the operator guide."

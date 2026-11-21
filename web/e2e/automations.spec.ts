@@ -155,11 +155,28 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
           expect(Math.abs((await y(form.getByLabel("Time of day"))) - dateY)).toBeLessThanOrEqual(4);
           expect(Math.abs((await y(form.getByLabel("Time zone"))) - dateY)).toBeLessThanOrEqual(4);
         }
+        if (width === 1280) {
+          // FIX-205: the date field is w-40 (160 px), not the full-width input class (it was 264 px).
+          const dateBox = (await form.getByLabel("Date", { exact: true }).boundingBox())!;
+          expect(dateBox.width).toBeGreaterThanOrEqual(150);
+          expect(dateBox.width).toBeLessThanOrEqual(175);
+        }
         await expect(form.getByTestId("schedule-summary")).toContainText(/^Once, on \w{3} \d{1,2} \w{3} at 10:00 \(UTC time\)\./); // the time picked for Every year carries over
         await form.getByLabel("Date", { exact: true }).fill("2020-01-01");
         await expect(form.getByText("Pick a time in the future")).toBeVisible();
         await expect(form.getByRole("button", { name: "Create schedule" })).toBeDisabled();
         await check(page);
+        if (width === 1280) {
+          // FIX-205: Custom's cron field is w-64 (256 px, not the row's 918 px), so the zone sits beside it.
+          await when.getByText("Custom", { exact: true }).click();
+          const cron = form.getByLabel("Cron (5 fields)");
+          await expect(cron).toBeVisible();
+          const cronBox = (await cron.boundingBox())!;
+          expect(cronBox.width).toBeLessThanOrEqual(270);
+          const zoneBox = (await form.getByLabel("Time zone").boundingBox())!;
+          expect(Math.abs(zoneBox.y - cronBox.y)).toBeLessThanOrEqual(4);
+          expect(zoneBox.x).toBeGreaterThan(cronBox.x + cronBox.width);
+        }
         await page.screenshot({ path: `${SHOTS}/once-form-${scheme}-${width}.png` });
       });
 
