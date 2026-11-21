@@ -45354,6 +45354,13 @@
           "actor_label": {
             "type": "string"
           },
+          "actor_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-REFINE-20) The person's display name when the actor is a person (`user` or `instance_admin`); null for a system,\na service key, an agent or a person who no longer exists. The dashboard names people with it, never by e-mail."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"

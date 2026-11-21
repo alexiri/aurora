@@ -39,6 +39,9 @@ export function ManageFrame({ children }: { children: ReactNode }) {
   const badge = useOrgBadge(resolved.data?.org.id);
 
   if (!slug || /^\/o\/[^/]+\/w\//.test(pathname)) return <>{children}</>;
+  // (P5-REFINE-20, org-3) No area, and no name taken from the address, until the organization is known: an unknown one is
+  // the shell's not-found state, never a "Manage <slug>" frame.
+  if (!resolved.data) return resolved.isError ? <>{children}</> : null;
 
   const instanceAdmin = me.data?.user.is_instance_admin === true;
   // While the role loads, list what every member sees; the pages refuse nothing they list.

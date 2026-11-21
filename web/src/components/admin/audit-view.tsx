@@ -11,6 +11,19 @@ import { Switch } from "@/components/ui/switch";
 import { useInstanceAudit, type InstanceAuditFilter } from "@/lib/api/admin-audit";
 import { useAdminOrgs } from "@/lib/api/freeze";
 import { instanceFromParams, useWriteAuditParams } from "@/lib/audit-url";
+import { auditFilterGroups, type AuditFilterGroup } from "@/lib/labels";
+
+/** (admin-10) Whole areas of Administration, by the action prefix the instance list takes, in words. */
+const ADMIN_AREAS: AuditFilterGroup = {
+  group: "Whole areas",
+  options: [
+    { value: "instance_settings.", label: "Instance settings" },
+    { value: "placement.", label: "New users" },
+    { value: "plugin.", label: "Apps" },
+    { value: "connector.", label: "Chat platforms" },
+    { value: "runner.", label: "Runners" },
+  ],
+};
 
 /** Instance administration, Audit (FIX-125): what instance admins did, and optionally every organization's rows. */
 export function AdminAuditView() {
@@ -36,7 +49,7 @@ export function AdminAuditView() {
     <AuditPanel
       title="Audit log"
       description="What administrators did."
-      placeholder="Action prefix, e.g. plugin."
+      actions={[ADMIN_AREAS, ...auditFilterGroups("instance")]}
       targetName={() => null}
       areas
       afterList={
@@ -75,11 +88,11 @@ export function AdminAuditView() {
           ) : null}
           <label className="flex items-center gap-2 text-sm">
             From
-            <DateField aria-label="From date" value={f.since} onChange={(v) => setF({ ...f, since: v })} />
+            <DateField format="app" aria-label="From date" value={f.since} onChange={(v) => setF({ ...f, since: v })} />
           </label>
           <label className="flex items-center gap-2 text-sm">
             To
-            <DateField aria-label="To date" value={f.until} onChange={(v) => setF({ ...f, until: v })} />
+            <DateField format="app" aria-label="To date" value={f.until} onChange={(v) => setF({ ...f, until: v })} />
           </label>
         </>
       }

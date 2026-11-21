@@ -167,7 +167,7 @@ describe("workspace BYO setting (P5-IA-4, C-967)", () => {
     wrap(<GeneralTab workspace={workspace()} canOwn />);
     expect(screen.queryByLabelText("BYO agent posture")).toBeNull();
     expect(screen.getByLabelText("Time zone")).toBeTruthy();
-    expect(screen.getByLabelText("Language your agents remember in")).toBeTruthy();
+    expect(screen.getByLabelText("Language agents remember in")).toBeTruthy();
   });
 
   it("is a ladder row in the agents list header: the organization's value above, the choice behind Restrict further…", async () => {

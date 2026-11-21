@@ -109,6 +109,13 @@ export const WORKSPACE_ROLE = {
   member: { label: "Member" },
 } satisfies LabelTable;
 
+/** A workspace role's choices for a select, least access first, in words ("Member", never "member"). */
+export const WORKSPACE_ROLE_OPTIONS = [
+  { value: "member", label: WORKSPACE_ROLE.member.label },
+  { value: "approver", label: WORKSPACE_ROLE.approver.label },
+  { value: "owner", label: WORKSPACE_ROLE.owner.label },
+];
+
 /** `MemberStatus` and `AccessStatus`. */
 export const MEMBER_STATUS = {
   active: { label: "Active" },
@@ -418,6 +425,13 @@ const named = (verb: string, noun: string, gone: string, weight: AuditWeight = "
   sentence: (actor, t) => (t ? `${actor} ${verb} ${noun} ${t}` : `${actor} ${verb} ${gone}`),
   weight,
 });
+/** A sentence with no named thing: "<actor> <text>". */
+const plain = (text: string, weight: AuditWeight = "routine"): AuditWords => ({ sentence: (actor) => `${actor} ${text}`, weight });
+/** A sentence about a person: "<actor> <verb> <person>" ("a person" when unnamed), with an optional tail. */
+const aboutPerson = (verb: string, tail = "", weight: AuditWeight = "routine"): AuditWords => ({
+  sentence: (actor, t) => `${actor} ${verb} ${t ?? "a person"}${tail}`,
+  weight,
+});
 const role = (m: Record<string, unknown>) => {
   const r = typeof m.role === "string" ? m.role : null;
   return r && r in WORKSPACE_ROLE ? WORKSPACE_ROLE[r as keyof typeof WORKSPACE_ROLE].label : null;
@@ -529,6 +543,175 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "admin.user_update": named("changed", "the person", "a person", "important"),
   "admin.org.delete": named("deleted", "the organization", "an organization", "important"),
   "admin.workspace.delete": named("deleted", "the workspace", "a workspace", "important"),
+  // (P5-REFINE-20, workspace-3, admin-10) The rest of what the API writes (every action of the Rust audit call sites:
+  // `tests/fixtures/audit-actions.json`), so no row ever says "did something".
+  // People and sign-in
+  "user.login": plain("signed in"),
+  "user.logout": plain("signed out"),
+  "user.signup": plain("joined Aurora"),
+  "user.update": plain("changed their profile"),
+  "user.delete": aboutPerson("deleted", "", "important"),
+  "user.reauth": plain("signed in again to confirm it was them"),
+  "user.admit_by_claim": { sentence: (_a, t) => `${t ?? "A person"} was let in by their sign-in provider`, weight: "routine" },
+  "session.revoke_others": plain("signed out of every other browser"),
+  "cli_login.approve": plain("approved a sign-in from the command line"),
+  "cli_login.consume": plain("signed in from the command line"),
+  "instance_admin.grant": aboutPerson("made", " an Aurora administrator", "important"),
+  "instance_admin.revoke": aboutPerson("took the Aurora administrator role from", "", "important"),
+  "org_role.idp_sync_blocked": { sentence: (_a, t) => `${t ?? "A person"}'s role from the sign-in provider was not applied`, weight: "important" },
+  "user_link.create": plain("linked a chat account to their Aurora account"),
+  "user_link.delete": plain("unlinked a chat account from their Aurora account"),
+  "user_token.create": plain("connected a chat account so agents can send as them"),
+  "user_token.grant": plain("let an agent send as them"),
+  "user_token.ungrant": plain("stopped letting an agent send as them"),
+  "user_token.revoke": plain("disconnected a chat account that agents sent as", "important"),
+  "user_token.invalid": { sentence: () => "A chat account agents sent as stopped working", weight: "routine" },
+  "user_token.send": plain("sent a message as a person, through an agent"),
+  "invitation.link": aboutPerson("made a new invitation link for"),
+  "invitation.resend": aboutPerson("sent the invitation again to"),
+  "scim.update": plain("changed directory sync", "important"),
+  "scim.error": { sentence: () => "A directory sync request failed", weight: "important" },
+  "scim_token.create": plain("made a directory sync token", "important"),
+  "scim_token.revoke": plain("revoked a directory sync token", "important"),
+  "scim_token.expiry_notice": { sentence: () => "A directory sync token is about to expire", weight: "routine" },
+  "oauth_client.create": named("added", "the sign-in app", "a sign-in app", "important"),
+  "oauth_client.update": named("changed", "the sign-in app", "a sign-in app", "important"),
+  "oauth_client.delete": named("removed", "the sign-in app", "a sign-in app", "important"),
+  "oauth_client.test": named("tested", "the sign-in app", "a sign-in app"),
+  // Teams
+  "group.create": named("created", "the team", "a team"),
+  "group.update": named("changed", "the team", "a team"),
+  "group.delete": named("deleted", "the team", "a team", "important"),
+  "group_member.add": aboutPerson("added", " to a team"),
+  "group_member.remove": aboutPerson("removed", " from a team", "important"),
+  "group_access.set": plain("gave a team access to a workspace", "important"),
+  "group_access.remove": plain("took a team's access to a workspace away", "important"),
+  // Agents
+  "agent.avatar_set": named("changed the picture of", "the agent", "an agent"),
+  "agent.avatar_remove": named("removed the picture of", "the agent", "an agent"),
+  "agent.byo_settings.update": named("changed where agents run for", "the agent", "an agent"),
+  "workspace.byo_posture.update": plain("changed whether agents may run outside Aurora in the workspace", "important"),
+  "agent.context_credential_create": plain("gave an agent an account for one conversation"),
+  "agent.files.write": plain("saved a file on an agent's computer"),
+  "agent.files.delete": plain("deleted files on an agent's computer", "important"),
+  "agent.files.rename": plain("renamed a file on an agent's computer"),
+  "agent.files.mkdir": plain("made a folder on an agent's computer"),
+  "agent.files.download": plain("downloaded a file from an agent's computer"),
+  "agent.sandbox_retry": plain("started an agent's computer again"),
+  "agent.sandbox_sleep": plain("put an agent's computer to sleep"),
+  "agent.sandbox_wake": plain("woke an agent's computer"),
+  "agent.ssh_certificate.mint": plain("made a sign-in certificate for an agent's computer"),
+  "agent.ssh.open": plain("opened an SSH session to an agent's computer"),
+  "agent.ssh.close": plain("closed an SSH session to an agent's computer"),
+  "ssh_session.disconnect": plain("ended an SSH session", "important"),
+  "agent.terminal.open": plain("opened a terminal on an agent's computer"),
+  "agent.terminal.close": plain("closed a terminal on an agent's computer"),
+  "agent_link.create": plain("linked two agents", "important"),
+  "agent_link.delete": plain("unlinked two agents", "important"),
+  "agent_link.direction": plain("changed which way two linked agents may ask each other", "important"),
+  "agent_link.policy": plain("changed what two linked agents may ask each other", "important"),
+  "reach_grant.decide": plain("decided who may reach an agent", "important"),
+  "reach.requested": { sentence: (actor) => `${actor} asked to reach an agent`, weight: "routine" },
+  "push_subscription.create": plain("turned on push notifications on a device"),
+  "push_subscription.update": plain("refreshed push notifications on a device"),
+  "push_subscription.move": plain("moved push notifications to another account"),
+  "push_subscription.delete": plain("turned off push notifications on a device"),
+  "push.vapid_rotate": plain("made new push notification keys", "important"),
+  // Workspaces, organizations and their settings
+  "workspace.update": named("changed", "the workspace", "a workspace"),
+  "org.freeze": named("paused", "the organization", "an organization", "important"),
+  "org.unfreeze": named("resumed", "the organization", "an organization"),
+  "org.app_availability.update": plain("changed which apps the organization offers", "important"),
+  "org.previews.update": plain("changed port previews for the organization", "important"),
+  "governance.update": plain("changed the AI and Internet access rules", "important"),
+  "retention.update": plain("changed how long data is kept", "important"),
+  "policy.draft_update": plain("edited the internet rules that are not applied yet"),
+  "preview.session.create": plain("opened a port preview"),
+  "preview.share.create": plain("shared a port preview", "important"),
+  "preview.share.start": plain("started sharing a port preview", "important"),
+  "preview.share.update": plain("changed who can open a shared port preview", "important"),
+  "preview.share.delete": plain("stopped sharing a port preview"),
+  // Apps and accounts
+  "account.test": named("tested", "the account", "an account"),
+  "addon.ingest": plain("added an app package", "important"),
+  "app_instance.create": named("set up", "the app", "an app"),
+  "app_instance.update": named("changed", "the app", "an app"),
+  "app_instance.promote": named("moved to a wider level", "the app", "an app", "important"),
+  "app_instance.delete": named("removed", "the app", "an app", "important"),
+  "app_setup_request.ask": plain("asked for an app to be set up"),
+  "app_setup_request.decline": plain("declined a request to set up an app"),
+  "app_setup_request.resolve": plain("set up an app that was asked for"),
+  "app_setup_request.withdraw": plain("withdrew a request to set up an app"),
+  "connection.webhook.update": named("changed the outgoing webhook of", "the account", "an account", "important"),
+  "grant.converted_by_app": plain("moved access to an app's own account"),
+  "plugin.approve": named("approved", "the app", "an app", "important"),
+  "plugin.reject": named("rejected", "the app", "an app", "important"),
+  "plugin.enable": named("turned on", "the app", "an app"),
+  "plugin.disable": named("turned off", "the app", "an app", "important"),
+  "secret.accept": named("accepted", "the secret", "a secret"),
+  "secret.reject": named("rejected", "the secret", "a secret"),
+  "secret.verify": named("checked", "the secret", "a secret"),
+  "secret_stores.migrate_start": plain("started moving secrets to another store", "important"),
+  "secret_stores.migrate_finish": plain("finished moving secrets to another store", "important"),
+  // Chat platforms
+  "channel_integration.create": named("connected", "the chat platform", "a chat platform"),
+  "channel_integration.update": named("changed", "the chat platform", "a chat platform"),
+  "channel_integration.delete": named("disconnected", "the chat platform", "a chat platform", "important"),
+  "channel_integration.autolink_enable": plain("turned on linking people by verified e-mail on a chat platform", "important"),
+  "channel_integration.autolink_disable": plain("turned off linking people by verified e-mail on a chat platform", "important"),
+  "channel_presence.attach": plain("put an agent on a chat platform"),
+  "channel_presence.detach": plain("took an agent off a chat platform"),
+  "channel_presence.reattach": plain("put an agent back on a chat platform"),
+  "channel.credential_dead": { sentence: () => "A chat platform stopped accepting its credential", weight: "important" },
+  "presence.deprovision_failed": { sentence: () => "An agent could not be removed from a chat platform", weight: "important" },
+  "space_binding.create": plain("connected a chat channel to an agent"),
+  "space_binding.update": plain("changed how a chat channel is connected to an agent"),
+  "space_binding.delete": plain("disconnected a chat channel from an agent"),
+  "dm_default.set": plain("chose which agent answers their direct messages"),
+  // Conversations, memory, skills, schedules, evals
+  "conversation.delete": plain("deleted a conversation", "important"),
+  "conversation.export": plain("exported a conversation", "important"),
+  "conversation.rename": plain("renamed a conversation"),
+  "conversation.owner_view": plain("read someone else's conversation", "important"),
+  "transcript_event.redact": plain("erased part of a conversation", "important"),
+  "attachment.delete": plain("deleted an attachment"),
+  "attachment.purge": plain("removed attachments that were past their time"),
+  "attachment.quota_notice": { sentence: () => "Attachment storage is nearly full", weight: "routine" },
+  "approval.expire": { sentence: () => "An approval ran out of time without an answer", weight: "routine" },
+  "automation.reassign": plain("handed a schedule or webhook to someone else", "important"),
+  "memory.save": plain("saved a memory"),
+  "memory.delete": plain("deleted a memory", "important"),
+  "memory.restore": plain("brought back a memory"),
+  "memory.redact": plain("erased what a memory said", "important"),
+  "skill.create": named("added", "the skill", "a skill"),
+  "skill.update": named("changed", "the skill", "a skill"),
+  "skill.delete": named("deleted", "the skill", "a skill", "important"),
+  "skill.file.put": plain("saved a file in a skill"),
+  "skill.file.delete": plain("deleted a file from a skill"),
+  "skill_library.create": named("added", "the skill library", "a skill library"),
+  "skill_library.update": named("changed", "the skill library", "a skill library"),
+  "skill_library.delete": named("removed", "the skill library", "a skill library", "important"),
+  "skill.library.detach": named("detached", "the skill library", "a skill library"),
+  "skill.library.update_proposed": plain("found an update of a skill library"),
+  "skill.library.update_apply": plain("applied an update of a skill library"),
+  "skill.library.update_reject": plain("rejected an update of a skill library"),
+  "schedule.create": named("created", "the schedule", "a schedule"),
+  "schedule.update": named("changed", "the schedule", "a schedule"),
+  "schedule.delete": named("deleted", "the schedule", "a schedule", "important"),
+  "schedule.run_now": named("ran now", "the schedule", "a schedule"),
+  "webhook.update": named("changed", "the webhook", "a webhook"),
+  "webhook.rotate_secret": named("made a new secret for", "the webhook", "a webhook", "important"),
+  "webhook.test_sent": named("sent a test to", "the webhook", "a webhook"),
+  "eval.question.create": plain("added an eval question"),
+  "eval.question.update": plain("changed an eval question"),
+  "eval.question.delete": plain("deleted an eval question"),
+  "eval.run.start": plain("started an eval run"),
+  "eval.run.cancel": plain("stopped an eval run"),
+  "eval.run.delete": plain("deleted an eval run"),
+  "eval.schedule.create": plain("scheduled eval runs"),
+  "eval.schedule.update": plain("changed the schedule of eval runs"),
+  "eval.schedule.delete": plain("stopped scheduled eval runs"),
+  "eval.settings.update": plain("changed the eval settings", "important"),
 };
 
 /** A settings section id in words for a sentence: "terminal" → "web terminal", an unknown one reads as its id with spaces. */
@@ -578,19 +761,142 @@ export function isSystemAudit(e: { actor_kind: string; action: string }): boolea
   );
 }
 
+/** Two actions whose sentences read alike get their own words in the filter (the list never repeats a line). */
+const FILTER_LABEL: Record<string, string> = {
+  "member.add": "Added a person to the organization",
+  "workspace.access.grant": "Added a person to a workspace",
+  "invitation.create": "Invited a person to the organization",
+  "member.invite": "Sent an invitation",
+  "approval.decide": "Answered an approval",
+  "action_approval.decide": "Answered an app action approval",
+  "skill.library.add": "Added a skill library",
+  "skill_library.create": "Connected a skill library",
+  "admin.user_update": "Changed a person's account",
+  "plugin.approve": "Approved an app update",
+  "plugin.auto_approved": "An app was approved automatically",
+  "app_instance.delete": "Removed an app from a workspace",
+  "connector.created": "A chat platform announced itself",
+  "connector.updated": "A chat platform announced a change",
+  "admin.workspace.delete": "Deleted a workspace as an administrator",
+  "admin.org.delete": "Deleted an organization as an administrator",
+};
+
+/** An action in words for a filter, without a subject: "Revoked an API key", "Saved a memory". */
+export function auditActionLabel(action: string): string {
+  const known = FILTER_LABEL[action] ?? (AUDIT_ACTION as Record<string, { label: string } | undefined>)[action]?.label;
+  if (known) return known;
+  const tpl = AUDIT_SENTENCE[action];
+  const text = tpl ? tpl.sentence("", null, {}).trim() : action.replace(/[._]/g, " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Where an action belongs in the filter's list, by what it is about. */
+const AUDIT_GROUPS: [string, string[]][] = [
+  ["People and sign-in", ["user", "session", "cli_login", "instance_admin", "org_role", "user_link", "user_token", "invitation", "scim", "scim_token", "oauth_client", "member", "workspace_access", "workspace.access", "group", "group_access", "group_member", "admin.user"]],
+  ["Agents", ["agent", "agent_link", "reach", "reach_grant", "ssh_key", "ssh_session", "preview", "api_key", "push", "push_subscription"]],
+  ["Apps and accounts", ["plugin", "addon", "addon_source", "app_instance", "app_setup_request", "connect", "connection", "grant", "secret", "secret_stores", "trusted_key", "account", "policy", "approval", "action_approval"]],
+  ["Chat platforms", ["channel", "channel_integration", "channel_presence", "connector", "admin.connector", "presence", "space_binding", "dm_default"]],
+  ["Conversations, memory and skills", ["conversation", "transcript_event", "attachment", "memory", "skill", "skill_library", "schedule", "webhook", "eval", "automation"]],
+  ["Workspaces and organizations", ["workspace", "org", "retention", "governance", "instance_settings", "placement", "admin.org", "admin.workspace", "admin.runner", "runner"]],
+];
+
+/** What only an instance administrator does: not offered on a workspace's or an organization's audit. */
+const INSTANCE_ONLY = ["instance_settings.", "placement.", "plugin.", "addon", "trusted_key.", "admin.", "connector.", "runner.", "scim", "secret_stores.", "instance_admin.", "oauth_client.", "push.vapid", "org_role.", "channel.credential_dead", "user.admit_by_claim"];
+
+export interface AuditFilterGroup {
+  group: string;
+  options: { value: string; label: string }[];
+}
+
+/** The action filter's choices, grouped, in words. `instance` offers every action; the others leave out the instance administrator's. */
+export function auditFilterGroups(level: "workspace" | "organization" | "instance"): AuditFilterGroup[] {
+  const groupOf = (action: string) => {
+    const head = action.includes(".") ? action.slice(0, action.indexOf(".")) : action;
+    // The longest key that names the action wins: "admin.connector" (a prefix) over "admin"; "workspace_access" (the first word).
+    let best: { group: string; len: number } | null = null;
+    for (const [group, keys] of AUDIT_GROUPS) {
+      for (const k of keys) {
+        const hit = k.includes(".") ? action.startsWith(k) : head === k;
+        if (hit && (best === null || k.length > best.len)) best = { group, len: k.length };
+      }
+    }
+    return best?.group ?? "Other";
+  };
+  const out = new Map<string, AuditFilterGroup>();
+  for (const [g] of AUDIT_GROUPS) out.set(g, { group: g, options: [] });
+  out.set("Other", { group: "Other", options: [] });
+  for (const action of Object.keys(AUDIT_SENTENCE)) {
+    if (level !== "instance" && INSTANCE_ONLY.some((p) => action.startsWith(p))) continue;
+    out.get(groupOf(action))!.options.push({ value: action, label: auditActionLabel(action) });
+  }
+  return [...out.values()].filter((g) => g.options.length > 0).map((g) => ({ ...g, options: g.options.sort((a, b) => a.label.localeCompare(b.label)) }));
+}
+
+/** What the platform's own jobs are called in words (the audit's `actor_label` of a `system` actor is the job's slug). */
+const MACHINE_ACTORS: Record<string, string> = {
+  placement: "New-user placement",
+  retention: "Data retention",
+  "attachment-sweep": "Attachment clean-up",
+  evals: "Scheduled evals",
+  "governance-reevaluation": "Rules re-check",
+  "agent-token-max-age": "Token age limit",
+  "registry-compiler": "App registry",
+  "skill-library-refresh": "Skill library refresh",
+  "ssh-terminator": "SSH gateway",
+  "workspace-delete": "Clean-up after a deletion",
+  "org-delete": "Clean-up after a deletion",
+  "agent-delete": "Clean-up after a deletion",
+  "addon-source-poll": "App source check",
+  "app-setup-requests": "App requests",
+  "channel-deprovision": "Chat platform clean-up",
+  "user-token": "Chat accounts",
+  "aurora-api push rotate-vapid": "Push notification keys",
+  "plugin-builtin": "Built-in apps",
+  "plugin-directory": "App directory",
+};
+
+/** The first word of a name ("Alice Admin" → "Alice"). */
+const firstName = (full: string) => full.trim().split(/\s+/)[0] ?? full;
+
+/** "alice.smith@example.test" → "Alice.smith": a person with no display name yet is never shown as an e-mail address. */
+function nameFromAddress(label: string): string {
+  const local = label.includes("@") ? (label.split("@")[0] ?? "") : label;
+  return local ? `${local.charAt(0).toUpperCase()}${local.slice(1)}` : label;
+}
+
+/**
+ * Who did it, in words (workspace-3, admin-10): `name` leads the sentence ("Alice"), `full` is the line under it
+ * ("Alice Admin"). People are named by their display name (`actor_name`), never by e-mail; Aurora's own jobs are "Aurora"
+ * with the job in words; a key says so; no dotted or dashed slug is ever shown.
+ */
+export function auditActor(e: { actor_kind?: string; actor_label: string; actor_name?: string | null }): { name: string; full: string } {
+  const kind = e.actor_kind ?? "user";
+  if (kind === "system") return { name: "Aurora", full: MACHINE_ACTORS[e.actor_label] ?? (e.actor_label.startsWith("connector:") ? "A chat platform" : "Aurora") };
+  const person = e.actor_name?.trim() || (e.actor_label ? nameFromAddress(e.actor_label) : "Someone");
+  if (kind === "service") {
+    // A key acts as its owner (an address label); the directory-sync and sign-in-provider services have labels of their own.
+    if (e.actor_label.startsWith("scim")) return { name: "Directory sync", full: "Directory sync" };
+    if (e.actor_label.startsWith("idp:")) return { name: "The sign-in provider", full: "The sign-in provider" };
+    return e.actor_name?.trim() ? { name: firstName(person), full: `${person} (through an API key)` } : { name: "An API key", full: "An API key" };
+  }
+  if (kind === "agent") return { name: e.actor_label || "An agent", full: `${e.actor_label || "An agent"} (agent)` };
+  return { name: firstName(person), full: person };
+}
+
 /** The words of one audit entry: the sentence and how much it matters. An action with no template says so, plainly. */
 export function auditWords(
-  e: { action: string; actor_label: string; critical?: boolean; metadata?: unknown },
+  e: { action: string; actor_label: string; actor_kind?: string; actor_name?: string | null; critical?: boolean; metadata?: unknown },
   target: string | null,
 ): { sentence: string; weight: "critical" | AuditWeight; known: boolean } {
   const meta = e.metadata && typeof e.metadata === "object" && !Array.isArray(e.metadata) ? (e.metadata as Record<string, unknown>) : {};
   const t = target ?? (typeof meta.name === "string" ? meta.name : typeof meta.email === "string" ? meta.email : null);
   const tpl = AUDIT_SENTENCE[e.action];
+  const actor = auditActor(e).name;
   if (!tpl) {
     const readable = (AUDIT_ACTION as Record<string, { label: string } | undefined>)[e.action]?.label ?? e.action.replace(/[._]/g, " ");
-    return { sentence: `${e.actor_label} did something (“${readable}”)`, weight: e.critical ? "critical" : "routine", known: false };
+    return { sentence: `${actor} did something (“${readable}”)`, weight: e.critical ? "critical" : "routine", known: false };
   }
-  return { sentence: tpl.sentence(e.actor_label, t, meta), weight: e.critical ? "critical" : tpl.weight, known: true };
+  return { sentence: tpl.sentence(actor, t, meta), weight: e.critical ? "critical" : tpl.weight, known: true };
 }
 
 /** (P5-REFINE-13, access-9) What an AI endpoint's models are, in one phrase, by its provider kind. */

@@ -77,6 +77,10 @@ export function useResolve(orgSlug: string | undefined, wsSlug?: string) {
       unwrap(api.GET("/v1/resolve", { params: { query: { org: orgSlug!, workspace: wsSlug } } })),
     enabled: !!orgSlug,
     retry: retryUnlessClientError,
+    // (P5-REFINE-20, org-3) A 404 is the answer ("there is no such organization"), not a failure to try again: every new
+    // observer that mounts (the shell shows the not-found state, the page frame mounts again) must not refetch it, or the
+    // error is cleared, the page renders, mounts a fresh observer, and the loop never ends.
+    retryOnMount: false,
   });
 }
 

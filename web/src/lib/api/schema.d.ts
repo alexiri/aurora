@@ -7965,6 +7965,11 @@ export interface components {
             /** @description `user` | `service` | `agent` | `system` | `instance_admin` */
             actor_kind: string;
             actor_label: string;
+            /**
+             * @description (P5-REFINE-20) The person's display name when the actor is a person (`user` or `instance_admin`); null for a system,
+             *     a service key, an agent or a person who no longer exists. The dashboard names people with it, never by e-mail.
+             */
+            actor_name?: string | null;
             /** Format: date-time */
             created_at: string;
             /** @description Row of the security-critical set (`04 §Audit`), written atomically with its change. */

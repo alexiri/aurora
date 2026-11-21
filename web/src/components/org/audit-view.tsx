@@ -6,6 +6,7 @@ import { useState } from "react";
 import { AuditPanel, type AuditFilters } from "@/components/audit/audit-panel";
 import { useOrgAudit } from "@/lib/api/org";
 import { basicFromParams, useWriteAuditParams } from "@/lib/audit-url";
+import { auditFilterGroups } from "@/lib/labels";
 
 export function OrgAuditView({ orgId }: { orgId: string }) {
   const params = useSearchParams();
@@ -16,7 +17,7 @@ export function OrgAuditView({ orgId }: { orgId: string }) {
     <AuditPanel
       title="Audit log"
       description="Who did what in this organization, newest first."
-      placeholder="Action, e.g. member.update"
+      actions={auditFilterGroups("organization")}
       feed={audit}
       filters={filters}
       onFilters={(n) => {

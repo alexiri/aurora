@@ -36,6 +36,7 @@ import {
   type WorkspaceRole,
 } from "@/lib/api/groups";
 import { orgRoutes } from "@/lib/routes";
+import { WORKSPACE_ROLE_OPTIONS } from "@/lib/labels";
 import { useWorkspaces } from "@/lib/api/queries";
 
 import { ImpactSummary } from "./impact-summary";
@@ -331,7 +332,7 @@ function Workspaces({ g, orgId }: { g: Group; orgId: string }) {
             <Select id="gw-ws" value={ws} className="w-64 max-w-full" placeholder="Select a workspace…" onChange={setWs} options={candidates.map((w) => ({ value: w.id, label: w.name }))} />
           </Field>
           <Field id="gw-role" label="Role">
-            <Select id="gw-role" value={role} className="w-40" onChange={(v) => setRole(v as WorkspaceRole)} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
+            <Select id="gw-role" value={role} className="w-40" onChange={(v) => setRole(v as WorkspaceRole)} options={WORKSPACE_ROLE_OPTIONS} />
           </Field>
           <Button type="submit" disabled={!ws || put.isPending}>
             Add
@@ -360,7 +361,7 @@ function BindingRow({
     <tr>
       <Td className="font-medium">{b.workspace.name}</Td>
       <Td>
-        <Select aria-label={`Role in ${b.workspace.name}`} value={b.role} disabled={put.isPending} className="w-36" onChange={(v) => put.mutate({ group: g.id, role: v as WorkspaceRole }, { onError })} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
+        <Select aria-label={`Role in ${b.workspace.name}`} value={b.role} disabled={put.isPending} className="w-36" onChange={(v) => put.mutate({ group: g.id, role: v as WorkspaceRole }, { onError })} options={WORKSPACE_ROLE_OPTIONS} />
       </Td>
       <Td className="text-right">
         <Button variant="outline" size="sm" aria-label={`Remove access to ${b.workspace.name}`} onClick={() => setConfirm(true)}>

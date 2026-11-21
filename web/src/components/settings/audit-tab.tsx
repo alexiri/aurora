@@ -7,6 +7,7 @@ import { AuditPanel, type AuditFilters } from "@/components/audit/audit-panel";
 import { useAccess, useAudit, useWorkspaceKeys } from "@/lib/api/account";
 import { useAgents } from "@/lib/api/queries";
 import { basicFromParams, useWriteAuditParams } from "@/lib/audit-url";
+import { auditFilterGroups } from "@/lib/labels";
 
 /** The workspace Audit tab: the shared audit panel (D-373), with the filters in the URL. */
 export function AuditTab({ wsId }: { wsId: string }) {
@@ -27,7 +28,7 @@ export function AuditTab({ wsId }: { wsId: string }) {
       headed={false}
       title="Workspace audit entries"
       description="Who changed what in this workspace."
-      placeholder="Action, e.g. workspace.update"
+      actions={auditFilterGroups("workspace")}
       targetName={(e) => (e.target_id ? (names.get(e.target_id) ?? null) : null)}
       feed={audit}
       filters={filters}

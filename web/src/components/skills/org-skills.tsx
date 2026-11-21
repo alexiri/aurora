@@ -23,14 +23,16 @@ export function OrgSkills() {
             description="Skills every agent in this organization can use."
             actions={<LibrariesLink slug={slug} orgId={org.id} />}
           />
-          <div className="mb-4">
-            <Notice role="status">
-              A workspace skill or an agent&apos;s own skill with the same name overrides an organization skill for that workspace or agent. Workspace owners manage
-              workspace skills on each workspace&apos;s Skills page.
-            </Notice>
-          </div>
           <AddLibraryCallToAction slug={slug} orgId={org.id} />
           <SkillsEditor scope={{ kind: "organization", id: org.id }} orgId={org.id} />
+          {/* (P5-REFINE-20, org-12) The precedence lives under "How skills combine", as on the workspace's page. */}
+          <details className="mt-6 rounded-card border border-line bg-surface px-5 py-3 text-sm" data-testid="skills-combine">
+            <summary className="cursor-pointer font-semibold text-ink">How skills combine</summary>
+            <p className="mt-2 text-ink-2">
+              A workspace skill or an agent&apos;s own skill with the same name overrides an organization skill for that workspace or agent. Workspace owners manage
+              workspace skills on each workspace&apos;s Skills page.
+            </p>
+          </details>
         </div>
       )}
     </OrgGate>

@@ -10,8 +10,8 @@ import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { Select } from "@/components/ui/select";
 import { usePatchWorkspace } from "@/lib/api/account";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
-import { useAgents, type Workspace } from "@/lib/api/queries";
-import { MEMORY_LANGUAGES, timeZones } from "@/lib/nav/landing";
+import type { Workspace } from "@/lib/api/queries";
+import { MEMORY_LANGUAGES, memoryLanguageName, timeZones } from "@/lib/nav/landing";
 
 export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn: boolean }) {
   const patch = usePatchWorkspace(workspace.id);
@@ -21,12 +21,19 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
   const [lang, setLang] = useState(workspace.memory_language);
   const [clientErr, setClientErr] = useState("");
   const bar = useSaveBar();
-  // (workspace-7) The first agent's name in the memory-language label: "Language Dani remembers in".
-  const agents = useAgents(workspace.id);
-  const agentName = agents.data?.items[0]?.name;
   const [savedName, setSavedName] = useState<string | null>(null);
   // What is saved: the form's start, and again after each save (the workspace-7 finding: "Saved" appears).
   const [base, setBase] = useState({ name: workspace.name, tz: workspace.timezone, lang: workspace.memory_language });
+  // The page no longer remounts this form when the workspace changes (a remount after the save dropped "Saved. The
+  // workspace is now called …"): a workspace changed from elsewhere starts the form again from what is stored.
+  const [seenAt, setSeenAt] = useState(workspace.updated_at);
+  if (workspace.updated_at !== seenAt) {
+    setSeenAt(workspace.updated_at);
+    setName(workspace.name);
+    setTz(workspace.timezone);
+    setLang(workspace.memory_language);
+    setBase({ name: workspace.name, tz: workspace.timezone, lang: workspace.memory_language });
+  }
   const dirty = name !== base.name || tz !== base.tz || lang !== base.lang;
   const fe = patch.error ? fieldErrors(patch.error) : {};
 
@@ -73,11 +80,11 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
         <Altitude id="ws.memlang" level="expert" promote={!!fe.memory_language}>
           <Field
             id="set-lang"
-            label={`Language ${agentName ?? "your agents"} ${agentName ? "remembers" : "remember"} in`}
+            label="Language agents remember in"
             hint="Language used for memory search indexing."
             error={fe.memory_language}
           >
-            <Select id="set-lang" value={lang} onChange={setLang} options={langOptions.map((l) => ({ value: l, label: l }))} />
+            <Select id="set-lang" value={lang} onChange={setLang} options={langOptions.map((l) => ({ value: l, label: memoryLanguageName(l) }))} />
           </Field>
         </Altitude>
       </fieldset>

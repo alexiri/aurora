@@ -13,6 +13,7 @@ import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { ApiError } from "@/lib/api/client";
 import { lastScope } from "@/lib/nav/recent-scopes";
+import { workspaceDisplayName } from "@/lib/workspace-name";
 import { pickRailWorkspace, useRailWorkspace, writeRailWorkspace } from "@/lib/nav/manage-return";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, ADMIN_RAIL_GROUPS, ADMIN_RAIL_LABEL, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
@@ -470,7 +471,9 @@ function SidebarContent({
   useRefreshAttentionOnMutation(true);
   const resolved = useResolve(orgSlug);
   useRememberReturn(orgSlug, wsSlug, resolved.data?.org.name, !inAdmin);
-  const wsName = resolved.data?.workspace?.name;
+  // (P5-REFINE-20, workspace-7) The remembered name is the one name everyone sees ("Your workspace"), not the stored one.
+  const resolvedWs = resolved.data?.workspace;
+  const wsName = resolvedWs ? workspaceDisplayName(resolvedWs, meQuery.data?.user) : undefined;
   useEffect(() => {
     if (orgSlug && wsSlug && wsName) writeRailWorkspace({ orgSlug, wsSlug, wsName });
   }, [orgSlug, wsSlug, wsName]);

@@ -81,6 +81,8 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("an organization admin narrows the allowed models and the page keeps Administration's limit visible above", async ({ page }) => {
         await open(page, "/o/acme/ai-models", scheme);
+        // (P5-REFINE-20, org-7) What Administration set comes last, collapsed: "Set above you".
+        await page.getByTestId("models-above").locator("summary").click();
         const above = page.getByRole("region", { name: "Set for you by an Aurora administrator" });
         await expect(above).toContainText("Which AI keys agents may use");
         await expect(above).toContainText("Only keys an administrator approved");

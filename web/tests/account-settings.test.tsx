@@ -120,6 +120,10 @@ describe("AccessTab", () => {
     // Remove is in the row's … menu (D6); organization owners have no menu.
     expect(screen.getByRole("button", { name: "More for Bob" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "More for Boss" })).not.toBeInTheDocument();    expect(await screen.findByLabelText("Organization member")).toBeInTheDocument();
+    // (workspace-7) The role choices are words, not the raw role values.
+    const role = screen.getByLabelText("Role") as HTMLSelectElement;
+    expect(Array.from(role.options).map((o) => o.textContent)).toEqual(["Member", "Approver", "Owner"]);
+    expect(role.selectedOptions[0]!.textContent).toBe("Member");
   });
   it("member sees a read-only list", async () => {
     mockFetch({ "GET /v1/workspaces/w/access": () => json(200, bindings) });

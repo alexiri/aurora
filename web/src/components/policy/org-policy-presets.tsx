@@ -57,7 +57,7 @@ export function OrgPolicyPresets({ org, part }: { org: Org; part: OrgPart }) {
   const draft = policy.data ? draftFromGeneration(policy.data.draft) : null;
   const askOn = (published?.rules ?? []).some((r) => r.name === ORG_ASK_RULE_NAME);
   const current = detectOrgPreset(form, floors, part, askOn);
-  const base: PresetId = current ?? PRESET_IDS.find((id) => orgPresetForbidden(id, floors, part) === null) ?? "open";
+  const base: PresetId = current ?? PRESET_IDS.find((id) => orgPresetForbidden(id, floors, part, form) === null) ?? "open";
 
   async function choose(id: PresetId) {
     setError(null);
@@ -98,7 +98,7 @@ export function OrgPolicyPresets({ org, part }: { org: Org; part: OrgPart }) {
         disabled={busy || put.isPending}
         onChange={(v) => v && void choose(v)}
         options={PRESET_IDS.map((id) => {
-          const why = orgPresetForbidden(id, floors, part);
+          const why = orgPresetForbidden(id, floors, part, form);
           return {
             value: id,
             label: PRESETS[id].label,
