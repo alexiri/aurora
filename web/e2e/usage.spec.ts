@@ -58,7 +58,8 @@ for (const scheme of ["light", "dark"] as const) {
       });
 
       test("the agent's Computer page shows the Usage card with See usage", async ({ page }) => {
-        await openRoute(page, "/o/acme/w/main/agents/daneel?tab=computer", scheme);
+        // (P5-REFINE-20 #11) The Usage card is on the Computer's Details (`?tab=computer` opens on Files).
+        await openRoute(page, "/o/acme/w/main/agents/daneel?tab=details", scheme);
         const card = page.getByRole("region", { name: "Usage" });
         await expect(card).toBeVisible();
         await expect(card.getByRole("link", { name: "See usage" })).toHaveAttribute("href", /\/activity\?tab=usage&agent=/);

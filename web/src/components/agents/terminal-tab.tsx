@@ -567,7 +567,7 @@ export function TerminalPane({
             Try again
           </Button>
           <Altitude id="agent.terminal" level="expert">
-            <a href="?tab=computer" className="text-xs text-accent-ink underline underline-offset-2">
+            <a href="?tab=details" className="text-xs text-accent-ink underline underline-offset-2">
               Report it
             </a>
           </Altitude>

@@ -120,7 +120,8 @@ test.describe("FIX-029 retry and start-log screens", () => {
         });
         await page.setViewportSize({ width, height: 900 });
         await page.emulateMedia({ colorScheme: scheme });
-        await page.goto("/o/acme/w/main/agents/daneel?tab=computer");
+        // (P5-REFINE-20 #11) `?tab=computer` opens on Files now; the start log is on Details.
+        await page.goto("/o/acme/w/main/agents/daneel?tab=details");
         // (P5-POLISH-6) The engine's details are collapsed under Technical details.
         await page.getByText("Technical details").click();
         await expect(page.getByRole("heading", { name: "Start log" })).toBeVisible();
