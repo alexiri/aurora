@@ -50,7 +50,8 @@ exists answer `404` or `403`, connect again and choose the other region.
 
 1. An administrator registers the host once: open *Self-hosted apps* (organization owners and admins
    for one organization, instance admins for all), choose Sentry and enter the host name, for example
-   `sentry.example.com` (no `https://`, port or path). Aurora checks `GET /api/0/` first.
+   `sentry.example.com` (no `https://` or port). If the server lives under a path, fill **Path** too;
+   pasting the full address fills both. Aurora checks `GET /api/0/` first.
    Registering decides where credentials may be sent, so only register hosts you trust.
 2. Create an internal integration in your Sentry as above, connect, and choose the registered server.
 

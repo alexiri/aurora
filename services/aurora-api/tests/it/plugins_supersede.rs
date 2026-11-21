@@ -646,7 +646,7 @@ async fn one_sentry_app_takes_over_the_region_and_self_hosted_connections() {
     let v2 = a
         .upload_with(&shipped, &[("agent/sentry/api-notes.md", notes.as_slice())])
         .await;
-    assert_eq!(v2["version"], "2.3.0", "{v2}");
+    assert_eq!(v2["version"], "2.3.1", "{v2}");
     if v2["status"] == "pending_approval" {
         let (st, b) = a.act(&v2["id"], "approve").await;
         assert_eq!(st, 200, "{b}");
@@ -689,7 +689,7 @@ async fn one_sentry_app_takes_over_the_region_and_self_hosted_connections() {
         (
             "sentry".to_owned(),
             "sentry".to_owned(),
-            "2.3.0".to_owned(),
+            "2.3.1".to_owned(),
             Some("token".to_owned()),
             "active".to_owned(),
             inst,
@@ -753,14 +753,14 @@ async fn one_sentry_app_takes_over_the_region_and_self_hosted_connections() {
 
     // Rerunning the step is a no-op (the presets are refreshed, not duplicated).
     let stored: Value = sqlx::query_scalar(
-        "SELECT manifest FROM plugin_packages WHERE package_id = 'sentry' AND version = '2.3.0'",
+        "SELECT manifest FROM plugin_packages WHERE package_id = 'sentry' AND version = '2.3.1'",
     )
     .fetch_one(p)
     .await
     .unwrap();
     let manifest: Manifest = serde_json::from_value(stored).unwrap();
     let mut tx = p.begin().await.unwrap();
-    let again = supersede::apply(&mut tx, &manifest, "2.3.0").await.unwrap();
+    let again = supersede::apply(&mut tx, &manifest, "2.3.1").await.unwrap();
     tx.commit().await.unwrap();
     assert!(again.is_empty(), "{again:?}");
     assert_eq!(again.presets, 2);

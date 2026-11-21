@@ -2,14 +2,15 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ConflictGroup } from "@/components/admin/host-claims-view";
-import { PluginReview } from "@/components/admin/plugin-detail-view";
+import { PluginDetailView, PluginReview } from "@/components/admin/plugin-detail-view";
 import { UploadForm } from "@/components/admin/plugins-view";
 import type { HostClaimConflict, PluginPackage } from "@/lib/api/plugins";
 import { wrap } from "./support/render";
 
 const push = vi.fn();
+const replace = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push, replace: vi.fn(), back: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push, replace, back: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/admin/apps/p1",
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -71,6 +72,42 @@ const plugin: PluginPackage = {
   approved_at: null,
   created_at: "2026-01-01T00:00:00Z",
 };
+
+// (FIX-201, D-438, C-1120) An app's name links by package id; the page resolves it to a version's UUID.
+describe("PluginDetailView with a package id", () => {
+  const U1 = "00000000-0000-4000-8000-000000000001";
+  const U2 = "00000000-0000-4000-8000-000000000002";
+  const row = (id: string, status: string) => ({ ...plugin, id, package_id: "atlassian", status });
+
+  it("replaces the address with the active version's UUID", async () => {
+    replace.mockClear();
+    const calls = mockFetch(() => json(200, { items: [row(U2, "pending_approval"), row(U1, "active")], next_cursor: null }));
+    wrap(<PluginDetailView id="atlassian" />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(`/admin/apps/packages/${U1}`));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.path).toBe("/v1/admin/plugins");
+    expect(calls[0]!.search).toContain("package_id=atlassian");
+    // usePlugin is never called with a package id
+    expect(calls.some((c) => c.path === "/v1/admin/plugins/atlassian")).toBe(false);
+  });
+
+  it("falls back to the newest version when none is active", async () => {
+    replace.mockClear();
+    mockFetch(() => json(200, { items: [row(U2, "pending_approval"), row(U1, "superseded")], next_cursor: null }));
+    wrap(<PluginDetailView id="atlassian" />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(`/admin/apps/packages/${U2}`));
+  });
+
+  it("says no such package is installed, not the form error", async () => {
+    replace.mockClear();
+    mockFetch(() => json(200, { items: [], next_cursor: null }));
+    wrap(<PluginDetailView id="nope" />);
+    expect(await screen.findByText("No app package called nope is installed.")).toBeInTheDocument();
+    expect(screen.queryByText(/check the form/i)).toBeNull();
+    expect(screen.getByRole("link", { name: /Administration › Apps/ })).toHaveAttribute("href", "/admin/apps?tab=apps");
+    expect(replace).not.toHaveBeenCalled();
+  });
+});
 
 describe("PluginReview", () => {
   it("enables approve at once, with every section open, and returns to the list with the app's name (E5)", async () => {

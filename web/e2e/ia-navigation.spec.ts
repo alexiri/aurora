@@ -93,7 +93,8 @@ const MOVED: [string, RegExp][] = [
   ["/admin/identity", /\/admin\/people\?tab=sign-in$/],
   ["/admin/placement", /\/admin\/people\?tab=new-users$/],
   ["/admin/plugins", /\/admin\/apps\?tab=apps$/],
-  ["/admin/plugins/github", /\/admin\/apps\/packages\/github$/],
+  // (FIX-201) The package page replaces a package id with the version's UUID.
+  ["/admin/plugins/github", new RegExp(`/admin/apps/packages/${id(1002)}$`)],
   ["/admin/addon-sources", /\/admin\/apps\?tab=advanced#package-sources$/],
   ["/admin/trusted-keys", /\/admin\/apps\?tab=advanced#publishers$/],
   ["/admin/host-claims", /\/admin\/apps\?tab=advanced#host-conflicts$/],

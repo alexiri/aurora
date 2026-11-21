@@ -46,8 +46,8 @@ JSON requests, the title or message.
 gitlab.com works out of the box. For your own GitLab, an administrator registers it once:
 
 1. Open {{aurora.page:self_hosted}} (organization owners and admins for one organization, instance
-   admins for all), choose GitLab, enter the host, for example `gitlab.example.com` (host name only: no `https://`,
-   port or path), and register it. Aurora checks `GET /api/v4/version` first. Registering decides
+   admins for all), choose GitLab, enter the host, for example `gitlab.example.com` (no `https://` or port; if the server
+   lives under a path, fill **Path** too, and pasting the full address fills both), and register it. Aurora checks `GET /api/v4/version` first. Registering decides
    where GitLab credentials may be sent, so only register hosts you trust.
 2. Create the OAuth application **on that GitLab** (see above) and add it under *Credentials,
    OAuth clients*, choosing the instance. Every instance has its own application.

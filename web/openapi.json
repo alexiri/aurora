@@ -3668,6 +3668,15 @@
             }
           },
           {
+            "name": "package_id",
+            "in": "query",
+            "description": "Exact match on the package id (C-1120); no match is an empty page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,

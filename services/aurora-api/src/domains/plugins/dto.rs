@@ -337,6 +337,8 @@ impl PluginPackage {
 pub struct ListPluginsQuery {
     /// Filter by package status.
     pub status: Option<String>,
+    /// Exact match on the package id (C-1120); no match is an empty page.
+    pub package_id: Option<String>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,
 }
