@@ -154,6 +154,9 @@ impl Env {
             reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(10))
+                // (FIX-217, SEC-04) A system proxy would resolve the name itself and the guarded
+                // resolver below would never run.
+                .no_proxy()
                 .dns_resolver(std::sync::Arc::new(Guarded)),
             extra_ca_bundle,
         )?
@@ -166,6 +169,7 @@ impl Env {
             reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(10))
+                .no_proxy() // (FIX-217) as above: the guard must see the lookup
                 .dns_resolver(std::sync::Arc::new(GuardedAllow(allow.clone()))),
             extra_ca_bundle,
         )?
@@ -268,6 +272,69 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reason(&open, "https://localhost:1/").await, "connect");
+    }
+
+    /// (FIX-217, SEC-04) Proxy environment variables do not apply to the guarded clients: with
+    /// `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` pointing at a local listener, a name that resolves to
+    /// loopback is still refused by the guard and the listener receives no connection. The variables
+    /// are set only on a child process (this test re-runs itself), so they cannot leak into other
+    /// tests of this process.
+    #[test]
+    fn proxy_environment_does_not_bypass_the_guard() {
+        if let Ok(port) = std::env::var("FIX217_PROXY_PORT") {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let ring = aurora_crypto::SecretRing::default();
+                let env = Env::new("http://hooks.example:4104", &ring, &[], None).unwrap();
+                let url = format!("https://localhost:{port}/");
+                for c in [&env.http, &env.http_instance] {
+                    let e = c.get(&url).send().await.unwrap_err();
+                    assert_eq!(classify_send_error(&e), "destination_refused", "{e:?}");
+                }
+            });
+            return;
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let proxy = format!("http://127.0.0.1:{port}");
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "domains::connect::env::tests::proxy_environment_does_not_bypass_the_guard",
+                "--nocapture",
+            ])
+            .env("FIX217_PROXY_PORT", port.to_string())
+            .env("HTTPS_PROXY", &proxy)
+            .env("HTTP_PROXY", &proxy)
+            .env("ALL_PROXY", &proxy)
+            .env("https_proxy", &proxy)
+            .env("http_proxy", &proxy)
+            .env("all_proxy", &proxy)
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "child failed:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+            "child did not run the test"
+        );
+        assert!(
+            matches!(
+                listener.accept().map(|_| ()).map_err(|e| e.kind()),
+                Err(std::io::ErrorKind::WouldBlock)
+            ),
+            "the proxy listener received a connection"
+        );
     }
 
     /// (FIX-106) Translated and reserved forms that embed or stand for a private IPv4 address are

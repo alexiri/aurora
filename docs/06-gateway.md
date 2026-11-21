@@ -713,7 +713,11 @@ minted.
    resolve at all (split-horizon DNS that only the proxy knows) is left to the
    egress proxy, since nothing was resolved here to judge. The egress proxy then resolves the
    name itself, so a DNS-rebinding window between the two lookups remains; it is
-   accepted, and the proxy's own policy is the second line.
+   accepted, and the proxy's own policy is the second line. (FIX-217, SEC-04) The API's own
+   outbound clients that dial through a destination guard (app-instance probes and connect
+   requests, push delivery, HashiCorp Vault) ignore `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY`:
+   a proxy would resolve the name itself and the guard would never see it. Outbound proxying for
+   apps is the gateway's `egress_proxy`, nothing else.
 3. **Method-override and path hygiene.** Requests carrying
    `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override` or a
    `_method` query parameter are refused (400 `method_override_refused`):
