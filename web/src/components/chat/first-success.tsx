@@ -86,7 +86,7 @@ function Card({
   switch (card.key) {
     case "first-answer":
       // "changed nothing outside this chat" is only said when the turn used no tools.
-      text = card.tools === 0 ? `${agentName} answered. It changed nothing outside this chat.` : `${agentName} answered and used ${card.tools} ${card.tools === 1 ? "tool" : "tools"}.`;
+      text = card.tools === 0 ? `${agentName} answered. It thought with the Company key and changed nothing outside this chat.` : `${agentName} answered and used ${card.tools} ${card.tools === 1 ? "tool" : "tools"}.`;
       action = onSeeWhatItDid ? (
         <Button type="button" variant="outline" size="sm" className="min-h-11 md:min-h-9" onClick={onSeeWhatItDid}>
           See what it did
