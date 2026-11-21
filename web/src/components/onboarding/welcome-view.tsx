@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { type ReactNode } from "react";
+import { type ReactNode, useSyncExternalStore } from "react";
 
 import { AgentSummary } from "@/components/agents/agent-summary";
 import { ErrorState, Loading } from "@/components/states";
@@ -45,6 +45,8 @@ export function roleSentence(role: string, agent: string): string | null {
  * cards from the five sentences of `14 §Information architecture`, "Get <Agent> talking" and what to do next. It is where
  * a person lands until the guide is finished or skipped (the guide marks Welcome seen when it completes).
  */
+const noSubscribe = () => () => {};
+
 export function WelcomeView() {
   const { org, ws } = useParams<{ org: string; ws: string }>();
   const search = useSearchParams();
@@ -56,8 +58,12 @@ export function WelcomeView() {
   const session = useSession();
   const patch = usePatchOnboarding();
   useMeOnboarding();
+  // The page's Suspense boundary (useSearchParams) can hydrate after the shell has already fetched these queries: the
+  // first client render must still be the server's (Loading), or React reports a hydration mismatch and rebuilds the
+  // tree (welcome-summary.spec, twice on CI). `false` while hydrating, `true` from then on.
+  const hydrated = useSyncExternalStore(noSubscribe, () => true, () => false);
 
-  if (resolved.isPending) return <Loading />;
+  if (!hydrated || resolved.isPending) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
   if (!resolvedWs) return <ErrorState error={{ code: "not_found" }} />;
   if (wsFull.isError) return <ErrorState error={wsFull.error} onRetry={() => wsFull.refetch()} />;
