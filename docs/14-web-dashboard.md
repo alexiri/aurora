@@ -472,8 +472,13 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   - A pending-approvals callout appears only when the count is above 0 and the
     user can approve. It shows the two most urgent items and a "Review all"
     link.
-  - Agents show as a card grid (avatar, name, `@handle`, kind and default
-    badges, plus a "New agent" tile for users who may create agents).
+  - Agents show as a card grid (P5-LAYOUT-3, D-440): the shared `CardGrid` of `AgentCard`s
+    (`components/agents/agent-card.tsx`), the same card as on the Agents page. A card has the
+    avatar, the name (the link to the agent's page), `@handle` and, at the right, the needs-you
+    chip when approvals wait; a badges line (kind chip, "BYO disabled by …", token badges for
+    owners); the agent's summary (C-986); and **Chat** at the foot. There is no "New agent"
+    tile: the **New agent** button stays in the section header. One agent is one card at the
+    start of the row.
   - The first-run checklist is a numbered list with a progress bar.
   - Recent activity shows the last few request-log entries (decision chip,
     method + host + path, agent, relative time) from the existing activity
@@ -1677,7 +1682,7 @@ every other topic is owners/admins and is not listed for a member.)
   say hello), agents, pending approvals, recent activity. (phase 4, P4-ONB-2) The
   checklist becomes the **getting-started guide** of `§Onboarding` (same component,
   collapsed to one line once complete).
-- **Agents** list → **agent page** tabs (phase 5, D-200: grouped into the sections
+- **Agents** list (P5-LAYOUT-3: the same `AgentCard`s in the `CardGrid` as Overview, with the summary and Chat) → **agent page** tabs (phase 5, D-200: grouped into the sections
   Chat · Behaviour · Triggers · Computer · Access of **Agent page (phase 5)**; each
   page below keeps its content and `?tab=` id):
   - **Chat** — (phase 2, RFE-010) per-conversation menu: Archive, Delete (typed

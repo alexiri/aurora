@@ -13,7 +13,7 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("Overview opens with its title and a sentence, and lists agents as rows with Chat", async ({ page }) => {
+      test("Overview opens with its title and a sentence, and lists agents as cards with Chat", async ({ page }) => {
         await openRoute(page, BASE, scheme);
         await expect(page.getByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
         const agents = page.getByRole("list", { name: "Agents" });
