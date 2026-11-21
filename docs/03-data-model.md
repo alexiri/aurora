@@ -1150,9 +1150,11 @@ other workspace); `skill_files` is unchanged.
 | id | uuid pk | |
 | org_id | uuid FK→organizations (cascade) | |
 | label | text not null | 1..80, unique per org (`skill_libraries_label_uq`) |
-| connection_id | uuid null FK→app_connections (set null) | **org-scoped** connection (service-enforced at create and at every refresh); set null when the connection is deleted → `status = error`, `last_error = connection_deleted` |
-| app_id | text not null | the git-hosting app (snapshot id) at creation, for the dashboard |
-| repo | text not null | validated against the package's `repo_pattern` |
+| connection_id | uuid null FK→app_connections (set null) | **unused since P5-SKLIB-1** (D-448): a library no longer needs an app connection; the column stays until a later cleanup and is never written or read |
+| app_id | text null | **unused since P5-SKLIB-1** (was the git-hosting app at creation); stays until a later cleanup |
+| url | text null CHECK null or 9..500 chars | (P5-SKLIB-1, C-1122/C-1123) the normalised https clone URL the API's own git reader fetches; null only on a row migrated from an app-connection library whose host was unknown (status `error`, "Enter the repository's git address"; `PATCH` may set it once) |
+| token_ref, token_updated_at | text null, timestamptz null | (C-1126, SEC-148) the sealed read-only access token `{ username, token }` (purpose `skill_library.token`, owner = the library id); both null or both set (`skill_libraries_token_ck`); never returned by any route |
+| repo | text null CHECK null or 1..500 chars | the display form `host/path` derived from `url` (was `owner/name`) |
 | ref | text null | validated ref; null = the repository's default branch |
 | path | text not null default `` | directory holding the skill directories, ≤ 4 segments |
 | status | text not null default `active` CHECK in (`active`,`paused`,`error`,`over_budget`) | `paused` = an admin stopped refreshing; `error` and `over_budget` are still refreshed (the job re-checks them) |
@@ -1163,7 +1165,7 @@ other workspace); `skill_files` is unchanged.
 | check_requested_at | timestamptz null | the last "Check now" (at most once per `LIBRARY_CHECK_NOW_INTERVAL`, 429 `library_check_too_soon`) (D-154) |
 | head_epoch | integer not null default 0 | bumped whenever an add clears `last_head_sha`; a refresh writes its head only if the epoch is the one it read (compare-and-set; FIX-096) |
 | created_by_user_id | uuid null FK→users (set null) | |
-| unique | (org_id, label) (`skill_libraries_label_uq`) | |
+| unique | (org_id, label) (`skill_libraries_label_uq`); (org_id, url, coalesce(ref, ''), path) where url is not null (`skill_libraries_url_uq`, 409 `library_exists`) | |
 | index | (org_id); (next_refresh_at) where status in (active, error, over_budget) | |
 
 ### `skill_library_heads` (FIX-096, D-178 Q-R5-3, D-210; heads browse and add accept)

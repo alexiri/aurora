@@ -12,5 +12,6 @@ mod membership_queries;
 mod migration_order;
 mod schema_6_11;
 mod schema_matches_spec;
+mod skill_library_git_url_migration;
 mod usage_ledger_migration;
 mod usage_per_model_migration;

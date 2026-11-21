@@ -1236,7 +1236,10 @@
       "refresh_failures",
       "refresh_lease_until",
       "repo",
-      "status"
+      "status",
+      "token_ref",
+      "token_updated_at",
+      "url"
     ],
     "skill_library_heads": [
       "commit_sha",
@@ -2825,7 +2828,7 @@
       "skill_id": "uuid"
     },
     "skill_libraries": {
-      "app_id": "text not null",
+      "app_id": "text null",
       "check_requested_at": "timestamptz null",
       "connection_id": "uuid null",
       "created_by_user_id": "uuid null",
@@ -2842,8 +2845,11 @@
       "ref": "text null",
       "refresh_failures": "integer not null",
       "refresh_lease_until": "timestamptz null",
-      "repo": "text not null",
-      "status": "text not null"
+      "repo": "text null",
+      "status": "text not null",
+      "token_ref": "text null",
+      "token_updated_at": "timestamptz null",
+      "url": "text null"
     },
     "skill_library_heads": {
       "commit_sha": "text",
