@@ -203,7 +203,10 @@ describe("run threads folded under their automation (D-409, C-1074)", () => {
     expect(chip.className).toContain("bg-pending-soft");
     // (batch 7, schedules-7) The chip is not inside the title's line clamp (it was clipped in a fixed-width list).
     expect(chip.closest(".line-clamp-2")).toBeNull();
-    expect(chip.className).toContain("shrink-0");
+    // (batch 8, schedules-7) It fits its column (wraps inside it) instead of running under the chevron or the "…" button.
+    expect(chip.className).toContain("min-w-0");
+    expect(chip.className).toContain("max-w-full");
+    expect(chip.className).not.toContain("shrink-0");
     expect(within(nav).getByText("It was started by a webhook that no longer exists. No new runs.")).toBeTruthy();
   });
 

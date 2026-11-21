@@ -138,7 +138,11 @@ for (const width of [1256, 1600]) {
       const [c, l] = [await chip.boundingBox(), await list.boundingBox()];
       expect(c!.x).toBeGreaterThanOrEqual(l!.x);
       expect(c!.x + c!.width).toBeLessThanOrEqual(l!.x + l!.width);
-      await list.getByRole("button", { name: /^Morning summary that is named/ }).click();
+      // (batch 8) It also stops short of the folder row's chevron, which sits at the row's right edge.
+      const folderRow = list.getByRole("button", { name: /^Morning summary that is named/ });
+      const chevron = await folderRow.locator("svg").last().boundingBox();
+      expect(c!.x + c!.width).toBeLessThanOrEqual(chevron!.x);
+      await folderRow.click();
       // Each run row's own title ends with its date and time ("… · 19 Nov 09:00"), never cut by a clamp.
       // Anchored on the title: each run row also has its own "Actions for Morning summary · …" menu button.
       const rows = list.getByRole("button", { name: /^Morning summary · \d{1,2} \w{3} \d\d:\d\d/ });
