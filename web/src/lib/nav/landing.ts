@@ -65,8 +65,19 @@ export function timeZones(): string[] {
 
 /** A memory language as a person reads it ("english" → "English"; the search config "simple" is any other language). */
 export function memoryLanguageName(language: string): string {
-  if (language === "simple") return "Any other language";
-  return language.charAt(0).toUpperCase() + language.slice(1);
+  const l = memoryLanguageConfig(language);
+  if (l === "simple") return "Any other language";
+  return l.charAt(0).toUpperCase() + l.slice(1);
+}
+
+const LANGUAGE_CODES: Record<string, string> = {
+  en: "english", de: "german", fr: "french", es: "spanish", it: "italian", pt: "portuguese",
+  nl: "dutch", sv: "swedish", no: "norwegian", nb: "norwegian", da: "danish", fi: "finnish", ru: "russian",
+};
+
+/** A stored language as the search config the list offers ("en" → "english"); anything else comes back unchanged. */
+export function memoryLanguageConfig(language: string): string {
+  return LANGUAGE_CODES[language.toLowerCase()] ?? language;
 }
 
 export const MEMORY_LANGUAGES = [

@@ -169,7 +169,8 @@ describe("workspace BYO setting (P5-LAYOUT-5, D-442, C-967)", () => {
     wrap(<GeneralTab workspace={workspace({ effective_byo_posture: { value: "enabled", level: "org" } })} canOwn />);
     const sel = (await screen.findByLabelText("Bring-your-own agents")) as HTMLSelectElement;
     expect([...sel.options].map((o) => o.value)).toEqual(["", "owners_only", "disabled"]);
-    expect(sel.options[0]).toHaveTextContent("Same as your organization (Members can create BYO agents)");
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["Same as your organization", "Only owners can create them", "No one can create them"]);
+    expect([...sel.options].every((o) => (o.textContent ?? "").length <= 30)).toBe(true);
     expect(screen.getByText("Your organization allows: members can create BYO agents. A workspace can only be stricter.")).toBeTruthy();
     expect(screen.getByLabelText("Time zone")).toBeTruthy();
     expect(screen.getByLabelText("Language agents remember in")).toBeTruthy();
@@ -230,7 +231,17 @@ describe("workspace BYO setting (P5-LAYOUT-5, D-442, C-967)", () => {
     wrap(<GeneralTab workspace={workspace({ byo_posture: "disabled", effective_byo_posture: { value: "disabled", level: "workspace" } })} canOwn />);
     const sel = (await screen.findByLabelText("Bring-your-own agents")) as HTMLSelectElement;
     expect([...sel.options].map((o) => o.value)).toEqual([""]);
-    expect(sel.options[0]).toHaveTextContent("Same as your organization (Nobody can create BYO agents)");
+    expect(sel.options[0]).toHaveTextContent(/^Same as your organization$/);
+  });
+
+  it("shows the language by name, never as a code", async () => {
+    mockFetch({ "GET /v1/orgs/o1/governance/effective": orgGov("enabled") });
+    wrap(<GeneralTab workspace={workspace({ memory_language: "en", effective_byo_posture: { value: "enabled", level: "org" } })} canOwn />);
+    const sel = (await screen.findByLabelText("Language agents remember in")) as HTMLSelectElement;
+    expect(sel.selectedOptions[0]).toHaveTextContent("English");
+    expect([...sel.options].map((o) => o.textContent)).toContain("Any other language");
+    expect([...sel.options].every((o) => (o.textContent ?? "").length > 3)).toBe(true);
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 
   it("a member never sees it and nothing about governance is read", async () => {

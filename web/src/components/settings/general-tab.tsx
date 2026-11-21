@@ -11,7 +11,7 @@ import { Select } from "@/components/ui/select";
 import { usePatchWorkspace } from "@/lib/api/account";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import type { Workspace } from "@/lib/api/queries";
-import { MEMORY_LANGUAGES, memoryLanguageName, timeZones } from "@/lib/nav/landing";
+import { MEMORY_LANGUAGES, memoryLanguageConfig, memoryLanguageName, timeZones } from "@/lib/nav/landing";
 
 import { ByoField, useByoChoice } from "./byo-field";
 
@@ -20,7 +20,7 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
   const zones = timeZones();
   const [name, setName] = useState(workspace.name);
   const [tz, setTz] = useState(workspace.timezone);
-  const [lang, setLang] = useState(workspace.memory_language);
+  const [lang, setLang] = useState(memoryLanguageConfig(workspace.memory_language));
   const [clientErr, setClientErr] = useState("");
   const bar = useSaveBar();
   const [savedName, setSavedName] = useState<string | null>(null);
@@ -28,7 +28,7 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
   const own = workspace.byo_posture ?? "";
   const [byo, setByo] = useState<string>(own);
   const byoChoice = useByoChoice(workspace, canOwn);
-  const [base, setBase] = useState({ name: workspace.name, tz: workspace.timezone, lang: workspace.memory_language, byo: own });
+  const [base, setBase] = useState({ name: workspace.name, tz: workspace.timezone, lang: memoryLanguageConfig(workspace.memory_language), byo: own });
   // The page no longer remounts this form when the workspace changes (a remount after the save dropped "Saved. The
   // workspace is now called …"): a workspace changed from elsewhere starts the form again from what is stored.
   const [seenAt, setSeenAt] = useState(workspace.updated_at);
@@ -36,9 +36,9 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
     setSeenAt(workspace.updated_at);
     setName(workspace.name);
     setTz(workspace.timezone);
-    setLang(workspace.memory_language);
+    setLang(memoryLanguageConfig(workspace.memory_language));
     setByo(own);
-    setBase({ name: workspace.name, tz: workspace.timezone, lang: workspace.memory_language, byo: own });
+    setBase({ name: workspace.name, tz: workspace.timezone, lang: memoryLanguageConfig(workspace.memory_language), byo: own });
   }
   const dirty = name !== base.name || tz !== base.tz || lang !== base.lang || (byoChoice.show && byo !== base.byo);
   const fe = patch.error ? fieldErrors(patch.error) : {};

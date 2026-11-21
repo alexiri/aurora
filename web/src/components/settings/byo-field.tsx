@@ -12,7 +12,13 @@ export const BYO_WORDS: Record<ByoPosture, string> = {
   owners_only: "Only workspace owners can create BYO agents",
   disabled: "Nobody can create BYO agents",
 };
-const words = (p: string): string => BYO_WORDS[p as ByoPosture] ?? p;
+/** The select's option labels: a native select cannot wrap, so they stay short; the help line carries the full sentence. */
+const BYO_SHORT: Record<ByoPosture, string> = {
+  enabled: "Members can create them",
+  owners_only: "Only owners can create them",
+  disabled: "No one can create them",
+};
+const words =(p: string): string => BYO_WORDS[p as ByoPosture] ?? p;
 const lower = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
 
 type Above = { value: string; source: string };
@@ -57,8 +63,8 @@ export function ByoField({ above, value, onChange, error }: { above: Above | nul
           value={value}
           onChange={onChange}
           options={[
-            { value: "", label: sentence ? `Same as your organization (${sentence})` : "Same as your organization" },
-            ...options.map((p) => ({ value: p, label: words(p) })),
+            { value: "", label: "Same as your organization" },
+            ...options.map((p) => ({ value: p, label: BYO_SHORT[p as ByoPosture] ?? p })),
           ]}
         />
       </Field>
