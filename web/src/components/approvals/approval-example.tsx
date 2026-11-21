@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { Fold } from "@/components/ui/fold";
 import type { Approval, Decision } from "@/lib/api/approvals";
 
 import { ApprovalQuestion } from "./approval-question";
@@ -47,26 +48,28 @@ export function ApprovalExample({ agentName, org, ws }: { agentName: string; org
     },
   } as Approval;
   return (
-    <section aria-label="Example approval" className="space-y-2" data-testid="approval-example">
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted">Example · this is what {agentName} asks before a change</p>
-      <div className="rounded-card border border-pending-line bg-surface p-4 shadow-card">
-        <ApprovalQuestion
-          approval={sample}
-          now={0}
-          pending={false}
-          canApprove
-          org={org}
-          ws={ws}
-          showExpiry={false}
-          showRequest={false}
-          onDecide={(d, always) => setSaid(exampleExplanation(agentName, d, always === true))}
-        />
-        {said ? (
-          <p role="status" className="mt-3 text-sm text-ink-2" data-testid="example-says">
-            {said}
-          </p>
-        ) : null}
-      </div>
-    </section>
+    <Fold summary="What an approval looks like" data-testid="approval-example">
+      <section aria-label="Example approval" className="mt-2 space-y-3">
+        <p className="text-ink-2">This is what {agentName} asks before it changes something. Try the buttons: nothing is sent.</p>
+        <div className="rounded-card border border-line bg-surface p-4 shadow-card">
+          <ApprovalQuestion
+            approval={sample}
+            now={0}
+            pending={false}
+            canApprove
+            org={org}
+            ws={ws}
+            showExpiry={false}
+            showRequest={false}
+            onDecide={(d, always) => setSaid(exampleExplanation(agentName, d, always === true))}
+          />
+          {said ? (
+            <p role="status" className="mt-3 text-sm text-ink-2" data-testid="example-says">
+              {said}
+            </p>
+          ) : null}
+        </div>
+      </section>
+    </Fold>
   );
 }

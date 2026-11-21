@@ -3093,8 +3093,9 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 - **Apps** keeps its grid of square cards with **Search apps** and the groups **Connected**, **Ready to connect**, **Needs an
   admin first** (A to Z; empty groups not drawn); the line for an app that needs an admin is "An admin sets up <what>
   once" (a role, never a name). **Skills** opens with what a skill is and keeps the precedence in the closed **How skills
-  combine** fold. **Approvals** shows "Nothing is waiting for you." once and an **Example** card (built from the real
-  question, never counted or sent; each answer explains itself) only while nothing is waiting.
+  combine** fold (the shared `Fold` primitive, `components/ui/fold.tsx`). **Approvals** shows "Nothing is waiting for you."
+  once and, below it, a closed fold **What an approval looks like** holding the example card (built from the real question,
+  never counted or sent; each answer explains itself; never amber, D-441), only while nothing is waiting.
 - **Badges (item 19, G1/G2/G6):** one shared hook (`useWorkspaceCounts`, one query on `GET /v1/attention/counts?workspace=`,
   C-1082) feeds every workspace count. **Approvals** shows the `approvals` part (gateway and action approvals the viewer can
   decide), **Overview** the whole workspace count, and the phone drawer lists the same rail; the hamburger button shows a dot
