@@ -4,10 +4,12 @@
 # but selects no tool: the package's `grants.block_untooled` blocks it under every grant. Tool paths are exact (no `**`),
 # so an extra, encoded or dot segment after a tool path never matches it.
 #
-# In production the gateway refuses dot segments (`.`, `..`, also as `%2e`), an encoded `/` (`%2F`) or
-# `\` and NUL with 400 `ambiguous_path` before matching (docs/06 step 3), and forwards the normalized
-# path, so matcher and Grafana see the same segments. This offline runner matches the raw path, so the
-# cases here show that even without that step such paths select no tool. All credentials are fake.
+# The gateway refuses dot segments (`.`, `..`, also as `%2e`), an encoded `/` (`%2F`) or `\` (`%5C`)
+# and NUL with 400 `ambiguous_path` before matching (docs/06 step 3), and forwards the normalized path
+# (`//` collapsed, encoded unreserved characters decoded), so matcher and Grafana see the same segments.
+# Since FIX-216 this offline runner applies the same step, so those cases expect the refusal; the
+# normalization cases show a normalized path matches exactly what its plain form matches. All
+# credentials are fake.
 - name: "proxy boundary: an unlisted backend GET (Prometheus configuration) selects no tool"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/status/config" }
@@ -27,25 +29,53 @@
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/admin/tsdb/snapshot" }
   expect: { app: grafana, no_tool: true }
-- name: "proxy boundary: a dot-dot segment after a tool path does not reach the admin API through the query tool"
+- name: "proxy boundary: a dot-dot segment after a tool path is refused before matching (ambiguous_path)"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query/../admin/tsdb/snapshot" }
-  expect: { app: grafana, no_tool: true }
-- name: "proxy boundary: an encoded dot-dot (%2e%2e) after a tool path selects no tool"
+  expect: { refused: ambiguous_path }
+- name: "proxy boundary: an encoded dot-dot (%2e%2e) after a tool path is refused (ambiguous_path)"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query/%2e%2e/admin/tsdb/snapshot" }
-  expect: { app: grafana, no_tool: true }
-- name: "proxy boundary: an upper-case encoded dot-dot (%2E%2E) selects no tool"
+  expect: { refused: ambiguous_path }
+- name: "proxy boundary: an upper-case encoded dot-dot (%2E%2E) is refused (ambiguous_path)"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/labels/%2E%2E/admin/tsdb/snapshot" }
-  expect: { app: grafana, no_tool: true }
+  expect: { refused: ambiguous_path }
+- name: "proxy boundary: a single-dot segment after a tool path is refused (ambiguous_path)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query/./admin" }
+  expect: { refused: ambiguous_path }
 - name: "proxy boundary: a double-encoded dot-dot (%252e%252e) selects no tool"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query/%252e%252e/admin/tsdb/snapshot" }
   expect: { app: grafana, no_tool: true }
-- name: "proxy boundary: encoded slashes (%2F) in the backend path select no tool"
+- name: "proxy boundary: encoded slashes (%2F) in the backend path are refused (ambiguous_path)"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/admin%2Ftsdb%2Fsnapshot" }
+  expect: { refused: ambiguous_path }
+- name: "proxy boundary: a lower-case encoded slash (%2f) is refused (ambiguous_path)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query%2f..%2fadmin" }
+  expect: { refused: ambiguous_path }
+- name: "proxy boundary: an encoded backslash (%5C) is refused (ambiguous_path)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query%5C..%5Cadmin" }
+  expect: { refused: ambiguous_path }
+- name: "proxy boundary: an encoded NUL (%00) is refused (ambiguous_path)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/query%00/admin" }
+  expect: { refused: ambiguous_path }
+- name: "proxy boundary: a doubled slash inside a tool path is collapsed and is still the query tool, GET only"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1//query?query=up" }
+  expect: { app: grafana, tool: prometheus_query }
+- name: "proxy boundary: an encoded unreserved character (%65 = e) is decoded and matches the plain tool path"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/qu%65ry?query=up" }
+  expect: { app: grafana, tool: prometheus_query }
+- name: "proxy boundary: an encoded unreserved character cannot spell an untooled path into a tool (adm%69n)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/datasources/proxy/uid/prom-main/api/v1/adm%69n/tsdb/snapshot" }
   expect: { app: grafana, no_tool: true }
 - name: "proxy boundary: a doubled slash before the admin API selects no tool"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
