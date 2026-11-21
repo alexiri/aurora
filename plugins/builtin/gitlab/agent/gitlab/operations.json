@@ -32,7 +32,7 @@
       "summary": "One project",
       "tags": ["projects"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id, or the full path with slashes written as %2F" }
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" }
       ],
       "tool": "get_project"
     },
@@ -43,7 +43,7 @@
       "summary": "Issues of a project",
       "tags": ["issues"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "state", "in": "query", "type": "string", "enum": ["opened", "closed", "all"], "description": "Issue state" },
         { "name": "labels", "in": "query", "type": "string", "description": "Comma-separated label names" },
         { "name": "search", "in": "query", "type": "string", "description": "Words in the title or description" },
@@ -60,7 +60,7 @@
       "summary": "One issue",
       "tags": ["issues"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "iid", "in": "path", "required": true, "type": "integer", "description": "Issue number inside the project" }
       ],
       "tool": "get_issue"
@@ -72,7 +72,7 @@
       "summary": "Open an issue",
       "tags": ["issues"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" }
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" }
       ],
       "body": {
         "content_type": "application/json",
@@ -91,7 +91,7 @@
       "summary": "Merge requests of a project",
       "tags": ["merge_requests"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "state", "in": "query", "type": "string", "enum": ["opened", "closed", "merged", "all"] },
         { "name": "per_page", "in": "query", "type": "integer", "description": "Page size, at most 100" }
       ],
@@ -106,7 +106,7 @@
       "summary": "One merge request",
       "tags": ["merge_requests"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "iid", "in": "path", "required": true, "type": "integer", "description": "Merge request number inside the project" }
       ],
       "tool": "get_merge_request"
@@ -118,7 +118,7 @@
       "summary": "The changes of a merge request",
       "tags": ["merge_requests"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "iid", "in": "path", "required": true, "type": "integer", "description": "Merge request number" }
       ],
       "pagination": { "style": "link_header" },
@@ -132,7 +132,7 @@
       "summary": "Pipelines of a project, newest first",
       "tags": ["pipelines"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "ref", "in": "query", "type": "string", "description": "Branch or tag; without it every branch and merge request" },
         { "name": "status", "in": "query", "type": "string", "enum": ["running", "pending", "success", "failed", "canceled", "skipped"] },
         { "name": "per_page", "in": "query", "type": "integer", "description": "Page size, at most 100" }
@@ -148,7 +148,7 @@
       "summary": "One pipeline with its status, ref and web_url",
       "tags": ["pipelines"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "pipeline", "in": "path", "required": true, "type": "integer", "description": "Pipeline id" }
       ],
       "tool": "get_pipeline"
@@ -160,7 +160,7 @@
       "summary": "Jobs of a pipeline",
       "tags": ["pipelines"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "pipeline", "in": "path", "required": true, "type": "integer", "description": "Pipeline id" },
         { "name": "scope[]", "in": "query", "type": "array", "description": "Job states, e.g. failed" }
       ],
@@ -175,7 +175,7 @@
       "summary": "The log of a job (can be very large: it is saved to a file)",
       "tags": ["pipelines"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "job", "in": "path", "required": true, "type": "integer", "description": "Job id" }
       ],
       "tool": "get_job_log"
@@ -187,7 +187,7 @@
       "summary": "Run the failed jobs of a pipeline again",
       "tags": ["pipelines"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "pipeline", "in": "path", "required": true, "type": "integer", "description": "Pipeline id" }
       ],
       "tool": "retry_pipeline"
@@ -199,7 +199,7 @@
       "summary": "Files and folders of a repository",
       "tags": ["repository"],
       "params": [
-        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id (a full path with %2F is refused by the gateway)" },
         { "name": "path", "in": "query", "type": "string", "description": "Folder inside the repository" },
         { "name": "ref", "in": "query", "type": "string", "description": "Branch, tag or commit" },
         { "name": "recursive", "in": "query", "type": "boolean" }

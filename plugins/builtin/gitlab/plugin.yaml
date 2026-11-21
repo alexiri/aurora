@@ -1,6 +1,6 @@
 package:
   id: gitlab
-  version: 1.4.1
+  version: 1.4.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -259,8 +259,8 @@ apps:
         Use the REST API v4 at <address>/api/v4 and git over HTTPS, where <address> is the address
         shown with the account (gitlab.com or a self-managed instance). Aurora adds the credentials;
         never ask for or write a token, and never send a request for one GitLab connection to
-        another host. Address a project by its numeric id or by its full path with slashes encoded
-        as %2F. Send request bodies as JSON so approvals can show what a change does.
+        another host. Address a project by its numeric id: a path with an encoded slash (%2F) is
+        refused as ambiguous_path. Send request bodies as JSON so approvals can show what a change does.
       operations: operations.json
       guide:
         - { file: pipeline-failed.md, title: "Find why a pipeline failed and retry it", kind: recipe }

@@ -279,7 +279,6 @@ fn execute(
         .ok_or("request.url has no host")?
         .to_ascii_lowercase();
     let port = uri.port_u16().unwrap_or_else(|| scheme.default_port());
-    let path = uri.path().to_owned();
     let query = uri.query().map(str::to_owned);
     let mut headers = HeaderMap::new();
     for (k, v) in &c.request.headers {
@@ -288,6 +287,20 @@ fn execute(
             HeaderValue::from_str(v).map_err(|_| format!("bad header value for `{k}`"))?,
         );
     }
+    // (FIX-216) Step 3, the gateway's own function: method overrides and ambiguous paths are
+    // refused, and everything below matches on the normalized path, exactly as in production.
+    let path = match crate::hygiene::check_request_line(&headers, uri.path(), query.as_deref()) {
+        Ok(p) => p,
+        Err(e) => {
+            let err = match e {
+                crate::hygiene::PathError::MethodOverride => {
+                    crate::guidance::method_override_refused()
+                }
+                crate::hygiene::PathError::Ambiguous => crate::guidance::ambiguous_path(),
+            };
+            return Ok(json!({ "refused": { "code": err.code(), "message": err.message() } }));
+        }
+    };
     let body = c.request.body.as_deref().unwrap_or("").as_bytes();
 
     // (P2-DBL-2) A database statement: the synthetic request of the database lane.
