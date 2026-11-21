@@ -121,7 +121,8 @@ fn build_client(
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(30));
     if let Some(g) = guard {
-        b = b.dns_resolver(g.resolver());
+        // (FIX-217, SEC-04) A system proxy would bypass the dial guard's resolver.
+        b = b.no_proxy().dns_resolver(g.resolver());
     }
     // An explicit bundle replaces the default roots for this store (`tls_certs_only`); without one
     // the OS trust store applies (reqwest's platform verifier). `tls.extra_ca_bundle` is added to

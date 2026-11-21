@@ -360,7 +360,8 @@ impl Sender {
                 .connect_timeout(timeout)
                 .user_agent("aurora-push");
             if guarded {
-                b = b.dns_resolver(Arc::new(GuardedResolver));
+                // (FIX-217, SEC-04) A system proxy would bypass the guarded resolver.
+                b = b.no_proxy().dns_resolver(Arc::new(GuardedResolver));
             }
             b.build().map_err(|e| format!("push http client: {e}"))
         };
