@@ -9,7 +9,7 @@ import { openRoute, overflow } from "./support/open";
 const BASE = "/o/acme/w/main";
 
 for (const scheme of ["light", "dark"] as const) {
-  for (const width of [1280, 390]) {
+  for (const width of [1280, 768, 390]) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 

@@ -3,9 +3,10 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * The grid every list of cards uses (D-439, docs/14 §Visual design): Apps, Accounts, Agents. One column below `sm`,
- * two from `sm`, three from `lg`, four from `2xl`. Its children are `<li>` cards; a card fills its cell (`h-full`)
- * and puts its actions at the foot (`mt-auto`).
+ * The grid every list of cards uses (D-439, docs/14 §Visual design): Apps, Accounts, Agents. The columns follow the
+ * width of the content area, not the viewport (the sidebar takes 256 px of it): one column below 672 px, two from
+ * `@2xl`, three from `@4xl` (896 px), four from `@7xl` (1280 px). Its children are `<li>` cards; a card fills its
+ * cell (`h-full`) and puts its actions at the foot (`mt-auto`).
  */
 export function CardGrid({
   children,
@@ -18,9 +19,11 @@ export function CardGrid({
   "aria-hidden"?: boolean | "true" | "false";
 }) {
   return (
-    <ul {...rest} className={cn("grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4", className)}>
-      {children}
-    </ul>
+    <div className="@container">
+      <ul {...rest} className={cn("grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-3 @7xl:grid-cols-4", className)}>
+        {children}
+      </ul>
+    </div>
   );
 }
 

@@ -96,7 +96,7 @@ describe("AccountsList: one row per kind", () => {
     listWs([app(), website(), aiKey()]);
     list();
     const grid = await screen.findByRole("list", { name: "Accounts" });
-    expect(grid).toHaveClass("grid", "sm:grid-cols-2", "lg:grid-cols-3", "2xl:grid-cols-4");
+    expect(grid).toHaveClass("grid", "@2xl:grid-cols-2", "@4xl:grid-cols-3", "@7xl:grid-cols-4");
     const cards = Array.from(grid.children) as HTMLElement[];
     expect(cards).toHaveLength(3);
     for (const card of cards) {

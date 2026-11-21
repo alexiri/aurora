@@ -398,7 +398,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   field is disabled. Every secret field uses it, and a test fails on any other password input.
 - **Avatar**: initial on a tinted tile when there is no image.
 - **AppIcon** (`ui/app-icon.tsx`) and **AiKeyTile**: App icons are 64 px (`size-16`) everywhere; the monogram tile (letter `text-2xl`) and the AI key tile follow the same size (owner 2026-11-21, FIX-211). Rows centre the icon against their text block; tiles and cards grow to fit. Agent avatars, the Aurora logo and chat-platform icons are not app icons.
-- **CardGrid** (`ui/card-grid.tsx`, D-439): the one grid for lists of cards (Apps, Accounts, Agents): a `<ul>` of `<li>` cards, 1 column below `sm`, 2 from `sm`, 3 from `lg`, 4 from `2xl`. A card is `rounded-card border border-line bg-surface p-4 shadow-card sm:p-5`, fills its cell, and puts its actions at the foot (`mt-auto`).
+- **CardGrid** (`ui/card-grid.tsx`, D-439): the one grid for lists of cards (Apps, Accounts, Agents): a `<ul>` of `<li>` cards. The columns switch on the **content area's width** (container queries, `@container`; the sidebar takes 256 px of the viewport, so a viewport breakpoint would squeeze the cards): 1 column below 672 px, 2 from `@2xl`, 3 from `@4xl` (896 px), 4 from `@7xl` (1280 px); in practice 4 per row at 1920 px, 3 at 1280, 1 at 768 and 390. A card is `rounded-card border border-line bg-surface p-4 shadow-card sm:p-5`, fills its cell, and puts its actions at the foot (`mt-auto`).
 - **EmptyState**, **ErrorState**, **Loading**.
 - **Focus**: `:focus-visible` shows a 2 px `accent` ring with a 3 px
   `focus-halo`.
@@ -2745,7 +2745,7 @@ list of the earlier draft.
   An agent that runs outside Aurora (BYO) has the same Access tab and the same journey.
 - **A card** shows (P5-LAYOUT-2, D-440; on an agent's Access tab the same contents sit in one row of the
   bordered list). The workspace's and the organization's Accounts are a grid of cards like Apps
-  (`CardGrid`, the Apps card frame; 4 per row at 1920 px, 1 at 390 px); an agent's Access tab keeps one
+  (`CardGrid`, the Apps card frame; 4 per row at 1920 px, 3 at 1280, 1 at 768 and 390); an agent's Access tab keeps one
   bordered list. The head holds the icon, the name (wrapping) and the "…" menu pinned top-right; the
   agent pills wrap inside the card; Technical details (Expert) sits at the foot. A skeleton of cards shows
   while the list loads:

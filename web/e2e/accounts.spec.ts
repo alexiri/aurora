@@ -208,7 +208,7 @@ for (const scheme of ["light", "dark"] as const) {
 // P5-LAYOUT-2 (D-440): the Accounts tab is a CardGrid of cards like Apps: four to a row at 1920 px, one at 390 px; the
 // menu sits top-right of every card; Technical details (Expert) opens on one card and the neighbours keep their content.
 for (const scheme of ["light", "dark"] as const) {
-  for (const width of [1920, 390]) {
+  for (const width of [1920, 1280, 768, 390]) {
     test.describe(`accounts as cards, ${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1920 ? 1080 : 844 } });
 
@@ -231,7 +231,7 @@ for (const scheme of ["light", "dark"] as const) {
           return { top: Math.round(r.top), right: Math.round(r.right), width: Math.round(r.width) };
         }));
         const perRow = boxes.filter((b) => b.top === boxes[0]!.top).length;
-        expect(perRow).toBe(Math.min(boxes.length, width === 1920 ? 4 : 1));
+        expect(perRow).toBe(Math.min(boxes.length, { 1920: 4, 1280: 3, 768: 1, 390: 1 }[width]!));
         // The menu is in the head, to the right of the card's content.
         const first = cards.first();
         const menu = (await first.getByRole("button", { name: /^More for/ }).boundingBox())!;

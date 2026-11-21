@@ -13,7 +13,7 @@ describe("CardGrid (D-439)", () => {
     );
     const list = screen.getByRole("list", { name: "Things" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(2);
-    for (const cls of ["grid", "gap-4", "sm:grid-cols-2", "lg:grid-cols-3", "2xl:grid-cols-4"]) {
+    for (const cls of ["grid", "gap-4", "@2xl:grid-cols-2", "@4xl:grid-cols-3", "@7xl:grid-cols-4"]) {
       expect(list).toHaveClass(cls);
     }
   });
