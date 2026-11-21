@@ -52,6 +52,10 @@ config:
     idle_stop_secs: 30     # park/wake scenario
   runner:
     image: localhost/aurora-e2e/aurora-sandbox:e2e   # kind load image-archive name (kind.sh)
+    # The image is the slim sandbox-min build (fake harness), not the standard image, though its repository is named
+    # aurora-sandbox: an explicit list keeps FIX-188's five standard harnesses from being reported for it (the runner's
+    # own default, as before FIX-188). Without it every e2e turn failed `harness_unavailable` (nightly 2026-11-21).
+    image_harnesses: [claude-code, fake]
     max_sandboxes: 4
     capacity_wait_secs: 5
   telemetry:
