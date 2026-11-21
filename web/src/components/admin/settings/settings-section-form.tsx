@@ -613,7 +613,7 @@ export function ConfirmDetails({ preview, fields }: { preview: SettingsPreview; 
               return (
                 <li key={o.org_id}>
                   {o.name}
-                  {lost > 0 ? ` — ${lost} LLM key${lost === 1 ? "" : "s"} stop${lost === 1 ? "s" : ""} working` : ""}
+                  {lost > 0 ? ` — ${lost} AI key${lost === 1 ? "" : "s"} stop${lost === 1 ? "s" : ""} working` : ""}
                   {clamped.length > 0
                     ? ` — ${clamped.map((c) => `${c.key.replace(/_/g, " ")} ${String(c.before)} → ${String(c.after)}`).join(", ")}`
                     : ""}
