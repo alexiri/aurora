@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { LoadMore } from "@/components/ui/load-more";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { personName } from "@/lib/workspace-name";
 import { ScopeLadder } from "@/components/ui/scope-ladder";
 import { Section } from "@/components/ui/section";
 import { WhoCan } from "@/components/ui/who-can";
@@ -49,7 +50,7 @@ function useBelow(org: Org, slug: string, all: boolean) {
         if (!s) return [];
         return [
           {
-            label: o.workspace.personal_of ? `${o.workspace.personal_of.name} (personal)` : o.workspace.name,
+            label: o.workspace.personal_of ? `${personName(o.workspace.personal_of.name)} (personal)` : o.workspace.name,
             values: overrideValues(o, org.name),
             link: { href: wsRoutes(slug, s).internetAccess(), label: "Open" },
           },

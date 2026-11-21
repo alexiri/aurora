@@ -220,6 +220,18 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
     expect(within(row).getByRole("switch", { name: "People may add their own key" })).toBeChecked();
   });
 
+  it("(batch 7 c) the pick list names a person with no display name by their address's local part, never by e-mail", async () => {
+    mockFetch(routes({
+      "GET /v1/orgs/o1/workspaces": () =>
+        json(200, { items: [{ id: "w9", slug: "dave", name: "dave@example.test", personal_of: { id: "u9", name: "dave@example.test" } }, { id: "w8", slug: "x", name: "Y", personal_of: { id: "u8", name: "  " } }], next_cursor: null }),
+    }));
+    wrap(<OrgAiModels org={ORG} />);
+    const pick = await screen.findByRole("combobox", { name: "Add team or workspace" });
+    await waitFor(() => expect(within(pick).getAllByRole("option").map((o) => o.textContent)).toContain("Workspace: Dave (personal)"));
+    expect(within(pick).getAllByRole("option").map((o) => o.textContent)).toContain("Workspace: A person without a name (personal)");
+    expect(pick.textContent).not.toContain("@");
+  });
+
   it("(org-7) opens with the summary sentence and plain rows, endpoints and Advanced collapsed, origin as names", async () => {
     // An admin reads the organization's own list; the first workspace (here one the admin is not in: 404) is not needed.
     mockFetch(routes({

@@ -8,6 +8,7 @@
  * `sentence(ctx)` is the longer form for a place that has room ("Blocked because no rule allows it.").
  */
 import type { TimelineItem, TimelineKind } from "@/lib/api/timeline";
+import { personName } from "@/lib/workspace-name";
 
 export interface LabelEntry<Ctx = void> {
   label: string;
@@ -897,7 +898,9 @@ export function auditWords(
   target: string | null,
 ): { sentence: string; weight: "critical" | AuditWeight; known: boolean } {
   const meta = e.metadata && typeof e.metadata === "object" && !Array.isArray(e.metadata) ? (e.metadata as Record<string, unknown>) : {};
-  const t = target ?? (typeof meta.name === "string" ? meta.name : typeof meta.email === "string" ? meta.email : null);
+  const raw = target ?? (typeof meta.name === "string" ? meta.name : typeof meta.email === "string" ? meta.email : null);
+  // A person with no display name is stored by their address: never an e-mail where a name is shown (the switcher's rule).
+  const t = raw !== null && /^[^\s@]+@[^\s@]+$/.test(raw) ? personName(raw) : raw;
   const tpl = AUDIT_SENTENCE[e.action];
   const actor = auditActor(e).name;
   if (!tpl) {

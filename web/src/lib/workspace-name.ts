@@ -37,3 +37,14 @@ export function firstNameOf(name: string | null | undefined): string | null {
   }
   return text.split(/\s+/)[0] ?? null;
 }
+
+/**
+ * A person's name wherever a name is shown (pick lists, audit sentences): their display name; a person with no display name
+ * is stored by their address, and is then the capitalised local part ("dave@example.test" → "Dave"), the same rule as the
+ * switcher's workspace names; an empty or unusable name reads "A person without a name". Never an e-mail address.
+ */
+export function personName(name: string | null | undefined): string {
+  const text = (name ?? "").trim();
+  if (!text.includes("@")) return text || "A person without a name";
+  return firstNameOf(text) ?? "A person without a name";
+}

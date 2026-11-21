@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { firstNameOf, nameInSentence, workspaceDisplayName } from "@/lib/workspace-name";
+import { firstNameOf, nameInSentence, personName, workspaceDisplayName } from "@/lib/workspace-name";
 
 describe("workspaceDisplayName (D-389)", () => {
   const me = { id: "u1" };
@@ -19,6 +19,13 @@ describe("workspaceDisplayName (D-389)", () => {
     expect(workspaceDisplayName({ name: "x", personal_of: { id: "u3", name: "  " } }, me)).toBe("Workspace of a person without a name");
     expect(workspaceDisplayName({ name: "x", personal_of: { id: "u3", name: "@example.test" } }, me)).toBe("Workspace of a person without a name");
     expect(firstNameOf("Bob Builder")).toBe("Bob");
+  });
+  it("personName: the display name, else the local part of the address, else 'A person without a name'; never an e-mail (batch 7 c)", () => {
+    expect(personName("Bob Builder")).toBe("Bob Builder");
+    expect(personName("dave@example.test")).toBe("Dave");
+    expect(personName("  ")).toBe("A person without a name");
+    expect(personName(null)).toBe("A person without a name");
+    expect(personName("@example.test")).toBe("A person without a name");
   });
   it("reads 'Your workspace' in lower case after a verb", () => {
     expect(nameInSentence("Your workspace")).toBe("your workspace");

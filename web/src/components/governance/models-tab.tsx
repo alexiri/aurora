@@ -8,6 +8,7 @@ import { issuesUnder, type EndpointForm, type GovForm, type GovIssues } from "@/
 import { useGroups } from "@/lib/api/groups";
 import { useMe, useWorkspaces, type Org } from "@/lib/api/queries";
 import { peopleMayAddOwnKey, whereKeysMayBeAdded } from "@/lib/policy-presets";
+import { personName } from "@/lib/workspace-name";
 
 /**
  * The names of the organization's own AI keys, the starter Company key included: from the organization's accounts list
@@ -73,7 +74,7 @@ export function ModelsTab({
   const setAll = (fn: (e: EndpointForm) => Partial<EndpointForm>) => patch({ endpoints: form.endpoints.map((e) => ({ ...e, ...fn(e) })) });
 
   const orgOptions: PickOption[] = (me.data?.memberships ?? []).flatMap((m) => (m.org.id ? [{ id: m.org.id, label: m.org.name ?? m.org.slug }] : []));
-  const wsOptions: PickOption[] = (workspaces.data?.items ?? []).map((w) => ({ id: w.id, label: w.personal_of ? `${w.personal_of.name} (personal)` : w.name }));
+  const wsOptions: PickOption[] = (workspaces.data?.items ?? []).map((w) => ({ id: w.id, label: w.personal_of ? `${personName(w.personal_of.name)} (personal)` : w.name }));
   const teamOptions: PickOption[] = (groups.data?.items ?? []).map((g) => ({ id: g.id, label: g.name }));
 
   // The one reading of "people may add their own key" (policy-presets.ts): the sentence and the row say where (every live

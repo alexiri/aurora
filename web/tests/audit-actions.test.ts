@@ -84,6 +84,11 @@ describe("audit actions in words", () => {
     // An agent is never called an account; the retired word "eval" is in no sentence.
     const by = { actor_kind: "user", actor_label: "alice@example.test", actor_name: "Alice Admin", critical: false } as const;
     expect(auditWords({ ...by, action: "grant.delete", metadata: {} }, "Rex").sentence).toBe("Alice took away Rex's access to an account");
+    // (batch 7 c) A person with no display name is stored by their address: the sentence never shows an e-mail.
+    const added = { ...by, action: "workspace_access.set", metadata: { role: "approver", previous_role: null } };
+    expect(auditWords(added, "dave@example.test").sentence).toBe("Alice added Dave as Approver");
+    expect(auditWords({ ...added, metadata: { role: "approver", previous_role: null, email: "dave@example.test" } }, null).sentence).toBe("Alice added Dave as Approver");
+    expect(auditWords(added, "Dave Smith").sentence).toBe("Alice added Dave Smith as Approver");
     for (const a of ["eval.question.create", "eval.run.start", "eval.schedule.update", "eval.settings.update"]) {
       expect(auditWords({ ...by, action: a, metadata: {} }, null).sentence, a).not.toMatch(/eval/i);
     }
