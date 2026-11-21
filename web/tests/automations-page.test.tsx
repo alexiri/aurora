@@ -381,7 +381,19 @@ describe("the schedule form", () => {
     expect(within(form).getByText(/Custom needs more controls/)).toBeInTheDocument();
   });
 
-  it("previews the next runs through the API only after the input settles for a second", async () => {
+  it("Every 5 minutes says 'Every 5 minutes · next 23:55, 00:00, 00:05.' from the preview (schedules-2)", async () => {
+    mockApi({
+      "GET /v1/agents/a1/schedules": page([]),
+      "GET /v1/agents/a1/webhooks": page([]),
+      "POST /v1/agents/a1/schedules/preview": () => json(200, { next: ["2026-11-20T22:55:00Z", "2026-11-20T23:00:00Z", "2026-11-20T23:05:00Z"], interval_secs: 300, too_frequent: false, min_interval_secs: 300 }),
+    });
+    mount();
+    const form = await openForm();
+    fireEvent.click(within(form).getByRole("radio", { name: "Every 5 minutes" }));
+    await waitFor(() => expect(within(form).getByTestId("schedule-summary")).toHaveTextContent(/^Every 5 minutes · next \d\d:\d\d, \d\d:\d\d, \d\d:\d\d\. Schedules run at most every 5 minutes\.$/), { timeout: 3000 });
+  });
+
+  it("previews the next runs through the API at once for a preset; a preset seen again comes from the cache", async () => {
     const calls = mockApi({
       "GET /v1/agents/a1/schedules": page([]),
       "GET /v1/agents/a1/webhooks": page([]),
@@ -389,16 +401,16 @@ describe("the schedule form", () => {
     });
     mount();
     const form = await openForm();
-    // Opening the form asks once (the preset it opens on); later changes wait for the input to settle.
-    await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/preview"))).toHaveLength(1), { timeout: 3000 });
+    // Opening the form asks once (the preset it opens on).
+    await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/preview"))).toHaveLength(1));
     expect(calls.find((c) => c.path.endsWith("/preview"))?.body).toEqual({ cron: "0 9 * * *", timezone: "Europe/Zurich" });
-    expect(await within(form).findByText(/next: /, undefined, { timeout: 2000 })).toBeInTheDocument();
-    // A quick run of changes is one request after the last one.
+    expect(await within(form).findByText(/next: /)).toBeInTheDocument();
+    // A click on a preset asks at once, with no wait; going back to one already seen asks nothing.
     fireEvent.click(within(form).getByRole("radio", { name: "Weekdays" }));
-    fireEvent.click(within(form).getByRole("radio", { name: "Weekly" }));
-    fireEvent.click(within(form).getByRole("radio", { name: "Weekdays" }));
+    await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/preview"))).toHaveLength(2));
+    fireEvent.click(within(form).getByRole("radio", { name: "Every day" }));
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 1300));
+      await new Promise((r) => setTimeout(r, 100));
     });
     const bodies = calls.filter((c) => c.path.endsWith("/preview")).map((c) => (c.body as { cron: string }).cron);
     expect(bodies).toEqual(["0 9 * * *", "0 9 * * 1-5"]);
@@ -422,7 +434,10 @@ describe("a webhook row", () => {
     expect(within(form).getByRole("radio", { name: /Signed/ })).toBeChecked();
     expect(within(form).getByRole("radio", { name: /Bearer token/ })).toBeInTheDocument();
     expect(within(form).getByRole("radio", { name: /Anyone with the URL/ })).toBeInTheDocument();
-    expect(within(form).getByText("Only senders that know the secret can wake Dani.")).toBeInTheDocument();
+    expect(within(form).getByText("Only senders that know the secret can wake Daneel.")).toBeInTheDocument();
+    // (webhooks-2) The agent's own name, never a sample one.
+    expect(within(form).getByText("Tells Daneel what to do with each delivery.")).toBeInTheDocument();
+    expect(form.textContent).not.toContain("Dani");
     expect(form.textContent).not.toContain("hmac_sha256");
     fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Deploy notice" } });
     fireEvent.change(within(form).getByLabelText("Instructions"), { target: { value: "Handle it" } });

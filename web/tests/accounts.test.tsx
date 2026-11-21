@@ -137,6 +137,20 @@ describe("AccountsList: one row per kind", () => {
     expect(screen.queryByRole("menuitem", { name: "Sign in again" })).toBeNull();
   });
 
+  it("a key that works has one status line, not 'Worked' and 'Works'; one being checked still says Checking… (access-15)", async () => {
+    const key = (name: string, id: string, state: string) =>
+      ({
+        ref: { type: "secret", id }, kind: "ai_key", name, scope: "workspace", levels: [], health: { state: "working", last_ok_at: new Date().toISOString() },
+        verification: { state }, agents: [], can: OWNER,
+      }) as unknown as Account;
+    listWs([key("Works key", "k1", "works"), key("New key", "k2", "checking")]);
+    list();
+    const works = await screen.findByRole("listitem", { name: "Works key" });
+    expect(within(works).getByText(/^Worked/)).toBeInTheDocument();
+    expect(within(works).queryByText("Works")).toBeNull();
+    expect(within(screen.getByRole("listitem", { name: "New key" })).getByText("Checking…")).toBeInTheDocument();
+  });
+
   it("every app row has the level pill, even with one level; a send-only app's levels are worded for sends (access-12, D-419)", async () => {
     listWs([
       app({ ref: { type: "connection", id: "c5" }, name: "Team calendar", levels: [], app: { app_id: "ics", name: "Calendar link", custom_only: false }, agents: [entry({ level: "use" })] }),

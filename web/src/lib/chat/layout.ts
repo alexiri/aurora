@@ -1,5 +1,5 @@
 import type { Conversation, TranscriptEvent } from "@/lib/api/conversations";
-import { displayTimeZone } from "@/lib/format-date";
+import { automationTimeZone, displayTimeZone } from "@/lib/format-date";
 
 import { activeTurnId, type TranscriptState } from "./transcript";
 
@@ -50,11 +50,11 @@ export function listTime(iso: string | null | undefined, now: Date): string {
 }
 
 /** (chat-9) A search result's time: the date and the clock, "19 Nov 23:50" ("19 Nov 2025 23:50" in another year). */
-export function searchTime(iso: string | null | undefined, now: Date): string {
+export function searchTime(iso: string | null | undefined, now: Date, timeZone: string | undefined = displayTimeZone()): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const parts = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone: displayTimeZone(), ...o }).format(d);
+  const parts = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone, ...o }).format(d);
   const sameYear = d.getFullYear() === now.getFullYear();
   return `${parts({ day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) })} ${parts({ hour: "2-digit", minute: "2-digit", hour12: false })}`;
 }
@@ -91,7 +91,8 @@ export function conversationTitle(
   now: Date = new Date(),
 ): string {
   if (c.automation && c.run_at) {
-    const when = searchTime(c.run_at, now);
+    // A run's thread is named in the workspace's zone, like the schedule rows and the delivery message.
+    const when = searchTime(c.run_at, now, automationTimeZone());
     if (when) return `${c.automation.name} · ${when}`;
   }
   if (c.title) return c.title;
@@ -278,7 +279,9 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
         // transcript event carries the door's name, so the chip is read from that speaker label, shown as "Approval".
         const approval = door === "system" && label === "Approval";
         const name = approval ? "Aurora" : label || "You";
-        push("person", `p:${name}`, name, approval ? "Approval" : door && door !== "dashboard" ? door : "", ev, { kind: "bubble", ev });
+        // A door that is the sender's own name ("Webhook" by `webhook`) is not said twice.
+        const chip = approval ? "Approval" : door && door !== "dashboard" && door.toLowerCase() !== name.toLowerCase() ? door : "";
+        push("person", `p:${name}`, name, chip, ev, { kind: "bubble", ev });
         break;
       }
       case "text":

@@ -251,6 +251,12 @@ export function hostOf(input: string): string {
   }
 }
 
+/** The site a token is made on, for "Paste a token from …": the token field's own page (github.com), not the connect note's docs page. */
+export function tokenSite(app: Pick<AppDetail, "connect_note">, method: Pick<ConnectMethod, "fields">): string {
+  const own = method.fields.find((f) => f.help_url)?.help_url;
+  return hostOf(own ?? tokenPage(app, method) ?? "");
+}
+
 /** The app's token page as a button's `href`: the app's note link, else the first field's help link. */
 export function tokenPage(app: Pick<AppDetail, "connect_note">, method: Pick<ConnectMethod, "fields">): string | null {
   const url = app.connect_note?.url ?? method.fields.find((f) => f.help_url)?.help_url ?? null;

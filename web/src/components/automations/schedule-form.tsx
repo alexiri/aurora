@@ -150,7 +150,10 @@ export function ScheduleForm({
 
   // The API previews the next three run times; typing waits 1 s and the same cadence is answered from the cache for 60 s.
   // A one-time schedule previews its instant the same way (C-1092): a past time is answered while you type.
-  const settled = useDebounced(cron, PREVIEW_DEBOUNCE_MS);
+  // A preset is one click, so its times are asked for at once ("Every 5 minutes · next 23:55, 00:00, 00:05." without a wait);
+  // only typed cron waits for the typing to settle.
+  const typedCron = useDebounced(cron, PREVIEW_DEBOUNCE_MS);
+  const settled = spec.preset === "custom" ? typedCron : cron;
   const settledRunAt = useDebounced(runAt, PREVIEW_DEBOUNCE_MS);
   const previewable = cronFieldCount(settled) === 5 && !(spec.preset === "custom" && isTooFrequent(settled));
   const preview = useSchedulePreview(agentId, previewable ? settled : "", timezone, once ? settledRunAt : "");

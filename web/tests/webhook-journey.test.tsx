@@ -67,10 +67,12 @@ const DETAIL = {
 const PLAN = { app_id: "webhook", available: true, suggested_method: "url", methods: [{ id: "url", kind: "fields", label: "url", description: null, recommended: true, audience: "person", needs: [], ready: true, scope_presets: { read: [], write: [] } }] };
 
 let testAnswer: () => Response;
+let viewSlots: unknown[] = [slot];
 let calls: { method: string; path: string }[] = [];
 
 beforeEach(() => {
   calls = [];
+  viewSlots = [slot];
   testAnswer = () => json(200, { status: 200, content_type: "text/plain", body: "ok", truncated: false, delivery_id: "01a1b2c3-0000-4000-8000-000000000001" });
   vi.stubGlobal("matchMedia", (query: string) => ({
     matches: query.includes("min-width"), media: query, onchange: null, addEventListener: () => undefined, removeEventListener: () => undefined,
@@ -85,7 +87,7 @@ beforeEach(() => {
     "GET /v1/workspaces/w1/accounts": () => json(200, { items: [], next_cursor: null }),
     "GET /v1/workspaces/w1/agents": () => json(200, { items: [{ id: "a1", name: "Daneel", handle: "daneel", kind: "hosted" }], next_cursor: null }),
     "POST /v1/apps/webhook/connect": () => json(200, { kind: "connected", connection: CONN, grants: [{ agent_id: "a1" }], missing_scopes: [] }),
-    "GET /v1/connections/c9/webhook": () => json(200, { ...cfg, host: "hooks.example.com", secret_value_names: [], effective_rate: { per_minute: 30, per_day: 500, source: "org" } }),
+    "GET /v1/connections/c9/webhook": () => json(200, { ...cfg, slots: viewSlots, host: "hooks.example.com", secret_value_names: [], effective_rate: { per_minute: 30, per_day: 500, source: "org" } }),
     "POST /v1/connections/c9/webhook/test": () => testAnswer(),
     "DELETE /v1/connections/c9": () => json(204, null),
   };
@@ -126,6 +128,20 @@ async function connectIt() {
 }
 
 describe("the flat journey", () => {
+  it("a webhook whose values have no example asks for them in place and sends them (access-4)", async () => {
+    viewSlots = [{ name: "count", type: "integer", required: true, description: "", example: null }];
+    open();
+    await connectIt();
+    fireEvent.click(await screen.findByRole("button", { name: "Send a test" }));
+    const field = await screen.findByLabelText("count");
+    expect(screen.queryByText(/Open it from the account/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send a test" }));
+    expect(await screen.findByText("This value is required.")).toBeInTheDocument();
+    fireEvent.change(field, { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send a test" }));
+    expect(await screen.findByText("The test went through.")).toBeInTheDocument();
+  });
+
   it("shows Address, Message and Done in the stepper and keeps Back and Next in the footer", async () => {
     open();
     await screen.findByLabelText("Address to send to");

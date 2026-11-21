@@ -70,6 +70,7 @@ export function Deliveries({ agentId, id, agentBase }: { agentId: string; id: st
 
 export function WebhookRow({
   agentId,
+  agentName,
   w,
   agentBase,
   wsId,
@@ -79,6 +80,7 @@ export function WebhookRow({
 }: {
   select?: { checked: boolean; onChange: (on: boolean) => void };
   agentId: string;
+  agentName: string;
   w: Webhook;
   agentBase: string;
   wsId?: string;
@@ -100,7 +102,7 @@ export function WebhookRow({
   if (editing)
     return (
       <li className="p-4" data-automation-kind="webhook">
-        <WebhookForm agentId={agentId} initial={w} embedded onDone={() => setEditing(false)} onReveal={onReveal} />
+        <WebhookForm agentId={agentId} agentName={agentName} initial={w} embedded onDone={() => setEditing(false)} onReveal={onReveal} />
       </li>
     );
 

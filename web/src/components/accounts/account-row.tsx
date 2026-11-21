@@ -211,7 +211,11 @@ export function AccountRow({
             onFix={account.can.manage ? (k) => (canFix(k) ? fix(k) : undefined) : undefined}
           />
           {/* (P5-REFINE-13, access-8) An AI key shows its check in place: Checking… then Works, or Failed with the reason and Try again. */}
-          {account.kind === "ai_key" && account.verification && account.verification.state !== "not_checked" ? (
+          {/* A key that works and has a "Worked <when>" health line above says it once, not twice. */}
+          {account.kind === "ai_key" &&
+          account.verification &&
+          account.verification.state !== "not_checked" &&
+          !(account.verification.state === "works" && account.health.state === "working") ? (
             <StatusLine
               tone={account.verification.state === "works" ? "ok" : account.verification.state === "checking" ? "idle" : "fail"}
               action={

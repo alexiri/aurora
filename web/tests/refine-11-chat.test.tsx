@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import { AttachmentCard } from "@/components/chat/attachments";
 import { effectiveContentType } from "@/lib/api/attachments";
-import { buildRows, searchTime } from "@/lib/chat/layout";
+import { buildRows, conversationTitle, searchTime } from "@/lib/chat/layout";
 import { errorCopy, type TranscriptState } from "@/lib/chat/transcript";
-import { setDisplayTimeZone } from "@/lib/format-date";
+import { setDisplayTimeZone, setWorkspaceTimeZone } from "@/lib/format-date";
 import { SOMETHING_WENT_WRONG } from "@/lib/labels";
 
 // P5-REFINE-11: chat-7 (one error), chat-9 (search time), chat-10 (image thumbnail).
@@ -48,6 +48,14 @@ describe("chat-9: a search result's time", () => {
     expect(searchTime("2026-11-19T23:50:00Z", new Date("2026-11-20T10:00:00Z"))).toBe("19 Nov 23:50");
     expect(searchTime("2025-03-02T08:05:00Z", new Date("2026-11-20T10:00:00Z"))).toBe("2 Mar 2025 08:05");
     expect(searchTime(null, new Date())).toBe("");
+    // (item 18) A run thread's title is in the workspace's zone, not the browser's or the person's.
+    setWorkspaceTimeZone("Asia/Tokyo");
+    try {
+      const run = { title: "x", kind: "schedule", external_ref: "r", automation: { id: "s", kind: "schedule", name: "Morning", deleted: false }, run_at: "2026-11-19T23:50:00Z" };
+      expect(conversationTitle(run as never, new Date("2026-11-20T10:00:00Z"))).toBe("Morning · 20 Nov 08:50");
+    } finally {
+      setWorkspaceTimeZone(null);
+    }
   });
 });
 
