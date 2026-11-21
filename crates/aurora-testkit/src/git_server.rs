@@ -175,7 +175,8 @@ impl GitServer {
             g.counter
         };
         let date = format!("{} +0000", 1_700_000_000 + n);
-        c.env("GIT_AUTHOR_DATE", &date).env("GIT_COMMITTER_DATE", &date);
+        c.env("GIT_AUTHOR_DATE", &date)
+            .env("GIT_COMMITTER_DATE", &date);
         if let Some(i) = index {
             c.env("GIT_INDEX_FILE", i);
         }
@@ -196,14 +197,26 @@ impl GitServer {
         let d = self.dir(name);
         std::fs::create_dir_all(&d).unwrap();
         let out = Command::new("git")
-            .args(["init", "--bare", "-q", "-b", "main", "--object-format", format])
+            .args([
+                "init",
+                "--bare",
+                "-q",
+                "-b",
+                "main",
+                "--object-format",
+                format,
+            ])
             .arg(&d)
             .env("HOME", &self.root.0)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .output()
             .unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         self.inner
             .lock()
             .unwrap()
@@ -229,10 +242,7 @@ impl GitServer {
         parent: Option<&str>,
         files: BTreeMap<String, Entry>,
     ) -> String {
-        let index = self
-            .root
-            .0
-            .join(format!("index-{}", uuid::Uuid::now_v7()));
+        let index = self.root.0.join(format!("index-{}", uuid::Uuid::now_v7()));
         self.git(repo, &["read-tree", "--empty"], None, Some(&index));
         let mut info = String::new();
         for (p, e) in &files {
@@ -335,7 +345,12 @@ impl GitServer {
 
     fn try_head(&self, repo: &str, branch: &str) -> Option<String> {
         let out = Command::new("git")
-            .args(["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")])
+            .args([
+                "rev-parse",
+                "--verify",
+                "-q",
+                &format!("refs/heads/{branch}"),
+            ])
             .env("GIT_DIR", self.dir(repo))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -601,7 +616,10 @@ async fn handle(inner: Arc<Mutex<Inner>>, root: PathBuf, req: Request<Body>) -> 
         }
     }
     let fetch = method == "POST" && is_fetch(&body);
-    let v2_req = v2 && git_protocol.as_deref().is_some_and(|p| p.contains("version=2"));
+    let v2_req = v2
+        && git_protocol
+            .as_deref()
+            .is_some_and(|p| p.contains("version=2"));
     if fetch && let Some(n) = oversize {
         let chunk = vec![b'0'; 64 * 1024];
         let chunks = n.div_ceil(chunk.len());
@@ -618,8 +636,18 @@ async fn handle(inner: Arc<Mutex<Inner>>, root: PathBuf, req: Request<Body>) -> 
     if fetch && wrong {
         return wrong_pack_answer(&root, &path, v2_req);
     }
-    cgi(&root, &method, &path, &query, content_type, git_protocol.filter(|_| v2), filter, any, body)
-        .await
+    cgi(
+        &root,
+        &method,
+        &path,
+        &query,
+        content_type,
+        git_protocol.filter(|_| v2),
+        filter,
+        any,
+        body,
+    )
+    .await
 }
 
 /// A fetch answer carrying a valid pack of one unrelated blob.
@@ -729,8 +757,13 @@ async fn cgi(
         };
         let v = v.trim();
         if k.eq_ignore_ascii_case("status") {
-            let code = v.split(' ').next().and_then(|c| c.parse().ok()).unwrap_or(500);
-            *r.status_mut() = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            let code = v
+                .split(' ')
+                .next()
+                .and_then(|c| c.parse().ok())
+                .unwrap_or(500);
+            *r.status_mut() =
+                StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         } else if let (Ok(n), Ok(val)) = (
             header::HeaderName::from_bytes(k.trim().as_bytes()),
             HeaderValue::from_str(v),

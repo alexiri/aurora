@@ -129,7 +129,11 @@ fn inflate(input: &[u8], size: usize) -> Result<(Vec<u8>, usize), PackError> {
         let (before_in, before_out) = (d.total_in(), d.total_out());
         let consumed = usize::try_from(d.total_in()).map_err(|_| bad)?;
         let status = d
-            .decompress_vec(&input[consumed.min(input.len())..], &mut out, FlushDecompress::None)
+            .decompress_vec(
+                &input[consumed.min(input.len())..],
+                &mut out,
+                FlushDecompress::None,
+            )
             .map_err(|_| bad)?;
         if out.len() > size {
             return Err(bad);
@@ -348,7 +352,9 @@ pub fn parse(pack: &[u8], limits: Limits) -> Result<HashMap<Oid, Object>, PackEr
                 continue;
             };
             if depth + 1 > limits.depth_max {
-                return Err(PackError::Malformed("a delta chain in the pack is too deep"));
+                return Err(PackError::Malformed(
+                    "a delta chain in the pack is too deep",
+                ));
             }
             let out = apply_delta(&content[base_idx], &entries[i].data, budget)?;
             budget -= out.len();
@@ -364,7 +370,9 @@ pub fn parse(pack: &[u8], limits: Limits) -> Result<HashMap<Oid, Object>, PackEr
         }
     }
     if left != 0 {
-        return Err(PackError::Malformed("a delta base is missing from the pack"));
+        return Err(PackError::Malformed(
+            "a delta base is missing from the pack",
+        ));
     }
     let mut out = HashMap::with_capacity(n);
     for (i, data) in content.into_iter().enumerate() {
@@ -490,15 +498,17 @@ pub(crate) mod tests {
                     p.extend(header(t, d.len()));
                     p.extend(z(d));
                 }
-                E::Ofs(back, delta, size) => {
+                E::Ofs(back, delta, _result_len) => {
+                    // `back` 0 is the entry before this one (`offsets` already holds this one's).
                     let here = p.len();
-                    let base = offsets[offsets.len() - 1 - back];
-                    p.extend(header(6, *size));
+                    let base = offsets[offsets.len() - 2 - back];
+                    // The size in a delta's header is that of the delta data, as in git's own packs.
+                    p.extend(header(6, delta.len()));
                     p.extend(ofs(here - base));
                     p.extend(z(delta));
                 }
-                E::Ref(id, delta, size) => {
-                    p.extend(header(7, *size));
+                E::Ref(id, delta, _result_len) => {
+                    p.extend(header(7, delta.len()));
                     p.extend_from_slice(id);
                     p.extend(z(delta));
                 }
@@ -559,7 +569,10 @@ pub(crate) mod tests {
         let m = parse(&p, Limits::standard()).unwrap();
         assert_eq!(m.len(), 4);
         assert_eq!(m[&base_id].data, base);
-        assert_eq!(m[&object_id(Kind::Blob, b"hello world!")].data, b"hello world!");
+        assert_eq!(
+            m[&object_id(Kind::Blob, b"hello world!")].data,
+            b"hello world!"
+        );
         assert_eq!(m[&object_id(Kind::Blob, b"hello again")].kind, Kind::Blob);
         assert!(m.contains_key(&object_id(Kind::Blob, b"hello-ref")));
         // git's own id of the empty blob
@@ -592,7 +605,10 @@ pub(crate) mod tests {
         let mut bad = ok.clone();
         let l = bad.len();
         bad[l - 1] ^= 1;
-        assert!(matches!(parse(&bad, Limits::standard()), Err(PackError::Malformed(_))));
+        assert!(matches!(
+            parse(&bad, Limits::standard()),
+            Err(PackError::Malformed(_))
+        ));
         // bad zlib
         let mut raw = header(3, 5);
         raw.extend_from_slice(b"notzlib!");
@@ -633,7 +649,13 @@ pub(crate) mod tests {
         let p = build(&[E::Plain(Kind::Blob, b"x".to_vec()), E::Ofs(0, d, n)]);
         assert!(parse(&p, Limits::standard()).is_err());
         // not a pack / wrong version
-        assert!(parse(b"NOPE0000000000000000000000000000000000", Limits::standard()).is_err());
+        assert!(
+            parse(
+                b"NOPE0000000000000000000000000000000000",
+                Limits::standard()
+            )
+            .is_err()
+        );
         let mut v9 = ok.clone();
         v9[7] = 9;
         assert!(parse(&v9, Limits::standard()).is_err());
@@ -687,7 +709,9 @@ pub(crate) mod tests {
         assert!(parse(&chain(50), Limits::standard()).is_ok());
         assert_eq!(
             parse(&chain(51), Limits::standard()),
-            Err(PackError::Malformed("a delta chain in the pack is too deep"))
+            Err(PackError::Malformed(
+                "a delta chain in the pack is too deep"
+            ))
         );
     }
 
@@ -700,7 +724,10 @@ pub(crate) mod tests {
         t.extend_from_slice(&id);
         let e = tree_entries(&t).unwrap();
         assert_eq!(e.len(), 2);
-        assert_eq!((e[0].mode.as_str(), e[0].name.as_str()), ("100644", "SKILL.md"));
+        assert_eq!(
+            (e[0].mode.as_str(), e[0].name.as_str()),
+            ("100644", "SKILL.md")
+        );
         assert_eq!(e[1].mode, "40000");
         for bad in [
             &b"100644 a"[..],

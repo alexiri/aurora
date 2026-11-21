@@ -402,7 +402,12 @@ mod tests {
         assert_eq!(ip6.url, "https://[fd00::1]:8443/a");
         assert_eq!(ip6.ip_literal(), Some("fd00::1".parse().unwrap()));
         assert_eq!(parse("https://git.example/a").unwrap().ip_literal(), None);
-        assert_eq!(parse("https://g.example/a/skills.git").unwrap().last_segment(), "skills");
+        assert_eq!(
+            parse("https://g.example/a/skills.git")
+                .unwrap()
+                .last_segment(),
+            "skills"
+        );
     }
 
     #[test]
@@ -416,22 +421,55 @@ mod tests {
         err("ssh://git@github.com/acme/skills.git", UrlError::SshUrl);
         err("git+ssh://github.com/acme/skills", UrlError::SshUrl);
         err("git@github.com:acme/skills.git", UrlError::SshUrl);
-        err("https://user:pw@github.com/acme/skills", UrlError::CredentialsInUrl);
-        err("https://token@github.com/acme/skills", UrlError::CredentialsInUrl);
-        err("https://github.com/acme/skills?ref=main", UrlError::QueryOrFragment);
-        err("https://github.com/acme/skills#readme", UrlError::QueryOrFragment);
+        err(
+            "https://user:pw@github.com/acme/skills",
+            UrlError::CredentialsInUrl,
+        );
+        err(
+            "https://token@github.com/acme/skills",
+            UrlError::CredentialsInUrl,
+        );
+        err(
+            "https://github.com/acme/skills?ref=main",
+            UrlError::QueryOrFragment,
+        );
+        err(
+            "https://github.com/acme/skills#readme",
+            UrlError::QueryOrFragment,
+        );
         err("https://github.com?x", UrlError::QueryOrFragment);
         err("https://github.com", UrlError::NotARepositoryPath);
         err("https://github.com/", UrlError::NotARepositoryPath);
         err("https://github.com//acme", UrlError::NotARepositoryPath);
-        err("https://github.com/acme/../etc", UrlError::NotARepositoryPath);
-        err("https://github.com/acme/%2e%2e/x", UrlError::NotARepositoryPath);
-        err("https://github.com/acme/a%2Fb", UrlError::NotARepositoryPath);
-        err("https://github.com/acme/sk ills", UrlError::NotARepositoryPath);
+        err(
+            "https://github.com/acme/../etc",
+            UrlError::NotARepositoryPath,
+        );
+        err(
+            "https://github.com/acme/%2e%2e/x",
+            UrlError::NotARepositoryPath,
+        );
+        err(
+            "https://github.com/acme/a%2Fb",
+            UrlError::NotARepositoryPath,
+        );
+        err(
+            "https://github.com/acme/sk ills",
+            UrlError::NotARepositoryPath,
+        );
         err("https://github.com/acme/%zz", UrlError::NotARepositoryPath);
-        err("https://github.com/acme/ski\u{0430}lls", UrlError::NotARepositoryPath);
-        err("https://gitlab.com/g/p/-/merge_requests", UrlError::NotARepositoryPath);
-        err("https://gitlab.com/-/tree/main", UrlError::NotARepositoryPath);
+        err(
+            "https://github.com/acme/ski\u{0430}lls",
+            UrlError::NotARepositoryPath,
+        );
+        err(
+            "https://gitlab.com/g/p/-/merge_requests",
+            UrlError::NotARepositoryPath,
+        );
+        err(
+            "https://gitlab.com/-/tree/main",
+            UrlError::NotARepositoryPath,
+        );
         err("https://host:99999/a", UrlError::NotARepositoryPath);
         err("https:///a/b", UrlError::NotARepositoryPath);
         err("https://.git", UrlError::NotARepositoryPath);

@@ -808,7 +808,11 @@ mod tests {
     #[tokio::test]
     async fn a_skill_loads_through_the_seam_with_one_blob_request() {
         let repo = MemRepo::new(&[
-            ("lib/alpha/SKILL.md", "100644", b"---\ndescription: Alpha\n---\nBody\n"),
+            (
+                "lib/alpha/SKILL.md",
+                "100644",
+                b"---\ndescription: Alpha\n---\nBody\n",
+            ),
             ("lib/alpha/run.sh", "100755", b"echo hi\n"),
             ("lib/alpha/notes/a.txt", "100644", b"n"),
             ("lib/beta/SKILL.md", "120000", b"../alpha/SKILL.md"),

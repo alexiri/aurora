@@ -98,11 +98,19 @@ mod tests {
         let t0 = Instant::now();
         let l = Limiter::default();
         let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
-        assert_eq!((0..8).filter(|_| l.allow_at(a, t0)).count(), 5, "per-org burst of 5");
+        assert_eq!(
+            (0..8).filter(|_| l.allow_at(a, t0)).count(),
+            5,
+            "per-org burst of 5"
+        );
         assert!(l.allow_at(b, t0), "another organization has its own bucket");
         assert!(!l.allow_at(a, t0));
         let later = t0 + Duration::from_secs(1);
-        assert_eq!((0..8).filter(|_| l.allow_at(a, later)).count(), 5, "refilled at 5 per second");
+        assert_eq!(
+            (0..8).filter(|_| l.allow_at(a, later)).count(),
+            5,
+            "refilled at 5 per second"
+        );
         let g = Limiter::default();
         let allowed = (0..25).filter(|_| g.allow_at(Uuid::now_v7(), t0)).count();
         assert_eq!(allowed, 20, "per-gateway burst of 20");

@@ -114,14 +114,74 @@ async fn libraries_are_backfilled_with_their_git_url_and_the_rest_asks_for_an_ad
     let gl_inst_conn = conn(&pool, org, "gitlab", Some(gl_inst)).await;
     let gl_com_conn = conn(&pool, org, "gitlab", None).await;
     let forge_conn = conn(&pool, org, "forge", None).await;
-    let github = lib(&pool, org, "gh", Some(gh_conn), "github", "acme/skills", Some("main"), 0).await;
+    let github = lib(
+        &pool,
+        org,
+        "gh",
+        Some(gh_conn),
+        "github",
+        "acme/skills",
+        Some("main"),
+        0,
+    )
+    .await;
     // the same repository, ref and folder again (another label): only the oldest keeps the url
-    let github_dup = lib(&pool, org, "gh2", Some(gh_conn), "github", "acme/skills", Some("main"), 1).await;
-    let ghes = lib(&pool, org, "ghes", Some(ghes_conn), "github", "team/skills", None, 2).await;
-    let gitlab_inst = lib(&pool, org, "gl", Some(gl_inst_conn), "gitlab", "grp/sub/proj", None, 3).await;
-    let gitlab_com = lib(&pool, org, "glcom", Some(gl_com_conn), "gitlab", "grp/proj", None, 4).await;
+    let github_dup = lib(
+        &pool,
+        org,
+        "gh2",
+        Some(gh_conn),
+        "github",
+        "acme/skills",
+        Some("main"),
+        1,
+    )
+    .await;
+    let ghes = lib(
+        &pool,
+        org,
+        "ghes",
+        Some(ghes_conn),
+        "github",
+        "team/skills",
+        None,
+        2,
+    )
+    .await;
+    let gitlab_inst = lib(
+        &pool,
+        org,
+        "gl",
+        Some(gl_inst_conn),
+        "gitlab",
+        "grp/sub/proj",
+        None,
+        3,
+    )
+    .await;
+    let gitlab_com = lib(
+        &pool,
+        org,
+        "glcom",
+        Some(gl_com_conn),
+        "gitlab",
+        "grp/proj",
+        None,
+        4,
+    )
+    .await;
     let gitlab_gone = lib(&pool, org, "glgone", None, "gitlab", "grp/gone", None, 5).await;
-    let forge = lib(&pool, org, "forge", Some(forge_conn), "forge", "acme/skills", None, 6).await;
+    let forge = lib(
+        &pool,
+        org,
+        "forge",
+        Some(forge_conn),
+        "forge",
+        "acme/skills",
+        None,
+        6,
+    )
+    .await;
 
     aurora_db::migrate(&pool).await.unwrap();
 

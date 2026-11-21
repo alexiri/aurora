@@ -150,7 +150,10 @@ pub fn address(
         if !state.connect.allow.load().permits(ip, &host) {
             return Err(ApiError::unprocessable(
                 "library_unreachable",
-                format!("The repository could not be reached: {}.", git::reason::ADDRESS_REFUSED),
+                format!(
+                    "The repository could not be reached: {}.",
+                    git::reason::ADDRESS_REFUSED
+                ),
             ));
         }
     }
@@ -253,7 +256,10 @@ async fn discard_token(state: &AppState, library: Uuid, org: Option<Uuid>, token
 }
 
 /// (SEC-148) Opens a library's token for one read. Only the repository reader uses the value.
-pub(crate) async fn open_token(state: &AppState, row: &LibraryRow) -> Result<Option<Token>, String> {
+pub(crate) async fn open_token(
+    state: &AppState,
+    row: &LibraryRow,
+) -> Result<Option<Token>, String> {
     let Some(tr) = row.token_ref.as_deref() else {
         return Ok(None);
     };
@@ -349,15 +355,27 @@ pub async fn create(
     req: &CreateSkillLibraryRequest,
 ) -> Result<LibraryRow, ApiError> {
     let label = clean_label_field(&req.label)?;
-    let src = address(state, &req.url, req.reference.as_deref(), req.path.as_deref())?;
+    let src = address(
+        state,
+        &req.url,
+        req.reference.as_deref(),
+        req.path.as_deref(),
+    )?;
     let token = token_input(req.token.as_deref(), req.token_username.as_deref())?;
     // Early refusals before the slow read of the repository; the authoritative checks run
     // under the org's advisory lock right before the insert (below).
     {
         let mut c = state.pool.acquire().await.map_err(DbError::from)?;
         check_library_cap(&mut c, org).await?;
-        if repo::url_taken(&mut c, org, &src.url, src.reference.as_deref(), &src.path, None)
-            .await?
+        if repo::url_taken(
+            &mut c,
+            org,
+            &src.url,
+            src.reference.as_deref(),
+            &src.path,
+            None,
+        )
+        .await?
         {
             return Err(exists());
         }
@@ -427,10 +445,20 @@ pub async fn check(
     state: &AppState,
     req: &CheckSkillLibraryRequest,
 ) -> Result<LibraryCheck, ApiError> {
-    let src = address(state, &req.url, req.reference.as_deref(), req.path.as_deref())?;
+    let src = address(
+        state,
+        &req.url,
+        req.reference.as_deref(),
+        req.path.as_deref(),
+    )?;
     let token = token_input(req.token.as_deref(), req.token_username.as_deref())?;
-    let git = GitRepo::new(&state.connect, &src.url, token.as_ref(), state.library.fetch_timeout)
-        .map_err(|e| unreachable_on_create(&e))?;
+    let git = GitRepo::new(
+        &state.connect,
+        &src.url,
+        token.as_ref(),
+        state.library.fetch_timeout,
+    )
+    .map_err(|e| unreachable_on_create(&e))?;
     let reader = Reader::new(&git, &src.path);
     let resolved = reader
         .resolve_full(src.reference.as_deref())
@@ -786,7 +814,9 @@ pub async fn check_now(state: &AppState, id: Uuid) -> Result<(), ApiError> {
 
 /// The token of a read (503 when the store cannot open it).
 async fn read_token(state: &AppState, row: &LibraryRow) -> Result<Option<Token>, ApiError> {
-    open_token(state, row).await.map_err(|_| store_unavailable())
+    open_token(state, row)
+        .await
+        .map_err(|_| store_unavailable())
 }
 
 fn git_for<'a>(
@@ -945,8 +975,8 @@ async fn read_listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>
 }
 
 async fn list_item(reader: &Reader<'_>, c: &Candidate) -> Result<ListItem, ReadError> {
-    let base = |valid: bool, description: Option<String>, reason: Option<String>, extra: u64| {
-        ListItem {
+    let base =
+        |valid: bool, description: Option<String>, reason: Option<String>, extra: u64| ListItem {
             path: c.dir.clone(),
             name: c.dir.clone(),
             description,
@@ -954,8 +984,7 @@ async fn list_item(reader: &Reader<'_>, c: &Candidate) -> Result<ListItem, ReadE
             reason: reason.map(|r| one_line(&r, 200)),
             size: c.tree_size() + extra,
             files: c.files.len() + usize::from(c.skill_md.is_some()),
-        }
-    };
+        };
     if let Some(p) = c.problem() {
         return Ok(base(false, None, Some(p), 0));
     }
@@ -964,9 +993,18 @@ async fn list_item(reader: &Reader<'_>, c: &Candidate) -> Result<ListItem, ReadE
     };
     let raw = reader.blob(&sm.blob).await?;
     // The tree of a filtered fetch has no blob sizes: count the SKILL.md just read.
-    let extra = if sm.size.is_none() { raw.len() as u64 } else { 0 };
+    let extra = if sm.size.is_none() {
+        raw.len() as u64
+    } else {
+        0
+    };
     if raw.len() > limits::LIBRARY_FILE_MAX {
-        return Ok(base(false, None, Some("SKILL.md is too large".into()), extra));
+        return Ok(base(
+            false,
+            None,
+            Some("SKILL.md is too large".into()),
+            extra,
+        ));
     }
     Ok(match content::parse_skill_md(&raw, &c.dir) {
         Ok((d, _)) => base(true, Some(d), None, extra),

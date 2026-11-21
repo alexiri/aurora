@@ -37,7 +37,8 @@ pub mod reason {
     pub const ENTER_URL: &str = "Enter the repository's git address";
     pub const SHA256: &str = "SHA-256 repositories are not supported";
     pub const MOVED: &str = "the git host answered with a redirect (the repository may have moved)";
-    pub const REDIRECT_REFUSED: &str = "The repository redirected to an address that is not allowed";
+    pub const REDIRECT_REFUSED: &str =
+        "The repository redirected to an address that is not allowed";
     pub const TOO_MANY_REDIRECTS: &str = "The repository redirected too many times";
     pub const NOT_GIT: &str = "The server does not answer as a git repository";
     pub const PROTOCOL: &str = "The git server's answer could not be read";
@@ -357,9 +358,7 @@ impl<'a> GitRepo<'a> {
                     out.push(discover::RefLine {
                         name: name.clone(),
                         id: *id,
-                        symref_target: (name == "HEAD")
-                            .then(|| a.head_target.clone())
-                            .flatten(),
+                        symref_target: (name == "HEAD").then(|| a.head_target.clone()).flatten(),
                         peeled: a.peeled.get(name).copied(),
                     });
                 }
@@ -464,7 +463,9 @@ impl RepoSource for GitRepo<'_> {
         };
         let Some(r) = reference else {
             let h = head.ok_or_else(not_found)?;
-            let name = head_target.as_deref().map_or_else(|| "HEAD".to_owned(), short);
+            let name = head_target
+                .as_deref()
+                .map_or_else(|| "HEAD".to_owned(), short);
             return Ok(Resolved {
                 sha: pack::hex(&h.id),
                 kind: RefKind::Branch,
@@ -524,8 +525,7 @@ impl RepoSource for GitRepo<'_> {
             let st = self.state.lock().await;
             for i in ids {
                 let oid = pack::parse_hex(i).ok_or_else(|| unreachable(reason::MISMATCH))?;
-                if !st.objects.get(&oid).is_some_and(|o| o.kind == Kind::Blob)
-                    && !want.contains(i)
+                if !st.objects.get(&oid).is_some_and(|o| o.kind == Kind::Blob) && !want.contains(i)
                 {
                     want.push(i.clone());
                 }
@@ -572,6 +572,17 @@ mod tests {
     use super::*;
     use pack::tests::{E, build};
 
+    /// (SEC-148) The token never reaches a log line through `{:?}` of the type that carries it.
+    #[test]
+    fn the_token_type_debug_never_shows_the_token() {
+        let t = Token {
+            username: "x-access-token".into(),
+            token: Secret::new("canary-secret-value".to_owned()),
+        };
+        let shown = format!("{t:?} {:?}", Some(&t));
+        assert!(!shown.contains("canary-secret-value"), "{shown}");
+    }
+
     fn tree(entries: &[(&str, &str, Oid)]) -> Vec<u8> {
         let mut t = Vec::new();
         for (mode, name, id) in entries {
@@ -604,7 +615,14 @@ mod tests {
         let paths: Vec<&str> = all.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(
             paths,
-            ["README", "skills", "skills/alpha", "skills/alpha/SKILL.md", "skills/alpha/l", "skills/sub"]
+            [
+                "README",
+                "skills",
+                "skills/alpha",
+                "skills/alpha/SKILL.md",
+                "skills/alpha/l",
+                "skills/sub"
+            ]
         );
         let under = walk(&objects, &commit_id, "skills").unwrap();
         assert_eq!(under.len(), 4);
@@ -613,9 +631,10 @@ mod tests {
         assert_eq!(under[1].size, None);
         assert!(walk(&objects, &commit_id, "nope").unwrap().is_empty());
         // a listed tree that is not in the pack fails the read
-        let p = build(&[
-            E::Plain(Kind::Commit, format!("tree {}\n\n", pack::hex(&root_id)).into_bytes()),
-        ]);
+        let p = build(&[E::Plain(
+            Kind::Commit,
+            format!("tree {}\n\n", pack::hex(&root_id)).into_bytes(),
+        )]);
         let objects = pack::parse(&p, pack::Limits::standard()).unwrap();
         let only = objects.keys().next().copied().unwrap();
         assert_eq!(
@@ -628,14 +647,24 @@ mod tests {
     async fn a_private_address_needs_allowed_private_and_http_is_never_dialled() {
         let ring = aurora_crypto::SecretRing::default();
         let strict = Env::new("http://hooks.example:4104", &ring, &[], None).unwrap();
-        let r = GitRepo::new(&strict, "https://localhost:1/acme/skills", None, Duration::from_secs(2))
-            .unwrap();
+        let r = GitRepo::new(
+            &strict,
+            "https://localhost:1/acme/skills",
+            None,
+            Duration::from_secs(2),
+        )
+        .unwrap();
         assert_eq!(
             r.resolve(None).await,
             Err(ReadError::Unreachable(reason::ADDRESS_REFUSED.into()))
         );
-        let r = GitRepo::new(&strict, "https://10.1.2.3/acme/skills", None, Duration::from_secs(2))
-            .unwrap();
+        let r = GitRepo::new(
+            &strict,
+            "https://10.1.2.3/acme/skills",
+            None,
+            Duration::from_secs(2),
+        )
+        .unwrap();
         assert_eq!(
             r.resolve(None).await,
             Err(ReadError::Unreachable(reason::ADDRESS_REFUSED.into()))
@@ -647,12 +676,25 @@ mod tests {
             None,
         )
         .unwrap();
-        let r = GitRepo::new(&open, "https://localhost:1/acme/skills", None, Duration::from_secs(2))
-            .unwrap();
+        let r = GitRepo::new(
+            &open,
+            "https://localhost:1/acme/skills",
+            None,
+            Duration::from_secs(2),
+        )
+        .unwrap();
         assert_eq!(
             r.resolve(None).await,
             Err(ReadError::Unreachable(reason::UNREACHABLE.into()))
         );
-        assert!(GitRepo::new(&open, "http://localhost:1/acme", None, Duration::from_secs(1)).is_err());
+        assert!(
+            GitRepo::new(
+                &open,
+                "http://localhost:1/acme",
+                None,
+                Duration::from_secs(1)
+            )
+            .is_err()
+        );
     }
 }

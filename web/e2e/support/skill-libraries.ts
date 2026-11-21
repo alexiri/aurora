@@ -14,9 +14,12 @@ const SHA_A = "0123456789abcdef0123456789abcdef01234567";
 const SHA_B = "89abcdef0123456789abcdef0123456789abcdef";
 const HOSTILE = "Review <img src=x onerror=alert(1)> [click](javascript:alert(1)) " + "x".repeat(120);
 
+// (P5-SKLIB-1, C-1122) A library is an address: `url` and the display form `repo`, no app connection; `token_set` says
+// whether a token is saved, never the token.
 const library = {
-  id: id(700), label: "Team skills", app_id: "github", connection: { id: id(40), label: "acme-skills-token", status: "active" },
-  repo: "acme/agent-skills", ref: null, path: "skills", status: "active", last_head_sha: SHA_B, last_refresh_at: now, last_error: null,
+  id: id(700), scope: "org", org_id: id(1), label: "Team skills", url: "https://git.example.org/acme/agent-skills.git",
+  repo: "git.example.org/acme/agent-skills", ref: null, path: "skills", status: "active", token_set: false, token_updated_at: null,
+  last_head_sha: SHA_B, last_refresh_at: now, last_error: null,
   skill_counts: { agent: 1, workspace: 0, org: 1 }, pending_updates: 1, created_at: now,
 };
 
@@ -24,7 +27,7 @@ const orgSkill = {
   id: id(710), tier: "org", scope: "organization", agent_id: null, workspace_id: null, org_id: id(1), name: "code-review",
   description: HOSTILE, body: "Review pull requests carefully.\n", enabled: true, files: [{ path: "checklist.md", size: 20, executable: false }],
   total_size: 52, overridden_in: null, updated_at: now, created_at: now,
-  source: { kind: "library", library_id: id(700), label: "Team skills", repo: "acme/agent-skills", path: "code-review", commit_sha: SHA_A, pinned_at: now, detached: false, update_pending: true },
+  source: { kind: "library", library_id: id(700), label: "Team skills", repo: "git.example.org/acme/agent-skills", path: "code-review", commit_sha: SHA_A, pinned_at: now, detached: false, update_pending: true },
 };
 
 const catalogue = {
@@ -44,7 +47,7 @@ const content = {
 };
 
 const info = {
-  library: { id: id(700), label: "Team skills", repo: "acme/agent-skills", path: "code-review" }, commit_sha: SHA_A, pinned_at: now, pinned_by: id(99), detached: false,
+  library: { id: id(700), label: "Team skills", repo: "git.example.org/acme/agent-skills", path: "code-review" }, commit_sha: SHA_A, pinned_at: now, pinned_by: id(99), detached: false,
   update: {
     id: id(720), kind: "changed", commit_sha: SHA_B, created_at: now, content_sha256: "b".repeat(64), over_budget: false, reason: null,
     diff: {
@@ -76,9 +79,6 @@ export async function mockLibraries(page: Page) {
     }
     if (p === `/v1/skill-libraries/${library.id}/skills/release-notes`) return json(content);
     if (p === `/v1/skills/${orgSkill.id}/library`) return json(info);
-    if (p === `/v1/orgs/${org.id}/connections`) {
-      return json({ items: [{ app_id: "github", app_version: "1.0.0", created_at: now, id: id(40), injecting: [], label: "acme-skills-token", metadata: {}, missing_scopes: [], org_id: id(1), package_id: "github", scope: "organization", scopes: [], status: "active", updated_at: now }] });
-    }
     return route.fallback();
   });
 }
@@ -96,7 +96,7 @@ export async function openLibraryScreen(page: Page, screen: LibraryScreen, schem
   if (screen === "libraries") return;
   if (screen === "connect") {
     await page.getByRole("button", { name: "Connect a repository" }).first().click();
-    await page.getByLabel("Repository", { exact: true }).waitFor();
+    await page.getByLabel("Repository address", { exact: true }).waitFor();
     return;
   }
   if (screen === "review") {

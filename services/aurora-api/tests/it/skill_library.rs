@@ -329,7 +329,10 @@ async fn create_list_patch_delete_with_the_permission_matrix() {
     assert_eq!(v["token_set"], false);
     assert!(v["token_updated_at"].is_null());
     assert_eq!(v["last_head_sha"], w.git.head("acme/skills", "main"));
-    assert!(v.get("connection").is_none() && v.get("app_id").is_none(), "{v}");
+    assert!(
+        v.get("connection").is_none() && v.get("app_id").is_none(),
+        "{v}"
+    );
     assert_eq!(
         v["skill_counts"],
         json!({"agent": 0, "workspace": 0, "org": 0})
@@ -445,12 +448,16 @@ async fn create_refusals_address_reach_and_limit() {
         ("https://git.example/", "not_a_repository_path"),
         ("https://git.example/acme/../x", "not_a_repository_path"),
     ] {
-        let (s, v) = w.call(&w.admin, Method::POST, &list, Some(mk(u, "a"))).await;
+        let (s, v) = w
+            .call(&w.admin, Method::POST, &list, Some(mk(u, "a")))
+            .await;
         assert_eq!((s, code(&v)), (422, "library_url_invalid"), "{u}: {v}");
         assert_eq!(v["error"]["details"]["reason"], reason, "{u}: {v}");
     }
     let long = format!("https://git.example/{}", "a".repeat(500));
-    let (s, v) = w.call(&w.admin, Method::POST, &list, Some(mk(&long, "a"))).await;
+    let (s, v) = w
+        .call(&w.admin, Method::POST, &list, Some(mk(&long, "a")))
+        .await;
     assert_eq!(
         (s, code(&v), v["error"]["details"]["reason"].as_str()),
         (422, "library_url_invalid", Some("too_long")),
@@ -458,7 +465,12 @@ async fn create_refusals_address_reach_and_limit() {
     );
     // (SEC-148) an IP-literal host the destination guard refuses is never dialled
     let (s, v) = w
-        .call(&w.admin, Method::POST, &list, Some(mk("https://10.1.2.3/acme/skills", "b")))
+        .call(
+            &w.admin,
+            Method::POST,
+            &list,
+            Some(mk("https://10.1.2.3/acme/skills", "b")),
+        )
         .await;
     assert_eq!((s, code(&v)), (422, "library_unreachable"), "{v}");
     assert_eq!(w.git.requests().len(), 0, "nothing was sent");
@@ -495,12 +507,23 @@ async fn create_refusals_address_reach_and_limit() {
     assert_eq!((s, code(&v)), (400, "invalid_request"), "{v}");
     // unreachable repository: the reason is shown, sanitized
     let (s, v) = w
-        .call(&w.admin, Method::POST, &list, Some(mk(&url("acme/missing"), "f")))
+        .call(
+            &w.admin,
+            Method::POST,
+            &list,
+            Some(mk(&url("acme/missing"), "f")),
+        )
         .await;
     assert_eq!((s, code(&v)), (422, "library_unreachable"), "{v}");
     let msg = v["error"]["message"].as_str().unwrap();
-    assert!(msg.contains("The repository was not found, or the token cannot read it"), "{v}");
-    assert!(!msg.contains("127.0.0.1") && !msg.contains("git.example"), "{v}");
+    assert!(
+        msg.contains("The repository was not found, or the token cannot read it"),
+        "{v}"
+    );
+    assert!(
+        !msg.contains("127.0.0.1") && !msg.contains("git.example"),
+        "{v}"
+    );
     // unknown ref
     let mut b = mk(&url("acme/skills"), "g");
     b["ref"] = json!("nonexistent");
@@ -523,13 +546,21 @@ async fn create_refusals_address_reach_and_limit() {
         assert_eq!(s, 201, "{v}");
     }
     let (s, v) = w
-        .call(&w.admin, Method::POST, &list, Some(mk(&url("acme/skills"), "l10")))
+        .call(
+            &w.admin,
+            Method::POST,
+            &list,
+            Some(mk(&url("acme/skills"), "l10")),
+        )
         .await;
     assert_eq!((s, code(&v)), (409, "library_limit"), "{v}");
     // (C-1123) a page URL fills ref and path; a nested GitLab-style project works
     w.git.add_repo("grp/sub/proj");
-    w.git
-        .commit("grp/sub/proj", "dev", &[put("team/s/SKILL.md", md("d", "b"))]);
+    w.git.commit(
+        "grp/sub/proj",
+        "dev",
+        &[put("team/s/SKILL.md", md("d", "b"))],
+    );
     let (s, v) = w
         .call(
             &w.admin,
@@ -547,13 +578,20 @@ async fn create_refusals_address_reach_and_limit() {
             &w.admin,
             Method::POST,
             &list,
-            Some(mk(&format!("{GIT_ORIGIN}/grp/sub/proj/-/tree/dev/team"), "gl")),
+            Some(mk(
+                &format!("{GIT_ORIGIN}/grp/sub/proj/-/tree/dev/team"),
+                "gl",
+            )),
         )
         .await;
     assert_eq!(s, 201, "{v}");
     assert_eq!(
         (v["url"].as_str(), v["ref"].as_str(), v["path"].as_str()),
-        (Some(url("grp/sub/proj").as_str()), Some("dev"), Some("team")),
+        (
+            Some(url("grp/sub/proj").as_str()),
+            Some("dev"),
+            Some("team")
+        ),
         "{v}"
     );
     assert_eq!(v["last_head_sha"], w.git.head("grp/sub/proj", "dev"));
@@ -640,13 +678,7 @@ async fn browse_is_live_stores_nothing_is_cached_and_marks_untrusted_text() {
     };
     assert_eq!(by("alpha")["valid"], true);
     assert_eq!(by("alpha")["description"], "Alpha skill");
-    for bad in [
-        "linked",
-        "Bad_Name",
-        "nofm",
-        "mismatch",
-        "aurora-reserved",
-    ] {
+    for bad in ["linked", "Bad_Name", "nofm", "mismatch", "aurora-reserved"] {
         assert_eq!(by(bad)["valid"], false, "{bad}");
         assert!(
             by(bad)["reason"].as_str().is_some_and(|r| !r.is_empty()),
@@ -749,7 +781,12 @@ async fn a_repository_over_the_tree_limit_is_refused_but_a_folder_of_it_can_be_r
     let w = world().await;
     w.git.add_repo("grp/proj");
     let mut changes: Vec<Change> = (0..12)
-        .map(|i| put(&format!("s/s{i:02}/SKILL.md"), md(&format!("Skill {i}"), "b")))
+        .map(|i| {
+            put(
+                &format!("s/s{i:02}/SKILL.md"),
+                md(&format!("Skill {i}"), "b"),
+            )
+        })
         .collect();
     changes.push(Change::Fill(
         "big".into(),
@@ -829,8 +866,10 @@ async fn browse_errors_are_reasons_never_credentials() {
     }
     // a redirect to an address that is not https is refused, never followed
     w.git.clear_overrides();
-    w.git
-        .redirect("/info/refs", "http://evil.example/acme/skills/info/refs?service=git-upload-pack");
+    w.git.redirect(
+        "/info/refs",
+        "http://evil.example/acme/skills/info/refs?service=git-upload-pack",
+    );
     let id = libs.iter().find(|(l, _)| *l == "redir").unwrap().1;
     let (s, v) = w
         .call(
@@ -880,7 +919,10 @@ async fn add_pins_the_exact_requested_commit_even_when_the_head_moved() {
     let _ = &sha2;
     for r in w.git.requests().iter().filter(|r| r.method == "POST") {
         let body = String::from_utf8_lossy(&r.body);
-        assert!(!body.contains(&sha2), "the newer head was asked for: {body}");
+        assert!(
+            !body.contains(&sha2),
+            "the newer head was asked for: {body}"
+        );
     }
     assert_eq!(
         w.git.ls_refs(),
@@ -1357,7 +1399,11 @@ async fn refresh_unchanged_head_costs_one_call_and_changes_nothing() {
     w.git.clear_requests();
     w.refresh(lib).await;
     assert_eq!(w.git.ls_refs(), 1, "one ref resolution");
-    assert_eq!(w.git.fetches(), 0, "nothing is fetched for an unchanged head");
+    assert_eq!(
+        w.git.fetches(),
+        0,
+        "nothing is fetched for an unchanged head"
+    );
     assert_eq!(
         w.git.requests().len(),
         2,
@@ -1648,8 +1694,7 @@ async fn refresh_errors_back_off_and_leave_pinned_skills_alone() {
     let l = w.library_row(lib).await;
     assert_eq!(l["status"], "error", "{l}");
     assert_eq!(
-        l["last_error"],
-        "The repository was not found, or the token cannot read it",
+        l["last_error"], "The repository was not found, or the token cannot read it",
         "{l}"
     );
     w.git.clear_overrides();
@@ -2593,11 +2638,7 @@ async fn refresh_reads_a_private_repository_with_the_sealed_token_and_never_show
             Some(json!({"label": "priv", "url": url("acme/skills")})),
         )
         .await;
-    assert_eq!(
-        (s, code(&v)),
-        (422, "library_unreachable"),
-        "no token: {v}"
-    );
+    assert_eq!((s, code(&v)), (422, "library_unreachable"), "no token: {v}");
     let (s, v) = w
         .call(
             &w.admin,
@@ -2612,8 +2653,11 @@ async fn refresh_reads_a_private_repository_with_the_sealed_token_and_never_show
     let lib: Uuid = v["id"].as_str().unwrap().parse().unwrap();
     w.add_org(lib, "alpha", &sha).await;
     w.git.clear_requests();
-    w.git
-        .commit("acme/skills", "main", &[put("alpha/SKILL.md", md("A2", "v2"))]);
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("alpha/SKILL.md", md("A2", "v2"))],
+    );
     w.refresh(lib).await;
     let want = format!(
         "Basic {}",
@@ -2622,7 +2666,12 @@ async fn refresh_reads_a_private_repository_with_the_sealed_token_and_never_show
     let reqs = w.git.requests();
     assert!(!reqs.is_empty());
     for r in &reqs {
-        assert_eq!(r.authorization.as_deref(), Some(want.as_str()), "{}", r.target);
+        assert_eq!(
+            r.authorization.as_deref(),
+            Some(want.as_str()),
+            "{}",
+            r.target
+        );
     }
     // a refused token is recorded as a fixed text, not the token
     w.git.require_token("x-access-token", "rotated");

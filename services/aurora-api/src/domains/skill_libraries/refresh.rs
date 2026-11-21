@@ -261,7 +261,12 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
     // it has one (opened for this pass only).
     let url = row_url(lib)?;
     let token = open_token(state, lib).await?;
-    let git = GitRepo::new(&state.connect, url, token.as_ref(), state.library.fetch_timeout)?;
+    let git = GitRepo::new(
+        &state.connect,
+        url,
+        token.as_ref(),
+        state.library.fetch_timeout,
+    )?;
     let reader = Reader::new(&git, &lib.path);
     let mut c = state.pool.acquire().await.map_err(db)?;
     let head = reader.resolve(lib.reference.as_deref()).await?;

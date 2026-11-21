@@ -232,8 +232,8 @@ NetworkPolicy and its key is a secret root.
 | `connector_host.api_url` | `http://127.0.0.1:4101` | connector-host | (phase 4, P4-MCON) the API the host registers with; the token comes from `AURORA_CONNECTOR_HOST_TOKEN` (`auh_`) |
 | `connector_host.listen` / `connector_host.ops_port` | `0.0.0.0:4110` / `4192` | connector-host | (phase 4, P4-MCON) platform callbacks (`/connectors/<id>/…`) / health and metrics |
 | `connector_host.test_types` | `false` | connector-host | (phase 4, P4-MCON) also announce the `fake` type (development and e2e only; startup warns); **development-only key**: refused unless `server.external_url` is loopback (FIX-116) |
-| `skills.library.enabled` | `true` | api | (phase 4, P4-GSL) kill-switch of the git skill library; invisible until an org admin connects a repository; no new infrastructure (`§Git skill library`) |
-| `api.gateway_internal_url` | `http://aurora-gateway:4103` | api | (phase 4, P4-GSL, D-154) the gateway's internal listener as the API reaches it for `POST /internal/v1/library-fetch` (`06 §Library fetch`); the internal secret ring authenticates; must be an `http(s)` URL (startup refusal naming the key otherwise) |
+| `skills.library.enabled` | `true` | api | (phase 4, P4-GSL) kill-switch of the git skill library; invisible until an org admin adds a repository; no new infrastructure (`§Git skill library`) |
+| `api.gateway_internal_url` | `http://aurora-gateway:4103` | api | (phase 4, P4-GSL, D-154) the gateway's internal listener as the API reaches it for `POST /internal/v1/account-test` (`06`; the library-fetch route it first served was removed, P5-SKLIB-1); the internal secret ring authenticates; must be an `http(s)` URL (startup refusal naming the key otherwise) |
 | `skills.library.refresh_interval_secs`, `skills.library.bytes_per_agent` | 900 (≥ 300), 1 MiB (lower only) | api | (phase 4, P4-GSL) `LIBRARY_REFRESH_INTERVAL`, `LIBRARY_BYTES_PER_AGENT` (`02 §Limits`) |
 | `plugins.addon_sources.update_interval` | `1d` | api | (phase 5, P5-ASRC, D-250) how often every addon source is re-checked: one of `6h`, `12h`, `1d`, `1w`, `2w`, `1mo`, `never` (`never` = manual checks only); anything else refuses startup. The poll shares the per-source lease with the manual "Check now" (`02 §Limits` `ADDON_*`, `22-addon-repos.md`) |
 | `previews.enabled` | `false` | api, relay | (phase 4, P4-PRV-1) master switch for port previews; **off unless configured**; when `true` the API refuses to start without a valid `previews.domain` (`§Port previews`). Helm: the chart value `relay.enabled` is the single switch — it mirrors `config.previews.enabled` (FIX-056), so `helm upgrade --set relay.enabled=true --set relay.domain=…` wires everything; set the config key only to agree explicitly, never alone |
@@ -1327,33 +1327,35 @@ older runner reports no `ssh` capability (channels fail, nothing else); an older
 `exec.*` (channels fail with 4502). Rolling back removes the terminator; keys and closed session rows
 stay in the database, inert.
 
-## Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
+## Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83; any git URL since P5-SKLIB-1, D-448, SEC-148)
 
-Optional by use: nothing to deploy, no new Service, Secret or NetworkPolicy. Requirements: the gateway
-can reach the git host's API **as it already does for agents** (the host is already one of the app's
-claimed hosts; the gateway's egress policy covers it), the API can reach the gateway's internal
-port 4103 (already true), and the **git-hosting package** (the built-in GitHub or GitLab package, at
-the release that adds the `library` block, re-approved by an instance admin like any package update,
-`09 §10`) is installed and approved. To use it an **org owner/admin** (1) connects the git host as an
-**org-scoped** app connection with a **read-only** credential (a fine-grained token limited to the
-skills repository is ideal; GitHub: *Contents: read*; GitLab: *read_repository*), then (2) Skills →
-Libraries → *Connect a repository*. Disable with `skills.library.enabled: false` (stored skills keep
-working; the dashboard hides the feature and the refresh job stops).
+Optional by use: nothing to deploy, no new Service, Secret or NetworkPolicy, **no app connection and no
+GitHub/GitLab account**. A library is an https git address that the **API** reads itself (git smart HTTP
+over `http_instance`), so the API pods need egress to the git hosts people add: the same destination guard
+as every API-side fetch applies (public addresses only; `gateway.allowed_private` opens a server on a private
+network, as for addon sources). To use it an **org owner/admin** opens Skills → Libraries → *Add a library*,
+pastes the repository address and, for a private repository, a **read-only access token**
+(see `docs/operator/skill-libraries.md` for the token to create per host). Disable with
+`skills.library.enabled: false` (stored skills keep working; the dashboard hides the feature and the refresh
+job stops).
 
-- **What leaves the cluster**: `GET`s of repository metadata and the files of skills people added or
-  browsed, from the git host's API, through the gateway. **What is stored**: only skills added to
-  agents, workspaces or the org (content, commit sha, blob ids) and open proposed updates (bounded,
-  `02 §Limits`). Nothing is cloned.
-- **Rate limits of the host**: a library with added skills costs one `resolve_ref` call per
-  `LIBRARY_REFRESH_INTERVAL` (15 min) while unchanged, plus a tree and changed files after a push;
-  browsing costs a tree and up to 200 file reads (cached 5 minutes). Self-hosted instances apply
-  their own limits; raise the interval with `skills.library.refresh_interval_secs`.
-- **Operations**: the Libraries page shows each library's status and last error (revoked token, repository
-  moved, host unreachable). A library in `error` leaves agents untouched. Metrics:
-  `aurora_skill_library_refresh_total{result}` (`unchanged`, `proposed`, `error`),
-  `aurora_skill_library_pending_updates`, `aurora_skill_library_refresh_duration_seconds`,
-  `aurora_gateway_library_fetch_total{step,status}`. Alert on sustained `result="error"` and on pending
-  updates older than a week (nobody is reviewing: agents keep running the pinned skills, which is safe
-  but stale).
-- **Upgrade and rollback**: additive tables and columns; rolling the API back leaves the tables and the
-  pinned skills (which are ordinary skill rows) in place and the library features disappear.
+- **What leaves the cluster**: git smart-HTTP requests (`info/refs`, `ls-refs`, `fetch`) to the repository
+  host, from the API pods, with the library's token (Basic) only to that host. **What is stored**: only skills
+  added to agents, workspaces or the org (content, commit sha, blob ids), open proposed updates (bounded,
+  `02 §Limits`) and the sealed token. Nothing is cloned to disk.
+- **Load on the git host**: a library with added skills costs one discovery and one `ls-refs` per
+  `LIBRARY_REFRESH_INTERVAL` (15 min) while unchanged, plus one tree and one blob fetch after a push;
+  browsing costs the same (cached 5 minutes). Self-hosted servers apply their own limits; raise the interval
+  with `skills.library.refresh_interval_secs`. A host's 429/503 is honoured (`Retry-After`) and is not a failure.
+- **Operations**: the Libraries page shows each library's status and last error ("The repository needs an
+  access token", "The access token was refused", host unreachable, …). A library in `error` leaves agents
+  untouched. Metrics: `aurora_skill_library_refresh_total{result}` (`unchanged`, `proposed`, `error`),
+  `aurora_skill_library_pending_updates`, `aurora_skill_library_refresh_duration_seconds`. Alert on sustained
+  `result="error"` and on pending updates older than a week. The gateway metric
+  `aurora_gateway_library_fetch_total` is gone with the route.
+- **Tokens**: sealed with the instance's secret store (purpose `skill_library.token`: `secrets migrate`
+  and key rotation cover it), never logged or returned.
+- **Upgrade and rollback**: migration `20261201000270` adds `url`, `token_ref`, `token_updated_at` and backfills
+  GitHub/GitLab libraries (`docs/operator/upgrades.md`). Rolling the API back leaves the columns and the
+  pinned skills in place (the old API needs the old gateway's library route: roll both back together).
+

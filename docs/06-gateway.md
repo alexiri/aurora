@@ -20,43 +20,23 @@ recommended" because the listener was plaintext; from phase 1 the listener is
 TLS-only and that caveat no longer applies (restricting source networks remains
 good practice).
 
-### Library fetch (internal; phase 4, P4-GSL, D-149, SEC-84)
+### Library fetch (removed; P5-SKLIB-1, D-448)
 
-The skill library (`10 §Skills`) reads repository files with a connection's credential. That
-credential is used **only here**, by the gateway, so the API never holds a plaintext token and the
-refresh and host guard (`08 §8`) stay in one place. It is the one credentialed request outside an app's
-tools: policy, grants and the app's `custom_only` / `block_untooled` flags do not apply to it, and it is
-bounded instead by the package's approved `library` templates (exact host, path and method, `09 §3.4 library`;
-FIX-085). The internal listener (4103) serves one more route,
-`POST /internal/v1/library-fetch`, with the same internal-secret auth and the same reachability
-(API replicas only, never a sandbox, SEC-09):
-
-`{ org_id, connection_id, step: "resolve_ref"|"list_tree"|"get_blob", params: { repo, ref?, sha?, blob?, page? }, max_bytes }`
-→ `200 { status, headers: { link?, retry-after? }, encoding: "base64", body (≤ max_bytes, base64) }` or `{ error }`
-(D-154: `status` is the git host's status, passed through as data; `body` is base64 because a blob may be binary;
-`page` is an integer 2–200 added to the template's query for a paginated tree; unknown request keys are refused).
-
-The gateway **builds the request itself** from the active snapshot's `apps[].library` block of the
-connection's app (`09 §3.4 library`): it validates every parameter against the block's patterns
-(a parameter that does not match is 400 `library_param`), substitutes it into the declared `path`,
-requires the connection to exist in the named org, to be **org-scoped**, `active` and of an app whose
-block is present (else 409 `library_unavailable`), and sends a `GET` to `request_host` through the
-ordinary guarded resolver (destination guard, SEC-06), the host entry's inject stage and OAuth refresh,
-TLS verification as for any request, **no redirects**, a response cap of `min(max_bytes, 4 MiB)`,
-and a total timeout of `LIBRARY_FETCH_TIMEOUT` (20 s). Policy, grants, approvals, agent rate limits and the
-request log of agents do **not** apply (there is no agent; the authority is an org owner/admin who
-connected the library and an instance admin who approved the manifest); instead the route is limited
-to the three templates of the block, has its own rate limit (`LIBRARY_FETCH_RATE`, 20/s per gateway,
-per-org 5/s) and counts in `aurora_gateway_library_fetch_total{step,status}`; a connection
-that needs re-authorization answers 409 `reauth_required` and sets the usual flag. No credential,
-header or token ever appears in the response or in logs. SEC-03 (policy before credentials) concerns
-agent requests and is unchanged: no agent request can reach this route.
+The gateway had an internal route `POST /internal/v1/library-fetch` (phase 4, P4-GSL, D-149, SEC-84) through
+which the API read skill-library files with an app connection's credential. **It no longer exists.** A skill
+library is an https git URL read by the API itself with the git smart-HTTP protocol over `http_instance`
+(the same destination guard and `gateway.allowed_private` rule as any API-side fetch of an operator-trusted
+address), with an optional sealed read-only token that is not an app credential (`10 §Git skill library`,
+C-1125, SEC-148). An API replica of the previous release that still calls the route gets 404 and records a
+transient refresh error that the next pass of the new release clears (`docs/operator/upgrades.md`). The
+`library` block of a manifest is still parsed and ignored (`09 §3.4 library`).
 
 ### Account test (internal; phase 5, P5-UX-14, D-335, C-943, SEC-129)
 
 The internal listener serves `POST /internal/v1/account-test` for the checks of Test that only the gateway
 can make, because an account's credential is used only here. Same internal-secret auth and reachability as
-library fetch (API replicas only, never a sandbox); per-organization limiter as library fetch.
+the other internal routes (API replicas only, never a sandbox); a per-organization token-bucket limiter
+(20/s per gateway, 5/s per organization; `aurora_gateway::limiter`, formerly the library fetch's).
 
 `{ org_id, connection_id, check: "database"|"mint"|"fresh" }` → `{ result: "ok"|"rejected"|"unreachable"|"unexpected"|"not_testable", detail?: { host?, code? } }`.
 

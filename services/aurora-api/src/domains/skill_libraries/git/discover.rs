@@ -26,10 +26,7 @@ pub struct FetchCaps {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Discovery {
-    V2 {
-        caps: FetchCaps,
-        ls_refs: bool,
-    },
+    V2 { caps: FetchCaps, ls_refs: bool },
     V0(Advertisement),
 }
 
@@ -364,9 +361,17 @@ mod tests {
         let b = pkts(&[b"version 2\n", b"fetch=shallow\n", b"FLUSH"]);
         assert!(matches!(
             parse_discovery(&b).unwrap(),
-            Discovery::V2 { caps: FetchCaps { filter: false, .. }, .. }
+            Discovery::V2 {
+                caps: FetchCaps { filter: false, .. },
+                ..
+            }
         ));
-        let b = pkts(&[b"version 2\n", b"fetch\n", b"object-format=sha256\n", b"FLUSH"]);
+        let b = pkts(&[
+            b"version 2\n",
+            b"fetch\n",
+            b"object-format=sha256\n",
+            b"FLUSH",
+        ]);
         assert_eq!(parse_discovery(&b), Err(ProtoError::Sha256));
         let b = pkts(&[b"version 2\n", b"ls-refs\n", b"FLUSH"]);
         assert_eq!(parse_discovery(&b), Err(ProtoError::Malformed));
@@ -433,8 +438,14 @@ mod tests {
         assert_eq!(r.len(), 2);
         assert_eq!(r[0].symref_target.as_deref(), Some("refs/heads/main"));
         assert_eq!(r[1].peeled, Some(parse_hex(A).unwrap()));
-        assert_eq!(parse_ls_refs(&pkts(&[b"ERR no\n"])), Err(ProtoError::Refused));
-        assert_eq!(parse_ls_refs(&pkts(&[b"zz HEAD\n"])), Err(ProtoError::Malformed));
+        assert_eq!(
+            parse_ls_refs(&pkts(&[b"ERR no\n"])),
+            Err(ProtoError::Refused)
+        );
+        assert_eq!(
+            parse_ls_refs(&pkts(&[b"zz HEAD\n"])),
+            Err(ProtoError::Malformed)
+        );
     }
 
     #[test]
@@ -483,7 +494,10 @@ mod tests {
             demux_pack(&pkts(&[b"packfile\n", b"\x03fatal\n"])),
             Err(ProtoError::Refused)
         );
-        assert_eq!(demux_pack(&pkts(&[b"NAK\n", b"FLUSH"])), Err(ProtoError::Malformed));
+        assert_eq!(
+            demux_pack(&pkts(&[b"NAK\n", b"FLUSH"])),
+            Err(ProtoError::Malformed)
+        );
         assert_eq!(demux_pack(b"00"), Err(ProtoError::Malformed));
     }
 }
