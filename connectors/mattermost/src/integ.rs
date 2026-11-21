@@ -86,6 +86,27 @@ impl Settings {
     }
 }
 
+/// (FIX-209, D-446) Whether two URLs have the same origin (scheme, host, port).
+pub fn same_origin(a: &str, b: &str) -> bool {
+    match (reqwest::Url::parse(a.trim()), reqwest::Url::parse(b.trim())) {
+        (Ok(a), Ok(b)) => a.origin() == b.origin() && a.host_str().is_some(),
+        _ => false,
+    }
+}
+
+impl Settings {
+    /// The callback address as seen by an integration on `server_url`: `None` when it is that
+    /// Mattermost server's own address, where no callback can ever arrive.
+    pub fn actions_url_for(&self, server_url: &str) -> Option<String> {
+        let url = self.actions_url()?;
+        if same_origin(&url, server_url) {
+            None
+        } else {
+            Some(url)
+        }
+    }
+}
+
 pub struct Integ {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -195,6 +216,15 @@ impl Integ {
             bot_username: bot.handle.clone(),
             presences: presence_bots(presences),
         };
+        if let Some(url) = settings.actions_url()
+            && settings.actions_url_for(&server).is_none()
+        {
+            tracing::warn!(
+                actions_url = %url,
+                integration = %integration.id,
+                "callback address points at the Mattermost server itself: buttons and /aurora are disabled"
+            );
+        }
         Ok(Self {
             id: integration.id,
             org_id: integration.org_id,
@@ -234,6 +264,17 @@ impl Integ {
         d.credentials_version = integration.credentials_version;
         d.caps = effective_caps(declared, &integration.config);
         d.presences = presence_bots(presences);
+    }
+
+    /// Where this integration's buttons and `/aurora` call back; `None` when no public URL is set
+    /// or it points at this integration's own Mattermost server (FIX-209).
+    pub fn actions_url(&self) -> Option<String> {
+        self.settings.actions_url_for(self.mm.base())
+    }
+
+    /// The configured callback address is the Mattermost server itself.
+    pub fn callback_is_server(&self) -> bool {
+        self.settings.actions_url().is_some() && self.actions_url().is_none()
     }
 
     pub fn snapshot(&self) -> Dynamic {
@@ -1106,6 +1147,11 @@ mod tests {
     }
 
     async fn rig() -> Rig {
+        rig_with(|_| "https://connector.test".into(), BTreeSet::new()).await
+    }
+
+    /// `public` maps the Mattermost mock's address to the connector's callback address.
+    async fn rig_with(public: impl FnOnce(&str) -> String, declared: BTreeSet<String>) -> Rig {
         let core = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/connector/events"))
@@ -1126,7 +1172,7 @@ mod tests {
         let sink = spawn_event_poster(client, rx);
         std::mem::forget(tx);
         let settings = Settings {
-            public_url: Some("https://connector.test".into()),
+            public_url: Some(public(&mm.uri())),
             hmac_key: b"k".to_vec(),
             catchup_window: Duration::from_secs(60),
             api_url: None,
@@ -1154,7 +1200,7 @@ mod tests {
         let integ = Integ::from_config(
             &integration,
             &[],
-            &BTreeSet::new(),
+            &declared,
             sink,
             IntegrationHandle::new(id),
             settings,
@@ -1220,6 +1266,89 @@ mod tests {
             "broadcast": {"channel_id": CH}, "seq": seq
         }))
         .unwrap()
+    }
+
+    fn approval_card_content() -> Value {
+        use aurora_channels::{Block, ButtonItem, ButtonStyle, Card};
+        let card = Card::new(vec![
+            Block::header("Approval needed"),
+            Block::buttons(vec![ButtonItem::new(
+                "Allow once",
+                ButtonStyle::Primary,
+                "tok-a".into(),
+            )])
+            .unwrap(),
+        ])
+        .unwrap();
+        json!({"card": card})
+    }
+
+    fn buttons_declared() -> BTreeSet<String> {
+        ["buttons", "menus"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn same_origin_compares_scheme_host_and_port() {
+        assert!(same_origin(
+            "https://mm.example/mm/actions",
+            "https://mm.example"
+        ));
+        assert!(same_origin(
+            "https://mm.example:443/x",
+            "https://mm.example/"
+        ));
+        assert!(!same_origin("https://mm.example", "http://mm.example"));
+        assert!(!same_origin(
+            "https://mm.example:8065",
+            "https://mm.example"
+        ));
+        assert!(!same_origin(
+            "https://aurora.example/connectors/mm",
+            "https://mm.example"
+        ));
+        assert!(!same_origin("nonsense", "https://mm.example"));
+    }
+
+    /// (FIX-209, D-446) A callback address on the Mattermost server's own origin counts as none:
+    /// the card falls back to text (no `actions` in the attachment). A different origin keeps them.
+    #[tokio::test]
+    async fn a_callback_address_on_the_mattermost_server_gives_no_buttons() {
+        let own = rig_with(
+            |mm| format!("{mm}/connectors/mattermost"),
+            buttons_declared(),
+        )
+        .await;
+        assert!(own.integ.callback_is_server());
+        assert_eq!(own.integ.actions_url(), None);
+        let (_, attachments) = crate::ops::render_content(&own.integ, &approval_card_content())
+            .await
+            .unwrap();
+        assert!(
+            attachments.iter().all(|a| a
+                .get("actions")
+                .is_none_or(|x| x.as_array().is_some_and(Vec::is_empty))),
+            "{attachments:?}"
+        );
+
+        let other = rig_with(
+            |_| "https://aurora.example/connectors/mattermost".into(),
+            buttons_declared(),
+        )
+        .await;
+        assert!(!other.integ.callback_is_server());
+        let (_, attachments) = crate::ops::render_content(&other.integ, &approval_card_content())
+            .await
+            .unwrap();
+        assert!(
+            attachments.iter().any(|a| a
+                .get("actions")
+                .and_then(Value::as_array)
+                .is_some_and(|x| !x.is_empty())),
+            "{attachments:?}"
+        );
     }
 
     /// A person posts and deletes straight away while the author lookup is slow: the core must

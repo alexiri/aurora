@@ -213,6 +213,23 @@ network needs `AURORA_MM_ALLOW_PRIVATE_NETWORKS` on the connector host
 (`extraCaBundle`, which the chart also hands to the connector host as `AURORA_TLS_EXTRA_CA_BUNDLE`,
 [install-helm.md](install-helm.md#connector-host)).
 
+**Buttons and `/aurora` need the Mattermost server to reach Aurora.** Mattermost's *server* (not the
+browser) POSTs every click to `<externalUrl>/connectors/<id>/mm/actions`, and `/aurora` to
+`…/mm/commands`. Check it from the Mattermost host:
+
+```sh
+curl -X POST <externalUrl>/connectors/<id>/mm/actions -H 'content-type: application/json' -d '{}'
+# → 403 {"error":"bad signature"}   (Aurora answered; anything else means it did not arrive)
+```
+
+"Action integration error" in Mattermost with no request in your proxy log means Mattermost never
+reached Aurora. Check, in order: *Aurora's address for Mattermost* (Advanced) is **empty** or is Aurora's
+own address followed by `/connectors/<id>`, never the Mattermost server's address (Aurora refuses a
+wrong path, and an address on the Mattermost server's own origin turns buttons and `/aurora` off, with
+a warning in the integration check and in the connector log); then Mattermost's own network, and
+`AllowedUntrustedInternalConnections` when Aurora's address is private. On start the connector logs
+`interactive callbacks expected at this address` with the address it gave Mattermost.
+
 1. **Instance administrator: add the connector.** *Administration › Chat platforms › Add connector → Add
    Mattermost.* Nothing needs typing: every Mattermost setting is optional or generated, and
    the *Advanced* section holds the two you almost never change (the address Mattermost uses
