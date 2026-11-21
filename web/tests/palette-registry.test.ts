@@ -65,11 +65,13 @@ describe("palette items", () => {
     );
     const pause = verbs.find((v) => v.label === "Pause Daneel")!;
     expect(pause.verb).toBe("pause-agent");
-    expect(pause.href).toBe("/o/acme/w/ops/agents/daneel?tab=instructions");
-    // Resume goes to the danger zone where its button is: it does not resume by itself.
+    expect(pause.href).toBe("/o/acme/w/ops/agents/daneel?tab=manage");
+    // (D-447) Export, Import and Resume open Manage, where their buttons are: Resume does not resume by itself.
+    expect(verbs.find((v) => v.label === "Export Daneel")!.href).toBe("/o/acme/w/ops/agents/daneel?tab=manage");
+    expect(verbs.find((v) => v.label === "Import into Daneel")!.href).toBe("/o/acme/w/ops/agents/daneel?tab=manage");
     const resume = verbs.find((v) => v.label === "Resume Giskard")!;
     expect(resume.verb).toBeUndefined();
-    expect(resume.href).toContain("#agent-danger");
+    expect(resume.href).toBe("/o/acme/w/ops/agents/giskard?tab=manage");
   });
 
   it("leaves out the verbs a role may not use", () => {

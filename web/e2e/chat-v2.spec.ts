@@ -232,7 +232,7 @@ test.describe("layout, 1280 px", () => {
       expect(await page.evaluate(() => document.scrollingElement!.scrollHeight - window.innerHeight), "page scrolls").toBeLessThanOrEqual(0);
       await page.screenshot({ path: `${dir}/chat-${scheme}-1280x800.png` });
       expect(await serious(page)).toEqual([]);
-      // (D-200, D-408) Every section has the same one-line header; Pause and Delete are at the bottom of Settings.
+      // (D-200, D-408) Every section has the same one-line header; Pause and Delete are on Settings › Manage.
       await page.getByRole("button", { name: "Settings" }).click();
       await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
       await expect(page.getByRole("button", { name: "Settings" })).toBeVisible();

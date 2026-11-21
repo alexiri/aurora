@@ -561,9 +561,13 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     keeps its label at 390 px). It opens the **Settings page directly** (on Instructions): the page header (back link, the page's
     name, a one-line lead: Instructions "Name, instructions, model", Apps & access "Apps, accounts and the AI key it uses",
     Memory "What it remembers", Skills "What it knows how to do"), a **left sub-nav** (Instructions · Apps & access · Memory ·
-    Skills · Tests* · Other agents*, * Expert altitude) that is the segmented `Tabs` under 768 px, the page, and at the bottom a **danger
-    zone** with **Pause <Agent>** ("Stops it until you resume it"; **Resume <Agent>** when paused) and **Delete <Agent>…**, for
-    workspace owners only (members see the pages read-only and no zone). `?tab=` ids are unchanged. Section ids are now `chat`,
+    Skills · Tests* · Other agents* · **Manage** (owners only), * Expert altitude) that is the segmented `Tabs` under 768 px, and
+    the page. **(D-447, FIX-213) The frame no longer ends with a danger zone:** Pause, Export and import and Delete are the owners'
+    last page, **Manage** (`?tab=manage`, lead "Pause, export, import or delete <Agent>"), with three sections in this order:
+    **Pause** ("Stops it until you resume it"; **Pause <Agent>**, or the paused state with **Resume <Agent>**), **Export and
+    import** (Expert, hosted agents only) and **Delete** (danger style, **Delete <Agent>…**). A BYO agent's Manage has Pause and
+    Delete only. Members and approvers see no Manage entry (they see the other pages read-only) and `?tab=manage` lands them on
+    the default page. `?tab=` ids are otherwise unchanged. Section ids are now `chat`,
     `triggers`, `computer`, `settings`. The computer's secondary tabs (Terminal, Files, …) collapse into a **More** menu rather
     than scrolling sideways.
   - **The header state** (D-408) is one `StatusLine`: **Can't answer: <reason>** (`no AI key`, `the key stopped working`,
@@ -2410,8 +2414,8 @@ No match: "Nothing matches “text”."; a skeleton row while the session loads.
   workspace, the topics the viewer's `visibleTopics` lists, the open agent's pages the navigation lists, and the person's
   account pages.
 - **Verbs, altitude Expert (`palette.verbs`):** *New chat with <Agent>*, *Give <Agent> an app* (goes to Apps & access),
-  *New schedule for…*, *New webhook for…*, *Pause <Agent>* (opens the Pause confirm) / *Resume <Agent>* (goes to the danger
-  zone where the button is), *Export <Agent>*, *Open Approvals*, *Add people*, *New agent*, *Keyboard shortcuts*. A verb the
+  *New schedule for…*, *New webhook for…*, *Pause <Agent>* (opens the Pause confirm) / *Resume <Agent>* (goes to Settings › Manage
+  where the button is; D-447), *Export <Agent>*, *Import into <Agent>* (Manage too), *Open Approvals*, *Add people*, *New agent*, *Keyboard shortcuts*. A verb the
   viewer's role lacks is not listed (owners: all; approvers: *Open Approvals*; members: *New chat*). A verb navigates to the
   page that owns the button and leaves a pending verb (`lib/palette-verb.ts`); the control registers `useVerb(id, open)` and
   opens its own dialog. A verb nobody picks up in five seconds is dropped.
@@ -2451,7 +2455,7 @@ listed by name with **Retry** (only the failed ones go again); what succeeded is
   ones that are on or paused; a Done one-time schedule has neither; undoable: they act at once and a toast offers **Undo**) and
   **Delete…** (permanent: type the number). A mixed selection says "automations", a single kind says "schedules" or "webhooks".
 
-**Export and import an agent (`export.agent`, Expert; D-413).** On the agent's Settings page, for workspace owners of a
+**Export and import an agent (`export.agent`, Expert; D-413).** On the agent's Settings › **Manage** page (D-447; it sat under every Settings page before), for workspace owners of a
 hosted agent: a section **Export and import** with **Export <Agent>…** and **Import into <Agent>…** (also palette verbs).
 The zip is built and read in the browser (`lib/export/zip.ts`, a store-only writer and a reader that also inflates;
 `lib/export/yaml.ts`, a restricted YAML that refuses anchors, aliases, tags, block scalars, flow collections, tabs,

@@ -176,22 +176,30 @@ export function InstructionsTab({
 
   return (
     <div className="space-y-6">
-      <form onSubmit={(e) => void submit(e)} noValidate className="max-w-180 space-y-5 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
-        <AvatarField agent={agent} wsId={wsId} />
-        <Field id="a-name" label="Name" error={clientErr || fe.name}>
-          <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
-        </Field>
+      <form onSubmit={(e) => void submit(e)} noValidate className="space-y-5 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+        {/* (FIX-212) Who it is: the picture and the name share a line from md. */}
+        <div className="space-y-5 md:flex md:items-start md:gap-6 md:space-y-0">
+          <div className="md:shrink-0">
+            <AvatarField agent={agent} wsId={wsId} />
+          </div>
+          <Field id="a-name" label="Name" error={clientErr || fe.name} className="md:min-w-0 md:flex-1">
+            <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+          </Field>
+        </div>
         <Field
           id="a-brief"
           label="Instructions"
           error={fe.brief}
           hint={`What ${agent.name} should do and how. It reads these before every conversation.`}>
-          <textarea id="a-brief" className={inputClass} rows={6} value={brief} onChange={(e) => setBrief(e.target.value)} />
+          <textarea id="a-brief" className={`${inputClass} resize-y`} rows={14} value={brief} onChange={(e) => setBrief(e.target.value)} />
         </Field>
-        <Field id="a-model" label="Model" error={roleErrors.model} hint={modelHint(agent.kind, models.data?.items.length, models.isError, agent.name)}>
+        {/* (FIX-212) How it runs: the model at a field width, the message-first switch beside it from md. */}
+        <div className="space-y-5 md:flex md:items-start md:gap-8 md:space-y-0">
+        <Field id="a-model" label="Model" error={roleErrors.model} hint={modelHint(agent.kind, models.data?.items.length, models.isError, agent.name)} className="md:w-80 md:shrink-0">
           <select
             id="a-model"
-            className={inputClass}
+            className={`${inputClass} truncate`}
+            title={model ? model.replace("\u0000", " / ") : defaultModelLabel}
             value={model}
             disabled={agent.kind !== "hosted" || !models.data?.items.length}
             onChange={(e) => {
@@ -223,8 +231,10 @@ export function InstructionsTab({
             hint="For example when a schedule finds something."
             checked={proactive !== "off"}
             onChange={(on) => setProactive(on ? (agent.proactive_messaging !== "off" ? agent.proactive_messaging : "ask") : "off")}
+            className="md:min-w-0 md:flex-1 md:pt-7"
           />
         </Altitude>
+        </div>
         {fe.proactive_messaging ? (
           <p role="alert" className="text-xs text-danger-ink">
             {fe.proactive_messaging}
@@ -239,9 +249,12 @@ export function InstructionsTab({
           <div className="space-y-5 rounded-control border border-line px-3 py-3">
             <p className="text-sm font-medium text-ink">Advanced</p>
             <Notice role="status">Advanced is for admins and power users. Most people never need it.</Notice>
+            {/* (FIX-212) Agent program and Effort share a line from md, each at its own width. */}
+            <div className="space-y-5 md:flex md:items-start md:gap-8 md:space-y-0">
             <Field
               id="a-harness"
               label="Agent program"
+              className="md:w-80 md:shrink-0"
               error={fe.harness}
               hint={
                 showPicker ? (
@@ -279,6 +292,10 @@ export function InstructionsTab({
                 </p>
               )}
             </Field>
+            <Field id="a-effort" label="Effort" error={fe.effort} className="md:w-48 md:shrink-0">
+              <Select id="a-effort" value={effort} placeholder="Default" onChange={setEffort} options={["low", "medium", "high", "max"].map((o) => ({ value: o, label: o }))} />
+            </Field>
+            </div>
             {agent.kind === "hosted" ? (
               <ModelRolesFields
                 harnessName={harnessInfo?.display_name ?? "this harness"}
@@ -293,9 +310,6 @@ export function InstructionsTab({
                 disabled={!endpointId}
               />
             ) : null}
-            <Field id="a-effort" label="Effort" error={fe.effort}>
-              <Select id="a-effort" value={effort} placeholder="Default" onChange={setEffort} options={["low", "medium", "high", "max"].map((o) => ({ value: o, label: o }))} />
-            </Field>
           </div>
         </Altitude>
         {/* (P5-POLISH-6, P5-REFINE-2) The one save bar: only after a change, at the bottom of the viewport; "Saved" for two seconds. */}

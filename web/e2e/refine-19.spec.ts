@@ -85,7 +85,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByRole("option", { name: /Pause Daneel/ })).toBeVisible();
         expect(await serious(page)).toEqual([]);
         await page.keyboard.press("Enter");
-        await expect(page).toHaveURL(/agents\/daneel\?tab=instructions/);
+        await expect(page).toHaveURL(/agents\/daneel\?tab=manage/);
         await expect(page.getByRole("dialog")).toBeVisible();
         expect(writes).toEqual([]);
         expect(errors).toEqual([]);

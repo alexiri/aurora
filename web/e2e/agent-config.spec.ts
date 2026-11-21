@@ -14,17 +14,22 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("the tab bar is Chat · Automations · Computer; the labelled Settings button opens Settings with Pause and Delete at its bottom", async ({ page }) => {
+      test("the tab bar is Chat · Automations · Computer; the labelled Settings button opens Settings; Pause and Delete are on its last page, Manage, and under no other page", async ({ page }) => {
         await openRoute(page, AGENT, scheme);
         const tabs = page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab");
         await expect(tabs).toHaveText(["Chat", "Automations", "Computer"]);
         await page.getByRole("button", { name: "Settings" }).click();
         await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
-        await expect(page.getByRole("button", { name: "Pause Daneel" })).toBeVisible();
-        await expect(page.getByRole("button", { name: "Delete Daneel…" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Pause Daneel" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Delete Daneel…" })).toHaveCount(0);
         await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Apps & access" }).click();
         await expect(page.getByRole("heading", { name: "Apps & access", level: 2 })).toBeVisible();
         await expect(page.getByText("Apps, accounts and the AI key it uses")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Pause Daneel" })).toHaveCount(0);
+        await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Manage" }).click();
+        await expect(page.getByRole("heading", { name: "Manage", level: 2 })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Pause Daneel" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Delete Daneel…" })).toBeVisible();
         await expect(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { selected: true })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
@@ -40,6 +45,27 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await serious(page)).toEqual([]);
         await openRoute(page, `${AGENT}?tab=access`, scheme);
         await expect(page.getByRole("heading", { name: "Apps & access", level: 2 })).toBeVisible();
+      });
+
+      test("Instructions uses the width (FIX-212): from md picture and Name, Model and the message-first switch share a line; it stacks at 390 px", async ({ page }) => {
+        await openRoute(page, `${AGENT}?tab=instructions`, scheme);
+        const name = (await page.locator("#a-name").boundingBox())!;
+        const picture = (await page.getByRole("button", { name: "Change picture" }).boundingBox())!;
+        const model = (await page.locator("#a-model").boundingBox())!;
+        const proactive = (await page.locator("#a-proactive").boundingBox())!;
+        const brief = (await page.locator("#a-brief").boundingBox())!;
+        if (width >= 768) {
+          expect(Math.abs(name.y - picture.y)).toBeLessThan(80);
+          expect(name.x).toBeGreaterThan(picture.x);
+          expect(model.x + model.width).toBeLessThan(proactive.x);
+          expect(Math.abs(model.y - proactive.y)).toBeLessThan(24);
+          expect(model.width).toBeLessThanOrEqual(330);
+          expect(brief.height).toBeGreaterThan(250);
+        } else {
+          expect(name.y).toBeGreaterThan(picture.y + picture.height);
+          expect(proactive.y).toBeGreaterThan(model.y + model.height);
+        }
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
       });
 
       test("Instructions: the save bar appears only after a change, and Discard puts it back", async ({ page }) => {

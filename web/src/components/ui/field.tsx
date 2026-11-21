@@ -19,7 +19,10 @@ export function Field({
   error,
   hint,
   children,
+  className,
 }: {
+  /** The field's width where it shares a line (`w-80`, `max-w-xs`…); full width when absent. */
+  className?: string;
   id: string;
   /** Usually text; a node when the label carries a marker (a "Set by …" badge). */
   label: ReactNode;
@@ -38,7 +41,7 @@ export function Field({
     });
   });
   return (
-    <div className="space-y-1.5">
+    <div className={className ? `space-y-1.5 ${className}` : "space-y-1.5"}>
       <label htmlFor={id} className="block text-sm font-medium text-ink">
         {label}
       </label>

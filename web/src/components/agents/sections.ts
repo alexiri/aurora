@@ -17,6 +17,7 @@ export type AgentPageId =
   | "webhooks"
   | "channels"
   | "peers"
+  | "manage"
   | "computer"
   | "details"
   | "terminal"
@@ -41,6 +42,7 @@ export const AGENT_PAGE_IDS: readonly AgentPageId[] = [
   "webhooks",
   "channels",
   "peers",
+  "manage",
   "computer",
   "details",
   "terminal",
@@ -69,6 +71,7 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
   webhooks: "Webhooks",
   channels: "Channels",
   peers: "Other agents",
+  manage: "Manage",
   // (P5-REFINE-15, D-408) The Computer's sub-nav reads Files · Terminal · Connect · Previews · Details.
   // (P5-REFINE-20 #11, rec 11) `computer` is the Computer tab itself: it opens on Files whenever Files exist, else on
   // Overview (`resolvePage`). Its Details sub-page has its own id, `details`.
@@ -90,7 +93,7 @@ export const SECTIONS: readonly { id: SectionId; label: string; pages: readonly 
   { id: "computer", label: "Computer", pages: ["files", "terminal", "ssh", "previews", "details", "connect"] },
   // (D-408) One page with a sub-nav; Pause and Delete sit in its danger zone. `peers` (Other agents) moved here from Automations
   // with its page id kept (P5-REFINE-12 renames and fills it).
-  { id: "settings", label: "Settings", pages: ["instructions", "access", "memory", "skills", "evals", "peers"] },
+  { id: "settings", label: "Settings", pages: ["instructions", "access", "memory", "skills", "evals", "peers", "manage"] },
 ];
 
 /** The one-line lead under a Settings page's name (the old menu's descriptions). */
@@ -101,6 +104,8 @@ export const SETTINGS_LEAD: Partial<Record<AgentPageId, string>> = {
   skills: "What it knows how to do",
   evals: "Checks that tell you whether it still does the job",
   peers: "Which other agents it may ask",
+  /** (D-447) The shell adds the agent's name: "Pause, export, import or delete Daneel". */
+  manage: "Pause, export, import or delete",
 };
 
 /** Page id → its section (the one mapping). */
@@ -122,9 +127,12 @@ export interface PageAvailability {
   terminal: boolean;
   /** (P4-SSH-1, C-795) The instance's `features.ssh`; absent means off. */
   ssh?: boolean;
+  /** (D-447) The viewer owns the workspace: Manage (Pause, Export and import, Delete) is theirs; absent means no. */
+  owner?: boolean;
 }
 
 export function isPageAvailable(page: AgentPageId, av: PageAvailability): boolean {
+  if (page === "manage") return av.owner === true;
   if (av.byo) return page === "instructions" || page === "connect" || page === "access";
   if (page === "connect") return false;
   // (P5-FILES-2, D-316(b)) Files exists exactly where the Terminal does: no gate of its own.

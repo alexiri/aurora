@@ -153,7 +153,7 @@ describe("the palette with Show more controls on", () => {
     const option = await screen.findByRole("option", { name: /Pause Daneel/ });
     expect(screen.getByText("Actions")).toBeInTheDocument();
     await userEvent.click(option);
-    expect(push).toHaveBeenCalledWith("/o/acme/w/ops/agents/daneel?tab=instructions");
+    expect(push).toHaveBeenCalledWith("/o/acme/w/ops/agents/daneel?tab=manage");
     // It acted on nothing: no write was sent.
     const writes = fetchMock.mock.calls.filter(([r]) => (r as Request).method !== "GET");
     expect(writes.filter(([r]) => /freeze|pause/.test((r as Request).url))).toEqual([]);
