@@ -355,8 +355,22 @@ describe("AgentChannelsTab", () => {
   });
 });
 
+// (FIX-220, C-1147) `GET /v1/me/dm-default-options`.
+const dmItem = (agent_id: string, name: string, handle: string, attached: boolean) => ({
+  agent_id, name, handle, workspace_id: "w1", workspace_name: "Main", attached,
+});
+const dmOptions = (items: ReturnType<typeof dmItem>[], bot: boolean = true) => ({
+  org_id: "o1",
+  shared_bot: bot ? { handle: "aurora", display_name: "Aurora" } : null,
+  items: bot ? items : [],
+});
+
 describe("LinkConfirmView", () => {
   const me = { user: { id: "u1", display_name: "Ada", email: "ada@x.test" }, memberships: [] };
+  const meWithWorkspace = {
+    ...me,
+    memberships: [{ org: { id: "o1", name: "Acme", slug: "acme" }, role: "member", status: "active", workspaces: [{ id: "w1", name: "Main", slug: "main", my_role: "member" }] }],
+  };
   const link = { id: "l1", integration_id: "i1", connector_id: "slack", tenant_label: "Acme Slack", platform_user_ref: "U123", user: { id: "u1", display_name: "Ada" }, method: "sign_in_link", created_at: T };
 
   const preview = {
@@ -367,6 +381,13 @@ describe("LinkConfirmView", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
   });
+
+  /** The button waits for the agent options (so a single agent is preselected before the click). */
+  async function clickConfirm() {
+    const button = await screen.findByRole("button", { name: "Confirm link" });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+  }
 
   it("shows the chat account being linked, confirms it and strips the token from the URL", async () => {
     const replace = vi.spyOn(window.history, "replaceState");
@@ -383,7 +404,7 @@ describe("LinkConfirmView", () => {
     expect(account.textContent).toContain("U123");
     expect(account.textContent).toContain("m@evil.example");
     expect(calls.find((c) => c.key.startsWith("GET /v1/channel-links/preview"))?.url).toContain("token=aui_secret");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm link" }));
+    await clickConfirm();
     expect(await screen.findByText(/is now linked to Ada/)).toBeInTheDocument();
     // The request repeats the account the page showed.
     expect(calls.find((c) => c.key.endsWith("/confirm"))?.body).toEqual({ token: "aui_secret", platform_user_ref: "U123" });
@@ -392,6 +413,101 @@ describe("LinkConfirmView", () => {
     expect(document.body.textContent).not.toContain("aui_secret");
     // A used token is not kept.
     expect(window.sessionStorage.getItem("aurora.channel-link-token")).toBeNull();
+  });
+
+  it("with exactly one agent it is preselected and sent with the confirm; the success text names it", async () => {
+    const calls = mockFetch({
+      "GET /v1/me": () => json(200, me),
+      "GET /v1/channel-links/preview": () => json(200, preview),
+      "GET /v1/me/dm-default-options": () => json(200, dmOptions([dmItem("a1", "Helper", "helper", false)])),
+      "POST /v1/channel-links/confirm": () => json(200, link),
+    });
+    wrap(<LinkConfirmView />);
+    const select = (await screen.findByLabelText("Agent that answers your direct messages to @aurora")) as HTMLSelectElement;
+    expect(calls.find((c) => c.key === "GET /v1/me/dm-default-options")?.url).toBe("?integration_id=i1");
+    expect(select.value).toBe("a1");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Decide later",
+      "Helper (@helper) · Main · will be added to @aurora",
+    ]);
+    await clickConfirm();
+    await waitFor(() => expect(document.body.textContent).toContain("Linked. Message @aurora again and Helper answers."));
+    expect(calls.find((c) => c.key === "POST /v1/channel-links/confirm")?.body).toEqual({
+      token: "aui_secret", platform_user_ref: "U123", agent_id: "a1",
+    });
+  });
+
+  it("with several agents none is preselected; picking one sends it, and Decide later sends no agent_id", async () => {
+    const routes = {
+      "GET /v1/me": () => json(200, me),
+      "GET /v1/channel-links/preview": () => json(200, preview),
+      "GET /v1/me/dm-default-options": () =>
+        json(200, dmOptions([dmItem("a1", "Helper", "helper", true), dmItem("a2", "Scribe", "scribe", true)])),
+      "POST /v1/channel-links/confirm": () => json(200, link),
+    };
+    const calls = mockFetch(routes);
+    const first = wrap(<LinkConfirmView />);
+    const select = (await screen.findByLabelText("Agent that answers your direct messages to @aurora")) as HTMLSelectElement;
+    expect(select.value).toBe("");
+    fireEvent.change(select, { target: { value: "a2" } });
+    await clickConfirm();
+    await waitFor(() => expect(document.body.textContent).toContain("Linked. Message @aurora again and Scribe answers."));
+    expect(calls.find((c) => c.key === "POST /v1/channel-links/confirm")?.body).toEqual({
+      token: "aui_secret", platform_user_ref: "U123", agent_id: "a2",
+    });
+    first.unmount();
+
+    // Decide later: the confirm carries no agent and the success text is the plain one.
+    window.sessionStorage.clear();
+    const calls2 = mockFetch(routes);
+    wrap(<LinkConfirmView />);
+    await screen.findByLabelText("Agent that answers your direct messages to @aurora");
+    await clickConfirm();
+    expect(await screen.findByText(/is now linked to Ada/)).toBeInTheDocument();
+    expect(calls2.find((c) => c.key === "POST /v1/channel-links/confirm")?.body).toEqual({
+      token: "aui_secret", platform_user_ref: "U123",
+    });
+  });
+
+  it("with a shared bot but no agent: no select, 'You don't have an agent yet' and a link to the first workspace's agents", async () => {
+    mockFetch({
+      "GET /v1/me": () => json(200, meWithWorkspace),
+      "GET /v1/channel-links/preview": () => json(200, preview),
+      "GET /v1/me/dm-default-options": () => json(200, dmOptions([])),
+    });
+    wrap(<LinkConfirmView />);
+    const note = await screen.findByTestId("link-no-agent");
+    expect(note.textContent).toContain("You don't have an agent yet.");
+    expect(within(note).getByRole("link", { name: "Create one" }).getAttribute("href")).toBe("/o/acme/w/main/agents");
+    expect(screen.queryByLabelText(/Agent that answers/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Confirm link" })).toBeEnabled();
+  });
+
+  it("with no shared bot the page looks as before (no question at all)", async () => {
+    mockFetch({
+      "GET /v1/me": () => json(200, me),
+      "GET /v1/channel-links/preview": () => json(200, preview),
+      "GET /v1/me/dm-default-options": () => json(200, dmOptions([], false)),
+    });
+    wrap(<LinkConfirmView />);
+    expect(await screen.findByTestId("link-account")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm link" })).toBeEnabled());
+    expect(screen.queryByLabelText(/Agent that answers/)).toBeNull();
+    expect(screen.queryByTestId("link-no-agent")).toBeNull();
+  });
+
+  it("a refused agent (422 agent_not_reachable) shows the error and nothing is linked", async () => {
+    mockFetch({
+      "GET /v1/me": () => json(200, me),
+      "GET /v1/channel-links/preview": () => json(200, preview),
+      "GET /v1/me/dm-default-options": () => json(200, dmOptions([dmItem("a1", "Helper", "helper", true)])),
+      "POST /v1/channel-links/confirm": () => err(422, "agent_not_reachable"),
+    });
+    wrap(<LinkConfirmView />);
+    await clickConfirm();
+    expect((await screen.findByRole("alert")).textContent).toContain("cannot reach that agent");
+    // The token is still good, so the person can try again.
+    expect(screen.getByRole("button", { name: "Confirm link" })).toBeInTheDocument();
   });
 
   it.each([
@@ -405,7 +521,7 @@ describe("LinkConfirmView", () => {
       "POST /v1/channel-links/confirm": () => err(status, code),
     });
     wrap(<LinkConfirmView />);
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm link" }));
+    await clickConfirm();
     expect((await screen.findByRole("alert")).textContent).toContain(text);
     expect(screen.queryByRole("button", { name: "Confirm link" })).toBeNull();
   });
@@ -457,7 +573,9 @@ describe("AccountChannelsView", () => {
   it("lists links, unlinks and maps agent_not_reachable for DM defaults", async () => {
     const calls = mockFetch({
       "GET /v1/me": () => json(200, { user: { id: "u1", display_name: "Ada", email: "a@x.test" }, memberships: [{ org: { id: "o1", name: "Acme", slug: "acme" }, role: "member", status: "active", workspaces: [{ id: "w1", name: "Main", slug: "main", my_role: "member" }] }] }),
-      "GET /v1/workspaces/w1/agents": () => json(200, { items: [{ id: "a1", name: "Helper", handle: "helper" }], next_cursor: null }),
+      // Every workspace's agents still feed "Send as me"; the DM select lists only the integration's options (C-1147).
+      "GET /v1/workspaces/w1/agents": () => json(200, { items: [{ id: "a1", name: "Helper", handle: "helper" }, { id: "a9", name: "Elsewhere", handle: "elsewhere" }], next_cursor: null }),
+      "GET /v1/me/dm-default-options": () => json(200, dmOptions([dmItem("a1", "Helper", "helper", true), dmItem("a2", "Scribe", "scribe", false)])),
       "GET /v1/me/channel-links": () =>
         json(200, { items: [{ id: "l1", integration_id: "i1", connector_id: "slack", tenant_label: "Acme Slack", platform_user_ref: "U123", user: { id: "u1", display_name: "Ada" }, method: "verified_email", created_at: T }] }),
       "GET /v1/me/dm-defaults": () => json(200, { items: [{ integration_id: "i1", platform_user_ref: "U123", agent_id: null }] }),
@@ -468,7 +586,16 @@ describe("AccountChannelsView", () => {
     });
     wrap(<AccountChannelsView />);
     const select = await screen.findByLabelText("Agent that answers direct messages");
-    await waitFor(() => expect(within(select).getAllByRole("option").length).toBe(2));
+    await waitFor(() => expect(within(select).getAllByRole("option").length).toBe(3));
+    // Only the integration's organization: "Elsewhere" (another workspace's agent) is not offered.
+    const labels = within(select).getAllByRole("option").map((o) => o.textContent);
+    expect(labels).toEqual([
+      "None chosen",
+      "Helper (@helper) · Main",
+      "Scribe (@scribe) · Main · will be added to @aurora",
+    ]);
+    expect(screen.getByText("Choosing an agent that isn't on @aurora yet adds it there.")).toBeInTheDocument();
+    expect(calls.find((c) => c.key === "GET /v1/me/dm-default-options")?.url).toBe("?integration_id=i1");
     fireEvent.change(select, { target: { value: "a1" } });
     expect((await screen.findByRole("alert")).textContent).toContain("cannot reach that agent");
     expect(calls.find((c) => c.key === "PUT /v1/me/dm-defaults")?.body).toEqual({ integration_id: "i1", agent_id: "a1" });

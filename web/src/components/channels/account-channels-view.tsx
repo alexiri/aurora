@@ -7,11 +7,12 @@ import { SendAsMeSection } from "@/components/account/send-as-me";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { inputClass } from "@/components/ui/field";
+import { Field } from "@/components/ui/field";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api/client";
 import { unwrap } from "@/lib/api/unwrap";
-import { useDmDefaults, useMyChannelLinks, useMyChatPlatforms, useSetDmDefault, useUnlinkMine } from "@/lib/api/channels";
+import { useDmDefaultOptions, useDmDefaults, useMyChannelLinks, useMyChatPlatforms, useSetDmDefault, useUnlinkMine } from "@/lib/api/channels";
 import { useSession } from "@/lib/api/queries";
 
 import { MutationError } from "./shared";
@@ -85,12 +86,63 @@ function PlatformsSection() {
   );
 }
 
+/**
+ * (FIX-220, D-461(d), C-1147) The agent that answers the person's direct messages to one integration's shared bot:
+ * only the agents of that integration's organization the person can use. Choosing one that is not on the bot yet
+ * adds it there (the server attaches it in the same request).
+ */
+function DmAgentSelect({
+  linkId,
+  integrationId,
+  current,
+  setDefault,
+}: {
+  linkId: string;
+  integrationId: string;
+  current: string | null | undefined;
+  setDefault: ReturnType<typeof useSetDmDefault>;
+}) {
+  const options = useDmDefaultOptions(integrationId);
+  const selectId = `dm-${linkId}`;
+  const bot = options.data?.shared_bot;
+  const items = options.data?.items ?? [];
+  return (
+    <div className="max-w-md space-y-1.5">
+      <Field
+        id={selectId}
+        label="Agent that answers direct messages"
+        hint={bot ? `Choosing an agent that isn't on @${bot.handle} yet adds it there.` : undefined}
+      >
+        <Select
+          id={selectId}
+          value={current ?? ""}
+          disabled={setDefault.isPending || options.isPending || !bot}
+          onChange={(v) => v && setDefault.mutate({ integration_id: integrationId, agent_id: v })}
+        >
+          <option value="">{current ? "Select…" : "None chosen"}</option>
+          {items.map((a) => (
+            <option key={a.agent_id} value={a.agent_id}>
+              {`${a.name} (@${a.handle}) · ${a.workspace_name}${a.attached ? "" : ` · will be added to @${bot?.handle ?? ""}`}`}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {options.isError ? (
+        <p className="text-sm text-ink-2">The agents could not be loaded. Reload the page to try again.</p>
+      ) : null}
+      {options.data && !bot ? (
+        <p className="text-sm text-ink-2">This chat platform has no shared bot to message directly.</p>
+      ) : null}
+    </div>
+  );
+}
+
 export function AccountChannelsView() {
   const links = useMyChannelLinks();
   const defaults = useDmDefaults();
   const unlink = useUnlinkMine();
   const setDefault = useSetDmDefault();
-  const { agents, pending: agentsPending } = useCandidateAgents();
+  const { agents } = useCandidateAgents();
 
   if (links.isPending || defaults.isPending) return <Loading />;
   if (links.isError) return <ErrorState error={links.error} onRetry={() => links.refetch()} />;
@@ -114,7 +166,6 @@ export function AccountChannelsView() {
           <ul aria-label="Linked chat accounts" className="space-y-3">
             {links.data.items.map((l) => {
               const d = dmFor(l.integration_id, l.platform_user_ref);
-              const selectId = `dm-${l.id}`;
               return (
                 <li key={l.id} className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
@@ -132,28 +183,12 @@ export function AccountChannelsView() {
                       Unlink
                     </Button>
                   </div>
-                  <div className="max-w-md space-y-1.5">
-                    <label htmlFor={selectId} className="block text-sm font-medium text-ink">
-                      Agent that answers direct messages
-                    </label>
-                    <select
-                      id={selectId}
-                      className={inputClass}
-                      value={d?.agent_id ?? ""}
-                      disabled={setDefault.isPending || agentsPending}
-                      onChange={(e) =>
-                        e.target.value &&
-                        setDefault.mutate({ integration_id: l.integration_id, agent_id: e.target.value })
-                      }
-                    >
-                      <option value="">{d?.agent_id ? "Select…" : "None chosen"}</option>
-                      {agents.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <DmAgentSelect
+                    linkId={l.id}
+                    integrationId={l.integration_id}
+                    current={d?.agent_id}
+                    setDefault={setDefault}
+                  />
                 </li>
               );
             })}

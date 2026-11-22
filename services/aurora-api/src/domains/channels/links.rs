@@ -279,12 +279,28 @@ pub async fn confirm(
             id
         }
     };
+    // (FIX-220, C-36) The agent the person chose answers their DMs: the same rule and the same
+    // transaction as the link. A refusal here ends the whole confirm; nothing is kept, the token
+    // stays usable.
+    let chosen = match req.agent_id {
+        Some(agent_id) => {
+            let refs = [lr.platform_user_ref.clone()];
+            let (agent, attached) =
+                agent_choice(&mut tx, c.user_id, &integ, agent_id, &refs).await?;
+            dm_defaults::upsert(&mut *tx, integ.id, &lr.platform_user_ref, agent.id).await?;
+            Some((agent, attached))
+        }
+        None => None,
+    };
     link_requests::mark_used(&mut *tx, lr.id, c.user_id).await?;
     let ev = AuditEvent::by(c, "user_link.create")
         .org(integ.org_id)
         .target("user_link", link_id)
         .metadata(json!({"integration_id": integ.id, "method": "sign_in_link"}));
     audit::commit_critical(tx, &ev).await?;
+    if let Some((agent, Some(p))) = &chosen {
+        super::presences::audit_shared_attach(s, c, agent, *p, integ.id, "link");
+    }
     let row = repo::get(&s.pool, link_id)
         .await?
         .ok_or_else(|| ApiError::internal("Link vanished."))?;
@@ -306,8 +322,110 @@ pub async fn dm_defaults_list(s: &AppState, c: &SessionCaller) -> Result<Vec<DmD
     Ok(out)
 }
 
-/// `PUT /me/dm-defaults` (C-37). Applies to every platform user the caller has linked on the
-/// integration; answers with the first.
+fn agent_not_reachable() -> ApiError {
+    ApiError::unprocessable(
+        "agent_not_reachable",
+        "That agent cannot be reached through this integration.",
+    )
+}
+
+/// (FIX-220, D-461(b), C-37, C-36) The one rule for "this agent answers the person's DMs with the
+/// shared bot", enforced on the server inside the caller's transaction. The agent must exist and
+/// belong to the integration's organization (never trusted from the UI). A person who can use the
+/// agent (`can_use`) may have it attached to the shared bot when it is not yet and the integration
+/// offers the shared mode: exactly the right C-34 attach already gives. A person who reaches it only
+/// through an approved person grant can choose it only when it is already attached. Anything else is
+/// 422 `agent_not_reachable`. Returns the agent and the id of the presence created, if any; the
+/// caller commits and then audits the attach.
+async fn agent_choice(
+    conn: &mut sqlx::PgConnection,
+    user: Uuid,
+    integ: &integ_repo::IntegrationRow,
+    agent_id: Uuid,
+    refs: &[String],
+) -> Result<(agents::AgentRow, Option<Uuid>), ApiError> {
+    let agent = agents::get(&mut *conn, agent_id)
+        .await?
+        .filter(|a| a.org_id == integ.org_id)
+        .ok_or_else(agent_not_reachable)?;
+    let can_use = authz::workspace_access(&mut *conn, user, agent.workspace_id)
+        .await?
+        .is_some();
+    let attached = channel_presences::active_shared(&mut *conn, agent.id, integ.id)
+        .await?
+        .is_some();
+    if attached {
+        let reachable = can_use
+            || reach_grants::approved_person_reach(&mut *conn, agent.id, integ.id, refs).await?;
+        return if reachable {
+            Ok((agent, None))
+        } else {
+            Err(agent_not_reachable())
+        };
+    }
+    if !can_use || !super::presences::offers_shared(conn, integ).await? {
+        return Err(agent_not_reachable());
+    }
+    let presence = Uuid::now_v7();
+    super::presences::attach_shared_tx(conn, integ, agent.id, presence).await?;
+    Ok((agent, Some(presence)))
+}
+
+/// `GET /me/dm-defaults/options?integration_id=` (FIX-220, C-1147): which agents the caller may
+/// choose to answer their DMs with the integration's shared bot, for the sign-in link page and the
+/// account page. The caller must be an active member of the integration's organization (the C-36
+/// preview's rule). Empty with `shared_bot: null` when the integration is not active, has no shared
+/// bot or the shared mode is off.
+pub async fn dm_default_options(
+    s: &AppState,
+    c: &SessionCaller,
+    integration: Uuid,
+) -> Result<DmDefaultOptions, ApiError> {
+    let integ = integ_repo::get(&s.pool, integration)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Integration not found."))?;
+    c.org(s, integ.org_id).await?;
+    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+    if !super::presences::offers_shared(&mut conn, &integ).await? {
+        return Ok(DmDefaultOptions {
+            org_id: integ.org_id,
+            shared_bot: None,
+            items: Vec::new(),
+        });
+    }
+    let bot = integ.shared_bot.as_ref();
+    let text = |k: &str| {
+        bot.and_then(|b| b.get(k))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    let handle = text("handle").unwrap_or_default();
+    let display_name = text("display_name").unwrap_or_else(|| handle.clone());
+    let items = agents::list_usable_in_org(&mut *conn, integ.org_id, c.user_id, integ.id)
+        .await?
+        .into_iter()
+        .map(|r| DmDefaultOption {
+            agent_id: r.agent_id,
+            name: r.name,
+            handle: r.handle,
+            workspace_id: r.workspace_id,
+            workspace_name: r.workspace_name,
+            attached: r.attached,
+        })
+        .collect();
+    Ok(DmDefaultOptions {
+        org_id: integ.org_id,
+        shared_bot: Some(SharedBotRef {
+            handle,
+            display_name,
+        }),
+        items,
+    })
+}
+
+/// `PUT /me/dm-defaults` (C-37, amended by FIX-220/C-1147). Applies to every platform user the
+/// caller has linked on the integration; answers with the first. Choosing a usable agent that is not
+/// on the shared bot yet attaches it there, in the same transaction as the default.
 pub async fn dm_default_set(
     s: &AppState,
     c: &SessionCaller,
@@ -317,34 +435,19 @@ pub async fn dm_default_set(
     if links.is_empty() {
         return Err(ApiError::not_found("No link on that integration."));
     }
-    let unreachable = || {
-        ApiError::unprocessable(
-            "agent_not_reachable",
-            "That agent cannot be reached through this integration.",
-        )
-    };
-    let agent = agents::get(&s.pool, req.agent_id)
+    let integ = integ_repo::get(&s.pool, req.integration_id)
         .await?
-        .ok_or_else(unreachable)?;
-    let can_use = authz::workspace_access(&s.pool, c.user_id, agent.workspace_id)
-        .await?
-        .is_some();
+        .ok_or_else(agent_not_reachable)?;
     let refs: Vec<String> = links.iter().map(|l| l.platform_user_ref.clone()).collect();
-    let reachable = can_use
-        || reach_grants::approved_person_reach(&s.pool, agent.id, req.integration_id, &refs)
-            .await?;
-    if !reachable
-        || channel_presences::active_shared(&s.pool, agent.id, req.integration_id)
-            .await?
-            .is_none()
-    {
-        return Err(unreachable());
-    }
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    let (agent, attached) = agent_choice(&mut tx, c.user_id, &integ, req.agent_id, &refs).await?;
     for l in &links {
         dm_defaults::upsert(&mut *tx, l.integration_id, &l.platform_user_ref, agent.id).await?;
     }
     tx.commit().await.map_err(DbError::from)?;
+    if let Some(p) = attached {
+        super::presences::audit_shared_attach(s, c, &agent, p, integ.id, "dm_default");
+    }
     Ok(DmDefault {
         integration_id: req.integration_id,
         platform_user_ref: links[0].platform_user_ref.clone(),

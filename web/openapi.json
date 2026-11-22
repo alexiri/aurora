@@ -23496,6 +23496,80 @@
         ]
       }
     },
+    "/v1/me/dm-default-options": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Agents the caller may choose to answer their DMs with an integration's shared bot (C-1147).",
+        "operationId": "listDmDefaultOptions",
+        "parameters": [
+          {
+            "name": "integration_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DmDefaultOptions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/me/dm-defaults": {
       "get": {
         "tags": [
@@ -23544,7 +23618,7 @@
         "tags": [
           "channels"
         ],
-        "summary": "Set the agent that answers the caller's DMs with an integration's shared bot (C-37).",
+        "summary": "Set the agent that answers the caller's DMs with an integration's shared bot (C-37). An agent\nthe caller can use that is not on the shared bot yet is attached there (C-1147).",
         "operationId": "setDmDefault",
         "requestBody": {
           "content": {
@@ -46892,6 +46966,14 @@
           "platform_user_ref"
         ],
         "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "(FIX-220, C-36) The agent that answers the person's DMs with the shared bot. Same rule as\n`PUT /me/dm-defaults`, in the same transaction as the link: an agent of the integration's\norganization the person can use; one not on the shared bot yet is attached there. When it\nis refused (422 `agent_not_reachable`) nothing is linked and the token stays usable."
+          },
           "platform_user_ref": {
             "type": "string",
             "description": "The platform user the confirm page showed (`LinkPreview.platform_user_ref`); the request is\nrefused (422 `link_reference_mismatch`) when it is not the token's chat account."
@@ -49891,6 +49973,73 @@
             "items": {
               "$ref": "#/components/schemas/DmDefault"
             }
+          }
+        }
+      },
+      "DmDefaultOption": {
+        "type": "object",
+        "description": "One agent the caller may choose to answer their DMs with the shared bot (C-1147).",
+        "required": [
+          "agent_id",
+          "name",
+          "handle",
+          "workspace_id",
+          "workspace_name",
+          "attached"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "attached": {
+            "type": "boolean",
+            "description": "The agent already has an active shared presence on the integration; choosing one that does\nnot attaches it."
+          },
+          "handle": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workspace_name": {
+            "type": "string"
+          }
+        }
+      },
+      "DmDefaultOptions": {
+        "type": "object",
+        "description": "`GET /me/dm-default-options?integration_id=` (FIX-220, C-1147).",
+        "required": [
+          "org_id",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DmDefaultOption"
+            }
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The integration's organization (the sign-in link page links to that organization's\nworkspaces when the person has no agent yet)."
+          },
+          "shared_bot": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SharedBotRef",
+                "description": "`null` (and `items` empty) when the integration is not active, has no shared bot or the\nshared mode is off."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -68593,6 +68742,22 @@
       },
       "SharedBotInfo": {
         "type": "object",
+        "required": [
+          "handle",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          }
+        }
+      },
+      "SharedBotRef": {
+        "type": "object",
+        "description": "The shared bot of an integration, as the DM-default choice names it (FIX-220, C-1147).",
         "required": [
           "handle",
           "display_name"

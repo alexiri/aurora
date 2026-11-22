@@ -8,10 +8,13 @@ import { AuthCard, Notice } from "@/components/auth/auth-card";
 import { FormError } from "@/components/auth/form-error";
 import { Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { Field } from "@/components/ui/field";
+import { Select } from "@/components/ui/select";
 import { ApiError } from "@/lib/api/client";
-import { useChannelLinkPreview, useConfirmChannelLink } from "@/lib/api/channels";
+import { useChannelLinkPreview, useConfirmChannelLink, useDmDefaultOptions } from "@/lib/api/channels";
 import { useSession } from "@/lib/api/queries";
 import { isUnauthorized, loginUrl } from "@/lib/auth/use-unauthorized-redirect";
+import { wsRoutes } from "@/lib/routes";
 
 import { personName } from "@/lib/workspace-name";
 import { channelError } from "./shared";
@@ -57,6 +60,12 @@ export function LinkConfirmView() {
   const signedIn = session.isSuccess;
   const preview = useChannelLinkPreview(token, signedIn);
   const confirm = useConfirmChannelLink();
+  // (FIX-220, C-1147) Which agent answers the person's direct messages to the shared bot. A failed load
+  // just leaves the question out: the link itself never depends on it.
+  const options = useDmDefaultOptions(preview.data?.integration_id, signedIn);
+  // `undefined` = not touched (then a single agent is preselected); `""` = "Decide later".
+  const [choice, setChoice] = useState<string | undefined>(undefined);
+  const [chosenName, setChosenName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -101,10 +110,19 @@ export function LinkConfirmView() {
 
   if (confirm.isSuccess) {
     const l = confirm.data;
+    const bot = options.data?.shared_bot;
     return (
       <AuthCard title="Account linked">
         <Notice>
-          <code>{l.platform_user_ref}</code> on {l.tenant_label} is now linked to {personName(l.user.display_name)}.
+          {chosenName && bot ? (
+            <>
+              Linked. Message <strong>@{bot.handle}</strong> again and <strong>{chosenName}</strong> answers.
+            </>
+          ) : (
+            <>
+              <code>{l.platform_user_ref}</code> on {l.tenant_label} is now linked to {personName(l.user.display_name)}.
+            </>
+          )}
         </Notice>
         <Link href="/account/channels" className="text-sm text-link underline">
           Manage chat links
@@ -129,6 +147,14 @@ export function LinkConfirmView() {
   }
 
   const p = preview.data;
+  const bot = options.data?.shared_bot ?? null;
+  const items = bot ? (options.data?.items ?? []) : [];
+  const selected = choice ?? (items.length === 1 ? items[0].agent_id : "");
+  const picked = items.find((i) => i.agent_id === selected);
+  // No agent to choose from: point to where one is created (a workspace's Agents page; `/` without a workspace).
+  const home = session.data.memberships?.find((m) => m.org.id === options.data?.org_id);
+  const firstWorkspace = home?.workspaces[0];
+  const createHref = home && firstWorkspace ? wsRoutes(home.org.slug, firstWorkspace.slug).agents() : "/";
   const terminal =
     confirm.error instanceof ApiError &&
     (confirm.error.code === "link_expired" ||
@@ -170,13 +196,51 @@ export function LinkConfirmView() {
       <p className="text-sm text-muted">
         Only confirm if this is your own chat account. Whoever writes as it will act as you in Aurora.
       </p>
+      {options.isPending ? <Loading /> : null}
+      {bot && items.length > 0 ? (
+        <Field
+          id="link-agent"
+          label={`Agent that answers your direct messages to @${bot.handle}`}
+          hint="You can change this later on your account's chat page."
+        >
+          <Select
+            id="link-agent"
+            value={selected}
+            disabled={confirm.isPending || terminal}
+            onChange={setChoice}
+          >
+            <option value="">Decide later</option>
+            {items.map((i) => (
+              <option key={i.agent_id} value={i.agent_id}>
+                {`${i.name} (@${i.handle}) · ${i.workspace_name}${i.attached ? "" : ` · will be added to @${bot.handle}`}`}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
+      {bot && items.length === 0 ? (
+        <p className="text-sm text-muted" data-testid="link-no-agent">
+          You don&apos;t have an agent yet.{" "}
+          <Link href={createHref} className="text-link underline">
+            Create one
+          </Link>
+          .
+        </p>
+      ) : null}
       <FormError message={confirm.isError ? channelError(confirm.error) : undefined} />
       {!terminal ? (
         <Button
           size="lg"
           className="w-full"
-          disabled={confirm.isPending}
-          onClick={() => confirm.mutate({ token, platform_user_ref: p.platform_user_ref })}
+          disabled={confirm.isPending || options.isPending}
+          onClick={() => {
+            setChosenName(picked?.name ?? null);
+            confirm.mutate({
+              token,
+              platform_user_ref: p.platform_user_ref,
+              ...(picked ? { agent_id: picked.agent_id } : {}),
+            });
+          }}
         >
           {confirm.isPending ? "Linking…" : "Confirm link"}
         </Button>

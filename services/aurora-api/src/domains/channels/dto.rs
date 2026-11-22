@@ -349,6 +349,12 @@ pub struct ConfirmLinkRequest {
     /// The platform user the confirm page showed (`LinkPreview.platform_user_ref`); the request is
     /// refused (422 `link_reference_mismatch`) when it is not the token's chat account.
     pub platform_user_ref: String,
+    /// (FIX-220, C-36) The agent that answers the person's DMs with the shared bot. Same rule as
+    /// `PUT /me/dm-defaults`, in the same transaction as the link: an agent of the integration's
+    /// organization the person can use; one not on the shared bot yet is attached there. When it
+    /// is refused (422 `agent_not_reachable`) nothing is linked and the token stays usable.
+    #[serde(default)]
+    pub agent_id: Option<Uuid>,
 }
 
 /// `GET /channel-links/preview?token=`: the chat account a sign-in link would bind (docs/13 §5.9).
@@ -382,6 +388,43 @@ pub struct DmDefault {
 #[derive(Serialize, ToSchema)]
 pub struct DmDefaultList {
     pub items: Vec<DmDefault>,
+}
+
+/// The shared bot of an integration, as the DM-default choice names it (FIX-220, C-1147).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SharedBotRef {
+    pub handle: String,
+    pub display_name: String,
+}
+
+/// One agent the caller may choose to answer their DMs with the shared bot (C-1147).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct DmDefaultOption {
+    pub agent_id: Uuid,
+    pub name: String,
+    pub handle: String,
+    pub workspace_id: Uuid,
+    pub workspace_name: String,
+    /// The agent already has an active shared presence on the integration; choosing one that does
+    /// not attaches it.
+    pub attached: bool,
+}
+
+/// `GET /me/dm-default-options?integration_id=` (FIX-220, C-1147).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct DmDefaultOptions {
+    /// The integration's organization (the sign-in link page links to that organization's
+    /// workspaces when the person has no agent yet).
+    pub org_id: Uuid,
+    /// `null` (and `items` empty) when the integration is not active, has no shared bot or the
+    /// shared mode is off.
+    pub shared_bot: Option<SharedBotRef>,
+    pub items: Vec<DmDefaultOption>,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct DmDefaultOptionsParams {
+    pub integration_id: Uuid,
 }
 
 #[derive(Deserialize, ToSchema)]
