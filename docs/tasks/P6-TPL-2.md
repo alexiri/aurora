@@ -79,7 +79,9 @@ of the skill-library domain). Do not write a second git client.
   `TEMPLATE_PACKAGE_RETRY`; expired to `invalid` after `TEMPLATE_PACKAGE_WAIT`.
 - **The source comparison** (step 6): the package's content hash must equal the tree's at the row's `commit_sha`.
   Read the tree **at that commit**, not at a newer head.
-- The avatar is re-encoded to a 256×256 PNG with the existing avatar encoder before storing.
+- The avatar is re-encoded to a 256×256 PNG with the existing avatar encoder before storing. If it is stored in
+  `blobs`, its key column is a reference the orphan-blob sweep must honour (FIX-223, D-466(c)): add it to
+  `repo/blobs.rs`'s reference list, or `scripts/guards/blob-references.sh` fails.
 - Then the rest of C-1108:
   - the admin list (with `needs_libraries`: is a matching library added for at least one organization, or as an
     instance library?);

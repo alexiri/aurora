@@ -728,7 +728,9 @@ backend is a later registry entry.
     `audit_log`). Metrics: `aurora_blob_bytes`, `aurora_org_attachment_bytes{org}`
     (top 20 orgs, others summed), `aurora_attachment_quota_rejections_total`.
   - **Sweep.** The daily singleton **attachment sweep** (`05 §Background jobs`):
-    purges by retention, removes orphan blobs (no attachment row), recomputes the
+    purges by retention, removes orphan blobs (no attachment row and no agent's
+    `avatar_blob_key` refers to them, FIX-223, D-466; an avatar blob is removed
+    only once its agent is gone), recomputes the
     usage counters (fixing drift), and raises the quota notices.
 - Filenames sanitized to `[A-Za-z0-9._-]`, ≤128; downloads always
 `Content-Disposition: attachment` with `X-Content-Type-Options: nosniff`.
