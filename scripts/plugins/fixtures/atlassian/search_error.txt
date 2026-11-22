@@ -1,0 +1,2 @@
+aurora-agent: jira-dc search_issues: HTTP 400
+{"errorMessages":["Error in the JQL Query: the quoted string is not terminated."],"errors":{}}

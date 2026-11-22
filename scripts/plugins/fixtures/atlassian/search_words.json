@@ -1,0 +1,37 @@
+{
+  "startAt": 0,
+  "maxResults": 3,
+  "total": 120,
+  "issues": [
+    {
+      "id": "10003",
+      "key": "ABC-31",
+      "fields": {
+        "summary": "Widget sync fails\u001b[31m red\u0007 on host demo-01",
+        "status": { "name": "Open" },
+        "updated": "2026-11-21T08:00:00.000+0100",
+        "labels": []
+      }
+    },
+    {
+      "id": "10004",
+      "key": "ABC-30",
+      "fields": {
+        "summary": "Delete the old widget share",
+        "status": { "name": "To Do" },
+        "updated": "2026-11-19T12:30:00.000+0100",
+        "labels": ["storage", "cleanup"]
+      }
+    },
+    {
+      "id": "10005",
+      "key": "ABC-29",
+      "fields": {
+        "summary": "Demo host out of disk space",
+        "status": { "name": "Waiting" },
+        "updated": "2026-11-17T06:45:00.000+0100",
+        "labels": ["storage"]
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 package:
   id: atlassian
-  version: 1.5.0
+  version: 1.6.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -350,6 +350,7 @@ apps:
         a token, and never send a request for this connection to another host. Descriptions and
         comments are plain text (wiki markup) in API v2. Send JSON bodies with content-type
         application/json. A 403 or 404 means the token's user cannot see that item.
+      operations: operations.json
   - about:
       id: confluence-dc
       name: Confluence Data Center
