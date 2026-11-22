@@ -40,9 +40,10 @@ Read, and nothing else unless a brief says so:
 - `plugins/builtin/README.md` (whole file): layout, checks, guide rules, placeholders, fixtures.
 - `docs/09-app-plugins.md` §3.4 (`connect[]`, instance-bound hosts, `token`, `tools`, `approvals`,
   `agent`), §5 (mechanisms), §12 (fixtures). Hooks (§8) only for Zoom.
-- `docs/24-app-guides.md` §3 (guide files, recipes) and §10a (operations file, `aurora-agent`).
+- `docs/24-app-guides.md` (renamed `24-apps-for-agents.md` by P5-APPSKILL-2) §3 (app skills) and §10a
+  (operations file, `aurora-agent`).
 - The reference package: `plugins/builtin/sentry/` (instances, token form, `access_levels` with
-  `permission_hints`, `store: label` name field, guide file); `plugins/builtin/indico/` for an
+  `permission_hints`, `store: label` name field, its app skill); `plugins/builtin/indico/` for an
   instance-only app; `plugins/builtin/aws-keys/hooks/` for a `token.mint` hook.
 
 Rules:
@@ -58,8 +59,11 @@ Rules:
    `scripts/plugins/check_builtin.py` and a passing `refused <what>: …` case for each.
 5. **Texts**: `about.summary`, `about.first_prompt`, tool `description`s (≤ 200 characters, plain words),
    `connect_note`, `permission_hints` in the vendor's own words, `agent.summary`, short
-   `agent.instructions`, one or two guide files (an `api-notes.md` reference; a recipe where the brief asks
-   for one). Setup guide `docs/setup.md` uses the `{{aurora.…}}` placeholders, never page paths.
+   `agent.instructions`, one or two **app skills** (D-453, P5-APPSKILL-1): `skills/<app>/<app>-api-notes/`
+   for the reference, and where a brief names a recipe `<task>.md`, the skill `skills/<app>/<app>-<task>/`
+   (scripts allowed, D-452). Wherever the five briefs say "guide file", "reference" or "recipe", read
+   "app skill". Setup guide `docs/setup.md` uses the `{{aurora.…}}` placeholders, never page paths.
+   These briefs therefore wait for P5-APPSKILL-1/-2 to merge.
 6. **Operations file**: where the brief says so, ship `operations.json` (`24 §10a`), hand-written or from
    `aurora plugin import-openapi` on the vendor's spec, cut down to the catalogue's scope.
 7. **Icon**: `plugins/builtin/ICONS.md` rules (D-99): Simple Icons 16.37.0 if the product is there

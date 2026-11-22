@@ -11,6 +11,12 @@ D-170..D-172 and D-295..D-298, invariants SEC-91 and SEC-117..SEC-120, contracts
 This document owns the feature. `09`, `10`, `11`, `12` and `16` carry short normative pointers
 where their own text changes.
 
+> **Being replaced (owner, 2026-11-22; D-452, D-453; P5-APPSKILL-1..4).** Apps ship **skills**
+> (`skills/<app_id>/<name>/SKILL.md` plus files, scripts allowed) instead of guide files and
+> recipes; the generated `guide.md` becomes `app.md`; the agent guide concept is removed. Until
+> P5-APPSKILL-1/-2 rewrite and rename this document (`24-apps-for-agents.md`), **C-1130..C-1139**
+> in `API_CONTRACTS.md`, D-452/D-453 and SEC-150 win over anything below that disagrees.
+
 **Amendment of 2026-11-15 (owner: "I don't like every app filling the context … I'd like more of
 a code mode approach", and "spec out fixing the MCP bridge's issues the same way").** Four
 changes, all in this document:
