@@ -247,6 +247,16 @@ impl W {
             .unwrap()
     }
 
+    /// The platform lines sent privately to clickers, oldest first (D-470: every click is answered).
+    async fn notice_lines(&self) -> Vec<String> {
+        self.ops("message.post")
+            .await
+            .into_iter()
+            .filter(|o| o.1["ephemeral_to"].is_string())
+            .filter_map(|o| o.1["content"]["text"].as_str().map(str::to_owned))
+            .collect()
+    }
+
     fn minter(&self, integ: Uuid) -> cards::Minter<'_> {
         cards::minter(&self.h.state, integ)
     }
@@ -938,16 +948,35 @@ async fn turn_stop_and_send_now() {
     // No workspace access: refused.
     let out = w.click(w.integ, &stop, "U_OUT", None).await;
     assert_eq!(out["reason"], "forbidden");
-    let out = w.click(w.integ, &now, "U_MEMBER", None).await;
-    assert_eq!(out["result"], "done", "{out}");
+    // (FIX-225, D-470) An old card's Send now on an agent that cannot do it is answered with a
+    // visible line, queues nothing, and does not burn the token.
+    for _ in 0..2 {
+        let out = w
+            .click_in(w.integ, &now, "U_MEMBER", None, Some("C1"))
+            .await;
+        assert_eq!(
+            (out["result"].as_str(), out["reason"].as_str()),
+            (Some("refused"), Some("unsupported")),
+            "{out}"
+        );
+    }
     let sn: Option<chrono::DateTime<chrono::Utc>> =
         sqlx::query_scalar("SELECT send_now_requested_at FROM turns WHERE id=$1")
             .bind(turn)
             .fetch_one(w.pool())
             .await
             .unwrap();
-    assert!(sn.is_some());
-    let out = w.click(w.integ, &stop, "U_MEMBER", None).await;
+    assert!(sn.is_none());
+    assert_eq!(w.token_uses().await, 0);
+    assert!(
+        w.notice_lines().await.iter().any(|l| l
+            == "This agent can't take messages mid-turn; they run when the current turn ends."),
+        "{:?}",
+        w.notice_lines().await
+    );
+    let out = w
+        .click_in(w.integ, &stop, "U_MEMBER", None, Some("C1"))
+        .await;
     assert_eq!(out["result"], "done", "{out}");
     let ab: Option<chrono::DateTime<chrono::Utc>> =
         sqlx::query_scalar("SELECT abort_requested_at FROM turns WHERE id=$1")
@@ -956,6 +985,168 @@ async fn turn_stop_and_send_now() {
             .await
             .unwrap();
     assert!(ab.is_some());
+    assert!(
+        w.notice_lines()
+            .await
+            .contains(&"Stopping this turn.".to_owned())
+    );
+}
+
+/// (FIX-225, D-469(c), D-470) The status card offers Stop always, Steer only for a harness that
+/// steers, Send now only for one that backgrounds a tool and does not steer.
+#[tokio::test]
+async fn the_turn_status_card_offers_only_the_controls_the_harness_supports() {
+    use aurora_api::domains::channels::cards::build;
+    use aurora_protocol::runner::TurnControls;
+    let w = W::new(&FULL).await;
+    let m = w.minter(w.integ);
+    let labels = |steer, background_tool| -> Vec<String> {
+        let b = build::turn_controls(
+            &m,
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            TurnControls {
+                steer,
+                background_tool,
+            },
+        )
+        .unwrap();
+        let v = serde_json::to_value(&b).unwrap();
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["label"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(labels(false, false), ["Stop"]);
+    assert_eq!(labels(true, false), ["Stop", "Steer"]);
+    assert_eq!(labels(false, true), ["Stop", "Send now"]);
+    // A harness that steers uses Steer even when it could also background (`fake`).
+    assert_eq!(labels(true, true), ["Stop", "Steer"]);
+}
+
+#[tokio::test]
+async fn the_steer_button_steers_the_waiting_messages_and_says_so_and_says_when_there_are_none() {
+    let w = W::new(&FULL).await;
+    // A hosted agent on the harness that steers, a running turn and two waiting follow-ups.
+    let agent = w.h.hosted_agent(w.org, w.ws, "steerer").await;
+    let conv = Uuid::now_v7();
+    sqlx::query("INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at) VALUES ($1,$2,$3,'api',$1::text, now())")
+        .bind(conv).bind(agent).bind(w.ws).execute(w.pool()).await.unwrap();
+    let turn = Uuid::now_v7();
+    sqlx::query("INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_label, text) VALUES ($1,$2,$3,'turn','running','{}','system','s','hi')")
+        .bind(turn).bind(conv).bind(agent).execute(w.pool()).await.unwrap();
+    let mut followups = Vec::new();
+    for t in ["one", "two"] {
+        let id = Uuid::now_v7();
+        sqlx::query("INSERT INTO turns (id, conversation_id, agent_id, role, status, parent_turn_id, door, speaker_kind, speaker_label, text) VALUES ($1,$2,$3,'followup','joining',$4,'{}','person','Mark',$5)")
+            .bind(id).bind(conv).bind(agent).bind(turn).bind(t).execute(w.pool()).await.unwrap();
+        followups.push(id);
+    }
+    let m = w.minter(w.integ);
+    let steer = || {
+        m.mint(turn, ActionKind::FollowupSteer { turn_id: turn })
+            .unwrap()
+    };
+    // No access: refused, nothing steered.
+    let out = w.click(w.integ, &steer(), "U_OUT", None).await;
+    assert_eq!(out["reason"], "forbidden");
+    let out = w
+        .click_in(w.integ, &steer(), "U_MEMBER", None, Some("C1"))
+        .await;
+    assert_eq!(out["result"], "done", "{out}");
+    let requested: Vec<bool> = sqlx::query_scalar(
+        "SELECT steer_requested_at IS NOT NULL FROM turns WHERE id = ANY($1) ORDER BY created_at, id",
+    )
+    .bind(&followups)
+    .fetch_all(w.pool())
+    .await
+    .unwrap();
+    assert_eq!(requested, [true, true]);
+    assert!(
+        w.notice_lines()
+            .await
+            .contains(&"Steering 2 messages in at the next step.".to_owned()),
+        "{:?}",
+        w.notice_lines().await
+    );
+    // Nothing left to steer: a visible line, and the card stays usable (the token is not burned).
+    let again = steer();
+    let uses = w.token_uses().await;
+    for _ in 0..2 {
+        let out = w
+            .click_in(w.integ, &again, "U_MEMBER", None, Some("C1"))
+            .await;
+        assert_eq!(
+            (out["result"].as_str(), out["reason"].as_str()),
+            (Some("refused"), Some("nothing_waiting")),
+            "{out}"
+        );
+    }
+    assert_eq!(w.token_uses().await, uses);
+    assert!(
+        w.notice_lines()
+            .await
+            .contains(&"No message is waiting to be steered.".to_owned())
+    );
+}
+
+/// (FIX-225, D-470) A control that did not do what it promised (a steer the harness missed) is
+/// posted to the conversation's chat thread as one short platform line, once per `dedupe`.
+#[tokio::test]
+async fn a_failed_control_is_posted_to_the_chat_thread_as_a_platform_note_once() {
+    use aurora_api::domains::channels::mirror;
+    let w = W::new(&FULL).await;
+    let text =
+        "Couldn't steer your message in (the agent missed it). It will run after the current turn.";
+    for _ in 0..2 {
+        let mut conn = w.pool().acquire().await.unwrap();
+        mirror::post_platform_note(&mut conn, w.conv, "steer-failed:one", text).await;
+    }
+    let posts: Vec<_> = w
+        .ops("message.post")
+        .await
+        .into_iter()
+        .filter(|o| o.1["content"]["text"] == text)
+        .collect();
+    assert_eq!(posts.len(), 1, "one note per dedupe key");
+    assert_eq!(posts[0].1["target"]["thread_ref"], "T1");
+    // A conversation without a chat thread posts nothing and fails nothing.
+    let mut conn = w.pool().acquire().await.unwrap();
+    mirror::post_platform_note(&mut conn, Uuid::now_v7(), "steer-failed:two", text).await;
+    assert_eq!(
+        w.ops("message.post")
+            .await
+            .into_iter()
+            .filter(|o| o.1["content"]["text"] == text)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn the_steer_button_on_an_agent_that_cannot_steer_says_so() {
+    let w = W::new(&FULL).await;
+    // The fixture's agent is bring-your-own: its harness is not ours and takes nothing mid-turn.
+    let turn = Uuid::now_v7();
+    sqlx::query("INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_label, text) VALUES ($1,$2,$3,'turn','running','{}','system','s','hi')")
+        .bind(turn).bind(w.conv).bind(w.agent).execute(w.pool()).await.unwrap();
+    let tok = w
+        .minter(w.integ)
+        .mint(turn, ActionKind::FollowupSteer { turn_id: turn })
+        .unwrap();
+    let out = w
+        .click_in(w.integ, &tok, "U_MEMBER", None, Some("C1"))
+        .await;
+    assert_eq!(
+        (out["result"].as_str(), out["reason"].as_str()),
+        (Some("refused"), Some("unsupported")),
+        "{out}"
+    );
+    assert!(w.notice_lines().await.contains(
+        &"This agent can't take messages mid-turn; they run when the current turn ends.".to_owned()
+    ));
 }
 
 #[tokio::test]

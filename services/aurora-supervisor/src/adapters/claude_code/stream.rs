@@ -7,7 +7,8 @@
 //!   `stop_reason` remembered (a `refusal` becomes `provider_refusal` at the result).
 //! - `assistant` messages: `tool_use` blocks -> `ToolStarted`; text/thinking blocks only when the
 //!   message was not already streamed through `stream_event`s.
-//! - `user` messages: `tool_result` blocks -> `ToolFinished`.
+//! - `user` messages: `tool_result` blocks -> `ToolFinished`; a replayed text message (`isReplay`,
+//!   `--replay-user-messages`) carrying the text of a steer handed to the CLI -> `MessageJoined`.
 //! - `result` -> terminal `Done{usage}` or `Error{code,message}` (see [`classify_failure`]).
 //! - Events with a non-null `parent_tool_use_id` (sub-agents) and unknown types are ignored.
 
@@ -15,6 +16,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 use crate::adapters::provider_error;
 use crate::harness::HarnessEvent;
@@ -42,8 +44,20 @@ pub struct Mapped {
 /// Per model: input, output, cache-read, cache-write tokens, as of the child's last `result`.
 pub type Baseline = Arc<StdMutex<BTreeMap<String, [i64; 4]>>>;
 
+/// (FIX-225) What a live child may still be handed: whether a run is taking steers, and the steers
+/// written to its stdin that it has not echoed yet (`(followup id, rendered text)`). One lock, so a
+/// steer can never be registered after the turn closed the door.
+#[derive(Debug, Default)]
+pub struct SteerState {
+    pub accepting: bool,
+    pub pending: Vec<(Uuid, String)>,
+}
+
+pub type Steers = Arc<StdMutex<SteerState>>;
+
 #[derive(Debug, Default)]
 pub struct StreamMapper {
+    steers: Steers,
     /// Shared across the turns of one child (the CLI's per-model report is cumulative for the process).
     baseline: Baseline,
     message_id: String,
@@ -89,10 +103,12 @@ impl StreamMapper {
         Self::default()
     }
 
-    /// A mapper for one turn of a child whose earlier turns left `baseline`.
-    pub fn with_baseline(baseline: Baseline) -> Self {
+    /// A mapper for one turn of a child whose earlier turns left `baseline`; the CLI's echo of a
+    /// steer in `steers` becomes `MessageJoined`.
+    pub fn with_baseline(baseline: Baseline, steers: Steers) -> Self {
         Self {
             baseline,
+            steers,
             ..Self::default()
         }
     }
@@ -274,6 +290,22 @@ impl StreamMapper {
             .pointer("/message/content")
             .and_then(Value::as_array)
             .map_or(&[][..], Vec::as_slice);
+        // `--replay-user-messages`: the CLI echoes a user line it has taken. The echo of a steer
+        // (its text matches one handed over) is the join; the turn's own message is not a steer.
+        if v.get("isReplay").and_then(Value::as_bool) == Some(true) {
+            let text = blocks
+                .iter()
+                .filter_map(|b| b.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if let Ok(mut s) = self.steers.lock()
+                && let Some(i) = s.pending.iter().position(|(_, t)| *t == text)
+            {
+                let (id, _) = s.pending.remove(i);
+                out.events
+                    .push(HarnessEvent::MessageJoined { followup_id: id });
+            }
+        }
         for b in blocks {
             if b.get("type").and_then(Value::as_str) != Some("tool_result") {
                 continue;
@@ -765,6 +797,40 @@ mod tests {
         assert!(u.get("by_model").is_none(), "{u}");
     }
 
+    /// (FIX-225) The echo of a steer (`isReplay`, `--replay-user-messages`) is its join; the turn's own
+    /// message, a tool result and an echo nobody asked for are not.
+    #[test]
+    fn a_replayed_user_line_joins_only_a_steer_that_was_handed_over() {
+        let steers = Steers::default();
+        let id = Uuid::now_v7();
+        steers
+            .lock()
+            .unwrap()
+            .pending
+            .push((id, "Ann: more".into()));
+        let mut m = StreamMapper::with_baseline(Baseline::default(), steers.clone());
+        let echo = |text: &str, replay: bool| {
+            json!({"type": "user", "isReplay": replay, "parent_tool_use_id": null,
+                "message": {"role": "user", "content": [{"type": "text", "text": text}]}})
+            .to_string()
+        };
+        assert!(m.map_line(&echo("first message", true)).events.is_empty());
+        assert!(
+            m.map_line(&echo("Ann: more", false)).events.is_empty(),
+            "only the CLI's replay counts"
+        );
+        assert_eq!(steers.lock().unwrap().pending.len(), 1);
+        assert_eq!(
+            m.map_line(&echo("Ann: more", true)).events,
+            [HarnessEvent::MessageJoined { followup_id: id }]
+        );
+        assert!(steers.lock().unwrap().pending.is_empty());
+        assert!(
+            m.map_line(&echo("Ann: more", true)).events.is_empty(),
+            "joined once"
+        );
+    }
+
     /// The CLI's report is cumulative for the child: a second turn reports its own share, and a counter
     /// that went down (a fresh child) is taken whole.
     #[test]
@@ -776,7 +842,7 @@ mod tests {
         };
         let base = Baseline::default();
         let turn = |line: String| {
-            let mut m = StreamMapper::with_baseline(base.clone());
+            let mut m = StreamMapper::with_baseline(base.clone(), Steers::default());
             done_usage(m.map_line(&line).terminal)
         };
         let first = turn(result(100, 300));

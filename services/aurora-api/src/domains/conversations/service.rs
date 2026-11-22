@@ -991,17 +991,14 @@ fn stored_key(user_id: Uuid, raw: &[Vec<u8>]) -> Result<Option<String>, ApiError
 
 /// The accepted-message body for a stored row, as it is now (C-323).
 async fn accepted_from_row(
+    state: &AppState,
+    c: &Caller,
     conn: &mut PgConnection,
     row: TurnRow,
 ) -> Result<MessageAccepted, ApiError> {
     if row.role == "followup" {
-        let promoted = if row.status == "promoted" {
-            turns::promoted_turn_id(&mut *conn, row.conversation_id, row.id).await?
-        } else {
-            None
-        };
-        let mut f = super::dto::Followup::from(row);
-        f.promoted_turn_id = promoted;
+        // (FIX-225, C-1154) `controls` are computed for the caller, as in the list.
+        let f = super::followups::view(state, conn, c, row).await?;
         Ok(MessageAccepted {
             turn: None,
             followup: Some(f),
@@ -1016,6 +1013,8 @@ async fn accepted_from_row(
 
 /// Replay or mismatch for an existing row under a key (C-323, C-324).
 async fn replay(
+    state: &AppState,
+    c: &Caller,
     conn: &mut PgConnection,
     row: TurnRow,
     text: &str,
@@ -1028,7 +1027,9 @@ async fn replay(
     let mut wanted = attachment_ids.to_vec();
     wanted.sort();
     wanted.dedup();
-    if row.text != text || stored != wanted || row.reply_to_seq != reply_to_seq {
+    // (FIX-225) A follow-up its author edited no longer holds the text they first sent.
+    let text_differs = row.edited_at.is_none() && row.text != text;
+    if text_differs || stored != wanted || row.reply_to_seq != reply_to_seq {
         let is_followup = row.role == "followup";
         return Err(ApiError::unprocessable(
             "idempotency_key_reused",
@@ -1039,7 +1040,7 @@ async fn replay(
             "followup_id": if is_followup { Some(row.id) } else { None },
         })));
     }
-    accepted_from_row(conn, row).await
+    accepted_from_row(state, c, conn, row).await
 }
 
 /// Create a message. `key_headers` are the raw `Idempotency-Key` header values (C-320). Returns
@@ -1059,7 +1060,7 @@ pub async fn post_message(
     if let Some(k) = &key {
         let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
         if let Some(row) = turns::by_source_event(&mut conn, conv.id, k).await? {
-            let body = replay(&mut conn, row, text, attachment_ids, reply_to_seq).await?;
+            let body = replay(state, c, &mut conn, row, text, attachment_ids, reply_to_seq).await?;
             return Ok((body, true));
         }
     }
@@ -1110,7 +1111,7 @@ pub async fn post_message(
             let row = turns::by_source_event(&mut conn, conv.id, k)
                 .await?
                 .ok_or(e)?;
-            let body = replay(&mut conn, row, text, attachment_ids, reply_to_seq).await?;
+            let body = replay(state, c, &mut conn, row, text, attachment_ids, reply_to_seq).await?;
             return Ok((body, true));
         }
         Err(e) => return Err(e),
@@ -1119,6 +1120,8 @@ pub async fn post_message(
     let (Created::Turn(row) | Created::Followup(row)) = created;
     Ok((
         accepted_from_row(
+            state,
+            c,
             &mut *state.pool.acquire().await.map_err(DbError::from)?,
             row,
         )
@@ -1170,8 +1173,24 @@ pub async fn abort(state: &AppState, c: &Caller, id: Uuid) -> Result<Turn, ApiEr
 }
 
 /// Send now: sets `send_now_requested_at` (delivered as `turn.send_now` by the engine).
+///
+/// (FIX-225, C-1156, D-470) Refused up front, 409 `send_now_unsupported`, when the agent's harness
+/// does not declare `background_tool` or when it steers (then the client uses Steer): the supervisor
+/// could only answer `unsupported`, which nobody would see.
 pub async fn send_now(state: &AppState, c: &Caller, id: Uuid) -> Result<Turn, ApiError> {
     let t = load_turn(state, c, id).await?;
+    {
+        let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
+        // (phase 2, RFE-006) 423 `frozen` stays ahead of every other refusal.
+        crate::domains::freeze::service::ensure_agent_active(&mut conn, t.agent_id).await?;
+        let a = super::followups::agent_facts(state, &mut conn, t.agent_id).await?;
+        if !a.tc.background_tool || a.tc.steer {
+            return Err(ApiError::conflict(
+                "send_now_unsupported",
+                "This agent can't move a running step to the background. Messages you send while it works run when the current turn ends.",
+            ));
+        }
+    }
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     convs::lock(&mut tx, t.conversation_id).await?;
     // (phase 2, RFE-006) 423 `frozen` for a frozen agent, ahead of the finished-turn 409.

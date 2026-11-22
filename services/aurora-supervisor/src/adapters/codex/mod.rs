@@ -16,7 +16,10 @@
 //! resumes it. Abort kills the child; `release` keeps the reference.
 //!
 //! `steer` is `false`: follow-ups become separate turns and `steer()` always refuses.
-//! `background_tool` is `false`.
+//! `background_tool` is `false`. Both tested in this mode (FIX-225, `docs/12 §Turn controls by
+//! harness`): the prompt is the child's stdin, read to its end, so nothing can reach a running turn
+//! (`codex_cannot_take_a_steer_or_background_a_tool_in_exec_mode`). `codex app-server` has
+//! `turn/steer`; it is not built (D-469(d)).
 //!
 //! No credential is ever rendered: `config.toml` and the environment carry only the placeholder
 //! `OPENAI_API_KEY`, the per-session proxy adds the turn's context credential and the gateway

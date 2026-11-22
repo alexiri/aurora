@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use crate::harness::{HarnessError, McpBridgeSpec, SessionOptions, TurnInput};
+use crate::harness::{HarnessError, McpBridgeSpec, SessionOptions, SteerInput, TurnInput};
 
 /// Placeholder credential; the real credential is added by the gateway/supervisor proxy.
 pub const PLACEHOLDER: &str = "aurora-placeholder";
@@ -264,6 +264,9 @@ pub fn build_args(
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        // (FIX-225) The CLI echoes each user line it takes (`isReplay: true`): the acknowledgement
+        // that a steer was handed to the model.
+        "--replay-user-messages",
         "--permission-mode",
         "bypassPermissions",
         "--strict-mcp-config",
@@ -327,6 +330,15 @@ pub fn render_turn(input: &TurnInput) -> String {
         ));
     }
     s
+}
+
+/// The text of a steer as the model sees it (and as its echo is matched on).
+pub fn render_steer(s: &SteerInput) -> String {
+    if s.speaker_label.is_empty() {
+        s.text.clone()
+    } else {
+        format!("{}: {}", s.speaker_label, s.text)
+    }
 }
 
 /// One stdin line (stream-json input) carrying the user message.
@@ -766,6 +778,8 @@ mod tests {
         let a = build_args(&o, Some("sess-1")).unwrap();
         let has = |x: &str| a.iter().any(|v| v == x);
         assert!(has("-p") && has("--include-partial-messages") && has("--strict-mcp-config"));
+        // (FIX-225) the echo of a steer is its acknowledgement
+        assert!(has("--replay-user-messages"));
         let pos = |x: &str| a.iter().position(|v| v == x).unwrap();
         assert_eq!(a[pos("--permission-mode") + 1], "bypassPermissions");
         assert_eq!(a[pos("--input-format") + 1], "stream-json");
@@ -800,5 +814,12 @@ mod tests {
         assert!(r.contains("/workspace/.aurora/inbox/t/a.txt"));
         let line: Value = serde_json::from_str(&user_message_line("x\ny")).unwrap();
         assert_eq!(line["message"]["content"][0]["text"], "x\ny");
+        let steer = |label: &str| SteerInput {
+            followup_id: Uuid::nil(),
+            text: "more".into(),
+            speaker_label: label.into(),
+        };
+        assert_eq!(render_steer(&steer("Ann")), "Ann: more");
+        assert_eq!(render_steer(&steer("")), "more");
     }
 }

@@ -422,9 +422,13 @@ async fn arm7_steer(
 ) -> Result<(), ApiError> {
     for c in hosted::steer_candidates(tx, runner, replica, ARM_LIMIT).await? {
         convs::lock(tx, c.conversation_id).await?;
-        if !turns::mark_steer_delivered(tx, c.followup_id).await? {
+        // (FIX-225, C-1153) The claim re-checks, under the conversation lock every edit, cancel and
+        // steer also takes, that the follow-up is still waiting and was asked for; and it returns the
+        // row as it is now, so what the agent receives is what is stored (an edit that committed
+        // after the candidate was read is delivered, never the stale text).
+        let Some(f) = turns::claim_steer(tx, c.followup_id).await? else {
             continue;
-        }
+        };
         let agent_id = turns::get(&mut *tx, c.turn_id)
             .await?
             .map(|t| t.agent_id)
@@ -433,8 +437,8 @@ async fn arm7_steer(
             tx,
             c.conversation_id,
             agent_id,
-            &c.text,
-            c.reply_to_seq,
+            &f.text,
+            f.reply_to_seq,
             usize::try_from(c.n_files).unwrap_or(0),
         )
         .await?;

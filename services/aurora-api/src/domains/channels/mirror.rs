@@ -292,6 +292,67 @@ async fn access_request_line(
     Ok(())
 }
 
+/// (FIX-225, D-470, C-1156) A control the person used did not do what it promised (a steer the
+/// harness missed, a send-now that found nothing running): one short platform line in the
+/// conversation's chat thread, if it has one. Platform voice only, no model text. Behind a
+/// savepoint, idempotent per `dedupe`: a mirror problem never fails the report.
+pub async fn post_platform_note(
+    conn: &mut PgConnection,
+    conversation_id: uuid::Uuid,
+    dedupe: &str,
+    text: &str,
+) {
+    let mut sp = match conn.begin().await {
+        Ok(sp) => sp,
+        Err(e) => {
+            tracing::warn!(error = %e, "platform note: no savepoint");
+            return;
+        }
+    };
+    match platform_note(&mut sp, conversation_id, dedupe, text).await {
+        Ok(()) => {
+            if let Err(e) = sp.commit().await {
+                tracing::warn!(error = %e, "platform note: commit failed");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e.message(), "platform note failed; report kept");
+            let _ = sp.rollback().await;
+        }
+    }
+}
+
+async fn platform_note(
+    conn: &mut PgConnection,
+    conversation_id: uuid::Uuid,
+    dedupe: &str,
+    text: &str,
+) -> Result<(), ApiError> {
+    let Some(tl) = thread_links::latest_for_conversation(&mut *conn, conversation_id).await? else {
+        return Ok(());
+    };
+    let Some(ctx) = ctx_of(conn, tl.integration_id).await? else {
+        return Ok(());
+    };
+    let Ok(sender) = serde_json::from_value::<Sender>(tl.sender.clone()) else {
+        return Ok(());
+    };
+    send::post(
+        conn,
+        &ctx,
+        send::Post {
+            sender,
+            target: send::space_target(&tl.space_ref, &tl.thread_ref),
+            content: Content::platform(text),
+            files: Vec::new(),
+            ephemeral_to: None,
+            dedupe: dedupe.to_owned(),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
 /// Hook from the supervisor's `turn.started` report (FIX-158 Part C, D-319): a running turn of a
 /// chat thread shows the platform's working status ("is typing…" where the platform has it) until the turn
 /// finishes. Only on integrations that declare `native_status`; web and API turns have none.

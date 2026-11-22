@@ -120,9 +120,78 @@ pub async fn apply(
             }
         }
         ReportBody::TurnResult(t) => result(s, tx, facts, r, t).await?,
-        ReportBody::SteerResult(_) | ReportBody::SendNowResult(_) => {
-            // Unjoined follow-ups are promoted when the live turn ends (finish_turn); a missed
-            // steer is never re-sent (`steer_delivered_at` is stamped).
+        ReportBody::SteerResult(sr) => {
+            // (FIX-225, C-1153, D-470) `delivered` needs nothing (the `message.joined` event sets
+            // `joined`). A steer the harness missed or refused is never re-sent
+            // (`steer_delivered_at` stays stamped): the follow-up stays `joining`, runs as the next
+            // turn (finish_turn promotes it), and the person is told on its row.
+            let reason = sr.outcome.as_str();
+            if matches!(reason, "missed" | "refused") {
+                let f = turns::get(&mut *tx, sr.followup_id)
+                    .await?
+                    .filter(|f| f.role == "followup" && f.agent_id == facts.agent_id);
+                let Some(f) = f else {
+                    return Ok(Some(res(
+                        r,
+                        ReportStatus::Invalid,
+                        Some("unknown_followup"),
+                    )));
+                };
+                convs::lock(&mut *tx, f.conversation_id).await?;
+                if turns::set_steer_error(&mut *tx, f.id, reason)
+                    .await?
+                    .is_some()
+                {
+                    conv::append_event(
+                        tx,
+                        f.conversation_id,
+                        f.parent_turn_id,
+                        "followup.steer_failed",
+                        &json!({"followup_id": f.id, "reason": reason}),
+                    )
+                    .await?;
+                    // A chat thread hears it too (platform voice, no model text).
+                    crate::domains::channels::mirror::post_platform_note(
+                        tx,
+                        f.conversation_id,
+                        &format!("steer-failed:{}", f.id),
+                        "Couldn't steer your message in (the agent missed it). It will run after the current turn.",
+                    )
+                    .await;
+                }
+            }
+            res(r, ReportStatus::Applied, None)
+        }
+        ReportBody::SendNowResult(sn) => {
+            // (FIX-225, C-1156, D-470) `moved` keeps `message.sent_now` (from the turn's events); an
+            // answer that moved nothing is shown to the person.
+            let outcome = sn.outcome.as_str();
+            if matches!(outcome, "nothing_running" | "unsupported") {
+                let t = match own_turn(tx, facts, r, sn.turn_id).await? {
+                    Ok(t) => t,
+                    Err(x) => return Ok(Some(x)),
+                };
+                convs::lock(&mut *tx, t.conversation_id).await?;
+                conv::append_event(
+                    tx,
+                    t.conversation_id,
+                    Some(t.id),
+                    "turn.send_now_failed",
+                    &json!({"turn_id": t.id, "outcome": outcome}),
+                )
+                .await?;
+                crate::domains::channels::mirror::post_platform_note(
+                    tx,
+                    t.conversation_id,
+                    &format!("send-now-failed:{}:{outcome}", t.id),
+                    if outcome == "nothing_running" {
+                        "Nothing was running to move to the background."
+                    } else {
+                        "This agent can't move a running step to the background."
+                    },
+                )
+                .await;
+            }
             res(r, ReportStatus::Applied, None)
         }
         ReportBody::Session(sr) => {

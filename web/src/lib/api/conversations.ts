@@ -14,6 +14,8 @@ import { unwrap } from "./unwrap";
 
 export type Turn = components["schemas"]["Turn"];
 export type Followup = components["schemas"]["Followup"];
+/** (FIX-225, C-1154) What the caller may do with a waiting follow-up now: a button shows only when its flag is true. */
+export type FollowupControls = components["schemas"]["FollowupControls"];
 export type Conversation = components["schemas"]["Conversation"];
 /** (P5-REFINE-7, C-1074) The schedule or webhook a run thread belongs to. */
 export type ConversationAutomation = components["schemas"]["ConversationAutomation"];
@@ -179,6 +181,14 @@ export const chatApi = {
   continue: (id: string) => unwrap(api.POST("/v1/conversations/{id}/continue", { params: { path: { id } } })),
   abort: (turn: string) => unwrap(api.POST("/v1/turns/{id}/abort", { params: { path: { id: turn } } })),
   sendNow: (turn: string) => unwrap(api.POST("/v1/turns/{id}/send-now", { params: { path: { id: turn } } })),
+  /** (FIX-225, C-1154) The waiting follow-ups of a conversation, oldest first, with the caller's `controls`. */
+  followups: (id: string) => unwrap(api.GET("/v1/conversations/{id}/followups", { params: { path: { id } } })),
+  /** (FIX-225, C-1155) Hand a waiting follow-up to the running turn at its next step. */
+  steerFollowup: (id: string) => unwrap(api.POST("/v1/followups/{id}/steer", { params: { path: { id } } })),
+  /** (FIX-225, C-1155) Withdraw a waiting follow-up. */
+  cancelFollowup: (id: string) => unwrap(api.POST("/v1/followups/{id}/cancel", { params: { path: { id } } })),
+  /** (FIX-225, C-1155) Replace the text of a waiting follow-up (its author only). */
+  editFollowup: (id: string, text: string) => unwrap(api.PATCH("/v1/followups/{id}", { params: { path: { id } }, body: { text } })),
   sandbox: (agent: string) => call<SandboxView>("GET", `/v1/agents/${agent}/sandbox`),
   restart: (agent: string) => call<SandboxView>("POST", `/v1/agents/${agent}/restart`),
   /** (FIX-029, C-610) Retry a failed start: 202 → the parked sandbox view. */
@@ -191,6 +201,17 @@ export const chatApi = {
   startFailures: (agent: string) => unwrap(api.GET("/v1/agents/{agent}/start-failures", { params: { path: { agent } } })),
   models: (agent: string) => call<{ items: ModelOption[] }>("GET", `/v1/agents/${agent}/models`),
 };
+
+/** (FIX-225, C-1154) The cache key of a conversation's waiting follow-ups. */
+export const followupsKey = (convId: string) => ["conversations", convId, "followups"] as const;
+
+/**
+ * (FIX-225, D-469, D-470) The queued messages come from the server, so they survive a reload and everyone who can
+ * see the conversation sees them. The composer refetches on every transcript event that changes them.
+ */
+export function useFollowups(convId: string) {
+  return useQuery({ queryKey: followupsKey(convId), queryFn: () => chatApi.followups(convId), retry: false });
+}
 
 export function useDirectConversation(agentId: string) {
   return useQuery({ queryKey: ["agents", agentId, "direct"] as const, queryFn: () => chatApi.direct(agentId), retry: false, staleTime: Infinity });

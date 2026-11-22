@@ -280,6 +280,32 @@ mod tests {
         opencode::OpenCodeAdapter, pi::PiAdapter,
     };
 
+    /// (FIX-225, C-1152) Every adapter declares exactly what `harness_turn_controls` says: the API
+    /// and the chat cards read the table, never the adapter, so a drift here would show a button
+    /// that does nothing (D-470).
+    #[test]
+    fn every_adapter_declares_what_the_turn_controls_table_says() {
+        let adapters: [&dyn HarnessAdapter; 6] = [
+            &ClaudeCodeAdapter::default(),
+            &CodexAdapter::default(),
+            &GooseAdapter::default(),
+            &OpenCodeAdapter::default(),
+            &PiAdapter::default(),
+            &crate::fake::FakeHarness,
+        ];
+        for a in adapters {
+            let want = aurora_protocol::runner::harness_turn_controls(a.id());
+            let caps = a.capabilities();
+            assert_eq!(caps.steer, want.steer, "{}: steer", a.id());
+            assert_eq!(
+                caps.background_tool,
+                want.background_tool,
+                "{}: background_tool",
+                a.id()
+            );
+        }
+    }
+
     /// (P5-SKILLDIR, D-454) `SKILLS_DIR` is `<home>/<skills_dir>`, absolute, no trailing slash,
     /// for each of the five adapters.
     #[test]

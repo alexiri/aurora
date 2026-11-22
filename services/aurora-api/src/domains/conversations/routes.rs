@@ -41,6 +41,10 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(post_message))
         .routes(routes!(abort_turn))
         .routes(routes!(send_now))
+        .routes(routes!(list_followups))
+        .routes(routes!(steer_followup))
+        .routes(routes!(cancel_followup))
+        .routes(routes!(edit_followup))
         .routes(routes!(continue_conversation))
         .routes(routes!(archive_conversation))
         .routes(routes!(unarchive_conversation))
@@ -522,11 +526,78 @@ async fn abort_turn(
     ))
 }
 
+/// The follow-ups waiting in a conversation (sent while a turn runs), oldest first, each with the
+/// controls the caller may use now.
+#[utoipa::path(get, path = "/conversations/{id}/followups", operation_id = "listFollowups", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Conversation id")),
+    responses((status = 200, body = FollowupList), (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn list_followups(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<FollowupList>, ApiError> {
+    Ok(Json(super::followups::list(&s, &c, id).await?))
+}
+
+/// Ask for a waiting follow-up to be steered into the running turn at its next step.
+#[utoipa::path(post, path = "/followups/{id}/steer", operation_id = "steerFollowup", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Follow-up id")),
+    responses((status = 202, body = Followup), (status = 404, body = ErrorEnvelope),
+        (status = 409, description = "followup_not_waiting, steer_unsupported", body = ErrorEnvelope),
+        (status = 423, description = "frozen", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn steer_followup(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<Followup>), ApiError> {
+    let out = super::followups::steer(&s, &c, id).await?;
+    Ok((StatusCode::ACCEPTED, Json(out.followup)))
+}
+
+/// Withdraw a waiting follow-up; it is never sent.
+#[utoipa::path(post, path = "/followups/{id}/cancel", operation_id = "cancelFollowup", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Follow-up id")),
+    responses((status = 202, body = Followup), (status = 403, description = "followup_forbidden", body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope),
+        (status = 409, description = "followup_not_waiting", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn cancel_followup(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<Followup>), ApiError> {
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(super::followups::cancel(&s, &c, id).await?),
+    ))
+}
+
+/// Replace the text of a waiting follow-up. Only the person who wrote it.
+#[utoipa::path(patch, path = "/followups/{id}", operation_id = "editFollowup", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Follow-up id")),
+    request_body = EditFollowup,
+    responses((status = 200, body = Followup), (status = 400, body = ErrorEnvelope),
+        (status = 403, description = "followup_forbidden", body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope),
+        (status = 409, description = "followup_not_waiting", body = ErrorEnvelope),
+        (status = 413, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn edit_followup(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(b): Json<EditFollowup>,
+) -> Result<Json<Followup>, ApiError> {
+    Ok(Json(super::followups::edit(&s, &c, id, &b.text).await?))
+}
+
 /// Ask the harness to move a blocking tool to the background.
 #[utoipa::path(post, path = "/turns/{id}/send-now", operation_id = "sendNowTurn", tag = "conversations",
     params(("id" = Uuid, Path, description = "Turn id")),
     responses((status = 202, body = Turn), (status = 404, body = ErrorEnvelope),
-        (status = 409, description = "turn_finished", body = ErrorEnvelope)),
+        (status = 409, description = "turn_finished, send_now_unsupported (the harness lacks background_tool or steers)", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn send_now(
     c: Caller,

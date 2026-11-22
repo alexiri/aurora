@@ -300,6 +300,11 @@ async fn s6_followup_joins_or_is_promoted() {
     st.wait_turn(&turn, &["running"], 60).await;
     let f = api.say(&conv, "second-word").await;
     let fid = f["followup"]["id"].as_str().expect("followup").to_owned();
+    // (FIX-225, C-1153) A follow-up waits for a person: Steer hands it to the running turn.
+    let (s, v) = api
+        .post(&format!("/v1/followups/{fid}/steer"), json!({}))
+        .await;
+    assert_eq!(s, 202, "{v}");
     st.wait_turn(&turn, &["done", "failed"], 60).await;
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while followup_state(&st, &fid).await == "joining" && std::time::Instant::now() < deadline {

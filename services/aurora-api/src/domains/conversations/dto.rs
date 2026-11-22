@@ -62,12 +62,45 @@ pub struct Turn {
 pub struct Followup {
     pub id: Uuid,
     pub parent_turn_id: Uuid,
-    /// `joining` | `joined` | `promoted`
+    /// `joining` | `joined` | `promoted` | `cancelled` (FIX-225)
     pub status: String,
     pub text: String,
     /// The turn this follow-up became; non-null only when `status` is `promoted` (D-107).
     pub promoted_turn_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
+    /// (FIX-225, C-1154) Who wrote it, as the transcript labels them.
+    pub speaker_label: Option<String>,
+    /// (FIX-225) When its author last edited it.
+    pub edited_at: Option<DateTime<Utc>>,
+    /// (FIX-225) Someone asked to steer it into the running turn.
+    pub steer_requested: bool,
+    /// (FIX-225) `missed` | `refused`: the harness did not take the steer; it runs as the next turn.
+    pub steer_error: Option<String>,
+    /// (FIX-225, C-1154) What the caller may do with it now.
+    pub controls: FollowupControls,
+}
+
+/// (FIX-225, C-1154) The buttons the dashboard may show for a follow-up, computed for the caller.
+/// A flag is true only when the action can apply (D-470: no silent controls).
+#[derive(Serialize, ToSchema, Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct FollowupControls {
+    pub steer: bool,
+    pub send_now: bool,
+    pub edit: bool,
+    pub cancel: bool,
+}
+
+/// (FIX-225, C-1154) `GET /v1/conversations/{id}/followups`.
+#[derive(Serialize, ToSchema)]
+pub struct FollowupList {
+    pub items: Vec<Followup>,
+}
+
+/// (FIX-225, C-1155) `PATCH /v1/followups/{id}`.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditFollowup {
+    pub text: String,
 }
 
 /// Exactly one of `turn` / `followup` is non-null (C-25).
@@ -313,8 +346,9 @@ impl From<TurnRow> for Turn {
     }
 }
 
-impl From<TurnRow> for Followup {
-    fn from(t: TurnRow) -> Self {
+impl Followup {
+    /// The follow-up as the caller sees it; `controls` were computed for them (C-1154).
+    pub fn new(t: TurnRow, controls: FollowupControls) -> Self {
         Followup {
             id: t.id,
             parent_turn_id: t.parent_turn_id.unwrap_or(t.id),
@@ -322,6 +356,11 @@ impl From<TurnRow> for Followup {
             text: t.text,
             promoted_turn_id: None,
             created_at: t.created_at,
+            speaker_label: Some(t.speaker_label),
+            edited_at: t.edited_at,
+            steer_requested: t.steer_requested_at.is_some(),
+            steer_error: t.steer_error,
+            controls,
         }
     }
 }

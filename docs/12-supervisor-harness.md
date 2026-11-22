@@ -158,11 +158,22 @@ chat cards show Steer / Send now from it (D-469(b), D-470).
 
 | Harness | Pinned version | `steer` | `background_tool` | Evidence | Other modes that could (not built) |
 |---|---|---|---|---|---|
-| `claude-code` | — | to be probed (FIX-225 Part A) | to be probed | — | — |
-| `codex` | — | to be probed | to be probed | — | — |
-| `goose` | — | to be probed | to be probed | — | — |
-| `opencode` | — | to be probed | to be probed | — | — |
-| `pi` | — | declared `true` (to be confirmed) | to be probed | — | — |
+| `claude-code` | 2.1.319 (also 2.1.318) | **yes** | no | `claude_code_steer_reaches_the_model_at_the_next_tool_boundary_and_the_run_ends_once` and the `steerable` case of `claude_code_conforms_against_the_mock_messages_upstream` (real CLI, mock Messages upstream); scripted-child tests `claude_code_steer_*` in `adapters/claude_code/tests.rs` run in CI without the CLI | `claude -p --input-format stream-json` has no command that moves a running tool to the background (none in `--help` or the stream-json input; the model's own `run_in_background` Bash option is chosen before the call, not a control) |
+| `codex` | 0.167.0 | no | no | `codex_cannot_take_a_steer_or_background_a_tool_in_exec_mode`: `codex exec -` reads its whole prompt from stdin and runs one child per turn; a steer during the run is refused and its text never reaches the model | `codex app-server` (JSON-RPC: `turn/steer`, `turn/interrupt` in its generated schema) would steer; not built (D-469(d)) |
+| `goose` | 1.59.2 | no | no | `goose_cannot_take_a_steer_or_background_a_tool_in_run_mode` (`goose run -i -`: the prompt is stdin read to its end) | `goose acp` (ACP over stdio) and `goose serve` (ACP over HTTP/WebSocket) have live sessions; not built |
+| `opencode` | 1.19.6 | no | no | `opencode_cannot_take_a_steer_or_background_a_tool_in_run_mode` (`opencode run --format json`, prompt on stdin, no `--attach`) | `opencode serve` (HTTP; `POST /session/:id/prompt_async` while a run is live) and `opencode acp`; not built, and `--attach` would break the MCP bridge's parent chain (D-301) |
+| `pi` | 1.5.2 | **yes** | no | the `steerable` case of `pi_conforms_against_the_mock_upstream_of_every_dialect_it_declares` (a `prompt` with `streamingBehavior: "steer"` is queued, joins before the next model call, the run ends once) | RPC mode is the mode in use; its commands include no way to background a running tool (none found) |
+
+Probed 2026-11-22 against the pinned binaries (the sandbox image's own versions, downloaded and
+checksum-checked) and the mock upstreams of `aurora-testkit`, no real keys. Findings for
+`claude-code`: a second `{"type":"user",…}` line written during a run is taken **at the next tool
+boundary** (the model's next request carries it) and the run continues to **one** `result` line; with
+`--replay-user-messages` the CLI echoes the line it took (`"isReplay":true`, the same text), which is
+the join and the only acknowledgement there is; without the flag nothing is echoed. A line that reaches
+an **idle** CLI starts a run of its own with its own `result`, so the adapter refuses a steer between
+turns and kills a CLI that still holds an unechoed steer when the turn ends. `harness_turn_controls` in
+`aurora-protocol` is this table; `every_adapter_declares_what_the_turn_controls_table_says` pins the
+adapters to it (the scripted `fake` harness declares both, as a test double).
 
 ### Adapter `claude-code` (phase 0)
 
@@ -171,8 +182,10 @@ chat cards show Steer / Send now from it (D-469(b), D-470).
   id. Exact flags and event mapping are pinned in the adapter next to the
   pinned CLI version and verified by the live conformance suite.
 - Capabilities: `resume`, `tool_events`, `thinking_deltas`, `platform_tools`;
-  `steer` only if the pinned version passes the steer conformance tests (else
-  false: follow-ups become separate turns); `background_tool = false`;
+  `steer = true` and `background_tool = false` (FIX-225, §Turn controls by harness: a
+  second user line takes effect at the next tool boundary, confirmed by the CLI's
+  `--replay-user-messages` echo; the turn's end kills a CLI that still holds an unechoed
+  steer, so a stray run never leaks into the next turn);
   dialects `[anthropic_messages]`; skills dir `.claude/skills`; instruction
   files `CLAUDE.md` and `AGENTS.md`.
 - Environment per session: `HTTPS_PROXY`/`HTTP_PROXY` = the per-session proxy;

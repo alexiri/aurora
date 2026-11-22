@@ -388,6 +388,8 @@ async fn abort_queued_send_now_and_finish_fencing() {
     let (_, v) = msg(&h, &f, conv, "go").await;
     let turn = v["turn"]["id"].as_str().unwrap().to_owned();
 
+    // (FIX-225, C-1156, D-470) A bring-your-own agent has no harness of ours: Send now is refused up
+    // front with a reason (it used to answer 202 and do nothing), and nothing is queued.
     let (s, t) = call(
         &h,
         Method::POST,
@@ -396,7 +398,20 @@ async fn abort_queued_send_now_and_finish_fencing() {
         None,
     )
     .await;
-    assert_eq!((s, t["send_now_requested"].clone()), (202, json!(true)));
+    assert_eq!(
+        (s, t["error"]["code"].as_str()),
+        (409, Some("send_now_unsupported")),
+        "{t}"
+    );
+    let (_, t) = call(
+        &h,
+        Method::GET,
+        &format!("/v1/conversations/{conv}"),
+        ("cookie", &f.cookie),
+        None,
+    )
+    .await;
+    assert_eq!(t["active_turn"]["send_now_requested"], json!(false), "{t}");
 
     let (s, t) = call(
         &h,
@@ -443,7 +458,8 @@ async fn abort_queued_send_now_and_finish_fencing() {
         (s, e["error"]["code"].as_str()),
         (409, Some("turn_finished"))
     );
-    let (s, _) = call(
+    // (FIX-225) The refusal for an agent that cannot do it comes before the finished-turn one.
+    let (s, e) = call(
         &h,
         Method::POST,
         &format!("/v1/turns/{turn}/send-now"),
@@ -451,7 +467,10 @@ async fn abort_queued_send_now_and_finish_fencing() {
         None,
     )
     .await;
-    assert_eq!(s, 409);
+    assert_eq!(
+        (s, e["error"]["code"].as_str()),
+        (409, Some("send_now_unsupported"))
+    );
 }
 
 #[tokio::test]

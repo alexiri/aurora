@@ -1193,6 +1193,14 @@ const ROWS: &[Row] = &[
     r("DELETE", "/v1/attachments/{id}", G::WsUse, false),
     r("POST", "/v1/turns/{id}/abort", G::WsUse, false),
     r("POST", "/v1/turns/{id}/send-now", G::WsUse, false),
+    // (FIX-225, C-1154, C-1155, SEC-152) Stop authority is `can_use` plus `can_see_conversation`: a
+    // follow-up's route answers 404 to anyone who cannot see its conversation. The finer rules (only
+    // the author edits, an owner of a direct conversation cancels, an agent token is 401, the 409 and
+    // 423 states) are it/followups.rs.
+    r("GET", "/v1/conversations/{id}/followups", G::WsUse, false),
+    r("POST", "/v1/followups/{id}/steer", G::WsUse, false),
+    r("POST", "/v1/followups/{id}/cancel", G::WsUse, false),
+    r("PATCH", "/v1/followups/{id}", G::WsUse, false),
     r("POST", "/v1/approvals/{id}/decision", G::WsApprove, false),
     r(
         "POST",
@@ -1732,6 +1740,7 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             | "/v1/agents/{agent}/freeze"
             | "/v1/admin/orgs/{org}/freeze",
         ) => json!({"reason": "matrix"}),
+        ("PATCH", "/v1/followups/{id}") => json!({"text": "matrix"}),
         ("POST", "/v1/orgs") => json!({"name": "Matrix second org"}),
         ("POST", "/v1/orgs/{org}/scim/tokens") => json!({"name": "matrix"}),
         ("POST", "/v1/orgs/{org}/groups") => json!({"name": "matrix group"}),

@@ -237,7 +237,16 @@ export type Row =
   | { kind: "system"; key: string; ev: TranscriptEvent };
 
 /** Events that never render on their own (their effect is folded into another row). */
-const FOLDED = new Set(["turn.started", "tool.finished", "approval.decided", "approval.expired", "event.redacted"]);
+const FOLDED = new Set([
+  "turn.started",
+  "tool.finished",
+  "approval.decided",
+  "approval.expired",
+  "event.redacted",
+  // (FIX-225) Asking to steer and editing show on the queued row and the message itself.
+  "followup.steer_requested",
+  "followup.edited",
+]);
 
 /** Turn the durable events into day dividers, sender groups (5-minute window), folded tool calls and standalone rows. */
 export function buildRows(state: TranscriptState, now: Date): Row[] {
@@ -263,6 +272,11 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
     const t = text.trim();
     return t !== "" && (errorText.get(turnId) ?? []).some((m) => m === t || m.includes(t) || t.includes(m));
   };
+  // (FIX-225) The latest edited text per queued message (`followup.edited`, keyed by the follow-up's id).
+  const editedText = new Map<string, string>();
+  for (const e of state.events) {
+    if (e.type === "followup.edited" && e.payload.redacted !== true) editedText.set(str(e.payload.followup_id), str(e.payload.text));
+  }
   let lastDay = "";
   // The open group; a holder object because `push` assigns it from a closure.
   const cur: { group: Extract<Row, { kind: "group" }> | null } = { group: null };
@@ -305,7 +319,9 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
         const name = approval ? "Aurora" : label || "You";
         // A door that is the sender's own name ("Webhook" by `webhook`) is not said twice.
         const chip = approval ? "Approval" : door && door !== "dashboard" && door.toLowerCase() !== name.toLowerCase() ? door : "";
-        push("person", `p:${name}`, name, chip, ev, { kind: "bubble", ev });
+        // (FIX-225) A queued message its author edited reads as it stands now; the event log keeps what was sent.
+        const edited = editedText.get(str(p.turn_id));
+        push("person", `p:${name}`, name, chip, ev, { kind: "bubble", ev: edited === undefined ? ev : { ...ev, payload: { ...p, text: edited } } });
         break;
       }
       case "text":
@@ -354,6 +370,10 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
       case "correction":
       case "message.joined":
       case "message.sent_now":
+      // (FIX-225, D-470) What a control did when it did not do what it promised, and a withdrawn message.
+      case "followup.cancelled":
+      case "followup.steer_failed":
+      case "turn.send_now_failed":
         cur.group = null;
         rows.push({ kind: "system", key: `s${ev.seq}`, ev });
         break;

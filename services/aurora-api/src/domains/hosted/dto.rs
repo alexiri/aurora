@@ -13,6 +13,10 @@ pub struct HarnessView {
     pub dialects: Vec<String>,
     /// (P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none.
     pub model_roles: Vec<String>,
+    /// (FIX-225, C-1152) A message sent while a turn runs can be steered into it at the next step.
+    pub steer: bool,
+    /// (FIX-225, C-1152) A running tool can be moved to the background ("Send now").
+    pub background_tool: bool,
     /// At least one live runner replica lists the harness (its image contains the runtime).
     pub available: bool,
 }

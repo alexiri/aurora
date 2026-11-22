@@ -21,7 +21,9 @@
 //! and the session stays resumable.
 //!
 //! `steer` is `false`: follow-ups become separate turns and `steer()` always refuses.
-//! `background_tool` is `false`.
+//! `background_tool` is `false`. Both tested in this mode (FIX-225, `docs/12 §Turn controls by
+//! harness`): `goose_cannot_take_a_steer_or_background_a_tool_in_run_mode`. `goose acp` / `goose
+//! serve` keep live sessions; not built (D-469(d)).
 //!
 //! No credential is ever rendered: the environment carries only the placeholder (`ANTHROPIC_API_KEY`
 //! or `LITELLM_API_KEY` = `aurora-placeholder`), the per-session proxy adds the turn's context

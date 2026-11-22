@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useMemo, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent, type MutableRefObject } from "react";
+import { useEffect, useId, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent, type MutableRefObject } from "react";
 
 import { Button } from "@/components/ui/button";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
@@ -31,11 +31,11 @@ import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { Kbd, Toolbar, ToolbarButton, ToolbarSeparator } from "@/components/ui/toolbar";
 import { ApiError } from "@/lib/api/client";
 import { uploadAttachment, uploadErrorMessage, type Attachment } from "@/lib/api/attachments";
-import { chatApi, type Followup } from "@/lib/api/conversations";
+import { chatApi, followupsKey, useFollowups } from "@/lib/api/conversations";
 import { useMe } from "@/lib/api/queries";
 import { newIdempotencyKey } from "@/lib/chat/idempotency";
 import { markStopped, useStoppedTurns } from "@/lib/chat/stopped";
-import { classifySend, pendingFollowups, type TranscriptState } from "@/lib/chat/transcript";
+import { classifySend, followupSignal, sendNowFailures, type TranscriptState } from "@/lib/chat/transcript";
 
 import { ComposerChip, UploadChip } from "./attachments";
 import type { ReplyTarget } from "./chat-actions";
@@ -137,7 +137,6 @@ export function Composer({
         ? (new URLSearchParams(window.location.search).get("draft") ?? "").slice(0, 500)
         : "",
   );
-  const [followups, setFollowups] = useState<Followup[]>([]);
   const [sendErr, setSendErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Attachment[]>([]);
@@ -154,7 +153,17 @@ export function Composer({
   const area = useRef<HTMLTextAreaElement>(null);
   const keyRef = useRef<{ sig: string; key: string } | null>(null);
   const restored = useRef<string | null>(null);
-  const waiting = useMemo(() => pendingFollowups(followups, state), [followups, state]);
+  // (FIX-225, D-469) The queued messages come from the server (rows survive a reload and everyone who can see the
+  // conversation sees them); they are refetched whenever the stream says one was queued, joined, steered, edited,
+  // cancelled, failed or run.
+  const followupList = useFollowups(convId);
+  const waiting = followupList.data?.items ?? [];
+  const sendNowFailed = sendNowFailures(state);
+  const signal = followupSignal(state);
+  const refreshFollowups = () => qc.invalidateQueries({ queryKey: followupsKey(convId) });
+  useEffect(() => {
+    if (signal > 0) void qc.invalidateQueries({ queryKey: followupsKey(convId) });
+  }, [signal, convId, qc]);
   const ids = useId().replace(/:/g, "");
   const listId = `${ids}-emoji`;
 
@@ -269,7 +278,7 @@ export function Composer({
     try {
       const out = classifySend(await chatApi.send(convId, t, attIds, keyRef.current.key, reply?.seq));
       keyRef.current = null;
-      if (out.kind === "followup") setFollowups((f) => [...f, out.followup]);
+      if (out.kind === "followup") void refreshFollowups();
       setText("");
       onDraftUsed?.();
       setPending([]);
@@ -416,9 +425,27 @@ export function Composer({
   const canSend = (!!text.trim() || pending.length > 0) && !busy && uploading.length === 0;
   return (
     <div className="shrink-0 space-y-2 border-t border-line bg-surface p-3 dark:bg-canvas md:px-5">
-      {waiting.map((f) => (
-        <QueuedRow key={f.id} text={f.text} onSendNow={() => void act(() => chatApi.sendNow(f.parent_turn_id))} />
-      ))}
+      {waiting.map((f) => {
+        const after = <T,>(p: Promise<T>) => p.finally(() => void refreshFollowups());
+        const failed = sendNowFailed.get(f.parent_turn_id);
+        return (
+          <QueuedRow
+            key={f.id}
+            followup={f}
+            notice={
+              failed === "nothing_running"
+                ? "Nothing was running to move to the background."
+                : failed === "unsupported"
+                  ? "This agent can't move a running step to the background."
+                  : null
+            }
+            onSteer={() => after(chatApi.steerFollowup(f.id))}
+            onSendNow={() => after(chatApi.sendNow(f.parent_turn_id))}
+            onSave={(t) => after(chatApi.editFollowup(f.id, t))}
+            onCancel={() => after(chatApi.cancelFollowup(f.id))}
+          />
+        );
+      })}
       {tooMany ? (
         <p role="alert" className="text-sm text-danger-ink">
           {uploadErrorMessage(sendErr)}

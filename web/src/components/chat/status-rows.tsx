@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
-import { chatApi, useRetrySandbox, useSandbox } from "@/lib/api/conversations";
+import { chatApi, useRetrySandbox, useSandbox, type Followup } from "@/lib/api/conversations";
 import { errorCopy, type ErrorLink } from "@/lib/chat/transcript";
 import { wsRoutes } from "@/lib/routes";
 
@@ -201,17 +201,183 @@ export function RetryStart({
   );
 }
 
-/** A queued follow-up: a dashed row above the composer with a QUEUED badge, one line of text and "Send now". */
-export function QueuedRow({ text, onSendNow }: { text: string; onSendNow: () => void }) {
+/**
+ * (FIX-225, D-470) What an API refusal on a queued row says, in words. The codes the follow-up routes answer have
+ * their own copy; any other code falls back to the API's own message.
+ */
+export function followupErrorText(e: unknown): string {
+  if (e instanceof ApiError) {
+    switch (e.code) {
+      case "followup_not_waiting":
+        return "This message was already handed to the agent, cancelled or run, so it can't be changed.";
+      case "steer_unsupported":
+        return "This agent can't take messages while it works. The message runs when the current turn ends.";
+      case "send_now_unsupported":
+        return "This agent can't move a running step to the background.";
+      case "followup_forbidden":
+        return "Only the person who wrote this message can edit it.";
+      default:
+        return e.message;
+    }
+  }
+  return "Something went wrong. Try again.";
+}
+
+type Pending = "steer" | "send_now" | "edit" | "cancel";
+
+/**
+ * (FIX-225, D-469, D-470, C-1154) A queued follow-up above the composer: a dashed row with a Queued badge, the text on one
+ * line and exactly the buttons the server says the caller may use now (`followup.controls`): **Steer** or **Send now**,
+ * **Edit**, **Cancel**. A button is never shown because the action "might" work. Every click answers: the row changes, or
+ * the refusal is written on the row (`role="alert"`). After Steer it reads "Steering in at the next step…". Edit turns
+ * the row into a text box with Save and Discard changes. `notice` is an outcome that arrived later (a send-now that found
+ * nothing running); the row also says when the harness missed a steer.
+ */
+export function QueuedRow({
+  followup,
+  notice,
+  onSteer,
+  onSendNow,
+  onSave,
+  onCancel,
+}: {
+  followup: Followup;
+  /** A later outcome for this row's turn, e.g. "Nothing was running to move to the background." */
+  notice?: string | null;
+  onSteer: () => Promise<unknown>;
+  onSendNow: () => Promise<unknown>;
+  /** Save the edited text. */
+  onSave: (text: string) => Promise<unknown>;
+  onCancel: () => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState<Pending | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(followup.text);
+  // The server's `steer_requested` arrives with the next refetch; until then this click's own answer shows.
+  const [asked, setAsked] = useState(false);
+  const [gone, setGone] = useState(false);
+  const c = followup.controls;
+  const steering = (followup.steer_requested || asked) && !followup.steer_error;
+
+  async function run(kind: Pending, fn: () => Promise<unknown>, done?: () => void) {
+    setBusy(kind);
+    setError(null);
+    try {
+      await fn();
+      done?.();
+    } catch (e) {
+      setError(followupErrorText(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+  if (gone) return null;
+  const btn = "max-md:min-h-11";
+  const failed =
+    followup.steer_error === "refused"
+      ? "Couldn't steer this in (the agent can't take messages right now). It will run after the current turn."
+      : followup.steer_error
+        ? "Couldn't steer this in (the agent missed it). It will run after the current turn."
+        : null;
   return (
-    <div className="flex min-h-11 items-center gap-2 rounded-control border border-dashed border-line-strong px-2.5 py-1 text-sm">
-      <Badge>Queued</Badge>
-      <span className="min-w-0 flex-1 truncate text-ink-2" title={text}>
-        Queued follow-up: {text}
-      </span>
-      <Button size="sm" variant="outline" onClick={onSendNow}>
-        Send now
-      </Button>
+    <div className="rounded-control border border-dashed border-line-strong px-2.5 py-1.5 text-sm">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <Badge>Queued</Badge>
+        {editing ? null : (
+          <span className="min-w-0 flex-1 basis-40 truncate text-ink-2" title={followup.text}>
+            {followup.text}
+          </span>
+        )}
+        {editing ? null : (
+          <span className="flex w-full flex-wrap gap-2 sm:w-auto">
+            {c.steer && !steering ? (
+              <Button size="sm" variant="outline" className={btn} disabled={busy !== null} onClick={() => void run("steer", onSteer, () => setAsked(true))}>
+                Steer
+              </Button>
+            ) : null}
+            {c.send_now ? (
+              <Button size="sm" variant="outline" className={btn} disabled={busy !== null} onClick={() => void run("send_now", onSendNow)}>
+                Send now
+              </Button>
+            ) : null}
+            {c.edit ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className={btn}
+                disabled={busy !== null}
+                onClick={() => {
+                  setDraft(followup.text);
+                  setError(null);
+                  setEditing(true);
+                }}>
+                Edit
+              </Button>
+            ) : null}
+            {c.cancel ? (
+              <Button size="sm" variant="outline" className={btn} disabled={busy !== null} onClick={() => void run("cancel", onCancel, () => setGone(true))}>
+                Cancel
+              </Button>
+            ) : null}
+          </span>
+        )}
+      </div>
+      {editing ? (
+        <div className="mt-1.5 space-y-2">
+          <textarea
+            aria-label="Edit queued message"
+            rows={3}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            className="block max-h-44 min-h-16 w-full min-w-0 resize-y rounded-control border border-line-strong bg-surface px-2 py-1.5 text-base text-ink focus-visible:border-accent focus-visible:outline-none md:text-sm"
+          />
+          <span className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              className={btn}
+              disabled={busy !== null || !draft.trim()}
+              onClick={() =>
+                void run("edit", () => onSave(draft.trim()), () => {
+                  setEditing(false);
+                })
+              }>
+              {busy === "edit" ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className={btn}
+              disabled={busy !== null}
+              onClick={() => {
+                setEditing(false);
+                setError(null);
+              }}>
+              Discard changes
+            </Button>
+          </span>
+        </div>
+      ) : null}
+      {steering ? (
+        <p role="status" className="mt-1 text-xs text-ink-2">
+          Steering in at the next step…
+        </p>
+      ) : null}
+      {failed ? (
+        <p role="alert" className="mt-1 text-xs text-danger-ink">
+          {failed}
+        </p>
+      ) : null}
+      {notice ? (
+        <p role="alert" className="mt-1 text-xs text-danger-ink">
+          {notice}
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" className="mt-1 text-xs text-danger-ink">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

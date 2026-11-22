@@ -452,6 +452,62 @@ pub fn harness_model_roles(harness: &str) -> &'static [&'static str] {
     }
 }
 
+/// (C-1152, FIX-225) What a harness can do with a message that arrives while its turn runs, in the
+/// mode its adapter uses. `steer`: hand it to the running turn at the next tool boundary.
+/// `background_tool`: move the running tool to the background so the turn goes on ("Send now").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TurnControls {
+    pub steer: bool,
+    pub background_tool: bool,
+}
+
+/// The one table of [`TurnControls`] per harness id, probed against each pinned CLI
+/// (`docs/12 §Turn controls by harness`). The API's `HarnessView` and the chat cards read only this;
+/// a supervisor test keeps every adapter's `capabilities()` equal to it. Unknown ids can do neither.
+pub fn harness_turn_controls(harness: &str) -> TurnControls {
+    match harness {
+        // claude-code: a second stream-json user line is taken at the next tool boundary and
+        // echoed (`--replay-user-messages`); pi: a `prompt` with `streamingBehavior: "steer"`.
+        // Neither CLI has an interface that backgrounds a running tool.
+        "claude-code" | "pi" => TurnControls {
+            steer: true,
+            background_tool: false,
+        },
+        // The scripted test harness supports both (`[[steer-accept]]`, a tool it can background).
+        "fake" => TurnControls {
+            steer: true,
+            background_tool: true,
+        },
+        // codex / goose / opencode run one `exec`/`run` child per turn whose stdin is the prompt:
+        // nothing can be handed to a run in this mode (other modes are noted in docs/12).
+        _ => TurnControls {
+            steer: false,
+            background_tool: false,
+        },
+    }
+}
+
+#[cfg(test)]
+mod turn_controls_tests {
+    use super::*;
+
+    #[test]
+    fn the_table_and_unknown_ids() {
+        let c = |h| {
+            let t = harness_turn_controls(h);
+            (t.steer, t.background_tool)
+        };
+        assert_eq!(c("claude-code"), (true, false));
+        assert_eq!(c("pi"), (true, false));
+        assert_eq!(c("codex"), (false, false));
+        assert_eq!(c("goose"), (false, false));
+        assert_eq!(c("opencode"), (false, false));
+        assert_eq!(c("fake"), (true, true));
+        assert_eq!(c("nope"), (false, false));
+        assert_eq!(c(""), (false, false));
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Recall {
     pub index: String,

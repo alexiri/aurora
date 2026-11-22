@@ -353,6 +353,167 @@ async fn claude_code_live_conforms_when_enabled() {
     suite(&ClaudeCodeAdapter::default(), &profile).await;
 }
 
+// ---- claude-code (FIX-225): the same cases against the mock Messages upstream of `aurora-testkit`,
+// run with the real pinned CLI (`AURORA_CLAUDE_BIN`, default the image location). Skipped when the
+// binary is not installed. The platform tools come from `tests/fixtures/mcp-probe.js` (needs `node`),
+// so the CLI sees its `aurora` MCP server connected, as in a sandbox.
+
+use aurora_supervisor::adapters::claude_code::launcher::{
+    DEFAULT_BIN as CLAUDE_DEFAULT_BIN, ProcessLauncher as ClaudeLauncher,
+};
+
+const CLAUDE_MOCK: Profile = Profile {
+    say: "Reply with exactly the word: pong",
+    long_running: "Count slowly from 1 to 500.",
+    fail: None,
+    tool: Some("Run `echo hi` with your Bash tool, then say done."),
+    // The CLI takes a second user line at the next tool boundary (after the `sleep 2`), echoes it
+    // (`--replay-user-messages`) and goes on to its single `result`.
+    steerable: Some("Run `sleep 2` with your Bash tool, then say done."),
+    // The door opens once the turn's own message is written (after the CLI's first-message grace).
+    steer_needs_ack: true,
+    missed_steer: false,
+};
+
+fn claude_opts(
+    base: &str,
+    home: &std::path::Path,
+    case: &str,
+    resume: Option<String>,
+) -> SessionOptions {
+    let dir = std::env::temp_dir().join(format!("fix225-claude-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let probe = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mcp-probe.js");
+    SessionOptions {
+        conversation_id: Uuid::now_v7(),
+        working_dir: dir,
+        resume_ref: resume,
+        model: ModelChoice {
+            provider: "litellm".into(),
+            endpoint_id: "mock".into(),
+            base_url: base.to_owned(),
+            dialect: "anthropic_messages".into(),
+            model: pi_model(case).into(),
+            effort: "low".into(),
+            client_env: vec![],
+            roles: None,
+            subagent_role: None,
+            model_meta: None,
+        },
+        proxy_url: "http://127.0.0.1:9".into(),
+        mcp_bridge: McpBridgeSpec {
+            command: vec!["node".into(), probe.into()],
+        },
+        env: vec![
+            ("NO_PROXY".into(), "127.0.0.1,localhost".into()),
+            ("HOME".into(), home.display().to_string()),
+        ],
+    }
+}
+
+fn claude_adapter() -> Option<ClaudeCodeAdapter> {
+    let bin =
+        std::env::var_os("AURORA_CLAUDE_BIN").map_or_else(|| CLAUDE_DEFAULT_BIN.into(), Into::into);
+    let bin: std::path::PathBuf = bin;
+    if !bin.exists() {
+        eprintln!(
+            "skipped: {} not installed (set AURORA_CLAUDE_BIN)",
+            bin.display()
+        );
+        return None;
+    }
+    Some(ClaudeCodeAdapter::with_launcher(std::sync::Arc::new(
+        ClaudeLauncher { program: bin },
+    )))
+}
+
+#[tokio::test]
+async fn claude_code_conforms_against_the_mock_messages_upstream() {
+    let Some(adapter) = claude_adapter() else {
+        return;
+    };
+    let caps = adapter.capabilities();
+    assert!(caps.steer, "claude-code steers (FIX-225, docs/12)");
+    // The shell tool is `Bash` in this CLI: the mock calls it by the name the CLI lists.
+    let up = HarnessUpstream::start_with_tools("mcp__aurora__ping", "Bash").await;
+    let home = std::env::temp_dir().join(format!("fix225-claude-home-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&home).unwrap();
+    let base = up.base().to_owned();
+    let mk = move |case: &str, resume: Option<String>| claude_opts(&base, &home, case, resume);
+    suite_with(&adapter, &CLAUDE_MOCK, &mk).await;
+}
+
+#[tokio::test]
+async fn claude_code_steer_reaches_the_model_at_the_next_tool_boundary_and_the_run_ends_once() {
+    let Some(adapter) = claude_adapter() else {
+        return;
+    };
+    let up = HarnessUpstream::start_with_tools("mcp__aurora__ping", "Bash").await;
+    let home = std::env::temp_dir().join(format!("fix225-claude-home-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&home).unwrap();
+    let mut s = adapter
+        .start_session(claude_opts(up.base(), &home, "steer", None))
+        .await
+        .unwrap();
+    let rx = s
+        .run_turn(turn("Run `sleep 2` with your Bash tool, then say done."))
+        .await
+        .unwrap();
+    let id = Uuid::now_v7();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let st = s
+            .steer(SteerInput {
+                followup_id: id,
+                text: "STEER-MARKER please also say hi".into(),
+                speaker_label: "Ann".into(),
+            })
+            .await
+            .unwrap();
+        if st == SteerAck::Accepted {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the door never opened"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let ev = drain(rx).await;
+    assert!(
+        ev.contains(&HarnessEvent::MessageJoined { followup_id: id }),
+        "{ev:?}"
+    );
+    assert!(
+        matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
+        "{ev:?}"
+    );
+    // What the model got: the steer's rendered text, in a request after the first one.
+    let reqs = up.requests();
+    let carrying: Vec<_> = reqs
+        .iter()
+        .filter(|r| {
+            r.body
+                .to_string()
+                .contains("Ann: STEER-MARKER please also say hi")
+        })
+        .collect();
+    assert!(
+        !carrying.is_empty(),
+        "no request carried the steer: {reqs:#?}"
+    );
+    assert!(
+        !reqs[0].body.to_string().contains("STEER-MARKER"),
+        "the first request is the turn's own"
+    );
+    // The next turn of the same session still works with one result per turn.
+    let ev = drain(s.run_turn(turn(CLAUDE_MOCK.say)).await.unwrap()).await;
+    assert!(
+        matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
+        "{ev:?}"
+    );
+}
+
 // ---- codex (phase 4, P4-HAR, D-122): the same cases against the mock Responses upstream of
 // `aurora-testkit`, run with the real pinned CLI. Skipped when the binary is not installed
 // (`AURORA_CODEX_BIN`, default `/opt/aurora/harness/codex/codex`); the env-gated variant
@@ -1591,4 +1752,153 @@ async fn opencode_live_conforms_when_enabled() {
         ..OPENCODE
     };
     suite_with(&OpenCodeAdapter::default(), &profile, &mk).await;
+}
+
+// ---- FIX-225 (D-469(d)): the harnesses that cannot take a message mid-turn in the mode their adapter
+// uses. Each one runs one `exec`/`run` child per turn whose stdin is the prompt (read to its end), so
+// there is no channel to a running turn: a steer during a run is refused and its text never reaches
+// the model, and the follow-up runs as the next turn. The rows of `docs/12 §Turn controls by harness`.
+
+async fn a_steer_during_a_run_is_refused_and_never_reaches_the_model(
+    a: &dyn HarnessAdapter,
+    mk: &dyn Fn(&str, Option<String>) -> SessionOptions,
+    prompt: &str,
+    case: &str,
+    upstream_bodies: &dyn Fn() -> String,
+) {
+    let caps = a.capabilities();
+    assert!(!caps.steer && !caps.background_tool);
+    let mut s = a.start_session(mk(case, None)).await.unwrap();
+    let rx = s.run_turn(turn(prompt)).await.unwrap();
+    for _ in 0..3 {
+        let st = s
+            .steer(SteerInput {
+                followup_id: Uuid::now_v7(),
+                text: "STEER-MARKER".into(),
+                speaker_label: String::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            st,
+            SteerAck::Refused,
+            "a run of this harness takes no steer"
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    assert_eq!(
+        s.background_running_tool().await.unwrap(),
+        aurora_protocol::runner::SendNowOutcome::Unsupported
+    );
+    let ev = drain(rx).await;
+    assert!(
+        matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
+        "{ev:?}"
+    );
+    assert!(!upstream_bodies().contains("STEER-MARKER"));
+}
+
+#[tokio::test]
+async fn codex_cannot_take_a_steer_or_background_a_tool_in_exec_mode() {
+    let bin = std::env::var_os("AURORA_CODEX_BIN").map_or_else(codex_bin, Into::into);
+    if !bin.exists() {
+        eprintln!(
+            "skipped: {} not installed (set AURORA_CODEX_BIN)",
+            bin.display()
+        );
+        return;
+    }
+    let up = aurora_testkit::responses::MockResponses::start().await;
+    let base = up.base().to_owned();
+    let shared = std::env::temp_dir().join(format!("fix225-codex-home-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&shared).unwrap();
+    let adapter = CodexAdapter::with_launcher(std::sync::Arc::new(ProcessLauncher {
+        program: bin.clone(),
+    }))
+    .codex_home(shared.join(".codex"));
+    let mk = move |case: &str, resume: Option<String>| codex_opts(&base, case, resume);
+    let bodies = || {
+        up.requests()
+            .iter()
+            .map(|r| r.body.to_string())
+            .collect::<String>()
+    };
+    a_steer_during_a_run_is_refused_and_never_reaches_the_model(
+        &adapter,
+        &mk,
+        CODEX.tool.unwrap(),
+        "tool",
+        &bodies,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn goose_cannot_take_a_steer_or_background_a_tool_in_run_mode() {
+    let Some(adapter) = goose_adapter() else {
+        return;
+    };
+    let up = HarnessUpstream::start_with_tools("aurora__ping", "shell").await;
+    let proxy = RefusingProxy::start().await;
+    let (base, purl) = (up.base().to_owned(), proxy.url.clone());
+    let mk = move |case: &str, resume: Option<String>| {
+        goose_opts(
+            &base,
+            &purl,
+            "anthropic_messages",
+            pi_model(case),
+            None,
+            Uuid::now_v7(),
+            resume,
+        )
+    };
+    let bodies = || {
+        up.requests()
+            .iter()
+            .map(|r| r.body.to_string())
+            .collect::<String>()
+    };
+    a_steer_during_a_run_is_refused_and_never_reaches_the_model(
+        &adapter,
+        &mk,
+        "Run `sleep 2` with your shell tool, then say done.",
+        "steer",
+        &bodies,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn opencode_cannot_take_a_steer_or_background_a_tool_in_run_mode() {
+    let Some(adapter) = opencode_adapter() else {
+        return;
+    };
+    let up = HarnessUpstream::start_with_all_tools("aurora_ping", "bash", "task").await;
+    let proxy = RefusingProxy::start().await;
+    let (base, purl) = (up.base().to_owned(), proxy.url.clone());
+    let mk = move |case: &str, resume: Option<String>| {
+        opencode_opts(
+            &base,
+            &purl,
+            "anthropic_messages",
+            opencode_case(case),
+            None,
+            Uuid::now_v7(),
+            resume,
+        )
+    };
+    let bodies = || {
+        up.requests()
+            .iter()
+            .map(|r| r.body.to_string())
+            .collect::<String>()
+    };
+    a_steer_during_a_run_is_refused_and_never_reaches_the_model(
+        &adapter,
+        &mk,
+        "Run `sleep 2` with your bash tool, then say done.",
+        "steer",
+        &bodies,
+    )
+    .await;
 }

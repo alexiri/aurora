@@ -36,6 +36,23 @@ pub async fn sandbox_facts(
     .await?)
 }
 
+/// (FIX-225, C-1155) Whether the agent's sandbox announced the `steer` capability at its last
+/// `supervisor.ready`; `None` when no sandbox has announced a harness yet.
+pub async fn reported_steer(
+    conn: &mut PgConnection,
+    agent_id: Uuid,
+) -> Result<Option<bool>, DbError> {
+    let row: Option<Option<bool>> = sqlx::query_scalar(
+        "SELECT CASE WHEN resource_profile->'harness'->'capabilities' IS NULL THEN NULL
+                     ELSE coalesce(resource_profile->'harness'->'capabilities' ? 'steer', false) END
+         FROM sandboxes WHERE agent_id = $1",
+    )
+    .bind(agent_id)
+    .fetch_optional(conn)
+    .await?;
+    Ok(row.flatten())
+}
+
 /// Record the harness announced by `supervisor.ready` (fenced on boot + channel holder).
 pub async fn record_harness(
     conn: &mut PgConnection,
@@ -556,6 +573,9 @@ pub async fn steer_candidates(
          FROM turns f JOIN turns t ON t.id = f.parent_turn_id
            JOIN sandboxes s ON s.agent_id = t.agent_id
          WHERE f.role = 'followup' AND f.status = 'joining' AND f.steer_delivered_at IS NULL
+           -- (FIX-225, C-1153) A follow-up waits for a person: only one somebody asked to steer, or a
+           -- platform-made approval resume (door `system`, C-824), is steered by itself.
+           AND (f.steer_requested_at IS NOT NULL OR f.door->>'kind' = 'system')
            -- (P5-SCHED-ONCE, C-1093) A schedule run queued behind a turn is its own turn later,
            -- never steered into the person's turn.
            AND f.door->>'kind' IS DISTINCT FROM 'schedule'
