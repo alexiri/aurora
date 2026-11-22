@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""jira-find-similar: search broadly for existing Jira issues before you create one.
+
+  jira-find-similar --project KEY [--label L] [--include-done] [--max N] [--account A] WORD [WORD ...]
+
+Runs up to two searches through `aurora-agent call jira-dc search_issues` (read only):
+  with --label: the open issues of the project that carry the label;
+  with words:   the open issues of the project whose text matches ANY of the words.
+Use broad words (the component, the host, the product, the key word of the error), not an exact path or
+message. Each search prints its title, the JQL sent (quote it in your report), the count, and one
+tab-separated line per issue: key, status, updated, labels, summary.
+--include-done also searches finished issues. Several Jira accounts: --account A.
+Nothing but `aurora-agent` touches the network; no credential is read or printed.
+Exit status: 0 ok, 1 a call failed, 2 bad usage.
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+PROJECT_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+# JQL text-search reserved characters (Atlassian, "Search syntax for text fields"), plus / (Lucene regex
+# delimiter) and the quote: each is replaced by a space, so a word can never end the JQL string or add
+# syntax to the text query.
+RESERVED = re.compile(r"[+\-&|!(){}\[\]^~*?\\:/\"\s\x00-\x1f\x7f-\x9f]+")
+OPERATORS = {"and", "or", "not", "to"}
+WORDS_MAX = 20
+WORD_MAX = 100
+LABEL_MAX = 255
+MAX_DEFAULT = 50
+TIMEOUT = 120
+ERR_LINES = 5
+
+
+def clean(v):
+    """Text safe to print: control characters (terminal escapes) are replaced."""
+    return CTRL.sub("?", str(v))
+
+
+def die(msg, code=2):
+    print(f"jira-find-similar: {clean(msg)}", file=sys.stderr)
+    sys.exit(code)
+
+
+def jql_label(label):
+    """A label inside a JQL string: the label has no quote or whitespace; a backslash is escaped."""
+    return label.replace("\\", "\\\\")
+
+
+def text_clause(word):
+    """`text ~ "..."` for one word, or None when nothing is left after removing reserved characters.
+    The result holds no quote or backslash except the \\" pair of a phrase."""
+    tokens = [t for t in RESERVED.split(word) if t]
+    if not tokens:
+        return None
+    if len(tokens) > 1 or tokens[0].lower() in OPERATORS:
+        return 'text ~ "\\"' + " ".join(tokens) + '\\""'
+    return 'text ~ "' + tokens[0] + '"'
+
+
+def tmp_dir():
+    d = os.path.join(os.environ.get("TMPDIR") or "/tmp", "aurora-agent")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+def search(jql, maxn, account):
+    """One search. Returns (parsed JSON or None, error text or None)."""
+    d = tempfile.mkdtemp(prefix="jira-find-similar-", dir=tmp_dir())
+    out = os.path.abspath(os.path.join(d, "result.json"))
+    cmd = ["aurora-agent", "call", "jira-dc", "search_issues", f"jql={jql}",
+           "fields=summary,status,updated,labels", f"maxResults={maxn}"]
+    if account:
+        cmd += ["--account", account]
+    cmd += ["--out", out]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+        if r.returncode != 0:
+            text = (r.stdout + r.stderr).strip().splitlines()[:ERR_LINES]
+            return None, "\n".join(text) or f"exit status {r.returncode}"
+        try:
+            with open(out, encoding="utf-8") as f:
+                return json.load(f), None
+        except (OSError, ValueError) as e:
+            return None, f"the answer could not be read: {e}"
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, f"aurora-agent failed: {e}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def show(title, jql, maxn, account):
+    print(f"## {clean(title)}")
+    print(f"# jql: {clean(jql)}")
+    data, err = search(jql, maxn, account)
+    if err:
+        print(f"jira-find-similar: the search failed:\n{clean(err)}", file=sys.stderr)
+        return 1
+    issues = data.get("issues") or []
+    total = data.get("total", len(issues))
+    print(f"# {clean(total)} found (showing {len(issues)})")
+    for i in issues:
+        f = i.get("fields") or {}
+        status = (f.get("status") or {}).get("name", "")
+        labels = ",".join(str(x) for x in (f.get("labels") or []))
+        print("\t".join(clean(x) for x in (i.get("key", ""), status, (f.get("updated") or "")[:10],
+                                           labels, f.get("summary") or "")))
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawTextHelpFormatter)
+    ap.add_argument("--project", required=True, help="project key, e.g. ABC")
+    ap.add_argument("--label", help="also list the open issues with this label")
+    ap.add_argument("--include-done", action="store_true", help="include finished issues")
+    ap.add_argument("--max", type=int, default=MAX_DEFAULT, help="most issues per search, 1..200 (default 50)")
+    ap.add_argument("--account", help="Jira account letter or connection id")
+    ap.add_argument("words", nargs="*", metavar="WORD")
+    try:
+        a = ap.parse_args()
+    except SystemExit as e:
+        sys.exit(0 if e.code == 0 else 2)
+    if not PROJECT_RE.match(a.project):
+        die("--project must be a key such as ABC ([A-Z][A-Z0-9_]{0,63})")
+    if a.label is not None and (not 1 <= len(a.label) <= LABEL_MAX or re.search(r'\s|"', a.label)
+                                or CTRL.search(a.label)):
+        die("--label must be 1..255 characters without whitespace or a double quote")
+    if not 1 <= a.max <= 200:
+        die("--max must be 1..200")
+    if a.label is None and not a.words:
+        die("give --label or at least one WORD")
+    if len(a.words) > WORDS_MAX:
+        die(f"at most {WORDS_MAX} words")
+    for w in a.words:
+        if not 1 <= len(w) <= WORD_MAX:
+            die(f"each word must be 1..{WORD_MAX} characters")
+    clauses = []
+    for w in a.words:
+        c = text_clause(w)
+        if c is None:
+            print(f"jira-find-similar: skipped a word with nothing searchable in it: {clean(w)!r}", file=sys.stderr)
+        else:
+            clauses.append(c)
+    if a.label is None and not clauses:
+        die("no searchable word left")
+    open_only = "" if a.include_done else " AND statusCategory != Done"
+    failed = 0
+    if a.label is not None:
+        failed += show(f"issues labelled {a.label}",
+                       f'project = {a.project} AND labels = "{jql_label(a.label)}"{open_only} ORDER BY updated DESC',
+                       a.max, a.account)
+    if clauses:
+        failed += show("issues matching the words",
+                       f"project = {a.project}{open_only} AND ({' OR '.join(clauses)}) ORDER BY updated DESC",
+                       a.max, a.account)
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

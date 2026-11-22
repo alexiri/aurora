@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+"""md2jira: convert Markdown to Jira wiki markup (Jira Data Center API v2 descriptions and comments are
+wiki markup, not Markdown), and optionally wrap it in a create_issue or comment JSON body.
+
+  md2jira < draft.md > draft.txt
+  md2jira --issue-json --project KEY (--type NAME | --type-id ID) --summary TEXT [--label L ...] [--priority NAME] < draft.md > issue.json
+  md2jira --comment-json < comment.md > comment.json
+
+Handles headings, **bold**, *italic*, _italic_, ~~strike~~, `code`, fenced code, nested lists, links,
+tables with a separator row, quotes and rules. Text that Jira would read as markup (macros such as
+{html} or {code}, links, images, paired * _ - + ^ ~ ?? markers) is escaped, so the rendered text matches
+the Markdown and a draft cannot add macros: the only macros printed are {code}, {noformat}, {quote}
+and {{...}}. Nothing is sent anywhere; no network, no credentials.
+Exit status: 0 ok, 2 bad usage.
+"""
+import argparse
+import json
+import re
+import sys
+
+PROJECT_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+SUMMARY_MAX = 255
+LABEL_MAX = 255
+INPUT_MAX = 1_000_000
+ZWSP = "\u200b"
+# Private-use characters mark converted spans while a line is processed.
+B, I, S = "\ue001", "\ue002", "\ue003"
+PH_OPEN, PH_CLOSE = "\ue010", "\ue011"
+PRIVATE = re.compile("[\ue000-\ue0ff]")
+CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+# Languages {code:<lang>} knows (Jira's list); sh/bash/text/console and unknown ones use {noformat}.
+CODE_LANGS = {
+    "actionscript", "ada", "applescript", "c", "c#", "c++", "cpp", "css", "erlang", "go", "groovy",
+    "haskell", "html", "java", "javascript", "json", "lua", "objc", "perl", "php", "python", "r",
+    "ruby", "scala", "sql", "swift", "visualbasic", "xml", "yaml",
+}
+LANG_ALIAS = {"js": "javascript", "py": "python", "yml": "yaml", "golang": "go", "rb": "ruby",
+              "csharp": "c#", "cs": "c#", "c++": "cpp"}
+URL_OK = re.compile(r"^(https?://|ftp://|mailto:|/|#)", re.I)
+BARE_URL = re.compile(r"https?://[^\s<>\[\]\ue000-\ue0ff]+", re.I)
+SEP_ROW = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$")
+
+
+class Store:
+    """Converted spans kept out of the text until the end."""
+
+    def __init__(self):
+        self.items = []
+
+    def put(self, markup):
+        self.items.append(markup)
+        return f"{PH_OPEN}{len(self.items) - 1}{PH_CLOSE}"
+
+    def restore(self, text):
+        pat = re.compile(f"{PH_OPEN}(\\d+){PH_CLOSE}")
+        for _ in range(50):
+            new = pat.sub(lambda m: self.items[int(m.group(1))], text)
+            if new == text:
+                break
+            text = new
+        return text
+
+
+def esc_char(c):
+    return "\\" + c if c in "{}[]|*_-+^~?!" else c
+
+
+def encode_url(u):
+    return re.sub(r"[\s\x00-\x1f\x7f|\[\]{}<>\"\\^`]", lambda m: "%%%02X" % ord(m.group(0)), u)
+
+
+def pair_escape(text, m, loose=False):
+    """Escape marker m where Jira could pair it into formatting."""
+    pos = [i for i, c in enumerate(text) if c == m]
+    if len(pos) < 2:
+        return text
+
+    def word(c):
+        return c.isalnum()
+
+    opens, closes = [], []
+    for i in pos:
+        prev = text[i - 1] if i > 0 else ""
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if nxt and not nxt.isspace() and nxt != m and (loose or not prev or not word(prev)):
+            opens.append(i)
+        if prev and not prev.isspace() and prev != m and (loose or not nxt or not word(nxt)):
+            closes.append(i)
+    if not any(o < c for o in opens for c in closes):
+        return text
+    hit = set(opens) | set(closes)
+    return "".join("\\" + c if i in hit else c for i, c in enumerate(text))
+
+
+def escape_plain(text):
+    """Escape the markup in plain text (private-use placeholders are left alone)."""
+    text = re.sub(r"[{}\[\]|]", lambda m: "\\" + m.group(0), text)
+    for m, loose in (("*", False), ("_", True), ("-", False), ("+", False), ("^", False), ("~", False)):
+        # an already escaped marker is skipped: only unescaped ones can pair
+        text = pair_escape_skipping(text, m, loose)
+    text = re.sub(r"\?\?(?=\S)(.+?)(?<=\S)\?\?", lambda m: "\\?\\?" + m.group(1) + "\\?\\?", text)
+    text = re.sub(r"!(?=\S)", r"\\!", text)
+    text = re.sub(r"\((?=[/xyni!?*+-]\))", r"\\(", text)
+    return text
+
+
+def pair_escape_skipping(text, m, loose):
+    # Work on the text with already-escaped markers masked out.
+    masked = text.replace("\\" + m, "\ue0ff")
+    out = pair_escape(masked, m, loose)
+    return out.replace("\ue0ff", "\\" + m)
+
+
+def inline(s, store, in_table=False):
+    # converted spans first
+    def md_escape(m):
+        c = m.group(1)
+        return store.put("\\" + ZWSP if c == "\\" else esc_char(c))
+
+    code_items = []
+
+    def keep_code(m):
+        body = m.group(2).replace("{", "\\{").replace("}", "\\}")
+        if in_table:
+            body = body.replace("|", "\\|")
+        return store.put("{{" + body + "}}")
+
+    s = PRIVATE.sub("", s)
+    s = re.sub(r"(`+)(?!`)(.+?)(?<!`)\1(?!`)", keep_code, s)
+    s = re.sub(r"\\([!-/:-@\[-`{-~])", md_escape, s)
+
+    def link(m):
+        text, url = m.group(1), m.group(2)
+        if URL_OK.match(url):
+            u = encode_url(url)
+            label = inline(text, store, in_table) if text.strip() else ""
+            return store.put("[" + (label + "|" if label else "") + u + "]")
+        return text + " (" + url + ")"
+
+    s = re.sub(r"\[([^\]]*)\]\(([^)\s]*)(?:\s+\"[^\"]*\")?\)", link, s)
+
+    def bare(m):
+        u = m.group(0)
+        tail = ""
+        while u and u[-1] in ".,;:!?)'\"":
+            tail = u[-1] + tail
+            u = u[:-1]
+        return store.put(encode_url(u)) + tail
+
+    s = BARE_URL.sub(bare, s)
+    s = re.sub(r"\*\*(?=\S)(.+?)(?<=\S)\*\*", lambda m: B + m.group(1) + B, s)
+    s = re.sub(r"(?<![\w])__(?=\S)(.+?)(?<=\S)__(?!\w)", lambda m: B + m.group(1) + B, s)
+    s = re.sub(r"~~(?=\S)(.+?)(?<=\S)~~", lambda m: S + m.group(1) + S, s)
+    s = re.sub(r"(?<![\w*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![\w*])", lambda m: I + m.group(1) + I, s)
+    s = re.sub(r"(?<![\w])_(?=[^\s_])(.+?)(?<=[^\s_])_(?!\w)", lambda m: I + m.group(1) + I, s)
+    s = escape_plain(s)
+    s = s.replace(B, "*").replace(I, "_").replace(S, "-")
+    return store.restore(s)
+
+
+def split_cells(line):
+    line = line.strip()
+    if line.startswith("|"):
+        line = line[1:]
+    if line.endswith("|") and not line.endswith("\\|"):
+        line = line[:-1]
+    return [c.strip().replace("\\|", "\\\x00") for c in re.split(r"(?<!\\)\|", line)]
+
+
+def cell(c, store):
+    c = c.replace("\\\x00", "\\|")
+    return inline(c, store, True) or " "
+
+
+def code_open(info):
+    lang = info.strip().split()[0].lower() if info.strip() else ""
+    lang = LANG_ALIAS.get(lang, lang)
+    return "{code:" + lang + "}" if lang in CODE_LANGS else "{noformat}"
+
+
+def convert(md):
+    store = Store()
+    lines = md.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    out = []
+    stack = []  # list nesting: (indent, marker)
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        fence = re.match(r"^\s*(`{3,}|~{3,})(.*)$", line)
+        if fence:
+            ch, info = fence.group(1), fence.group(2)
+            opener = code_open(info)
+            closer = "{code}" if opener.startswith("{code") else "{noformat}"
+            out.append(opener)
+            i += 1
+            while i < len(lines):
+                cl = lines[i]
+                if re.match(r"^\s*" + re.escape(ch[0]) + "{" + str(len(ch)) + r",}\s*$", cl):
+                    break
+                out.append(re.sub(r"\{(code|noformat)", "{" + ZWSP + r"\1", cl, flags=re.I))
+                i += 1
+            out.append(closer)
+            i += 1
+            stack = []
+            continue
+        if not line.strip():
+            out.append("")
+            stack = []
+            i += 1
+            continue
+        h = re.match(r"^\s{0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$", line)
+        if h:
+            out.append(f"h{len(h.group(1))}. " + inline(h.group(2), store))
+            stack = []
+            i += 1
+            continue
+        if re.match(r"^\s{0,3}([-*_])(\s*\1){2,}\s*$", line):
+            out.append("----")
+            stack = []
+            i += 1
+            continue
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if "|" in line and SEP_ROW.match(nxt) and "|" in nxt:
+            out.append("||" + "||".join(cell(c, store) for c in split_cells(line)) + "||")
+            i += 2
+            while i < len(lines) and lines[i].strip() and "|" in lines[i]:
+                out.append("|" + "|".join(cell(c, store) for c in split_cells(lines[i])) + "|")
+                i += 1
+            stack = []
+            continue
+        if line.lstrip().startswith(">"):
+            quote = []
+            while i < len(lines) and lines[i].lstrip().startswith(">"):
+                quote.append(re.sub(r"^\s*>\s?", "", lines[i]))
+                i += 1
+            body = [inline(q, store) for q in quote]
+            if len(body) == 1:
+                out.append("bq. " + body[0])
+            else:
+                out += ["{quote}"] + body + ["{quote}"]
+            stack = []
+            continue
+        li = re.match(r"^(\s*)([-*+]|\d+[.)])\s+(.*)$", line)
+        if li:
+            indent = len(li.group(1).replace("\t", "    "))
+            mark = "#" if li.group(2)[0].isdigit() else "*"
+            while stack and stack[-1][0] > indent:
+                stack.pop()
+            if stack and stack[-1][0] == indent:
+                stack[-1] = (indent, mark)
+            else:
+                stack.append((indent, mark))
+            out.append("".join(m for _, m in stack) + " " + inline(li.group(3), store))
+            i += 1
+            continue
+        stack = []
+        text = inline(line, store)
+        text = re.sub(r"^(\s*)(h[1-6]|bq)\.(?=\s)", r"\1\2\\.", text)
+        out.append(text)
+        i += 1
+    while out and out[-1] == "":
+        out.pop()
+    return "\n".join(out) + "\n"
+
+
+def usage(msg):
+    print(f"md2jira: {CTRL.sub('?', msg)}", file=sys.stderr)
+    sys.exit(2)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawTextHelpFormatter)
+    ap.add_argument("--issue-json", action="store_true", help="print a create_issue body")
+    ap.add_argument("--comment-json", action="store_true", help='print {"body": ...} for add_issue_comment')
+    ap.add_argument("--project", help="project key (with --issue-json)")
+    ap.add_argument("--type", dest="itype", help="issue type name (with --issue-json)")
+    ap.add_argument("--type-id", help="issue type id (with --issue-json)")
+    ap.add_argument("--summary", help="one line, at most 255 characters (with --issue-json)")
+    ap.add_argument("--label", action="append", default=[], help="label, repeatable (with --issue-json)")
+    ap.add_argument("--priority", help="priority name (with --issue-json)")
+    try:
+        a = ap.parse_args()
+    except SystemExit as e:
+        sys.exit(0 if e.code == 0 else 2)
+    if a.issue_json and a.comment_json:
+        usage("--issue-json and --comment-json are exclusive")
+    if not a.issue_json and (a.project or a.itype or a.type_id or a.summary or a.label or a.priority):
+        usage("--project, --type, --type-id, --summary, --label and --priority need --issue-json")
+    if a.issue_json:
+        if not a.project or not PROJECT_RE.match(a.project):
+            usage("--project is required: a key such as ABC ([A-Z][A-Z0-9_]{0,63})")
+        if bool(a.itype) == bool(a.type_id):
+            usage("give exactly one of --type and --type-id")
+        if a.itype is not None and (not a.itype.strip() or CTRL.search(a.itype) or len(a.itype) > 100):
+            usage("--type must be 1..100 printable characters")
+        if a.type_id is not None and not re.fullmatch(r"[0-9]{1,18}", a.type_id):
+            usage("--type-id must be a number")
+        if not a.summary or not a.summary.strip():
+            usage("--summary is required")
+        if CTRL.search(a.summary) or "\n" in a.summary or "\r" in a.summary:
+            usage("--summary must be one line without control characters")
+        if len(a.summary) > SUMMARY_MAX:
+            usage(f"--summary is {len(a.summary)} characters; the limit is {SUMMARY_MAX} (shorten it)")
+        for lab in a.label:
+            if not (1 <= len(lab) <= LABEL_MAX) or re.search(r"\s", lab) or CTRL.search(lab):
+                usage("each --label must be 1..255 characters without whitespace")
+        if a.priority is not None and (not a.priority.strip() or CTRL.search(a.priority) or len(a.priority) > 100):
+            usage("--priority must be 1..100 printable characters")
+    data = sys.stdin.buffer.read(INPUT_MAX + 1)
+    if len(data) > INPUT_MAX:
+        usage("input is larger than 1 MB")
+    try:
+        text = convert(data.decode("utf-8"))
+    except UnicodeDecodeError:
+        usage("input is not UTF-8")
+    if a.comment_json:
+        json.dump({"body": text.rstrip("\n")}, sys.stdout, ensure_ascii=False)
+        print()
+    elif a.issue_json:
+        fields = {"project": {"key": a.project},
+                  "issuetype": {"name": a.itype} if a.itype else {"id": a.type_id},
+                  "summary": a.summary, "description": text.rstrip("\n")}
+        if a.label:
+            fields["labels"] = a.label
+        if a.priority:
+            fields["priority"] = {"name": a.priority}
+        json.dump({"fields": fields}, sys.stdout, indent=1, ensure_ascii=False)
+        print()
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,163 @@
+{
+  "format": "aurora.operations/1",
+  "operations": [
+    {
+      "id": "get_myself",
+      "method": "GET",
+      "path": "/rest/api/2/myself",
+      "summary": "The Jira account Aurora is connected as",
+      "tags": ["account"],
+      "tool": "get_myself"
+    },
+    {
+      "id": "list_projects",
+      "method": "GET",
+      "path": "/rest/api/2/project",
+      "summary": "The projects the account can see (key, name); answer is a JSON array",
+      "tags": ["projects"],
+      "params": [
+        { "name": "expand", "in": "query", "type": "string", "description": "Comma-separated extras, e.g. description,lead" },
+        { "name": "recent", "in": "query", "type": "integer", "description": "Only the N projects most recently viewed by the account" }
+      ],
+      "items": "$",
+      "tool": "list_projects"
+    },
+    {
+      "id": "get_project",
+      "method": "GET",
+      "path": "/rest/api/2/project/{projectIdOrKey}",
+      "summary": "One project with its issueTypes (id, name, subtask), needed before creating an issue",
+      "tags": ["projects"],
+      "params": [
+        { "name": "projectIdOrKey", "in": "path", "required": true, "type": "string", "description": "Project key such as ABC, or its numeric id" },
+        { "name": "expand", "in": "query", "type": "string", "description": "Comma-separated extras, e.g. description,lead" }
+      ],
+      "tool": "get_project"
+    },
+    {
+      "id": "search_issues",
+      "method": "GET",
+      "path": "/rest/api/2/search",
+      "summary": "Issues matching a JQL query; fields= limits the fields returned; total above maxResults means more pages via startAt",
+      "tags": ["issues"],
+      "params": [
+        { "name": "jql", "in": "query", "required": true, "type": "string", "description": "JQL, e.g. project = ABC AND statusCategory != Done ORDER BY updated DESC" },
+        { "name": "startAt", "in": "query", "type": "integer", "default": 0, "description": "Index of the first issue returned; page by adding maxResults while startAt + maxResults < total" },
+        { "name": "maxResults", "in": "query", "type": "integer", "default": 50, "description": "At most this many issues (the server may cap it, often at 1000)" },
+        { "name": "fields", "in": "query", "type": "string", "description": "Comma-separated, e.g. summary,status,updated,labels; leave out for all fields (large)" },
+        { "name": "expand", "in": "query", "type": "string", "description": "Comma-separated extras, e.g. changelog,renderedFields" },
+        { "name": "validateQuery", "in": "query", "type": "string", "description": "strict (default) refuses an invalid JQL, warn answers with warnings, none skips the check" }
+      ],
+      "items": "$.issues",
+      "tool": "search_issues"
+    },
+    {
+      "id": "get_issue",
+      "method": "GET",
+      "path": "/rest/api/2/issue/{issueIdOrKey}",
+      "summary": "One issue; fields= limits the fields returned",
+      "tags": ["issues"],
+      "params": [
+        { "name": "issueIdOrKey", "in": "path", "required": true, "type": "string", "description": "Issue key such as ABC-123, or its numeric id" },
+        { "name": "fields", "in": "query", "type": "string", "description": "Comma-separated, e.g. summary,status,description; leave out for all fields" },
+        { "name": "expand", "in": "query", "type": "string", "description": "Comma-separated extras, e.g. changelog,renderedFields" }
+      ],
+      "tool": "get_issue"
+    },
+    {
+      "id": "list_issue_comments",
+      "method": "GET",
+      "path": "/rest/api/2/issue/{issueIdOrKey}/comment",
+      "summary": "The comments on an issue (wiki markup bodies); total above maxResults means more pages via startAt",
+      "tags": ["comments"],
+      "params": [
+        { "name": "issueIdOrKey", "in": "path", "required": true, "type": "string", "description": "Issue key such as ABC-123, or its numeric id" },
+        { "name": "startAt", "in": "query", "type": "integer", "default": 0, "description": "Index of the first comment returned" },
+        { "name": "maxResults", "in": "query", "type": "integer", "description": "At most this many comments" },
+        { "name": "orderBy", "in": "query", "type": "string", "enum": ["created", "-created", "+created"], "description": "Order by creation date; -created is newest first" }
+      ],
+      "items": "$.comments",
+      "tool": "list_issue_comments"
+    },
+    {
+      "id": "get_issue_comment",
+      "method": "GET",
+      "path": "/rest/api/2/issue/{issueIdOrKey}/comment/{id}",
+      "summary": "One comment on an issue",
+      "tags": ["comments"],
+      "params": [
+        { "name": "issueIdOrKey", "in": "path", "required": true, "type": "string", "description": "Issue key such as ABC-123, or its numeric id" },
+        { "name": "id", "in": "path", "required": true, "type": "string", "description": "Comment id from list_issue_comments" }
+      ],
+      "tool": "get_issue_comment"
+    },
+    {
+      "id": "list_issue_transitions",
+      "method": "GET",
+      "path": "/rest/api/2/issue/{issueIdOrKey}/transitions",
+      "summary": "The workflow steps an issue can move to now (id, name); use the id with transition_issue",
+      "tags": ["issues"],
+      "params": [
+        { "name": "issueIdOrKey", "in": "path", "required": true, "type": "string", "description": "Issue key such as ABC-123, or its numeric id" }
+      ],
+      "items": "$.transitions",
+      "tool": "list_issue_transitions"
+    },
+    {
+      "id": "create_issue",
+      "method": "POST",
+      "path": "/rest/api/2/issue",
+      "summary": "Create an issue (a write); nested JSON body: use --body @file, see the jira-dc-create-issue skill",
+      "tags": ["issues"],
+      "body": {
+        "content_type": "application/json"
+      },
+      "tool": "create_issue"
+    },
+    {
+      "id": "edit_issue",
+      "method": "PUT",
+      "path": "/rest/api/2/issue/{issueIdOrKey}",
+      "summary": "Change fields of an issue (a write); JSON body {\"fields\": {...}}: use --body @file",
+      "tags": ["issues"],
+      "params": [
+        { "name": "issueIdOrKey", "in": "path", "required": true, "type": "string", "description": "Issue key such as ABC-123, or its numeric id" }
+      ],
+      "body": {
+        "content_type": "application/json"
+      },
+      "tool": "edit_issue"
+    },
+    {
+      "id": "add_issue_comment",
+      "method": "POST",
+      "path": "/rest/api/2/issue/{issueIdOrKey}/comment",
+      "summary": "Comment on an issue (a write); the body is wiki markup, not Markdown: convert with md2jira --comment-json",
+      "tags": ["comments"],
+      "params": [
+        { "name": "issueIdOrKey", "in": "path", "required": true, "type": "string", "description": "Issue key such as ABC-123, or its numeric id" }
+      ],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          { "name": "body", "required": true, "type": "string", "description": "The comment in Jira wiki markup" }
+        ]
+      },
+      "tool": "add_issue_comment"
+    },
+    {
+      "id": "transition_issue",
+      "method": "POST",
+      "path": "/rest/api/2/issue/{issueIdOrKey}/transitions",
+      "summary": "Move an issue through a workflow step (a write); JSON body {\"transition\": {\"id\": ...}}: use --body @file",
+      "tags": ["issues"],
+      "params": [
+        { "name": "issueIdOrKey", "in": "path", "required": true, "type": "string", "description": "Issue key such as ABC-123, or its numeric id" }
+      ],
+      "body": {
+        "content_type": "application/json"
+      },
+      "tool": "transition_issue"
+    }
+  ]
+}
