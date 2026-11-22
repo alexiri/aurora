@@ -25,7 +25,7 @@ fi
 
 blds=$(printf '%s\n' "$@" | jq -R 'select(length > 0)' | jq -sc .)
 dir="${TMPDIR:-/tmp}/aurora-agent"
-mkdir -p -m 700 "$dir"
+(umask 077 && mkdir -p "$dir")
 cache="$dir/indico-rooms-$tag-$(date +%F).json"
 if [ ! -s "$cache" ]; then
   t=$(mktemp "$dir/rooms.XXXXXX")
