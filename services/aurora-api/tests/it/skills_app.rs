@@ -427,7 +427,9 @@ async fn the_effective_route_and_the_agent_tools_show_app_skills_read_only() {
 }
 
 /// Two apps of two packages whose ids overlap (`ov` and `ov-x`) ship a skill of the same name
-/// `ov-x-thing`: the app whose id is the longest prefix wins, the other is shadowed by it.
+/// `ov-x-thing`: the app whose id is the longest prefix wins. (D-465(c), FIX-221) The name belongs to
+/// `ov-x`, so `ov`'s copy is claimed: left out of the candidates, it is neither given nor listed as
+/// shadowed (its admin view says `claimed_by`).
 #[tokio::test]
 async fn between_apps_the_longest_prefix_of_the_name_wins() {
     let r = rig().await;
@@ -472,16 +474,16 @@ async fn between_apps_the_longest_prefix_of_the_name_wins() {
         .find(|i| i["skill"]["name"] == "ov-x-thing")
         .unwrap();
     assert_eq!(win["app"]["app_id"], "ov-x");
-    let sh = v["shadowed"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|i| i["skill"]["name"] == "ov-x-thing")
-        .unwrap();
-    assert_eq!(sh["app"]["app_id"], "ov");
-    assert_eq!(
-        sh["shadowed_by"],
-        json!({"id": null, "tier": "app", "app_id": "ov-x"})
+    let ov_copy = |list: &Value| {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["skill"]["name"] == "ov-x-thing" && i["app"]["app_id"] == "ov")
+    };
+    assert!(!ov_copy(&v["items"]), "ov's claimed copy is not given: {v}");
+    assert!(
+        !ov_copy(&v["shadowed"]),
+        "ov's claimed copy is left out, not shadowed: {v}"
     );
 }
 
