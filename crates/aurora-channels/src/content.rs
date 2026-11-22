@@ -174,6 +174,50 @@ fn mention_ref(reference: &str) -> String {
         .collect()
 }
 
+/// A neutral mention token as it stands between `<` and `>` (`13 §4.3`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MentionToken<'a> {
+    /// `<@user:REF>`
+    User(&'a str),
+    /// `<@bot:REF>`
+    Bot(&'a str),
+    /// `<#space:REF>`
+    Space(&'a str),
+    /// `<@here>`
+    Here,
+}
+
+/// A token reference: 1..=128 bytes, no `<`, `>`, space or newline.
+pub fn valid_mention_ref(r: &str) -> bool {
+    !r.is_empty() && r.len() <= 128 && !r.contains(['<', '>', ' ', '\n'])
+}
+
+/// Parses the text between `<` and `>`; `None` when it is not a mention token.
+pub fn parse_mention_token(inner: &str) -> Option<MentionToken<'_>> {
+    if inner == "@here" {
+        return Some(MentionToken::Here);
+    }
+    if let Some(r) = inner.strip_prefix("@user:") {
+        return valid_mention_ref(r).then_some(MentionToken::User(r));
+    }
+    if let Some(r) = inner.strip_prefix("@bot:") {
+        return valid_mention_ref(r).then_some(MentionToken::Bot(r));
+    }
+    if let Some(r) = inner.strip_prefix("#space:") {
+        return valid_mention_ref(r).then_some(MentionToken::Space(r));
+    }
+    None
+}
+
+/// C-1146: a mention handle is `^[@~#][A-Za-z0-9][A-Za-z0-9._-]{0,63}$`.
+pub fn valid_mention_handle(h: &str) -> bool {
+    let mut cs = h.chars();
+    matches!(cs.next(), Some('@' | '~' | '#'))
+        && cs.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && h.len() <= 65
+        && cs.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 /// Platform-voice text may not smuggle a `<@here>` through the plain constructor.
 fn defuse_here(s: &str) -> String {
     s.replace("<@here>", "@here")

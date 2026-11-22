@@ -336,3 +336,41 @@ fn rotation_keeps_old_tokens_and_removal_revokes_them() -> R {
     assert!(ActionToken::verify(&removed, &new_v2, integ, 1).is_ok());
     Ok(())
 }
+
+#[test]
+fn mention_tokens_parse_with_one_grammar() {
+    use aurora_channels::content::{MentionToken, parse_mention_token};
+    assert_eq!(
+        parse_mention_token("@user:u1"),
+        Some(MentionToken::User("u1"))
+    );
+    assert_eq!(
+        parse_mention_token("@bot:b1"),
+        Some(MentionToken::Bot("b1"))
+    );
+    assert_eq!(
+        parse_mention_token("#space:c1"),
+        Some(MentionToken::Space("c1"))
+    );
+    assert_eq!(parse_mention_token("@here"), Some(MentionToken::Here));
+    assert_eq!(parse_mention_token("@user:"), None);
+    assert_eq!(parse_mention_token("@user:a b"), None);
+    assert_eq!(parse_mention_token("@user:a<b"), None);
+    assert_eq!(
+        parse_mention_token(&format!("@user:{}", "x".repeat(129))),
+        None
+    );
+    assert!(parse_mention_token(&format!("@user:{}", "x".repeat(128))).is_some());
+    // A neutralized token (zero-width space after `<`) is not a token.
+    assert_eq!(parse_mention_token("\u{200b}@user:x"), None);
+}
+
+#[test]
+fn mention_handles_follow_c1146() {
+    use aurora_channels::content::valid_mention_handle as ok;
+    assert!(ok("@jlunadur") && ok("~town-square") && ok("#a") && ok("@a.b_c-d"));
+    assert!(ok(&format!("@{}", "a".repeat(64))));
+    assert!(!ok(&format!("@{}", "a".repeat(65))));
+    assert!(!ok("jlunadur") && !ok("@") && !ok("@a b") && !ok("@<x>") && !ok("@-a"));
+    assert!(!ok("@a\nb") && !ok("@é") && !ok(""));
+}

@@ -59,6 +59,27 @@ fn space() -> Space {
     }
 }
 
+/// (C-1146) `handle` and `label` are optional and absent from the wire when unset.
+#[test]
+fn mention_handle_and_label_are_optional() -> R {
+    let old: Mention = serde_json::from_value(json!({"kind": "user", "ref": "u1"}))?;
+    assert_eq!((old.handle.as_deref(), old.label.as_deref()), (None, None));
+    assert_eq!(
+        serde_json::to_value(&old)?,
+        json!({"kind": "user", "ref": "u1"})
+    );
+    let new: Mention = serde_json::from_value(
+        json!({"kind": "space", "ref": "c1", "handle": "~town-square", "label": "Town Square"}),
+    )?;
+    assert_eq!(new.handle.as_deref(), Some("~town-square"));
+    assert_eq!(new.label.as_deref(), Some("Town Square"));
+    assert_eq!(
+        serde_json::from_value::<Mention>(serde_json::to_value(&new)?)?,
+        new
+    );
+    Ok(())
+}
+
 #[test]
 fn message_posted_event_roundtrip() -> R {
     let body = MessagePosted {
@@ -76,6 +97,8 @@ fn message_posted_event_roundtrip() -> R {
         mentions: vec![Mention {
             kind: MentionKind::Bot,
             reference: "B1".into(),
+            handle: None,
+            label: None,
         }],
         bot_mentioned: true,
         addressed_bot_ref: "B1".into(),

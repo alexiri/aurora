@@ -161,11 +161,15 @@ async fn inject_message(State(f): Ctl, Json(m): Json<InjectMessage>) -> Reply {
                 mentions.push(Mention {
                     kind,
                     reference: r.to_owned(),
+                    handle: Some(format!("@{r}")),
+                    label: None,
                 });
             } else if token == "here" {
                 mentions.push(Mention {
                     kind: MentionKind::Broadcast,
                     reference: "here".into(),
+                    handle: None,
+                    label: None,
                 });
             }
             rest = &tail[end + 1..];

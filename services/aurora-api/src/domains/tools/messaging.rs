@@ -157,7 +157,7 @@ impl PlatformTool for SendMessage {
                "properties": {
                  "to": {"type": "string",
                         "description": "Who to send to: `me` (the person you are working for, in a direct message), `here` (this conversation's own thread), an alias from find_recipient (e.g. `jdoe`), a recipient id, or a person's exact @handle / a channel's exact name — those are looked up for you."},
-                 "text": {"type": "string", "description": "Message body (Markdown)."},
+                 "text": {"type": "string", "description": "Message body (Markdown). To mention someone or link a channel, write it exactly as messages show it (for example `@jdoe` or `~town-square`)."},
                  "files": {"type": "array", "items": {"type": "string"},
                            "description": "Attachment ids of files you produced in this conversation."},
                  "platform": {"type": "string",

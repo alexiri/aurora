@@ -456,6 +456,13 @@ pub struct Mention {
     pub kind: MentionKind,
     #[serde(rename = "ref")]
     pub reference: String,
+    /// (C-1146) The mention as the platform writes it, sigil included (`@jdoe`, `~town-square`).
+    /// Must match `^[@~#][A-Za-z0-9][A-Za-z0-9._-]{0,63}$`; the core ignores one that does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    /// (C-1146) Display name of the person, bot or space; untrusted, sanitized by the core.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

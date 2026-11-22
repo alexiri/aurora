@@ -95,23 +95,13 @@ enum Token<'a> {
 }
 
 fn parse_token(inner: &str) -> Option<Token<'_>> {
-    if inner == "@here" {
-        return Some(Token::Here);
-    }
-    if let Some(r) = inner
-        .strip_prefix("@user:")
-        .or_else(|| inner.strip_prefix("@bot:"))
-    {
-        return valid_ref(r).then_some(Token::User(r));
-    }
-    if let Some(r) = inner.strip_prefix("#space:") {
-        return valid_ref(r).then_some(Token::Space(r));
-    }
-    None
-}
-
-fn valid_ref(r: &str) -> bool {
-    !r.is_empty() && r.len() <= 128 && !r.contains(['<', '>', ' ', '\n'])
+    use aurora_channels::content::{MentionToken, parse_mention_token};
+    // The grammar lives in aurora-channels, shared with the core (C-1146).
+    Some(match parse_mention_token(inner)? {
+        MentionToken::Here => Token::Here,
+        MentionToken::User(r) | MentionToken::Bot(r) => Token::User(r),
+        MentionToken::Space(r) => Token::Space(r),
+    })
 }
 
 fn for_each_token<'a>(neutral: &'a str, mut f: impl FnMut(&'a str, Token<'a>) -> bool) {

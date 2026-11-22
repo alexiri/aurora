@@ -1,5 +1,6 @@
 //! `message.posted` (docs/13 §5.1, steps 1-11).
 
+use super::mention_text;
 use super::speaker::{self, Speaker};
 use super::{Retry, ignored, outcome, send};
 use crate::app::AppState;
@@ -298,7 +299,10 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
     )
     .await
     .retry()?;
-    let text = turn_text(&context, &m.text, &failed_files);
+    // (FIX-219, D-460) The agent reads mentions as the platform writes them, plus a line saying
+    // who or what each one is.
+    let (message_text, mentioned) = mention_text::agent_text(&m.text, &m.mentions);
+    let text = turn_text(&context, &message_text, &mentioned, &failed_files);
     if text.trim().is_empty() {
         return Ok(ignored("empty"));
     }
@@ -995,13 +999,17 @@ async fn fetch_files(
 
 /// The turn text: the context block, then the message; everything is platform data, so it is
 /// sanitized (control and bidi characters stripped, clamped).
-fn turn_text(context: &str, text: &str, failed: &[FailedFile]) -> String {
+fn turn_text(context: &str, text: &str, mentioned: &str, failed: &[FailedFile]) -> String {
     let mut out = String::new();
     if !context.is_empty() {
         out.push_str(context);
         out.push_str("\n\n");
     }
     out.push_str(&sanitize::block(text, TURN_TEXT_MAX / 2));
+    if !mentioned.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&sanitize::block(mentioned, 4_000));
+    }
     for (name, _, _, reason) in failed {
         out.push_str(&format!(
             "\n\n[Attachment \"{name}\" could not be fetched: {reason}]"

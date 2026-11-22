@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::api::{Mm, R, is_mm_id};
 use crate::events::{
     Bots, MmChannel, MmFileInfo, MmPost, MmUser, WsEvent, command_from_text, dedupe_posts,
-    mentioned_usernames, message_posted, now_ms, rfc3339_ms, space,
+    mentioned_channel_names, mentioned_usernames, message_posted, now_ms, rfc3339_ms, space,
 };
 use crate::lanes::Lanes;
 use crate::render::{Lookups, MentionRefs};
@@ -26,6 +26,8 @@ use crate::ws::{WsConn, WsError};
 
 const USER_TTL: Duration = Duration::from_secs(300);
 const CHANNEL_TTL: Duration = Duration::from_secs(600);
+/// `~name` lookups and the private-channel membership answers (FIX-219).
+const CHANNEL_NAME_TTL: Duration = Duration::from_secs(60);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Catch-up reads a channel this many posts at a time, for at most this many pages: 10 000 posts
 /// per channel (docs/20 §Transport).
@@ -121,6 +123,10 @@ pub struct Integ {
     /// `@name` → user / group / neither (D-271(c)).
     mention_names: crate::mentions::NameCache,
     channels: Mutex<HashMap<String, (Instant, MmChannel)>>,
+    /// `~name` (lowercase) → channel of the team, or none (negative answers included).
+    channel_names: Mutex<HashMap<String, (Instant, Option<MmChannel>)>>,
+    /// `(channel id, user id)` → is the user a member (private channels only).
+    memberships: Mutex<HashMap<(String, String), (Instant, bool)>>,
     ready: AtomicBool,
     catching_up: AtomicBool,
     /// Bots this connector disabled itself (`presence.deprovision`): their
@@ -238,6 +244,8 @@ impl Integ {
             names: Mutex::new(HashMap::new()),
             mention_names: crate::mentions::NameCache::default(),
             channels: Mutex::new(HashMap::new()),
+            channel_names: Mutex::new(HashMap::new()),
+            memberships: Mutex::new(HashMap::new()),
             ready: AtomicBool::new(false),
             catching_up: AtomicBool::new(false),
             retired: Mutex::new(HashSet::new()),
@@ -430,6 +438,80 @@ impl Integ {
         Ok(c)
     }
 
+    /// The channel of this integration's team called `name` (lowercase), cached one minute;
+    /// a failed lookup counts as "none", so a flood of `~x` cannot repeat the call.
+    pub async fn channel_by_name(&self, name: &str) -> Option<MmChannel> {
+        if let Some((at, c)) = lock(&self.channel_names).get(name)
+            && at.elapsed() < CHANNEL_NAME_TTL
+        {
+            return c.clone();
+        }
+        let path = format!("/teams/{}/channels/name/{name}", self.team_id);
+        let found = match self.read(&path, &[]).await {
+            Ok(v) => serde_json::from_value::<MmChannel>(v).ok(),
+            Err(_) => None,
+        };
+        lock(&self.channel_names).insert(name.to_owned(), (Instant::now(), found.clone()));
+        found
+    }
+
+    /// Is `user_id` a member of `channel_id`? Fails closed: anything but a 200 is "no".
+    /// Definite answers (member / not a member) are cached one minute.
+    pub async fn is_channel_member(&self, channel_id: &str, user_id: &str) -> bool {
+        if !is_mm_id(channel_id) || !is_mm_id(user_id) {
+            return false;
+        }
+        let key = (channel_id.to_owned(), user_id.to_owned());
+        if let Some((at, m)) = lock(&self.memberships).get(&key)
+            && at.elapsed() < CHANNEL_NAME_TTL
+        {
+            return *m;
+        }
+        match self
+            .read(&format!("/channels/{channel_id}/members/{user_id}"), &[])
+            .await
+        {
+            Ok(_) => {
+                lock(&self.memberships).insert(key, (Instant::now(), true));
+                true
+            }
+            Err(e) => {
+                if e.code == aurora_protocol::connector::ErrorCode::NotFound {
+                    lock(&self.memberships).insert(key, (Instant::now(), false));
+                }
+                false
+            }
+        }
+    }
+
+    /// (D-460(c)) The channels named by `names` that the message's author may be told about,
+    /// keyed by name. Open channels of the team always; a private channel only when the author
+    /// is a member; deleted channels, other teams' channels, DMs and group DMs never.
+    pub async fn channels_by_names(
+        &self,
+        names: &[String],
+        author_id: &str,
+    ) -> HashMap<String, MmChannel> {
+        let mut out = HashMap::new();
+        for name in names.iter().take(crate::events::MAX_CHANNEL_LOOKUPS) {
+            let Some(ch) = self.channel_by_name(name).await else {
+                continue;
+            };
+            if ch.delete_at != 0 || ch.team_id != self.team_id || !is_mm_id(&ch.id) {
+                continue;
+            }
+            let visible = match ch.kind.as_str() {
+                "O" => true,
+                "P" => self.is_channel_member(&ch.id, author_id).await,
+                _ => false,
+            };
+            if visible {
+                out.insert(name.clone(), ch);
+            }
+        }
+        out
+    }
+
     pub async fn lookups(&self, refs: &MentionRefs) -> Lookups {
         let mut lk = Lookups::default();
         for id in &refs.users {
@@ -536,13 +618,24 @@ impl Integ {
         let known = self
             .users_by_names(&mentioned_usernames(&post.message))
             .await;
+        let spaces = self
+            .channels_by_names(&mentioned_channel_names(&post.message), &author.id)
+            .await;
         let mut files = Vec::new();
         for id in &post.file_ids {
             if let Some(f) = self.file_info(id).await {
                 files.push(f);
             }
         }
-        let payload = message_posted(post, &channel, &author, &files, &known, &self.bots());
+        let payload = message_posted(
+            post,
+            &channel,
+            &author,
+            &files,
+            &known,
+            &spaces,
+            &self.bots(),
+        );
         self.emit(
             format!("posted:{}", post.id),
             EventKind::MessagePosted,
@@ -1442,5 +1535,151 @@ mod tests {
 
     fn posted_ids(events: Vec<(String, String)>) -> Vec<String> {
         events.into_iter().map(|(_, id)| id).collect()
+    }
+
+    // ------------------------------------------------ `~channel` resolution (FIX-219, D-460)
+
+    fn cid(n: u32) -> String {
+        format!("chn{n:023}")
+    }
+
+    async fn mount_channel(rig: &Rig, name: &str, id: &str, kind: &str, team: &str, deleted: i64) {
+        Mock::given(method("GET"))
+            .and(path(format!("/api/v4/teams/{TEAM}/channels/name/{name}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": id, "team_id": team, "type": kind, "name": name,
+                "display_name": format!("Display {name}"), "delete_at": deleted
+            })))
+            .mount(&rig.mm)
+            .await;
+    }
+
+    /// `GET /channels/{id}/members/{USER}`: 200, or the given error status.
+    async fn mount_member(rig: &Rig, id: &str, status: u16) {
+        let body = if status == 200 {
+            json!({"channel_id": id, "user_id": USER})
+        } else {
+            json!({"id": "x", "message": "no", "status_code": status})
+        };
+        Mock::given(method("GET"))
+            .and(path(format!("/api/v4/channels/{id}/members/{USER}")))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .mount(&rig.mm)
+            .await;
+    }
+
+    async fn api_calls(rig: &Rig, needle: &str) -> usize {
+        rig.mm
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path().contains(needle))
+            .count()
+    }
+
+    fn names(ns: &[&str]) -> Vec<String> {
+        ns.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[tokio::test]
+    async fn open_channels_of_the_team_resolve() {
+        let rig = rig().await;
+        mount_channel(&rig, "town-square", &cid(1), "O", TEAM, 0).await;
+        let got = rig
+            .integ
+            .channels_by_names(&names(&["town-square"]), USER)
+            .await;
+        assert_eq!(got["town-square"].id, cid(1));
+    }
+
+    #[tokio::test]
+    async fn a_private_channel_resolves_only_for_a_member_author() {
+        let stranger = rig().await;
+        mount_channel(&stranger, "secret", &cid(2), "P", TEAM, 0).await;
+        mount_member(&stranger, &cid(2), 404).await;
+        // D-460(c): not a member → no entry, so no label and no display name can leak.
+        let got = stranger
+            .integ
+            .channels_by_names(&names(&["secret"]), USER)
+            .await;
+        assert!(got.is_empty());
+
+        let member = rig().await;
+        mount_channel(&member, "secret", &cid(2), "P", TEAM, 0).await;
+        mount_member(&member, &cid(2), 200).await;
+        let got = member
+            .integ
+            .channels_by_names(&names(&["secret"]), USER)
+            .await;
+        assert_eq!(got["secret"].id, cid(2));
+    }
+
+    #[tokio::test]
+    async fn a_failed_membership_lookup_fails_closed() {
+        let rig = rig().await;
+        mount_channel(&rig, "secret", &cid(2), "P", TEAM, 0).await;
+        mount_member(&rig, &cid(2), 500).await;
+        let got = rig.integ.channels_by_names(&names(&["secret"]), USER).await;
+        assert!(got.is_empty());
+        // Nothing mounted at all for another private channel: also "no".
+        mount_channel(&rig, "other", &cid(3), "P", TEAM, 0).await;
+        let got = rig.integ.channels_by_names(&names(&["other"]), USER).await;
+        assert!(got.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleted_foreign_and_direct_channels_never_resolve() {
+        let rig = rig().await;
+        mount_channel(&rig, "gone", &cid(4), "O", TEAM, 5).await;
+        mount_channel(
+            &rig,
+            "elsewhere",
+            &cid(5),
+            "O",
+            "team0000000000000000000002",
+            0,
+        )
+        .await;
+        mount_channel(&rig, "dm", &cid(6), "D", TEAM, 0).await;
+        mount_channel(&rig, "group", &cid(7), "G", TEAM, 0).await;
+        mount_member(&rig, &cid(6), 200).await;
+        mount_member(&rig, &cid(7), 200).await;
+        // `nothing` has no mock at all: the mock server answers 404.
+        let got = rig
+            .integ
+            .channels_by_names(
+                &names(&["gone", "elsewhere", "dm", "group", "nothing"]),
+                USER,
+            )
+            .await;
+        assert!(got.is_empty(), "{got:?}");
+    }
+
+    #[tokio::test]
+    async fn lookups_are_capped_and_cached() {
+        let rig = rig().await;
+        let all: Vec<String> = (0..11).map(|i| format!("c{i}")).collect();
+        for (i, n) in all.iter().enumerate() {
+            mount_channel(&rig, n, &cid(10 + u32::try_from(i).unwrap()), "O", TEAM, 0).await;
+        }
+        let got = rig.integ.channels_by_names(&all, USER).await;
+        assert_eq!(got.len(), 10);
+        assert!(!got.contains_key("c10"));
+        assert_eq!(api_calls(&rig, "/channels/name/").await, 10);
+        // The same names again (and a repeated one) cost no further call, negative answers included.
+        rig.integ.channels_by_names(&all, USER).await;
+        rig.integ.channel_by_name("nothing").await;
+        rig.integ.channel_by_name("nothing").await;
+        assert_eq!(api_calls(&rig, "/channels/name/").await, 11);
+    }
+
+    #[tokio::test]
+    async fn membership_answers_are_cached() {
+        let rig = rig().await;
+        mount_member(&rig, &cid(2), 200).await;
+        assert!(rig.integ.is_channel_member(&cid(2), USER).await);
+        assert!(rig.integ.is_channel_member(&cid(2), USER).await);
+        assert_eq!(api_calls(&rig, "/members/").await, 1);
     }
 }

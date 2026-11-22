@@ -420,6 +420,12 @@ integration) are claimable by any live replica of the connector.
   word boundary) becomes the core's `<@here>`. Every other ping is the
   connector's to defuse: `@channel`, `@all` and `@here` in any other spelling,
   and a platform's **group** names (§4.6, `docs/20 §Rendering` — mentions table).
+- **Mentions the agent reads and writes** (phase 5, FIX-219, D-460, C-1146): the neutral
+  tokens (`<@user:ID>`, `<@bot:ID>`, `<#space:ID>`) are unchanged on the wire. The agent sees
+  each one as the platform writes it (`@jlunadur`, `~town-square`, from `mentions[].handle`)
+  plus a `[Mentioned: …]` line (§5.1 step 10); a token whose mention has no valid `handle`
+  stays a token. To mention someone or link a channel, the agent writes the handle exactly as
+  messages show it; the connector keeps it live (the rule above, `docs/20 §Rendering`).
 - **`<@here>`** is emitted only by the core: in platform voice when
   explicitly intentional, or from a standalone `@here` in an agent's message
   body (above). Never from untrusted data; never from a token typed in any
@@ -568,7 +574,16 @@ idempotent). Steps:
    platform voice and the turn still runs).
 10. **Turn**: create the turn (door `thread`, `source_event_id = event_id`; (phase 3, RFE-018) event ids starting with the reserved prefix `api:` were already rejected at ingest, `§POST /events`,
     speaker). A turn already created by a crashed earlier attempt is found by
-    `source_event_id` and not duplicated.
+    `source_event_id` and not duplicated. (phase 5, FIX-219, D-460, C-1146) **Before** the turn,
+    the text is rewritten for the agent: each `<@user:R>`, `<@bot:R>` and `<#space:R>` whose `R`
+    has a mention with a valid `handle` (`^[@~#][A-Za-z0-9][A-Za-z0-9._-]{0,63}$`) becomes that
+    handle, and when any was replaced one line follows the message (before the failed-attachment
+    lines): `[Mentioned: @jlunadur (José Luna Durán), @aurora (bot), ~town-square (channel "Town Square")]`
+    — each handle once, in order, at most 20 entries then `, …`; a label goes through
+    `sanitize::label` and loses `"`, `[`, `]`, `(`, `)`, `<`, `>`, so it cannot close its quotes or
+    fake an entry; no label, or one equal to the handle without its sigil, is left out. Tokens
+    without a usable mention (an older connector) stay as they are. The stored turn text, which
+    the dashboard shows, is this rendered text.
 11. **Receipt**: `reaction.add` (neutral `eyes`) or `status.set` or placeholder. (phase 5, FIX-158, D-319, C-908) The receipt stays until the thread's answer or failure line posts (§5.2); a platform with `reactions` and `native_status` also gets the working indicator when the turn goes `running` (§4.5). Each add logs one `info` line on target `aurora_api::channels::receipt`.
 
 Other events: `bot.added` → binding flow (5.3); `bot.removed` → deactivate the
