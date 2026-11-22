@@ -318,12 +318,24 @@ blocked for you.",
 
 /// The instruction file for a sandbox without `aurora-agent` (the in-sandbox command, P5-GUIDE-6).
 pub fn render(i: &RenderInputs) -> String {
-    render_with(i, false)
+    render_with(i, false, Some("/workspace/.claude/skills"))
+}
+
+/// (P5-SKILLDIR, C-1140) The Skills fragment: `path` is the absolute skills folder
+/// (`harness::skills_dir_abs`, Aurora's own value, never third-party text). `None` (a home without
+/// a skills folder, tests only) keeps the plain sentence.
+fn skills_fragment(path: Option<&str>) -> String {
+    match path {
+        Some(p) => format!(
+            "## Skills\n\nSkills are read-only folders in {p} (also $SKILLS_DIR in every shell); list and read them with the skill tools. A skill's own files are under {p}/<skill name>/; run its scripts as \"$SKILLS_DIR/<skill name>/scripts/<file>\".\n\n"
+        ),
+        None => "## Skills\n\nSkills are read-only folders in the skills directory; list and read them with the skill tools.\n\n".to_owned(),
+    }
 }
 
 /// `agent_cli`: the sandbox has the `aurora-agent` command (C-653); the index and the preamble
-/// paragraph then carry its sentences.
-pub fn render_with(i: &RenderInputs, agent_cli: bool) -> String {
+/// paragraph then carry its sentences. `skills_path`: the absolute skills folder (C-1140).
+pub fn render_with(i: &RenderInputs, agent_cli: bool, skills_path: Option<&str>) -> String {
     let index = index_mode(&i.apps);
     let mut o = String::new();
     let name = inline(&i.agent.name, NAME_MAX);
@@ -501,7 +513,7 @@ ASCII words joined by hyphens.\n\n",
         o.push_str(&models_fragment(m));
     }
 
-    o.push_str("## Skills\n\nSkills are read-only folders in the skills directory; list and read them with the skill tools.\n\n");
+    o.push_str(&skills_fragment(skills_path));
 
     o.push_str("## Schedules\n\n");
     match i.schedules.as_deref().filter(|s| !s.trim().is_empty()) {
@@ -525,6 +537,26 @@ ASCII words joined by hyphens.\n\n",
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SKILLS: Option<&str> = Some("/workspace/.claude/skills");
+
+    /// (P5-SKILLDIR, C-1140) The Skills text with each harness's real path (snapshots), and the
+    /// plain sentence without one.
+    #[test]
+    fn skills_fragment_names_the_harness_folder() {
+        for (name, path) in [
+            ("claude_code", "/workspace/.claude/skills"),
+            ("codex", "/workspace/.codex/skills/aurora"),
+            ("agents", "/workspace/.agents/skills"),
+        ] {
+            let t = skills_fragment(Some(path));
+            insta::assert_snapshot!(format!("skills_fragment_{name}"), t);
+            let r = render_with(&sample(), false, Some(path));
+            assert!(r.contains(&t), "{r}");
+            assert!(r.contains(&format!("in {path} (also $SKILLS_DIR in every shell)")));
+        }
+        assert!(!skills_fragment(None).contains("SKILLS_DIR"));
+    }
 
     /// (C-884) The Models line is a fixed template, rendered only when given inputs; unset roles are omitted;
     /// the subagent sentence needs a subagent role; an id that fails the pattern is never rendered.
@@ -688,7 +720,7 @@ mod tests {
     fn platform_tools_fragment_snapshots_for_both_modes() {
         let mut i = sample();
         i.platform_tools = Some(tool_families());
-        let on = render_with(&i, true);
+        let on = render_with(&i, true, SKILLS);
         assert!(on.contains("## Platform tools"));
         assert!(on.contains("- memory (save, get, list, search): what you remember"));
         assert!(on.contains("- schedules (create, list): "));
@@ -703,15 +735,15 @@ mod tests {
         insta::assert_snapshot!("platform_tools_on_demand", on);
 
         i.platform_tools.as_mut().unwrap().mode = "all".into();
-        let all = render_with(&i, true);
+        let all = render_with(&i, true, SKILLS);
         assert!(!all.contains("Platform tools"), "{all}");
         insta::assert_snapshot!("platform_tools_all", all);
 
         // No command in the sandbox, or no inputs from an older API: nothing is hidden, nothing said.
         i.platform_tools.as_mut().unwrap().mode = "on_demand".into();
-        assert!(!render_with(&i, false).contains("Platform tools"));
+        assert!(!render_with(&i, false, SKILLS).contains("Platform tools"));
         i.platform_tools = None;
-        assert!(!render_with(&i, true).contains("Platform tools"));
+        assert!(!render_with(&i, true, SKILLS).contains("Platform tools"));
 
         // The measured size of the fragment (chars / 4, P5-GUIDE-7's report).
         let frag = platform_tools_fragment(&tool_families());
@@ -752,7 +784,7 @@ mod tests {
         let r = render(&i);
         assert!(r.contains("Requests to connected apps run from your sandbox"));
         assert!(!r.contains("aurora-agent"));
-        let r = render_with(&i, true);
+        let r = render_with(&i, true, SKILLS);
         assert!(r.contains("`aurora-agent call` does both for you"));
         assert!(r.contains("`aurora-agent search <words>`"));
         assert!(!r.contains("`tools.md` lists every operation"));

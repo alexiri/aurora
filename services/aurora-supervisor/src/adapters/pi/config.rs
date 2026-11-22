@@ -306,8 +306,18 @@ pub(crate) mod tests {
     fn the_session_environment_reaches_the_harness_process() {
         let mut o = opts("anthropic_messages", "medium");
         o.env.push(("AURORA_SESSION".into(), "conv-1".into()));
+        // (P5-SKILLDIR, D-454) The supervisor adds `SKILLS_DIR` (the adapter's own folder) beside it.
+        let skills = crate::harness::skills_dir_abs(
+            std::path::Path::new("/workspace"),
+            &crate::harness::HarnessAdapter::capabilities(
+                &crate::adapters::pi::PiAdapter::default(),
+            )
+            .skills_dir,
+        );
+        o.env.push(("SKILLS_DIR".into(), skills.clone()));
         let env = build_env(&o, Path::new("/tmp/pi"));
         assert!(env.contains(&("AURORA_SESSION".to_owned(), "conv-1".to_owned())));
+        assert!(env.contains(&("SKILLS_DIR".to_owned(), skills)));
     }
 
     pub(crate) fn opts(dialect: &str, effort: &str) -> SessionOptions {

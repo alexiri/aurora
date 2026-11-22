@@ -1740,6 +1740,22 @@ tables above in the same change (and this section shrinks).
 
 `blobs` (the Postgres backend table), `agents.avatar_blob_key` (avatars) and `plugin_blobs` are unchanged and stay in Postgres. No new table: S3 state is the bucket. The `attachments` index on `blob_key` serves the S3 orphan sweep (rows are looked up by `(blob_backend, blob_key)`). `GET /v1/admin/storage` reports bytes and counts **per backend** from `attachments` (never by listing the bucket).
 
+#### Agent templates (phase 6, P6-TEMPLATES, D-435, D-436, D-456, D-457, C-1106, C-1112, C-1143, SEC-146)
+Three migrations. P6-TPL-2 creates the four template tables. P6-TPL-6 creates `agent_helper_files`. P6-TPL-3 adds the `agents` columns and `agent_template_parts`. Full column lists are in C-1106, C-1143 and C-1112; summary:
+
+| Planned table / column | Type | Notes | Phase |
+|---|---|---|---|
+| `agent_template_sources` | table | One row per template repository an instance admin added. It holds the git address (C-1123 form), `ref`, `path` (unique together), the sealed read-only token (`token_ref`, `token_updated_at`, purpose `TemplateSourceToken`), `packages_url` (the manifest's URL template), the last accepted manifest (jsonb), `last_head_sha`, `update_interval`, `status` (`ok`/`check_failed`), check timestamps, lease columns and `created_by`. No signing key (D-435(b)) | 6 (P6-TPL-2) |
+| `agent_templates` | table | One row per template id (`template_id` unique on the instance). FK source (cascade); `dir`; name and summary from the head's `template.yaml`; `head_version`, `head_state` (`ok`/`needs_newer_aurora`/`invalid`) and `head_problems`; `offered` (admin withdraw); `removed_upstream` | 6 (P6-TPL-2) |
+| `agent_template_versions` | table | One row per version seen at the head. `status` is `awaiting_package`/`pending_approval`/`approved`/`rejected`/`invalid`; also `status_reason`, `commit_sha`, `package_url`, `archive_sha256`, `size_bytes`, `content_sha256` and `content` (parsed; null only for `awaiting_package` and `invalid`), `last_attempt_at`, `decided_by`, `decided_at`. Unique `(agent_template_id, version)` | 6 (P6-TPL-2) |
+| `org_disabled_agent_templates` | table | `(org_id, template_id)` pk: a template turned off for an organization. It is keyed by template id, so it survives a source removed and added again | 6 (P6-TPL-2) |
+| `agent_helper_files` | table | `(agent_id, path)` pk: a template's helper files on an agent (`content` bytea, `executable`, `sha256`, `size`). Projected read-only at `.aurora/helpers/`; FK agent (cascade) | 6 (P6-TPL-6) |
+| `agents.template_id`, `.template_name`, `.template_version` | text null | Provenance as text (no FK): deleting a source or template changes no agent | 6 (P6-TPL-3) |
+| `agents.template_inputs` | jsonb null | The checked input values, reused to render update offers | 6 (P6-TPL-3) |
+| `agent_template_parts` | table | `(agent_id, kind, key)` pk. `kind` is one of `instructions`, `skill`, `helpers`, `library_skill`; `content_sha256` is the hash of what was last written from the template; FK agent (cascade) | 6 (P6-TPL-3) |
+
+The gateway role has no access to any of these tables.
+
 #### `secrets` (additional LLM providers; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

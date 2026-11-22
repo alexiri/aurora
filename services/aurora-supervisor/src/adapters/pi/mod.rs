@@ -106,7 +106,7 @@ impl HarnessAdapter for PiAdapter {
             dialects: config::DIALECTS.iter().map(|d| (*d).to_owned()).collect(),
             // Pi loads `$HOME/.agents/skills` without project trust (verified); a project's own
             // `.agents/skills` needs `--approve`, which is never passed.
-            skills_dir: Some(".agents/skills".into()),
+            skills_dir: ".agents/skills".into(),
             instruction_files: vec!["AGENTS.md".into()],
             // Pi has no subagents: a role has no slot to go to.
             model_roles: vec![],

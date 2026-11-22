@@ -214,6 +214,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         })?,
         aurora_supervisor::pty::ShellPaths::default(),
         Some(harness_env.clone()),
+        // (P5-SKILLDIR, D-454) `SKILLS_DIR` for every terminal shell and SSH exec.
+        Some(aurora_supervisor::harness::skills_dir_abs(
+            Path::new("/workspace"),
+            &adapter.capabilities().skills_dir,
+        )),
     );
     let mut cfg = SupervisorConfig::new(upstream, boot_token);
     if let Err(e) =

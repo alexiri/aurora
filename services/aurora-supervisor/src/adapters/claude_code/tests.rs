@@ -194,7 +194,7 @@ async fn steer_refused_and_background_unsupported_and_caps() {
             "anthropic_vertex"
         ]
     );
-    assert_eq!(caps.skills_dir.as_deref(), Some(".claude/skills"));
+    assert_eq!(caps.skills_dir, ".claude/skills");
     assert_eq!(caps.instruction_files, ["CLAUDE.md", "AGENTS.md"]);
     let mut s = a.start_session(opts(None)).await.unwrap();
     let st = s

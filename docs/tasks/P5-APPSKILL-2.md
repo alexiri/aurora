@@ -139,7 +139,7 @@ shape).
 ## Out of scope
 
 - The dashboard sections (P5-APPSKILL-3) beyond compiling; Indico content (P5-APPSKILL-4).
-- Hiding an app's skills per organization or agent (Q-APPSKILL-1), skills for BYO agents (no projected
+- Hiding an app's skills per organization or agent (never: owner, D-455), skills for BYO agents (no projected
   home), digest-based skipping of unchanged files.
 
 ## Completion report

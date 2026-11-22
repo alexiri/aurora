@@ -755,6 +755,12 @@ sync. Order:
  "Notes from the <app> plugin (third-party)"), where you talk (channels),
  peer agents, memory (including the **memory language** rule), skills,
  schedules, background processes, machine facts (timezone, home, tools).
+ (Phase 5, P5-SKILLDIR, D-454, C-1140) The **Skills line** names the harness's skills folder by
+ its absolute path (`/workspace/.claude/skills`, `/workspace/.codex/skills/aurora`,
+ `/workspace/.agents/skills`; Aurora's own value, rendered from the adapter's `skills_dir`) and
+ `$SKILLS_DIR`: "Skills are read-only folders in `<abs path>` (also `$SKILLS_DIR` in every
+ shell); list and read them with the skill tools. A skill's own files are under
+ `<abs path>/<skill name>/`; run its scripts as `"$SKILLS_DIR/<skill name>/scripts/<file>"`."
  (Phase 5, FIX-144/FIX-145, C-730/C-731) Each account of the connected-apps
  render inputs is `{ id, label, service?, address? }`. `address` is where a
  self-hosted account lives: `https://<instance host><base_path>` for a
@@ -894,6 +900,12 @@ no name equal to `skill.md` case-insensitively; optional executable bit
 (projected 0555, else 0444).
 - Projection: `<harness skills dir>/<name>/SKILL.md` + files, read-only; the
 supervisor prunes by manifest.
+- (Phase 5, P5-SKILLDIR, D-454, C-1140) A skill refers to its own files as
+  `$SKILLS_DIR/<name>/…`: `SKILLS_DIR` is `<home>/<harness skills dir>` (absolute, no trailing
+  slash) in the harness process, `process_start` processes, terminal shells and SSH execs, and
+  the instruction file names the same folder. A path with a harness folder in it
+  (`.claude/skills/…`) works on one harness only. BYO agents have no projected home, so no
+  variable.
 - Agents may create/update/delete their **own agent-tier** skills via tools;
 org skills (and, from phase 3, workspace skills) are dashboard/API-only. (Phase 4, P4-GSL: skills may also come from an org's **git skill library**, below; those are pinned and read-only.)
 

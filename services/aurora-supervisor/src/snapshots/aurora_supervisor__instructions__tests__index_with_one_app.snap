@@ -50,7 +50,7 @@ Write every memory — key, title, description and content — in German, whatev
 
 ## Skills
 
-Skills are read-only folders in the skills directory; list and read them with the skill tools.
+Skills are read-only folders in /workspace/.claude/skills (also $SKILLS_DIR in every shell); list and read them with the skill tools. A skill's own files are under /workspace/.claude/skills/<skill name>/; run its scripts as "$SKILLS_DIR/<skill name>/scripts/<file>".
 
 ## Schedules
 

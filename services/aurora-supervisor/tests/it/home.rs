@@ -87,7 +87,7 @@ fn codex_projection_renders_agents_md_and_its_own_skills_dir_only() {
     let d = TempDir::new();
     let mut p = HomeProjector::new(HomeConfig {
         root: d.path().to_path_buf(),
-        skills_dir: caps.skills_dir.clone(),
+        skills_dir: Some(caps.skills_dir.clone()),
         instruction_files: caps.instruction_files.clone(),
         pg: None,
         agent_cli: false,
@@ -881,8 +881,12 @@ fn unknown_part_kinds_and_render_input_fields_are_skipped() {
     p.commit(1).unwrap();
     let want = fs::read(root.join("AGENTS.md")).unwrap();
 
-    let d2 = TempDir::new();
-    let mut p2 = projector(d2.path());
+    // (P5-SKILLDIR) The instruction file names the absolute skills folder, so the second run uses
+    // the same root path, emptied first, to stay comparable.
+    drop(p);
+    fs::remove_dir_all(root).unwrap();
+    fs::create_dir_all(root).unwrap();
+    let mut p2 = projector(root);
     let with_unknown = vec![
         part(
             1,
@@ -899,7 +903,7 @@ fn unknown_part_kinds_and_render_input_fields_are_skipped() {
     ];
     apply_all(&mut p2, &with_unknown);
     p2.commit(1).unwrap();
-    assert_eq!(fs::read(d2.path().join("AGENTS.md")).unwrap(), want);
+    assert_eq!(fs::read(root.join("AGENTS.md")).unwrap(), want);
 }
 
 /// (P5-GUIDE-7, C-654) The catalogue digest, which releases idle sessions, covers the core
@@ -908,10 +912,15 @@ fn unknown_part_kinds_and_render_input_fields_are_skipped() {
 /// does.
 #[test]
 fn the_catalogue_digest_follows_core_descriptors_and_instruction_files_only() {
+    // (P5-SKILLDIR) The instruction file names the absolute skills folder, so every call uses the
+    // same root path, emptied first, to stay comparable.
+    let base = TempDir::new();
     let digest = |mode: &str, core_desc: &str, demand_desc: &str, brief: &str| -> String {
-        let d = TempDir::new();
+        let root = base.path().join("home");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
         let mut p = HomeProjector::new(HomeConfig {
-            root: d.path().to_path_buf(),
+            root,
             skills_dir: Some(".claude/skills".into()),
             instruction_files: vec!["AGENTS.md".into()],
             pg: None,

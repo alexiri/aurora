@@ -231,7 +231,12 @@ knobs** (quotas per user/agent/workspace/org, limit profiles, sandbox awake-time
 caps, expensive-endpoint classes, an instance pressure level; `docs/tasks/P6-LIMITS.md`), and the **Slack connector** (P6-SLACK, moved from phase 5 by the owner 2026-11-15, D-285: not a priority), and the **S3-compatible blob store** (P4-S3, moved from phase 5 by the owner
 2026-11-15, D-318; already specified, D-120, with its brief `docs/tasks/P4-S3.md`), and **warm starts**
 (owner 2026-11-18: start time measured per phase, and the sandbox started on the first keystroke in the
-composer; `docs/tasks/P6-WARMPOOL.md`; its questions answered, D-379: first in phase 6). The org tree and
+composer; `docs/tasks/P6-WARMPOOL.md`; its questions answered, D-379: first in phase 6), and **agent
+templates** (owner 2026-11-21 and 2026-11-22: ready-made agents from template repositories (any https git
+repository, templates kept as source and packaged by the repository's CI) that an instance admin adds and
+reviews, created with the person's own accounts and access, with library skills by reference and helper
+files, Save as template; specified, D-435, D-436, D-456, D-457, SEC-146, `docs/tasks/P6-TEMPLATES.md`, briefs
+P6-TPL-1..6). The org tree and
 limits items are proposals with open questions (`Q-P6-ORG-*`, `Q-P6-LIM-*`); the spec batches run
 when the owner starts phase 6. See `21 §Phase 6`. (The third proposal, "the harness chooses models",
 was moved to phase 5 by the owner on 2026-11-15, D-302(f), and is specified as P5-MODELS-1..3,
