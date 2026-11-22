@@ -40,17 +40,27 @@ impl CardsImpl {
     }
 }
 
-/// Picker entries for agent ids (labels are agent names; unknown ids are dropped).
+/// Picker entries for agent ids with their handle and workspace (FIX-230, D-473(d)); unknown ids
+/// are dropped. Ordered by workspace name, then agent name.
 async fn choices(tx: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<AgentChoice>, ApiError> {
-    let rows: Vec<(Uuid, String)> =
-        sqlx::query_as("SELECT id, name FROM agents WHERE id = ANY($1) ORDER BY name, id")
-            .bind(ids)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(DbError::from)?;
+    let rows: Vec<(Uuid, String, String, String)> = sqlx::query_as(
+        "SELECT a.id, a.name, a.handle, w.name
+           FROM agents a JOIN workspaces w ON w.id = a.workspace_id
+          WHERE a.id = ANY($1)
+          ORDER BY lower(w.name), w.id, lower(a.name), a.id",
+    )
+    .bind(ids)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(DbError::from)?;
     Ok(rows
         .into_iter()
-        .map(|(agent_id, label)| AgentChoice { agent_id, label })
+        .map(|(agent_id, label, handle, workspace_name)| AgentChoice {
+            agent_id,
+            label,
+            handle,
+            workspace_name,
+        })
         .collect())
 }
 

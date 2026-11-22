@@ -14,6 +14,10 @@ pub struct AgentChoice {
     pub agent_id: Uuid,
     /// Display label (agent name; sanitized by the card builder).
     pub label: String,
+    /// The agent's handle (unique only per workspace; FIX-230, D-473(d)).
+    pub handle: String,
+    /// The workspace the agent lives in: every choice names it.
+    pub workspace_name: String,
 }
 
 /// `binding.choose`: DM the person who added the shared bot a select of agents they own.

@@ -524,13 +524,21 @@ idempotent). Steps:
 3. **Target agent**:
    - addressed to a **dedicated** bot (DM to it, or it is mentioned) → its agent;
    - **shared** bot in a DM: an existing thread link for `(space, thread_ref)`
-     → that agent; else the author's DM default; else, if the author can reach
-     exactly one agent with a shared presence here → it; else post an agent
-     picker card (`dm_default.choose`) and stop. When the author can reach
-     **none** (FIX-220, D-461(c)) the reply says what to do and never mentions
-     `bind` (which does nothing in a DM): a person who can use at least one agent
-     of the organization gets "None of your agents answers direct messages here
-     yet. Choose one: `<external_url>/account/channels`"; a person who can use
+     → that agent (authorization unchanged: `can_use`); else the author's DM
+     default **while it is still one of their own agents** (a default that no
+     longer is, is ignored, not deleted); else, if the author's **own agents**
+     with a shared presence here are exactly one → it; else post an agent picker
+     card (`dm_default.choose`) and stop. **Own agents** (FIX-230, D-473, C-1157)
+     are the agents of workspaces where the person has access in their own right
+     (an active direct or group binding, `own_workspace_access`; the implicit
+     owner role of org owners and admins does not count), plus agents they reach
+     through an approved person reach grant. Every choice names its workspace:
+     picker options read `Name (@handle) · Workspace`, the text fallback lists
+     `` `handle` (Name · Workspace) ``. When the author has **none** (FIX-220,
+     D-461(c)) the reply says what to do and never mentions
+     `bind` (which does nothing in a DM): a person who has at least one own agent
+     in the organization gets "None of your agents answers direct messages here
+     yet. Choose one: `<external_url>/account/channels`"; a person who has
      none gets "You don't have an agent here yet. Create one in Aurora
      (`<external_url>`), or ask {owners} to add you to a workspace that has
      one." At most one such reply per person and integration per 10 minutes
@@ -652,8 +660,10 @@ no behaviour in phase 0.
 ### 5.3 Space bindings (shared bot)
 
 On `bot.added`: if the adding person is linked and is `can_own` of ≥1 workspace
-with agents that have a shared presence on this integration, DM them a
-`binding.choose` select of those agents; the choice creates the binding (listen
+**they are in in their own right** (FIX-230, D-473: an org admin's implicit access
+does not count) with agents that have a shared presence on this integration, DM
+them a `binding.choose` select of those agents (options `Name (@handle) ·
+Workspace`); the choice creates the binding (listen
 `mentions`) and the bot announces itself in the space. Otherwise the bot posts
 that it is not set up and who can set it up. The `bind <handle>` command does
 the same from inside the space. Bindings can be edited/removed in the
@@ -671,9 +681,14 @@ conversation they are not part of; direct conversations are not bindable. The ef
 ### 5.4 Commands (platform-neutral)
 
 Connectors map their command syntax (slash command, `!cmd`, or a mention
-prefix) onto these names: `help`, `agents` (agents this person can reach here),
-`use <handle>` (set DM default), `link`, `unlink`, `bind <handle>`, `unbind`,
-`approve <code>`, `deny <code>`. Replies are ephemeral where possible.
+prefix) onto these names: `help`, `agents` (the person's own agents here, each
+with its workspace: `` `handle` (Name · Workspace) ``; D-473), `use <handle>`
+(set DM default; the handle must be one of the person's own agents; when
+several of them share the handle it sets nothing and replies with the matches
+and `<external_url>/account/channels`, outcome `use_ambiguous`), `link`,
+`unlink`, `bind <handle>`, `unbind` (`bind` keeps `can_own`: an admin may bind
+any agent of the organization), `approve <code>`, `deny <code>`. Replies are
+ephemeral where possible.
 
 ### 5.5 Clicker authorization (invariant)
 
@@ -791,11 +806,14 @@ phase 1 (RFE-001) the sign-in link is the default and only automatic path**:
   (FIX-220, D-461, C-1147) When the integration has a shared bot with the
   shared mode on, the same page also asks **which agent answers the person's
   direct messages to the shared bot**: the agents of the integration's
-  organization the person can use (`GET /v1/me/dm-default-options`), one
+  organization that are the person's **own** (D-473: workspaces where they
+  have access in their own right, not an org admin's implicit access;
+  `GET /v1/me/dm-default-options`), one
   preselected when there is exactly one, "Decide later" always available, and
   with none a line "You don't have an agent yet" and a link to create one. The
   choice goes in the confirm (`agent_id`); the server checks the organization
-  and `can_use`, attaches the agent to the shared bot when it is not yet
+  and that the agent is the person's own (`own_workspace_access`, D-473; an
+  approved person grant still works for an attached agent), attaches the agent to the shared bot when it is not yet
   (audit `channel_presence.attach`, `via: "link"`) and sets the DM default, all
   in the transaction of the link. A refused choice refuses the confirm and the
   token stays usable. People linked by verified e-mail never see the page: their

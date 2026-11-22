@@ -3584,3 +3584,105 @@ async fn shared_presences_enqueue_nothing_on_org_delete() {
     .await;
     assert!(w.ops_of("presence.deprovision").await.is_empty());
 }
+
+/// FIX-230 (D-473, C-1157): an org owner/admin has the implicit owner role on every workspace, but
+/// the DM-default options, the PUT and the confirm offer and accept only agents of workspaces the
+/// person is in in their own right (or reaches through an approved person grant).
+#[tokio::test]
+async fn dm_default_options_put_and_confirm_exclude_an_admins_implicit_access() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let theirs = w.agent("a1").await; // the world's workspace: the org owner has no binding there
+    w.attach(&w.owner, theirs, integ, "shared").await;
+    let other = w.agent("a2").await; // unattached
+    // The org owner's own workspace with an agent.
+    let own_ws = w.h.workspace(w.org).await;
+    w.h.bind_ws(own_ws, w.users.owner, "owner").await;
+    let mine = w.h.hosted_agent(w.org, own_ws, "mine").await;
+    w.call(
+        &w.admin,
+        Method::POST,
+        &format!("/v1/channel-integrations/{integ}/user-links"),
+        Some(json!({"platform_user_ref": "U-7", "user_id": w.users.owner})),
+    )
+    .await;
+    // Options: only the agent of their own workspace, though `can_use` holds for every agent.
+    let uri = format!("/v1/me/dm-default-options?integration_id={integ}");
+    let (s, v) = w.call(&w.owner, Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    let ids: Vec<&str> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["agent_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec![mine.to_string().as_str()], "{v}");
+    // The PUT: another member's agent, attached or not, is refused and nothing is kept or attached.
+    for agent in [theirs, other] {
+        let (s, v) = w
+            .call(
+                &w.owner,
+                Method::PUT,
+                "/v1/me/dm-defaults",
+                Some(json!({"integration_id": integ, "agent_id": agent})),
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("agent_not_reachable")),
+            "{v}"
+        );
+    }
+    assert_eq!(attached_count(&w, other).await, 0);
+    assert_eq!(w.count("SELECT count(*) FROM dm_defaults").await, 0);
+    // Their own agent still works (and is attached by the PUT).
+    let (s, v) = w
+        .call(
+            &w.owner,
+            Method::PUT,
+            "/v1/me/dm-defaults",
+            Some(json!({"integration_id": integ, "agent_id": mine})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(attached_count(&w, mine).await, 1);
+    // A reach-grant agent that is attached still works for the admin (the grant is the right).
+    sqlx::query("INSERT INTO reach_grants (id, agent_id, integration_id, subject_kind, subject_ref, subject_label, state) VALUES ($1,$2,$3,'person','U-7','Ann','approved')")
+        .bind(Uuid::now_v7()).bind(theirs).bind(integ).execute(w.h.pool()).await.unwrap();
+    let (s, v) = w
+        .call(
+            &w.owner,
+            Method::PUT,
+            "/v1/me/dm-defaults",
+            Some(json!({"integration_id": integ, "agent_id": theirs})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // The confirm: another member's agent refuses the whole confirm and the token stays usable.
+    let tok = link_url(&w, integ, "U-6").await;
+    let confirm = |agent: Uuid| {
+        let (w, tok) = (&w, tok.clone());
+        async move {
+            w.call(
+                &w.owner,
+                Method::POST,
+                "/v1/channel-links/confirm",
+                Some(json!({"token": tok, "platform_user_ref": "U-6", "agent_id": agent})),
+            )
+            .await
+        }
+    };
+    let (s, v) = confirm(other).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("agent_not_reachable")),
+        "{v}"
+    );
+    assert_eq!(attached_count(&w, other).await, 0);
+    assert_eq!(
+        w.count("SELECT count(*) FROM user_links WHERE platform_user_ref='U-6'")
+            .await,
+        0
+    );
+    assert_eq!(confirm(mine).await.0, 200);
+}

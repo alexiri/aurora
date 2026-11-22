@@ -358,6 +358,26 @@ pub async fn can_use<'e, E: PgExecutor<'e>>(
     Ok(workspace_access(exec, user, ws).await?.is_some())
 }
 
+/// (FIX-230, D-473(a), C-1157) The person's access to `ws` **in their own right**: an active direct
+/// or group binding while an active org member and not suspended there (`own_workspace_access`).
+/// The implicit owner role of an org owner/admin does not count. Chat offers and auto-picks agents
+/// by this; authorization (`can_use`, `can_own`) is unchanged. Reads people tables through the
+/// view: call it from the API only, never from a function the gateway runs.
+pub async fn own_access<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    ws: Uuid,
+) -> Result<Option<WorkspaceRole>, DbError> {
+    let r: Option<String> = sqlx::query_scalar(
+        "SELECT role FROM own_workspace_access WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(ws)
+    .bind(user)
+    .fetch_optional(exec)
+    .await?;
+    Ok(r.as_deref().and_then(WorkspaceRole::parse))
+}
+
 /// The outcome of [`can_ssh`] (docs/04 §SSH access, D-239(a)): who may SSH into which sandbox is
 /// the web terminal's rule. `Denied` collapses "agent unknown", "person disabled" and "no
 /// `can_use`" so a caller cannot probe which one it was (the API answers 404).

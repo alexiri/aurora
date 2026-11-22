@@ -772,3 +772,26 @@ pub async fn on_credential_dead(
     audit::record(s, ev);
     Ok(())
 }
+
+/// (FIX-230, D-473(a), C-1157) Whether `agent` is one of the person's **own** agents for chat: the
+/// person has access to its workspace in their own right (`authz::own_access`: an active direct or
+/// group binding; the implicit owner role of an org admin does not count) or reaches it through an
+/// approved person reach grant on the integration. Chat offers and auto-picks only these;
+/// authorization (`can_use`) is unchanged.
+pub async fn is_own_agent(
+    pool: &sqlx::PgPool,
+    user: Uuid,
+    workspace_id: Uuid,
+    agent_id: Uuid,
+    integration: Uuid,
+    platform_refs: &[String],
+) -> Result<bool, DbError> {
+    if aurora_db::authz::own_access(pool, user, workspace_id)
+        .await?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    aurora_db::repo::reach_grants::approved_person_reach(pool, agent_id, integration, platform_refs)
+        .await
+}

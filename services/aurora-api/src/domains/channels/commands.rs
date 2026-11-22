@@ -12,9 +12,7 @@ use aurora_core::sanitize;
 use aurora_db::authz;
 use aurora_db::repo::channel_inbox::InboxRow;
 use aurora_db::repo::channel_presences::{self, PresenceAgent};
-use aurora_db::repo::{
-    approvals, dm_defaults, reach_grants, space_bindings, thread_links, user_links,
-};
+use aurora_db::repo::{approvals, dm_defaults, space_bindings, thread_links, user_links};
 use aurora_protocol::connector::{CommandInvoked, Sender};
 use serde_json::{Value, json};
 use sqlx::PgConnection;
@@ -147,15 +145,17 @@ impl Cmd<'_> {
             {
                 continue;
             }
-            let ok = authz::can_use(pool, user, p.workspace_id).await.retry()?
-                || reach_grants::approved_person_reach(
-                    pool,
-                    p.agent_id,
-                    self.ctx.id(),
-                    std::slice::from_ref(&self.c.user_ref),
-                )
-                .await
-                .retry()?;
+            // The person's own agents only (FIX-230, D-473): not the admin's implicit access.
+            let ok = super::presences::is_own_agent(
+                pool,
+                user,
+                p.workspace_id,
+                p.agent_id,
+                self.ctx.id(),
+                std::slice::from_ref(&self.c.user_ref),
+            )
+            .await
+            .retry()?;
             if ok {
                 out.push(p);
             }
@@ -175,9 +175,10 @@ impl Cmd<'_> {
                 .iter()
                 .map(|p| {
                     format!(
-                        "- `{}` ({})",
+                        "- `{}` ({} · {})",
                         sanitize::label(&p.agent_handle),
-                        sanitize::label(&p.agent_name)
+                        sanitize::label(&p.agent_name),
+                        sanitize::label(&p.workspace_name)
                     )
                 })
                 .collect();
@@ -193,10 +194,33 @@ impl Cmd<'_> {
         };
         let want = handle_of(args);
         let list = self.reachable(user, all).await?;
-        let found = list
+        let matches: Vec<&&PresenceAgent> = list
             .iter()
-            .find(|p| p.mode == "shared" && p.agent_handle.to_lowercase() == want);
-        let Some(p) = found.filter(|_| !want.is_empty()) else {
+            .filter(|p| p.mode == "shared" && p.agent_handle.to_lowercase() == want)
+            .filter(|_| !want.is_empty())
+            .collect();
+        // Handles are unique only per workspace: several own matches set nothing (D-473(d)).
+        if matches.len() > 1 {
+            let lines: Vec<String> = matches
+                .iter()
+                .map(|p| {
+                    format!(
+                        "- `{}` ({} · {})",
+                        sanitize::label(&p.agent_handle),
+                        sanitize::label(&p.agent_name),
+                        sanitize::label(&p.workspace_name)
+                    )
+                })
+                .collect();
+            let base = self.state.config.external_url.trim_end_matches('/');
+            self.reply(&format!(
+                "More than one of your agents has that handle, so I changed nothing:\n{}\nChoose one on your account page: {base}/account/channels",
+                lines.join("\n")
+            ))
+            .await?;
+            return Ok(outcome("use_ambiguous"));
+        }
+        let Some(p) = matches.first() else {
             self.reply("I can't find an agent with that handle that you can reach. Try `agents`.")
                 .await?;
             return Ok(outcome("use_not_found"));

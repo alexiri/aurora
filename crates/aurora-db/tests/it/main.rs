@@ -12,6 +12,7 @@ mod followup_controls_migration;
 mod gateway_grants;
 mod membership_queries;
 mod migration_order;
+mod own_workspace_access;
 mod schema_6_11;
 mod schema_matches_spec;
 mod skill_library_git_url_migration;

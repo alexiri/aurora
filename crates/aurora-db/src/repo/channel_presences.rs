@@ -338,6 +338,8 @@ pub struct PresenceAgent {
     pub agent_handle: String,
     pub agent_name: String,
     pub workspace_id: Uuid,
+    /// (FIX-230, D-473(d)) Every agent choice names its workspace.
+    pub workspace_name: String,
 }
 
 pub async fn active_with_agents<'e, E: PgExecutor<'e>>(
@@ -346,8 +348,10 @@ pub async fn active_with_agents<'e, E: PgExecutor<'e>>(
 ) -> Result<Vec<PresenceAgent>, DbError> {
     Ok(sqlx::query_as(
         "SELECT p.id AS presence_id, p.mode, p.platform_user_ref, a.id AS agent_id,
-                a.handle AS agent_handle, a.name AS agent_name, a.workspace_id
+                a.handle AS agent_handle, a.name AS agent_name, a.workspace_id,
+                w.name AS workspace_name
            FROM channel_presences p JOIN agents a ON a.id = p.agent_id
+           JOIN workspaces w ON w.id = a.workspace_id
           WHERE p.integration_id=$1 AND p.status='active'
           ORDER BY p.created_at, p.id",
     )

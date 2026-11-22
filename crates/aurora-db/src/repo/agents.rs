@@ -184,11 +184,12 @@ pub struct UsableAgentRow {
     pub attached: bool,
 }
 
-/// (FIX-220, C-1147) Agents of `org` whose workspace `user` can use (`effective_workspace_access`,
-/// the `can_use` rule), sorted by workspace name, then agent name; `attached` says whether the agent
-/// already has an active shared presence on `integration`. One query, no per-workspace loop. Reads
-/// no people table, so it also runs under the gateway's role.
-pub async fn list_usable_in_org<'e, E: PgExecutor<'e>>(
+/// (FIX-220, C-1147, FIX-230/D-473) Agents of `org` in workspaces where `user` has access in their
+/// own right (`own_workspace_access`: not the implicit owner role of an org admin), sorted by
+/// workspace name, then agent name; `attached` says whether the agent already has an active shared
+/// presence on `integration`. One query, no per-workspace loop. The view joins people tables: call
+/// it from API code only, never from a function the gateway runs.
+pub async fn list_own_in_org<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,
     user: Uuid,
@@ -201,7 +202,7 @@ pub async fn list_usable_in_org<'e, E: PgExecutor<'e>>(
                            AND p.mode = 'shared' AND p.status = 'active') AS attached
            FROM agents a
            JOIN workspaces w ON w.id = a.workspace_id
-           JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $2
+           JOIN own_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $2
           WHERE a.org_id = $1 AND w.org_id = $1
           ORDER BY lower(w.name), w.id, lower(a.name), a.id",
     )
