@@ -2766,6 +2766,11 @@ Rule: `docs/tasks/P6-TEMPLATES.md` (design), `docs/25-agent-templates.md` (the p
   - The SSH grant redemption (`POST /v1/runner/preview-streams/open`, `kind: "ssh"`, C-796) answers `shell`: the stored preference of the session's own person for the grant's agent, `bash` when there is no row. The runner copies it into `exec.open.shell` (`16 §W20`, optional, absent = bash).
   - The value is a closed enum end to end: the table CHECK, `PtyShell` in the API and the protocol, and the supervisor's fixed binary paths. A client never supplies a path.
   - The row is removed with the person or the agent (FK cascade). One writer: the `PUT`.
+- C-1146 **Mentions carry the platform's handle and a label** (FIX-219, D-460; `13 §4.1`, `20`; no migration).
+  - `message.posted.mentions[]` gains `handle?: string` and `label?: string` (serde default, omitted when absent; schemas regenerated). `handle` is the mention as the platform writes it, sigil included, matching `^[@~#][A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (otherwise the core ignores it); `label` is the display name of the person, bot or space (the core applies `sanitize::label`; empty → ignored).
+  - Mattermost: users and bots get `handle: "@<username>"` and `label` = the author block's display-name rule; `~<channel name>` of the integration's team becomes `<#space:ID>` with `kind: "space"`, `handle: "~<name>"`, `label` = the channel's display name, for an open channel, or a private one whose member is the message's author (never `D`/`G`, never deleted; at most 10 names per message; lookups cached one minute; a failure leaves the text as typed).
+  - Core: the turn text replaces each `<@user:R>`, `<@bot:R>`, `<#space:R>` whose `R` has a mention with a valid `handle` by that handle, and when any was replaced appends `[Mentioned: @h (label), @b (bot), ~c (channel "label"), …]` (the label omitted when absent or equal to the handle without its sigil; at most 20 entries, then `, …`; `"` stripped from labels) after the message and before the failed-attachment lines. Tokens without a usable mention are left unchanged.
+  - `send_message`'s `text` description: "To mention someone or link a channel, write it exactly as messages show it (for example `@jdoe` or `~town-square` on Mattermost)."
 
 ## Shared schemas
 
