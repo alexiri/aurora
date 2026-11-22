@@ -834,7 +834,10 @@ is what changes.
 
 **Index in the instruction file** (platform voice, capability fragment *platform tools*,
 `10 §Agent instructions`), rendered from the render inputs' `platform_tools.families` (each
-family's name, one-line purpose and tool names, from the registry; unavailable tools omitted):
+family's name, one-line purpose and tool names, from the registry; unavailable tools omitted).
+Each tool is shown by its **full name**, the `<name>` that `aurora-agent describe` and `call`
+take, never a shortened verb (FIX-226: verbs such as `save` were refused as unknown names). Only
+names of 1–64 characters `[a-z0-9_]` are printed:
 
 ```
 ## Platform tools
@@ -843,14 +846,14 @@ Besides the tools you see, Aurora gives you these, which you call from your sand
 `aurora-agent search <words>` finds one, `aurora-agent describe aurora <name>` shows its
 arguments, `aurora-agent call aurora <name> key=value …` runs it and prints the result.
 
-- memory (save, get, list, search, delete): notes you keep across conversations
-- schedules (create, list, update, delete): run a prompt on a cron schedule
-- processes (start, status, stop, watch): long-running commands that outlive a turn
+- memory (`memory_save`, `memory_get`, `memory_list`, `memory_search`, `memory_delete`): notes you keep across conversations
+- schedules (`schedule_create`, `schedule_list`, `schedule_update`, `schedule_delete`): run a prompt on a cron schedule
+- processes (`process_start`, `process_status`, `process_stop`, `process_watch`): long-running commands that outlive a turn
 - …
 ```
 
-About 20 tokens per family line (estimate); the whole fragment is about 300 tokens against 2 000
-to 3 000 today.
+About 35 tokens per family line (estimate); the whole fragment is about 450 tokens against 2 000
+to 3 000 with every tool listed.
 
 **Calling them**: `aurora-agent … aurora …`, the platform target of the one command (§10a,
 *Target `aurora`*).
