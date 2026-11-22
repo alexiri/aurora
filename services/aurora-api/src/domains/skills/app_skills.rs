@@ -45,13 +45,46 @@ pub struct Merged {
     pub shadowed: Vec<(AppSkill, By)>,
 }
 
-/// The skills of the apps in `app_ids` from the snapshot, in `(name, app_id)` order.
+/// (FIX-221, D-465(c)) The app of the snapshot that owns skill `name`: the one whose id is the
+/// longest that the name equals or continues with `-`, over **all** apps of the snapshot.
+#[must_use]
+pub fn owner_of<'a>(snap: &'a Snapshot, name: &str) -> Option<&'a AppEntry> {
+    let id = owner_id(snap.apps.iter().map(|a| a.app_id.as_str()), name)?;
+    snap.apps.iter().find(|a| a.app_id == id)
+}
+
+/// The id among `ids` that owns `name` (the longest the name equals or continues with `-`): the
+/// one prefix rule, also used by the admin view of a package that is not active.
+#[must_use]
+pub fn owner_id<'a>(ids: impl IntoIterator<Item = &'a str>, name: &str) -> Option<&'a str> {
+    ids.into_iter()
+        .map(|id| (prefix_score(id, name), id))
+        .filter(|(score, _)| *score > 0)
+        .max_by_key(|(score, _)| *score)
+        .map(|(_, id)| id)
+}
+
+/// (FIX-221, D-465(c)(d)) The other app that owns the name of `app_id`'s skill `name`, when there
+/// is one: such a skill is given to no agent.
+#[must_use]
+pub fn claimed_by<'a>(snap: &'a Snapshot, app_id: &str, name: &str) -> Option<&'a AppEntry> {
+    owner_of(snap, name).filter(|o| o.app_id != app_id)
+}
+
+/// The skills of the apps in `app_ids` from the snapshot, in `(name, app_id)` order. A skill
+/// whose name another app of the snapshot owns (D-465(c)) is left out: this is the one list the
+/// effective route, the skill tools and the home projection all use.
 #[must_use]
 pub fn candidates(snap: &Snapshot, app_ids: &[String]) -> Vec<AppSkill> {
     let mut out = Vec::new();
     for app in snap.apps.iter().filter(|a| app_ids.contains(&a.app_id)) {
         let version = version_of(snap, app);
-        for s in app.agent.iter().flat_map(|a| &a.skills) {
+        for s in app
+            .agent
+            .iter()
+            .flat_map(|a| &a.skills)
+            .filter(|s| claimed_by(snap, &app.app_id, &s.name).is_none())
+        {
             out.push(AppSkill {
                 app_id: app.app_id.clone(),
                 app_name: app.about.name.clone(),
@@ -230,6 +263,83 @@ mod tests {
                 files: Vec::new(),
             },
         }
+    }
+
+    /// A snapshot of `(app id, skill names)` apps, each in a package of its own.
+    fn snap_of(apps: &[(&str, &[&str])]) -> Snapshot {
+        let apps: Vec<serde_json::Value> = apps
+            .iter()
+            .map(|(id, skills)| {
+                let skills: Vec<_> = skills
+                    .iter()
+                    .map(|n| {
+                        serde_json::json!({
+                            "name": n, "description": "d", "sha256": "0", "size": 1, "files": []
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "app_id": id, "package_id": format!("pkg-{id}"),
+                    "about": { "id": id, "name": format!("App {id}") },
+                    "credentials": [], "metadata": [], "connect": [], "token": null,
+                    "tools": null, "approvals": {}, "database": null,
+                    "agent": { "instructions": "", "skills": skills }
+                })
+            })
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "format": 1, "contract": 1, "packages": [], "oauth_clients": [],
+            "apps": apps, "hosts": [], "reserved_hosts": []
+        }))
+        .unwrap()
+    }
+
+    /// (FIX-221, D-465(c)) A skill whose name another app of the snapshot owns reaches nobody, even
+    /// an agent granted only the shipping app; without that app it stays. The longest id owns.
+    #[test]
+    fn candidates_drop_a_skill_another_app_owns() {
+        let own = ["demo".to_owned()];
+        let names = |snap: &Snapshot, ids: &[String]| -> Vec<String> {
+            candidates(snap, ids)
+                .into_iter()
+                .map(|c| format!("{}:{}", c.app_id, c.skill.name))
+                .collect()
+        };
+        let both = snap_of(&[("demo", &["demo-x-thing", "demo-own"]), ("demo-x", &[])]);
+        assert_eq!(names(&both, &own), ["demo:demo-own"]);
+        // the owner's own skill with that name is given, and only that one
+        let owner_ships = snap_of(&[
+            ("demo", &["demo-x-thing"]),
+            ("demo-x", &["demo-x-thing", "demo-x"]),
+        ]);
+        let all = ["demo".to_owned(), "demo-x".to_owned()];
+        assert_eq!(
+            names(&owner_ships, &all),
+            ["demo-x:demo-x", "demo-x:demo-x-thing"]
+        );
+        // without `demo-x` in the snapshot the skill stays
+        let alone = snap_of(&[("demo", &["demo-x-thing", "demo-own"])]);
+        assert_eq!(names(&alone, &own), ["demo:demo-own", "demo:demo-x-thing"]);
+        // a name equal to another app's id is claimed too
+        let eq = snap_of(&[("demo", &["demo-x"]), ("demo-x", &[])]);
+        assert!(names(&eq, &own).is_empty());
+        // a chain `demo`, `demo-x`, `demo-x-y`: the longest id owns, `-` boundary only
+        let chain = snap_of(&[
+            ("demo", &["demo-xy", "demo-x-y-z", "demo-x-q"]),
+            ("demo-x", &[]),
+            ("demo-x-y", &[]),
+        ]);
+        assert_eq!(names(&chain, &own), ["demo:demo-xy"]);
+        assert_eq!(
+            claimed_by(&chain, "demo", "demo-x-y-z").map(|a| a.app_id.as_str()),
+            Some("demo-x-y")
+        );
+        assert_eq!(
+            claimed_by(&chain, "demo", "demo-x-q").map(|a| a.app_id.as_str()),
+            Some("demo-x")
+        );
+        assert!(claimed_by(&chain, "demo", "demo-xy").is_none());
+        assert!(claimed_by(&chain, "demo-x-y", "demo-x-y-z").is_none());
     }
 
     #[test]

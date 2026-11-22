@@ -51,6 +51,10 @@ pub enum PluginCmd {
         /// Instance external URL; its host is reserved.
         #[arg(long)]
         external_url: Option<String>,
+        /// App id of another package (the built-ins) that a skill name is checked against
+        /// (repeatable; default: only this package's own apps, FIX-221).
+        #[arg(long)]
+        other_app_id: Vec<String>,
         #[arg(long, default_value = cmds::CORE_VERSION)]
         core_version: String,
     },
@@ -69,6 +73,9 @@ pub enum PluginCmd {
         /// Instance external URL; its host is reserved.
         #[arg(long)]
         external_url: Option<String>,
+        /// App id of another package that a skill name is checked against (repeatable).
+        #[arg(long)]
+        other_app_id: Vec<String>,
         #[arg(long, default_value = cmds::CORE_VERSION)]
         core_version: String,
     },
@@ -137,12 +144,13 @@ pub fn run(cmd: PluginCmd) -> Result<i32> {
             allow_unsigned,
             reserved_host,
             external_url,
+            other_app_id,
             core_version,
         } => cmds::validate(
             &package,
             &pubkey,
             allow_unsigned,
-            &Reserved::new(reserved_host, external_url),
+            &Reserved::new(reserved_host, external_url, other_app_id),
             &core_version,
         ),
         PluginCmd::Compile { package } => cmds::compile(&package),
@@ -151,11 +159,12 @@ pub fn run(cmd: PluginCmd) -> Result<i32> {
             pubkey,
             reserved_host,
             external_url,
+            other_app_id,
             core_version,
         } => cmds::test(
             &package,
             &pubkey,
-            &Reserved::new(reserved_host, external_url),
+            &Reserved::new(reserved_host, external_url, other_app_id),
             &core_version,
         ),
         PluginCmd::Sign { package, key, out } => cmds::sign(&package, &key, out),

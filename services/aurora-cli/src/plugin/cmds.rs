@@ -109,13 +109,21 @@ fn violations_json(v: &[Violation]) -> Value {
 pub struct Reserved {
     hosts: Vec<String>,
     external_url: Option<String>,
+    /// (FIX-221, D-465) App ids of other packages (the built-ins) a skill name is checked against.
+    /// The CLI embeds no list: `--other-app-id` names them, none means only the package's own apps.
+    other_app_ids: Vec<String>,
 }
 
 impl Reserved {
-    pub fn new(hosts: Vec<String>, external_url: Option<String>) -> Self {
+    pub fn new(
+        hosts: Vec<String>,
+        external_url: Option<String>,
+        other_app_ids: Vec<String>,
+    ) -> Self {
         Self {
             hosts,
             external_url,
+            other_app_ids,
         }
     }
 
@@ -175,6 +183,12 @@ fn lint(
     let ctx = ValidationContext {
         running_version: core.to_owned(),
         reserved_hosts: reserved.patterns()?,
+        // Another package's id is never this package's, so the ids count as foreign apps.
+        active_app_ids: reserved
+            .other_app_ids
+            .iter()
+            .map(|id| (id.clone(), "(built-in)".to_owned()))
+            .collect(),
         ..Default::default()
     };
     Ok(validate_package(pkg, &ctx, &trust, allow_unsigned))
@@ -200,6 +214,12 @@ pub fn validate(
             "ok": v.is_empty(),
             "violations": violations_json(&v),
             "warnings": violations_json(&warnings),
+            // (FIX-221) Which other apps a skill name was checked against.
+            "skill_names_checked_against": if reserved.other_app_ids.is_empty() {
+                json!("this package's own apps only (pass --other-app-id for the apps of other packages)")
+            } else {
+                json!(reserved.other_app_ids)
+            },
         }))?
     );
     Ok(i32::from(!v.is_empty()))

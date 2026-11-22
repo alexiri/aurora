@@ -63253,6 +63253,17 @@
           "files"
         ],
         "properties": {
+          "claimed_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PluginAgentSkillClaim",
+                "description": "(FIX-221, D-465(d)) Present only when no agent gets this skill because the name belongs to\nan app of another package (it was installed after this one)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },
@@ -63291,6 +63302,22 @@
             }
           },
           "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PluginAgentSkillClaim": {
+        "type": "object",
+        "description": "The app that owns a skill's name.",
+        "required": [
+          "app_id",
+          "app_name"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "app_name": {
             "type": "string"
           }
         }

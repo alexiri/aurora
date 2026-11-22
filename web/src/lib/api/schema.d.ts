@@ -13497,6 +13497,7 @@ export interface components {
          *     first, then the other files by path.
          */
         PluginAgentSkill: {
+            claimed_by?: components["schemas"]["PluginAgentSkillClaim"] | null;
             description: string;
             files: components["schemas"]["PluginAgentSkillFile"][];
             name: string;
@@ -13508,6 +13509,11 @@ export interface components {
             change: string;
             files: components["schemas"]["PluginAgentFileChange"][];
             name: string;
+        };
+        /** @description The app that owns a skill's name. */
+        PluginAgentSkillClaim: {
+            app_id: string;
+            app_name: string;
         };
         PluginAgentSkillFile: {
             executable: boolean;

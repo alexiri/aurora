@@ -204,6 +204,19 @@ fn every_builtin_package_passes_the_skill_rules_without_a_warning() {
     use aurora_registry::validate::agent_rules::archive_rules;
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/builtin");
     let mut skills = 0;
+    // app id -> built-in package (directory) id, for every built-in.
+    let mut all_apps = std::collections::HashMap::new();
+    for e in std::fs::read_dir(&dir).unwrap() {
+        let root = e.unwrap().path();
+        let Ok(text) = std::fs::read_to_string(root.join("plugin.yaml")) else {
+            continue;
+        };
+        let pid = root.file_name().unwrap().to_string_lossy().into_owned();
+        for a in Manifest::parse(&text, "9.9.9").unwrap().apps {
+            all_apps.insert(a.about.id, pid.clone());
+        }
+    }
+    let others_of = |_pid: &str| all_apps.clone();
     for e in std::fs::read_dir(&dir).unwrap() {
         let root = e.unwrap().path();
         let manifest = root.join("plugin.yaml");
@@ -244,7 +257,8 @@ fn every_builtin_package_passes_the_skill_rules_without_a_warning() {
             }
         }
         let mut v = Vec::new();
-        archive_rules(&m, &pkg, &mut v);
+        // (FIX-221) Built-ins are linted against every other built-in's app ids.
+        archive_rules(&m, &pkg, &others_of(&id), &mut v);
         assert!(v.is_empty(), "{id}: {v:?}");
         let w = aurora_registry::validate::package_warnings(&m, &pkg);
         assert!(w.is_empty(), "{id}: {w:?}");

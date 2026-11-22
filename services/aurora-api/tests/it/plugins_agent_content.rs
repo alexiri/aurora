@@ -253,6 +253,72 @@ async fn a_package_that_breaks_a_skill_rule_is_invalid_with_the_code() {
     }
 }
 
+/// Another package with one app `gdemo-app-x` and no agent content (FIX-221).
+fn owner_yaml() -> String {
+    "package: { id: gowner, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: Owner }\napps:\n  - about: { id: gdemo-app-x, name: Owner App }\n    credentials: [ { name: api_token, secret: true } ]\n    connect:\n      - id: api_key\n        kind: fields\n        fields: [ { name: api_token, label: T, type: secret, required: true } ]\n    hosts:\n      - match: { host: \"api.gowner.example\" }\n        inject:\n          - bearer: \"{credentials.api_token}\"\n"
+        .to_owned()
+}
+
+const CLAIMED: &str = "skills/gdemo-app/gdemo-app-x-thing/SKILL.md";
+
+/// (FIX-221, D-465(b)) A package whose skill starts with the id of an app of another active package
+/// is invalid at ingest with `app_skill_name_claimed` at the skill's path and stores no blob (the same
+/// package without that owner installed is accepted: registry lint test and the next test).
+#[tokio::test]
+async fn ingest_refuses_a_skill_named_with_another_active_apps_id() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let md = skill_md("gdemo-app-x-thing", "d", "b");
+    let y = yaml("api.gdemo.example", "");
+    a.install(&owner_yaml()).await;
+    let md2 = md;
+    let v = a.upload_with(&y, &[(CLAIMED, &md2)]).await;
+    assert_eq!(v["status"], "invalid", "{v}");
+    let claim: Vec<&Value> = v["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|x| x["code"] == "app_skill_name_claimed")
+        .collect();
+    assert_eq!(claim.len(), 1, "{}", v["violations"]);
+    assert_eq!(claim[0]["path"], "skills/gdemo-app/gdemo-app-x-thing");
+    let msg = claim[0]["message"].as_str().unwrap();
+    assert!(
+        msg.contains("`gdemo-app-x`") && msg.contains("`gowner`"),
+        "{msg}"
+    );
+    assert!(blob_kind(&h, &hex(&md2)).await.is_none());
+}
+
+/// (FIX-221, D-465(c)(d)) An app installed after the package that shipped the skill claims the name:
+/// the admin view of the shipping package marks that skill `claimed_by`, and only that one.
+#[tokio::test]
+async fn the_admin_view_marks_a_skill_a_later_install_claimed() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let claimed = skill_md("gdemo-app-x-thing", "d", "b");
+    let own = skill_md("gdemo-app-steps", "d", "b");
+    let installed = a
+        .install_with(
+            &yaml("api.gdemo.example", ""),
+            &[(CLAIMED, &claimed), (SKILL, &own)],
+        )
+        .await;
+    let before = a.status(&installed["id"]).await;
+    for s in before["agent"][0]["skills"].as_array().unwrap() {
+        assert!(s.get("claimed_by").is_none(), "nothing claims it yet: {s}");
+    }
+    a.install(&owner_yaml()).await;
+    let after = a.status(&installed["id"]).await;
+    let skills = after["agent"][0]["skills"].as_array().unwrap();
+    let by_name = |n: &str| skills.iter().find(|s| s["name"] == n).unwrap();
+    assert_eq!(
+        by_name("gdemo-app-x-thing")["claimed_by"],
+        json!({"app_id": "gdemo-app-x", "app_name": "Owner App"})
+    );
+    assert!(by_name("gdemo-app-steps").get("claimed_by").is_none());
+}
+
 /// The admin detail carries `agent` per app; the file routes serve the bytes by digest with the safe
 /// headers; unknown packages, apps, skills and files are 404, a bad path 400, a non-admin 403.
 #[tokio::test]

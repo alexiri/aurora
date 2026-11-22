@@ -121,6 +121,24 @@ describe("AgentContentSection", () => {
     expect(within(app).getByText("Removed")).toBeInTheDocument();
   });
 
+  it("marks a skill whose name another app owns as not given to agents, and only that one (FIX-221)", () => {
+    mockFetch(() => text(200, ""));
+    const claimed: PluginAgent = {
+      ...full,
+      changed: null,
+      skills: [
+        { ...full.skills[0], claimed_by: { app_id: "git-x", app_name: "Git X" } },
+        full.skills[1],
+      ],
+    };
+    wrap(<AgentContentSection plugin={{ ...plugin, agent: [claimed] }} />);
+    const app = screen.getByTestId("agent-content-git");
+    expect(within(app).getByTestId("agent-skill-claimed-git-api")).toHaveTextContent(
+      "Not given to agents: the name belongs to the Git X app",
+    );
+    expect(within(app).queryByTestId("agent-skill-claimed-git-retry")).toBeNull();
+  });
+
   it("says 'no longer a script' for a file that lost the bit, and lists a removed file of a changed skill", () => {
     mockFetch(() => text(200, ""));
     const agent: PluginAgent = {

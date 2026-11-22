@@ -10,7 +10,8 @@ use uuid::Uuid;
 
 use super::dto::{
     PluginAgent, PluginAgentChanged, PluginAgentFileChange, PluginAgentOperations,
-    PluginAgentSkill, PluginAgentSkillChange, PluginAgentSkillFile, PluginPackage,
+    PluginAgentSkill, PluginAgentSkillChange, PluginAgentSkillClaim, PluginAgentSkillFile,
+    PluginPackage,
 };
 
 const STATUSES: [&str; 6] = [
@@ -291,6 +292,28 @@ pub async fn agent_of(
         .as_ref()
         .map(|o| changes(o, &new).into_iter().collect())
         .unwrap_or_default();
+    // (FIX-221, D-465(d)) Every app of the current snapshot except this package's own (the other
+    // version of it is not "another package"), then this package's apps: the ids a skill name is
+    // owned among. A name owned by an app of another package is given to no agent.
+    let snap = super::registry::active_typed_on(conn).await?;
+    let others: Vec<(&str, &str)> = snap
+        .iter()
+        .flat_map(|s| &s.apps)
+        .filter(|a| a.package_id != r.package_id)
+        .map(|a| (a.app_id.as_str(), a.about.name.as_str()))
+        .collect();
+    let claimed = |app_id: &str, name: &str| -> Option<PluginAgentSkillClaim> {
+        let own = new.manifest.apps.iter().map(|a| a.about.id.as_str());
+        let owner = crate::domains::skills::app_skills::owner_id(
+            own.chain(others.iter().map(|(id, _)| *id)),
+            name,
+        )?;
+        let (_, app_name) = others.iter().find(|(id, _)| *id == owner)?;
+        (owner != app_id).then(|| PluginAgentSkillClaim {
+            app_id: owner.to_owned(),
+            app_name: (*app_name).to_owned(),
+        })
+    };
     Ok(new
         .manifest
         .apps
@@ -334,6 +357,7 @@ pub async fn agent_of(
                             executable: f.executable,
                         }))
                         .collect(),
+                        claimed_by: claimed(&id, &s.name),
                     })
                     .collect(),
                 changed: changed.remove(&id),
