@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Altitude } from "@/components/ui/altitude";
 import { ConfirmAction } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { Fold } from "@/components/ui/fold";
+import { TextViewer } from "@/components/ui/text-viewer";
 import { CheckboxField } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { SwitchField } from "@/components/ui/switch";
@@ -408,11 +410,48 @@ function FileTree({ nodes, readOnly = false, onDelete, onReplace }: { nodes: Fil
 export function EffectiveSkillsView({ agentId }: { agentId: string }) {
   const eff = useEffectiveSkills(agentId);
   const [open, setOpen] = useState<Skill | null>(null);
-  // (P5-APPSKILL-2, C-1133) Skills of apps (tier "app", `id: null`) are listed by P5-APPSKILL-3 under "From apps";
-  // until then this view shows the database tiers only.
-  const items = (eff.data?.items ?? []).filter((i) => i.skill.id != null);
-  const shadowed = (eff.data?.shadowed ?? []).filter((i) => i.skill.id != null);
+  // (C-1133, C-1139) Skills of apps (tier "app", `id: null`) are read-only and listed apart, under "From apps": no
+  // open-to-edit, disable or delete (D-455: no switch for them anywhere).
+  const all = eff.data?.items ?? [];
+  const items = all.filter((i) => i.skill.id != null);
+  const appItems = all.filter((i) => i.skill.id == null);
+  const allShadowed = eff.data?.shadowed ?? [];
+  const shadowed = allShadowed.filter((i) => i.skill.id != null);
+  const shadowedApps = allShadowed.filter((i) => i.skill.id == null);
   const tierWord = (tier: string) => ((TIER_LABEL as Record<string, string>)[tier] ?? tier).toLowerCase();
+  const appName = (appId: string | null | undefined) =>
+    [...all, ...allShadowed].find((i) => i.app?.app_id === appId)?.app?.name ?? appId ?? "an";
+  /** Who wins a name an app skill lost: "the organization skill" or "the <App> app's skill". */
+  const winner = (w: { tier: string; app_id?: string | null }) => (w.tier === "app" ? `the ${appName(w.app_id)} app's skill` : `the ${tierWord(w.tier)} skill`);
+  const appRow = (i: (typeof all)[number] | (typeof allShadowed)[number], extra: React.ReactNode) => (
+    <li key={`${i.app?.app_id}/${i.skill.name}`} className="space-y-1 py-2 text-sm text-ink" data-testid={`app-skill-${i.skill.name}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-mono font-medium">{i.skill.name}</span>
+        <Badge>App</Badge>
+        {extra}
+      </div>
+      <p className="text-xs text-muted">
+        From the {i.app?.name ?? i.app?.app_id ?? "app"} app · {i.app?.version}
+      </p>
+      <p className="break-words text-xs text-ink-2">{i.skill.description}</p>
+      <Fold summary="Read the skill" className="mt-1 px-3 py-2">
+        <div className="mt-2 space-y-2">
+          <TextViewer label={`Instructions of ${i.skill.name}`} text={i.skill.body} className="max-h-64" />
+          {i.skill.files.length > 0 ? (
+            <ul aria-label={`Files of ${i.skill.name}`} className="space-y-1 text-xs">
+              {i.skill.files.map((f) => (
+                <li key={f.path} className="flex flex-wrap items-center gap-2">
+                  <span className="break-all font-mono">{f.path}</span>
+                  <span className="text-muted">{formatCount(f.size)} chars</span>
+                  {f.executable ? <Badge>Script</Badge> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </Fold>
+    </li>
+  );
   const row = (s: Skill, extra: React.ReactNode) => (
     <li key={s.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 text-sm text-ink">
       <button type="button" className="font-mono text-link underline" aria-label={`Open ${s.name} (${TIER_LABEL[s.tier]})`} onClick={() => setOpen(s)}>
@@ -424,7 +463,7 @@ export function EffectiveSkillsView({ agentId }: { agentId: string }) {
     </li>
   );
   // (P5-POLISH-6, C6) "Skills this agent receives" shows only when there are some.
-  if (eff.data && items.length === 0 && shadowed.length === 0) return null;
+  if (eff.data && all.length === 0 && allShadowed.length === 0) return null;
   return (
     <section aria-label="Effective skills" className="space-y-3">
       <h3 className="font-display text-base font-semibold text-ink">Skills this agent receives</h3>
@@ -436,7 +475,7 @@ export function EffectiveSkillsView({ agentId }: { agentId: string }) {
       </Altitude>
       {eff.isPending ? <Loading /> : null}
       {eff.isError ? <ErrorState error={eff.error} onRetry={() => eff.refetch()} /> : null}
-      {eff.data && items.length === 0 ? <p className="text-sm text-muted">None.</p> : null}
+      {eff.data && items.length === 0 && appItems.length === 0 ? <p className="text-sm text-muted">None.</p> : null}
       <ul aria-label="Received skills" className="divide-y divide-line">
         {items.map((i) =>
           row(
@@ -447,7 +486,16 @@ export function EffectiveSkillsView({ agentId }: { agentId: string }) {
           ),
         )}
       </ul>
-      {shadowed.length > 0 ? (
+      {appItems.length > 0 ? (
+        <>
+          <h4 className="text-sm font-semibold text-ink">From apps</h4>
+          <p className="text-xs text-muted">Skills the publishers of your apps ship. They are read-only here and change with the app.</p>
+          <ul aria-label="Skills from apps" className="divide-y divide-line">
+            {appItems.map((i) => appRow(i, i.shadows.length > 0 ? <span className="text-xs text-muted">Overrides {i.shadows.map((s) => tierWord(s.tier)).join(" and ")} skill</span> : null))}
+          </ul>
+        </>
+      ) : null}
+      {shadowed.length > 0 || shadowedApps.length > 0 ? (
         <>
           <h4 className="text-sm font-semibold text-ink">Not applied</h4>
           <ul aria-label="Skills not applied" className="divide-y divide-line">
@@ -455,9 +503,12 @@ export function EffectiveSkillsView({ agentId }: { agentId: string }) {
               row(
                 i.skill as Skill,
                 <span className="text-xs text-muted">
-                  {!i.enabled ? "Disabled" : i.shadowed_by ? `Shadowed by the ${tierWord(i.shadowed_by.tier)} skill` : ""}
+                  {!i.enabled ? "Disabled" : i.shadowed_by ? `Shadowed by ${winner(i.shadowed_by)}` : ""}
                 </span>,
               ),
+            )}
+            {shadowedApps.map((i) =>
+              appRow(i, <span className="text-xs text-muted">{i.shadowed_by ? `Shadowed by ${winner(i.shadowed_by)}` : ""}</span>),
             )}
           </ul>
         </>
