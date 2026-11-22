@@ -21,7 +21,7 @@ trap 'rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR" "$WORK/bin" "$WORK/bodies"
 export STUB_FIX="$FIX" STUB_LOG="$WORK/calls.log" STUB_BODIES="$WORK/bodies"
-unset STUB_EMPTY STUB_FAIL_CALL STUB_SWEEP_ERR
+unset STUB_EMPTY STUB_FAIL_CALL
 
 # The stub: `aurora-agent call grafana <operation> [name=value ...] [--body @file] [--account A] --out FILE`.
 cat > "$WORK/bin/aurora-agent" <<'STUB'
@@ -46,8 +46,6 @@ case "$op" in
     n=$(find "$STUB_BODIES" -type f | wc -l)
     cp "$body" "$STUB_BODIES/body-$((n + 1)).json"
     if grep -q '"expr": "bad' "$body" || [ "${STUB_FAIL_CALL:-}" = "$((n + 1))" ]; then cat "$STUB_FIX/query_error.txt" >&2; exit 1
-    elif grep -q 'node_filesystem_size_bytes' "$body"; then
-      if [ -n "${STUB_SWEEP_ERR:-}" ]; then cp "$STUB_FIX/query_sweep_err.json" "$out"; else cp "$STUB_FIX/query_sweep.json" "$out"; fi
     elif grep -q '"instant": true\|"queryType": "instant"' "$body"; then cp "$STUB_FIX/query_instant.json" "$out"
     elif grep -q 'raw_data' "$body"; then cp "$STUB_FIX/query_raw.json" "$out"
     elif grep -q 'os-logs' "$body"; then cp "$STUB_FIX/query_opensearch.json" "$out"
@@ -419,124 +417,8 @@ reset
 PR compare --ds prom-main --from now-2h --to now --offsets 2d 'sum(up)' >/dev/null
 expect_eq "compare: --offsets 2d is two calls" 2 "$(grep -c query_datasources "$STUB_LOG")"
 
-# --- sweep -----------------------------------------------------------------------------------------------------------------
-SEL='job="node",instance=~"web.*"'
-SW=(sweep --ds prom-main --selector "$SEL" --from 2026-11-20T03:00:00Z --to 2026-11-20T15:00:00Z)
-reset
-out=$(PR "${SW[@]}")
-expect_eq "sweep: every query in one query_datasources call" 1 "$(grep -c query_datasources "$STUB_LOG")"
-expect_eq "sweep: six default checks and four filesystem queries" "C0 C1 C2 C3 C4 C5 FSIZE FFREE FMIN FAGO" \
-  "$(body 1 | jq -r '[.queries[].refId] | join(" ")')"
-expect_eq "sweep: instant queries of the prometheus type at --to" "true prometheus $to_ms" \
-  "$(body 1 | jq -r '"\(.queries[0].instant) \(.queries[0].datasource.type) \(.to)"')"
-expect_eq "sweep: \${SELECTOR}, \${WINDOW} and \${HOST} substituted" \
-  "min by (instance) (min_over_time(up{$SEL}[43200s]))" "$(body 1 | jq -r '.queries[0].expr')"
-expect_eq "sweep: no placeholder left in any expression" false "$(body 1 | jq -r '[.queries[].expr | contains("${")] | any')"
-expect_has "sweep: the filesystem queries exclude pseudo filesystems" 'fstype!~"tmpfs|overlay|squashfs|devtmpfs|autofs"' "$(body 1 | jq -r '.queries[6].expr')"
-expect_has "sweep: the trend is an offset" "offset 7d" "$(body 1 | jq -r '.queries[9].expr')"
-expect_has "sweep: host x check table, short host names as columns" $'check\tflag\tweb-1\tweb-2' "$out"
-expect_has "sweep: a value under its flag has no !" $'up min\t<1\t1\t1' "$out"
-expect_has "sweep: a crossed flag has !" $'load1 max / cpu\t>2\t0.5\t!2.5' "$out"
-expect_has "sweep: another crossed flag" $'memory used max\t>0.9\t0.4\t!0.95' "$out"
-expect_eq "sweep: a network filesystem on two hosts is one row" 1 "$(grep -c '/shared' <<<"$out")"
-expect_has "sweep: ! on under 10 % free" $'!/shared\tceph\t1000\t20\t2\t19\t0\t-' "$out"
-expect_has "sweep: ! on under 30 days to full (linear)" $'!/\text4\t100\t60\t60\t59\t5.71429\t10.5' "$out"
-expect_has "sweep: no ! on a healthy filesystem" $'\n/data\txfs\t500\t300\t60\t299\t4.28571\t70' $'\n'"$out"
-rc=0; PR "${SW[@]}" >/dev/null || rc=$?
-expect_eq "sweep: exit 0 when nothing failed" 0 "$rc"
-reset
-out=$(PR "${SW[@]}" --show-queries)
-expect_has "sweep --show-queries: the window" "# window 2026-11-20T03:00:00Z .. 2026-11-20T15:00:00Z" "$out"
-expect_has "sweep --show-queries: every expression" "#   C0 (up min): min by (instance) (min_over_time(up{$SEL}[43200s]))" "$out"
-expect_has "sweep --show-queries: the filesystem expressions" "#   FAGO: min by (device, mountpoint, fstype) (node_filesystem_avail_bytes{" "$out"
-reset
-out=$(PR "${SW[@]}" --json --show-queries)
-if jq -e '.window and (.filesystems | length == 3) and (.errors | length == 0) and (.checks["load1 max / cpu"]["web-2.example.org:9100"] == 2.5) and .queries.C0' <<<"$out" >/dev/null; then ok "sweep --json: parses with jq and has window, checks, filesystems, errors"; else bad "sweep --json: unexpected JSON"; echo "$out" >&2; fi
-reset
-PR sweep --ds prom-main --selector "$SEL" --last 12h --host-label host >/dev/null
-expect_eq "sweep --last 12h: a window of 12 hours" 43200000 "$(body 1 | jq -r '(.to | tonumber) - (.from | tonumber)')"
-expect_eq "sweep --host-label: used for the grouping" "min by (host) (min_over_time(up{$SEL}[43200s]))" "$(body 1 | jq -r '.queries[0].expr')"
-# placeholders: exactly three tokens, nothing else rewritten, nothing else accepted
-cat > "$WORK/checks.json" <<'JSON'
-{"checks": [{"name": "busy workers", "expr": "max by (${HOST}) (workers_busy{${SELECTOR}}[${WINDOW}]) + HOST_total + $SELECTOR{HOST=\"x\", WINDOW=\"y\"} + SELECTOR", "flag": ">=300"}]}
-JSON
-reset
-out=$(PR "${SW[@]}" --checks "$WORK/checks.json")
-expect_eq "sweep: the file's check is added after the defaults" "C6" "$(body 1 | jq -r '.queries[6].refId')"
-expect_eq "sweep: only the three tokens are replaced; HOST, WINDOW, SELECTOR and \$SELECTOR without braces are kept" \
-  "max by (instance) (workers_busy{$SEL}[43200s]) + HOST_total + \$SELECTOR{HOST=\"x\", WINDOW=\"y\"} + SELECTOR" \
-  "$(body 1 | jq -r '.queries[6].expr')"
-expect_has "sweep: a file check's row with its flag" $'busy workers\t>=300\t12\t!345' "$out"
-for tok in '${SEL}' '${selector}' '${HOST }' '${}' '${FOO}'; do
-  jq -n --arg e "up{\${SELECTOR}} + $tok" '{checks: [{name: "x", expr: $e}]}' > "$WORK/ph.json"
-  reset
-  rc=0; err=$(PR "${SW[@]}" --checks "$WORK/ph.json" 2>&1 >/dev/null) || rc=$?
-  expect_eq "sweep: unknown placeholder $tok is a usage error" 2 "$rc"
-  expect_has "sweep: the error names the placeholder $tok" "unknown placeholder $tok" "$err"
-  expect_eq "sweep: nothing sent for $tok" 0 "$(grep -c query_datasources "$STUB_LOG" || true)"
-done
-reset
-echo '{"checks": [{"name": "only", "expr": "vector(1)"}], "replace_default_checks": true}' > "$WORK/only.json"
-out=$(PR "${SW[@]}" --checks "$WORK/only.json")
-expect_eq "sweep: replace_default_checks leaves only the file's checks" "C0 FSIZE FFREE FMIN FAGO" "$(body 1 | jq -r '[.queries[].refId] | join(" ")')"
-reset
-echo '{"disable_default_checks": ["up min", "reboots"]}' > "$WORK/dis.json"
-out=$(PR "${SW[@]}" --checks "$WORK/dis.json")
-if grep -q $'^up min\t\|^reboots\t' <<<"$out"; then bad "sweep: a disabled default check is still printed"; else ok "sweep: disable_default_checks drops the named checks"; fi
-expect_has "sweep: the others stay" $'load1 max / cpu\t>2' "$out"
-bad_file() { # name json
-  printf '%s\n' "$2" > "$WORK/bad.json"; reset
-  rc=0; err=$(PR "${SW[@]}" --checks "$WORK/bad.json" 2>&1 >/dev/null) || rc=$?
-  expect_eq "sweep --checks: $1 is a usage error" 2 "$rc"
-  expect_eq "sweep --checks: $1 sends nothing" 0 "$(grep -c query_datasources "$STUB_LOG" || true)"
-}
-bad_file "an unknown default name in disable_default_checks" '{"disable_default_checks": ["no such check"]}'
-bad_file "an unknown key" '{"chekcs": []}'
-bad_file "an unknown key in a check" '{"checks": [{"name": "a", "expr": "up", "flg": ">1"}]}'
-bad_file "a bad flag" '{"checks": [{"name": "a", "expr": "up", "flag": "~3"}]}'
-bad_file "a flag without a number" '{"checks": [{"name": "a", "expr": "up", "flag": ">"}]}'
-bad_file "an empty name" '{"checks": [{"name": "", "expr": "up"}]}'
-bad_file "a name of 61 characters" "{\"checks\": [{\"name\": \"$(printf 'n%.0s' $(seq 1 61))\", \"expr\": \"up\"}]}"
-bad_file "a name with a control character" '{"checks": [{"name": "a\u001bb", "expr": "up"}]}'
-bad_file "a name used twice" '{"checks": [{"name": "a", "expr": "up"}, {"name": "a", "expr": "up"}]}'
-bad_file "a name of a default check" '{"checks": [{"name": "reboots", "expr": "up"}]}'
-bad_file "no expr" '{"checks": [{"name": "a"}]}'
-bad_file "31 checks" "$(jq -nc '{checks: [range(31) | {name: "c\(.)", expr: "up"}]}')"
-bad_file "a file that is not an object" '[1]'
-bad_file "replace_default_checks that is not a boolean" '{"replace_default_checks": "yes"}'
-reset
-echo '{"checks": '"$(jq -nc '[range(30) | {name: "c\(.)", expr: "up"}]')"'}' > "$WORK/thirty.json"
-rc=0; PR "${SW[@]}" --checks "$WORK/thirty.json" >/dev/null 2>&1 || rc=$?
-expect_eq "sweep --checks: 30 checks are accepted" 0 "$rc"
-expect_eq "sweep --checks: 30 more checks stay one call" 1 "$(grep -c query_datasources "$STUB_LOG")"
-sweep_usage() { # a usage error and nothing sent
-  reset
-  rc=0; PR sweep --ds prom-main "$@" >/dev/null 2>&1 || rc=$?
-  expect_eq "sweep: usage error for $*" 2 "$rc"
-  expect_eq "sweep: nothing sent for $*" 0 "$(grep -c query_datasources "$STUB_LOG" || true)"
-}
-sweep_usage --selector '' --last 12h
-sweep_usage --selector "$SEL"
-sweep_usage --selector "$SEL" --from 2026-11-20T03:00:00Z
-sweep_usage --selector "$SEL" --last 12h --from 2026-11-20T03:00:00Z --to 2026-11-20T15:00:00Z
-sweep_usage --selector "$SEL" --last 12h --trend 7x
-sweep_usage --selector "$SEL" --last 12h --host-label 'a b'
-sweep_usage --selector "$SEL" --from 2026-11-20T15:00:00Z --to 2026-11-20T03:00:00Z
-sweep_usage --selector "$SEL" --last 12h --checks "$WORK/does-not-exist.json"
-reset
-rc=0; out=$(STUB_SWEEP_ERR=1 PR "${SW[@]}") || rc=$?
-expect_eq "sweep: a failed refId exits 1" 1 "$rc"
-expect_has "sweep: the failed check is named with its error" "# ERROR load1 max / cpu: parse error: unexpected end of input" "$out"
-expect_has "sweep: the other checks still print" $'up min\t<1\t1' "$out"
-reset
-rc=0; out=$(STUB_FAIL_CALL=1 PR "${SW[@]}") || rc=$?
-expect_eq "sweep: a failed request exits 1" 1 "$rc"
-expect_has "sweep: a failed request is reported" "# ERROR request: HTTP 400 from the app" "$out"
-expect_eq "sweep: a failed request is not retried" 1 "$(grep -c query_datasources "$STUB_LOG")"
-for sub in compare sweep; do
-  out=$(PR "$sub" --help)
-  expect_has "grafana-prom $sub --help works" "usage: grafana-prom $sub" "$out"
-done
+out=$(PR compare --help)
+expect_has "grafana-prom compare --help works" "usage: grafana-prom compare" "$out"
 expect_has "grafana-os --help works" "usage: grafana-os" "$(O --help)"
 # --wide, --max-rows and --columns of grafana-os are the ones of grafana-query run
 reset
@@ -560,6 +442,19 @@ cat > "$WORK/esc.json" <<'JSON'
 JSON
 out=$(G frames "$WORK/esc.json" --wide)
 if grep -q $'\033' <<<"$out"; then bad "wide / display names: an escape character reached the output"; else ok "wide / display names: control characters are replaced"; fi
+
+# --- size budgets (D-471): the app must not grow back silently ---------------------------------------------------------
+PKG="$ROOT/plugins/builtin/grafana"
+total=$(find "$SKILLS" -type f -exec cat {} + | wc -c)
+bodies=$(cat "$SKILLS"/*/SKILL.md | wc -c)
+echo "sizes: all skill files $total (budget 59000), SKILL.md bodies $bodies (budget 16000)"
+for f in "$SKILLS"/*/SKILL.md "$SCRIPT" "$OSCRIPT" "$PSCRIPT"; do echo "sizes: $(wc -c < "$f") ${f#"$SKILLS"/}"; done
+if [ "$total" -le 59000 ]; then ok "all skill files together are at most 59000 characters ($total)"; else bad "all skill files are $total characters, over 59000"; fi
+if [ "$bodies" -le 16000 ]; then ok "SKILL.md bodies together are at most 16000 characters ($bodies)"; else bad "SKILL.md bodies are $bodies characters, over 16000"; fi
+expect_eq "exactly three skills" "grafana-opensearch grafana-prometheus grafana-query" "$(find "$SKILLS" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd' ')"
+expect_eq "only grafana-query's description says to read it first" "grafana-query" \
+  "$(for f in "$SKILLS"/*/SKILL.md; do grep -m1 '^description:' "$f" | grep -qi 'first' && basename "$(dirname "$f")"; done | paste -sd' ')"
+if grep -rnIE 'grafana-api-notes|investigate-a-spike|sweep' "$PKG" >&2; then bad "a removed skill or subcommand is still mentioned in the package"; else ok "no mention of grafana-api-notes, investigate-a-spike or sweep in the package"; fi
 
 # --- hygiene -------------------------------------------------------------------------------------------------------------------------
 for s in "$SCRIPT" "$OSCRIPT" "$PSCRIPT"; do

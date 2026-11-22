@@ -1,7 +1,0 @@
-{
-  "results": {
-    "C0": {"status": 200, "frames": [
-      {"schema": {"refId": "C0", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-1.example.org:9100"}}]}, "data": {"values": [[1763650800000], [1]]}}]},
-    "C1": {"status": 400, "error": "parse error: unexpected end of input", "errorSource": "plugin", "frames": []}
-  }
-}

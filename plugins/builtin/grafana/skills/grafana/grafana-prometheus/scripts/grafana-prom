@@ -2,11 +2,8 @@
 """grafana-prom: Prometheus and Mimir helpers on top of Grafana's query API.
 
   grafana-prom compare --ds UID --from T --to T [--offsets 1d,7d] [--step 5m] EXPR
-  grafana-prom sweep --ds UID --selector 'job="node"' (--from T --to T | --last 12h) [--checks FILE]
-                     [--host-label instance] [--trend 7d] [--show-queries] [--json]
 
-compare: one expression over the window and the same window days earlier. sweep: host health checks
-and filesystem days-to-full over a window, in one request.
+compare: one expression over the window and the same window days earlier.
 Times (T): epoch milliseconds, RFC 3339 (converted), or now / now-6h / now-30m / now-7d.
 Every request goes through `aurora-agent call grafana query_datasources`; nothing else touches the
 network and no credential is read or printed. Several Grafana accounts: --account A.
@@ -27,9 +24,6 @@ TIMEOUT = 300
 UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
-LABEL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,100}$")
-NETFS = {"ceph", "fuse.ceph-fuse", "nfs", "nfs4", "cifs", "glusterfs", "fuse.glusterfs", "lustre"}
-FS_EXCL = 'fstype!~"tmpfs|overlay|squashfs|devtmpfs|autofs"'
 ACCOUNT = None
 
 
@@ -140,7 +134,7 @@ def read_json(path):
         die(f"{path}: {e}")
 
 
-# --- shared by compare and sweep --------------------------------------------------------------------
+# --- helpers of compare --------------------------------------------------------------------
 
 def ms(seconds):
     return str(int(round(seconds * 1000)))
@@ -274,223 +268,6 @@ def cmd_compare(a):
     return 1 if failed else 0
 
 
-# --- sweep --------------------------------------------------------------------------------------------
-
-CHECKS_MAX = 30
-PLACEHOLDER_RE = re.compile(r"\$\{([^}]*)\}")
-PLACEHOLDERS = ("SELECTOR", "WINDOW", "HOST")
-FLAG_RE = re.compile(r"^(>=|<=|>|<)(-?\d+(\.\d+)?([eE][+-]?\d+)?)$")
-CHECK_KEYS = {"name", "expr", "flag"}
-FILE_KEYS = {"checks", "replace_default_checks", "disable_default_checks"}
-DEFAULT_CHECKS = [
-    {"name": "up min", "flag": "<1",
-     "expr": "min by (${HOST}) (min_over_time(up{${SELECTOR}}[${WINDOW}]))"},
-    {"name": "load1 max / cpu", "flag": ">2",
-     "expr": "max by (${HOST}) (max_over_time(node_load1{${SELECTOR}}[${WINDOW}])) / "
-             "count by (${HOST}) (node_cpu_seconds_total{${SELECTOR},mode=\"idle\"})"},
-    {"name": "memory used max", "flag": ">0.9",
-     "expr": "max by (${HOST}) (max_over_time((1 - node_memory_MemAvailable_bytes{${SELECTOR}} / "
-             "node_memory_MemTotal_bytes{${SELECTOR}})[${WINDOW}:5m]))"},
-    {"name": "iowait max", "flag": ">0.2",
-     "expr": "max by (${HOST}) (max_over_time((avg by (${HOST}) (rate(node_cpu_seconds_total"
-             "{${SELECTOR},mode=\"iowait\"}[5m])))[${WINDOW}:5m]))"},
-    {"name": "reboots", "flag": ">0",
-     "expr": "sum by (${HOST}) (changes(node_boot_time_seconds{${SELECTOR}}[${WINDOW}]))"},
-    {"name": "network errors", "flag": ">0",
-     "expr": "sum by (${HOST}) (increase(node_network_transmit_errs_total{${SELECTOR}}[${WINDOW}]) + "
-             "increase(node_network_receive_errs_total{${SELECTOR}}[${WINDOW}]))"},
-]
-
-
-def check_placeholders(expr, where):
-    """Only ${SELECTOR}, ${WINDOW} and ${HOST} are placeholders; any other ${...} is a usage error."""
-    for m in PLACEHOLDER_RE.finditer(expr):
-        if m.group(1) not in PLACEHOLDERS:
-            die(f"{where}: unknown placeholder ${{{m.group(1)}}} (only ${{SELECTOR}}, ${{WINDOW}} and ${{HOST}})")
-
-
-def substitute(expr, values):
-    """Replaces exactly the three tokens, in one pass: other text (such as a HOST in a name) is kept."""
-    return PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], expr)
-
-
-def load_checks(path):
-    """The checks of a sweep: the defaults changed by the file, validated (a usage error names the problem)."""
-    checks = list(DEFAULT_CHECKS)
-    if path is None:
-        return checks
-    cfg = read_json(path)
-    if not isinstance(cfg, dict):
-        die(f"{path}: the file is a JSON object")
-    for k in cfg:
-        if k not in FILE_KEYS:
-            die(f"{path}: unknown key {k!r} (use checks, replace_default_checks, disable_default_checks)")
-    if not isinstance(cfg.get("replace_default_checks", False), bool):
-        die(f"{path}: replace_default_checks is true or false")
-    extra = cfg.get("checks", [])
-    if not isinstance(extra, list) or len(extra) > CHECKS_MAX:
-        die(f"{path}: checks is a list of at most {CHECKS_MAX} checks")
-    skip = cfg.get("disable_default_checks", [])
-    if not isinstance(skip, list) or not all(isinstance(s, str) for s in skip):
-        die(f"{path}: disable_default_checks is a list of default check names")
-    known = [c["name"] for c in DEFAULT_CHECKS]
-    for s in skip:
-        if s not in known:
-            die(f"{path}: disable_default_checks names {s!r}, which is no default check ({', '.join(known)})")
-    checks = [] if cfg.get("replace_default_checks") else [c for c in checks if c["name"] not in skip]
-    names = {c["name"] for c in checks}
-    for i, c in enumerate(extra):
-        where = f"{path}: checks[{i}]"
-        if not isinstance(c, dict):
-            die(f"{where} is an object with name, expr and optional flag")
-        for k in c:
-            if k not in CHECK_KEYS:
-                die(f"{where}: unknown key {k!r} (use name, expr, flag)")
-        name, expr, flag = c.get("name"), c.get("expr"), c.get("flag")
-        if not isinstance(name, str) or not 1 <= len(name) <= 60 or not name.isprintable():
-            die(f"{where}: name is 1 to 60 printable characters")
-        if name in names:
-            die(f"{where}: the check name {name!r} is used twice")
-        if not isinstance(expr, str) or not expr.strip() or len(expr) > 2000:
-            die(f"{where} ({name}): expr is a PromQL expression of at most 2000 characters")
-        if flag is not None and (not isinstance(flag, str) or not FLAG_RE.match(flag)):
-            die(f"{where} ({name}): flag is >, >=, < or <= and a number, such as >=300")
-        check_placeholders(expr, f"{where} ({name})")
-        names.add(name)
-        checks.append({"name": name, "expr": expr, **({"flag": flag} if flag is not None else {})})
-    return checks
-
-
-def flagged(v, rule):
-    m = FLAG_RE.match(rule or "")
-    if v is None or not m:
-        return False
-    x = float(m.group(2))
-    return {">=": v >= x, "<=": v <= x, ">": v > x, "<": v < x}[m.group(1)]
-
-
-def short_host(h):
-    """Host name without port and domain (an IPv4 address is kept whole)."""
-    h = re.sub(r":\d+$", "", h)
-    return h if re.fullmatch(r"[\d.]+", h) else h.split(".")[0]
-
-
-def cmd_sweep(a):
-    if not UID_RE.match(a.ds):
-        die("a data source UID has only letters, digits, - and _")
-    sel = a.selector.strip()
-    if not sel or CTRL.search(sel):
-        die("--selector is the label matchers inside the braces, such as 'job=\"node\"'")
-    if not LABEL_RE.match(a.host_label):
-        die("--host-label is a label name")
-    trend_s = parse_step(a.trend)
-    if a.last:
-        if a.frm or a.to:
-            die("use --last or --from and --to, not both")
-        t_s = dt.datetime.now(dt.timezone.utc).timestamp()
-        f_s = t_s - parse_step(a.last)
-    elif a.frm and a.to:
-        f_s = norm_time(a.frm)[1]
-        t_s = norm_time(a.to)[1]
-    else:
-        die("give --from and --to, or --last")
-    if t_s <= f_s:
-        die("--to is not after --from")
-    window = f"{int(t_s - f_s)}s"
-    values = {"SELECTOR": sel, "WINDOW": window, "HOST": a.host_label}
-    checks = load_checks(a.checks)
-    host = a.host_label
-    queries, names = [], {}
-    for i, c in enumerate(checks):
-        check_placeholders(c["expr"], c["name"])
-        ref = f"C{i}"
-        names[ref] = c
-        queries.append(prom_query(ref, a.ds, substitute(c["expr"], values)))
-    fs = f"{{{sel},{FS_EXCL}}}"
-    by = "by (device, mountpoint, fstype)"
-    for ref, e in (("FSIZE", f"max {by} (node_filesystem_size_bytes{fs})"),
-                   ("FFREE", f"min {by} (node_filesystem_avail_bytes{fs})"),
-                   ("FMIN", f"min {by} (min_over_time(node_filesystem_avail_bytes{fs}[{window}]))"),
-                   ("FAGO", f"min {by} (node_filesystem_avail_bytes{fs} offset {a.trend})")):
-        queries.append(prom_query(ref, a.ds, e))
-    if a.show_queries and not a.json:
-        print(f"# window {iso(f_s)} .. {iso(t_s)} (instant queries at --to)")
-        for q in queries:
-            print(f"#   {q['refId']}{' (' + clean(names[q['refId']]['name']) + ')' if q['refId'] in names else ''}: "
-                  f"{clean(q['expr'])}")
-    ok, data, text = send_body({"from": ms(f_s), "to": ms(t_s), "queries": queries})
-    results = data.get("results") if ok and isinstance(data, dict) else None
-    if not isinstance(results, dict):
-        print(f"# ERROR request: {clean(text if not ok else 'no results in the answer')[:400]} "
-              "(a bad expression fails the whole request: try --show-queries)")
-        return 1
-
-    table, hosts, errors = {}, set(), []
-    for ref, c in names.items():
-        err = result_error(results.get(ref))
-        if err:
-            errors.append(f"{c['name']}: {err[:200]}")
-            continue
-        for labels, pts in series_of(results.get(ref)):
-            h = clean(labels.get(host, "(all)"))
-            hosts.add(h)
-            table.setdefault(c["name"], {})[h] = pts[-1][1] if pts else None
-
-    def by_dev(ref):
-        err = result_error(results.get(ref))
-        if err:
-            errors.append(f"filesystems {ref}: {err[:200]}")
-        return {(l.get("device"), l.get("mountpoint")): (p[-1][1] if p else None, l.get("fstype"))
-                for l, p in series_of(results.get(ref))}
-    size, free, fmin, ago = (by_dev(r) for r in ("FSIZE", "FFREE", "FMIN", "FAGO"))
-    fsrows, seen = [], set()
-    for (dev, mp), (sz, fstype) in sorted(size.items(), key=lambda kv: -(kv[1][0] or 0)):
-        # a network filesystem mounted on several hosts is one row: keyed by mountpoint, type and size
-        key = (mp, fstype, round(sz or 0, -9)) if fstype in NETFS else (dev, mp)
-        if key in seen or not sz:
-            continue
-        seen.add(key)
-        fr = free.get((dev, mp), (None,))[0]
-        mn = fmin.get((dev, mp), (None,))[0]
-        ag = ago.get((dev, mp), (None,))[0]
-        per_day = (ag - fr) / (trend_s / 86400) if ag is not None and fr is not None else None
-        days = fr / per_day if per_day and per_day > 0 else None
-        pct = 100 * fr / sz if fr is not None else None
-        fsrows.append({"mountpoint": clean(mp), "fstype": clean(fstype), "size_gb": sz / 1e9,
-                       "free_now_gb": fr / 1e9 if fr is not None else None, "free_pct": pct,
-                       "min_free_in_window_gb": mn / 1e9 if mn is not None else None,
-                       "gb_per_day": per_day / 1e9 if per_day is not None else None,
-                       "days_to_full": days,
-                       "flag": bool((pct is not None and pct < 10) or (days is not None and days < 30))})
-    errors = [clean(e) for e in errors]
-    if a.json:
-        out = {"window": [iso(f_s), iso(t_s)], "checks": table, "filesystems": fsrows, "errors": errors}
-        if a.show_queries:
-            out["queries"] = {q["refId"]: clean(q["expr"]) for q in queries}
-        print(json.dumps(out, indent=1))
-        return 1 if errors else 0
-    hl = sorted(hosts)
-    short = [short_host(h) for h in hl]
-    if len(set(short)) != len(short):
-        short = [re.sub(r":\d+$", "", h) for h in hl]
-    print(f"# sweep {iso(f_s)} .. {iso(t_s)}  (! = crosses the flag)")
-    print("check\tflag\t" + "\t".join(short))
-    for c in checks:
-        row = table.get(c["name"], {})
-        cells = [("!" if flagged(row.get(h), c.get("flag")) else "") + num(row.get(h)) for h in hl]
-        print(f"{clean(c['name'])}\t{clean(c.get('flag', ''))}\t" + "\t".join(cells))
-    print(f"\n# filesystems (one row each; trend over {a.trend}, linear)")
-    print("mountpoint\tfstype\tsize GB\tfree now GB\tfree %\tmin free GB\tGB/day used\tdays to full")
-    for r in fsrows:
-        print(f"{'!' if r['flag'] else ''}{r['mountpoint']}\t{r['fstype']}\t{num(r['size_gb'])}\t"
-              f"{num(r['free_now_gb'])}\t{num(r['free_pct'])}\t{num(r['min_free_in_window_gb'])}\t"
-              f"{num(r['gb_per_day'])}\t{num(r['days_to_full'])}")
-    for e in errors:
-        print(f"# ERROR {e}")
-    return 1 if errors else 0
-
-
-
 def main():
     global ACCOUNT
     common = argparse.ArgumentParser(add_help=False)
@@ -507,20 +284,6 @@ def main():
     p.add_argument("--step", help="resolution (default: fitted to the window)")
     p.add_argument("expr")
     p.set_defaults(fn=cmd_compare)
-
-    p = sub.add_parser("sweep", parents=[common],
-                       help="host health checks and filesystem days-to-full over a window, in one request")
-    p.add_argument("--ds", required=True, help="Prometheus or Mimir data source UID")
-    p.add_argument("--selector", required=True, help="label matchers, such as 'job=\"node\",instance=~\"web.*\"'")
-    p.add_argument("--from", dest="frm")
-    p.add_argument("--to")
-    p.add_argument("--last", help="instead of --from and --to: the window ending now, such as 12h")
-    p.add_argument("--host-label", default="instance", help="label that names a host (default instance)")
-    p.add_argument("--checks", help="JSON file with more checks (see the grafana-prometheus skill)")
-    p.add_argument("--trend", default="7d", help="period of the filesystem trend (default 7d)")
-    p.add_argument("--show-queries", action="store_true", help="print the window and every expression sent")
-    p.add_argument("--json", action="store_true", help="print JSON instead of tables")
-    p.set_defaults(fn=cmd_sweep)
 
     a = ap.parse_args()
     ACCOUNT = getattr(a, "account", None)
