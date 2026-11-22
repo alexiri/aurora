@@ -200,6 +200,16 @@ const EXEMPT: &[(&str, &str, &str)] = &[
     ),
     (
         "GET",
+        "/v1/agents/{agent}/terminal/shell",
+        "FIX-218 (C-1145): the terminal's authority, session-cookie only (a key is 401 `unauthenticated`, not 403), an agent of another workspace 404, a BYO agent 422 `terminal_not_supported`; the auth matrix is it/terminal.rs shell_preference_authority",
+    ),
+    (
+        "PUT",
+        "/v1/agents/{agent}/terminal/shell",
+        "FIX-218: see GET /terminal/shell",
+    ),
+    (
+        "GET",
         "/v1/agents/{agent}/files/content",
         "P5-FILES-1: see GET /files",
     ),
