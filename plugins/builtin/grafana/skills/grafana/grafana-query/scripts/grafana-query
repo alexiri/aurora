@@ -1,0 +1,416 @@
+#!/usr/bin/env python3
+"""grafana-query: run data source queries through Grafana and print the data frames as text.
+
+  grafana-query datasources [--type T]
+  grafana-query panels DASHBOARD_UID
+  grafana-query promql --ds UID --from T --to T [--step 5m | --instant] EXPR [EXPR ...]
+  grafana-query logql  --ds UID --from T --to T [--step 5m | --instant] [--limit N] EXPR [EXPR ...]
+  grafana-query run BODY.json
+  grafana-query frames RESULT.json
+
+Times (T): epoch milliseconds, RFC 3339 (converted), or now / now-6h / now-30m / now-7d.
+Every request goes through `aurora-agent call grafana ...`; nothing else touches the network and no
+credential is read or printed. Several Grafana accounts: --account A (letter or connection id).
+Exit status: 0 all good, 1 a call or a refId failed, 2 bad usage.
+"""
+import argparse
+import datetime as dt
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+POINTS_MAX = 11000  # Prometheus refuses more points than this per series
+ROWS_MAX = 200  # rows printed per frame
+TIMEOUT = 300
+UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+ACCOUNT = None
+
+
+def clean(v):
+    """Text safe to print: control characters (terminal escapes) are replaced."""
+    return CTRL.sub("?", str(v))
+
+
+def die(msg, code=2):
+    print(f"grafana-query: {clean(msg)}", file=sys.stderr)
+    sys.exit(code)
+
+
+def tmp_dir():
+    d = os.path.join(os.environ.get("TMPDIR") or "/tmp", "aurora-agent")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+def mktemp(suffix):
+    fd, path = tempfile.mkstemp(prefix="grafana-query-", suffix=suffix, dir=tmp_dir())
+    os.close(fd)
+    return os.path.abspath(path)
+
+
+def agent(operation, *args, body=None):
+    """One `aurora-agent call grafana` (argument list, no shell). Returns (ok, parsed JSON or None, text)."""
+    out = mktemp(".json")
+    cmd = ["aurora-agent", "call", "grafana", operation, *args]
+    if body is not None:
+        cmd += ["--body", "@" + body]
+    if ACCOUNT:
+        cmd += ["--account", ACCOUNT]
+    cmd += ["--out", out]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+        text = (r.stdout + r.stderr).strip()
+        data = None
+        if r.returncode == 0:
+            try:
+                with open(out, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError) as e:
+                return False, None, f"the answer could not be read: {e}"
+        return r.returncode == 0, data, text
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, None, f"aurora-agent: {e}"
+    finally:
+        try:
+            os.unlink(out)
+        except OSError:
+            pass
+
+
+# --- times and steps -------------------------------------------------------------------------------
+
+def parse_step(s):
+    m = re.fullmatch(r"(\d+)([smhdw])", s or "")
+    if not m or int(m.group(1)) == 0:
+        die(f"bad step {s!r}: use a number and s, m, h, d or w, such as 30s or 5m")
+    return int(m.group(1)) * UNIT_S[m.group(2)]
+
+
+def norm_time(t):
+    """Returns (value for the request, absolute seconds or None)."""
+    now = dt.datetime.now(dt.timezone.utc).timestamp()
+    if re.fullmatch(r"\d{13}", t):
+        return t, int(t) / 1000
+    if re.fullmatch(r"\d{10}", t):
+        return str(int(t) * 1000), int(t)
+    if t == "now":
+        return t, now
+    m = re.fullmatch(r"now-(\d+)([smhdw])", t)
+    if m:
+        return t, now - int(m.group(1)) * UNIT_S[m.group(2)]
+    try:
+        d = dt.datetime.fromisoformat(t.replace("Z", "+00:00"))
+    except ValueError:
+        die(f"bad time {t!r}: use epoch milliseconds, RFC 3339, now or now-6h")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.timezone.utc)
+    return str(int(d.timestamp() * 1000)), d.timestamp()
+
+
+def fit_step(window_s):
+    """A step, as Prometheus writes it, that keeps a window under POINTS_MAX points."""
+    need = math.ceil(window_s / (POINTS_MAX - 1))
+    for unit, secs in (("s", 1), ("m", 60), ("h", 3600), ("d", 86400)):
+        if need <= secs * 59 or unit == "d":
+            return f"{math.ceil(need / secs)}{unit}"
+    return f"{need}s"
+
+
+# --- frames ----------------------------------------------------------------------------------------
+
+def fmt_value(v, ftype):
+    if v is None:
+        return ""
+    if ftype == "time" and isinstance(v, (int, float)):
+        try:
+            return dt.datetime.fromtimestamp(v / 1000, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        except (OverflowError, OSError, ValueError):
+            return str(v)
+    if isinstance(v, float):
+        return f"{v:.6g}"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, separators=(",", ":"))
+    return clean(v).replace("\t", " ").replace("\n", "\\n")
+
+
+def print_frame(frame):
+    schema = frame.get("schema") or {}
+    fields = schema.get("fields") or []
+    cols = (frame.get("data") or {}).get("values") or []
+    names = []
+    for f in fields:
+        label = ",".join(f"{k}={v}" for k, v in sorted((f.get("labels") or {}).items()))
+        names.append(clean(f.get("name", "")) + (f"{{{clean(label)}}}" if label else ""))
+    title = schema.get("name") or ""
+    print(f"## frame {clean(title)}".rstrip())
+    print("\t".join(names))
+    n = max((len(c) for c in cols), default=0)
+    for i in range(min(n, ROWS_MAX)):
+        row = []
+        for j, c in enumerate(cols):
+            ftype = fields[j].get("type") if j < len(fields) else None
+            row.append(fmt_value(c[i] if i < len(c) else None, ftype))
+        print("\t".join(row))
+    if n > ROWS_MAX:
+        print(f"... {n - ROWS_MAX} more rows not shown ({n} in all)")
+
+
+def print_results(results):
+    """Prints every refId; returns the number of refIds with an error."""
+    bad = 0
+    for ref in sorted(results):
+        r = results[ref] or {}
+        status = r.get("status", "?")
+        err = r.get("error")
+        print(f"# {clean(ref)} {clean(status)}" + (f" error: {clean(err)}" if err else "")
+              + (f" (errorSource {clean(r['errorSource'])})" if r.get("errorSource") else ""))
+        if err or (isinstance(status, int) and status >= 400):
+            bad += 1
+        for frame in r.get("frames") or []:
+            print_frame(frame)
+    return bad
+
+
+def run_body(body):
+    """Sends a ds/query body. On a failure of several queries, retries each refId alone, because
+    Grafana answers HTTP 400 for the whole request when any refId failed and aurora-agent keeps
+    only the first lines of such an answer."""
+    path = mktemp(".json")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(body, f)
+        ok, data, text = agent("query_datasources", body=path)
+    finally:
+        os.unlink(path)
+    if ok:
+        if not isinstance(data, dict) or not isinstance(data.get("results"), dict):
+            print(f"# no results in the answer: {clean(json.dumps(data)[:300])}")
+            return 1
+        return 1 if print_results(data["results"]) else 0
+    queries = body.get("queries") or []
+    if len(queries) < 2:
+        print(f"# {clean(queries[0].get('refId', 'A') if queries else 'A')} failed: {clean(text)}")
+        return 1
+    print("# the request failed as a whole; trying each refId alone")
+    bad = 0
+    for q in queries:
+        bad += run_body({**body, "queries": [q]})
+    return 1 if bad else 0
+
+
+# --- subcommands -----------------------------------------------------------------------------------
+
+def cmd_datasources(a):
+    ok, data, text = agent("list_datasources")
+    if not ok:
+        die(f"list_datasources failed: {text}", 1)
+    rows = [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
+    if a.type:
+        rows = [d for d in rows if d.get("type") == a.type]
+    if not rows:
+        print("no data sources listed: Grafana shows this list only to tokens allowed to read data "
+              "source settings (Viewer and Editor usually are not). Use `grafana-query panels "
+              "<dashboard uid>` to find the UIDs a dashboard queries.")
+        return 0
+    for d in rows:
+        print(f"{clean(d.get('uid', ''))}\t{clean(d.get('type', ''))}\t{clean(d.get('name', ''))}")
+    return 0
+
+
+def walk_panels(panels):
+    for p in panels or []:
+        if isinstance(p, dict):
+            yield p
+            yield from walk_panels(p.get("panels"))
+
+
+def variables(dash):
+    out = {}
+    for v in (dash.get("templating") or {}).get("list") or []:
+        cur = v.get("current") or {}
+        val = cur.get("value", cur.get("text"))
+        if isinstance(val, list):
+            val = ",".join(str(x) for x in val)
+        out[v.get("name")] = val
+    return out
+
+
+def resolve_ds(ds, vars_):
+    """(uid, type) of a panel or target datasource, resolving ${var} through templating."""
+    if isinstance(ds, str):
+        uid, typ = ds, ""
+    elif isinstance(ds, dict):
+        uid, typ = ds.get("uid") or "", ds.get("type") or ""
+    else:
+        return "", ""
+    m = re.fullmatch(r"\$\{?(\w+)\}?|\[\[(\w+)\]\]", uid)
+    if m:
+        name = m.group(1) or m.group(2)
+        uid = f"{vars_[name]} (variable {name})" if vars_.get(name) not in (None, "") else uid
+    return uid, typ
+
+
+def describe_target(t):
+    parts = []
+    for key in ("expr", "query", "rawSql"):
+        if t.get(key):
+            parts.append(f"{key}={t[key]}")
+    if t.get("metrics"):
+        parts.append("metrics=" + ",".join(f"{m.get('type', '?')}:{m.get('field', '')}" for m in t["metrics"]))
+    if t.get("bucketAggs"):
+        parts.append("bucketAggs=" + ",".join(f"{b.get('type', '?')}:{b.get('field', '')}" for b in t["bucketAggs"]))
+    if t.get("timeField"):
+        parts.append(f"timeField={t['timeField']}")
+    return " | ".join(parts)
+
+
+def cmd_panels(a):
+    if not UID_RE.match(a.uid):
+        die("a dashboard UID has only letters, digits, - and _")
+    ok, data, text = agent("get_dashboard", f"uid={a.uid}")
+    if not ok:
+        die(f"get_dashboard failed: {text}", 1)
+    dash = (data or {}).get("dashboard") if isinstance(data, dict) else None
+    if not isinstance(dash, dict):
+        die("no dashboard in the answer", 1)
+    vars_ = variables(dash)
+    n = 0
+    for p in walk_panels(dash.get("panels")):
+        if p.get("type") == "row" and not p.get("targets"):
+            continue
+        n += 1
+        uid, typ = resolve_ds(p.get("datasource"), vars_)
+        print(f"[{clean(p.get('id', '?'))}] {clean(p.get('title', ''))} ({clean(p.get('type', ''))}) "
+              f"datasource: {clean(uid)} {clean(typ)}".rstrip())
+        for t in p.get("targets") or []:
+            tuid, ttyp = resolve_ds(t.get("datasource"), vars_)
+            own = f" [{clean(tuid)} {clean(ttyp)}]" if t.get("datasource") and (tuid, ttyp) != (uid, typ) else ""
+            print(f"  {clean(t.get('refId', '?'))}{own}: {clean(describe_target(t))}")
+    if n == 0:
+        print("no panels with queries in this dashboard")
+    return 0
+
+
+def cmd_promql(a, kind="prometheus"):
+    for e in a.expr:
+        if not e.strip():
+            die("an expression is empty")
+    if not UID_RE.match(a.ds):
+        die("a data source UID has only letters, digits, - and _")
+    f, f_s = norm_time(a.frm)
+    t, t_s = norm_time(a.to)
+    window = (t_s - f_s) if f_s is not None and t_s is not None else None
+    if window is not None and window <= 0:
+        die("--to is not after --from")
+    if len(a.expr) > 26:
+        die("at most 26 expressions (refIds A to Z)")
+    step_s = None
+    max_points = 1
+    if not a.instant:
+        if a.step:
+            step_s = parse_step(a.step)
+        elif window is not None:
+            step_s = max(15, math.ceil(window / 240))
+        else:
+            step_s = 60
+        if window is not None:
+            points = window / step_s
+            if points > POINTS_MAX:
+                die(f"{int(points)} points per series is over the limit of {POINTS_MAX}: "
+                    f"use --step {fit_step(window)} or a shorter window")
+            max_points = max(1, math.ceil(points) + 1)
+    queries = []
+    for i, e in enumerate(a.expr):
+        q = {"refId": chr(ord("A") + i), "datasource": {"uid": a.ds, "type": kind}, "expr": e,
+             "intervalMs": (step_s or 1) * 1000, "maxDataPoints": max_points}
+        if kind == "prometheus":
+            q["instant" if a.instant else "range"] = True
+            if step_s:
+                q["interval"] = f"{step_s}s"
+        else:
+            q["queryType"] = "instant" if a.instant else "range"
+            q["maxLines"] = a.limit
+            if step_s:
+                q["step"] = f"{step_s}s"
+        queries.append(q)
+    return run_body({"from": f, "to": t, "queries": queries})
+
+
+def cmd_logql(a):
+    return cmd_promql(a, "loki")
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError) as e:
+        die(f"{path}: {e}")
+
+
+def cmd_run(a):
+    body = read_json(a.body)
+    if not isinstance(body, dict) or not isinstance(body.get("queries"), list) or not body["queries"]:
+        die("the body needs a non-empty queries list (and from and to)")
+    refs = [q.get("refId", "A") for q in body["queries"] if isinstance(q, dict)]
+    if len(refs) != len(set(refs)):
+        die("every query needs its own refId")
+    return run_body(body)
+
+
+def cmd_frames(a):
+    data = read_json(a.result)
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, dict):
+        die("no results in that file")
+    return 1 if print_results(results) else 0
+
+
+def main():
+    global ACCOUNT
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--account", help="Grafana account: letter or connection id")
+    ap = argparse.ArgumentParser(prog="grafana-query", description=__doc__.split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("datasources", parents=[common], help="uid, type and name of the data sources Grafana lists")
+    p.add_argument("--type", help="only this plugin type, e.g. prometheus")
+    p.set_defaults(fn=cmd_datasources)
+
+    p = sub.add_parser("panels", parents=[common], help="a dashboard's panels, data sources and queries")
+    p.add_argument("uid")
+    p.set_defaults(fn=cmd_panels)
+
+    for name, fn, extra in (("promql", cmd_promql, "Prometheus or Mimir"), ("logql", cmd_logql, "Loki")):
+        p = sub.add_parser(name, parents=[common], help=f"{extra} queries, one refId per expression")
+        p.add_argument("--ds", required=True, help="data source UID")
+        p.add_argument("--from", dest="frm", required=True)
+        p.add_argument("--to", required=True)
+        p.add_argument("--step", help="resolution, such as 30s or 5m (range queries)")
+        p.add_argument("--instant", action="store_true", help="one point per series at --to")
+        if name == "logql":
+            p.add_argument("--limit", type=int, default=100, help="most log lines (default 100)")
+        p.add_argument("expr", nargs="+")
+        p.set_defaults(fn=fn)
+
+    p = sub.add_parser("run", parents=[common], help="send a ds/query body file (OpenSearch, SQL, anything)")
+    p.add_argument("body")
+    p.set_defaults(fn=cmd_run)
+
+    p = sub.add_parser("frames", help="print a saved ds/query answer")
+    p.add_argument("result")
+    p.set_defaults(fn=cmd_frames)
+
+    a = ap.parse_args()
+    ACCOUNT = getattr(a, "account", None)
+    sys.exit(a.fn(a))
+
+
+if __name__ == "__main__":
+    main()

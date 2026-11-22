@@ -1,0 +1,21 @@
+{
+  "results": {
+    "A": {
+      "status": 200,
+      "frames": [
+        {
+          "schema": {"refId": "A", "name": "api 200", "meta": {"type": "timeseries-multi", "typeVersion": [0, 0]},
+                     "fields": [{"name": "Time", "type": "time", "typeInfo": {"frame": "time.Time"}},
+                                {"name": "Value", "type": "number", "typeInfo": {"frame": "float64"}, "labels": {"job": "api", "status": "200"}}]},
+          "data": {"values": [[1763643600000, 1763643900000, 1763644200000], [10.5, 11, 0.000123456789]]}
+        },
+        {
+          "schema": {"refId": "A", "name": "api 500",
+                     "fields": [{"name": "Time", "type": "time"},
+                                {"name": "Value", "type": "number", "labels": {"job": "api", "status": "500"}}]},
+          "data": {"values": [[1763643600000, 1763643900000, 1763644200000], [0, null, 3]]}
+        }
+      ]
+    }
+  }
+}

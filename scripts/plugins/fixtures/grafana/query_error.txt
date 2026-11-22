@@ -1,0 +1,2 @@
+HTTP 400 from the app
+{"results":{"B":{"status":400,"error":"parse error: unexpected end of input","errorSource":"plugin","frames":[]}}}

@@ -494,8 +494,11 @@ async fn the_shipped_indico_version_replaces_the_previous_one_automatically() {
     // (P5-APPSKILL-1) The shipped package carries its skills and operations file in the archive.
     let base = format!("{root}/../../plugins/builtin/indico");
     let files: Vec<(String, Vec<u8>)> = [
-        "skills/indico/indico-book-free-room/SKILL.md",
-        "skills/indico/indico-find-category-events/SKILL.md",
+        "skills/indico/indico-find-and-book-room/SKILL.md",
+        "skills/indico/indico-book-recurring-room/SKILL.md",
+        "skills/indico/indico-meeting-prep/SKILL.md",
+        "skills/indico/indico-search-talks-and-files/SKILL.md",
+        "skills/indico/indico-category-events/SKILL.md",
         "skills/indico/indico-api-families/SKILL.md",
         "agent/indico/operations.json",
     ]
@@ -513,7 +516,7 @@ async fn the_shipped_indico_version_replaces_the_previous_one_automatically() {
         .collect();
     let v2 = a.upload_with(&shipped, &refs).await;
     assert_eq!(v2["package_id"], "indico", "{v2}");
-    assert_eq!(v2["version"], "1.5.0", "{v2}");
+    assert_eq!(v2["version"], "1.6.0", "{v2}");
     assert_eq!(v2["status"], "active", "activated without approval: {v2}");
     assert_eq!(a.status(&v1["id"]).await["status"], "superseded");
 }

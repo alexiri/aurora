@@ -34,14 +34,14 @@ change: on a 404 or an unexpected shape, say so.
 
 | Purpose | Request |
 |---|---|
-| Free rooms | `GET /rooms/api/rooms/search?building=&capacity=&start_dt=&end_dt=&repeat_frequency=NEVER` |
-| Room details | `GET /rooms/api/rooms/<id>` (the search returns ids only) |
-| All rooms, locations, equipment | `GET /rooms/api/rooms/`, `/rooms/api/locations`, equipment types |
-| Is one room free | `GET /rooms/api/rooms/<id>/availability/...` |
-| Booking calendar, one booking, mine | `GET /rooms/api/calendar`, `/rooms/api/bookings/<id>`, `/rooms/api/bookings/mine` |
+| Free rooms | `GET /rooms/api/rooms/search?capacity=&start_dt=&end_dt=&repeat_frequency=NEVER` (`building=` is optional: leave it out and filter the room list; `repeat_frequency=WEEK` with `repeat_interval` and the LAST date in `end_dt` checks a whole series; the answer's `rooms` are the free ids, `total` counts busy rooms too) |
+| Room details | `GET /rooms/api/rooms/<id>` (the search returns ids only); every room at once: `GET /rooms/api/rooms/` |
+| Locations, equipment | `GET /rooms/api/locations`, equipment types |
+| Is one room free | `GET /rooms/api/rooms/<id>/availability/...` (ignores dates: always the next days from today) |
+| Booking calendar, one booking, mine | `GET /rooms/api/calendar?start_date=&end_date=` (all rooms, ignores building and room filters, about 2 MB a month), `/rooms/api/bookings/<id>`, `/rooms/api/bookings/mine` |
 | Book with all options | `POST /rooms/api/booking/create` (JSON, `full:everything`) |
-| Cancel | `POST /rooms/api/bookings/<id>/cancel` and the per-date cancel of a recurring booking |
-| Search | `GET /search/api/search`, `GET /category/search?q=`, user search (returns personal data) |
+| Cancel | `POST /rooms/api/bookings/<id>/cancel`; one date of a recurring booking `POST /rooms/api/bookings/<id>/<YYYY-MM-DD>/cancel` |
+| Search | `GET /search/api/search?q=&type=` (`type` required: `event`, `contribution`, `attachment`, `event_note`, `category`; answer has `results`, `total`, `pages`, `aggregations`), `GET /category/search?q=`, user search (returns personal data) |
 | Favorites | `/user/api/favorites/...` for users, categories, events; rooms under `/rooms/api/` |
 | Prepare an event | `GET /event/create/prepare`: Indico cannot create events by API |
 
@@ -54,4 +54,7 @@ server's local time.
 - Confirm room, time and person before any booking; never retry a booking.
 - Always send `repeat_frequency` to the room search, or busy rooms are returned as well.
 - Never guess availability: if a scope is missing, say which one.
-- Task procedures: `book-free-room.md`, `find-category-events.md`.
+- Task skills: `indico-find-and-book-room`, `indico-book-recurring-room`, `indico-meeting-prep`,
+  `indico-search-talks-and-files`, `indico-category-events`. Run `aurora-agent describe indico <operation>`
+  for an operation's parameters (`search_rooms`, `search`, `list_category_events`, `get_event`,
+  `get_event_file`, `get_booking_calendar`, `cancel_booking_occurrence`, `list_favorite_categories`).

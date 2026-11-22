@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Free rooms for one time slot, joined with the cached room list.
+# Usage: free-rooms DATE START END CAPACITY [BUILDING ...]
+#   e.g. free-rooms 2026-11-27 10:00 11:00 10 31 600 513
+# Output TSV: id, full_name, capacity, direct|NEEDS-CONFIRMATION, comments
+# One search without `building` (every building of the server) plus the room list, which is cached
+# per account and day under ${TMPDIR:-/tmp}/aurora-agent. With several Indico accounts set
+# INDICO_ACCOUNT to the account letter or connection id. Requests go through aurora-agent only.
+set -euo pipefail
+
+usage() { sed -n '2,3s/^# //p' "$0" >&2; exit 2; }
+[ $# -ge 4 ] || usage
+d=$1; s=$2; e=$3; cap=$4; shift 4
+[[ $d =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "free-rooms: DATE must be YYYY-MM-DD" >&2; exit 2; }
+[[ $s =~ ^[0-9]{2}:[0-9]{2}$ && $e =~ ^[0-9]{2}:[0-9]{2}$ ]] || { echo "free-rooms: times must be HH:MM" >&2; exit 2; }
+[[ $cap =~ ^[1-9][0-9]*$ ]] || { echo "free-rooms: CAPACITY must be a positive number" >&2; exit 2; }
+date -d "$d" +%F >/dev/null 2>&1 || { echo "free-rooms: not a date: $d" >&2; exit 2; }
+
+acct=()
+tag=default
+if [ -n "${INDICO_ACCOUNT:-}" ]; then
+  acct=(--account "$INDICO_ACCOUNT")
+  tag=$(printf '%s' "$INDICO_ACCOUNT" | tr -c 'A-Za-z0-9' '_')
+fi
+
+blds=$(printf '%s\n' "$@" | jq -R 'select(length > 0)' | jq -sc .)
+dir="${TMPDIR:-/tmp}/aurora-agent"
+mkdir -p -m 700 "$dir"
+cache="$dir/indico-rooms-$tag-$(date +%F).json"
+if [ ! -s "$cache" ]; then
+  t=$(mktemp "$dir/rooms.XXXXXX")
+  if aurora-agent call indico list_all_rooms "${acct[@]}" --raw > "$t"; then
+    mv "$t" "$cache"
+  else
+    rm -f "$t"
+    echo "free-rooms: could not read the room list (scope read:everything needed)" >&2
+    exit 1
+  fi
+fi
+
+aurora-agent call indico search_rooms "${acct[@]}" \
+  capacity="$cap" start_dt="${d}T${s}:00" end_dt="${d}T${e}:00" repeat_frequency=NEVER --raw |
+jq -r --slurpfile r "$cache" --argjson b "$blds" '
+  if (.rooms | type) != "array" then error("search gave no room list: \(tostring | .[0:200])") else . end
+  | .rooms as $ids
+  | [$r[0][] | select(.id as $i | $ids | index($i))
+             | select(($b|length)==0 or (.building as $x | $b | index($x)))]
+  | sort_by(.reservations_need_confirmation, .building, .capacity)[]
+  | [.id, .full_name, .capacity,
+     (if .reservations_need_confirmation then "NEEDS-CONFIRMATION" else "direct" end),
+     ((.comments // "") | gsub("\\s+"; " ") | .[0:160])] | @tsv'

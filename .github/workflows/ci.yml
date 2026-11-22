@@ -138,6 +138,10 @@ jobs:
       # reuses the aurora and aurora-gateway binaries the fixture step just built.
       - name: Built-in plugin checks (validate, test, coverage, scopes, docs)
         run: SKIP_CARGO=1 bash scripts/plugins/check-builtin.sh
+      - name: Built-in skill scripts (stubbed aurora-agent, P5-APPSKILL-4)
+        run: bash scripts/plugins/indico_skills_test.sh
+      - name: Grafana skill script (stubbed aurora-agent, P5-GRAFANA-2)
+        run: bash scripts/plugins/grafana_skills_test.sh
       - name: Build nextest archive
         run: >-
           cargo nextest archive --workspace --all-features

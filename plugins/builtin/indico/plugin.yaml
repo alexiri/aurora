@@ -1,6 +1,6 @@
 package:
   id: indico
-  version: 1.5.0
+  version: 1.6.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -254,7 +254,7 @@ apps:
           - { label: Duration, source: body, steps: [ { json: /duration } ] }
           - { label: Type, source: body, steps: [ { json: /event_type } ] }
     agent:
-      summary: "Events, timetables, materials and room booking in Indico: find a free room and book it, events of a category."
+      summary: "Events, meeting prep, talk and file search, room search and booking (also recurring) on your Indico server."
       instructions: |
         Send requests to the Indico address shown with the account; Aurora adds the token. Never ask
         for one, never add ak, apikey, signature, timestamp or cookieauth, and never send this

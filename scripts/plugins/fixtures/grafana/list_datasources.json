@@ -1,0 +1,5 @@
+[
+  {"id": 1, "uid": "prom-main", "type": "prometheus", "name": "Main Prometheus", "url": "http://prom.internal:9090", "secureJsonFields": {"httpHeaderValue1": true}},
+  {"id": 2, "uid": "loki-main", "type": "loki", "name": "Main Loki"},
+  {"id": 3, "uid": "os-logs", "type": "grafana-opensearch-datasource", "name": "Logs\u001b[31m"}
+]
