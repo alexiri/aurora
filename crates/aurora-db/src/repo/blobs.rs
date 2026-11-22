@@ -30,9 +30,18 @@ pub async fn delete(exec: impl PgExecutor<'_>, key: &str) -> Result<(), DbError>
     Ok(())
 }
 
-/// Delete up to `limit` `postgres`-backend blobs older than `min_age_secs` that no `attachments`
-/// row references (rows removed by a conversation/workspace/agent/org cascade leave their blobs
-/// behind). `FOR UPDATE ... SKIP LOCKED` keeps concurrent sweeps on several replicas disjoint.
+/// Every column that stores a `blobs.key`: the references the orphan sweep honours (D-466, FIX-223).
+/// A table that stores a blob key adds itself here and to the query of [`delete_unreferenced`] in
+/// the same change; `scripts/guards/blob-references.sh` fails on a `*blob_key` column of a
+/// migration that is not named below (`("table", "column")`).
+pub const BLOB_REFERENCE_COLUMNS: &[(&str, &str)] =
+    &[("attachments", "blob_key"), ("agents", "avatar_blob_key")];
+
+/// Delete up to `limit` `postgres`-backend blobs older than `min_age_secs` that nothing references
+/// (rows removed by a conversation/workspace/agent/org cascade leave their blobs behind). The
+/// references are those of [`BLOB_REFERENCE_COLUMNS`]: an `attachments` row, or an agent's
+/// `avatar_blob_key`. A deleted agent's avatar blob is unreferenced and goes (SEC-47).
+/// `FOR UPDATE ... SKIP LOCKED` keeps concurrent sweeps on several replicas disjoint.
 /// Returns how many were deleted.
 pub async fn delete_unreferenced(
     exec: impl PgExecutor<'_>,
@@ -45,6 +54,7 @@ pub async fn delete_unreferenced(
              WHERE b.created_at < now() - make_interval(secs => $1)
                AND NOT EXISTS (SELECT 1 FROM attachments a
                                WHERE a.blob_backend = 'postgres' AND a.blob_key = b.key)
+               AND NOT EXISTS (SELECT 1 FROM agents g WHERE g.avatar_blob_key = b.key)
              ORDER BY b.created_at LIMIT $2
              FOR UPDATE OF b SKIP LOCKED)",
     )

@@ -1,0 +1,2 @@
+# FIX-223 (D-466): `table.column  # reason` for a `*blob_key` column that does not point into `blobs`.
+# None today: both `attachments.blob_key` and `agents.avatar_blob_key` reference `blobs.key`.

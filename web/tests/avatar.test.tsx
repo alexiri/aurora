@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { Avatar } from "@/components/agent-avatar";
 import { AgentsList } from "@/components/agents-list";
 import { InstructionsTab } from "@/components/agents/instructions-tab";
 import type { Agent } from "@/lib/api/queries";
@@ -112,5 +113,19 @@ describe("agents list", () => {
     const { container } = render(<AgentsList agents={[withAvatar, { ...without, id: "a2", name: "Zed" }]} />);
     expect(container.querySelector("img")).toHaveAttribute("src", "/v1/public/avatars/KEY");
     expect(screen.getByText("Z")).toBeInTheDocument();
+  });
+});
+
+describe("avatar image that fails to load (FIX-223)", () => {
+  it("falls back to the initial tile on an image error and tries a new url again", () => {
+    const { container, rerender } = render(<Avatar name="Bot" url="/v1/public/avatars/GONE" />);
+    const img = container.querySelector("img")!;
+    expect(img).toHaveAttribute("src", "/v1/public/avatars/GONE");
+    fireEvent.error(img);
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("B")).toBeInTheDocument();
+    // A new upload gives a new url: the image is tried again.
+    rerender(<Avatar name="Bot" url="/v1/public/avatars/NEW" />);
+    expect(container.querySelector("img")).toHaveAttribute("src", "/v1/public/avatars/NEW");
   });
 });

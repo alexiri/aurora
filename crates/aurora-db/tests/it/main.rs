@@ -2,6 +2,7 @@
 mod agent_link_direction_migration;
 mod app_setup_request_reason_migration;
 mod authz_groups;
+mod avatar_blob_refs_migration;
 mod conversations_threads_migration;
 mod counters_build;
 mod db;

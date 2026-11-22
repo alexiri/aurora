@@ -871,7 +871,7 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | eval_judge_model_id | text null | (phase 5, P4-EVAL-1) the judge's model (a model the key's endpoint serves); written together with `eval_judge_secret_id` by `PUT eval-settings`; ignored while the secret id is null (deleting the secret nulls the id only) |
 | eval_regression_notify | bool not null default true | (phase 5, P4-EVAL-1, C-871) whether the Evals page shows a regression notice for this agent |
 | eval_judge_test_result, eval_judge_test_reason, eval_judge_test_ms, eval_judge_tested_at | text null (`ok` or `failed`), text null, bigint null, timestamptz null | (P5-REFINE-20, C-1101) the last test of the grader, written with the judge in the same transaction; display data, never the provider's text |
-| avatar_blob_key | text null | |
+| avatar_blob_key | text null | the avatar's `blobs.key`; a reference the orphan-blob sweep honours (FIX-223, D-466); partial index `agents_avatar_blob_key_idx` (avatar_blob_key) WHERE avatar_blob_key IS NOT NULL (migration `20261201000274`, which also clears pointers to blobs that no longer exist) |
 | avatar_public_key | text null | unguessable, rotating; gates the public avatar GET; partial index (avatar_public_key) WHERE avatar_public_key IS NOT NULL |
 | resource_overrides | jsonb null | `ResourceProfile` (instance admins only) |
 | home_sync_generation | bigint not null default 0 | desired projection generation |
