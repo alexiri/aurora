@@ -1,3 +1,7 @@
+"use client";
+
+import { useState } from "react";
+
 import { cn } from "@/lib/utils";
 
 const TINTS = [
@@ -44,9 +48,21 @@ export function Avatar({
   className?: string;
 }) {
   const sizeClass = SIZES[size] ?? SIZES[32];
-  if (url) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={url} alt="" width={size} height={size} className={cn("shrink-0 rounded-full object-cover", sizeClass, className)} />;
+  // The image can be gone (404) while the agent still names it: show the initial. The failure is
+  // keyed on the url, so a new upload (a new url) is tried again.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (url && url !== failedUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt=""
+        width={size}
+        height={size}
+        onError={() => setFailedUrl(url)}
+        className={cn("shrink-0 rounded-full object-cover", sizeClass, className)}
+      />
+    );
   }
   return (
     <span

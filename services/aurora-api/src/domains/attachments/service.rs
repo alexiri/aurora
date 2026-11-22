@@ -349,9 +349,10 @@ pub async fn sweep_pending(pool: &PgPool) -> Result<usize, aurora_core::ApiError
 /// not have its row committed yet.
 pub const ORPHAN_BLOB_MIN_AGE_SECS: f64 = 3600.0;
 
-/// Hourly job part 2: delete `postgres` blobs that no attachment row references any more
+/// Hourly job part 2: delete `postgres` blobs that nothing references any more
 /// (cascades from conversation/workspace/agent/org deletes remove rows but not blobs), so deleted
-/// content does not persist. Batched, `SKIP LOCKED`, idempotent across replicas. Returns the
+/// content does not persist. A reference is an attachment row or an agent's `avatar_blob_key`
+/// (`aurora_db::repo::blobs::BLOB_REFERENCE_COLUMNS`, D-466). Batched, `SKIP LOCKED`, idempotent across replicas. Returns the
 /// number of blobs removed.
 pub async fn sweep_orphan_blobs(pool: &PgPool) -> Result<usize, aurora_core::ApiError> {
     let mut total = 0usize;

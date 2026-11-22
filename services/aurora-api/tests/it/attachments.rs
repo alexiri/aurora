@@ -1009,6 +1009,42 @@ async fn sweep_removes_blobs_orphaned_by_cascades_and_keeps_referenced_ones() {
     );
 }
 
+/// FIX-223 (D-466): an old blob referenced only by `agents.avatar_blob_key` is kept by the sweep;
+/// an old blob nothing references is removed, as before.
+#[tokio::test]
+async fn sweep_keeps_old_blobs_referenced_by_an_agent_avatar() {
+    let r = rig().await;
+    let agent = r.agent("avatar-holder").await;
+    for k in ["avatar-blob", "orphan-old"] {
+        sqlx::query("INSERT INTO blobs (key, content) VALUES ($1, 'x')")
+            .bind(k)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE agents SET avatar_blob_key = 'avatar-blob', avatar_public_key = 'pub' WHERE id = $1")
+        .bind(agent)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blobs SET created_at = now() - interval '2 hours'")
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        aurora_api::jobs::sweep_attachments(r.h.pool())
+            .await
+            .unwrap(),
+        1,
+        "only the unreferenced blob goes"
+    );
+    let keys: Vec<String> = sqlx::query_scalar("SELECT key FROM blobs ORDER BY key")
+        .fetch_all(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(keys, vec!["avatar-blob".to_string()]);
+}
+
 #[tokio::test]
 async fn outbound_send_file_is_refused_at_the_org_storage_quota() {
     // P2-015 (RFE-015, SEC-48): the agent's `send_file` obeys the org quota, not only the

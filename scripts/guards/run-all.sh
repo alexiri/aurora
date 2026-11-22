@@ -30,6 +30,9 @@ if require_helm helm-gateway-role; then bash deploy/helm/check-gateway-role.sh; 
 echo "== limits-readers (FIX-116: every limits.rs constant has a reader and a docs/02 row)"
 bash scripts/guards/limits-readers.sh
 
+echo "== blob-references (FIX-223: every *blob_key column is a reference the orphan-blob sweep honours)"
+bash scripts/guards/blob-references.sh
+
 echo "== live-settings-readers (FIX-168: no boot-config read of a live-settings key; use state.ops())"
 bash scripts/guards/live-settings-readers.sh
 

@@ -385,3 +385,76 @@ async fn avatar_routes_require_agent_access() {
     .await;
     assert_eq!(s, 404);
 }
+
+/// FIX-223 (D-466): the hourly orphan-blob sweep counts `agents.avatar_blob_key` as a reference,
+/// so an avatar older than the age floor survives it (it used to be deleted about an hour after
+/// upload). A deleted agent's avatar blob is still erased (SEC-47). The public route stays the
+/// same: the missing-blob 404 is byte-identical to the unknown-key 404.
+#[tokio::test]
+async fn avatar_survives_the_orphan_blob_sweep() {
+    let w = world().await;
+    let (s, a) = w.put(encode(&image(80, 80), ImageFormat::Png)).await;
+    assert_eq!(s, 200, "{a}");
+    let url = a["avatar_url"].as_str().unwrap().to_owned();
+    let (_, _, before) = w.public(&url).await;
+    assert_clean_png(&before);
+
+    let backdate = || async {
+        sqlx::query("UPDATE blobs SET created_at = now() - interval '2 hours'")
+            .execute(w.h.pool())
+            .await
+            .unwrap();
+    };
+    backdate().await;
+    let removed = aurora_api::domains::attachments::sweep_orphan_blobs(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(removed, 0, "the avatar blob is referenced by its agent");
+
+    let (s, _, body) = w.public(&url).await;
+    assert_eq!(s, 200, "the public avatar is still served after the sweep");
+    assert_eq!(body, before);
+    let (s, _, body) = raw(
+        &w.h,
+        Method::GET,
+        &w.uri(),
+        &[("cookie", &w.member)],
+        vec![],
+    )
+    .await;
+    assert_eq!(s, 200);
+    assert_eq!(body, before);
+
+    // Deleting the agent leaves the blob unreferenced: the sweep erases it (SEC-47).
+    let (s, _, _) = raw(
+        &w.h,
+        Method::DELETE,
+        &format!("/v1/agents/{}", w.agent),
+        &[("cookie", &w.member), ("origin", ORIGIN)],
+        vec![],
+    )
+    .await;
+    assert_eq!(s, 204);
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM blobs")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "the cascade leaves the blob until the sweep");
+    backdate().await;
+    let removed = aurora_api::domains::attachments::sweep_orphan_blobs(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(removed, 1);
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM blobs")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "a deleted agent's avatar blob is erased");
+
+    // The public route is unchanged: a missing blob and an unknown key answer identically.
+    let (s_gone, _, gone_body) = w.public(&url).await;
+    let unknown = format!("/v1/public/avatars/{}", "A".repeat(43));
+    let (s_unk, _, unk_body) = w.public(&unknown).await;
+    assert_eq!((s_gone, s_unk), (404, 404));
+    assert_eq!(gone_body, unk_body);
+}
