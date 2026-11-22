@@ -1780,6 +1780,8 @@ async fn serve_exec_leg(
         mode: spec.mode,
         command: spec.command,
         tty: spec.tty,
+        // (FIX-218) The SSH grant carries the person's stored choice; sftp ignores it.
+        shell: if ssh { binding.shell } else { None },
         env: spec.env,
     };
     if state

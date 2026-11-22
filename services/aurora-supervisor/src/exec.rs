@@ -26,6 +26,7 @@ use std::time::Duration;
 use aurora_core::limits::{EXECS_PER_SANDBOX, TERMINAL_CHUNK, TERMINAL_STREAM_WINDOW};
 use aurora_protocol::runner::{
     EXEC_COMMAND_MAX, ExecExit, ExecMode, ExecOpen, ExecRefuseReason, PtyCloseReason, PtyCredit,
+    PtyShell,
 };
 use aurora_protocol::supervisor::SupervisorToRunner;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -135,15 +136,6 @@ impl ExecTable {
         }
     }
 
-    /// The image shell: `bash` when present, else `sh` (fixed paths, never from the wire).
-    fn image_shell(&self) -> std::path::PathBuf {
-        if self.shells.bash.is_file() {
-            self.shells.bash.clone()
-        } else {
-            self.shells.sh.clone()
-        }
-    }
-
     pub fn contains(&self, id: u32) -> bool {
         self.live.contains_key(&id)
     }
@@ -216,22 +208,31 @@ impl ExecTable {
             return Err(ExecRefuseReason::Unsupported);
         }
         // The program per mode; every other shape is refused (`12 §SSH channels`).
-        let (program, args, is_shell): (std::path::PathBuf, Vec<String>, bool) = match o.mode {
+        let (program, args, is_shell, notice): (
+            std::path::PathBuf,
+            Vec<String>,
+            bool,
+            Option<&'static str>,
+        ) = match o.mode {
             ExecMode::Sftp => {
                 if o.command.is_some() || o.tty.is_some() || !self.sftp_server.is_file() {
                     return Err(ExecRefuseReason::Unsupported);
                 }
-                (self.sftp_server.clone(), Vec::new(), false)
+                (self.sftp_server.clone(), Vec::new(), false, None)
             }
             ExecMode::Shell => {
                 if o.command.is_some() {
                     return Err(ExecRefuseReason::Unsupported);
                 }
-                (self.image_shell(), Vec::new(), true)
+                let r = shell_plan(&self.shells, o.shell, None);
+                // The fallback notice only on a tty session: a pipe session keeps stdout clean.
+                let notice = if o.tty.is_some() { r.notice } else { None };
+                (r.program, r.args, true, notice)
             }
             ExecMode::Exec => match &o.command {
                 Some(c) if c.len() <= EXEC_COMMAND_MAX && !c.contains('\0') => {
-                    (self.image_shell(), vec!["-c".to_owned(), c.clone()], true)
+                    let r = shell_plan(&self.shells, o.shell, Some(c));
+                    (r.program, r.args, true, None)
                 }
                 _ => return Err(ExecRefuseReason::Unsupported),
             },
@@ -255,7 +256,7 @@ impl ExecTable {
             let shell = ResolvedShell {
                 program,
                 args,
-                notice: None,
+                notice,
             };
             let pty = match PtySession::spawn(
                 &shell,
@@ -316,6 +317,23 @@ impl ExecTable {
         );
         Ok(())
     }
+}
+
+/// (FIX-218, D-459) What an SSH `shell`/`exec` runs: the person's chosen shell (absent = bash)
+/// through the terminal's own `ShellPaths::resolve` (fixed paths, never from the wire). `shell`
+/// mode keeps resolve's login `-l`; `exec` runs `<shell> -c <command>` without `-l` (the
+/// command is one argv element, never re-quoted). `sh` (the last-resort fallback) has no `-l`.
+pub(crate) fn shell_plan(
+    shells: &ShellPaths,
+    choice: Option<PtyShell>,
+    command: Option<&str>,
+) -> ResolvedShell {
+    let mut r = shells.resolve(choice.unwrap_or_default());
+    if let Some(c) = command {
+        r.args = vec!["-c".to_owned(), c.to_owned()];
+        r.notice = None;
+    }
+    r
 }
 
 /// `LANG` and `LC_*` only (`12 §SSH channels`); `AURORA_*` never.

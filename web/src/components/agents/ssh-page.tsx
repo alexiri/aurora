@@ -260,7 +260,7 @@ function SshContent({ agentId, agentName, agentHandle }: { agentId: string; agen
 
       <Section id="ssh-what-works" title="What works" card>
         <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
-          <li>An interactive shell, remote commands, sftp and scp.</li>
+          <li>An interactive shell (bash or zsh, as chosen on the Computer page), remote commands, sftp and scp.</li>
           <li>
             Port forwarding, agent forwarding and X11 are not available; use the <strong>Previews</strong> page for web apps.
           </li>

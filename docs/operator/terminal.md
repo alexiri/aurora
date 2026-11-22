@@ -108,3 +108,12 @@ for the full recipe.
 
 Terminal traffic exposes byte totals only, never content, and there is no terminal-specific series: the shared runner
 stream listener and the API's request metrics apply. The audit log has one `agent.terminal.open` row per open.
+
+## Shells and defaults
+
+(FIX-218, D-459.) A person chooses **bash** or **zsh** on the agent's **Computer** page; the choice is stored per person and
+agent on the server and applies to the web terminal and to SSH alike. Both start the shell as a **login** shell, so both get
+the image's aliases, colours, prompt and history (`/etc/profile.d/aurora.sh` for bash, `/etc/zshrc` for zsh). A person's own
+`~/.bashrc` is read when their home has no `~/.bash_profile`, `~/.bash_login` or `~/.profile`. `ssh host command` runs the
+command under the chosen shell as `<shell> -c`, which is not a login or interactive shell and so has no aliases. Nothing to
+configure; roll the sandbox image with the runner so the supervisor and `aurora.sh` match.

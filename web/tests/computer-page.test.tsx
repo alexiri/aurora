@@ -34,6 +34,8 @@ function serve(sandbox: () => Record<string, unknown>, extra: Record<string, Han
     "GET /v1/me": () => json(200, { user: { id: "u1", display_name: "Ada", email: "a@b.c", ...me }, memberships: [], groups: [], approval_email: true }),
     "GET /v1/instance": () => json(200, { version: "0", features: { hosted: true, channels: false, previews: false, terminal: true, ssh: true } }),
     "GET /v1/agents/a1/start-failures": () => json(200, { items: [] }),
+    // (FIX-218, C-1145) The Terminal card's shell preference.
+    "GET /v1/agents/a1/terminal/shell": () => json(200, { shell: "bash", stored: false }),
     ...extra,
   };
   const fn = vi.fn(async (input: Request | string | URL, init?: RequestInit) => {

@@ -24,8 +24,10 @@ use aurora_db::DbError;
 use aurora_db::repo::agents::{self as agents_repo, AgentRow};
 use aurora_db::repo::runners as runners_repo;
 use aurora_db::repo::terminal_grants as grants_repo;
+use aurora_db::repo::terminal_shell as shell_repo;
 use aurora_protocol::runner::PreviewStreamOpenRequest;
 use aurora_protocol::runner::PreviewStreamOpenResponse;
+use aurora_protocol::runner::PtyShell;
 use aurora_protocol::runner::{TerminalModel, TerminalModelUnavailable, TerminalModels};
 
 /// Close codes of leg 1 (`16 §W18`/`§W19`, C-617). `4403 not allowed` originates here only from
@@ -151,6 +153,57 @@ async fn admit(s: &AppState, c: &Caller, agent: Uuid) -> Result<AgentRow, ApiErr
     Ok(a)
 }
 
+/// The authority of the shell-preference routes (C-1145): a session, `can_use` of the agent's
+/// workspace (404/403 as for the terminal), a hosted agent (422). Neither the terminal feature
+/// flag nor the freeze gate applies: the choice is also used by SSH, and a frozen agent's
+/// settings stay readable and writable.
+async fn shell_pref_agent(s: &AppState, c: &Caller, agent: Uuid) -> Result<AgentRow, ApiError> {
+    if !c.is_session() {
+        return Err(ApiError::unauthenticated(
+            "The shell choice needs a dashboard session.",
+        ));
+    }
+    let a = load_agent(s, c, agent).await?;
+    if a.kind != "hosted" {
+        return Err(terminal_not_supported());
+    }
+    Ok(a)
+}
+
+/// `GET /v1/agents/{agent}/terminal/shell` (C-1145): the person's own choice; bash with
+/// `stored: false` when nothing is saved.
+pub async fn get_shell_preference(
+    s: &AppState,
+    c: &Caller,
+    agent: Uuid,
+) -> Result<super::routes::TerminalShellPreference, ApiError> {
+    let a = shell_pref_agent(s, c, agent).await?;
+    let stored = shell_repo::get(&s.pool, c.user_id, a.id).await?;
+    Ok(super::routes::TerminalShellPreference {
+        stored: stored.is_some(),
+        shell: stored.unwrap_or_else(|| PtyShell::Bash.as_str().to_owned()),
+    })
+}
+
+/// `PUT /v1/agents/{agent}/terminal/shell` (C-1145): only the closed enum is stored; any other
+/// value is 422 `invalid_shell`.
+pub async fn put_shell_preference(
+    s: &AppState,
+    c: &Caller,
+    agent: Uuid,
+    value: &str,
+) -> Result<super::routes::TerminalShellPreference, ApiError> {
+    let a = shell_pref_agent(s, c, agent).await?;
+    let shell = PtyShell::parse(value).ok_or_else(|| {
+        ApiError::unprocessable("invalid_shell", "`shell` must be `bash` or `zsh`.")
+    })?;
+    shell_repo::set(&s.pool, c.user_id, a.id, shell.as_str()).await?;
+    Ok(super::routes::TerminalShellPreference {
+        shell: shell.as_str().to_owned(),
+        stored: true,
+    })
+}
+
 /// `GET /v1/agents/{agent}/terminal`: the WebSocket upgrade (C-616). Answers 202
 /// `{waking: true}` for a parked sandbox (the open was the wake demand; the dashboard retries
 /// on ready) or long-polls ≤ `TERMINAL_WAKE_WAIT` when the client asked to wait.
@@ -160,9 +213,17 @@ pub async fn upgrade(
     agent: Uuid,
     ws: WebSocketUpgrade,
     wait: bool,
-    shell: aurora_protocol::runner::PtyShell,
+    shell: Option<PtyShell>,
 ) -> Result<axum::response::Response, ApiError> {
     let a = admit(&s, &c, agent).await?;
+    // An explicit `?shell=` wins; else the person's stored choice for this agent, else bash.
+    let shell = match shell {
+        Some(sh) => sh,
+        None => shell_repo::get(&s.pool, c.user_id, a.id)
+            .await?
+            .and_then(|v| PtyShell::parse(&v))
+            .unwrap_or_default(),
+    };
     let Some((sandbox_id, state, boot_id)) = load_sandbox(&s, a.id).await? else {
         // Unprovisioned agent: waking it is meaningless without a start request; the dashboard
         // starts the agent explicitly. 404 as a pre-upgrade answer.

@@ -1004,9 +1004,15 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   spawn's environment and the supervisor's spawn default `spawn::IMAGE_PATH`). `/opt/aurora/bin`
   is the directory of the `claude` and `codex` wrappers (below). System-wide **interactive** defaults (aliases `ls`,
   `ll`, `la`, `l`, `grep`, colours, a prompt `user@<agent handle>:cwd`, history size and
-  de-duplication, zsh `compinit`) live only in the image's system rc files (`/etc/bashrc`,
-  `/etc/zshrc`) — not in the agent's home, so a person's own `~/.bashrc`/`~/.zshrc` still wins —
-  and are read by interactive shells only: agent turns and `bash -c` never see the aliases.
+  de-duplication, zsh `compinit`) live only in the image's system files — `/etc/profile.d/aurora.sh`
+  (read by a **login** bash through `/etc/profile`; the terminal and SSH `shell` both start one) and
+  `/etc/zshrc` (zsh) — not in the agent's home, so a person's own `~/.zshrc` still wins — and are
+  read by interactive shells only: agent turns and `bash -c` never see the aliases. (FIX-218,
+  D-459(d)) A login bash reads `~/.bash_profile`, else `~/.bash_login`, else `~/.profile`, never
+  `~/.bashrc`; so `/etc/profile.d/aurora.sh` also sources the person's own `~/.bashrc` when the home
+  has none of those three files (guarded against a double sourcing), and a person's `~/.bashrc` is
+  honoured by the web terminal and SSH alike. The person's shell choice is stored per person and
+  agent (`terminal_shell_preferences`, C-1145) and applies to both entry points.
 - **Harnesses in the terminal (FIX-138 item 1b, D-247).** `claude` and `codex` on `PATH` are the
   wrappers `/opt/aurora/bin/claude` and `/opt/aurora/bin/codex` (image files, `images/sandbox/bin`),
   not the pinned binaries (`/opt/aurora/harness/…`, off `PATH`). At boot, and again with the agent's
@@ -1128,12 +1134,19 @@ treats both identically.
 
 - **Modes** (`exec.open { pty_id, window, mode, command?, tty?, env }`, the `pty_id` space and the
   `0x02` data tag shared with terminals):
-  - `shell` — the image shell (`$SHELL`, else `/bin/sh`) as a login-less interactive shell; with
-    `tty` it is exactly `§Terminal`'s PTY (own session, controlling terminal, `O_NOCTTY` on the
-    supervisor's side, `TIOCSWINSZ` from `tty.cols/rows`); without `tty` (`ssh -T host`) it reads
-    commands from stdin over pipes.
-  - `exec` — `<shell> -c <command>` (OpenSSH's semantics; `command` ≤ `SSH_EXEC_COMMAND_MAX` 8 KiB, no
-    NUL; never logged, never stored, never audited), with or without `tty` (`ssh -t host cmd`).
+  - `shell` — (FIX-218, D-459) the person's chosen shell (`exec.open.shell`: `bash` or `zsh`, absent =
+    bash; the enumeration resolves through the same `ShellPaths::resolve` as the terminal, so the
+    same fixed binaries and fallbacks) as an interactive **login** shell (`-l`, as OpenSSH's `sshd`
+    runs it), with or without a `tty`: the same `PATH`, aliases, colours, prompt and history as the
+    web terminal (`§Terminal`). With `tty` it is exactly `§Terminal`'s PTY (own session, controlling
+    terminal, `O_NOCTTY` on the supervisor's side, `TIOCSWINSZ` from `tty.cols/rows`) and the
+    fallback notice (zsh missing) is written to it; without `tty` (`ssh -T host`) it reads commands
+    from stdin over pipes and writes no notice, so stdout stays clean. `SHELL` is the binary run.
+  - `exec` — `<shell> -c <command>` with the same choice, **without** `-l` (OpenSSH's `$SHELL -c`:
+    non-interactive, not a login shell, so no aliases); the command is one argv element, never
+    re-quoted (`command` ≤ `SSH_EXEC_COMMAND_MAX` 8 KiB, no
+    NUL; never logged, never stored, never audited), with or without `tty` (`ssh -t host cmd`);
+    no fallback notice.
     Legacy `scp -O` arrives here as `scp -t|-f …` and works because the image carries `scp`.
   - `sftp` — the image's `/usr/libexec/openssh/sftp-server` (fixed path; never a path the client
     names) over pipes, no `tty`; `exec.refused { unsupported }` when the image lacks it (a custom

@@ -2551,6 +2551,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/terminal/shell": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The person's chosen shell for this agent: used by the web terminal (when `?shell=` is
+         *     absent) and by SSH. Session cookie, `can_use`, hosted agent; frozen agents still answer.
+         */
+        get: operations["getTerminalShell"];
+        /** Saves the person's shell choice for this agent (`bash` or `zsh`). */
+        put: operations["putTerminalShell"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/timeline": {
         parameters: {
             query?: never;
@@ -13982,6 +14003,11 @@ export interface components {
              */
             store: Record<string, never>;
         };
+        /** @description Body of `PUT /agents/{agent}/terminal/shell`. */
+        PutTerminalShell: {
+            /** @description `bash` or `zsh`; anything else is 422 `invalid_shell`. */
+            shell: string;
+        };
         /** @description `PUT /v1/connections/{id}/webhook` request: the configuration plus the edits of the secrets. */
         PutWebhookRequest: components["schemas"]["WebhookConfig"] & {
             /** @description A value sets, `null` deletes, an absent name is kept. */
@@ -15730,6 +15756,16 @@ export interface components {
             path?: string | null;
             /** @enum {string} */
             type: "network";
+        };
+        /** @description (FIX-218, D-459, C-1145) The shell preference of the signed-in person for an agent. */
+        TerminalShellPreference: {
+            /**
+             * @description `bash` or `zsh`; `bash` when nothing is saved.
+             * @example bash
+             */
+            shell: string;
+            /** @description Whether a choice is saved (`false` = the default applies). */
+            stored: boolean;
         };
         /** @description One registered terminator replica (`GET /v1/admin/terminators`, C-793). */
         TerminatorInfo: {
@@ -27454,6 +27490,136 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getTerminalShell: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminalShellPreference"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putTerminalShell: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutTerminalShell"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminalShellPreference"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

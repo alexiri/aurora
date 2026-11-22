@@ -257,6 +257,8 @@ export async function mockApi(
     conversations_days: 180, conversations_days_max: 365, attachments_days: null, attachments_days_max: 90,
     attachment_quota_mib: null, attachment_quota_mib_max: 102_400, attachment_quota_mib_effective: 51_200,
   };
+  // (FIX-218, C-1145) The shell preference of the Computer page's Terminal card.
+  let shellPref: { shell: string; stored: boolean } = { shell: "bash", stored: false };
   for (const [k, v] of Object.entries(overrides)) {
     if (/[\^*+()[\]{}|\\]/.test(k)) patterns.push([new RegExp(k.startsWith("/") ? `^${k}$` : k), v]);
     else exact.set(k, v);
@@ -305,6 +307,14 @@ export async function mockApi(
       });
     }
     if (/^\/v1\/agents\/[^/]+\/start-failures$/.test(p)) return json({ items: [] });
+    // (FIX-218, C-1145) The person's shell choice, stored on the server: bash with nothing stored until a PUT.
+    if (/^\/v1\/agents\/[^/]+\/terminal\/shell$/.test(p)) {
+      if (route.request().method() === "PUT") {
+        const { shell } = route.request().postDataJSON() as { shell: string };
+        shellPref = { shell, stored: true };
+      }
+      return json(shellPref);
+    }
     if (/^\/v1\/agents\/[^/]+\/sandbox\/retry$/.test(p)) return json({ error: { code: "sandbox_not_failed", message: "not failed" } }, 409);
     if (/^\/v1\/admin\/agents\/[^/]+\/start-failures$/.test(p)) return json({ items: [] });
     if (p === "/v1/admin/setup") return json(setupStatus);

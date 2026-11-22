@@ -1206,3 +1206,213 @@ async fn a_closed_terminal_is_audited_with_code_and_duration_only() {
 fn hex(h: &[u8]) -> String {
     h.iter().map(|b| format!("{b:02x}")).collect()
 }
+
+// ------------------------------------------------ shell preference (FIX-218, D-459, C-1145)
+
+async fn member_user(r: &Rig) -> Uuid {
+    sqlx::query_scalar("SELECT id FROM users WHERE email = 'm@x.io'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap()
+}
+
+/// GET answers bash `stored: false` until a PUT; the PUT stores exactly `bash`/`zsh`; anything
+/// else (a path, another shell, a case variant, extra words) is 422 `invalid_shell` and
+/// changes nothing; a frozen agent's preference is still readable and writable.
+#[tokio::test]
+async fn shell_preference_round_trip_and_validation() {
+    let r = term_rig().await;
+    let (agent, _, _) = sandbox_on(&r, "pref-sb", "running").await;
+    let uri = format!("/v1/agents/{agent}/terminal/shell");
+    let (s, v) = r.term_call(Method::GET, &uri, &[], None).await;
+    assert_eq!((s, &v), (200, &json!({"shell": "bash", "stored": false})));
+    let (s, v) = r
+        .term_call(Method::PUT, &uri, &[], Some(json!({"shell": "zsh"})))
+        .await;
+    assert_eq!((s, &v), (200, &json!({"shell": "zsh", "stored": true})));
+    let (_, v) = r.term_call(Method::GET, &uri, &[], None).await;
+    assert_eq!(v, json!({"shell": "zsh", "stored": true}));
+    for bad in ["fish", "/bin/sh", "ZSH", "bash -c id", ""] {
+        let (s, v) = r
+            .term_call(Method::PUT, &uri, &[], Some(json!({"shell": bad})))
+            .await;
+        assert_eq!((s, code(&v)), (422, "invalid_shell"), "{bad:?}: {v}");
+    }
+    let (_, v) = r.term_call(Method::GET, &uri, &[], None).await;
+    assert_eq!(v["shell"], "zsh", "a refused value changes nothing");
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM terminal_shell_preferences")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+    // Frozen agents keep their settings.
+    sqlx::query(
+        "UPDATE agents SET frozen_at = now(), frozen_reason = 'x', \
+         frozen_authority = 'workspace_owner' WHERE id = $1",
+    )
+    .bind(agent)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let (s, _) = r
+        .term_call(Method::PUT, &uri, &[], Some(json!({"shell": "bash"})))
+        .await;
+    assert_eq!(s, 200);
+    let (_, v) = r.term_call(Method::GET, &uri, &[], None).await;
+    assert_eq!(v, json!({"shell": "bash", "stored": true}));
+}
+
+/// The authority is the terminal's: no cookie or an API key is 401, an agent of another
+/// workspace is 404, a BYO agent is 422 `terminal_not_supported`; none writes a row.
+#[tokio::test]
+async fn shell_preference_authority() {
+    let r = term_rig().await;
+    let (agent, _, _) = sandbox_on(&r, "auth-sb", "running").await;
+    let uri = format!("/v1/agents/{agent}/terminal/shell");
+    let user = r.h.user("pk@x.io", false).await;
+    let (_, tok) = r.h.api_key(user, r.org, Some(r.ws), false).await;
+    let b = bearer(&tok);
+    for m in [Method::GET, Method::PUT] {
+        let body = (m == Method::PUT).then(|| json!({"shell": "zsh"}));
+        let (s, _, v) =
+            r.h.send(m.clone(), &uri, &[("origin", ORIGIN)], body.clone())
+                .await;
+        assert_eq!((s.as_u16(), code(&v)), (401, "unauthenticated"), "{m} {v}");
+        let (s, _, v) =
+            r.h.send(
+                m.clone(),
+                &uri,
+                &[("authorization", &b), ("origin", ORIGIN)],
+                body,
+            )
+            .await;
+        assert_eq!(s.as_u16(), 401, "{m} {v}");
+    }
+    // Another workspace's agent.
+    let other_org = r.h.org().await;
+    let other_ws = r.h.workspace(other_org).await;
+    let foreign = Uuid::now_v7();
+    let byo = Uuid::now_v7();
+    for (id, org, ws, kind) in [
+        (foreign, other_org, other_ws, "hosted"),
+        (byo, r.org, r.ws, "byo"),
+    ] {
+        sqlx::query(
+            "INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) \
+             VALUES ($1,$2,$3,$1::text,$1::text,$4,'fake')",
+        )
+        .bind(id)
+        .bind(org)
+        .bind(ws)
+        .bind(kind)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    }
+    for (id, want) in [(foreign, 404), (byo, 422)] {
+        for m in [Method::GET, Method::PUT] {
+            let body = (m == Method::PUT).then(|| json!({"shell": "zsh"}));
+            let (s, _) = r
+                .term_call(m, &format!("/v1/agents/{id}/terminal/shell"), &[], body)
+                .await;
+            assert_eq!(s, want, "{id}");
+        }
+    }
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM terminal_shell_preferences")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "a refused call stores nothing");
+}
+
+/// A terminal open with no `?shell=` takes the stored preference onto the grant; an explicit
+/// `?shell=` still wins; with nothing stored it is bash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn terminal_open_uses_the_stored_preference_when_shell_is_absent() {
+    let r = term_rig().await;
+    let (url, _api) = served::serve(&r).await;
+    let (agent, _, _) = sandbox_on(&r, "pref-open", "running").await;
+    let uri = format!("/v1/agents/{agent}/terminal/shell");
+    for (put, q, want) in [
+        (None, "", "bash"),
+        (Some("zsh"), "", "zsh"),
+        (Some("zsh"), "?shell=bash", "bash"),
+        (Some("bash"), "?shell=zsh", "zsh"),
+        (Some("bash"), "", "bash"),
+    ] {
+        if let Some(p) = put {
+            let (s, _) = r
+                .term_call(Method::PUT, &uri, &[], Some(json!({"shell": p})))
+                .await;
+            assert_eq!(s, 200);
+        }
+        sqlx::query("DELETE FROM terminal_stream_grants WHERE agent_id = $1")
+            .bind(agent)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        // The runner endpoint does not resolve in the test host: 502 after the mint.
+        let s = served::status(
+            &url,
+            &r.cookie,
+            &format!("/v1/agents/{agent}/terminal{q}"),
+            ORIGIN,
+        )
+        .await;
+        assert_eq!(s, 502, "{put:?} {q}");
+        let shell: String =
+            sqlx::query_scalar("SELECT shell FROM terminal_stream_grants WHERE agent_id = $1")
+                .bind(agent)
+                .fetch_one(r.h.pool())
+                .await
+                .unwrap();
+        assert_eq!(shell, want, "{put:?} {q}");
+    }
+}
+
+/// The row dies with the person or the agent (FK cascade), and the CHECK refuses any other
+/// value at the table.
+#[tokio::test]
+async fn shell_preference_rows_cascade_and_the_table_checks_the_value() {
+    let r = term_rig().await;
+    let (a1, _, _) = sandbox_on(&r, "casc-1", "running").await;
+    let (a2, _, _) = sandbox_on(&r, "casc-2", "running").await;
+    let victim = r.h.user("victim@x.io", false).await;
+    for (u, a) in [(victim, a1), (victim, a2)] {
+        sqlx::query(
+            "INSERT INTO terminal_shell_preferences (user_id, agent_id, shell) VALUES ($1,$2,'zsh')",
+        )
+        .bind(u)
+        .bind(a)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    }
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM terminal_shell_preferences")
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap()
+    };
+    assert_eq!(count().await, 2);
+    sqlx::query("DELETE FROM agents WHERE id = $1")
+        .bind(a1)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(count().await, 1, "the agent's row goes with it");
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(victim)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(count().await, 0, "the person's rows go with them");
+    let bad = sqlx::query(
+        "INSERT INTO terminal_shell_preferences (user_id, agent_id, shell) VALUES ($1,$2,'/bin/sh')",
+    )
+    .bind(member_user(&r).await)
+    .bind(a2)
+    .execute(r.h.pool())
+    .await;
+    assert!(bad.is_err(), "the CHECK admits bash and zsh only");
+}

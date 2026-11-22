@@ -15004,6 +15004,180 @@
         ]
       }
     },
+    "/v1/agents/{agent}/terminal/shell": {
+      "get": {
+        "tags": [
+          "terminal"
+        ],
+        "summary": "The person's chosen shell for this agent: used by the web terminal (when `?shell=` is\nabsent) and by SSH. Session cookie, `can_use`, hosted agent; frozen agents still answer.",
+        "operationId": "getTerminalShell",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalShellPreference"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "terminal"
+        ],
+        "summary": "Saves the person's shell choice for this agent (`bash` or `zsh`).",
+        "operationId": "putTerminalShell",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutTerminalShell"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalShellPreference"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/timeline": {
       "get": {
         "tags": [
@@ -64591,6 +64765,19 @@
           }
         }
       },
+      "PutTerminalShell": {
+        "type": "object",
+        "description": "Body of `PUT /agents/{agent}/terminal/shell`.",
+        "required": [
+          "shell"
+        ],
+        "properties": {
+          "shell": {
+            "type": "string",
+            "description": "`bash` or `zsh`; anything else is 422 `invalid_shell`."
+          }
+        }
+      },
       "PutWebhookRequest": {
         "allOf": [
           {
@@ -70084,6 +70271,25 @@
           }
         ],
         "description": "Rule target (I-12: tagged with `type`)."
+      },
+      "TerminalShellPreference": {
+        "type": "object",
+        "description": "(FIX-218, D-459, C-1145) The shell preference of the signed-in person for an agent.",
+        "required": [
+          "shell",
+          "stored"
+        ],
+        "properties": {
+          "shell": {
+            "type": "string",
+            "description": "`bash` or `zsh`; `bash` when nothing is saved.",
+            "example": "bash"
+          },
+          "stored": {
+            "type": "boolean",
+            "description": "Whether a choice is saved (`false` = the default applies)."
+          }
+        }
       },
       "TerminatorInfo": {
         "type": "object",
