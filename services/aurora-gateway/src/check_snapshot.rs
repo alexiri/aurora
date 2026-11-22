@@ -569,6 +569,8 @@ fn execute(
         &SummaryRequest {
             method: method.as_str(),
             host: &host,
+            // (D-467) `{request.host}` in a link carries the registration's base path.
+            base_path: base.filter(|_| m.instance),
             // `{path.N}` counts from the app path (D-231).
             path: &app_path,
             query: query.as_deref(),
@@ -761,6 +763,7 @@ fn link_summary(l: &Loaded, obs: &mut Value, host: &str, body: &[u8]) {
         approval,
         &template::Input {
             host,
+            base_path: None,
             path: "/",
             query: None,
             header: &|_| None,

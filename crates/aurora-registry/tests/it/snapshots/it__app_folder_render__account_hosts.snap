@@ -11,8 +11,8 @@ Written by Aurora for this agent, except the last section.
 
 Choose an account with the request header `x-aurora-connection-id: <connection id>`. Without it the gateway uses your only account, or refuses when there are several.
 
-- `c_i`: Self-hosted (host its.example.test)
-- `c_t`: Tenant (host acme.example.test)
+- `c_i`: Self-hosted (address its.example.test/jira)
+- `c_t`: Tenant (address acme.example.test)
 - `c_db`: Warehouse (database: `psql service=wh_main`)
 
 ## Your access

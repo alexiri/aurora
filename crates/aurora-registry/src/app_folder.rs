@@ -36,6 +36,9 @@ pub struct AppAccount {
     pub label: String,
     /// Where requests go: the instance host, the tenant host or the app's default host.
     pub host: Option<String>,
+    /// (D-231, D-467) The base path of a self-hosted instance (`/sub`); `None` for a tenant host,
+    /// a default host and every account without one. Shown with the host as the account's address.
+    pub base_path: Option<String>,
     /// libpq service name of a database connection (`psql service=<name>`, C-231).
     pub service: Option<String>,
     pub access: GrantAccess,
@@ -505,7 +508,11 @@ fn app_md(
         for a in accounts {
             let place = match (&a.service, &a.host) {
                 (Some(s), _) => format!(" (database: `psql service={}`)", inline(s, 64)),
-                (None, Some(h)) => format!(" (host {})", inline(h, 253)),
+                (None, Some(h)) => format!(
+                    " (address {}{})",
+                    inline(h, 253),
+                    inline(a.base_path.as_deref().unwrap_or(""), 253)
+                ),
                 (None, None) => String::new(),
             };
             let _ = writeln!(

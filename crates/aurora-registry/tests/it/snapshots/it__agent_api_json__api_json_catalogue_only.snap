@@ -6,6 +6,7 @@ expression: "api(None, &a)"
 {
   "accounts": [
     {
+      "base_path": null,
       "base_url": "https://api.example.test",
       "connection_id": "c_1",
       "grant": "full",

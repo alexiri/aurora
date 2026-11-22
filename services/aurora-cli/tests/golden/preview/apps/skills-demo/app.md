@@ -6,7 +6,7 @@ Written by Aurora for this agent, except the last section.
 
 Choose an account with the request header `x-aurora-connection-id: <connection id>`. Without it the gateway uses your only account, or refuses when there are several.
 
-- `c_sample`: Sample account (host api.guide.example.test)
+- `c_sample`: Sample account (address api.guide.example.test)
 
 ## Your access
 

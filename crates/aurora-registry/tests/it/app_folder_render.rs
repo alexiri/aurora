@@ -22,6 +22,7 @@ fn acct(id: &str, label: &str, host: Option<&str>, access: GrantAccess) -> AppAc
         id: id.into(),
         label: label.into(),
         host: host.map(Into::into),
+        base_path: None,
         service: None,
         access,
         webhook: None,
@@ -169,12 +170,16 @@ fn instance_tenant_and_database_accounts_show_where_requests_go() {
         &a,
         &[],
         &[
-            acct(
-                "c_i",
-                "Self-hosted",
-                Some("its.example.test"),
-                GrantAccess::Full,
-            ),
+            AppAccount {
+                // (D-467) A self-hosted instance under a base path: the address carries it.
+                base_path: Some("/jira".into()),
+                ..acct(
+                    "c_i",
+                    "Self-hosted",
+                    Some("its.example.test"),
+                    GrantAccess::Full,
+                )
+            },
             acct(
                 "c_t",
                 "Tenant",
@@ -186,8 +191,9 @@ fn instance_tenant_and_database_accounts_show_where_requests_go() {
         "1.2.3",
         &AppSkills::default(),
     );
-    assert!(r.app_md.contains("(host its.example.test)"));
-    assert!(r.app_md.contains("(host acme.example.test)"));
+    assert!(r.app_md.contains("(address its.example.test/jira)"));
+    assert!(r.app_md.contains("(address acme.example.test)"));
+    assert!(!r.app_md.contains("(host "), "{}", r.app_md);
     assert!(r.app_md.contains("(database: `psql service=wh_main`)"));
     insta::assert_snapshot!("account_hosts", r.app_md);
 }

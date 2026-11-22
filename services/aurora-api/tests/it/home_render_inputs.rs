@@ -51,6 +51,10 @@ apps:
       - id: api_key
         kind: fields
         fields: [ { name: api_token, label: T, type: secret, required: true } ]
+    tools:
+      read:
+        items:
+          - { id: list_issues, name: List, host: "{instance}", path: /issues, methods: [GET] }
     hosts:
       - match: { host: "{instance}" }
         inject:
@@ -139,6 +143,32 @@ impl W {
             x = x.bind(*b);
         }
         x.execute(self.h.pool()).await.unwrap();
+    }
+
+    /// (D-467) The generated files of the `apps` part (`app.md`, `tools.md`, `api.json`), by path.
+    async fn app_files(&self) -> std::collections::BTreeMap<String, String> {
+        let mut conn = self.h.pool().acquire().await.unwrap();
+        let claim = HomeSyncClaim {
+            sandbox_id: Uuid::now_v7(),
+            boot_id: Uuid::now_v7(),
+            agent_id: self.agent,
+            generation: 1,
+            harness_id: None,
+        };
+        let parts = aurora_api::domains::hosted::home::render(&self.h.state, &mut conn, &claim)
+            .await
+            .unwrap();
+        parts
+            .iter()
+            .filter(|p| p.part.kind.as_str() == "apps")
+            .flat_map(|p| p.part.entries.iter())
+            .map(|e| {
+                (
+                    e["path"].as_str().unwrap().to_owned(),
+                    e["content"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
     }
 
     async fn render_inputs(&self) -> Value {
@@ -411,6 +441,62 @@ async fn render_inputs_tell_the_agent_where_a_self_hosted_account_lives() {
         "{text}"
     );
     assert!(text.contains(&format!("`{plain}`: work\n")), "{text}");
+}
+
+/// (D-467) The files the agent reads carry the base path too: `app.md` gives the address with it
+/// and `api.json` has it as `base_path` next to the bare `base_url`. A default-host connection (and
+/// one on no host) carries none.
+#[tokio::test]
+async fn the_app_folder_carries_a_self_hosted_accounts_base_path() {
+    let w = world().await;
+    let inst = Uuid::now_v7();
+    w.sql("INSERT INTO app_instances (id, org_id, package_id, app_id, host, base_path, label) VALUES ($1,$2,'acme','desk','its.cern.ch','/jira','CERN')", &[inst, w.org]).await;
+    let on_instance = Uuid::now_v7();
+    let on_default = Uuid::now_v7();
+    for (id, label) in [(on_instance, "alice"), (on_default, "bob saas")] {
+        w.sql(&format!("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'desk','acme','1.0.0','{label}','active','x')"), &[id, w.org, w.ws]).await;
+        w.sql(
+            "INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')",
+            &[Uuid::now_v7(), w.ws, w.agent, id],
+        )
+        .await;
+    }
+    w.sql(
+        "UPDATE app_connections SET instance_id = $2 WHERE id = $1",
+        &[on_instance, inst],
+    )
+    .await;
+    let files = w.app_files().await;
+    let keys: Vec<&String> = files.keys().collect();
+    let app_md = files
+        .get(".aurora/apps/desk/app.md")
+        .unwrap_or_else(|| panic!("no desk app.md in {keys:?}"));
+    assert!(
+        app_md.contains(&format!(
+            "`{on_instance}`: alice (address its.cern.ch/jira)"
+        )),
+        "{app_md}"
+    );
+    assert!(
+        app_md.contains(&format!(
+            "`{on_default}`: bob saas (address saas.desk.example)"
+        )),
+        "{app_md}"
+    );
+    let api: Value = serde_json::from_str(&files[".aurora/apps/desk/api.json"]).unwrap();
+    let acct = |id: Uuid| {
+        api["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["connection_id"] == json!(id.to_string()))
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(acct(on_instance)["base_url"], "https://its.cern.ch");
+    assert_eq!(acct(on_instance)["base_path"], "/jira");
+    assert_eq!(acct(on_default)["base_url"], "https://saas.desk.example");
+    assert!(acct(on_default)["base_path"].is_null(), "{api}");
 }
 
 #[tokio::test]

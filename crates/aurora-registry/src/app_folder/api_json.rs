@@ -48,6 +48,8 @@ struct AccountOut {
     connection_id: String,
     label: String,
     base_url: Option<String>,
+    /// (D-467) The instance base path (`/sub`) the agent's command puts before every path; `null` if none.
+    base_path: Option<String>,
     grant: &'static str,
 }
 
@@ -532,6 +534,14 @@ pub(super) fn render(
                         .clone()
                         .or_else(|| sole_static_host(app))
                         .map(|h| format!("https://{}", inline(&h, 253)))
+                },
+                base_path: if a.webhook.is_some() || a.host.is_none() {
+                    None
+                } else {
+                    a.base_path
+                        .as_deref()
+                        .map(|p| inline(p, 253))
+                        .filter(|p| !p.is_empty())
                 },
                 grant: match a.access {
                     GrantAccess::Full => "full",

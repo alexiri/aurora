@@ -23,6 +23,10 @@ const LINK_VALUE: &AsciiSet = &NON_ALPHANUMERIC
 /// Everything the template summarizer may look at.
 pub struct Input<'a> {
     pub host: &'a str,
+    /// (D-231, D-467) The base path of the matched self-hosted registration (`/sub`), validated
+    /// at registration; `None` for every other request. `{request.host}` in a link renders
+    /// `host` + this. `path` below stays the app path.
+    pub base_path: Option<&'a str>,
     /// Request path (already redacted by the caller), without query.
     pub path: &'a str,
     pub query: Option<&'a str>,
@@ -455,6 +459,11 @@ fn render_link(parts: &[Part], inp: &Input<'_>, fields: &[SummaryField]) -> Opti
                     _ => return None,
                 };
                 out.push_str(&utf8_percent_encode(&v, LINK_VALUE).to_string());
+                // (D-467) The base path is already validated (unreserved segments, D-231(a)); its
+                // `/` must stay, so it is appended after the host value was encoded.
+                if matches!(r.ns, Ns::Request) {
+                    out.push_str(inp.base_path.unwrap_or(""));
+                }
             }
         }
     }
@@ -470,9 +479,13 @@ fn link_host_ok(link: &str, inp: &Input<'_>) -> bool {
         return false;
     }
     let host = authority.to_ascii_lowercase();
-    inp.declared_hosts
-        .iter()
-        .any(|h| h.eq_ignore_ascii_case(&host))
+    // (D-467) The request's own host: the request goes there anyway, so a link to it shows the
+    // approver nothing new. An instance app's `{instance}` host is in no `hosts` entry.
+    inp.host.eq_ignore_ascii_case(&host)
+        || inp
+            .declared_hosts
+            .iter()
+            .any(|h| h.eq_ignore_ascii_case(&host))
         || inp.web_hosts.iter().any(|h| h.eq_ignore_ascii_case(&host))
 }
 
@@ -497,6 +510,7 @@ mod tests {
             &a,
             &Input {
                 host: "api.example.com",
+                base_path: None,
                 path,
                 query,
                 header: &hdr,
@@ -753,6 +767,92 @@ mod tests {
         assert!(f("https://{path.1}/x").is_none());
         assert!(f("https://app.example.com/{path.9}").is_none());
         assert!(f("https://app.example.com/{field.Nope}").is_none());
+    }
+
+    /// (D-467) A link of an instance app under a base path, with the host in no `declared_hosts`.
+    fn instance_link(link: &str, host: &str, base_path: Option<&str>) -> Option<String> {
+        let a: Approval = serde_json::from_value(json!({
+            "title":"T","fields":[{"label":"Id","source":"path","segment":2}],"link":link
+        }))
+        .unwrap();
+        summarize(
+            &a,
+            &Input {
+                host,
+                base_path,
+                path: "/x/KEY-7",
+                query: None,
+                header: &|_| None,
+                body_prefix: b"",
+                truncated: false,
+                declared_hosts: &[],
+                web_hosts: &[],
+                injected_headers: &[],
+            },
+        )
+        .link
+    }
+
+    #[test]
+    fn request_host_in_a_link_carries_the_base_path() {
+        assert_eq!(
+            instance_link(
+                "https://{request.host}/browse/{path.2}",
+                "its.example.org",
+                Some("/sub")
+            )
+            .as_deref(),
+            Some("https://its.example.org/sub/browse/KEY-7")
+        );
+        // No base path: as before.
+        assert_eq!(
+            instance_link(
+                "https://{request.host}/browse/{path.2}",
+                "h.example.org",
+                None
+            )
+            .as_deref(),
+            Some("https://h.example.org/browse/KEY-7")
+        );
+        // Only `{request.host}` gets it; a literal host does not.
+        assert!(
+            instance_link(
+                "https://other.example.org/{path.2}",
+                "its.example.org",
+                Some("/sub")
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_link_to_the_requests_own_host_is_kept_and_any_other_host_is_dropped() {
+        // Own host, in no `declared_hosts`: kept (case-insensitive).
+        assert_eq!(
+            instance_link(
+                "https://ITS.example.org/browse/{path.2}",
+                "its.example.org",
+                None
+            )
+            .as_deref(),
+            Some("https://ITS.example.org/browse/KEY-7")
+        );
+        // Another host, a userinfo trick, a port, a lookalike suffix, http: all dropped.
+        for link in [
+            "https://evil.example.org/browse/{path.2}",
+            "https://its.example.org@evil.example.org/x",
+            "https://evil.example.org@its.example.org/x",
+            "https://its.example.org:8443/x",
+            "https://its.example.org.evil.org/x",
+            "https://xits.example.org/x",
+            "http://its.example.org/x",
+            "https://its.example.org\\@evil.org/x",
+        ] {
+            assert!(
+                instance_link(link, "its.example.org", Some("/sub")).is_none(),
+                "{link}"
+            );
+        }
     }
 
     #[test]

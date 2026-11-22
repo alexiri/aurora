@@ -1616,6 +1616,10 @@ impl PolicyHandler {
                 &crate::hold::SummaryRequest {
                     method: &ctx.method,
                     host: &host,
+                    // (D-467) `{request.host}` in a link carries the registration's base path.
+                    base_path: inst
+                        .filter(|_| app_match.as_ref().is_some_and(|m| m.instance))
+                        .and_then(|i| i.base_path.as_deref()),
                     // `{path.N}` in the summary counts from the app path (D-231); the approval
                     // display below keeps the full path.
                     path: &red_app_path,
