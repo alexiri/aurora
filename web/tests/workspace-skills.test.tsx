@@ -160,6 +160,74 @@ describe("agent Skills tab: effective set", () => {
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   });
 
+  it("lists app skills read-only under From apps, with the app and version, and names the winner of a shadowed one", async () => {
+    const appBody = (name: string, files: Array<{ path: string; size: number; executable: boolean }> = []) => ({
+      id: null,
+      org_id: null,
+      agent_id: null,
+      workspace_id: null,
+      created_at: null,
+      updated_at: null,
+      tier: "app",
+      scope: "app",
+      name,
+      description: `${name} description`,
+      body: `# ${name}\n<img src=x onerror="window.__pwned=1">`,
+      enabled: true,
+      files,
+      total_size: 10,
+      overridden_in: null,
+    });
+    const app = { app_id: "git", name: "Git", version: "1.2.0" };
+    const withApps = {
+      items: [
+        ...effective.items,
+        { skill: appBody("git-api", [{ path: "scripts/run.sh", size: 12, executable: true }]), tier: "app", enabled: true, shadows: [], app },
+      ],
+      shadowed: [
+        ...effective.shadowed,
+        { skill: appBody("triage"), tier: "app", enabled: true, shadowed_by: { id: "ag1", tier: "agent", app_id: null }, app },
+      ],
+    };
+    mockFetch({ "GET /v1/agents/a1/skills/effective": () => json(200, withApps) });
+    const { container } = wrap(<EffectiveSkillsView agentId="a1" />);
+    const apps = await screen.findByRole("list", { name: "Skills from apps" });
+    expect(screen.getByRole("heading", { name: "From apps" })).toBeTruthy();
+    const row = within(apps).getByTestId("app-skill-git-api");
+    expect(within(row).getByText("From the Git app · 1.2.0")).toBeTruthy();
+    expect(within(row).getByText("Script")).toBeTruthy();
+    // Read-only: no button of any kind in the row except the fold's summary; no edit, disable, delete.
+    expect(within(row).queryByRole("button")).toBeNull();
+    expect(within(row).queryByRole("switch")).toBeNull();
+    expect(within(row).queryByRole("checkbox")).toBeNull();
+    // The body is text, not markup.
+    expect(within(row).getByRole("region", { name: "Instructions of git-api" })).toHaveTextContent('<img src=x onerror="window.__pwned=1">');
+    expect(container.querySelector("img")).toBeNull();
+    // A shadowed app skill names its winner, and has no controls either.
+    const notApplied = screen.getByRole("list", { name: "Skills not applied" });
+    const shadowedRow = within(notApplied).getByTestId("app-skill-triage");
+    expect(within(shadowedRow).getByText("Shadowed by the agent skill")).toBeTruthy();
+    expect(within(shadowedRow).queryByRole("button")).toBeNull();
+    // The database tiers are unchanged and still open to read.
+    expect(within(screen.getByRole("list", { name: "Received skills" })).getAllByRole("listitem")).toHaveLength(3);
+  });
+
+  it("an app skill that loses to another app names that app", async () => {
+    const body = { id: null, org_id: null, agent_id: null, workspace_id: null, created_at: null, updated_at: null, tier: "app", scope: "app", name: "jira-x", description: "d", body: "b", enabled: true, files: [], total_size: 1, overridden_in: null };
+    const jira = { app_id: "jira", name: "Jira", version: "1.0.0" };
+    const jiraDc = { app_id: "jira-dc", name: "Jira Data Center", version: "2.0.0" };
+    mockFetch({
+      "GET /v1/agents/a1/skills/effective": () =>
+        json(200, {
+          items: [{ skill: body, tier: "app", enabled: true, shadows: [{ tier: "app", id: null, app_id: "jira" }], app: jiraDc }],
+          shadowed: [{ skill: body, tier: "app", enabled: true, shadowed_by: { tier: "app", id: null, app_id: "jira-dc" }, app: jira }],
+        }),
+    });
+    wrap(<EffectiveSkillsView agentId="a1" />);
+    const notApplied = await screen.findByRole("list", { name: "Skills not applied" });
+    expect(within(notApplied).getByText("Shadowed by the Jira Data Center app's skill")).toBeTruthy();
+  });
+
   it("the agent's own list stays editable", async () => {
     mockFetch({ "GET /v1/agents/a1/skills": () => json(200, { items: [mine], next_cursor: null }) });
     wrap(<SkillsEditor scope={{ kind: "agent", id: "a1" }} />);

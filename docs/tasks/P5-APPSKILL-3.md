@@ -79,3 +79,27 @@ fixtures for `PluginPackage` and effective skills.
 
 Files changed, test files changed or renamed, commands and results, screenshots of both themes at 390 px
 and desktop for the section and the skills view.
+
+### Done 2026-11-22 (lane B, branch `alexiri/p5-polish-b`, Sonnet)
+
+**Files changed.** `web/src/components/admin/agent-content-section.tsx` (renamed from `agent-guide-section.tsx`: `AgentContentSection`,
+`SkillsChangedLine`, `skillsChangeSummary`, `packageHasAgentContent`), `plugin-detail-view.tsx` (heading "For agents", fold "What agents get",
+section id `agents`, anchor `#for-agents`, the skills line inside the summary card above Approve for a pending version),
+`web/src/components/skills/skills-view.tsx` (app items under "From apps", app items and shadowed app skills read-only, the winner named,
+`id: null` no longer filtered or keyed by id). The hook is `useAgentFile` (named so by -2; no `useAgentGuideFile` was left).
+**Shape.** Per app: summary, essentials (plain-text viewer), operations file with count and a button to open it, **Skills** as one fold per skill
+(name, size, description, "Script" count; open at first when the skill changed) with its files (size, "Script", marks `Added`/`Changed`/`Removed`,
+`mode` → "Now a script" / "No longer a script"; a file that changed content and bit shows both), removed skills and removed files listed with
+"Removed". Marks on files only for a `changed` skill (an added or removed skill carries one mark). A script counts once in the approve line even when
+listed as `changed` + `mode`. Skills view: "From apps" list, each row "From the <App> app · <version>", a "Read the skill" fold with the body as plain text and
+the files (Script marked); no button, switch or checkbox of its own (D-455). Shadowed app skills in "Not applied" say "Shadowed by the agent skill" /
+"Shadowed by the <App> app's skill". File contents are only ever React text children (never Markdown/HTML).
+**Words.** `rg -n -i "agent guide|agent-guide|agentGuide|agent_guides|What agents can read" web/src web/tests web/e2e scripts/e2e` is empty. The remaining
+`recipe` hits are the credentials' injection recipe (`RecipeKind`, `buildRecipe`: how a website secret is injected), a different thing, no visible text; untouched.
+**Tests.** Renamed `web/tests/agent-guide-section.test.tsx` → `agent-content-section.test.tsx` (marks, mode pair both ways, removed file, summary counts, inert HTML,
+the line above Approve incl. none for no skill change and none once active) and `web/e2e/agent-guide.spec.ts` → `agent-content.spec.ts` (package page 390/1280 × both themes with
+scripts, marks, line, plain text, axe; plus the agent's Skills page 390/768/1280 × both themes with the app group, read-only, shadowed winner, axe). `web/tests/workspace-skills.test.tsx`:
+two new tests (app group, app-over-app winner). No production Playwright spec or `scripts/e2e` script references the changed strings or routes. None removed or loosened.
+**Commands.** `pnpm typecheck` ok; eslint on the six touched files ok; `vitest run` whole web suite: 250 files, 3473 tests passed;
+`playwright test e2e/agent-content.spec.ts --project=mocked`: 11 passed; `bash scripts/guards/run-all.sh`: all guards passed. Screenshots not taken (kept out of git); axe and the 390 px overflow checks run in both themes.
+**Not done / honest notes.** `docs/14` and FEATURES/PROGRESS rows are not updated by this commit (Orchestrator tracking). A bug the e2e found and fixed before commit: a `changed` + `mode` file was counted as two scripts.
