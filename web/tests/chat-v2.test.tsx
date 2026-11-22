@@ -366,12 +366,28 @@ describe("composer", () => {
     await waitFor(() => expect(box.value).toBe(""));
   });
 
-  it("queues a follow-up above the box with Send now, and Stop aborts the running turn", async () => {
+  // (FIX-225, D-469, D-470) The queued rows are the server's list, so they survive a reload; each shows only the
+  // buttons its `controls` allow (the matrix of flags is in queued-row.test.tsx).
+  const queued = (over: Record<string, unknown> = {}) => ({
+    id: "f1", parent_turn_id: "t1", status: "joining", text: "also check CI", created_at: "2026-11-08T12:01:00Z",
+    speaker_label: "Ann", edited_at: null, steer_requested: false, steer_error: null, promoted_turn_id: null,
+    controls: { steer: true, send_now: false, edit: true, cancel: true }, ...over,
+  });
+
+  it("queues a follow-up above the box with Steer (not Send now), and Stop aborts the running turn", async () => {
     st.events = [e(1, "turn.queued", { turn_id: "t1", speaker_label: "Ann", text: "go" })];
-    const followup = { id: "f1", parent_turn_id: "t1", status: "joining", text: "also check CI", created_at: "2026-11-08T12:01:00Z" };
+    let items: unknown[] = [];
+    const steered = queued({ steer_requested: true, controls: { steer: false, send_now: false, edit: true, cancel: true } });
     const calls = mock({
-      "POST /v1/conversations/c1/messages": () => json(202, { turn: null, followup }),
-      "POST /v1/turns/t1/send-now": () => json(200, {}),
+      "GET /v1/conversations/c1/followups": () => json(200, { items }),
+      "POST /v1/conversations/c1/messages": () => {
+        items = [queued()];
+        return json(202, { turn: null, followup: queued() });
+      },
+      "POST /v1/followups/f1/steer": () => {
+        items = [steered];
+        return json(202, steered);
+      },
       "POST /v1/turns/t1/abort": () => json(200, {}),
     });
     pane();
@@ -379,12 +395,41 @@ describe("composer", () => {
     expect(screen.getByPlaceholderText("Add a follow-up…")).toBeTruthy();
     fireEvent.change(box, { target: { value: "also check CI" } });
     fireEvent.click(screen.getByRole("button", { name: "Follow up" }));
-    expect(await screen.findByText(/Queued follow-up: also check CI/)).toBeTruthy();
+    expect(await screen.findByText("also check CI")).toBeTruthy();
     expect(screen.getByText("Queued")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
-    await waitFor(() => expect(calls.some((c) => c.path === "/v1/turns/t1/send-now")).toBe(true));
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
+    await waitFor(() => expect(calls.some((c) => c.path === "/v1/followups/f1/steer")).toBe(true));
+    expect(await screen.findByText("Steering in at the next step…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Steer" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(calls.some((c) => c.path === "/v1/turns/t1/abort")).toBe(true));
+  });
+
+  it("shows the server's queued rows after a reload, with Send now only where it is the control, and an inline error when it fails", async () => {
+    st.events = [e(1, "turn.queued", { turn_id: "t1", speaker_label: "Ann", text: "go" })];
+    const calls = mock({
+      "GET /v1/conversations/c1/followups": () => json(200, { items: [queued({ controls: { steer: false, send_now: true, edit: false, cancel: true } })] }),
+      "POST /v1/turns/t1/send-now": () => json(409, { error: { code: "send_now_unsupported", message: "nope" } }),
+    });
+    pane();
+    expect(await screen.findByText("also check CI")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Steer" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(calls.some((c) => c.path === "/v1/turns/t1/send-now")).toBe(true));
+    expect((await screen.findByText("This agent can't move a running step to the background.")).closest("[role=alert]")).toBeTruthy();
+  });
+
+  it("says on the row when a send-now found nothing to move, from the durable event", async () => {
+    st.events = [
+      e(1, "turn.queued", { turn_id: "t1", speaker_label: "Ann", text: "go" }),
+      e(2, "turn.send_now_failed", { turn_id: "t1", outcome: "nothing_running" }),
+    ];
+    mock({ "GET /v1/conversations/c1/followups": () => json(200, { items: [queued()] }) });
+    pane();
+    const row = (await screen.findByText("also check CI")).closest("div.border-dashed") as HTMLElement;
+    expect(within(row).getByRole("alert").textContent).toBe("Nothing was running to move to the background.");
   });
 
   it("shows the read-only audited notice instead of the composer, with Stop for a running turn (RFE-009)", () => {

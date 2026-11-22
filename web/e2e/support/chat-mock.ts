@@ -82,7 +82,32 @@ export interface Fixture {
   folders?: { kind: string; id: string; name: string; deleted: boolean; thread_count: number; last_activity_at: string; last_result: string | null }[];
   /** (P5-CHAT-4) The answer to `GET /v1/workspaces/{ws}/messages/search` for these query parameters. */
   search?: (url: URL) => unknown;
+  /** (FIX-225, C-1154) The waiting follow-ups `GET …/followups` lists; the mock's steer, cancel and edit routes change this array. */
+  followups?: QueuedFixture[];
+  /** (FIX-225) Answer these follow-up actions with an error instead: `{ status, code, message }` by action. */
+  followupErrors?: Partial<Record<"steer" | "cancel" | "edit", { status: number; code: string; message: string }>>;
 }
+
+/** (FIX-225, C-1154) A waiting follow-up as `GET …/followups` returns it. */
+export interface QueuedFixture {
+  id: string;
+  parent_turn_id: string;
+  status: "joining";
+  text: string;
+  created_at: string;
+  speaker_label: string | null;
+  edited_at: string | null;
+  steer_requested: boolean;
+  steer_error: "missed" | "refused" | null;
+  promoted_turn_id: null;
+  controls: { steer: boolean; send_now: boolean; edit: boolean; cancel: boolean };
+}
+
+export const queued = (over: Partial<QueuedFixture> = {}): QueuedFixture => ({
+  id: id(310), parent_turn_id: "t4", status: "joining", text: "also check the Sentry alerts", created_at: now, speaker_label: "Ada Lovelace",
+  edited_at: null, steer_requested: false, steer_error: null, promoted_turn_id: null,
+  controls: { steer: true, send_now: false, edit: true, cancel: true }, ...over,
+});
 
 export const DEFAULT: Fixture = {
   direct: MINE,
@@ -182,6 +207,29 @@ export async function mockChat(page: Page, fx: Fixture = DEFAULT) {
     // (P5-CHAT-4, C-727) Message search: the spec's own answer, or an empty complete page.
     if (method === "GET" && /^\/v1\/workspaces\/[^/]+\/messages\/search$/.test(p)) {
       return json(fx.search ? fx.search(url) : { items: [], next_cursor: null, index_complete: true });
+    }
+    // (FIX-225, D-469, C-1154, C-1155) The queued messages: a list, and Steer, Edit and Cancel that change it.
+    if (method === "GET" && /^\/v1\/conversations\/[^/]+\/followups$/.test(p)) return json({ items: fx.followups ?? [] });
+    const fup = p.match(/^\/v1\/followups\/([^/]+)(\/steer|\/cancel)?$/);
+    if (fup) {
+      const action = fup[2] === "/steer" ? "steer" : fup[2] === "/cancel" ? "cancel" : "edit";
+      const list = fx.followups ?? [];
+      const row = list.find((f) => f.id === fup[1]);
+      const err = fx.followupErrors?.[action];
+      if (err) return json({ error: { code: err.code, message: err.message, details: null } }, err.status);
+      if (!row) return json({ error: { code: "not_found", message: "Follow-up not found.", details: null } }, 404);
+      if (action === "steer") {
+        row.steer_requested = true;
+        row.controls = { ...row.controls, steer: false };
+        return json(row, 202);
+      }
+      if (action === "cancel") {
+        list.splice(list.indexOf(row), 1);
+        return json({ ...row, status: "cancelled" }, 202);
+      }
+      row.text = (route.request().postDataJSON() as { text: string }).text;
+      row.edited_at = new Date().toISOString();
+      return json(row);
     }
     if (p === `/v1/orgs/${org.id}/retention`) return json({ conversations_days: 90, conversations_days_max: null });
     if (p.startsWith("/v1/attachments/") && p.endsWith("/content")) return route.fulfill({ status: 200, contentType: "image/png", body: ICON });

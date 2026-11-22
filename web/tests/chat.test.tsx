@@ -11,8 +11,9 @@ import {
   classifySend,
   emptyTranscript,
   errorCopy,
+  followupSignal,
   loadHistory,
-  pendingFollowups,
+  sendNowFailures,
 } from "@/lib/chat/transcript";
 
 const ev = (seq: number | null, type: string, payload: Record<string, unknown>): TranscriptEvent => ({
@@ -75,11 +76,34 @@ describe("composer", () => {
     expect(classifySend({ turn, followup: null })).toEqual({ kind: "turn", turnId: "t1" });
     expect(classifySend({ turn: null, followup }).kind).toBe("followup");
   });
-  it("drops follow-ups once the parent turn finishes", () => {
-    const f = { id: "f", parent_turn_id: "t", status: "joining", text: "x", created_at: "" } as const;
-    expect(pendingFollowups([f], emptyTranscript)).toHaveLength(1);
-    const s = applyEvent(emptyTranscript, ev(1, "message.sent_now", { turn_id: "t" }));
-    expect(pendingFollowups([f], s)).toHaveLength(0);
+  // (FIX-225) The queued rows come from the server; the transcript only says when to read them again.
+  it("signals a refetch of the queued rows on the events that change them, and on no others", () => {
+    expect(followupSignal(emptyTranscript)).toBe(0);
+    let s = applyEvents(emptyTranscript, [ev(1, "turn.queued", { turn_id: "t" }), ev(2, "turn.started", { turn_id: "t" }), ev(3, "text", { turn_id: "t" })]);
+    expect(followupSignal(s)).toBe(0);
+    s = applyEvent(s, ev(4, "turn.queued", { turn_id: "f", followup_of: "t" }));
+    expect(followupSignal(s)).toBe(4);
+    for (const [seq, type] of [
+      [5, "followup.steer_requested"],
+      [6, "followup.steer_failed"],
+      [7, "followup.edited"],
+      [8, "followup.cancelled"],
+      [9, "message.joined"],
+      [10, "turn.send_now_failed"],
+      [11, "turn.finished"],
+    ] as const) {
+      s = applyEvent(s, ev(seq, type, { turn_id: "t" }));
+      expect(followupSignal(s), type).toBe(seq);
+    }
+    s = applyEvent(s, ev(12, "text", { turn_id: "t" }));
+    expect(followupSignal(s)).toBe(11);
+  });
+  it("remembers the latest failed send-now per turn", () => {
+    let s = applyEvent(emptyTranscript, ev(1, "turn.send_now_failed", { turn_id: "t", outcome: "nothing_running" }));
+    s = applyEvent(s, ev(2, "turn.send_now_failed", { turn_id: "u", outcome: "unsupported" }));
+    s = applyEvent(s, ev(3, "turn.send_now_failed", { turn_id: "t", outcome: "unsupported" }));
+    s = applyEvent(s, ev(4, "turn.send_now_failed", { turn_id: "v", outcome: "weird" }));
+    expect(Object.fromEntries(sendNowFailures(s))).toEqual({ t: "unsupported", u: "unsupported" });
   });
 });
 

@@ -95,6 +95,7 @@ export async function loadHistory(
 export const STREAM_EVENT_TYPES = [
   "turn.queued", "turn.started", "text.delta", "thinking.delta", "activity", "text",
   "tool.started", "tool.finished", "correction", "message.joined", "message.sent_now",
+  "followup.steer_requested", "followup.steer_failed", "followup.edited", "followup.cancelled", "turn.send_now_failed",
   "approval.pending", "approval.decided", "approval.expired",
   "action_approval.pending", "action_approval.decided", "attachment", "notice", "error", "turn.finished",
   "event.redacted",
@@ -137,13 +138,36 @@ export function classifySend(res: SendResult): SendOutcome {
   return { kind: "unknown" };
 }
 
-/** Followups still waiting: drop those whose parent turn finished or was sent now. */
-export function pendingFollowups(followups: Followup[], state: TranscriptState): Followup[] {
-  const done = new Set<string>();
+/**
+ * (FIX-225, C-1154) The seq of the latest event that changes the list of waiting follow-ups: a follow-up was queued,
+ * joined, steered, edited, cancelled or its steer failed, a send-now failed, or a turn ended (its follow-ups run next).
+ * The composer refetches `GET …/followups` whenever this number changes. 0 when there is none.
+ */
+export function followupSignal(state: TranscriptState): number {
+  let seq = 0;
   for (const e of state.events) {
-    if (e.type === "turn.finished" || e.type === "message.sent_now") done.add(str(e.payload.turn_id));
+    const t = e.type;
+    const changes =
+      t.startsWith("followup.") ||
+      t === "message.joined" ||
+      t === "message.sent_now" ||
+      t === "turn.send_now_failed" ||
+      t === "turn.finished" ||
+      (t === "turn.queued" && str(e.payload.followup_of) !== "");
+    if (changes && typeof e.seq === "number") seq = Math.max(seq, e.seq);
   }
-  return followups.filter((f) => f.status !== "promoted" && !done.has(f.parent_turn_id));
+  return seq;
+}
+
+/** What a send-now that did nothing came to, per turn (the latest `turn.send_now_failed`): shown on that turn's queued rows. */
+export function sendNowFailures(state: TranscriptState): Map<string, "nothing_running" | "unsupported"> {
+  const out = new Map<string, "nothing_running" | "unsupported">();
+  for (const e of state.events) {
+    if (e.type !== "turn.send_now_failed") continue;
+    const o = str(e.payload.outcome);
+    if (o === "nothing_running" || o === "unsupported") out.set(str(e.payload.turn_id), o);
+  }
+  return out;
 }
 
 /** Approval status derived from the durable decided/expired events. */

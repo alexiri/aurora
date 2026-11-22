@@ -13,6 +13,24 @@ import type { AgentIdent } from "./types";
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
 
+/** (FIX-225, D-470) The system line of a follow-up or send-now event: what happened, in words, never a code. */
+function systemLine(type: string, p: Record<string, unknown>): string {
+  switch (type) {
+    case "message.joined":
+      return "Follow-up joined the running turn.";
+    case "followup.cancelled":
+      return s(p.by_label) ? `${s(p.by_label)} cancelled a queued message.` : "A queued message was cancelled.";
+    case "followup.steer_failed":
+      return s(p.reason) === "refused"
+        ? "A queued message couldn't be steered in (the agent can't take messages right now). It runs after the current turn."
+        : "A queued message couldn't be steered in (the agent missed it). It runs after the current turn.";
+    case "turn.send_now_failed":
+      return s(p.outcome) === "nothing_running" ? "Nothing was running to move to the background." : "This agent can't move a running step to the background.";
+    default:
+      return "Follow-up sent now.";
+  }
+}
+
 /** The 2 s highlight of a message the reader jumped to (`accent-soft`; a colour change, so reduced motion is respected). */
 const HIGHLIGHT = ["bg-accent-soft", "rounded-card", "outline", "outline-2", "outline-accent"];
 const HIGHLIGHT_MS = 2000;
@@ -192,7 +210,7 @@ export function TranscriptView({
                   </SystemRow>
                 );
               }
-              return <SystemRow key={r.key}>{type === "message.joined" ? "Follow-up joined the running turn." : "Follow-up sent now."}</SystemRow>;
+              return <SystemRow key={r.key}>{systemLine(type, p)}</SystemRow>;
             }
           }
         })}
