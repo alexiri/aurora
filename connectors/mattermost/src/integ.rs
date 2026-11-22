@@ -28,6 +28,22 @@ const USER_TTL: Duration = Duration::from_secs(300);
 const CHANNEL_TTL: Duration = Duration::from_secs(600);
 /// `~name` lookups and the private-channel membership answers (FIX-219).
 const CHANNEL_NAME_TTL: Duration = Duration::from_secs(60);
+/// Most entries each of the `~name` and membership caches holds (FIX-219).
+const CHANNEL_CACHE_MAX: usize = 1024;
+
+/// Inserts into a one-minute cache: expired entries are dropped first, and a map still at
+/// [`CHANNEL_CACHE_MAX`] is cleared, so distinct names cannot grow it without bound.
+fn insert_bounded<K: std::hash::Hash + Eq, V>(
+    map: &mut HashMap<K, (Instant, V)>,
+    key: K,
+    value: V,
+) {
+    map.retain(|_, (at, _)| at.elapsed() < CHANNEL_NAME_TTL);
+    if map.len() >= CHANNEL_CACHE_MAX && !map.contains_key(&key) {
+        map.clear();
+    }
+    map.insert(key, (Instant::now(), value));
+}
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Catch-up reads a channel this many posts at a time, for at most this many pages: 10 000 posts
 /// per channel (docs/20 §Transport).
@@ -451,7 +467,11 @@ impl Integ {
             Ok(v) => serde_json::from_value::<MmChannel>(v).ok(),
             Err(_) => None,
         };
-        lock(&self.channel_names).insert(name.to_owned(), (Instant::now(), found.clone()));
+        insert_bounded(
+            &mut lock(&self.channel_names),
+            name.to_owned(),
+            found.clone(),
+        );
         found
     }
 
@@ -472,12 +492,12 @@ impl Integ {
             .await
         {
             Ok(_) => {
-                lock(&self.memberships).insert(key, (Instant::now(), true));
+                insert_bounded(&mut lock(&self.memberships), key, true);
                 true
             }
             Err(e) => {
                 if e.code == aurora_protocol::connector::ErrorCode::NotFound {
-                    lock(&self.memberships).insert(key, (Instant::now(), false));
+                    insert_bounded(&mut lock(&self.memberships), key, false);
                 }
                 false
             }
@@ -1672,6 +1692,21 @@ mod tests {
         rig.integ.channel_by_name("nothing").await;
         rig.integ.channel_by_name("nothing").await;
         assert_eq!(api_calls(&rig, "/channels/name/").await, 11);
+    }
+
+    #[test]
+    fn the_channel_caches_are_bounded() {
+        let mut m: HashMap<String, (Instant, bool)> = HashMap::new();
+        for i in 0..(CHANNEL_CACHE_MAX * 3) {
+            insert_bounded(&mut m, format!("n{i}"), true);
+            assert!(m.len() <= CHANNEL_CACHE_MAX, "grew to {}", m.len());
+        }
+        assert!(!m.is_empty());
+        // Expired entries go on the next insert.
+        let old = Instant::now() - CHANNEL_NAME_TTL - Duration::from_secs(1);
+        let mut e: HashMap<u32, (Instant, bool)> = (0..10).map(|i| (i, (old, true))).collect();
+        insert_bounded(&mut e, 99, false);
+        assert_eq!(e.len(), 1);
     }
 
     #[tokio::test]
