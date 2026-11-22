@@ -96,6 +96,11 @@ pub fn merge(
     taken: &BTreeMap<String, (&'static str, Option<Uuid>)>,
 ) -> Merged {
     let mut out = Merged::default();
+    // Grouping below takes adjacent candidates of one name, and the winners are documented in name
+    // order: sort here with `candidates()`'s key (a no-op for its output) so any input is grouped and
+    // ordered right; unsorted, one name could split into two groups with two winners.
+    let mut candidates = candidates;
+    candidates.sort_by(|a, b| (&a.skill.name, &a.app_id).cmp(&(&b.skill.name, &b.app_id)));
     let mut it = candidates.into_iter().peekable();
     while let Some(first) = it.next() {
         let mut group = vec![first];
