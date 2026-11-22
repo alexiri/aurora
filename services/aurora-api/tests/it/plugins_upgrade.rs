@@ -491,19 +491,19 @@ async fn the_shipped_indico_version_replaces_the_previous_one_automatically() {
     assert_eq!(v1["status"], "pending_approval", "{v1}");
     let (s, b) = a.act(&v1["id"], "approve").await;
     assert_eq!(s, 200, "{b}");
-    // (P5-GUIDE-4) The shipped package lists agent guide files: they travel in the archive.
-    let dir = format!("{root}/../../plugins/builtin/indico/agent/indico");
+    // (P5-APPSKILL-1) The shipped package carries its skills and operations file in the archive.
+    let base = format!("{root}/../../plugins/builtin/indico");
     let files: Vec<(String, Vec<u8>)> = [
-        "book-free-room.md",
-        "find-category-events.md",
-        "api-families.md",
-        "operations.json",
+        "skills/indico/indico-book-free-room/SKILL.md",
+        "skills/indico/indico-find-category-events/SKILL.md",
+        "skills/indico/indico-api-families/SKILL.md",
+        "agent/indico/operations.json",
     ]
     .iter()
     .map(|f| {
         (
-            format!("agent/indico/{f}"),
-            std::fs::read(format!("{dir}/{f}")).unwrap(),
+            (*f).to_owned(),
+            std::fs::read(format!("{base}/{f}")).unwrap(),
         )
     })
     .collect();
@@ -513,7 +513,7 @@ async fn the_shipped_indico_version_replaces_the_previous_one_automatically() {
         .collect();
     let v2 = a.upload_with(&shipped, &refs).await;
     assert_eq!(v2["package_id"], "indico", "{v2}");
-    assert_eq!(v2["version"], "1.4.1", "{v2}");
+    assert_eq!(v2["version"], "1.5.0", "{v2}");
     assert_eq!(v2["status"], "active", "activated without approval: {v2}");
     assert_eq!(a.status(&v1["id"]).await["status"], "superseded");
 }

@@ -28,6 +28,4 @@ apps:
       # The essentials: what an agent must know before its first request (about 600 characters).
       instructions: |
         Items are addressed by numeric id. Send JSON bodies.
-      # Reference files and recipes in agent/<app id>/ (kind: recipe = a procedure for one task).
-      guide:
-        - {{ file: api.md, title: "Items API: endpoints, parameters and errors" }}
+      # Skills live in skills/<app id>/<name>/SKILL.md (a skill per task; scripts allowed).

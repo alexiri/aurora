@@ -3,12 +3,9 @@ use aurora_db::DbError;
 use aurora_db::repo::agents;
 pub use aurora_db::repo::skills::Owner;
 use aurora_db::repo::skills::{self as repo, SkillRow};
-use base64::Engine as _;
+use aurora_registry::skill_format;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
-
-const PATH_MAX_DEPTH: usize = 4;
-const PATH_MAX_LEN: usize = 200;
 
 pub struct FileMeta {
     pub path: String,
@@ -56,23 +53,16 @@ fn not_found() -> ApiError {
 }
 
 pub fn validate_name(name: &str) -> Result<(), ApiError> {
-    let ok = !name.is_empty()
-        && name.len() <= limits::SKILL_NAME_MAX
-        && name.split('-').all(|p| {
-            !p.is_empty()
-                && p.bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-        });
-    if !ok {
-        return Err(bad(
+    match skill_format::check_name(name) {
+        Ok(()) => Ok(()),
+        Err(skill_format::NameError::Grammar) => Err(bad(
             "/name",
             "lowercase letters and digits joined by single hyphens, at most 64 characters",
-        ));
+        )),
+        Err(skill_format::NameError::Reserved) => {
+            Err(bad("/name", "the aurora- prefix is reserved"))
+        }
     }
-    if name.starts_with("aurora-") || name == "aurora" {
-        return Err(bad("/name", "the aurora- prefix is reserved"));
-    }
-    Ok(())
 }
 
 fn validate_description(d: &str) -> Result<(), ApiError> {
@@ -102,20 +92,7 @@ fn validate_body(b: &str) -> Result<(), ApiError> {
 }
 
 pub fn validate_path(path: &str) -> Result<(), ApiError> {
-    let chars_ok = path
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'/' | b'-'));
-    let segs: Vec<&str> = path.split('/').collect();
-    let ok = !path.is_empty()
-        && path.len() <= PATH_MAX_LEN
-        && chars_ok
-        && segs.len() <= PATH_MAX_DEPTH
-        && segs
-            .iter()
-            .all(|s| !s.is_empty() && *s != "." && *s != "..")
-        // (FIX-110) `SKILL.md` in any segment (`skill.md/x` too), not only the last.
-        && !segs.iter().any(|s| s.eq_ignore_ascii_case("skill.md"));
-    if ok {
+    if skill_format::path_ok(path) {
         Ok(())
     } else {
         Err(bad(
@@ -128,10 +105,7 @@ pub fn validate_path(path: &str) -> Result<(), ApiError> {
 
 /// Characters for text, base64 length for binary content.
 pub(crate) fn content_size(c: &[u8]) -> usize {
-    match std::str::from_utf8(c) {
-        Ok(s) => s.chars().count(),
-        Err(_) => base64::engine::general_purpose::STANDARD.encode(c).len(),
-    }
+    skill_format::content_size(c)
 }
 
 fn check_total(body: &str, files: &[repo::FileRow]) -> Result<(), ApiError> {

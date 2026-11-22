@@ -101,102 +101,111 @@ Terms: the **agent guide** of an app is the content of that folder. It is distin
 
 ```yaml
 agent:
-  summary: "Projects, issues, merge requests, pipelines and git over HTTPS."   # new, optional
+  summary: "Projects, issues, merge requests, pipelines and git over HTTPS."   # optional
   instructions: |                 # unchanged key; now called the essentials
     Address a project by numeric id or by its URL-encoded full path. Send JSON bodies.
-  guide:                          # new, optional: reference files and recipes in agent/<app_id>/
-    - { file: api.md, title: "REST conventions, pagination, errors, rate limits" }
-    - { file: pipelines.md, title: "Pipelines, jobs, artifacts and logs" }
-    - { file: retry-failed-jobs.md, title: "Retry the failed jobs of a pipeline", kind: recipe }
-  operations: operations.json     # new, optional (D-296): machine-readable operations, §3.5
+  operations: operations.json     # optional (D-296): machine-readable operations, §3.5
   env: […]                        # unchanged
   stubs: […]                      # unchanged
   default_blocklist: […]          # unchanged
 ```
 
+The **skills** of an app are not listed in the manifest: they are the `skills/<app_id>/<name>/`
+folders of the archive (§3.2), as a skill library's skills are the folders of a repository.
+
 - **`summary`**: one line, at most `AGENT_SUMMARY_MAX` characters, no control characters. What
   the app is for, in words an agent can match against a task. It is the only plugin text that is
   ever in the instruction file (§6), so it is what makes an agent pick the app: name the tasks
   the app serves ("Events, timetables, room search and booking"). Absent →
-  `about.description` is used, clamped. Required when `guide` or `operations` is present
+  `about.description` is used, clamped. Required when the app ships skills or has `operations`
   (`agent_summary_required`).
 - **`instructions`** keeps its key, limit (`AGENT_SNIPPET_MAX`) and sanitization. Its role
   narrows to the **essentials**: what the agent must know before the first request (which
-  account rules apply, what never to retry, what the gateway adds for it). Endpoint lists and
-  parameter tables belong in guide files.
-- **`guide`**: 0 to `AGENT_GUIDE_FILES_MAX` entries `{ file, title, kind? }`. `file` matches
-  `[a-z0-9][a-z0-9_-]{0,47}\.(md|txt|json|yaml|tsv|csv)` and is not `guide.md`, `tools.md` or
-  `api.json` (written by the core). `title` is one line, 1 to 120 characters, shown in
-  `guide.md` so the agent knows which file to open. File order is the order in which `guide.md`
-  lists them.
-- **`kind`** (D-295): `reference` (default) or `recipe`. A **recipe** is a task-oriented
-  procedure: the steps, requests (or `aurora-agent` calls, §10a) and pitfalls of one thing a
-  person asks for, such as "Find a free room and book it". It is the package's equivalent of a
-  skill, without depending on a harness's skill loader: `guide.md` lists recipes in their own
-  section ahead of the reference files, and `aurora-agent search` matches their titles (§10a). A
-  recipe is a `.md` file (`agent_recipe_not_markdown`) and its `title` is a task, not a topic.
-  Recipes are text: they never run, carry no permission, and a request a recipe describes is
-  decided by the gateway like any other (a booking still needs a catalogue tool and a grant
-  that allows it or asks approval).
-- **`operations`** (D-296): optional, the name of one file in `agent/<app_id>/` that matches the
-  `file` grammar with the extension `.json` and is **not** listed in `guide`. It is the
-  machine-readable operation list of §3.5. It is not projected as is: the core validates it at
-  ingest and renders it into `api.json` (§5.4).
-- Unknown keys inside `agent` and inside a `guide` entry stay errors. `sha256` and `size` of a
-  guide entry (and of `operations`) exist only in the snapshot and are computed by the core
-  (§4); a `plugin.yaml` that carries either is rejected (`agent_guide_computed_field`).
+  account rules apply, what never to retry, what the gateway adds for it). Endpoint lists,
+  parameter tables and procedures belong in skills.
+- **`operations`** (D-296): optional, the name of one `.json` file in `agent/<app_id>/`
+  (`[a-z0-9][a-z0-9_-]{0,47}.json`, not `guide.md`, `app.md`, `tools.md` or `api.json`, which
+  the core writes). It is the machine-readable operation list of §3.5. It is not projected as
+  is: the core validates it at ingest and renders it into `api.json` (§5.4).
+- **`guide`** (removed, D-453): the key is still **parsed** so an old package is accepted and an
+  old stored version still compiles, but its entries and the files they name are **ignored**:
+  the linter warns `agent_guide_ignored` (once per app, never an error) and nothing of them is
+  stored for agents or put in the snapshot. Convert each entry to a skill (§10).
+- Unknown keys inside `agent` stay errors. `sha256` and `size` of an operations file exist only
+  in the snapshot and are computed by the core (§4).
 - Optional `description` on a catalogue tool (`09 §3.4 tools`, existing key) is what `tools.md`
   prints after the tool's name; authors of large catalogues should fill it.
 
-### 3.2 Archive: `agent/<app_id>/<file>`
+### 3.2 Archive: `skills/<app_id>/<name>/…` and `agent/<app_id>/<operations file>`
 
-The archive (`09 §2`) may contain `agent/<app_id>/<file>` entries: regular files, one directory
-level per app, nothing deeper.
+The archive (`09 §2`) may contain regular files (no symlink, no hard link) at these paths:
 
-- Every file under `agent/<app_id>/` MUST be listed in that app's `agent.guide` or be its
-  `agent.operations`, and every listed file MUST exist (`agent_guide_unlisted_file`,
-  `agent_guide_missing_file`). `<app_id>` MUST be an app of this package
-  (`agent_guide_unknown_app`).
-- Content is **UTF-8 text**: no NUL, no control character other than LF and TAB (CR included: no
-  CRLF), no byte-order mark (`agent_guide_not_text`). This bounds the JSON form of a file at
-  twice its size, so every file fits one home-sync part.
-- Sizes: a file at most `AGENT_GUIDE_FILE_MAX`; the files of one app at most
-  `AGENT_GUIDE_APP_MAX` in total (`agent_guide_file_too_large`, `agent_guide_app_too_large`,
-  `agent_guide_too_many_files`).
-- Files are covered by the canonical digest and the signature like every other package file.
-- Guide files are **data**. The core never parses, executes or interprets them; `.json` and
-  `.yaml` are extensions, not schemas. The one exception is the `operations` file: the linter
-  parses it against the closed schema of §3.5 and the renderer re-emits its validated fields
-  into `api.json`; nothing in it is ever executed, and it does not count toward
-  `AGENT_GUIDE_FILES_MAX` or `AGENT_GUIDE_APP_MAX` (it has its own limit,
-  `AGENT_OPERATIONS_FILE_MAX`).
+- **`skills/<app_id>/<name>/SKILL.md`** and **`skills/<app_id>/<name>/<path>`** (D-453(a)).
+  `<app_id>` MUST be an app of this package (`app_skill_unknown_app`). `<name>` is a skill name
+  (`[a-z0-9]+(-[a-z0-9]+)*`, at most `SKILL_NAME_MAX`, not `aurora` or `aurora-*`) that equals
+  `<app_id>` or starts with `<app_id>-`, **and** whose longest matching app id among the
+  package's apps is `<app_id>` itself: in a package with `jira` and `jira-dc`, `jira-dc-x`
+  belongs under `skills/jira-dc/` (`app_skill_name`). Names are therefore unique across the
+  package, and a skill's app is derived from its name.
+- **`agent/<app_id>/<operations file>`**, the file named by `agent.operations` (§3.5). Every
+  other file under `agent/<app_id>/` is an old guide file: accepted, ignored (`agent_guide_ignored`).
+  `<app_id>` MUST still be an app of this package (`agent_unknown_app`); the operations file
+  MUST exist (`agent_operations_missing_file`).
+
+Each skill follows **exactly the rules of a skill-library skill** (`10 §Skills`), applied by the
+one shared validator, `aurora-registry::skill_format`, which the package linter, `aurora plugin
+validate` and the API's library reader all call (so the two cannot drift):
+
+- `SKILL.md`: YAML frontmatter between `---` lines with `name` absent or equal to the folder
+  name and a single-line `description` of at most `SKILL_DESCRIPTION_MAX` characters, no anchors
+  or aliases (`app_skill_frontmatter`); the body at most `SKILL_BODY_MAX` characters
+  (`app_skill_body_too_large`); body plus files at most `SKILL_TOTAL_MAX` (`app_skill_too_large`).
+- Files: paths of `[A-Za-z0-9._/-]`, at most 4 segments and 200 characters, no empty, `.` or
+  `..` segment, and no segment named `skill.md` in any case (`app_skill_path`); at most
+  `SKILL_FILES_MAX` files per skill (`app_skill_too_many_files`); each at most 64 KiB
+  (`app_skill_file_too_large`).
+- **Files are UTF-8 text** (valid UTF-8, no NUL, no byte-order mark; `app_skill_not_text`): the
+  home projection sends text only. A script is a text file.
+- Per app at most `APP_SKILLS_MAX` skills (`app_skills_too_many`) and `APP_SKILLS_APP_MAX` bytes
+  of `SKILL.md` and files together (`app_skills_app_too_large`).
+- **The executable bit** of a file under `skills/` (tar mode `0755` or `0644`) is part of the
+  canonical digest (`09 §2`, C-1131), so the bit is signed with the content. `aurora plugin
+  build` sets it from the source file's mode (git `100755`).
+- Everything is covered by the signature like every other package file. Skill files are **data**
+  to the core: it parses only `SKILL.md`'s frontmatter (by the shared parser) and never executes
+  or interprets a file (SEC-150). The operations file is the one other parsed file (§3.5); it has
+  its own limit, `AGENT_OPERATIONS_FILE_MAX`.
 
 ### 3.3 Compatibility
 
-- A package that uses neither `summary`, `guide` nor `agent/` is untouched: same digest, same
-  snapshot fragment, same behaviour.
-- A core that does not know the keys rejects the package (unknown key, or unknown archive path),
-  which fails closed; packages that use them declare `min_core` of the release that ships
-  P5-GUIDE-1.
-- The snapshot omits `summary`, `guide` and `operations` when absent. A gateway or hook host that
-  predates the keys refuses a snapshot that carries them and keeps the previous one (`06
-  §Registry snapshot loading`), like every additive key since `grants`; neither service uses
-  these keys. `kind` (D-295) and `operations` (D-296) ship in the same release as `summary` and
-  `guide` when P5-GUIDE-1 and P5-GUIDE-6 land in one release; otherwise a package that uses
-  `operations` declares the `min_core` of the release that ships P5-GUIDE-6.
+- A package that uses neither `summary`, `skills/` nor `agent/` is untouched: same digest, same
+  snapshot fragment, same behaviour. A package without `skills/` has the digest it always had
+  (the `\0x` marker exists only for executable entries under `skills/`).
+- A package in the old format (`agent.guide`, files under `agent/<app_id>/`) is still **accepted
+  and served**, with the warning `agent_guide_ignored`; it simply gives agents nothing but its
+  summary, essentials and operations file.
+- A core that does not know `skills/` rejects the package (unknown archive path), which fails
+  closed; packages that ship skills declare `min_core` of the release that ships P5-APPSKILL-1.
+- The snapshot omits `summary`, `skills` and `operations` when absent. A gateway or hook host
+  that predates the keys refuses a snapshot that carries them and keeps the previous one (`06
+  §Registry snapshot loading`); neither service uses them.
 
 ### 3.4 Lifecycle
 
-A change of `summary`, `instructions` or guide files is **not a permission widening** (`09 §10`):
-the text an app gives agents is untrusted data, labelled as such wherever it is read, and gives
-the package no new capability (D-171). It is visible and audited instead:
+A change of `summary`, `instructions`, the operations file or any skill (a script included) is
+**not a permission widening** (`09 §10`, D-452(c)): the text an app gives agents is untrusted
+data, labelled as such wherever it is read, and gives the package no new capability: a script
+runs only when the agent runs it, in that agent's sandbox, with that agent's access, and every
+request it makes passes the gateway like any other (SEC-150). It is visible and audited
+instead:
 
-- the permissions review of a pending version has an **Agent guide** section (§9) and marks what
-  changed against the active version;
-- `plugin.approve` and the system row `plugin.activate` carry
-  `agent_guide_changed: [app_id, …]` in their metadata when the summary, essentials, any guide
-  file digest (recipes included) or the operations file digest differs from the previously
-  active version.
+- the permissions review of a pending version has a **For agents** section (§9) and marks what
+  changed against the active version, including a skill file that became or stopped being a
+  script;
+- `plugin.approve`, the system row `plugin.activate` and `plugin.auto_approved` carry
+  `agent_changed: [app_id, …]` in their metadata when the summary, the essentials, the operations
+  file digest or any app skill (added, removed, `SKILL.md` digest, a file added, removed or
+  changed, or its executable bit) differs from the previously active version.
 
 ### 3.5 The operations file (D-296, P5-GUIDE-6)
 
@@ -269,27 +278,28 @@ Rules (linter, violation codes `agent_operations_*`; the file is rejected as a w
 
 ## 4. Ingest, storage, snapshot
 
-- **Linter** (`aurora-registry::validate`): the rules of §3 with the violation codes named
-  there, plus `agent_summary_too_long`, `agent_summary_multiline`, `agent_guide_file_name`,
-  `agent_guide_reserved_name`, `agent_guide_title`, `agent_guide_duplicate_file`,
-  `agent_guide_computed_field`; (P5-GUIDE-1, D-295) `agent_recipe_not_markdown`, an unknown
-  `kind` (`agent_guide_kind`); (P5-GUIDE-6, D-296) the `agent_operations_*` rules of §3.5 and
-  `agent_operations_too_large`, `agent_operations_too_many`.
-- **Blobs**: at ingest each guide file of a package that is not `invalid` is stored once in
-  `plugin_blobs` (`03`), `kind = 'agent_guide'` (the `kind` check gains this value), keyed by
-  the SHA-256 of its bytes, in the ingest transaction, as `hooks.wasm` is today. `plugin_blobs`
-  is keyed by digest alone, so a guide file whose bytes equal a blob of another kind is already
-  stored under that kind: guide files are therefore **read by digest only**, whatever the row's
-  kind.
-- **Snapshot** (`09 §9`): `apps[].agent` gains `summary` (string),
-  `guide: [{ file, title, kind, sha256, size }]` (`kind` always present in the snapshot,
-  `reference` or `recipe`; `sha256` lower-case hex of the file bytes, `size` in bytes) and
-  (P5-GUIDE-6) `operations: { file, sha256, size, count }`, each key omitted when absent. The
-  digests are computed by the core from the stored archive, as `hooks_digest` is. No guide
-  content is in the snapshot. The operations file is stored as a blob of kind `agent_guide` like
-  the other files.
-- The API serves guide content from an in-process cache keyed by digest (content-addressed, so
-  never invalidated; bounded at 64 MiB, least recently used evicted).
+- **Linter** (`aurora-registry::validate::agent_rules`): the rules of §3 with the violation codes
+  named there, plus `agent_summary_too_long`, `agent_summary_multiline`,
+  `agent_summary_required`; (P5-GUIDE-6, D-296) the `agent_operations_*` rules of §3.5, with
+  `agent_operations_file_name`, `agent_operations_reserved_name`,
+  `agent_operations_missing_file` and `agent_operations_not_text` for the file itself; (D-453)
+  the `app_skill_*` and `app_skills_*` codes of §3.2; and the warning `agent_guide_ignored`.
+  Removed with the guide: every other `agent_guide_*` error and `agent_recipe_not_markdown`.
+- **Blobs**: at ingest each `SKILL.md`, each skill file and the operations file of a package that
+  is not `invalid` is stored once in `plugin_blobs` (`03`), `kind = 'agent_file'` (migration
+  `20261201000272` renames `agent_guide`), keyed by the SHA-256 of its bytes, in the ingest
+  transaction, as `hooks.wasm` is. `plugin_blobs` is keyed by digest alone, so a file whose bytes
+  equal a blob of another kind is already stored under that kind: agent files are therefore
+  **read by digest only**, whatever the row's kind. Old guide files are stored nowhere.
+- **Snapshot** (`09 §9`, C-1132): `apps[].agent` carries `summary` (string),
+  `skills: [{ name, description, sha256, size, files: [{ path, sha256, size, executable }] }]`
+  (sorted by `name`, files by `path`; `sha256`/`size` are those of `SKILL.md` as shipped) and
+  (P5-GUIDE-6) `operations: { file, sha256, size, count }`, each key omitted when absent.
+  `guide` is no longer emitted, also for a stored version that carries it. The digests are
+  computed by the core from the stored archive, as `hooks_digest` is. No content is in the
+  snapshot.
+- The API serves agent file content from an in-process cache keyed by digest (content-addressed,
+  so never invalidated; bounded at 64 MiB, least recently used evicted).
 
 ## 5. What the agent gets
 
@@ -537,10 +547,10 @@ files) does not change the instruction file, so idle sessions are **not** releas
 |---|---|---|
 | `AGENT_SUMMARY_MAX` | 160 chars | `agent.summary`, one line |
 | `AGENT_SNIPPET_MAX` | 2 000 chars (unchanged) | `agent.instructions`, the essentials |
-| `AGENT_GUIDE_FILES_MAX` | 24 | guide files per app |
-| `AGENT_GUIDE_FILE_MAX` | 64 KiB | one guide file (UTF-8 bytes) |
-| `AGENT_GUIDE_APP_MAX` | 256 KiB | all guide files of one app |
-| `AGENT_GUIDE_SYNC_MAX` | 2 MiB | reference files and recipes projected into one agent's home |
+| `APP_SKILLS_MAX` | 16 | skills per app (D-453) |
+| `APP_SKILLS_APP_MAX` | 256 KiB | `SKILL.md` and files of all skills of one app (UTF-8 bytes) |
+| `APP_SKILLS_SYNC_MAX` | 2 MiB | app skills projected into one agent's home |
+| `SKILL_*` (`SKILL_NAME_MAX`, `SKILL_DESCRIPTION_MAX`, `SKILL_BODY_MAX`, `SKILL_TOTAL_MAX`, `SKILL_FILES_MAX`) | as `10 §Skills` | the same limits as any skill; each file at most 64 KiB |
 | `AGENT_OPERATIONS_MAX` | 2 000 | operations in one operations file (P5-GUIDE-6) |
 | `AGENT_OPERATIONS_FILE_MAX` | 512 KiB | one operations file (P5-GUIDE-6) |
 | `AGENT_API_JSON_MAX` | 512 KiB | one rendered `api.json` (P5-GUIDE-6) |
@@ -552,72 +562,68 @@ files) does not change the instruction file, so idle sessions are **not** releas
 `AGENT_NOTES_INLINE_MAX` (4 000 chars, the inline/index threshold of 2026-11-13) is removed by
 D-295.
 
-256 KiB per app is about 64 000 tokens of reference: enough for an operation index of a
-thousand-operation API with one line each and per-area detail files. It is a budget for what is
-*available* to read; the agent reads one file at a time.
+256 KiB per app is about 64 000 tokens of skills: a skill per task and a few reference skills.
+It is a budget for what is *available* to read; the agent opens one skill at a time. The operation
+index of a large API is the operations file, searched with `aurora-agent` (§10a), not a skill.
 
 ## 9. People: API and dashboard
 
-- `PluginPackage` (`GET /v1/admin/plugins/{id}`, instance admins) gains
-  `agent_guides: [{ app_id, summary, instructions, files: [{ file, title, kind, size, sha256 }],
-  operations: { file, size, sha256, count } | null, changed }]`, one entry per app of the
-  package. `changed` compares with the active version of the same package: `null` when there is
-  none, else `{ summary: bool, instructions: bool, operations: bool, files: [{ file, change:
-  "added"|"changed"|"removed" }] }`. The file route below also serves the operations file.
-- `GET /v1/admin/plugins/{id}/agent-guides/{app_id}/{file}` (instance admins) returns the file
-  as `text/plain; charset=utf-8` with `X-Content-Type-Options: nosniff`,
+- `PluginPackage` (`GET /v1/admin/plugins/{id}`, instance admins) carries **`agent: [{ app_id,
+  summary, instructions, operations: { file, size, sha256, count } | null, skills: [{ name,
+  description, size, files: [{ path, size, sha256, executable }] }], changed }]`**, one entry per
+  app of the package (C-1136; `SKILL.md` is the first file of its skill). `changed` compares with
+  the active version of the same package: `null` when there is none, else `{ summary: bool,
+  instructions: bool, operations: bool, skills: [{ name, change: "added"|"changed"|"removed",
+  files: [{ path, change: "added"|"changed"|"removed"|"mode" }] }] }`; `mode` means only the
+  executable bit changed.
+- `GET /v1/admin/plugins/{id}/apps/{app_id}/skills/{name}/file?path=<path>` (instance admins;
+  `path` absent = `SKILL.md` as shipped) and `GET /v1/admin/plugins/{id}/apps/{app_id}/operations`
+  return the file as `text/plain; charset=utf-8` with `X-Content-Type-Options: nosniff`,
   `Content-Disposition: attachment` and `Cache-Control: private, no-store`. 404 for an unknown
-  package, app or file.
-- **Dashboard** (Admin → Plugins → a package, and the permissions review of a pending version):
-  an **Agent guide** section per app: the summary, the essentials, the recipes (marked as such)
-  and reference files with sizes and change marks, and the operations file with its operation
-  count; a file opens in the shared code/preformatted viewer as **plain text** (never
-  rendered as Markdown or HTML). The review states: *"Agents that use this app can read this
-  text. It is written by the publisher."* The section follows `14 §Visual design` (tokens,
-  shared primitives, both themes, no horizontal scroll at 390 px; long lines wrap or scroll
-  inside the viewer only).
+  package, app, skill, path or operations file; 400 `invalid_request` for a `path` that fails the
+  skill path grammar. The route serves only files the package's archive carried for that skill,
+  read by digest.
+- **Dashboard** (P5-APPSKILL-3; Admin → Plugins → a package, and the permissions review): a
+  **For agents** section per app: the summary, the essentials, the operations file with its
+  count, and the skills with their files (scripts marked), change marks, and a file opens in the
+  shared code viewer as **plain text**, never rendered. The review states: *"Agents that use
+  this app get these skills. They are written by the publisher; scripts run in the agent's
+  sandbox with the agent's access."* (`14 §Visual design`.)
 - No route for members and none for agents in this phase (§12).
 
 ## 10. Authoring
 
-- `aurora plugin new <id>` scaffolds `agent.summary`, a short `agent.instructions`, one
-  `agent/<app_id>/api.md` and its `guide` entry.
-- `aurora plugin build` packs `agent/**`; `validate` runs the rules of §3 and §4; `docs` adds
-  the agent guide (summary, essentials, file list) to its output.
-- **`aurora plugin guide [--app <id>] [--access full|custom] [--out <dir>]`** (new) renders what
-  an agent would get for a sample account: `guide.md`, `tools.md`, `api.json` (from
-  P5-GUIDE-6), the recipes and the reference files, to the directory or to stdout. `custom`
-  marks read tools allowed and write tools `approval`, so both vocabularies appear. It uses the
-  renderer of §5.
-- `plugins/builtin/README.md` gains the authoring rules: what goes in the summary (what the app
-  is for, naming the tasks it serves), the essentials (what must be known before the first
-  request, at most about 600 characters), a recipe (one task a person asks for, as numbered
-  steps with the exact requests or `aurora-agent` calls, the pitfalls, and how to confirm the
-  result; title phrased as the task), a reference file (everything else, one topic per file, the
-  first screen of each file says what is in it), and tool `description`s.
-- **OpenAPI import (P5-GUIDE-5, after P5-GUIDE-1; not ordered before the addon tasks).**
-  `aurora plugin import-openapi <file> --app <id> [--host <host>]` reads a local OpenAPI 3.0 or
-  3.1 document (JSON or YAML; no network access) and writes, deterministically (sorted, stable
-  across runs, so CI can regenerate and fail on drift):
-  1. `agent/<app_id>/operations.md`: one line per operation (`METHOD path: summary
-     [operationId]`), grouped by tag;
-  2. `agent/<app_id>/ops-<tag>.md` per tag: for each operation its parameters (name, location,
-     required, type) and the top-level fields of its JSON request body, descriptions clamped;
-  3. a `tools:` catalogue skeleton on stdout: `operationId` → tool id (lower snake case, clamped
-     to the id grammar, de-duplicated), `GET`/`HEAD` → `read`, every other method → `write`,
-     `{param}` path segments → `*`.
-  4. (P5-GUIDE-6, D-296) `agent/<app_id>/operations.json` in the format of §3.5: every
-     operation with its parameters, top-level body fields, the `items` path when the success
-     response is an array or has one obvious array property, and `pagination` when it can be
-     recognised (`Link` response header → `link_header`; a `page` query parameter →
-     `page_param`); `tool` is set from the generated skeleton. Header parameters that §3.5
-     forbids are left out with a note. Bounded by `AGENT_OPERATIONS_FILE_MAX` with the same
-     drop order.
-  When the output would pass `AGENT_GUIDE_APP_MAX` it drops, in order, body fields, parameter
-  descriptions, then per-tag detail of the largest tags, and prints what it dropped. The author
-  reviews the skeleton (overlap order, `params` classifiers, which operations deserve a tool);
-  the linter remains the authority. This is what makes a several-hundred-operation app a
-  day's work instead of a week's, and it gives the agent a searchable index of the whole API.
+- `aurora plugin new <id>` scaffolds `agent.summary`, a short `agent.instructions` and
+  `skills/<id>/<id>-example/SKILL.md` (an app id with an underscore cannot ship skills: a skill
+  name has none).
+- `aurora plugin build` packs `skills/**` with the executable bit of each source file (C-1131)
+  and `agent/<app_id>/<operations file>`; `validate` runs the rules of §3 and §4 and prints the
+  warnings; `docs` lists each app's summary, essentials and skills (name, description, scripts).
+- **`aurora plugin preview [--app <id>] [--access full|custom] [--out <dir>]`** (replaces
+  `aurora plugin guide`) renders what an agent would get for a sample account:
+  `apps/<app_id>/{guide.md, tools.md, api.json}` (`app.md` from P5-APPSKILL-2) and
+  `skills/<name>/…` exactly as projected (provenance line included, modes `0555` for scripts and
+  `0444` for the rest), to the directory or to stdout. `custom` marks read tools allowed and write
+  tools `approval`, so both vocabularies appear. It uses the renderers of §5.
+- `plugins/builtin/README.md` has the authoring rules: the summary (what the app is for, naming
+  the tasks it serves), the essentials (what must be known before the first request, at most
+  about 600 characters), **a skill per task** (a task a person asks for, as numbered steps with
+  the exact requests or `aurora-agent` calls, the pitfalls and how to confirm the result; the
+  description is phrased as the task or says what the skill is for), a reference skill for what
+  every task needs (one topic per skill; the first screen says what is in it), scripts in
+  `scripts/` committed executable, no secrets, no hard-coded hosts (the host comes from the account
+  in `app.md`), and tool `description`s.
+- **OpenAPI import (P5-GUIDE-5; C-1138).** `aurora plugin import-openapi <file> --app <id>
+  [--host <host>]` reads a local OpenAPI 3.0 or 3.1 document (JSON or YAML; no network access)
+  and writes, deterministically (sorted, stable across runs, so CI can regenerate and fail on
+  drift): `agent/<app_id>/operations.json` in the format of §3.5 (every operation with its
+  parameters, top-level body fields, the `items` path and `pagination` when they can be
+  recognised; `tool` set from the skeleton; bounded by `AGENT_OPERATIONS_FILE_MAX`), and prints
+  `operations: operations.json` and a `tools:` catalogue skeleton on stdout (`operationId` → tool
+  id, `GET`/`HEAD` → `read`, every other method → `write`, `{param}` path segments → `*`). It
+  writes **no** `operations.md` or `ops-<tag>.md` and no `guide:` entries: `aurora-agent search`
+  and `describe` serve the index (§10a). The author reviews the skeleton (overlap order, `params`
+  classifiers, which operations deserve a tool); the linter remains the authority.
 
 ## 10a. `aurora-agent`: one command to search, describe and call (P5-GUIDE-6/7, D-296, D-297)
 
@@ -869,9 +875,9 @@ matter.
 - **A code-execution runtime** (JavaScript isolate, `search`/`execute` meta-tools, Skarn). The
   sandbox is the execution environment (§1, D-170); `aurora-agent` provides the *search* and
   *execute* verbs, as a command in that sandbox (§10a).
-- **Executable recipes** (scripts shipped by a package and run by the agent). A script from an
-  approved package would run with the agent's access and see its home and memory; recipes stay
-  text until that trust step has its own decision (D-295).
+- **Platform-run scripts.** A package's scripts (D-452) are files in a skill: the agent runs them
+  in its sandbox with its own access. No platform component runs, interprets or schedules a
+  package script (SEC-150).
 - **A generated per-language client** (Python or TypeScript modules per app). `aurora-agent` works
   from every language and shell; a client library can come later from the same `api.json`.
 - **MCP-server apps** (an app whose only interface is an MCP server). The shape is recorded so
@@ -884,10 +890,10 @@ matter.
 - **Effective-policy access** in `tools.md` (§5.2), **digest-based skipping** of unchanged files
   in the home sync, **compression of command output**, **guides for BYO agents** (they have no
   projected home; an export route can come later), a guide route for members.
-- Guides as harness **skills**: rejected (D-171). Skills are harness-specific (`codex` may have
-  no skills directory), their loading is decided by the harness from a description line, and
-  account lists and access must not depend on that. The folder works for every harness; recipes
-  (D-295) are the package's skills in that folder.
+- Guides as harness **skills**: rejected in 2026-11-13 (D-171) and **reversed** on 2026-11-22
+  (D-453): "guides and skills are basically the same thing". The agent guide is gone; an app's
+  skills are projected into the harness skills directory at the lowest tier, and `app.md`
+  (account lists and access, which must not depend on a harness's skill loader) lists them.
 - **Binding platform-tool calls to the calling process** (SEC-119): not changed here.
 
 ## 13. Tasks and order

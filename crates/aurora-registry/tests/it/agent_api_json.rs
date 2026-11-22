@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use aurora_registry::agent_guide::{GrantAccess, GuideAccount, render_with_operations};
 use aurora_registry::operations;
 
-use super::agent_guide::{AGENT, FILES, TOOLS, snapshot_of, yaml};
+use super::agent_guide::{AGENT, TOOLS, snapshot_of, yaml};
 
 const OPS: &str = r#"{"format":"aurora.operations/1","operations":[
  {"id":"list_things","method":"GET","path":"/v1/things","summary":"All things","tags":["things"],
@@ -39,7 +39,7 @@ fn custom(allow: &[&str], ask: &[&str]) -> GrantAccess {
 }
 
 fn api(ops: Option<&str>, accounts: &[GuideAccount]) -> String {
-    let s = snapshot_of(&yaml(TOOLS, AGENT, ""), &FILES);
+    let s = snapshot_of(&yaml(TOOLS, AGENT, ""), &[]);
     let parsed = ops.map(|o| operations::parse(o.as_bytes()).unwrap());
     let r = render_with_operations(&s.apps[0], &[], accounts, "1.2.3", true, parsed.as_ref());
     let j = r.api_json.expect("api.json");
@@ -88,7 +88,7 @@ fn rendering_is_deterministic() {
     let a = [acct("c_1", Some("api.example.test"), GrantAccess::Full)];
     assert_eq!(api(Some(OPS), &a), api(Some(OPS), &a));
     // Key order of C-652 in the bytes themselves (the snapshot sorts keys).
-    let s = snapshot_of(&yaml(TOOLS, AGENT, ""), &FILES);
+    let s = snapshot_of(&yaml(TOOLS, AGENT, ""), &[]);
     let parsed = operations::parse(OPS.as_bytes()).unwrap();
     let raw = render_with_operations(&s.apps[0], &[], &a, "1", true, Some(&parsed))
         .api_json
@@ -122,7 +122,7 @@ fn an_oversized_api_json_drops_descriptions_then_params_and_says_so() {
     }
     ops.push_str("]}");
     let a = [acct("c_1", Some("api.example.test"), GrantAccess::Full)];
-    let s = snapshot_of(&yaml(TOOLS, AGENT, ""), &FILES);
+    let s = snapshot_of(&yaml(TOOLS, AGENT, ""), &[]);
     let parsed = operations::parse(ops.as_bytes()).unwrap();
     let r = render_with_operations(&s.apps[0], &[], &a, "1", true, Some(&parsed));
     let j = r.api_json.unwrap();
@@ -137,7 +137,7 @@ fn an_oversized_api_json_drops_descriptions_then_params_and_says_so() {
 
 #[test]
 fn a_database_app_has_no_api_json() {
-    let mut s = snapshot_of(&yaml(TOOLS, AGENT, ""), &FILES);
+    let mut s = snapshot_of(&yaml(TOOLS, AGENT, ""), &[]);
     s.apps[0].database = Some(aurora_registry::manifest::Database {
         engine: "postgres".into(),
     });
@@ -298,7 +298,7 @@ fn the_webhook_render_input_has_no_template_headers_url_or_secret_field() {
 
 #[test]
 fn tools_md_lists_each_webhook_with_its_slots_and_a_curl_example() {
-    let s = snapshot_of(&yaml(TOOLS, AGENT, ""), &FILES);
+    let s = snapshot_of(&yaml(TOOLS, AGENT, ""), &[]);
     let a = [webhook_acct(
         "c_1",
         "Ops alerts",

@@ -17,6 +17,7 @@ pub mod manifest;
 pub mod operations;
 pub mod package;
 pub mod signature;
+pub mod skill_format;
 pub mod snapshot;
 pub mod superseded;
 pub mod template;

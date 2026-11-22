@@ -1,6 +1,6 @@
 package:
   id: gitlab
-  version: 1.4.3
+  version: 1.5.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -243,6 +243,3 @@ apps:
         another host. Address a project by its numeric id: a path with an encoded slash (%2F) is
         refused as ambiguous_path. Send request bodies as JSON so approvals can show what a change does.
       operations: operations.json
-      guide:
-        - { file: pipeline-failed.md, title: "Find why a pipeline failed and retry it", kind: recipe }
-        - { file: api-conventions.md, title: "REST API v4 conventions: addressing, pagination, errors" }

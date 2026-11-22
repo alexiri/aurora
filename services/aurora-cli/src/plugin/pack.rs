@@ -41,9 +41,9 @@ fn source_files(dir: &Path) -> Result<Vec<String>> {
         p.sort();
         out.extend(p);
     }
-    // (P5-GUIDE-1, C-640) `agent/<app_id>/<file>`: the agent guide files, one directory per app.
-    // Anything deeper or not a regular file is left out here and the linter says why a listed
-    // file is missing.
+    // (P5-GUIDE-1, C-640) `agent/<app_id>/<file>`: the operations file (and, in an old package, the
+    // guide files the linter now ignores), one directory per app. Anything deeper or not a regular
+    // file is left out here.
     if let Ok(apps) = std::fs::read_dir(dir.join("agent")) {
         let mut g = Vec::new();
         for app in apps.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()) {
@@ -61,7 +61,51 @@ fn source_files(dir: &Path) -> Result<Vec<String>> {
         g.sort();
         out.extend(g);
     }
+    // (P5-APPSKILL-1, C-1138) `skills/<app_id>/<name>/<path>`: every regular file below the
+    // skills directory, whatever its depth (the linter says what is too deep); symlinks are never
+    // followed (`DirEntry::file_type` does not resolve them, so a link is skipped).
+    let mut sk = Vec::new();
+    collect_skill_files(&dir.join("skills"), "skills", &mut sk);
+    sk.sort();
+    out.extend(sk);
     Ok(out)
+}
+
+/// Regular files below `at`, as archive paths under `prefix`. A symlink or special file is
+/// skipped (the archive refuses links; a skill must be a real file). Depth is bounded.
+fn collect_skill_files(at: &Path, prefix: &str, out: &mut Vec<String>) {
+    fn walk(at: &Path, prefix: &str, depth: usize, out: &mut Vec<String>) {
+        if depth > 8 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(at) else {
+            return;
+        };
+        for e in rd.filter_map(|e| e.ok()) {
+            let Ok(ft) = e.file_type() else { continue };
+            let name = format!("{prefix}/{}", e.file_name().to_string_lossy());
+            if ft.is_dir() {
+                walk(&e.path(), &name, depth + 1, out);
+            } else if ft.is_file() {
+                out.push(name);
+            }
+        }
+    }
+    walk(at, prefix, 0, out);
+}
+
+/// Whether the file at `p` has the owner-execute bit on disk (git mode `100755`).
+fn is_executable(p: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o100 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = p;
+        false
+    }
 }
 
 /// A builder holding exactly the files of `dir` (no defaults).
@@ -73,7 +117,12 @@ pub fn builder_from_dir(dir: &Path) -> Result<PackageBuilder> {
         .remove_file("docs/setup.md");
     for f in source_files(dir)? {
         let data = std::fs::read(dir.join(&f)).with_context(|| f.clone())?;
-        b.set_file(&f, &data);
+        // (C-1131) The executable bit travels for skill files only; it is part of the signed digest.
+        b.set_file_exec(
+            &f,
+            &data,
+            f.starts_with("skills/") && is_executable(&dir.join(&f)),
+        );
     }
     Ok(b)
 }
@@ -238,7 +287,7 @@ pub fn rebuild(pkg: &Package, key: &SigningKey) -> Result<Vec<u8>> {
     b.remove_file("assets/icon.png")
         .remove_file("docs/setup.md");
     for (p, d) in &pkg.files {
-        b.set_file(p, d);
+        b.set_file_exec(p, d, pkg.executable.contains(p));
     }
     b.sign(key, &PackageBuilder::key_id(key));
     Ok(b.build()?)

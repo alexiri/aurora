@@ -433,10 +433,11 @@ pub async fn get_blob<'e, E: PgExecutor<'e>>(
     )
 }
 
-/// (P5-GUIDE-1, C-642) Bytes of an agent guide file, **by digest only**: `plugin_blobs` is keyed by
-/// digest alone, so a guide file whose bytes equal a blob of another kind is stored under that
-/// kind, and the same bytes are the same content whatever the row's kind says.
-pub async fn get_guide_blob<'e, E: PgExecutor<'e>>(
+/// (P5-GUIDE-1, C-642, C-1132) Bytes of an agent file (a skill file, a `SKILL.md` or the operations
+/// file), **by digest only**: `plugin_blobs` is keyed by digest alone, so a file whose bytes equal
+/// a blob of another kind is stored under that kind, and the same bytes are the same content
+/// whatever the row's kind says.
+pub async fn get_agent_blob<'e, E: PgExecutor<'e>>(
     exec: E,
     digest: &str,
 ) -> Result<Option<Vec<u8>>, DbError> {

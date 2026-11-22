@@ -1108,9 +1108,9 @@ pub struct Stub {
     pub content: String,
 }
 
-/// (P5-GUIDE-1, C-640) One `agent.guide[]` entry of a submitted manifest. `kind` stays a string so
-/// the linter can name an unknown value (`agent_guide_kind`); `sha256` and `size` are accepted
-/// only so the linter can reject them (`agent_guide_computed_field`): they exist in the snapshot.
+/// (P5-GUIDE-1, C-640) One `agent.guide[]` entry of a submitted manifest. Since P5-APPSKILL-1
+/// (D-453) the key is only parsed, so an old manifest still compiles; the linter warns
+/// `agent_guide_ignored` and nothing of it is used. The fields stay permissive for that reason.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GuideEntry {
@@ -1122,14 +1122,6 @@ pub struct GuideEntry {
     pub sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
-}
-
-impl GuideEntry {
-    /// Whether this entry is a recipe (`kind: recipe`).
-    #[must_use]
-    pub fn is_recipe(&self) -> bool {
-        self.kind.as_deref() == Some("recipe")
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

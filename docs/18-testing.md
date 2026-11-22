@@ -807,6 +807,35 @@ done when its tests exist, pass in CI, and the security invariants it touches
 
 ### App guides on demand (phase 5, P5-GUIDE-1..7, D-170..D-172, D-295..D-297, SEC-91, SEC-117..SEC-120)
 
+**Amendment of 2026-11-22 (D-452, D-453; P5-APPSKILL-1/2) — supersedes every guide-file, recipe,
+`fixture-guide` and `aurora plugin guide` mention below.** Apps ship skills; the agent guide is gone.
+The tests that replace the guide ones:
+
+- **Shared validator** (`aurora-registry::skill_format`, SEC-150): unit tests there; the library
+  ITs (`services/aurora-api/tests/it/skill_library*.rs`) and the skills-service tests pass
+  **unchanged** and are the proof the API's behaviour did not move.
+- **Registry** (`tests/it/app_skills_lint.rs`): one case per `app_skill_*` / `app_skills_*` code
+  (unknown app, name and prefix, the longest matching app id, frontmatter, body, total, path
+  grammar with `Skill.md` as a file name and depth 5, not text with NUL / BOM, file size 64 KiB + 1,
+  51 files, 17 skills, per-app size), a legacy `agent.guide` package that is valid with exactly one
+  `agent_guide_ignored` warning, the operations-file codes, archive paths. `tests/it/app_skills_package.rs`:
+  the digest of a package without `skills/` equals the value recorded on master, an executable
+  skill file adds `\0x` to its line, flipping the bit breaks the signature (both ways), the reader
+  records the bit under `skills/` only, a link under `skills/` is refused, every built-in passes
+  without a warning. `tests/it/agent_guide.rs`: the snapshot carries `skills` sorted with digests
+  and bits, no `guide` key, a stored version with `agent.guide` still compiles.
+- **API** (`tests/it/plugins_agent_guide.rs`): `agent_file` blobs read by digest, nothing stored for
+  old guide files or for an `invalid` package, the snapshot's `skills`, a package breaking a rule is
+  `invalid` with the code, the admin detail `agent` and the file routes (`text/plain`, `nosniff`,
+  404, 400, 403), `changed` and `agent_changed` (a bit flip alone counts); migration
+  `20261201000272` (`schema_matches_spec`, `scripts/extract-schema.py --check`).
+- **CLI** (`tests/plugin.rs`): `preview` against `tests/golden/preview/` (skills with the provenance
+  line, modes 0555/0444), `build` keeps `100755` in the digest, `validate` warns for an old guide,
+  `docs` lists skills, `import-openapi` goldens without reference files (`tests/golden/openapi/`).
+- **Fixtures**: `fixture-app-skills`, `fixture-legacy-guide`, `fixture-invalid-app-skill-*` and
+  `fixture-invalid-agent-operations-missing` with their lines in `expected-invalid.txt`
+  (`scripts/fixtures/build.sh`; the oversize cases are written by `mkfixture.py`).
+
 **Amendment of 2026-11-15 (D-295..D-297).** Where the list below says *inline* or *index*, read:
 the supervisor snapshots are **index always** (one, two and 23 apps), the older-API fallback
 (no `guide_path` → today's inline file byte for byte), and the paragraph with and without

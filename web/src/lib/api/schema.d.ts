@@ -692,26 +692,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/admin/plugins/{id}/agent-guides/{app_id}/{file}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * One agent guide file of a package: what agents that use the app can read (instance
-         *     administrators). Third-party text, served as a plain-text download, never rendered.
-         */
-        get: operations["adminGetPluginAgentGuideFile"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/admin/plugins/{id}/approve": {
         parameters: {
             query?: never;
@@ -727,6 +707,43 @@ export interface paths {
          *     the same transaction (`connections_reauth`, C-341, C-342).
          */
         post: operations["adminApprovePlugin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/plugins/{id}/apps/{app_id}/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The operations file of an app of a package (C-1136, instance administrators), as plain text. */
+        get: operations["adminGetPluginOperationsFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/plugins/{id}/apps/{app_id}/skills/{name}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One file of an app skill of a package (C-1136, instance administrators): third-party text,
+         *     served as a plain-text download, never rendered.
+         */
+        get: operations["adminGetPluginAppSkillFile"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -12420,11 +12437,11 @@ export interface components {
         Page_PluginPackage: {
             items: {
                 /**
-                 * @description (P5-GUIDE-2, C-648) What agents that use each app can read: one entry per app, in manifest
-                 *     order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive for the digests);
-                 *     empty in lists and in the responses of the lifecycle routes.
+                 * @description (P5-APPSKILL-2, C-1136) What agents that use each app get from the package: one entry per
+                 *     app, in manifest order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive
+                 *     for the digests); empty in lists and in the responses of the lifecycle routes.
                  */
-                agent_guides?: components["schemas"]["PluginAgentGuide"][];
+                agent?: components["schemas"]["PluginAgent"][];
                 /** Format: date-time */
                 approved_at?: string | null;
                 approved_by?: components["schemas"]["PluginUserRef"] | null;
@@ -13330,15 +13347,59 @@ export interface components {
             /** @description Free-text reason (at most 64 characters), stored as `status_reason`. */
             reason?: string | null;
         };
-        /** @description (P5-GUIDE-2, C-648) The agent guide of one app of a package (`docs/24 §9`). */
-        PluginAgentGuide: {
+        /** @description (C-1136) What agents of one app get from a package (`docs/24 §9`). */
+        PluginAgent: {
             app_id: string;
-            changed?: components["schemas"]["PluginGuideChanged"] | null;
-            files: components["schemas"]["PluginGuideFile"][];
+            changed?: components["schemas"]["PluginAgentChanged"] | null;
             /** @description The essentials (`agent.instructions`); third-party text, shown as plain text only. */
             instructions: string;
-            operations?: components["schemas"]["PluginGuideOperations"] | null;
+            operations?: components["schemas"]["PluginAgentOperations"] | null;
+            /** @description The app's skills, by name. Scripts are marked by `executable` on their files. */
+            skills: components["schemas"]["PluginAgentSkill"][];
             summary?: string | null;
+        };
+        PluginAgentChanged: {
+            instructions: boolean;
+            operations: boolean;
+            skills: components["schemas"]["PluginAgentSkillChange"][];
+            summary: boolean;
+        };
+        PluginAgentFileChange: {
+            /** @description `added` | `changed` | `removed` | `mode` (only the executable bit changed). */
+            change: string;
+            path: string;
+        };
+        PluginAgentOperations: {
+            /** Format: int32 */
+            count: number;
+            file: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+        };
+        /**
+         * @description An app skill: `size` is `SKILL.md` and every file together in bytes; `files` lists `SKILL.md`
+         *     first, then the other files by path.
+         */
+        PluginAgentSkill: {
+            description: string;
+            files: components["schemas"]["PluginAgentSkillFile"][];
+            name: string;
+            /** Format: int64 */
+            size: number;
+        };
+        PluginAgentSkillChange: {
+            /** @description `added` | `changed` | `removed`. */
+            change: string;
+            files: components["schemas"]["PluginAgentFileChange"][];
+            name: string;
+        };
+        PluginAgentSkillFile: {
+            executable: boolean;
+            path: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
         };
         PluginAppRef: {
             app_id: string;
@@ -13356,34 +13417,6 @@ export interface components {
         PluginApproval: components["schemas"]["PluginPackage"] & {
             /** Format: int64 */
             connections_reauth: number;
-        };
-        PluginGuideChanged: {
-            files: components["schemas"]["PluginGuideFileChange"][];
-            instructions: boolean;
-            operations: boolean;
-            summary: boolean;
-        };
-        PluginGuideFile: {
-            file: string;
-            /** @description `reference` | `recipe`. */
-            kind: string;
-            sha256: string;
-            /** Format: int64 */
-            size: number;
-            title: string;
-        };
-        PluginGuideFileChange: {
-            /** @description `added` | `changed` | `removed`. */
-            change: string;
-            file: string;
-        };
-        PluginGuideOperations: {
-            /** Format: int32 */
-            count: number;
-            file: string;
-            sha256: string;
-            /** Format: int64 */
-            size: number;
         };
         PluginHostClaim: {
             app_id: string;
@@ -13441,11 +13474,11 @@ export interface components {
         };
         PluginPackage: {
             /**
-             * @description (P5-GUIDE-2, C-648) What agents that use each app can read: one entry per app, in manifest
-             *     order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive for the digests);
-             *     empty in lists and in the responses of the lifecycle routes.
+             * @description (P5-APPSKILL-2, C-1136) What agents that use each app get from the package: one entry per
+             *     app, in manifest order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive
+             *     for the digests); empty in lists and in the responses of the lifecycle routes.
              */
-            agent_guides?: components["schemas"]["PluginAgentGuide"][];
+            agent?: components["schemas"]["PluginAgent"][];
             /** Format: date-time */
             approved_at?: string | null;
             approved_by?: components["schemas"]["PluginUserRef"] | null;
@@ -19517,66 +19550,6 @@ export interface operations {
             };
         };
     };
-    adminGetPluginAgentGuideFile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Package row id */
-                id: string;
-                /** @description App id of the package */
-                app_id: string;
-                /** @description File name listed in the app's guide */
-                file: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": string;
-                };
-            };
-            /** @description Unauthenticated: no credential, or an invalid or expired one */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Too many requests: the per-principal rate limit */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     adminApprovePlugin: {
         parameters: {
             query?: never;
@@ -19627,6 +19600,135 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetPluginOperationsFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Package row id */
+                id: string;
+                /** @description App id of the package */
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetPluginAppSkillFile: {
+        parameters: {
+            query?: {
+                /** @description Path inside the skill; absent = `SKILL.md` as shipped. */
+                path?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Package row id */
+                id: string;
+                /** @description App id of the package */
+                app_id: string;
+                /** @description Skill name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

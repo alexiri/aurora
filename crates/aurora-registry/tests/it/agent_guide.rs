@@ -33,23 +33,39 @@ pub const AGENT: &str = "    agent:
       summary: \"Things, listed and made.\"
       instructions: |
         Things are addressed by id.
+";
+
+/// `AGENT` in the format before P5-APPSKILL (D-453): `agent.guide` entries.
+pub const LEGACY_AGENT: &str = "    agent:
+      summary: \"Things, listed and made.\"
+      instructions: |
+        Things are addressed by id.
       guide:
         - { file: make-and-check.md, title: \"Make a thing and check it\", kind: recipe }
         - { file: api.md, title: \"API conventions\" }
         - { file: codes.tsv, title: \"Codes\" }
 ";
 
-/// Compile `y` with the guide digests of `files` (`app file -> bytes`) and return the snapshot.
-pub fn snapshot_of(y: &str, files: &[(&str, &str)]) -> aurora_registry::snapshot::Snapshot {
-    use aurora_registry::snapshot::{compile_with_guides, guide_digests};
+/// A `SKILL.md` as an author writes it.
+pub fn skill_md(name: &str, description: &str, body: &str) -> String {
+    format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}")
+}
+
+/// Compile `y` with the agent files of `files` (`archive path -> bytes`, `exec` = executable
+/// paths) and return the snapshot.
+pub fn snapshot_with(
+    y: &str,
+    files: &[(&str, &str)],
+    exec: &[&str],
+) -> aurora_registry::snapshot::Snapshot {
+    use aurora_registry::snapshot::{agent_files, compile_with_agent_files};
     let m = Manifest::parse(y, "99.0.0").unwrap();
-    let mut pkg = aurora_registry::Package {
-        files: Default::default(),
-        signature: None,
-    };
+    let mut pkg = aurora_registry::Package::default();
     for (f, c) in files {
-        pkg.files
-            .insert(format!("agent/demo-app/{f}"), c.as_bytes().to_vec());
+        pkg.files.insert((*f).to_owned(), c.as_bytes().to_vec());
+    }
+    for e in exec {
+        pkg.executable.insert((*e).to_owned());
     }
     let p = ActivePackage {
         digest: "d".into(),
@@ -57,41 +73,71 @@ pub fn snapshot_of(y: &str, files: &[(&str, &str)]) -> aurora_registry::snapshot
         hooks_digest: None,
         manifest: m.clone(),
     };
-    let g = std::collections::BTreeMap::from([("demo".to_owned(), guide_digests(&m, &pkg))]);
-    let c = compile_with_guides(&[p], &[], &[], 1, &g).unwrap();
+    let g = std::collections::BTreeMap::from([("demo".to_owned(), agent_files(&m, &pkg))]);
+    let c = compile_with_agent_files(&[p], &[], &[], 1, &g).unwrap();
     aurora_registry::snapshot::Snapshot::from_slice(&c.json).unwrap()
 }
 
-pub const FILES: [(&str, &str); 3] = [
-    ("make-and-check.md", "# Make\n1. POST\n"),
-    ("api.md", "# API\n"),
-    ("codes.tsv", "a\tb\n"),
-];
+/// [`snapshot_with`] for files under `agent/demo-app/` (the operations file).
+pub fn snapshot_of(y: &str, files: &[(&str, &str)]) -> aurora_registry::snapshot::Snapshot {
+    let full: Vec<(String, &str)> = files
+        .iter()
+        .map(|(f, c)| (format!("agent/demo-app/{f}"), *c))
+        .collect();
+    let refs: Vec<(&str, &str)> = full.iter().map(|(f, c)| (f.as_str(), *c)).collect();
+    snapshot_with(y, &refs, &[])
+}
 
-/// The snapshot carries `summary` and `guide[]` with `kind`, `sha256` and `size`, and omits both
-/// when the app has no guide (the fragment is then the pre-P5-GUIDE-1 one).
+/// The snapshot carries `summary`, the skills with their digests (SKILL.md digest, file digests,
+/// executable bits, sorted) and omits `skills` when the app has none (the fragment is then the
+/// pre-P5-APPSKILL one).
 #[test]
-fn snapshot_carries_summary_and_guide_with_digests_and_omits_them_when_absent() {
+fn snapshot_carries_summary_and_skills_with_digests_and_omits_them_when_absent() {
     use sha2::{Digest, Sha256};
-    let snap = snapshot_of(&yaml(TOOLS, AGENT, ""), &FILES);
+    let md_b = skill_md("demo-app-b", "Second skill.", "Steps.\n");
+    let md_a = skill_md("demo-app-a", "First skill.", "Steps.\n");
+    let snap = snapshot_with(
+        &yaml(TOOLS, AGENT, ""),
+        &[
+            ("skills/demo-app/demo-app-b/SKILL.md", &md_b),
+            ("skills/demo-app/demo-app-a/SKILL.md", &md_a),
+            (
+                "skills/demo-app/demo-app-a/scripts/run.sh",
+                "#!/bin/sh\necho hi\n",
+            ),
+            ("skills/demo-app/demo-app-a/reference/a.txt", "a\n"),
+        ],
+        &["skills/demo-app/demo-app-a/scripts/run.sh"],
+    );
     let ag = snap.apps[0].agent.as_ref().unwrap();
     assert_eq!(ag.summary.as_deref(), Some("Things, listed and made."));
-    assert_eq!(ag.guide.len(), 3);
-    assert_eq!(ag.guide[0].file, "make-and-check.md");
-    assert_eq!(
-        ag.guide[0].kind,
-        aurora_registry::snapshot::GuideKind::Recipe
-    );
-    assert_eq!(
-        ag.guide[1].kind,
-        aurora_registry::snapshot::GuideKind::Reference
-    );
-    let want: String = Sha256::digest(b"# API\n")
+    let names: Vec<_> = ag.skills.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["demo-app-a", "demo-app-b"], "sorted by name");
+    let a = &ag.skills[0];
+    assert_eq!(a.description, "First skill.");
+    let want: String = Sha256::digest(md_a.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    assert_eq!(ag.guide[1].sha256, want);
-    assert_eq!(ag.guide[1].size, 6);
+    assert_eq!(a.sha256, want, "SKILL.md as shipped");
+    assert_eq!(a.size, md_a.len() as u64);
+    let files: Vec<_> = a
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.executable))
+        .collect();
+    assert_eq!(
+        files,
+        [("reference/a.txt", false), ("scripts/run.sh", true)],
+        "sorted by path, with the executable bit"
+    );
+    assert_eq!(a.files[0].size, 2);
+    // Nothing of the content is in the snapshot, and no `guide` key.
+    let json = serde_json::to_string(&snap.apps[0]).unwrap();
+    assert!(
+        !json.contains("echo hi") && !json.contains("\"guide\""),
+        "{json}"
+    );
     let v: serde_json::Value = serde_json::from_slice(
         &aurora_registry::snapshot::compile(&[], &[], &[], 1)
             .unwrap()
@@ -99,7 +145,7 @@ fn snapshot_carries_summary_and_guide_with_digests_and_omits_them_when_absent() 
     )
     .unwrap();
     assert!(v["apps"].as_array().unwrap().is_empty());
-    // No guide keys: neither key is in the agent fragment.
+    // No skills: the key is not in the agent fragment.
     let plain = yaml(TOOLS, "    agent:\n      instructions: hi\n", "");
     let snap = snapshot_of(&plain, &[]);
     let v = serde_json::to_value(&snap.apps[0]).unwrap();
@@ -111,11 +157,47 @@ fn snapshot_carries_summary_and_guide_with_digests_and_omits_them_when_absent() 
     );
 }
 
-/// A listed file whose digest is not supplied cannot be compiled (a validated package always has it).
+/// (C-1132) A stored version in the old format (`agent.guide`) still compiles: the entries are
+/// ignored, and the snapshot has no `guide` key whatever the files in the archive were.
 #[test]
-fn compile_refuses_a_guide_entry_without_a_digest() {
+fn a_stored_version_with_agent_guide_still_compiles_without_a_guide_key() {
+    let snap = snapshot_of(
+        &yaml(TOOLS, LEGACY_AGENT, ""),
+        &[
+            ("make-and-check.md", "# Make\n1. POST\n"),
+            ("api.md", "# API\n"),
+            ("codes.tsv", "a\tb\n"),
+        ],
+    );
+    let ag = snap.apps[0].agent.as_ref().unwrap();
+    assert_eq!(ag.summary.as_deref(), Some("Things, listed and made."));
+    assert!(ag.skills.is_empty());
+    let json = serde_json::to_string(&snap.apps[0]).unwrap();
+    assert!(
+        !json.contains("guide") && !json.contains("api.md"),
+        "{json}"
+    );
+    // And the compiled snapshot of an older version, which carries `guide[]`, still parses.
+    let old = r#"{"summary":"s","instructions":"","guide":[{"file":"a.md","title":"A","kind":"reference","sha256":"00","size":1}],"env":[],"stubs":[],"default_blocklist":[]}"#;
+    let e: aurora_registry::snapshot::AgentEntry = serde_json::from_str(old).unwrap();
+    assert!(e.skills.is_empty());
+    assert!(!serde_json::to_string(&e).unwrap().contains("guide"));
+}
+
+/// An operations file whose digest was not supplied cannot be compiled (a validated package
+/// always has it).
+#[test]
+fn compile_refuses_an_operations_file_without_a_digest() {
     use aurora_registry::snapshot::{CompileError, compile};
-    let m = Manifest::parse(&yaml(TOOLS, AGENT, ""), "99.0.0").unwrap();
+    let m = Manifest::parse(
+        &yaml(
+            TOOLS,
+            "    agent:\n      summary: \"S\"\n      operations: operations.json\n",
+            "",
+        ),
+        "99.0.0",
+    )
+    .unwrap();
     let p = ActivePackage {
         digest: "d".into(),
         publisher: "aurora".into(),
@@ -124,7 +206,7 @@ fn compile_refuses_a_guide_entry_without_a_digest() {
     };
     assert!(matches!(
         compile(&[p], &[], &[], 1),
-        Err(CompileError::GuideFileMissing { .. })
+        Err(CompileError::AgentFileMissing { .. })
     ));
 }
 

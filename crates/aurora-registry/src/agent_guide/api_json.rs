@@ -15,7 +15,7 @@ use super::{
 use crate::identify::identify_tool_in;
 use crate::manifest::INSTANCE_HOST;
 use crate::operations::{Body, Field, Operation, OperationsFile, Pagination, Param};
-use crate::snapshot::{AppEntry, GuideKind, HostEntry};
+use crate::snapshot::{AppEntry, HostEntry};
 
 pub const FORMAT: &str = "aurora.app-api/1";
 const SUMMARY_MAX: usize = 200;
@@ -412,6 +412,7 @@ pub(super) fn render(
     reference_available: bool,
     operations: Option<&OperationsFile>,
 ) -> Option<String> {
+    let _ = reference_available; // P5-APPSKILL-2 replaces it with the skills of this app
     if app.database.is_some() {
         return None;
     }
@@ -505,19 +506,8 @@ pub(super) fn render(
             source: "catalogue",
         });
     }
-    let recipes = if reference_available {
-        app.agent
-            .iter()
-            .flat_map(|a| &a.guide)
-            .filter(|f| f.kind == GuideKind::Recipe)
-            .map(|f| RecipeOut {
-                file: inline(&f.file, 64),
-                title: inline(&f.title, NAME_MAX),
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // (C-1135) `recipes` stays in the file, always empty, for an `aurora-agent` one release older.
+    let recipes: Vec<RecipeOut> = Vec::new();
     let mut doc = Doc {
         format: FORMAT,
         app: AppOut {

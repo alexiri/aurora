@@ -13,8 +13,8 @@ use aurora_db::repo::{gateway, plugins};
 use aurora_registry::claims::ConflictGroup;
 use aurora_registry::manifest::CONTRACT;
 use aurora_registry::snapshot::{
-    ActivePackage, CompileError, CompiledSnapshot, Decision, GuideDigests, compile_with_guides,
-    guide_digests as guide_digests_of, select_active,
+    ActivePackage, AgentFiles, CompileError, CompiledSnapshot, Decision,
+    agent_files as agent_files_of, compile_with_agent_files, select_active,
 };
 use aurora_registry::{Limits, Manifest, Package};
 use serde_json::{Value, json};
@@ -49,7 +49,7 @@ pub use ::hex::encode as hex;
 async fn active_package(
     conn: &mut PgConnection,
     r: &plugins::PackageRow,
-) -> Result<(ActivePackage, GuideDigests), ApiError> {
+) -> Result<(ActivePackage, AgentFiles), ApiError> {
     let manifest: Manifest = serde_json::from_value(r.manifest.clone())
         .map_err(|e| ApiError::internal(format!("stored manifest unreadable: {e}")))?;
     let declares_hooks = r
@@ -57,15 +57,12 @@ async fn active_package(
         .get("hooks")
         .and_then(Value::as_array)
         .is_some_and(|a| !a.is_empty());
-    // (P5-GUIDE-1, C-641) Guide digests come from the stored archive, as `hooks_digest` does.
-    let has_guide = manifest.apps.iter().any(|a| {
-        a.agent
-            .as_ref()
-            .is_some_and(|g| !g.guide.is_empty() || g.operations.is_some())
-    });
+    // (C-641, C-1132) The operations file and skill digests come from the stored archive, as
+    // `hooks_digest` does; skills need `agent.summary`, so an app with skills has an agent block.
+    let has_agent = manifest.apps.iter().any(|a| a.agent.is_some());
     let mut hooks_digest = None;
-    let mut guide_digests = GuideDigests::new();
-    if declares_hooks || has_guide {
+    let mut agent_files = AgentFiles::default();
+    if declares_hooks || has_agent {
         let bytes = plugins::get_blob(&mut *conn, &r.digest, "archive")
             .await?
             .ok_or_else(|| ApiError::internal("Package archive blob is missing."))?;
@@ -74,7 +71,7 @@ async fn active_package(
         hooks_digest = pkg
             .file(aurora_registry::package::HOOKS_WASM)
             .map(|w| hex(Sha256::digest(w)));
-        guide_digests = guide_digests_of(&manifest, &pkg);
+        agent_files = agent_files_of(&manifest, &pkg);
     }
     Ok((
         ActivePackage {
@@ -83,7 +80,7 @@ async fn active_package(
             publisher: r.publisher.clone(),
             hooks_digest,
         },
-        guide_digests,
+        agent_files,
     ))
 }
 
@@ -108,15 +105,15 @@ async fn compile_active(
     let reserved = ingest::reserved_names(state);
     loop {
         let mut pkgs = Vec::with_capacity(rows.len());
-        let mut guides = BTreeMap::new();
+        let mut agent_files = BTreeMap::new();
         for r in &rows {
             let (p, g) = active_package(conn, r).await?;
-            if !g.is_empty() {
-                guides.insert(p.manifest.package.id.clone(), g);
+            if g != AgentFiles::default() {
+                agent_files.insert(p.manifest.package.id.clone(), g);
             }
             pkgs.push(p);
         }
-        match compile_with_guides(&pkgs, &decisions, &reserved, CONTRACT, &guides) {
+        match compile_with_agent_files(&pkgs, &decisions, &reserved, CONTRACT, &agent_files) {
             Ok(c) => return Ok(c),
             Err(CompileError::UnresolvedConflicts(groups)) => {
                 let mut held = BTreeSet::new();

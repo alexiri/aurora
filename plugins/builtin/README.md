@@ -88,37 +88,52 @@ host in the egress list), so a fixture cannot pass with output the host would re
 | docs | `aurora plugin docs` renders (md and html) twice with identical output and contains the permissions table. Rendered output is regenerated, not committed. |
 | secrets | `scripts/guards/no-live-tokens.sh` (part of `scripts/guards/run-all.sh`) fails on anything token-shaped under `plugins/builtin/**/tests`. |
 
-## Agent guides (P5-GUIDE-1, `docs/24 §3` and `§10`)
+## Skills for agents (P5-APPSKILL-1, D-453, `docs/24 §3` and `§10`)
 
-What an agent is told about an app costs context only when it uses the app. Four kinds of text, each
-with its own job:
+What an agent is told about an app costs context only when it uses the app. Three kinds of text,
+each with its own job (the old agent guide, `agent.guide`, is gone: it is ignored with the warning
+`agent_guide_ignored`, and the linter warning fails a built-in):
 
 - **`agent.summary`**: one line of at most 160 characters, what the app is for, **naming the tasks
   it serves** ("Events, timetables, room search and booking"). It is the only plugin text in the
-  instruction file, so it is what makes an agent pick the app. Required when `guide` is present.
+  instruction file, so it is what makes an agent pick the app. Required when the app ships skills
+  or an operations file.
 - **`agent.instructions`** (the essentials): what must be known *before the first request* (which
   account rules apply, what never to retry, what the gateway adds for the agent), at most about
   600 characters. Endpoint lists and parameter tables do not belong here.
-- **A recipe** (`kind: recipe`, a `.md` file): one task a person asks for, with a title phrased as the
-  task ("Find a free room and book it"), as numbered steps with the exact requests (or
-  `aurora-agent` calls), the pitfalls, and how to confirm the result. Recipes are text: they run
-  nothing and grant nothing.
-- **A reference file** (everything else, one topic per file, `.md|.txt|.json|.yaml|.tsv|.csv`): the
-  first screen of each file says what is in it, so an agent can stop reading early.
+- **Skills**, in `skills/<app_id>/<name>/SKILL.md` plus files, the format of a skill-library skill
+  (`docs/10 §Skills`):
+  - **a skill per task**: the task a person asks for ("Find a free room and book it"), as numbered
+    steps with the exact requests (or `aurora-agent` calls), the pitfalls, and how to confirm the
+    result. The `description` is the task, in one line (at most 500 characters).
+  - **a reference skill** for what several tasks share (how the API is addressed, paginated and
+    rate-limited, what its errors mean): one topic per skill, the first screen says what is in it,
+    and the `description` starts with what it is for ("How the GitLab REST API is addressed,
+    paginated and rate-limited; read before the first request").
+  - names: `<app_id>` or `<app_id>-<topic>` (lowercase letters, digits and single hyphens, at most
+    64 characters, never `aurora-…`); in a package with `jira` and `jira-dc`, a `jira-dc-…` skill is
+    under `skills/jira-dc/`. An app id with an underscore cannot ship skills.
+  - **scripts** go in `scripts/` next to the `SKILL.md`, committed **executable** (git mode
+    `100755`: the executable bit is signed with the content). Every file is UTF-8 text (no NUL, no
+    byte-order mark), at most 64 KiB; at most 16 skills and 256 KiB per app, 50 files per skill.
+    A script runs only when the agent runs it, with the agent's access, and every request it makes
+    passes the gateway like any other: it holds **no secret** and **no hard-coded host**: the host
+    comes from the account shown in `app.md` (`$H` in the examples).
+  - refer to the generated file as `app.md`, never `guide.md`.
 
-Files live in `agent/<app_id>/<file>`, are listed in `agent.guide` (listed ⇔ present), are UTF-8
-text with LF line ends (no CR, NUL, other control characters or byte-order mark), at most 64 KiB
-each, 24 files and 256 KiB per app. `guide.md`, `tools.md` and `api.json` are reserved: Aurora
-writes them. Fill the tool `description`s too: `tools.md` prints each one after the tool's name.
-Run `aurora plugin guide <dir> --app <id>` to see the result; `aurora plugin validate` runs the
-rules.
+Fill the tool `description`s too: `tools.md` prints each one after the tool's name. Run
+`aurora plugin preview <dir> --app <id>` to see exactly what an agent gets, and
+`aurora plugin validate` for the rules and warnings.
 
-Fixture notes: `plugins/fixtures/fixture-guide` is a valid package with a summary, essentials, a
-recipe, a reference file and a data file; `fixture-invalid-agent-guide-*` are the rejected shapes
-(`expected-invalid.txt`). Two of them (`not-text`, `too-large`) have their file written by
-`scripts/fixtures/mkfixture.py` (a CR, 64 KiB + 1) because they cannot be checked in as text.
-`services/aurora-cli/tests/golden/guide/` is the checked-in output of `aurora plugin guide` on
-`fixture-guide`.
+Fixture notes: `plugins/fixtures/fixture-app-skills` is a valid package with a summary,
+essentials, an operations file and two skills (one with an executable script and a nested
+`reference/` file); `fixture-legacy-guide` is a package in the old format (valid, one
+`agent_guide_ignored` warning); `fixture-invalid-app-skill-*` are the rejected shapes
+(`expected-invalid.txt`). The ones that are too big to check in as text (`body-too-large`,
+`too-large`, `file-too-large`, `too-many-files`, `not-text`, `not-text-bom`, `too-many-skills`,
+`app-too-large`) have their files written by `scripts/fixtures/mkfixture.py`.
+`services/aurora-cli/tests/golden/preview/` is the checked-in output of `aurora plugin preview`
+on `fixture-app-skills`.
 
 ## Guide placeholders and approval titles (P5-UX-13, D-334, C-940)
 

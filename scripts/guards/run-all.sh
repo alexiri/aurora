@@ -73,7 +73,7 @@ bash scripts/guards/helm-values-docs.sh
 echo "== settings-chart (SET-1, D-237(c): the default render contains no movable instance-setting key)"
 bash scripts/guards/settings-chart.sh
 
-echo "== agent-guide-advisory (SEC-91: the gateway, policy and hook host never read the agent guide)"
+echo "== agent-guide-advisory (SEC-91, SEC-150: the gateway, policy, hook host and runner never read the agent folder or package skills)"
 bash scripts/guards/agent-guide-advisory.sh --self-test
 bash scripts/guards/agent-guide-advisory.sh
 

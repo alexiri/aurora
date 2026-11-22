@@ -42,19 +42,28 @@ assets/icon-dark.png   # optional
 docs/setup.md          # required, CommonMark without raw HTML, ≤64 KiB
 hooks.wasm             # optional, WebAssembly component (wasm32-wasip2 target, no WASI imports used)
 tests/*.yaml           # fixtures (required for built-ins; recommended otherwise)
-agent/<app_id>/<file>  # optional (phase 5, P5-GUIDE-1): agent guide reference files, UTF-8 text, listed in apps[].agent.guide (24 §3.2)
+agent/<app_id>/<file>  # optional: the operations file named by apps[].agent.operations (24 §3.5); older guide files are ignored
+skills/<app_id>/<name>/<path>  # optional (phase 5, P5-APPSKILL-1, D-453): the app's skills, SKILL.md plus UTF-8 text files, scripts allowed (24 §3.2)
 SIGNATURE              # required
 ```
 
 No other paths, no symlinks, no absolute or `..` paths, no duplicate entries.
-(phase 5, P5-GUIDE-1, D-171) `agent/<app_id>/<file>` holds the reference files of an app's
-**agent guide**: what a hosted agent can read about the app in its home. Names, content rules
-and sizes are in `24 §3.2`; the files are data, covered by the digest and the signature, and
-never interpreted by the core. A core that does not know the path rejects the package.
+(phase 5, P5-APPSKILL-1, D-453) `skills/<app_id>/<name>/…` holds the **skills** of an app: what a
+hosted agent can read and run about the app. Names, content rules and sizes are in `24 §3.2`
+(the rules of a skill-library skill, applied by one shared validator); files are UTF-8 text, a
+script is a text file, and none is ever interpreted by the core. `agent/<app_id>/<file>` holds the
+operations file (`24 §3.5`); any other file there belongs to the old agent-guide format and is
+ignored with the warning `agent_guide_ignored`. A core that does not know the paths rejects the
+package.
 
 **Canonical digest**: list every file except `SIGNATURE`, sorted by path
 (bytewise); for each emit `<path>\0<sha256 hex of content>\n`; the package
-digest is `sha256` of that text. **SIGNATURE** contains
+digest is `sha256` of that text. (phase 5, P5-APPSKILL-1, C-1131) For an entry **under `skills/`
+whose tar mode has the owner-execute bit** the line is `<path>\0<sha256 hex of content>\0x\n`;
+every other line is unchanged, so the digest of a package without `skills/` is what it always
+was, and the executable bit of a skill file is signed with its content. One function computes
+it for `aurora plugin build`, `sign`, `verify` and API ingest; `build` writes mode `0755` for a
+source file that is executable on disk and `0644` otherwise. **SIGNATURE** contains
 `aurora-sig-v1\n<key_id>\n<base64 ed25519 signature over the digest bytes>\n`.
 `key_id` is `builtin` or the base64 public key. The signature verifies against
 the compiled-in project key (publisher `aurora`) or a non-revoked
@@ -678,30 +687,27 @@ agent:
 proxy and CA variables, LLM client variables). Stub paths are relative to the
 home and confined to it.
 
-(phase 5, P5-GUIDE-1, D-171, SEC-117) **Agent guide.** `agent` gains two optional keys, additive
-in contract 1 (`24 §3` is normative):
+(phase 5, P5-GUIDE-1, D-171, SEC-117; P5-APPSKILL-1, D-453) **What an app gives agents.** `agent` has
+two optional keys beyond `instructions`, additive in contract 1 (`24 §3` is normative):
 ```yaml
 agent:
   summary: "Tasks, projects and comments over REST v2."     # one line, ≤ AGENT_SUMMARY_MAX
   instructions: |                                           # unchanged; the essentials
     Task ids are strings. Send JSON bodies.
-  guide:                                                    # reference files and recipes in agent/<app_id>/
-    - { file: api.md, title: "Endpoints, filters, pagination, errors" }
-    - { file: weekly-review.md, title: "Prepare a weekly review of open tasks", kind: recipe }
   operations: operations.json                               # (P5-GUIDE-6, D-296) machine-readable operations
 ```
 `summary` says what the app is for and is the one line of plugin text an agent always sees;
 `instructions` keeps its limit and becomes the **essentials** (what must be known before the
-first request); `guide` lists the files of `agent/<app_id>/`, each with a one-line title, and
-(D-295) marks task procedures as `kind: recipe`; `operations` (D-296) names the operations file
-(`24 §3.5`). The core projects them, with files it writes itself (`guide.md`: accounts, access,
-recipes, file list, essentials; `tools.md`: every catalogue tool and the agent's access to it;
-`api.json`: operations and access for `aurora-agent`), into `.aurora/apps/<app_id>/` of each
-hosted agent that holds a grant on a connection of the app (`24 §5`, `12 §Home projection`).
-The instruction file names the folder and never carries the notes themselves (D-295, `10
-§Agent instructions`). A package without the keys is untouched; a core that does not know them
-rejects the package (packages declare `min_core`). A tool's optional `description` is printed in
-`tools.md`.
+first request); `operations` (D-296) names the operations file (`24 §3.5`). The **skills** are
+the `skills/<app_id>/<name>/` folders of the archive, not listed in the manifest; the old
+`guide:` list is still parsed and **ignored** (`agent_guide_ignored`). The core projects the
+skills into the harness skills directory of each hosted agent that holds a grant on a connection
+of the app, at the lowest tier (P5-APPSKILL-2), and writes `app.md` (accounts, access, the
+skills, essentials), `tools.md` and `api.json` into `.aurora/apps/<app_id>/` (`24 §5`, `12 §Home
+projection`). The instruction file names the folder and never carries the notes themselves
+(D-295, `10 §Agent instructions`). A package without the keys is untouched; a core that does not
+know them rejects the package (packages declare `min_core`). A tool's optional `description` is
+printed in `tools.md`.
 
 #### `grants` (phase 4, P4-GRANTS, D-123, SEC-67)
 ```yaml
@@ -1061,19 +1067,24 @@ if any of:
   unknown keys or non-conforming values), or `library` on an app without a credential that can
   authenticate requests to `request_host` (and, since P5-SKLIB-1, the **warning** `library_ignored` on any
   package that still carries the block: it is parsed, never used);
-- (phase 5, P5-GUIDE-1) the agent guide rules of `24 §3`: `agent.summary` longer than
-  `AGENT_SUMMARY_MAX` or not one line (`agent_summary_too_long`, `agent_summary_multiline`),
-  `guide` without `summary` (`agent_summary_required`); a guide entry whose `file` does not match
-  the name grammar, is `guide.md` or `tools.md`, is listed twice, or whose `title` is empty, longer
-  than 120 characters or not one line (`agent_guide_file_name`, `agent_guide_reserved_name`,
-  `agent_guide_duplicate_file`, `agent_guide_title`), or that carries `sha256` or `size`
-  (`agent_guide_computed_field`: they exist only in the snapshot); a file under `agent/` that is not listed, a
-  listed file that is missing, a directory for an app the package does not contain
-  (`agent_guide_unlisted_file`, `agent_guide_missing_file`, `agent_guide_unknown_app`); content
-  that is not UTF-8 text without control characters other than LF and TAB
-  (`agent_guide_not_text`); more than `AGENT_GUIDE_FILES_MAX` files, a file over
-  `AGENT_GUIDE_FILE_MAX`, an app over `AGENT_GUIDE_APP_MAX` (`agent_guide_too_many_files`,
-  `agent_guide_file_too_large`, `agent_guide_app_too_large`);
+- (phase 5, P5-GUIDE-1; P5-APPSKILL-1, C-1130) the agent rules of `24 §3`: `agent.summary` longer
+  than `AGENT_SUMMARY_MAX` or not one line (`agent_summary_too_long`, `agent_summary_multiline`),
+  no `summary` on an app with skills or an operations file (`agent_summary_required`); the
+  operations file: a reserved or malformed name, a missing file, a file that is not text, a file of
+  an app the package does not contain (`agent_operations_reserved_name`,
+  `agent_operations_file_name`, `agent_operations_missing_file`, `agent_operations_not_text`,
+  `agent_unknown_app`, and the `agent_operations_*` rules of `24 §3.5`); **skills**, through the
+  shared skill validator: a skill of an app the package does not contain (`app_skill_unknown_app`),
+  a name that is not the app id or prefixed by it, is `aurora`-reserved or belongs to a longer
+  app id (`app_skill_name`), a `SKILL.md` without valid frontmatter (`app_skill_frontmatter`), a
+  body or a skill over its size limit (`app_skill_body_too_large`, `app_skill_too_large`), a file
+  path outside the grammar, too deep, or with a `skill.md` segment (`app_skill_path`), too many
+  files or a file over 64 KiB (`app_skill_too_many_files`, `app_skill_file_too_large`), a file
+  that is not UTF-8 text without NUL or byte-order mark (`app_skill_not_text`), more than
+  `APP_SKILLS_MAX` skills or `APP_SKILLS_APP_MAX` bytes per app (`app_skills_too_many`,
+  `app_skills_app_too_large`). **Warning, never an error:** `agent.guide` or a file under
+  `agent/<app_id>/` other than the operations file (`agent_guide_ignored`, once per app). The
+  `agent_guide_*` errors and `agent_recipe_not_markdown` are removed;
 - (FIX-123, D-214) connect methods: a duplicate method id (`duplicate_connect_method`), a `label`
   over 60 or a `description` over 400 characters, blank or with control characters
   (`method_text_invalid`), more than one `recommended` (`recommended_multiple`), a
@@ -1280,11 +1291,12 @@ The gateway, the API (catalogue, forms, effective views, simulation) and the
 hook host all consume the same snapshot; there is no second copy of any
 catalogue or matcher.
 
-(phase 5, P5-GUIDE-1) `apps[].agent` gains `summary` and
-`guide: [{ file, title, sha256, size }]`, both **omitted when absent** (a snapshot of packages
-that do not use them is byte-identical to before). `sha256` and `size` are computed by the core
-from the stored archive, as `hooks_digest` is; the file bytes live in `plugin_blobs` (`kind = 'agent_guide'`, read by digest) and are never in
-the snapshot. Only the API reads these keys; a gateway or hook host that predates them refuses a
+(phase 5, P5-GUIDE-1; P5-APPSKILL-1, C-1132) `apps[].agent` gains `summary`,
+`skills: [{ name, description, sha256, size, files: [{ path, sha256, size, executable }] }]` and
+`operations`, all **omitted when absent** (a snapshot of packages that do not use them is
+byte-identical to before; `guide` is no longer emitted). Digests and sizes are computed by the
+core from the stored archive, as `hooks_digest` is; the file bytes live in `plugin_blobs`
+(`kind = 'agent_file'`, read by digest) and are never in the snapshot. Only the API reads these keys; a gateway or hook host that predates them refuses a
 snapshot carrying them and keeps the previous one (`06 §Registry snapshot loading`).
 
 ## 10. Package lifecycle
@@ -1409,12 +1421,14 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
 - **New tools arrive blocked** in custom grants; removed tools make referencing
   rules inert (flagged).
 - Each connection records `app_version` for diagnostics.
-- (phase 5, P5-GUIDE-1, D-171) A change of `agent.summary`, `agent.instructions` or of an agent
-  guide file is **not a widening**: the text is untrusted data that gives the package no
-  capability (SEC-117). It is shown and audited instead: the permissions review has an **Agent
-  guide** section that marks what changed against the active version (`24 §9`), and
-  `plugin.approve` / the system row `plugin.activate` carry
-  `agent_guide_changed: [app_id, …]` in their metadata. Activation needs no extra step: the new
+- (phase 5, P5-GUIDE-1, D-171; P5-APPSKILL-1, D-452(c)) A change of `agent.summary`,
+  `agent.instructions`, the operations file or of an app skill (a script included, and the
+  executable bit of a file) is **not a widening**: the text and scripts give the package no
+  capability (SEC-117, SEC-150): a script runs only when the agent runs it, with that agent's
+  access. It is shown and audited instead: the permissions review has a **For agents** section
+  that marks what changed against the active version (`24 §9`), and `plugin.approve` / the system
+  rows `plugin.activate` and `plugin.auto_approved` carry `agent_changed: [app_id, …]` in their
+  metadata. Activation needs no extra step: the new
   snapshot bumps the home sync generation of the affected agents as every snapshot does.
 
 ## 11. Connect flow (API)
@@ -1458,13 +1472,16 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
     `http_cassette`; format in `plugins/builtin/README.md`);
   - `sign --key <file>` — write `SIGNATURE`; `keygen` — create an ed25519 pair;
   - `docs` — render setup guide + permissions table to HTML/Markdown;
-  - (phase 5, P5-GUIDE-1) `guide [--app <id>] [--access full|custom] [--out <dir>]` — render what
-    an agent would read for a sample account (`guide.md`, `tools.md`, the reference files), with
-    the renderer the API uses (`24 §5`, `§10`); `new` scaffolds a summary, essentials and one
-    guide file, `build` packs `agent/**`;
-  - (phase 5, P5-GUIDE-5) `import-openapi <file> --app <id> [--host <host>]` — from a local
-    OpenAPI 3.0/3.1 document write an operation index and per-tag reference files into
-    `agent/<app_id>/` and print a `tools:` catalogue skeleton; deterministic, no network (`24 §10`).
+  - (phase 5, P5-APPSKILL-1, C-1138) `preview [--app <id>] [--access full|custom] [--out <dir>]` —
+    replaces `guide`: render what an agent would get for a sample account (`apps/<app_id>/…` and
+    `skills/<name>/…` as projected, provenance line and modes included), with the renderers the
+    API uses (`24 §5`, `§10`); `new` scaffolds a summary, essentials and one starter skill,
+    `build` packs `skills/**` with the executable bit and `agent/**`, `validate` prints the
+    warnings, `docs` lists each app's skills;
+  - (phase 5, P5-GUIDE-5, C-1138) `import-openapi <file> --app <id> [--host <host>]` — from a
+    local OpenAPI 3.0/3.1 document write `agent/<app_id>/operations.json` and print the
+    `operations:` key and a `tools:` catalogue skeleton; no reference files, no `guide:` entries;
+    deterministic, no network (`24 §10`).
 
 Fixture file format (`tests/*.yaml`):
 ```yaml
@@ -1550,5 +1567,6 @@ hook point.
 | `fixture-sigv4` | `aws_sigv4` finalizer (checked against AWS test vectors), `org_external_id` context variable |
 | `fixture-graphql-git` | GraphQL query/mutation tools (fail-closed), git push/fetch tools, `git_commit_trailer`, `registry_token_challenge` |
 | `fixture-conflict` | a claim overlapping `fixture-bearer` for host-claim decisions |
-| `fixture-guide` (phase 5, P5-GUIDE-1) | agent guide: one app with `summary`, essentials, two guide files (`.md` and `.tsv`) and tool descriptions, a second app with none of them; tools of all three access states under a custom grant |
-| `fixture-invalid-*` | one package per linter rule, each expected to be rejected with a specific reason |
+| `fixture-app-skills` (phase 5, P5-APPSKILL-1) | app skills: one app with `summary`, essentials, an operations file and two skills (one with an executable script and a nested `reference/` file), tool descriptions; tools of all three access states under a custom grant |
+| `fixture-legacy-guide` (phase 5, P5-APPSKILL-1) | a package in the old agent-guide format (`agent.guide`, reference files and a recipe): valid, one `agent_guide_ignored` warning, nothing of it reaches an agent |
+| `fixture-invalid-*` | one package per linter rule, each expected to be rejected with a specific reason (`fixture-invalid-app-skill-*` for the app-skill codes of `24 §3.2`) |

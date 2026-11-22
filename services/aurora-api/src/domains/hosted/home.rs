@@ -239,15 +239,15 @@ fn cache_put(digest: &str, bytes: std::sync::Arc<Vec<u8>>) {
     c.map.insert(digest.to_owned(), (bytes, tick));
 }
 
-/// Bytes of a guide file by digest (never by kind, `get_guide_blob`).
-async fn guide_bytes(
+/// Bytes of a guide file by digest (never by kind, `get_agent_blob`).
+async fn agent_bytes(
     conn: &mut PgConnection,
     digest: &str,
 ) -> Result<Option<std::sync::Arc<Vec<u8>>>, DbError> {
     if let Some(b) = cache_get(digest) {
         return Ok(Some(b));
     }
-    let Some(bytes) = aurora_db::repo::plugins::get_guide_blob(&mut *conn, digest).await? else {
+    let Some(bytes) = aurora_db::repo::plugins::get_agent_blob(&mut *conn, digest).await? else {
         return Ok(None);
     };
     let bytes = std::sync::Arc::new(bytes);
@@ -343,7 +343,7 @@ async fn app_folder(
     // or unparsable blob leaves `api.json` to the catalogue entries.
     let mut operations = None;
     if let Some(r) = app.agent.as_ref().and_then(|a| a.operations.as_ref()) {
-        match guide_bytes(conn, &r.sha256).await? {
+        match agent_bytes(conn, &r.sha256).await? {
             Some(bytes) => match aurora_registry::operations::parse(&bytes) {
                 Ok(f) => operations = Some(f),
                 Err(e) => {
@@ -378,21 +378,8 @@ async fn app_folder(
     if let Some(api) = with.api_json {
         generated.push(("api.json".to_owned(), api));
     }
-    let mut reference = Vec::new();
-    for g in app.agent.iter().flat_map(|a| a.guide.iter()) {
-        let Some(bytes) = guide_bytes(conn, &g.sha256).await? else {
-            tracing::warn!(app = %app.app_id, file = %g.file, "guide file blob missing; not projected");
-            continue;
-        };
-        let Ok(text) = std::str::from_utf8(&bytes) else {
-            tracing::warn!(app = %app.app_id, file = %g.file, "guide file is not UTF-8; not projected");
-            continue;
-        };
-        reference.push((
-            g.file.clone(),
-            agent_guide::project_file(&app.about.name, version, g, text),
-        ));
-    }
+    // (P5-APPSKILL-1) Guide files are gone (D-453); P5-APPSKILL-2 projects the app skills here.
+    let reference: Vec<(String, String)> = Vec::new();
     Ok(AppFolder {
         app_id: app.app_id.clone(),
         generated,
@@ -674,7 +661,7 @@ pub async fn render(
     let mut over_budget = false;
     for f in folders {
         let need: usize = f.reference.iter().map(|(_, c)| c.len()).sum();
-        if !over_budget && reference_used + need > state.guide_sync_max {
+        if !over_budget && reference_used + need > state.app_skills_sync_max {
             over_budget = true;
             tracing::warn!(agent = %claim.agent_id, app = %f.app_id,
                 "agent guide reference files over the sync budget; generated files only from this app on");

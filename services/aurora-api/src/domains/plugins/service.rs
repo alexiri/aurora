@@ -2,15 +2,15 @@ use crate::app::AppState;
 use aurora_core::ApiError;
 use aurora_db::repo::plugins::{self, PackageRow};
 use aurora_registry::diff::{Widening, widens};
-use aurora_registry::manifest::{Agent, GuideEntry};
-use aurora_registry::snapshot::{GuideDigests, OPERATIONS_COUNT_KEY, guide_digests};
+use aurora_registry::manifest::Agent;
+use aurora_registry::snapshot::{AgentFiles, SkillEntry, agent_files};
 use aurora_registry::{Limits, Manifest, Package};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
 use super::dto::{
-    PluginAgentGuide, PluginGuideChanged, PluginGuideFile, PluginGuideFileChange,
-    PluginGuideOperations, PluginPackage,
+    PluginAgent, PluginAgentChanged, PluginAgentFileChange, PluginAgentOperations,
+    PluginAgentSkill, PluginAgentSkillChange, PluginAgentSkillFile, PluginPackage,
 };
 
 const STATUSES: [&str; 6] = [
@@ -59,13 +59,13 @@ async fn widenings(state: &AppState, r: &PackageRow) -> Result<Vec<Widening>, Ap
 /// The detail view: like [`to_dto`], plus `impact` for a `pending_approval` version (C-340).
 pub async fn to_detail_dto(state: &AppState, r: PackageRow) -> Result<PluginPackage, ApiError> {
     let pending = r.status == "pending_approval";
-    let guides = {
+    let agent = {
         let mut conn = state
             .pool
             .acquire()
             .await
             .map_err(aurora_db::DbError::from)?;
-        agent_guides(&mut conn, &r).await?
+        agent_of(&mut conn, &r).await?
     };
     let impact = if pending {
         let mut conn = state
@@ -79,102 +79,153 @@ pub async fn to_detail_dto(state: &AppState, r: PackageRow) -> Result<PluginPack
     };
     let mut dto = to_dto(state, r).await?;
     dto.impact = impact;
-    dto.agent_guides = guides;
+    dto.agent = agent;
     Ok(dto)
 }
 
-/// A package version's manifest with the digests of its guide files (from the stored archive, as
-/// the snapshot's are, C-641).
-pub struct GuideView {
+/// A package version's manifest with what its archive gives agents (the operations file and the
+/// skills with their digests and executable bits, from the stored archive as the snapshot's are,
+/// C-1132).
+pub struct AgentView {
     pub manifest: Manifest,
-    pub digests: GuideDigests,
+    pub files: AgentFiles,
 }
 
-/// Reads the archive only when the manifest declares a guide file.
-pub async fn guide_view(conn: &mut PgConnection, r: &PackageRow) -> Result<GuideView, ApiError> {
+/// Reads the archive only when an app has an `agent` block (skills need its summary).
+pub async fn agent_view(conn: &mut PgConnection, r: &PackageRow) -> Result<AgentView, ApiError> {
     let manifest: Manifest = serde_json::from_value(r.manifest.clone())
         .map_err(|e| ApiError::internal(format!("stored manifest unreadable: {e}")))?;
-    let has_guide = manifest.apps.iter().any(|a| {
-        a.agent
-            .as_ref()
-            .is_some_and(|g| !g.guide.is_empty() || g.operations.is_some())
-    });
-    let mut digests = GuideDigests::new();
-    if has_guide {
+    let has_agent = manifest.apps.iter().any(|a| a.agent.is_some());
+    let mut files = AgentFiles::default();
+    if has_agent {
         let bytes = plugins::get_blob(&mut *conn, &r.digest, "archive")
             .await?
             .ok_or_else(|| ApiError::internal("Package archive blob is missing."))?;
         let pkg = Package::read(&bytes, &Limits::default())
             .map_err(|_| ApiError::internal("Stored package archive is unreadable."))?;
-        digests = guide_digests(&manifest, &pkg);
+        files = agent_files(&manifest, &pkg);
     }
-    Ok(GuideView { manifest, digests })
+    Ok(AgentView { manifest, files })
 }
 
-fn kind_of(g: &GuideEntry) -> &'static str {
-    if g.is_recipe() { "recipe" } else { "reference" }
+/// Every file of a skill as `(path, sha256, executable)`, `SKILL.md` first (never executable).
+fn skill_files(s: &SkillEntry) -> Vec<(&str, &str, bool)> {
+    std::iter::once(("SKILL.md", s.sha256.as_str(), false))
+        .chain(
+            s.files
+                .iter()
+                .map(|f| (f.path.as_str(), f.sha256.as_str(), f.executable)),
+        )
+        .collect()
 }
 
-/// What changed in one app's guide against the previous version (`None` = the app is new: all of
-/// it is "added").
-fn app_changed(
-    old: Option<(&Agent, &GuideDigests, &str)>,
-    new: (&Agent, &GuideDigests, &str),
-) -> PluginGuideChanged {
-    let (nag, ndig, app_id) = new;
-    let empty = Agent::default();
-    let (oag, odig) = match old {
-        Some((a, d, _)) => (a, Some(d)),
-        None => (&empty, None),
+/// How one skill changed (`None` = the same). A file whose only difference is the executable bit
+/// is `mode`.
+fn skill_change(
+    old: Option<&SkillEntry>,
+    new: Option<&SkillEntry>,
+) -> Option<PluginAgentSkillChange> {
+    let all = |s: &SkillEntry, change: &str| -> Vec<PluginAgentFileChange> {
+        skill_files(s)
+            .into_iter()
+            .map(|(p, _, _)| PluginAgentFileChange {
+                path: p.to_owned(),
+                change: change.to_owned(),
+            })
+            .collect()
     };
-    let sha = |d: &GuideDigests, f: &str| {
-        d.get(&(app_id.to_owned(), f.to_owned()))
-            .map(|(h, _)| h.clone())
-    };
-    let mut files = Vec::new();
-    for g in &nag.guide {
-        match oag.guide.iter().find(|o| o.file == g.file) {
-            None => files.push(PluginGuideFileChange {
-                file: g.file.clone(),
-                change: "added".into(),
-            }),
-            Some(o) => {
-                let same = o.title == g.title
-                    && kind_of(o) == kind_of(g)
-                    && odig.is_some_and(|d| sha(d, &o.file) == sha(ndig, &g.file));
-                if !same {
-                    files.push(PluginGuideFileChange {
-                        file: g.file.clone(),
-                        change: "changed".into(),
+    match (old, new) {
+        (None, Some(n)) => Some(PluginAgentSkillChange {
+            name: n.name.clone(),
+            change: "added".into(),
+            files: all(n, "added"),
+        }),
+        (Some(o), None) => Some(PluginAgentSkillChange {
+            name: o.name.clone(),
+            change: "removed".into(),
+            files: all(o, "removed"),
+        }),
+        (Some(o), Some(n)) => {
+            let of = skill_files(o);
+            let nf = skill_files(n);
+            let mut files = Vec::new();
+            for (p, h, x) in &nf {
+                match of.iter().find(|(op, _, _)| op == p) {
+                    None => files.push(PluginAgentFileChange {
+                        path: (*p).to_owned(),
+                        change: "added".into(),
+                    }),
+                    Some((_, oh, ox)) if oh != h => {
+                        let _ = ox;
+                        files.push(PluginAgentFileChange {
+                            path: (*p).to_owned(),
+                            change: "changed".into(),
+                        });
+                    }
+                    Some((_, _, ox)) if ox != x => files.push(PluginAgentFileChange {
+                        path: (*p).to_owned(),
+                        change: "mode".into(),
+                    }),
+                    Some(_) => {}
+                }
+            }
+            for (p, _, _) in &of {
+                if !nf.iter().any(|(np, _, _)| np == p) {
+                    files.push(PluginAgentFileChange {
+                        path: (*p).to_owned(),
+                        change: "removed".into(),
                     });
                 }
             }
+            (!files.is_empty() || o.description != n.description).then(|| PluginAgentSkillChange {
+                name: n.name.clone(),
+                change: "changed".into(),
+                files,
+            })
+        }
+        (None, None) => None,
+    }
+}
+
+/// What changed for one app against the previous version (`old` = `None`: the app is new, all of it
+/// is "added").
+fn app_changed(
+    old: Option<(&Agent, &AgentFiles)>,
+    new: (&Agent, &AgentFiles),
+    app_id: &str,
+) -> PluginAgentChanged {
+    let (nag, nfiles) = new;
+    let empty = Agent::default();
+    let (oag, ofiles) = match old {
+        Some((a, f)) => (a, Some(f)),
+        None => (&empty, None),
+    };
+    let none: Vec<SkillEntry> = Vec::new();
+    let oskills = ofiles.and_then(|f| f.skills.get(app_id)).unwrap_or(&none);
+    let nskills = nfiles.skills.get(app_id).unwrap_or(&none);
+    let mut skills = Vec::new();
+    for n in nskills {
+        if let Some(c) = skill_change(oskills.iter().find(|o| o.name == n.name), Some(n)) {
+            skills.push(c);
         }
     }
-    for o in &oag.guide {
-        if !nag.guide.iter().any(|g| g.file == o.file) {
-            files.push(PluginGuideFileChange {
-                file: o.file.clone(),
-                change: "removed".into(),
-            });
+    for o in oskills {
+        if !nskills.iter().any(|n| n.name == o.name)
+            && let Some(c) = skill_change(Some(o), None)
+        {
+            skills.push(c);
         }
     }
-    PluginGuideChanged {
+    PluginAgentChanged {
         summary: oag.summary != nag.summary,
         instructions: oag.instructions != nag.instructions,
-        operations: oag.operations != nag.operations
-            || (nag.operations.is_some()
-                && odig.is_none_or(|d| {
-                    nag.operations
-                        .as_ref()
-                        .is_some_and(|f| sha(d, f) != sha(ndig, f))
-                })),
-        files,
+        operations: ofiles.and_then(|f| f.operations.get(app_id)) != nfiles.operations.get(app_id),
+        skills,
     }
 }
 
 /// `changed` of every app of `new` against `old` (`24 §9`).
-fn changes(old: &GuideView, new: &GuideView) -> Vec<(String, PluginGuideChanged)> {
+fn changes(old: &AgentView, new: &AgentView) -> Vec<(String, PluginAgentChanged)> {
     new.manifest
         .apps
         .iter()
@@ -190,43 +241,44 @@ fn changes(old: &GuideView, new: &GuideView) -> Vec<(String, PluginGuideChanged)
                 .map(|o| o.agent.as_ref().unwrap_or(&empty));
             (
                 id.to_owned(),
-                app_changed(oag.map(|o| (o, &old.digests, id)), (nag, &new.digests, id)),
+                app_changed(oag.map(|o| (o, &old.files)), (nag, &new.files), id),
             )
         })
         .collect()
 }
 
-/// `agent_guide_changed` of the audit metadata: the apps whose summary, essentials, any guide
-/// file (recipes included) or operations file differs from the previously active version of the
-/// same package. Empty when there is no previous version.
-pub fn agent_guide_changed(old: Option<&GuideView>, new: &GuideView) -> Vec<String> {
+/// `agent_changed` of the audit metadata (C-1137): the apps whose summary, essentials, operations
+/// file or any app skill (added, removed, `SKILL.md` or a file changed, an executable bit flipped)
+/// differs from the previously active version of the same package. Empty when there is no previous
+/// version.
+pub fn agent_changed(old: Option<&AgentView>, new: &AgentView) -> Vec<String> {
     let Some(old) = old else { return Vec::new() };
     changes(old, new)
         .into_iter()
-        .filter(|(_, c)| c.summary || c.instructions || c.operations || !c.files.is_empty())
+        .filter(|(_, c)| c.summary || c.instructions || c.operations || !c.skills.is_empty())
         .map(|(id, _)| id)
         .collect()
 }
 
-/// The guide of the active version of `row`'s package, when there is another one.
-pub async fn active_guide_view(
+/// The agent files of the active version of `row`'s package, when there is another one.
+pub async fn active_agent_view(
     conn: &mut PgConnection,
     row: &PackageRow,
-) -> Result<Option<GuideView>, ApiError> {
+) -> Result<Option<AgentView>, ApiError> {
     match plugins::active_of_package(&mut *conn, &row.package_id).await? {
-        Some(a) if a.id != row.id => Ok(Some(guide_view(conn, &a).await?)),
+        Some(a) if a.id != row.id => Ok(Some(agent_view(conn, &a).await?)),
         _ => Ok(None),
     }
 }
 
-/// `PluginPackage.agent_guides` for the detail view (C-648).
-pub async fn agent_guides(
+/// `PluginPackage.agent` for the detail view (C-1136).
+pub async fn agent_of(
     conn: &mut PgConnection,
     r: &PackageRow,
-) -> Result<Vec<PluginAgentGuide>, ApiError> {
-    let new = guide_view(conn, r).await?;
-    let old = active_guide_view(conn, r).await?;
-    let mut changed: std::collections::BTreeMap<String, PluginGuideChanged> = old
+) -> Result<Vec<PluginAgent>, ApiError> {
+    let new = agent_view(conn, r).await?;
+    let old = active_agent_view(conn, r).await?;
+    let mut changed: std::collections::BTreeMap<String, PluginAgentChanged> = old
         .as_ref()
         .map(|o| changes(o, &new).into_iter().collect())
         .unwrap_or_default();
@@ -237,44 +289,44 @@ pub async fn agent_guides(
         .map(|a| {
             let id = a.about.id.clone();
             let ag = a.agent.as_ref();
-            PluginAgentGuide {
+            PluginAgent {
                 summary: ag.and_then(|g| g.summary.clone()),
                 instructions: ag.map(|g| g.instructions.clone()).unwrap_or_default(),
-                files: ag
+                operations: new
+                    .files
+                    .operations
+                    .get(&id)
+                    .map(|o| PluginAgentOperations {
+                        file: o.file.clone(),
+                        size: o.size,
+                        sha256: o.sha256.clone(),
+                        count: u32::try_from(o.count).unwrap_or(u32::MAX),
+                    }),
+                skills: new
+                    .files
+                    .skills
+                    .get(&id)
                     .into_iter()
-                    .flat_map(|g| &g.guide)
-                    .map(|g| {
-                        let (sha, size) = new
-                            .digests
-                            .get(&(id.clone(), g.file.clone()))
-                            .cloned()
-                            .unwrap_or_default();
-                        PluginGuideFile {
-                            file: g.file.clone(),
-                            title: g.title.clone(),
-                            kind: kind_of(g).to_owned(),
-                            size,
-                            sha256: sha,
-                        }
+                    .flatten()
+                    .map(|s| PluginAgentSkill {
+                        name: s.name.clone(),
+                        description: s.description.clone(),
+                        size: s.size + s.files.iter().map(|f| f.size).sum::<u64>(),
+                        files: std::iter::once(PluginAgentSkillFile {
+                            path: "SKILL.md".into(),
+                            size: s.size,
+                            sha256: s.sha256.clone(),
+                            executable: false,
+                        })
+                        .chain(s.files.iter().map(|f| PluginAgentSkillFile {
+                            path: f.path.clone(),
+                            size: f.size,
+                            sha256: f.sha256.clone(),
+                            executable: f.executable,
+                        }))
+                        .collect(),
                     })
                     .collect(),
-                operations: ag.and_then(|g| g.operations.as_ref()).map(|f| {
-                    let (sha256, size) = new
-                        .digests
-                        .get(&(id.clone(), f.clone()))
-                        .cloned()
-                        .unwrap_or_default();
-                    let count = new
-                        .digests
-                        .get(&(id.clone(), OPERATIONS_COUNT_KEY.to_owned()))
-                        .map_or(0, |(_, n)| u32::try_from(*n).unwrap_or(u32::MAX));
-                    PluginGuideOperations {
-                        file: f.clone(),
-                        size,
-                        sha256,
-                        count,
-                    }
-                }),
                 changed: changed.remove(&id),
                 app_id: id,
             }
@@ -282,33 +334,50 @@ pub async fn agent_guides(
         .collect())
 }
 
-/// The bytes of one guide file of a package (`GET …/agent-guides/{app_id}/{file}`): the file must
-/// be listed in the app's guide; the content is read by its digest.
-pub async fn guide_file(
+/// The bytes of one skill file of a package (`GET …/apps/{app_id}/skills/{name}/file`): the file
+/// must be one the archive carried for that skill (`path` `None` = `SKILL.md`); the content is
+/// read by its digest.
+pub async fn skill_file(
     conn: &mut PgConnection,
     r: &PackageRow,
     app_id: &str,
-    file: &str,
+    name: &str,
+    path: Option<&str>,
 ) -> Result<Vec<u8>, ApiError> {
-    let not_found = || ApiError::not_found("Agent guide file not found.");
-    let view = guide_view(conn, r).await?;
-    let listed = view
-        .manifest
-        .apps
-        .iter()
-        .find(|a| a.about.id == app_id)
-        .and_then(|a| a.agent.as_ref())
-        .is_some_and(|g| {
-            g.guide.iter().any(|e| e.file == file) || g.operations.as_deref() == Some(file)
-        });
-    if !listed {
-        return Err(not_found());
-    }
-    let (digest, _) = view
-        .digests
-        .get(&(app_id.to_owned(), file.to_owned()))
+    let not_found = || ApiError::not_found("Skill file not found.");
+    let view = agent_view(conn, r).await?;
+    let skill = view
+        .files
+        .skills
+        .get(app_id)
+        .and_then(|l| l.iter().find(|s| s.name == name))
         .ok_or_else(not_found)?;
-    plugins::get_guide_blob(&mut *conn, digest)
+    let digest = match path {
+        None | Some("SKILL.md") => &skill.sha256,
+        Some(p) => {
+            &skill
+                .files
+                .iter()
+                .find(|f| f.path == p)
+                .ok_or_else(not_found)?
+                .sha256
+        }
+    };
+    plugins::get_agent_blob(&mut *conn, digest)
+        .await?
+        .ok_or_else(not_found)
+}
+
+/// The operations file of an app of a package (`GET …/apps/{app_id}/operations`).
+pub async fn operations_file(
+    conn: &mut PgConnection,
+    r: &PackageRow,
+    app_id: &str,
+) -> Result<Vec<u8>, ApiError> {
+    let not_found = || ApiError::not_found("Operations file not found.");
+    let view = agent_view(conn, r).await?;
+    let o = view.files.operations.get(app_id).ok_or_else(not_found)?;
+    plugins::get_agent_blob(&mut *conn, &o.sha256)
         .await?
         .ok_or_else(not_found)
 }

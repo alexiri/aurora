@@ -1,6 +1,5 @@
-//! (P5-GUIDE-2, C-643, C-644, C-648, D-171, D-295, SEC-117, SEC-91) The agent guide in the home
-//! sync: the `apps` part, the render inputs' index fields, the budget, the grant-row access lines,
-//! and the admin routes.
+//! (P5-GUIDE-2, C-643, C-644, D-171, D-295, SEC-117, SEC-91) The generated files of an app in the
+//! home sync: the `apps` part, the render inputs' index fields, the grant-row access lines.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::collections::BTreeMap;
@@ -13,18 +12,14 @@ use http::Method;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-const ROOT: &str = ".aurora/apps/gdemo_app";
+const ROOT: &str = ".aurora/apps/gdemo-app";
 const CREDENTIAL_REF: &str = "SECRET-CREDENTIAL-REF-9f3a";
-
-const API_MD: &[u8] = b"# API\nUse the bulk endpoint.\n";
-const STEPS_MD: &[u8] = b"# Steps\n1. list things\n2. create one\n";
-const DATA_JSON: &[u8] = b"{\"things\": []}\n";
 
 fn yaml(summary: &str, essentials: &str) -> String {
     format!(
         r#"package: {{ id: gdemo, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: P }}
 apps:
-  - about: {{ id: gdemo_app, name: Demo App, description: "Fallback description.", category: dev }}
+  - about: {{ id: gdemo-app, name: Demo App, description: "Fallback description.", category: dev }}
     credentials: [ {{ name: api_token, secret: true }} ]
     connect:
       - id: api_key
@@ -33,10 +28,6 @@ apps:
     agent:
       summary: "{summary}"
       instructions: "{essentials}"
-      guide:
-        - {{ file: api.md, title: "REST conventions" }}
-        - {{ file: steps.md, title: "Create a thing", kind: recipe }}
-        - {{ file: data.json, title: "Sample data" }}
     tools:
       read:
         items:
@@ -52,12 +43,10 @@ apps:
     )
 }
 
+/// (P5-APPSKILL-1) No guide files any more: the app's folder holds the generated files only until
+/// P5-APPSKILL-2 projects the skills.
 fn files() -> Vec<(&'static str, &'static [u8])> {
-    vec![
-        ("agent/gdemo_app/api.md", API_MD),
-        ("agent/gdemo_app/steps.md", STEPS_MD),
-        ("agent/gdemo_app/data.json", DATA_JSON),
-    ]
+    Vec::new()
 }
 
 struct Agent {
@@ -84,7 +73,7 @@ async fn world(h: &Harness, a: &Admin<'_>, grant: &str) -> Agent {
     sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, effort, brief) VALUES ($1,$2,$3,'ada','Ada','hosted','fake','medium','')")
         .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
     let conn = Uuid::now_v7();
-    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'gdemo_app','gdemo','1.0.0','work account','active',$4)")
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'gdemo-app','gdemo','1.0.0','work account','active',$4)")
         .bind(conn).bind(org).bind(ws).bind(CREDENTIAL_REF).execute(h.pool()).await.unwrap();
     sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'{grant}')")))
         .bind(Uuid::now_v7()).bind(ws).bind(agent).bind(conn).execute(h.pool()).await.unwrap();
@@ -166,7 +155,7 @@ async fn the_folder_matches_the_render_inputs_and_the_manifest() {
     let p = parts(&h, w.agent).await;
     let ri = render_inputs(&p);
     let app = &ri["apps"][0];
-    assert_eq!(app["app_id"], "gdemo_app");
+    assert_eq!(app["app_id"], "gdemo-app");
     assert_eq!(app["summary"], "Things, lists and creating them.");
     assert_eq!(app["guide_path"], format!("{ROOT}/guide.md"));
     // The four fields of before are untouched (a supervisor that predates the guides renders as before).
@@ -182,12 +171,9 @@ async fn the_folder_matches_the_render_inputs_and_the_manifest() {
     assert_eq!(
         names,
         [
-            ".aurora/apps/gdemo_app/api.json",
-            ".aurora/apps/gdemo_app/api.md",
-            ".aurora/apps/gdemo_app/data.json",
-            ".aurora/apps/gdemo_app/guide.md",
-            ".aurora/apps/gdemo_app/steps.md",
-            ".aurora/apps/gdemo_app/tools.md",
+            ".aurora/apps/gdemo-app/api.json",
+            ".aurora/apps/gdemo-app/guide.md",
+            ".aurora/apps/gdemo-app/tools.md",
         ]
     );
     let m = manifest(&p);
@@ -206,20 +192,17 @@ async fn the_folder_matches_the_render_inputs_and_the_manifest() {
         assert!(serde_json::to_vec(s).unwrap().len() <= MAX_HOME_SYNC_PART);
     }
 
-    assert!(
-        f[&format!("{ROOT}/api.md")]
-            .starts_with("> Reference from the Demo App plugin (third-party, version 1.0.0).")
-    );
-    assert!(f[&format!("{ROOT}/api.md")].ends_with(std::str::from_utf8(API_MD).unwrap()));
-    assert!(f[&format!("{ROOT}/steps.md")].starts_with("> Procedure from the Demo App plugin"));
-    // Other extensions byte for byte.
-    assert_eq!(f[&format!("{ROOT}/data.json")].as_bytes(), DATA_JSON);
     let guide = &f[&format!("{ROOT}/guide.md")];
     assert!(
         guide.contains(&w.conn.to_string()) && guide.contains("work account"),
         "{guide}"
     );
-    assert!(guide.contains("Create a thing"), "{guide}");
+    assert!(guide.contains("Be careful."), "{guide}");
+    // No guide file of the old format is projected, whatever the package carried (D-453).
+    assert!(
+        f.keys()
+            .all(|k| !k.ends_with(".md") || k.ends_with("/guide.md") || k.ends_with("/tools.md"))
+    );
     let tools = &f[&format!("{ROOT}/tools.md")];
     assert!(
         tools.contains("`list_things` GET /things") && tools.contains("`create_thing`"),
@@ -249,7 +232,7 @@ async fn an_agent_without_a_grant_gets_nothing_of_the_app() {
     assert!(folder(&p).is_empty());
     assert!(manifest(&p).iter().all(|m| !m.starts_with(".aurora/apps/")));
     assert_eq!(render_inputs(&p)["apps"], json!([]));
-    assert!(!serde_json::to_string(&p).unwrap().contains("gdemo_app"));
+    assert!(!serde_json::to_string(&p).unwrap().contains("gdemo-app"));
 }
 
 /// A custom grant shows the three states from the grant row; editing it, revoking it, disconnecting
@@ -318,23 +301,13 @@ async fn grant_changes_move_the_generation_and_the_folder() {
         .await
         .unwrap();
     assert!(generation(&h, w.agent).await > g);
-    assert_eq!(folder(&parts(&h, w.agent).await).len(), 6);
+    assert_eq!(folder(&parts(&h, w.agent).await).len(), 3);
 
-    // A new package version (changed reference file) is the next generation with the new bytes.
+    // A new package version (changed essentials) is the next generation with the new text.
     let before = generation(&h, w.agent).await;
-    let v2 = yaml("Things, lists and creating them.", "Be careful.")
+    let v2 = yaml("Things, lists and creating them.", "Be careful, v2.")
         .replace("version: 1.0.0", "version: 1.1.0");
-    let new_api: &[u8] = b"# API v2\nNew.\n";
-    let v = a
-        .upload_with(
-            &v2,
-            &[
-                ("agent/gdemo_app/api.md", new_api),
-                ("agent/gdemo_app/steps.md", STEPS_MD),
-                ("agent/gdemo_app/data.json", DATA_JSON),
-            ],
-        )
-        .await;
+    let v = a.upload_with(&v2, &files()).await;
     // No widening: it activates on upload.
     assert_eq!(v["status"], "active", "{v}");
     assert!(
@@ -342,8 +315,7 @@ async fn grant_changes_move_the_generation_and_the_folder() {
         "a new snapshot bumps the generation"
     );
     let f = folder(&parts(&h, w.agent).await);
-    assert!(f[&format!("{ROOT}/api.md")].contains("API v2"));
-    assert!(f[&format!("{ROOT}/api.md")].contains("version 1.1.0"));
+    assert!(f[&format!("{ROOT}/guide.md")].contains("Be careful, v2."));
 
     // Disconnect: the account leaves.
     let before = generation(&h, w.agent).await;
@@ -379,180 +351,7 @@ async fn grant_changes_move_the_generation_and_the_folder() {
     assert!(manifest(&p).iter().all(|m| !m.starts_with(".aurora/apps/")));
 }
 
-/// The reference files of one sync stop at the budget: the app that does not fit gets the
-/// generated files only and its `guide.md` says so.
-#[tokio::test]
-async fn the_budget_keeps_generated_files_and_drops_reference_files() {
-    let h = Harness::new().await;
-    let a = setup(&h).await;
-    let w = world(&h, &a, "full").await;
-    let tight = h.state.clone().with_guide_sync_max(10);
-    // The counter is process-wide and only grows: assert the delta of this one sync, and that the
-    // default budget (below) does not move it.
-    let series = "aurora_home_guide_budget_exceeded_total";
-    let _ = metrics_text(); // the recorder must exist before the counter is incremented
-    let before = counter_value(series);
-    let p = parts_with(&h, tight, w.agent).await;
-    assert_eq!(
-        counter_value(series) - before,
-        1.0,
-        "one app over budget, one increment"
-    );
-    let f = folder(&p);
-    let names: Vec<&str> = f.keys().map(String::as_str).collect();
-    assert_eq!(
-        names,
-        [
-            ".aurora/apps/gdemo_app/api.json",
-            ".aurora/apps/gdemo_app/guide.md",
-            ".aurora/apps/gdemo_app/tools.md"
-        ]
-    );
-    let guide = &f[&format!("{ROOT}/guide.md")];
-    assert!(guide.contains("not available in this sandbox"), "{guide}");
-    assert!(!guide.contains("REST conventions") || guide.contains("not available in this sandbox"));
-    // Every path of the manifest is a projected one.
-    assert!(
-        manifest(&p)
-            .iter()
-            .filter(|m| m.starts_with(".aurora/apps/"))
-            .all(|m| f.contains_key(m))
-    );
-    // The default budget sends all six and does not count.
-    let before = counter_value(series);
-    assert_eq!(folder(&parts(&h, w.agent).await).len(), 6);
-    assert_eq!(counter_value(series), before);
-}
-
-/// The admin routes: the detail carries `agent_guides`, the file route serves the bytes by digest
-/// with the safe headers, and unknown packages, apps and files are 404.
-#[tokio::test]
-async fn the_admin_routes_serve_the_guide() {
-    let h = Harness::new().await;
-    let a = setup(&h).await;
-    let v = a
-        .upload_with(&yaml("Things.", "Be careful."), &files())
-        .await;
-    let id = v["id"].as_str().unwrap().to_owned();
-    let d = a.status(&v["id"]).await;
-    let g = &d["agent_guides"][0];
-    assert_eq!(g["app_id"], "gdemo_app");
-    assert_eq!(g["summary"], "Things.");
-    assert_eq!(g["instructions"], "Be careful.");
-    assert_eq!(g["files"][0]["file"], "api.md");
-    assert_eq!(g["files"][0]["kind"], "reference");
-    assert_eq!(g["files"][0]["size"], API_MD.len());
-    assert_eq!(g["files"][1]["kind"], "recipe");
-    assert_eq!(g["operations"], Value::Null);
-    assert_eq!(
-        g["changed"],
-        Value::Null,
-        "no active version to compare with"
-    );
-    // A list does not read archives.
-    let (s, list) = a.json(Method::GET, "/v1/admin/plugins", None).await;
-    assert_eq!(s, 200);
-    assert_eq!(list["items"][0]["agent_guides"], json!([]));
-
-    let uri = format!("/v1/admin/plugins/{id}/agent-guides/gdemo_app/api.md");
-    let res = h.get_raw(&uri, &[("cookie", &a.cookie)]).await;
-    assert_eq!(res.0, 200);
-    assert_eq!(res.2, API_MD);
-    let hd = |n: &str| res.1.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str());
-    assert_eq!(hd("content-type"), Some("text/plain; charset=utf-8"));
-    assert_eq!(hd("x-content-type-options"), Some("nosniff"));
-    assert_eq!(
-        hd("content-disposition"),
-        Some("attachment; filename=\"api.md\"")
-    );
-    assert_eq!(hd("cache-control"), Some("private, no-store"));
-    for bad in [
-        format!(
-            "/v1/admin/plugins/{}/agent-guides/gdemo_app/api.md",
-            Uuid::now_v7()
-        ),
-        format!("/v1/admin/plugins/{id}/agent-guides/nope/api.md"),
-        format!("/v1/admin/plugins/{id}/agent-guides/gdemo_app/nope.md"),
-        format!("/v1/admin/plugins/{id}/agent-guides/gdemo_app/guide.md"),
-    ] {
-        let r = h.get_raw(&bad, &[("cookie", &a.cookie)]).await;
-        assert_eq!(r.0, 404, "{bad}");
-    }
-    // Not an instance admin: refused.
-    let user = h.user("member@x.io", false).await;
-    let (_, tok) = h.good_session(user).await;
-    let r = h.get_raw(&uri, &[("cookie", &cookie(&tok))]).await;
-    assert_eq!(r.0, 403);
-}
-
-/// `changed` against the active version, and `agent_guide_changed` in the approve and activate
-/// audit rows (listing the apps whose summary, essentials or files differ).
-#[tokio::test]
-async fn a_new_version_reports_what_changed_and_audits_it() {
-    let h = Harness::new().await;
-    let a = setup(&h).await;
-    let _w = world(&h, &a, "full").await;
-    // A new host claim is a widening, so version 1.1.0 waits for approval and can be compared.
-    let v2 = yaml("Things, changed.", "Be careful.")
-        .replace("version: 1.0.0", "version: 1.1.0")
-        .replace(
-            "    hosts:\n",
-            "    hosts:\n      - match: { host: \"api2.gdemo.example\" }\n        inject:\n          - bearer: \"{credentials.api_token}\"\n",
-        );
-    let v = a
-        .upload_with(
-            &v2,
-            &[
-                ("agent/gdemo_app/api.md", API_MD),
-                ("agent/gdemo_app/steps.md", b"# Steps\nrewritten\n"),
-                ("agent/gdemo_app/data.json", DATA_JSON),
-            ],
-        )
-        .await;
-    assert_eq!(v["status"], "pending_approval", "{v}");
-    let d = a.status(&v["id"]).await;
-    let c = &d["agent_guides"][0]["changed"];
-    assert_eq!(c["summary"], true, "{d}");
-    assert_eq!(c["instructions"], false);
-    assert_eq!(c["operations"], false);
-    assert_eq!(
-        c["files"],
-        json!([{"file": "steps.md", "change": "changed"}])
-    );
-    let (s, p) = a.act(&v["id"], "approve").await;
-    assert_eq!(s, 200, "{p}");
-    for action in ["plugin.approve", "plugin.activate"] {
-        let meta: Value = wait_audit_meta(&h, action, v["id"].as_str().unwrap()).await;
-        assert_eq!(
-            meta["agent_guide_changed"],
-            json!(["gdemo_app"]),
-            "{action}: {meta}"
-        );
-    }
-    // An automatic activation (no widening) audits it too; an unchanged guide adds no key.
-    let v3 = yaml("Things, changed.", "Be careful.")
-        .replace("version: 1.0.0", "version: 1.2.0")
-        .replace(
-            "    hosts:\n",
-            "    hosts:\n      - match: { host: \"api2.gdemo.example\" }\n        inject:\n          - bearer: \"{credentials.api_token}\"\n",
-        );
-    let v = a
-        .upload_with(
-            &v3,
-            &[
-                ("agent/gdemo_app/api.md", b"# API v3\n"),
-                ("agent/gdemo_app/steps.md", b"# Steps\nrewritten\n"),
-                ("agent/gdemo_app/data.json", DATA_JSON),
-            ],
-        )
-        .await;
-    assert_eq!(v["status"], "active", "{v}");
-    let meta = wait_audit_meta(&h, "plugin.activate", v["id"].as_str().unwrap()).await;
-    assert_eq!(meta["auto"], true);
-    assert_eq!(meta["agent_guide_changed"], json!(["gdemo_app"]), "{meta}");
-}
-
-trait RawGet {
+pub(crate) trait RawGet {
     /// `(status, headers as lower-case name/value pairs, body bytes)`.
     async fn get_raw(
         &self,
@@ -590,7 +389,7 @@ impl RawGet for Harness {
     }
 }
 
-const OPERATIONS_JSON: &[u8] = br#"{
+pub(crate) const OPERATIONS_JSON: &[u8] = br#"{
   "format": "aurora.operations/1",
   "operations": [
     { "id": "list_things", "method": "GET", "path": "/things", "summary": "All the things",
@@ -614,11 +413,11 @@ async fn api_json_is_projected_beside_the_guide() {
     let h = Harness::new().await;
     let a = setup(&h).await;
     let y = yaml("Things, lists and creating them.", "Be careful.").replace(
-        "      guide:\n",
-        "      operations: operations.json\n      guide:\n",
+        "      instructions:",
+        "      operations: operations.json\n      instructions:",
     );
     let mut fs = files();
-    fs.push(("agent/gdemo_app/operations.json", OPERATIONS_JSON));
+    fs.push(("agent/gdemo-app/operations.json", OPERATIONS_JSON));
     let v = a.upload_with(&y, &fs).await;
     assert_eq!(v["status"], "pending_approval", "{}", v["violations"]);
     let (s, p) = a.act(&v["id"], "approve").await;
@@ -629,7 +428,7 @@ async fn api_json_is_projected_beside_the_guide() {
     sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, effort, brief) VALUES ($1,$2,$3,'ada','Ada','hosted','fake','medium','')")
         .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
     let conn = Uuid::now_v7();
-    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'gdemo_app','gdemo','1.0.0','work account','active',$4)")
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'gdemo-app','gdemo','1.0.0','work account','active',$4)")
         .bind(conn).bind(org).bind(ws).bind(CREDENTIAL_REF).execute(h.pool()).await.unwrap();
     sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')")
         .bind(Uuid::now_v7()).bind(ws).bind(agent).bind(conn).execute(h.pool()).await.unwrap();
@@ -645,7 +444,7 @@ async fn api_json_is_projected_beside_the_guide() {
     assert!(manifest(&p).contains(&path), "api.json is in the manifest");
     let api: Value = serde_json::from_str(&f[&path]).expect("api.json is JSON");
     assert_eq!(api["format"], "aurora.app-api/1", "{api}");
-    assert_eq!(api["app"]["id"], "gdemo_app");
+    assert_eq!(api["app"]["id"], "gdemo-app");
     let ops = api["operations"].as_array().expect("operations");
     let find = |id: &str| {
         ops.iter()
@@ -670,7 +469,7 @@ async fn api_json_is_projected_beside_the_guide() {
 }
 
 /// Best-effort audit rows land shortly after the request.
-async fn wait_audit_meta(h: &Harness, action: &str, target: &str) -> Value {
+pub(crate) async fn wait_audit_meta(h: &Harness, action: &str, target: &str) -> Value {
     for _ in 0..200 {
         let row: Option<Value> = sqlx::query_scalar(
             "SELECT metadata FROM audit_log WHERE action = $1 AND target_id = $2 ORDER BY created_at DESC LIMIT 1",

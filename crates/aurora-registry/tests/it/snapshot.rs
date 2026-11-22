@@ -391,49 +391,46 @@ fn full_fixture_roundtrips() {
 fn the_shipped_builtin_packages_compile_without_a_host_claim_decision() {
     let dir = format!("{}/../../plugins/builtin", env!("CARGO_MANIFEST_DIR"));
     let mut pkgs = Vec::new();
-    let mut guides = std::collections::BTreeMap::new();
+    let mut agent_files = std::collections::BTreeMap::new();
     for e in std::fs::read_dir(&dir).unwrap() {
         let p = e.unwrap().path().join("plugin.yaml");
         if !p.is_file() {
             continue;
         }
         let m = Manifest::parse(&std::fs::read_to_string(&p).unwrap(), "9.9.9").unwrap();
-        // (P5-GUIDE-4) The packages list agent guide files: the snapshot records their digests, so
-        // each listed file must exist next to the manifest (size and digest of the real bytes).
-        let mut digests = aurora_registry::snapshot::GuideDigests::new();
-        for a in &m.apps {
-            // (P5-GUIDE-6) The operations file is one more entry, with its operation count.
-            if let Some(f) = a.agent.as_ref().and_then(|ag| ag.operations.as_ref()) {
-                let path = p
-                    .parent()
-                    .unwrap()
-                    .join(format!("agent/{}/{f}", a.about.id));
-                let b = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-                digests.insert(
-                    (a.about.id.clone(), f.clone()),
-                    (format!("{:064x}", b.len()), b.len() as u64),
-                );
-                digests.insert(
-                    (
-                        a.about.id.clone(),
-                        aurora_registry::snapshot::OPERATIONS_COUNT_KEY.to_owned(),
-                    ),
-                    (String::new(), aurora_registry::operations::count(&b) as u64),
-                );
-            }
-            for g in a.agent.iter().flat_map(|ag| &ag.guide) {
-                let f = p
-                    .parent()
-                    .unwrap()
-                    .join(format!("agent/{}/{}", a.about.id, g.file));
-                let b = std::fs::read(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
-                digests.insert(
-                    (a.about.id.clone(), g.file.clone()),
-                    (format!("{:064x}", b.len()), b.len() as u64),
-                );
+        // (P5-APPSKILL-1) The snapshot records the digests of the operations file and the skills
+        // of each package, so the shipped files are read next to the manifest: the digests are those
+        // of the real bytes (the compile fails when a named operations file is absent).
+        let dir = p.parent().unwrap();
+        let mut pkg = aurora_registry::Package::default();
+        for sub in ["agent", "skills"] {
+            let mut stack = vec![dir.join(sub)];
+            while let Some(d) = stack.pop() {
+                let Ok(rd) = std::fs::read_dir(&d) else {
+                    continue;
+                };
+                for e in rd {
+                    let path = e.unwrap().path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else {
+                        let rel = path
+                            .strip_prefix(dir)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned();
+                        pkg.files.insert(rel, std::fs::read(&path).unwrap());
+                    }
+                }
             }
         }
-        guides.insert(m.package.id.clone(), digests);
+        let files = aurora_registry::snapshot::agent_files(&m, &pkg);
+        // No built-in ships guide files any more (D-453): nothing but the operations file is
+        // left under `agent/`, and every skill is listed under its app.
+        for k in pkg.files.keys().filter(|k| k.starts_with("agent/")) {
+            assert!(k.ends_with("/operations.json"), "{k}");
+        }
+        agent_files.insert(m.package.id.clone(), files);
         pkgs.push(ActivePackage {
             digest: format!("d-{}", m.package.id),
             manifest: m,
@@ -441,7 +438,7 @@ fn the_shipped_builtin_packages_compile_without_a_host_claim_decision() {
             hooks_digest: Some("h".into()),
         });
     }
-    let c = aurora_registry::snapshot::compile_with_guides(&pkgs, &[], &[], 1, &guides)
+    let c = aurora_registry::snapshot::compile_with_agent_files(&pkgs, &[], &[], 1, &agent_files)
         .unwrap_or_else(|e| panic!("built-ins conflict on a fresh instance: {e:?}"));
     let snap = Snapshot::from_slice(&c.json).unwrap();
     let ids: Vec<&str> = snap.apps.iter().map(|a| a.app_id.as_str()).collect();

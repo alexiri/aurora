@@ -1,0 +1,11 @@
+- name: list rooms injects bearer
+  connection: { credentials: { api_token: "tok" }, metadata: {} }
+  request: { method: GET, url: "https://api.guide.example.test/v1/rooms" }
+  expect:
+    app: skills-demo
+    tool: list_rooms
+    upstream: { headers: { authorization: "Bearer tok" } }
+- name: booking summary uses the path
+  connection: { credentials: { api_token: "tok" } }
+  request: { method: POST, url: "https://api.guide.example.test/v1/rooms/7/bookings" }
+  expect: { tool: book_room, summary: { title: "Book a room", fields: { Room: "7" } } }

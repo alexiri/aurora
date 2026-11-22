@@ -1,0 +1,48 @@
+{
+  "format": "aurora.operations/1",
+  "operations": [
+    {
+      "id": "list_rooms",
+      "method": "GET",
+      "path": "/v1/rooms",
+      "summary": "Rooms of a building, one page at a time",
+      "tags": ["rooms"],
+      "params": [
+        { "name": "building", "in": "query", "required": true, "type": "string", "description": "Building number, e.g. 40" },
+        { "name": "page", "in": "query", "type": "integer", "description": "Page number, from 1" }
+      ],
+      "pagination": { "style": "page_param", "param": "page", "start": 1 },
+      "items": "$.rooms",
+      "tool": "list_rooms"
+    },
+    {
+      "id": "get_room",
+      "method": "GET",
+      "path": "/v1/rooms/{id}",
+      "summary": "One room with its bookings",
+      "tags": ["rooms"],
+      "params": [
+        { "name": "id", "in": "path", "required": true, "type": "integer", "description": "Room id" }
+      ],
+      "tool": "get_room"
+    },
+    {
+      "id": "book_room",
+      "method": "POST",
+      "path": "/v1/rooms/{id}/bookings",
+      "summary": "Reserve a room for a time slot",
+      "tags": ["rooms", "booking"],
+      "params": [
+        { "name": "id", "in": "path", "required": true, "type": "integer", "description": "Room id" }
+      ],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          { "name": "start", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM, local time" },
+          { "name": "minutes", "type": "integer", "default": 60 }
+        ]
+      },
+      "tool": "book_room"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 package:
   id: microsoft-365
-  version: 1.3.0
+  version: 1.4.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -177,8 +177,5 @@ apps:
         sites and drives by id; OneDrive files are addressed by item id, not by path. Send JSON
         bodies with content-type application/json so approvals can show what a change does. Use
         $select, $top and $filter to keep responses small.
-      guide:
-        - { file: schedule-meeting.md, title: "Find a free slot and schedule a meeting", kind: recipe }
-        - { file: graph-conventions.md, title: "Graph conventions: entry points, $select/$filter, paging, writing" }
       env:
         - { name: MICROSOFT_GRAPH_URL, value: "https://graph.microsoft.com/v1.0" }

@@ -1,6 +1,6 @@
 package:
   id: grafana
-  version: 1.0.0
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -166,6 +166,3 @@ apps:
         through /api/datasources/proxy/uid/<uid>/… (only the paths in tools.md work). Keep time
         ranges and step small, and use aurora-agent so large results are saved, not printed.
       operations: operations.json
-      guide:
-        - { file: investigate-a-spike.md, title: "Find out why a metric jumped", kind: recipe }
-        - { file: api-notes.md, title: "API notes: search, dashboards, data source UIDs, proxy paths, alerting, annotations, errors" }

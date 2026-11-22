@@ -454,19 +454,19 @@ async fn ingest_inner(
     } else {
         None
     };
-    // (P5-GUIDE-2, C-648) Apps whose agent guide differs from the version this one replaces.
-    let mut guide_changed: Vec<String> = Vec::new();
+    // (C-1137) Apps whose summary, essentials, operations file or skills differ from the version this one replaces.
+    let mut agent_changed: Vec<String> = Vec::new();
     if auto {
         if let (Ok(m), Some(prev)) = (
             &parsed,
             plugins::active_of_package(&mut *tx, &package_id).await?,
         ) {
-            let old = service::guide_view(&mut tx, &prev).await?;
-            let new = service::GuideView {
+            let old = service::agent_view(&mut tx, &prev).await?;
+            let new = service::AgentView {
                 manifest: m.clone(),
-                digests: aurora_registry::snapshot::guide_digests(m, &pkg),
+                files: aurora_registry::snapshot::agent_files(m, &pkg),
             };
-            guide_changed = service::agent_guide_changed(Some(&old), &new);
+            agent_changed = service::agent_changed(Some(&old), &new);
         }
         plugins::supersede_active(&mut tx, &package_id).await?;
     }
@@ -522,13 +522,31 @@ async fn ingest_inner(
             plugins::put_blob(&mut *tx, &hex(Sha256::digest(wasm)), "hooks_wasm", wasm).await?;
         }
         plugins::put_blob(&mut *tx, &digest, "archive", bytes).await?;
-        // (P5-GUIDE-1, C-642) One blob per agent guide file, keyed by the digest of its bytes.
+        // (P5-APPSKILL-1, C-1132) One `agent_file` blob per skill file, `SKILL.md` and operations
+        // file, keyed by the digest of its bytes. Guide files of an old package are ignored
+        // (D-453): nothing of them is stored for agents.
+        let ops: std::collections::BTreeSet<String> = parsed
+            .as_ref()
+            .map(|m| {
+                m.apps
+                    .iter()
+                    .filter_map(|a| {
+                        a.agent
+                            .as_ref()
+                            .and_then(|g| g.operations.as_ref())
+                            .map(|f| {
+                                format!("{}{}/{f}", aurora_registry::package::AGENT_DIR, a.about.id)
+                            })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         for (path, content) in &pkg.files {
-            if path.starts_with(aurora_registry::package::AGENT_DIR) {
+            if path.starts_with(aurora_registry::package::SKILLS_DIR) || ops.contains(path) {
                 plugins::put_blob(
                     &mut *tx,
                     &hex(Sha256::digest(content)),
-                    "agent_guide",
+                    "agent_file",
                     content,
                 )
                 .await?;
@@ -583,8 +601,8 @@ async fn ingest_inner(
     if auto {
         let mut meta = json!({"package_id": package_id, "version": version, "auto": true,
             "connections_reauth": 0});
-        if !guide_changed.is_empty() {
-            meta["agent_guide_changed"] = json!(guide_changed);
+        if !agent_changed.is_empty() {
+            meta["agent_changed"] = json!(agent_changed);
         }
         audit::record(
             state,

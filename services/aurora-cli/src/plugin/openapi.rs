@@ -1,16 +1,15 @@
-//! `aurora plugin import-openapi` (docs/24 §10, C-650, D-172(a)): reference files and a catalogue
-//! skeleton from a local OpenAPI 3.0/3.1 document. Offline, deterministic (sorted, no timestamps),
-//! and every string taken from the document is untrusted: HTML tags stripped, one line, clamped.
+//! `aurora plugin import-openapi` (docs/24 §10, C-650, C-1138, D-172(a)): the operations file and a
+//! catalogue skeleton from a local OpenAPI 3.0/3.1 document. Offline, deterministic (sorted, no
+//! timestamps), and every string taken from the document is untrusted: HTML tags stripped, one
+//! line, clamped.
 //!
 //! The parser fills one intermediate [`Model`] (operations with parameters, body fields, tags and
-//! the generated tool id); the three outputs are serializers over it, so P5-GUIDE-6's
-//! `operations.json` is a fourth serializer, not a second parse.
+//! the generated tool id); `operations.json` and the `tools:` skeleton are serializers over it.
 
 use anyhow::{Context, Result, anyhow, bail};
-use aurora_core::limits::{AGENT_GUIDE_APP_MAX, AGENT_GUIDE_FILE_MAX, AGENT_GUIDE_FILES_MAX};
 use aurora_core::sanitize::inline;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -23,8 +22,6 @@ const DESC_MAX: usize = 160;
 const SUMMARY_MAX: usize = 200;
 const NAME_MAX: usize = 80;
 const REF_DEPTH: usize = 16;
-/// Room under the per-file limit for the header of a split `operations` file.
-const CHUNK_MAX: usize = AGENT_GUIDE_FILE_MAX - 512;
 
 /// One parameter or top-level body field.
 #[derive(Debug, Clone)]
@@ -49,11 +46,10 @@ pub(crate) struct Operation {
     pub summary: String,
     pub operation_id: Option<String>,
     pub params: Vec<Field>,
-    pub body: Vec<Field>,
     /// Lower snake case, unique within the model.
     pub tool_id: String,
     /// (C-656) Request body of any declared kind (`application/json`, form, multipart) with its
-    /// top-level fields; `body` above stays the JSON-only view the reference files print.
+    /// top-level fields.
     pub op_body: Option<(String, Vec<Field>)>,
     /// (C-656) JSON path of the list in the success response.
     pub items: Option<String>,
@@ -230,27 +226,6 @@ fn param_fields(root: &Value, list: Option<&Value>) -> Result<Vec<Field>> {
                 DESC_MAX,
             ),
         });
-    }
-    Ok(out)
-}
-
-fn body_fields(root: &Value, op: &Value) -> Result<Vec<Field>> {
-    let Some(rb) = op.get("requestBody") else {
-        return Ok(Vec::new());
-    };
-    let rb = resolve(root, rb)?;
-    let Some(content) = rb.get("content").and_then(Value::as_object) else {
-        return Ok(Vec::new());
-    };
-    let media = content.get("application/json").or_else(|| {
-        content
-            .iter()
-            .find(|(k, _)| k.ends_with("+json"))
-            .map(|(_, v)| v)
-    });
-    let mut out = Vec::new();
-    if let Some(schema) = media.and_then(|m| m.get("schema")) {
-        fields_of_schema(root, schema, 0, &mut out);
     }
     Ok(out)
 }
@@ -453,7 +428,6 @@ pub(crate) fn parse(doc: &str, host_override: Option<&str>) -> Result<Model> {
                 summary,
                 operation_id,
                 params,
-                body: body_fields(&root, op)?,
                 tool_id: String::new(),
                 op_body: any_body(&root, op)?,
                 items: success_items(&root, op),
@@ -483,7 +457,7 @@ pub(crate) fn parse(doc: &str, host_override: Option<&str>) -> Result<Model> {
     })
 }
 
-// ---------------------------------------------------------------- the three outputs
+// ---------------------------------------------------------------- the outputs
 
 /// File-name stem of a tag: lower case, `[a-z0-9_-]`, at most 40 characters.
 fn slug(tag: &str) -> String {
@@ -504,211 +478,6 @@ fn slug(tag: &str) -> String {
     let s = s.trim_matches('-');
     let s = if s.is_empty() { "other" } else { s };
     s.chars().take(40).collect()
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Detail {
-    Full,
-    NoBody,
-    NoDescriptions,
-}
-
-fn field_line(f: &Field, detail: Detail) -> String {
-    let mut l = format!(
-        "- `{}` ({}, {}, {})",
-        f.name,
-        f.loc,
-        if f.required { "required" } else { "optional" },
-        f.ty
-    );
-    if detail != Detail::NoDescriptions && !f.description.is_empty() {
-        let _ = write!(l, ": {}", f.description);
-    }
-    l
-}
-
-fn op_section(op: &Operation, detail: Detail) -> String {
-    let mut o = format!("## {} {}\n\n", op.method, op.path);
-    if !op.summary.is_empty() {
-        let _ = writeln!(o, "{}\n", op.summary);
-    }
-    if !op.params.is_empty() {
-        o.push_str("Parameters:\n");
-        for p in &op.params {
-            let _ = writeln!(o, "{}", field_line(p, detail));
-        }
-        o.push('\n');
-    }
-    if detail == Detail::Full && !op.body.is_empty() {
-        o.push_str("Body fields (JSON, top level):\n");
-        for f in &op.body {
-            let _ = writeln!(o, "{}", field_line(f, detail));
-        }
-        o.push('\n');
-    }
-    o
-}
-
-fn index_line(op: &Operation) -> String {
-    let mut l = format!("- {} {}", op.method, op.path);
-    if !op.summary.is_empty() {
-        let _ = write!(l, ": {}", op.summary);
-    }
-    let _ = write!(
-        l,
-        " [{}]",
-        op.operation_id.as_deref().unwrap_or(&op.tool_id)
-    );
-    l
-}
-
-/// The operation index, split into files under the per-file limit when it must be.
-fn index_files(app_id: &str, ops: &[Operation]) -> Vec<(String, String)> {
-    let header = format!(
-        "# {app_id}: operations by tag\n\nOne line per operation: `METHOD path: summary [operationId]`. Details of each tag are in its `ops-<tag>.md` file when one exists.\n"
-    );
-    let mut files: Vec<String> = vec![header.clone()];
-    let mut tag = "";
-    for op in ops {
-        let mut chunk = String::new();
-        if op.tag != tag {
-            tag = &op.tag;
-            let _ = write!(chunk, "\n## {tag}\n\n");
-        }
-        chunk.push_str(&index_line(op));
-        chunk.push('\n');
-        if files
-            .last()
-            .is_some_and(|f| f.len() + chunk.len() > CHUNK_MAX)
-        {
-            let mut next = format!("{header}\n## {}\n\n", op.tag);
-            if chunk.starts_with('\n') {
-                chunk = chunk
-                    .split_once("\n\n")
-                    .map(|(_, r)| r.to_owned())
-                    .unwrap_or(chunk);
-            }
-            next.push_str(&chunk);
-            files.push(next);
-        } else if let Some(f) = files.last_mut() {
-            f.push_str(&chunk);
-        }
-    }
-    files
-        .into_iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let name = if i == 0 {
-                "operations.md".to_owned()
-            } else {
-                format!("operations-{}.md", i + 1)
-            };
-            (name, c)
-        })
-        .collect()
-}
-
-struct Built {
-    /// `(file, title, text)` in listing order.
-    files: Vec<(String, String, String)>,
-    /// Tag file names by tag, for the drop step.
-    tag_files: BTreeMap<String, String>,
-}
-
-fn build(app_id: &str, m: &Model, detail: Detail) -> Result<Built> {
-    let mut files: Vec<(String, String, String)> = Vec::new();
-    for (i, (name, text)) in index_files(app_id, &m.ops).into_iter().enumerate() {
-        let title = if i == 0 {
-            "Operation index: every operation, grouped by tag".to_owned()
-        } else {
-            format!("Operation index, part {}", i + 1)
-        };
-        files.push((name, title, text));
-    }
-    // Tags, merged into `other` (smallest first) when there are more files than allowed.
-    let mut by_tag: BTreeMap<String, Vec<&Operation>> = BTreeMap::new();
-    for op in &m.ops {
-        by_tag.entry(op.tag.clone()).or_default().push(op);
-    }
-    while files.len() + by_tag.len() > AGENT_GUIDE_FILES_MAX {
-        let Some(smallest) = by_tag
-            .iter()
-            .filter(|(t, _)| *t != "other")
-            .min_by_key(|(t, ops)| (ops.len(), (*t).clone()))
-            .map(|(t, _)| t.clone())
-        else {
-            bail!(
-                "too many operation index files for one app ({})",
-                files.len()
-            );
-        };
-        let moved = by_tag.remove(&smallest).unwrap_or_default();
-        by_tag.entry("other".into()).or_default().extend(moved);
-    }
-    let mut tag_files = BTreeMap::new();
-    let mut taken: BTreeSet<String> = BTreeSet::new();
-    for (tag, ops) in &by_tag {
-        let mut stem = format!("ops-{}", slug(tag));
-        let mut n = 2;
-        while !taken.insert(stem.clone()) {
-            stem = format!("ops-{}-{n}", slug(tag));
-            n += 1;
-        }
-        let mut sorted = ops.clone();
-        sorted.sort_by(|a, b| (&a.path, &a.method).cmp(&(&b.path, &b.method)));
-        let mut body = format!("# Operations: {tag}\n\n");
-        for op in sorted {
-            body.push_str(&op_section(op, detail));
-        }
-        let file = format!("{stem}.md");
-        tag_files.insert(tag.clone(), file.clone());
-        files.push((file, format!("Operations: {tag}"), body));
-    }
-    Ok(Built { files, tag_files })
-}
-
-/// `(file, title, text)`.
-type GuideFile = (String, String, String);
-
-fn fits(files: &[GuideFile]) -> bool {
-    files.len() <= AGENT_GUIDE_FILES_MAX
-        && files
-            .iter()
-            .all(|(_, _, t)| t.len() <= AGENT_GUIDE_FILE_MAX)
-        && files.iter().map(|(_, _, t)| t.len()).sum::<usize>() <= AGENT_GUIDE_APP_MAX
-}
-
-/// Files within every limit, and what was dropped to get there (stderr).
-fn generate(app_id: &str, m: &Model) -> Result<(Vec<GuideFile>, Vec<String>)> {
-    let mut notes = Vec::new();
-    let mut built = build(app_id, m, Detail::Full)?;
-    for (detail, what) in [
-        (Detail::NoBody, "dropped the top-level body fields"),
-        (Detail::NoDescriptions, "dropped the parameter descriptions"),
-    ] {
-        if fits(&built.files) {
-            break;
-        }
-        notes.push(what.to_owned());
-        built = build(app_id, m, detail)?;
-    }
-    // The `ops-<tag>.md` files of the largest tags go next; their operations stay in the index.
-    while !fits(&built.files) {
-        let largest = built
-            .files
-            .iter()
-            .filter(|(f, _, _)| built.tag_files.values().any(|t| t == f))
-            .max_by_key(|(f, _, t)| (t.len(), std::cmp::Reverse(f.clone())))
-            .map(|(f, _, _)| f.clone());
-        let Some(file) = largest else {
-            bail!("the operation index alone exceeds the agent guide limits of one app");
-        };
-        notes.push(format!(
-            "dropped {file} (largest tag); its operations stay in the index"
-        ));
-        built.files.retain(|(f, _, _)| *f != file);
-    }
-    Ok((built.files, notes))
 }
 
 /// `tools:` skeleton: reads (`GET`/`HEAD`), then writes; more specific paths first within a group.
@@ -768,7 +537,8 @@ fn valid_app_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || *c == b'_')
 }
 
-/// Removes the files an earlier run wrote, so a regeneration never leaves an unlisted file behind.
+/// Removes the files an earlier run wrote: the reference files of the old (guide) format, which
+/// are ignored now (D-453), and the previous `operations.json`, so a regeneration starts clean.
 fn clear_generated(dir: &Path) -> Result<()> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return Ok(());
@@ -787,6 +557,9 @@ fn clear_generated(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// (C-1138) Writes `agent/<app>/operations.json` (what `aurora-agent search` and `describe` serve)
+/// and prints the `operations:` key and a `tools:` skeleton on stdout. No reference files and no
+/// `guide:` entries: guides are skills now.
 pub fn import(file: &Path, app: &str, host: Option<&str>, dir: &Path) -> Result<i32> {
     if !valid_app_id(app) {
         bail!("`{app}` is not an app id ([a-z][a-z0-9_-]{{1,47}})");
@@ -794,24 +567,24 @@ pub fn import(file: &Path, app: &str, host: Option<&str>, dir: &Path) -> Result<
     let doc =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
     let model = parse(&doc, host)?;
-    let (files, notes) = generate(app, &model)?;
     let out_dir = dir.join("agent").join(app);
     std::fs::create_dir_all(&out_dir)?;
     clear_generated(&out_dir)?;
-    for (name, _, content) in &files {
-        std::fs::write(out_dir.join(name), content).with_context(|| format!("writing {name}"))?;
-    }
-    // (C-656) The fourth output: the operations file `aurora-agent` reads through `api.json`.
+    // (C-656) The operations file `aurora-agent` reads through `api.json`.
     let (operations, op_notes) = ops::generate(&model);
     if let Some(json) = &operations {
         std::fs::write(out_dir.join("operations.json"), json).context("writing operations.json")?;
     }
-    for n in notes.iter().chain(&op_notes) {
+    for n in &op_notes {
         eprintln!("import-openapi: {n}");
     }
     eprintln!(
-        "import-openapi: wrote {} files for {} operations to {}",
-        files.len(),
+        "import-openapi: wrote {} for {} operations to {}",
+        if operations.is_some() {
+            "operations.json"
+        } else {
+            "no operations file"
+        },
         model.ops.len(),
         out_dir.display()
     );
@@ -821,18 +594,10 @@ pub fn import(file: &Path, app: &str, host: Option<&str>, dir: &Path) -> Result<
         );
     }
     let mut out = String::from(
-        "# Add under apps[].agent in plugin.yaml (summary is required with a guide):\n",
+        "# Add under apps[].agent in plugin.yaml (summary is required with an operations file):\n",
     );
     if operations.is_some() {
         out.push_str("operations: operations.json\n");
-    }
-    out.push_str("guide:\n");
-    for (name, title, _) in &files {
-        let _ = writeln!(
-            out,
-            "  - {{ file: {name}, title: {} }}",
-            serde_json::to_string(title).unwrap_or_default()
-        );
     }
     out.push_str(
         "\n# Catalogue skeleton for apps[]: review overlaps, approvals and `params` classifiers.\n",

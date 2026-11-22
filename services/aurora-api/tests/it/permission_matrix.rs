@@ -534,7 +534,13 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/plugins/{id}", G::Inst, false),
     r(
         "GET",
-        "/v1/admin/plugins/{id}/agent-guides/{app_id}/{file}",
+        "/v1/admin/plugins/{id}/apps/{app_id}/skills/{name}/file",
+        G::Inst,
+        false,
+    ),
+    r(
+        "GET",
+        "/v1/admin/plugins/{id}/apps/{app_id}/operations",
         G::Inst,
         false,
     ),

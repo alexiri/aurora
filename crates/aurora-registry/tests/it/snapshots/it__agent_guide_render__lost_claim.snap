@@ -1,5 +1,6 @@
 ---
 source: crates/aurora-registry/tests/it/agent_guide_render.rs
+assertion_line: 114
 expression: both(&r)
 ---
 === guide.md ===
@@ -19,18 +20,10 @@ Choose an account with the request header `x-aurora-connection-id: <connection i
 
 `tools.md` lists every operation and your access to it.
 
-## Recipes
-
-Step-by-step procedures from the Demo app plugin (third-party). Open the one that matches your task before you start.
-
-- `make-and-check.md`: Make a thing and check it
-
 ## Files in this folder
 
 - `tools.md`: every operation and your access to it
 - `api.json`: the operations of this app, for `aurora-agent`. Use `aurora-agent search|describe|call <app_id> …` rather than reading it.
-- `api.md`: API conventions
-- `codes.tsv`: Codes (third-party file, no header)
 
 ## Documentation
 

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AgentGuideSection } from "@/components/admin/agent-guide-section";
 import { PluginReview } from "@/components/admin/plugin-detail-view";
-import type { PluginAgentGuide, PluginPackage } from "@/lib/api/plugins";
+import type { PluginAgent, PluginPackage } from "@/lib/api/plugins";
 import { wrap } from "./support/render";
 
 vi.mock("next/navigation", () => ({
@@ -12,7 +12,7 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-/** (P5-GUIDE-3, C-648) The agent guide section: structure, change marks, inert text, fetch on selection. */
+/** (C-1136) The agent section of a package: structure, change marks, inert text, fetch on selection. */
 
 interface Call {
   method: string;
@@ -37,24 +37,31 @@ function mockFetch(handler: (c: Call) => Response) {
 const text = (status: number, body: string) =>
   new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 
-const full: PluginAgentGuide = {
+const full: PluginAgent = {
   app_id: "git",
   summary: "Projects and pipelines.",
   instructions: "Use numeric ids.",
-  files: [
-    { file: "api.md", title: "REST conventions", kind: "reference", size: 2048, sha256: "a" },
-    { file: "retry.md", title: "Retry the failed jobs", kind: "recipe", size: 512, sha256: "b" },
-    { file: "data.json", title: "Sample data", kind: "reference", size: 10, sha256: "c" },
+  skills: [
+    {
+      name: "git-api",
+      description: "How the REST API is addressed",
+      size: 2058,
+      files: [
+        { path: "SKILL.md", size: 2048, sha256: "a", executable: false },
+        { path: "scripts/run.sh", size: 10, sha256: "c", executable: true },
+      ],
+    },
+    { name: "git-retry", description: "Retry the failed jobs", size: 512, files: [{ path: "SKILL.md", size: 512, sha256: "b", executable: false }] },
   ],
   operations: { file: "operations.json", size: 4096, sha256: "d", count: 37 },
   changed: {
     summary: true,
     instructions: false,
     operations: false,
-    files: [
-      { file: "retry.md", change: "added" },
-      { file: "api.md", change: "changed" },
-      { file: "old.md", change: "removed" },
+    skills: [
+      { name: "git-retry", change: "added", files: [{ path: "SKILL.md", change: "added" }] },
+      { name: "git-api", change: "changed", files: [{ path: "SKILL.md", change: "changed" }, { path: "scripts/run.sh", change: "mode" }] },
+      { name: "git-old", change: "removed", files: [{ path: "SKILL.md", change: "removed" }] },
     ],
   },
 };
@@ -82,39 +89,41 @@ const plugin: PluginPackage = {
   approved_by: null,
   approved_at: null,
   created_at: "2026-01-01T00:00:00Z",
-  agent_guides: [full],
+  agent: [full],
 };
 
 describe("AgentGuideSection", () => {
-  it("shows the summary, essentials, recipes before reference files, the operations file and every change mark", () => {
+  it("shows the summary, essentials, the skills with scripts marked, the operations file and every change mark", () => {
     mockFetch(() => text(200, ""));
     wrap(<AgentGuideSection plugin={plugin} />);
-    expect(screen.getByText("Agents that use this app can read this text. It is written by the publisher.")).toBeInTheDocument();
+    expect(screen.getByText(/Agents that use this app get these skills\. They are written by the publisher/)).toBeInTheDocument();
     const app = screen.getByTestId("agent-guide-git");
     expect(within(app).getByText("Projects and pipelines.")).toBeInTheDocument();
     expect(within(app).getByRole("region", { name: "Essentials of Git" })).toHaveTextContent("Use numeric ids.");
     const headings = within(app)
       .getAllByRole("heading", { level: 5 })
       .map((h) => h.textContent);
-    expect(headings.indexOf("Recipes")).toBeLessThan(headings.indexOf("Reference files"));
+    expect(headings.indexOf("Skills")).toBeLessThan(headings.indexOf("Operations"));
     expect(within(app).getByText("37 operations, 4.0 KiB")).toBeInTheDocument();
-    // Change marks: summary, the added and changed files, the removed one.
+    expect(within(app).getByText("script, 10 B")).toBeInTheDocument();
+    // Change marks: summary and the changed skill file, the added one, the mode-only one, the removed one.
     expect(within(app).getAllByText("Changed").length).toBe(2);
     expect(within(app).getAllByText("Added")).toHaveLength(1);
+    expect(within(app).getAllByText("Script bit")).toHaveLength(1);
     expect(within(app).getAllByText("Removed").length).toBeGreaterThanOrEqual(1);
-    expect(within(app).getByText("old.md")).toBeInTheDocument();
+    expect(within(app).getByText("git-old/SKILL.md")).toBeInTheDocument();
   });
 
   it("says so for an app with no guide and for a missing summary", () => {
     mockFetch(() => text(200, ""));
-    const empty: PluginAgentGuide = { app_id: "bare", summary: null, instructions: "", files: [], operations: null, changed: null };
-    const noSummary: PluginAgentGuide = { ...empty, app_id: "ess", instructions: "Essentials only." };
+    const empty: PluginAgent = { app_id: "bare", summary: null, instructions: "", skills: [], operations: null, changed: null };
+    const noSummary: PluginAgent = { ...empty, app_id: "ess", instructions: "Essentials only." };
     wrap(
       <AgentGuideSection
-        plugin={{ ...plugin, apps: [{ app_id: "bare", name: "Bare" }, { app_id: "ess", name: "Ess" }], agent_guides: [empty, noSummary] }}
+        plugin={{ ...plugin, apps: [{ app_id: "bare", name: "Bare" }, { app_id: "ess", name: "Ess" }], agent: [empty, noSummary] }}
       />,
     );
-    expect(within(screen.getByTestId("agent-guide-bare")).getByText("This app ships no agent guide.")).toBeInTheDocument();
+    expect(within(screen.getByTestId("agent-guide-bare")).getByText("This app gives agents nothing but its description.")).toBeInTheDocument();
     expect(within(screen.getByTestId("agent-guide-ess")).getByText("No summary: the app description is used.")).toBeInTheDocument();
   });
 
@@ -129,9 +138,9 @@ describe("AgentGuideSection", () => {
     const calls = mockFetch(() => text(200, hostile));
     const { container } = wrap(<AgentGuideSection plugin={plugin} />);
     expect(calls).toHaveLength(0);
-    fireEvent.click(screen.getByRole("button", { name: "api.md" }));
-    const viewer = await screen.findByRole("region", { name: "File api.md" });
-    expect(calls).toEqual([{ method: "GET", path: "/v1/admin/plugins/p1/agent-guides/git/api.md" }]);
+    fireEvent.click(screen.getByRole("button", { name: "git-api/SKILL.md" }));
+    const viewer = await screen.findByRole("region", { name: "File git-api/SKILL.md" });
+    expect(calls).toEqual([{ method: "GET", path: "/v1/admin/plugins/p1/apps/git/skills/git-api/file" }]);
     expect(viewer).toHaveTextContent("<script>window.__pwned = 1</script>");
     expect(viewer).toHaveTextContent("[click me](javascript:window.__pwned=3)");
     // Nothing became an element: no script, no image, no link, no heading from the text.
@@ -140,22 +149,22 @@ describe("AgentGuideSection", () => {
     expect(container.querySelector("a[href]")).toBeNull();
     expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
     // Another selection is a second request.
-    fireEvent.click(screen.getByRole("button", { name: "retry.md" }));
-    await screen.findByRole("region", { name: "File retry.md" });
+    fireEvent.click(screen.getByRole("button", { name: "git-retry/SKILL.md" }));
+    await screen.findByRole("region", { name: "File git-retry/SKILL.md" });
     expect(calls).toHaveLength(2);
   });
 
   it("shows an error when the file cannot be read and an empty-file note", async () => {
-    mockFetch((c) => (c.path.endsWith("/api.md") ? text(404, "") : text(200, "")));
+    mockFetch((c) => (c.path.includes("/skills/git-api/") ? text(404, "") : text(200, "")));
     wrap(<AgentGuideSection plugin={plugin} />);
-    fireEvent.click(screen.getByRole("button", { name: "api.md" }));
+    fireEvent.click(screen.getByRole("button", { name: "git-api/SKILL.md" }));
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "data.json" }));
+    fireEvent.click(screen.getByRole("button", { name: "operations.json" }));
     expect(await screen.findByText("This file is empty.")).toBeInTheDocument();
   });
 });
 
-describe("PluginReview and the agent guide", () => {
+describe("PluginReview and the agent section", () => {
   it("shows the agent guide open, and approval needs no second confirmation", async () => {
     const calls = mockFetch(() => new Response(JSON.stringify({ ...plugin, status: "active" }), { status: 200, headers: { "content-type": "application/json" } }));
     wrap(<PluginReview plugin={plugin} />);
@@ -168,7 +177,7 @@ describe("PluginReview and the agent guide", () => {
 
   it("has no guide section for a package without guide text", () => {
     mockFetch(() => text(200, ""));
-    wrap(<PluginReview plugin={{ ...plugin, agent_guides: [] }} />);
+    wrap(<PluginReview plugin={{ ...plugin, agent: [] }} />);
     expect(screen.queryByRole("button", { name: /What agents can read/ })).toBeNull();
   });
 });
