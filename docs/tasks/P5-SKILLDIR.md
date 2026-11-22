@@ -115,3 +115,19 @@ instruction snapshots change on purpose: review each diff, don't regenerate blin
   needs an API `warnings` field).
 - BYO agents: they have no projected home, so no variable; `10 §Skills` says so.
 - App-shipped skills (P5-APPSKILL-1..4).
+
+## Completion report (lane A, Sonnet, 2026-11-22)
+
+**Done: every item of "What to build" and the docs list.**
+
+- `skills_dir` is now `String` (required) on `HarnessCapabilities` (type change was mechanical: five adapters, fake, their tests); `HomeConfig.skills_dir` stays `Option` (home tests unchanged, the projection is untouched).
+- `harness::skills_dir_abs(home, rel)` computes the value (`<home>/<skills_dir>`, no trailing slash). Set in `supervisor.rs`: harness env (after `AURORA_SESSION`, existing value replaced), `ProcessConfig.env` for `process_start`. Terminal and SSH: `PtyEngine::spawn_with_harness_env`/`spawn_with_exec` take `skills_dir: Option<String>`; `exec::with_skills_dir` adds it to the child env map after the client's accepted names (last wins; `main.rs` passes `/workspace` + the adapter folder). The `AURORA_*` sweep has no exception.
+- Instructions: `render_with(i, agent_cli, skills_path: Option<&str>)`; `home.rs` passes the absolute folder; `render(i)` (tests) uses `/workspace/.claude/skills`. `None` keeps the old plain sentence (only a home without a skills folder, tests).
+- Hosted e2e `skills_dir_names_the_harness_skills_folder_in_started_processes` in `tests/e2e-hosted/tests/hosted.rs` (written, compiles; CI runs it).
+- Docs: 10 (§Agent instructions, §Skills), 12 (§Harness interface, §Adapter codex, §Home projection, §Process manager, §Terminal, §SSH channels), 24:881 reason corrected, `operator/skill-libraries.md` author paragraph. C-1140 was already in API_CONTRACTS.
+
+**Test files changed:** `src/adapters/*/config.rs` (5, SKILLS_DIR next to AURORA_SESSION), `src/adapters/*/tests.rs` (4, `skills_dir` is a `String`), `src/harness.rs` (new unit test: the five adapters' values), `src/instructions.rs` (new test + 3 new snapshots claude-code, codex, `.agents`), the 5 existing instruction snapshots (diff = the Skills line only, reviewed), `tests/it/pty_env_probe.rs` (terminal has SKILLS_DIR), `tests/it/exec_ssh.rs` (shell/exec with and without tty have it; client `SKILLS_DIR` refused), `tests/it/exec_sftp.rs` (rig passes it), `tests/it/spawn_env.rs` (a `process_start` process sees it, an image value is replaced), `tests/it/home.rs` (`skills_dir: Some(..)`; two tests that compared instruction files across different temp roots now reuse one root path, because the file now contains the absolute folder).
+
+**Commands (through heavy.sh):** `cargo fmt --check` ok; `cargo clippy -p aurora-supervisor -p aurora-e2e-hosted --all-targets -- -D warnings` ok; `cargo test -p aurora-supervisor` (lib + `--test it`) filtered to `config process pty exec instructions home skills_dir a_started_process harness:: spawn_env sftp ssh`: lib 71 passed, it 88 passed; `cargo test -p aurora-e2e-hosted --no-run` ok; `extract-schema.py --check` ok; `guards/run-all.sh` ok.
+
+**Deviations / notes:** none against the brief. A few mechanical multi-file edits (adapter `skills_dir` literals, five identical test additions) were done with sed/python, not Edit. The adapter "session variables" tests mirror the supervisor's push (the supervisor wiring itself is covered by the `spawn_env` IT for `process_start`; the harness-process push in `supervisor.rs` has no direct test, as the existing AURORA_SESSION push has none). PROGRESS/FEATURES not touched (Orchestrator). Open questions: none.

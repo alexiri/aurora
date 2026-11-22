@@ -248,6 +248,8 @@ pub struct PtyEngine {
     bootstrap: std::path::PathBuf,
     /// The terminal wrappers' `harness.env` (`None`: tests, no file).
     harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
+    /// (P5-SKILLDIR, D-454) `SKILLS_DIR` for every shell (absolute; `None`: tests).
+    skills_dir: Option<String>,
     live: HashMap<u32, Live>,
     /// (P5-FILES-1, `16 §W20` leg 2) the `exec.*` children: one `pty_id` space with `live`.
     execs: crate::exec::ExecTable,
@@ -286,11 +288,13 @@ impl PtyEngine {
         bootstrap: std::path::PathBuf,
         shells: ShellPaths,
     ) -> Arc<PtyHandle> {
-        Self::spawn_with_harness_env(ends, enabled, uid, cwd, bootstrap, shells, None)
+        Self::spawn_with_harness_env(ends, enabled, uid, cwd, bootstrap, shells, None, None)
     }
 
     /// [`Self::spawn_with_shells`] with the terminal's `harness.env` state: a `pty.open` that
     /// carries models rewrites the file before its shell starts (C-750 (4)).
+    /// `skills_dir` is the absolute `SKILLS_DIR` every shell and SSH exec gets (P5-SKILLDIR).
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_with_harness_env(
         ends: channel::PtyEnds,
         enabled: bool,
@@ -299,6 +303,7 @@ impl PtyEngine {
         bootstrap: std::path::PathBuf,
         shells: ShellPaths,
         harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
+        skills_dir: Option<String>,
     ) -> Arc<PtyHandle> {
         Self::spawn_with_exec(
             ends,
@@ -309,6 +314,7 @@ impl PtyEngine {
             shells,
             harness_env,
             crate::exec::SFTP_SERVER.into(),
+            skills_dir,
         )
     }
 
@@ -324,6 +330,7 @@ impl PtyEngine {
         shells: ShellPaths,
         harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
         sftp_server: std::path::PathBuf,
+        skills_dir: Option<String>,
     ) -> Arc<PtyHandle> {
         let channel::PtyEnds {
             sender,
@@ -332,7 +339,12 @@ impl PtyEngine {
         } = ends;
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (task_tx, task_rx) = mpsc::unbounded_channel();
-        let execs = crate::exec::ExecTable::new(sftp_server, shells.clone(), bootstrap.clone());
+        let execs = crate::exec::ExecTable::new(
+            sftp_server,
+            shells.clone(),
+            bootstrap.clone(),
+            skills_dir.clone(),
+        );
         let pump = Self {
             out: sender,
             inbound,
@@ -346,6 +358,7 @@ impl PtyEngine {
             cwd,
             bootstrap,
             harness_env,
+            skills_dir,
             live: HashMap::new(),
             execs,
             violations: Violations::default(),
@@ -505,7 +518,10 @@ impl PtyEngine {
             o.cols,
             o.rows,
             "xterm-256color",
-            &std::collections::BTreeMap::new(),
+            &crate::exec::with_skills_dir(
+                &std::collections::BTreeMap::new(),
+                self.skills_dir.as_deref(),
+            ),
         ) {
             Ok(p) => p,
             Err(e) => {

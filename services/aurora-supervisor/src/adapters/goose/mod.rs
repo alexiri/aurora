@@ -101,7 +101,7 @@ impl HarnessAdapter for GooseAdapter {
             platform_tools: true,
             dialects: config::DIALECTS.iter().map(|d| (*d).to_owned()).collect(),
             // goose reads `$HOME/.agents/skills` and a project's, with `AGENTS.md` (verified).
-            skills_dir: Some(".agents/skills".into()),
+            skills_dir: ".agents/skills".into(),
             instruction_files: vec!["AGENTS.md".into()],
             // `subagent_role` -> `GOOSE_SUBAGENT_PROVIDER` / `GOOSE_SUBAGENT_MODEL`: any role can be it.
             model_roles: aurora_protocol::runner::harness_model_roles(ID)

@@ -65,6 +65,14 @@ setting one under `config.skills.library.*` in Helm locks it.
 
 In Helm put the keys under `config.skills.library` and `config.gateway`.
 
+## For library authors: scripts in a skill
+
+A skill that ships a helper script should run it as `"$SKILLS_DIR/<skill name>/scripts/<file>"`
+(mark the file executable in the repository). Every agent's shell, background process, terminal
+and SSH session has `SKILLS_DIR` set to the skills folder of the agent's harness, so the same
+skill works on every harness. A path with a harness folder in it (`~/.claude/skills/<name>/…`)
+works on one harness only and stops working when the agent's harness is changed.
+
 ## What is stored, what is read
 
 - **Read** (by the API itself, with the git smart-HTTP protocol, nothing cloned or written to disk): the repository's refs, and the files of the skills people browsed or added. A library with added skills costs **one** discovery and one ref listing per interval while the repository is unchanged, plus a tree and a file read after a push. Browsing costs the same plus one read of each skill's `SKILL.md` (at most 200), cached in memory for five minutes; members opening the picker at the same time share one read. A 429 or 503 from the git host is not counted as a failure: the library keeps its state and is tried again after the host's `Retry-After` (default 5 minutes, at most 1 hour). Self-hosted servers apply their own rate limits: raise the interval if needed. Every answer is capped (32 MiB of body, 64 MiB inflated, 500 object ids per request, 20 s per read) and every object's id is checked.

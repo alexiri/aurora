@@ -970,6 +970,70 @@ async fn s8c_process_start_children_have_no_boot_material_in_their_environment()
     );
 }
 
+/// P5-SKILLDIR (D-454, C-1140): every process the supervisor starts has `SKILLS_DIR` equal to the
+/// harness's skills folder (the fake harness: `/workspace/.claude/skills`), so a skill's helper is
+/// run as `"$SKILLS_DIR/<skill>/scripts/<file>"` on every harness; the instruction file says the
+/// same.
+#[tokio::test]
+async fn skills_dir_names_the_harness_skills_folder_in_started_processes() {
+    if !enabled() {
+        return;
+    }
+    let (st, api) = fx(Opts::default()).await;
+    // A skill with an executable helper (projected 0555 under the harness's skills folder).
+    let (s, skill) = api
+        .post(
+            &format!("/v1/agents/{}/skills", api.daneel),
+            json!({"name": "skilldir-demo", "description": "A fixture with a script.",
+                   "body": "Run scripts/hello.sh."}),
+        )
+        .await;
+    assert_eq!(s, 201, "{skill}");
+    let id = skill["id"].as_str().unwrap().to_owned();
+    let (s, _, b) = api
+        .bytes(
+            reqwest::Method::PUT,
+            &format!("/v1/skills/{id}/files/scripts/hello.sh?executable=true"),
+            &[],
+            Some(b"#!/bin/sh\necho hello-from-skill\n".to_vec()),
+        )
+        .await;
+    assert!(
+        (200..300).contains(&s),
+        "{s} {}",
+        String::from_utf8_lossy(&b)
+    );
+    let conv = api.direct().await;
+    // The turn carries the home sync that projects the skill.
+    run_turn(&st, &api, &conv, "[[say: warm]]").await;
+    let cs = containers();
+    assert_eq!(cs.len(), 1, "{cs:?}");
+    let c = cs[0].as_str();
+    let out = process_output(
+        &st,
+        &api,
+        c,
+        &conv,
+        "skilldir",
+        "echo \"dir=$SKILLS_DIR\"; test -x \"$SKILLS_DIR/skilldir-demo/scripts/hello.sh\" && echo exec-ok; \"$SKILLS_DIR/skilldir-demo/scripts/hello.sh\"",
+        60,
+    )
+    .await;
+    assert!(
+        out.contains("dir=/workspace/.claude/skills\n"),
+        "SKILLS_DIR is the fake harness's folder: {out}"
+    );
+    assert!(out.contains("exec-ok"), "the helper is executable: {out}");
+    assert!(out.contains("hello-from-skill"), "the helper ran: {out}");
+    // The instruction file names the same folder (the exact C-1140 sentence).
+    let (_, agents) = exec_in(c, "cat /workspace/AGENTS.md");
+    assert!(
+        agents.contains("Skills are read-only folders in /workspace/.claude/skills (also $SKILLS_DIR in every shell)"),
+        "{agents}"
+    );
+    st.finish().await;
+}
+
 /// A TLS page server on `127.0.0.1` (self-signed; the browser runs with `--ignore-certificate-errors`
 /// because the open lane is a blind tunnel). Returns its port and the request heads it has seen.
 async fn https_page_server(

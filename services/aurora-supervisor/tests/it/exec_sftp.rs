@@ -28,6 +28,9 @@ use tokio::sync::mpsc;
 
 const T: Duration = Duration::from_secs(15);
 
+/// (P5-SKILLDIR) The `SKILLS_DIR` the rig's engine hands every exec.
+pub(crate) const SKILLS_DIR_VALUE: &str = "/workspace/.agents/skills";
+
 struct Rig {
     tx: mpsc::UnboundedSender<PtyIn>,
     out: mpsc::Receiver<StreamOut>,
@@ -61,6 +64,7 @@ fn rig(cwd: &Path, enabled: bool, sftp: PathBuf) -> Rig {
         aurora_supervisor::pty::ShellPaths::default(),
         None,
         sftp,
+        Some(SKILLS_DIR_VALUE.into()),
     );
     Rig {
         tx: in_tx,

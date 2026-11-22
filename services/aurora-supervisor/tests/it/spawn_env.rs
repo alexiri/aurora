@@ -120,3 +120,56 @@ async fn inner_probe() {
     check(&all);
     assert!(!all.contains("GH_TOKEN"));
 }
+
+/// (P5-SKILLDIR, D-454, C-1140) A `process_start` process of a supervisor with the fake harness
+/// (skills folder `.claude/skills`) sees `SKILLS_DIR=<home>/.claude/skills`, and an image value
+/// does not win: the supervisor sets it last. No `AURORA_*` variable appears.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_started_process_sees_skills_dir() {
+    use aurora_supervisor::fake::FakeHarness;
+    use aurora_supervisor::supervisor::{Supervisor, SupervisorConfig};
+
+    let home = TempDir::new();
+    let (out_tx, _out_rx) = mpsc::channel(256);
+    let mut cfg = SupervisorConfig::new(crate::common::dead_upstream(), "aub_x");
+    cfg.working_dir = home.path().to_path_buf();
+    cfg.process = ProcessConfig::new(home.path().to_path_buf());
+    cfg.process.uid = None;
+    // An image or profile value of the same name is replaced, not duplicated.
+    cfg.process
+        .env
+        .push(("SKILLS_DIR".into(), "/from/the/image".into()));
+    let sup = Supervisor::new(
+        cfg,
+        ChannelSender::from_mpsc(out_tx),
+        std::sync::Arc::new(FakeHarness),
+        aurora_supervisor::streams::StreamsHandle::noop(),
+        aurora_supervisor::pty::PtyHandle::noop(),
+    );
+    let pm = sup.process_manager();
+    let r = pm
+        .call(
+            "process_start",
+            &json!({"name": "s", "command": "env -0; echo PROBE_\"OK\""}),
+        )
+        .unwrap();
+    let id = r["id"].as_str().unwrap().to_owned();
+    let mut tail = String::new();
+    for _ in 0..200 {
+        let s = pm.call("process_status", &json!({"id": id})).unwrap();
+        tail = s["tail"].as_str().unwrap_or_default().to_owned();
+        if tail.contains("PROBE_OK") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(tail.contains("PROBE_OK"), "{tail}");
+    let want = format!("SKILLS_DIR={}/.claude/skills", home.path().display());
+    assert_eq!(
+        tail.split('\0')
+            .filter(|l| l.starts_with("SKILLS_DIR="))
+            .collect::<Vec<_>>(),
+        [want.as_str()],
+        "{tail}"
+    );
+}

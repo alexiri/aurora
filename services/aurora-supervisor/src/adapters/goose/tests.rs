@@ -392,7 +392,7 @@ fn capabilities_are_declared_and_the_roles_equal_the_protocol_table() {
     assert!(c.resume && c.tool_events && c.platform_tools);
     assert!(!c.steer && !c.thinking_deltas && !c.background_tool);
     assert_eq!(c.dialects, ["anthropic_messages", "openai_chat"]);
-    assert_eq!(c.skills_dir.as_deref(), Some(".agents/skills"));
+    assert_eq!(c.skills_dir, ".agents/skills");
     assert_eq!(c.instruction_files, ["AGENTS.md"]);
     assert_eq!(c.model_roles, ["large", "medium", "small"]);
 }

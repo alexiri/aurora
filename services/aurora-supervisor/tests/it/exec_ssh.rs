@@ -124,6 +124,12 @@ async fn the_environment_is_the_allow_list_with_and_without_tty() {
         assert!(text.contains("LC_ALL=C.UTF-8"), "{text}");
         assert!(text.contains("SHELL=/"), "{text}");
         assert!(!text.contains("AURORA_"), "{text}");
+        // (P5-SKILLDIR, D-454) Aurora's own variable, the adapter's folder.
+        assert!(
+            text.lines()
+                .any(|l| l == format!("SKILLS_DIR={SKILLS_DIR_VALUE}")),
+            "{text}"
+        );
         assert!(
             text.contains(&format!("PATH={}", aurora_supervisor::spawn::IMAGE_PATH)),
             "{text}"
@@ -224,6 +230,10 @@ async fn malformed_shapes_are_refused() {
     cases.push(c);
     let mut c = exec_frame(6, "ls");
     c.env.insert("AURORA_X".into(), "1".into());
+    cases.push(c);
+    // (P5-SKILLDIR) A client cannot set `SKILLS_DIR`: it is not an accepted name.
+    let mut c = exec_frame(7, "ls");
+    c.env.insert("SKILLS_DIR".into(), "/evil".into());
     cases.push(c);
     for o in cases {
         let id = o.pty_id;
