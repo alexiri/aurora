@@ -2417,6 +2417,11 @@ Amends C-570..C-579 (P4-GSL). Every route still answers 404 `skill_libraries_dis
   - Add: step 1 fields Repository address (required), Branch or tag, Folder, fold "This repository is private" (Access token, User name) → **Check** (C-1124) → step 2 shows `repo`, "<branch> (default branch)" or the tag or commit, `sha7`, "<valid> skills can be added" (+ "<found − valid> can't be added" when any), up to 20 names as plain text, the truncated notice, Label prefilled from `suggested_label` → **Add library** (C-1122). **Back** returns to step 1 with the fields kept. `library_url_invalid` shows on the address field in words per `details.reason`; `library_unreachable` above the fields.
   - Status words: `active` Active, `paused` Paused, `error` "Can't be read" + reason, and "Needs an access token" when the reason is that one, `over_budget` "Pending updates over budget"; a migrated row without `url` shows "Enter the repository's git address" with **Set address**.
   - Add from library: the picker groups "Your organization" and "Shared with every organization" and passes `?org=` for instance libraries; the badge is "Library · <repo> · <sha7>".
+- C-1140 **`SKILLS_DIR` in the sandbox** (P5-SKILLDIR, D-454; no wire change).
+  - Value: `<supervisor working dir>/<adapter skills_dir>` with no trailing slash: `/workspace/.claude/skills` (claude-code, fake), `/workspace/.codex/skills/aurora` (codex), `/workspace/.agents/skills` (pi, goose, opencode).
+  - Set in the harness process environment (next to `AURORA_SESSION`), in `process_start` processes, in terminal shells and in SSH execs (after the `AURORA_*` sweep). Aurora sets it last; it is not an SSH client-accepted name.
+  - Instruction file, Skills section (all harnesses): `Skills are read-only folders in <abs path> (also $SKILLS_DIR in every shell); list and read them with the skill tools. A skill's own files are under <abs path>/<skill name>/; run its scripts as "$SKILLS_DIR/<skill name>/scripts/<file>".`
+  - `12 §Harness interface`: `skills_dir` is required for every adapter.
 
 ## Shared schemas
 
