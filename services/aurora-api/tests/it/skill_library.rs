@@ -2018,9 +2018,11 @@ async fn concurrent_creates_at_the_cap_admit_exactly_one() {
         );
     }
     let uri = format!("/v1/orgs/{}/skill-libraries", w.org);
+    // The owner races: the admin's nine seed creates spent nine of the ten checks a person may run a minute (P5-SKLIB-1,
+    // C-1124), so racing as the admin answered 429 instead of the cap's 409 (CI run 45004562829).
     let results = futures::future::join_all((0..4).map(|i| {
         let body = json!({"label": format!("race{i}"), "url": url(&format!("acme/race{i}"))});
-        w.call(&w.admin, Method::POST, &uri, Some(body))
+        w.call(&w.owner, Method::POST, &uri, Some(body))
     }))
     .await;
     let created = results.iter().filter(|(s, _)| *s == 201).count();

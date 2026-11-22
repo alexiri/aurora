@@ -150,7 +150,9 @@ async fn a_started_process_sees_skills_dir() {
     let r = pm
         .call(
             "process_start",
-            &json!({"name": "s", "command": "env -0; echo PROBE_\"OK\""}),
+            // Only the SKILLS_DIR entries: the status `tail` keeps the end of the output, and a CI runner's whole
+            // environment is longer than it (run 45004562829 saw the tail start mid-environment, after SKILLS_DIR).
+            &json!({"name": "s", "command": "env -0 | grep -z '^SKILLS_DIR='; echo PROBE_\"OK\""}),
         )
         .unwrap();
     let id = r["id"].as_str().unwrap().to_owned();
