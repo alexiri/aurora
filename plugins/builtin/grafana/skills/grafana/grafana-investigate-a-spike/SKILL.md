@@ -42,8 +42,10 @@ by `instance`, `status`, `route` or `pod` to find the part that moved.
 
 ## 4. Compare with the day before
 
-A second call with the same expressions and `--from`/`--to` 24 hours earlier (or wrap the expression
-in `offset 1d`). A daily peak at the same time is not an incident; say so.
+`"$SKILLS_DIR/grafana-prometheus/scripts/grafana-prom" compare --ds <ds uid> --from <from> --to <to> --offsets 1d 'sum(rate(http_requests_total{job="api"}[5m]))'`
+runs the expression over the window and the same window 24 hours earlier and prints both side by
+side (an `offset 1d` in the expression, or a second call 24 hours earlier, does the same). A daily
+peak at the same time is not an incident; say so.
 
 ## 5. Look for causes
 

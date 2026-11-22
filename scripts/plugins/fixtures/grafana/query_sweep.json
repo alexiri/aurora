@@ -1,0 +1,45 @@
+{
+  "results": {
+    "C0": {"status": 200, "frames": [
+      {"schema": {"refId": "C0", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-1.example.org:9100"}}]}, "data": {"values": [[1763650800000], [1]]}},
+      {"schema": {"refId": "C0", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-2.example.org:9100"}}]}, "data": {"values": [[1763650800000], [1]]}}]},
+    "C1": {"status": 200, "frames": [
+      {"schema": {"refId": "C1", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-1.example.org:9100"}}]}, "data": {"values": [[1763650800000], [0.5]]}},
+      {"schema": {"refId": "C1", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-2.example.org:9100"}}]}, "data": {"values": [[1763650800000], [2.5]]}}]},
+    "C2": {"status": 200, "frames": [
+      {"schema": {"refId": "C2", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-1.example.org:9100"}}]}, "data": {"values": [[1763650800000], [0.4]]}},
+      {"schema": {"refId": "C2", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-2.example.org:9100"}}]}, "data": {"values": [[1763650800000], [0.95]]}}]},
+    "C3": {"status": 200, "frames": [
+      {"schema": {"refId": "C3", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-1.example.org:9100"}}]}, "data": {"values": [[1763650800000], [0.01]]}},
+      {"schema": {"refId": "C3", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-2.example.org:9100"}}]}, "data": {"values": [[1763650800000], [0.02]]}}]},
+    "C4": {"status": 200, "frames": [
+      {"schema": {"refId": "C4", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-1.example.org:9100"}}]}, "data": {"values": [[1763650800000], [0]]}},
+      {"schema": {"refId": "C4", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-2.example.org:9100"}}]}, "data": {"values": [[1763650800000], [0]]}}]},
+    "C5": {"status": 200, "frames": [
+      {"schema": {"refId": "C5", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-1.example.org:9100"}}]}, "data": {"values": [[1763650800000], [0]]}},
+      {"schema": {"refId": "C5", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-2.example.org:9100"}}]}, "data": {"values": [[1763650800000], [0]]}}]},
+    "C6": {"status": 200, "frames": [
+      {"schema": {"refId": "C6", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-1.example.org:9100"}}]}, "data": {"values": [[1763650800000], [12]]}},
+      {"schema": {"refId": "C6", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"instance": "web-2.example.org:9100"}}]}, "data": {"values": [[1763650800000], [345]]}}]},
+    "FSIZE": {"status": 200, "frames": [
+      {"schema": {"refId": "FSIZE", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "/dev/sda1", "mountpoint": "/", "fstype": "ext4"}}]}, "data": {"values": [[1763650800000], [100000000000]]}},
+      {"schema": {"refId": "FSIZE", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "/dev/sdb1", "mountpoint": "/data", "fstype": "xfs"}}]}, "data": {"values": [[1763650800000], [500000000000]]}},
+      {"schema": {"refId": "FSIZE", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "192.0.2.10:/vol1", "mountpoint": "/shared", "fstype": "ceph"}}]}, "data": {"values": [[1763650800000], [1000000000000]]}},
+      {"schema": {"refId": "FSIZE", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "192.0.2.11:/vol1", "mountpoint": "/shared", "fstype": "ceph"}}]}, "data": {"values": [[1763650800000], [1000000000000]]}}]},
+    "FFREE": {"status": 200, "frames": [
+      {"schema": {"refId": "FFREE", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "/dev/sda1", "mountpoint": "/", "fstype": "ext4"}}]}, "data": {"values": [[1763650800000], [60000000000]]}},
+      {"schema": {"refId": "FFREE", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "/dev/sdb1", "mountpoint": "/data", "fstype": "xfs"}}]}, "data": {"values": [[1763650800000], [300000000000]]}},
+      {"schema": {"refId": "FFREE", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "192.0.2.10:/vol1", "mountpoint": "/shared", "fstype": "ceph"}}]}, "data": {"values": [[1763650800000], [20000000000]]}},
+      {"schema": {"refId": "FFREE", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "192.0.2.11:/vol1", "mountpoint": "/shared", "fstype": "ceph"}}]}, "data": {"values": [[1763650800000], [20000000000]]}}]},
+    "FMIN": {"status": 200, "frames": [
+      {"schema": {"refId": "FMIN", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "/dev/sda1", "mountpoint": "/", "fstype": "ext4"}}]}, "data": {"values": [[1763650800000], [59000000000]]}},
+      {"schema": {"refId": "FMIN", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "/dev/sdb1", "mountpoint": "/data", "fstype": "xfs"}}]}, "data": {"values": [[1763650800000], [299000000000]]}},
+      {"schema": {"refId": "FMIN", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "192.0.2.10:/vol1", "mountpoint": "/shared", "fstype": "ceph"}}]}, "data": {"values": [[1763650800000], [19000000000]]}},
+      {"schema": {"refId": "FMIN", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "192.0.2.11:/vol1", "mountpoint": "/shared", "fstype": "ceph"}}]}, "data": {"values": [[1763650800000], [19000000000]]}}]},
+    "FAGO": {"status": 200, "frames": [
+      {"schema": {"refId": "FAGO", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "/dev/sda1", "mountpoint": "/", "fstype": "ext4"}}]}, "data": {"values": [[1763650800000], [100000000000]]}},
+      {"schema": {"refId": "FAGO", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "/dev/sdb1", "mountpoint": "/data", "fstype": "xfs"}}]}, "data": {"values": [[1763650800000], [330000000000]]}},
+      {"schema": {"refId": "FAGO", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "192.0.2.10:/vol1", "mountpoint": "/shared", "fstype": "ceph"}}]}, "data": {"values": [[1763650800000], [20000000000]]}},
+      {"schema": {"refId": "FAGO", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"device": "192.0.2.11:/vol1", "mountpoint": "/shared", "fstype": "ceph"}}]}, "data": {"values": [[1763650800000], [20000000000]]}}]}
+  }
+}

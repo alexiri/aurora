@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""grafana-os: an OpenSearch or Elasticsearch Lucene query built from flags, run through Grafana.
+
+  grafana-os --ds UID --from T --to T [--ds-type grafana-opensearch-datasource|elasticsearch]
+             [--query LUCENE] [--metric SPEC ...] [--terms FIELD[:SIZE[:ORDER]] ...]
+             [--hist INTERVAL] [--time-field F] [--raw N [--columns a,b]] [--print-body]
+             [--wide] [--max-rows N] [--account A]
+
+The body is built as data and written with the JSON library; the answer is printed by
+`grafana-query run` (the sibling skill's script), so --columns, --wide and --max-rows are its.
+Times (T): epoch milliseconds, RFC 3339 (converted), or now / now-6h / now-30m / now-7d.
+Exit status: 0 all good, 1 a call or a refId failed, 2 bad usage.
+"""
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+TIMEOUT = 300
+UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+FIELD_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,200}$")
+QUERY_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "grafana-query", "scripts",
+                            "grafana-query")
+
+
+def clean(v):
+    """Text safe to print: control characters (terminal escapes) are replaced."""
+    return CTRL.sub("?", str(v))
+
+
+def die(msg, code=2):
+    print(f"grafana-query: {clean(msg)}", file=sys.stderr)
+    sys.exit(code)
+
+
+def tmp_dir():
+    d = os.path.join(os.environ.get("TMPDIR") or "/tmp", "aurora-agent")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+def mktemp(suffix):
+    fd, path = tempfile.mkstemp(prefix="grafana-query-", suffix=suffix, dir=tmp_dir())
+    os.close(fd)
+    return os.path.abspath(path)
+
+
+def parse_step(s):
+    m = re.fullmatch(r"(\d+)([smhdw])", s or "")
+    if not m or int(m.group(1)) == 0:
+        die(f"bad step {s!r}: use a number and s, m, h, d or w, such as 30s or 5m")
+    return int(m.group(1)) * UNIT_S[m.group(2)]
+
+
+def norm_time(t):
+    """Returns (value for the request, absolute seconds or None)."""
+    now = dt.datetime.now(dt.timezone.utc).timestamp()
+    if re.fullmatch(r"\d{13}", t):
+        return t, int(t) / 1000
+    if re.fullmatch(r"\d{10}", t):
+        return str(int(t) * 1000), int(t)
+    if t == "now":
+        return t, now
+    m = re.fullmatch(r"now-(\d+)([smhdw])", t)
+    if m:
+        return t, now - int(m.group(1)) * UNIT_S[m.group(2)]
+    try:
+        d = dt.datetime.fromisoformat(t.replace("Z", "+00:00"))
+    except ValueError:
+        die(f"bad time {t!r}: use epoch milliseconds, RFC 3339, now or now-6h")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.timezone.utc)
+    return str(int(d.timestamp() * 1000)), d.timestamp()
+
+
+# --- os: an OpenSearch / Elasticsearch Lucene query from flags --------------------------------------
+
+METRIC_SIMPLE = ("sum", "avg", "max", "min", "cardinality")
+METRICS_MAX = 6
+TERMS_MAX = 3
+PERCENTS_DEFAULT = "50,95,99"
+PERCENT_RE = re.compile(r"^\d+(\.\d+)?$")
+
+
+def field_arg(value, what):
+    if not FIELD_RE.match(value or ""):
+        die(f"{what}: {value!r} is not a field name (letters, digits, _ . @ -, at most 200 characters)")
+    return value
+
+
+def parse_metric(spec, i):
+    """--metric SPEC to a metric of the query body, with id i."""
+    kind, _, rest = spec.partition(":")
+    m = {"id": str(i), "type": kind}
+    if kind == "count":
+        if rest:
+            die(f"--metric {spec!r}: count takes no field")
+    elif kind in METRIC_SIMPLE:
+        m["field"] = field_arg(rest, f"--metric {spec!r}")
+    elif kind == "percentiles":
+        field, _, pcts = rest.partition(":")
+        m["field"] = field_arg(field, f"--metric {spec!r}")
+        percents = (pcts or PERCENTS_DEFAULT).split(",")
+        if len(percents) > 10 or not all(PERCENT_RE.match(p) and 0 < float(p) <= 100 for p in percents):
+            die(f"--metric {spec!r}: percentiles are at most 10 numbers above 0 up to 100, such as 50,95,99")
+        m["settings"] = {"percents": percents}
+    else:
+        die(f"--metric {spec!r}: use count, sum:F, avg:F, max:F, min:F, cardinality:F or percentiles:F[:P,P,...]")
+    return m
+
+
+def parse_terms(spec, metric_specs, metric_ids, next_id):
+    field, _, rest = spec.partition(":")
+    size_s, _, order = rest.partition(":")
+    field_arg(field, f"--terms {spec!r}")
+    size = 10
+    if size_s:
+        if not re.fullmatch(r"\d{1,5}", size_s) or not 1 <= int(size_s) <= 10000:
+            die(f"--terms {spec!r}: SIZE is a number from 1 to 10000")
+        size = int(size_s)
+    order = order or "_count"
+    if order == "_count":
+        order_by, direction = "_count", "desc"
+    elif order == "_key":
+        order_by, direction = "_key", "asc"
+    elif order in metric_specs and not order.startswith("percentiles"):
+        order_by, direction = metric_ids[metric_specs.index(order)], "desc"
+        if order == "count":
+            order_by = "_count"
+    else:
+        die(f"--terms {spec!r}: ORDER is _count, _key or one of the --metric specs (not percentiles), written the same way")
+    return {"id": str(next_id), "type": "terms", "field": field,
+            "settings": {"size": str(size), "orderBy": order_by, "order": direction}}
+
+
+def build_os_query(a):
+    """The query of the request body. Built as data and sent with the JSON library, so no argument can
+    leave its field."""
+    if not UID_RE.match(a.ds):
+        die("a data source UID has only letters, digits, - and _")
+    query = {"refId": "A", "datasource": {"uid": a.ds, "type": a.ds_type},
+             "queryType": "lucene", "query": a.query}
+    if a.time_field is not None:
+        field_arg(a.time_field, "--time-field")
+    if a.raw is not None:
+        if a.metric or a.terms or a.hist:
+            die("--raw returns documents: it cannot be combined with --metric, --terms or --hist")
+        if not 1 <= a.raw <= 200:
+            die("--raw takes a number from 1 to 200")
+        query["metrics"] = [{"id": "1", "type": "raw_data", "settings": {"size": str(a.raw), "order": "desc"}}]
+        query["maxDataPoints"] = 100
+        return query
+    specs = a.metric or ["count"]
+    terms = a.terms or []
+    if len(specs) > METRICS_MAX:
+        die(f"at most {METRICS_MAX} --metric")
+    if len(terms) > TERMS_MAX:
+        die(f"at most {TERMS_MAX} --terms")
+    if not terms and not a.hist:
+        die("a count or aggregation needs a bucket: use --terms FIELD, --hist INTERVAL, or --raw N for documents")
+    metrics = [parse_metric(s, i + 1) for i, s in enumerate(specs)]
+    ids = [m["id"] for m in metrics]
+    buckets = []
+    next_id = len(metrics) + 1
+    for s in terms:
+        buckets.append(parse_terms(s, specs, ids, next_id))
+        next_id += 1
+    interval_ms = 1000
+    if a.hist:
+        interval_ms = parse_step(a.hist) * 1000
+        hist = {"id": str(next_id), "type": "date_histogram", "settings": {"interval": a.hist}}
+        if a.time_field:
+            # without a field the plugin uses the data source's configured time field
+            # (lucene_handler.go addDateHistogramAgg, opensearch-datasource v2.34.7)
+            hist["field"] = a.time_field
+        buckets.append(hist)
+    elif any(m["type"] == "percentiles" for m in metrics):
+        print("grafana-query: note: with --terms and no --hist the plugin returns null percentiles; add "
+              "--hist <the window's length> to get them as time series", file=sys.stderr)
+    query.update({"metrics": metrics, "bucketAggs": buckets, "intervalMs": interval_ms, "maxDataPoints": 100})
+    return query
+
+
+def cmd_os(a):
+    if not a.query.strip():
+        die("--query is empty (the default is *)")
+    f, f_s = norm_time(a.frm)
+    t, t_s = norm_time(a.to)
+    if t_s <= f_s:
+        die("--to is not after --from")
+    body = {"from": f, "to": t, "queries": [build_os_query(a)]}
+    if a.print_body:
+        print("# body: " + clean(json.dumps(body, separators=(",", ":"))), flush=True)
+    path = mktemp(".json")
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(body, fh)
+        cmd = [sys.executable, QUERY_SCRIPT, "run", path]
+        if a.columns is not None:
+            cmd += ["--columns", a.columns]
+        if a.wide:
+            cmd.append("--wide")
+        if a.max_rows is not None:
+            cmd += ["--max-rows", str(a.max_rows)]
+        if a.account:
+            cmd += ["--account", a.account]
+        try:
+            return subprocess.run(cmd, timeout=TIMEOUT).returncode
+        except (OSError, subprocess.TimeoutExpired) as e:
+            die(f"grafana-query: {e}", 1)
+    finally:
+        os.unlink(path)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="grafana-os", description=__doc__.split("\n\n")[0])
+    ap.add_argument("--ds", required=True, help="data source UID")
+    ap.add_argument("--from", dest="frm", required=True)
+    ap.add_argument("--to", required=True)
+    ap.add_argument("--ds-type", default="grafana-opensearch-datasource",
+                    choices=["grafana-opensearch-datasource", "elasticsearch"])
+    ap.add_argument("--query", default="*", help="Lucene query (default *)")
+    ap.add_argument("--metric", action="append",
+                    help="count (default), sum:F, avg:F, max:F, min:F, cardinality:F or percentiles:F[:P,P,...]; "
+                         "repeatable, at most 6")
+    ap.add_argument("--terms", action="append",
+                    help="FIELD[:SIZE[:ORDER]], SIZE 1-10000 (default 10), ORDER _count (default), _key or a "
+                         "--metric spec; repeatable, at most 3, nested in the order given")
+    ap.add_argument("--hist", help="innermost date_histogram interval, such as 30m, 1h or 1d")
+    ap.add_argument("--time-field", help="field of the date_histogram (default: the data source's time field)")
+    ap.add_argument("--raw", type=int, help="N newest documents (1-200) instead of aggregations")
+    ap.add_argument("--columns", help="with --raw: print only these fields (comma-separated) plus the time field")
+    ap.add_argument("--wide", action="store_true", help="one table for single-series frames")
+    ap.add_argument("--max-rows", type=int, metavar="N", help="rows printed per frame or table, 1 to 5000")
+    ap.add_argument("--print-body", action="store_true", help="print the request body first (for the report)")
+    ap.add_argument("--account", help="Grafana account: letter or connection id")
+    sys.exit(cmd_os(ap.parse_args()))
+
+
+if __name__ == "__main__":
+    main()

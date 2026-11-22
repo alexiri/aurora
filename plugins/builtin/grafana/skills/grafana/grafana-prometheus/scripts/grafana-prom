@@ -1,0 +1,531 @@
+#!/usr/bin/env python3
+"""grafana-prom: Prometheus and Mimir helpers on top of Grafana's query API.
+
+  grafana-prom compare --ds UID --from T --to T [--offsets 1d,7d] [--step 5m] EXPR
+  grafana-prom sweep --ds UID --selector 'job="node"' (--from T --to T | --last 12h) [--checks FILE]
+                     [--host-label instance] [--trend 7d] [--show-queries] [--json]
+
+compare: one expression over the window and the same window days earlier. sweep: host health checks
+and filesystem days-to-full over a window, in one request.
+Times (T): epoch milliseconds, RFC 3339 (converted), or now / now-6h / now-30m / now-7d.
+Every request goes through `aurora-agent call grafana query_datasources`; nothing else touches the
+network and no credential is read or printed. Several Grafana accounts: --account A.
+Exit status: 0 all good, 1 a call or a refId failed, 2 bad usage.
+"""
+import argparse
+import datetime as dt
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+POINTS_MAX = 11000  # Prometheus refuses more points than this per series
+TIMEOUT = 300
+UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+LABEL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,100}$")
+NETFS = {"ceph", "fuse.ceph-fuse", "nfs", "nfs4", "cifs", "glusterfs", "fuse.glusterfs", "lustre"}
+FS_EXCL = 'fstype!~"tmpfs|overlay|squashfs|devtmpfs|autofs"'
+ACCOUNT = None
+
+
+def clean(v):
+    """Text safe to print: control characters (terminal escapes) are replaced."""
+    return CTRL.sub("?", str(v))
+
+
+def die(msg, code=2):
+    print(f"grafana-query: {clean(msg)}", file=sys.stderr)
+    sys.exit(code)
+
+
+def tmp_dir():
+    d = os.path.join(os.environ.get("TMPDIR") or "/tmp", "aurora-agent")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+def mktemp(suffix):
+    fd, path = tempfile.mkstemp(prefix="grafana-query-", suffix=suffix, dir=tmp_dir())
+    os.close(fd)
+    return os.path.abspath(path)
+
+
+def agent(operation, *args, body=None):
+    """One `aurora-agent call grafana` (argument list, no shell). Returns (ok, parsed JSON or None, text)."""
+    out = mktemp(".json")
+    cmd = ["aurora-agent", "call", "grafana", operation, *args]
+    if body is not None:
+        cmd += ["--body", "@" + body]
+    if ACCOUNT:
+        cmd += ["--account", ACCOUNT]
+    cmd += ["--out", out]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+        text = (r.stdout + r.stderr).strip()
+        data = None
+        if r.returncode == 0:
+            try:
+                with open(out, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError) as e:
+                return False, None, f"the answer could not be read: {e}"
+        return r.returncode == 0, data, text
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, None, f"aurora-agent: {e}"
+    finally:
+        try:
+            os.unlink(out)
+        except OSError:
+            pass
+
+def parse_step(s):
+    m = re.fullmatch(r"(\d+)([smhdw])", s or "")
+    if not m or int(m.group(1)) == 0:
+        die(f"bad step {s!r}: use a number and s, m, h, d or w, such as 30s or 5m")
+    return int(m.group(1)) * UNIT_S[m.group(2)]
+
+
+def norm_time(t):
+    """Returns (value for the request, absolute seconds or None)."""
+    now = dt.datetime.now(dt.timezone.utc).timestamp()
+    if re.fullmatch(r"\d{13}", t):
+        return t, int(t) / 1000
+    if re.fullmatch(r"\d{10}", t):
+        return str(int(t) * 1000), int(t)
+    if t == "now":
+        return t, now
+    m = re.fullmatch(r"now-(\d+)([smhdw])", t)
+    if m:
+        return t, now - int(m.group(1)) * UNIT_S[m.group(2)]
+    try:
+        d = dt.datetime.fromisoformat(t.replace("Z", "+00:00"))
+    except ValueError:
+        die(f"bad time {t!r}: use epoch milliseconds, RFC 3339, now or now-6h")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.timezone.utc)
+    return str(int(d.timestamp() * 1000)), d.timestamp()
+
+
+def fit_step(window_s):
+    """A step, as Prometheus writes it, that keeps a window under POINTS_MAX points."""
+    need = math.ceil(window_s / (POINTS_MAX - 1))
+    for unit, secs in (("s", 1), ("m", 60), ("h", 3600), ("d", 86400)):
+        if need <= secs * 59 or unit == "d":
+            return f"{math.ceil(need / secs)}{unit}"
+    return f"{need}s"
+
+def send_body(body):
+    """One query_datasources call with this body. Returns (ok, parsed JSON or None, text)."""
+    path = mktemp(".json")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(body, f)
+        return agent("query_datasources", body=path)
+    finally:
+        os.unlink(path)
+
+
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError) as e:
+        die(f"{path}: {e}")
+
+
+# --- shared by compare and sweep --------------------------------------------------------------------
+
+def ms(seconds):
+    return str(int(round(seconds * 1000)))
+
+
+def iso(seconds):
+    return dt.datetime.fromtimestamp(seconds, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def num(v):
+    return "-" if v is None else f"{v:.6g}"
+
+
+def prom_query(ref, ds, expr, step_s=None, points=1):
+    q = {"refId": ref, "datasource": {"uid": ds, "type": "prometheus"}, "expr": expr,
+         "intervalMs": (step_s or 1) * 1000, "maxDataPoints": points}
+    if step_s:
+        q["range"] = True
+        q["interval"] = f"{step_s}s"
+    else:
+        q["instant"] = True
+    return q
+
+
+def result_error(r):
+    r = r or {}
+    status = r.get("status")
+    if r.get("error"):
+        return str(r["error"])
+    if isinstance(status, int) and status >= 400:
+        return f"status {status}"
+    return None
+
+
+def series_of(result):
+    """[(labels, [(time, value)])] of the numeric value fields of a refId's frames."""
+    out = []
+    for fr in (result or {}).get("frames") or []:
+        if not isinstance(fr, dict):
+            continue
+        fields = (fr.get("schema") or {}).get("fields") or []
+        vals = (fr.get("data") or {}).get("values") or []
+        ti = next((i for i, f in enumerate(fields) if f.get("type") == "time"), None)
+        times = vals[ti] if ti is not None and ti < len(vals) else []
+        for j, f in enumerate(fields):
+            if j == ti or f.get("type") == "time" or j >= len(vals):
+                continue
+            pts = [(times[i] if i < len(times) else None, v) for i, v in enumerate(vals[j])
+                   if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)]
+            out.append((f.get("labels") or {}, pts))
+    return out
+
+
+def percentile(vals, p):
+    if not vals:
+        return None
+    s = sorted(vals)
+    k = (len(s) - 1) * p / 100
+    lo = int(k)
+    hi = min(lo + 1, len(s) - 1)
+    return s[lo] + (s[hi] - s[lo]) * (k - lo)
+
+
+def labels_key(labels):
+    return ",".join(f"{k}={v}" for k, v in sorted(labels.items())) or "(value)"
+
+
+# --- compare ------------------------------------------------------------------------------------------
+
+OFFSETS_MAX = 5
+
+
+def cmd_compare(a):
+    if not UID_RE.match(a.ds):
+        die("a data source UID has only letters, digits, - and _")
+    if not a.expr.strip():
+        die("the expression is empty")
+    offsets = [o for o in a.offsets.split(",") if o]
+    if not offsets or len(offsets) > OFFSETS_MAX:
+        die(f"--offsets takes 1 to {OFFSETS_MAX} durations such as 1d,7d")
+    offs = [("now", 0)] + [(o, parse_step(o)) for o in offsets]
+    f, f_s = norm_time(a.frm)
+    t, t_s = norm_time(a.to)
+    if t_s <= f_s:
+        die("--to is not after --from")
+    step_s = parse_step(a.step) if a.step else parse_step(fit_step(t_s - f_s))
+    points = (t_s - f_s) / step_s
+    if points > POINTS_MAX:
+        die(f"{int(points)} points per series is over the limit of {POINTS_MAX}: use --step {fit_step(t_s - f_s)}")
+    stats, failed, rows = {}, 0, []
+    for name, off in offs:
+        body = {"from": ms(f_s - off), "to": ms(t_s - off),
+                "queries": [prom_query("A", a.ds, a.expr, step_s, math.ceil(points) + 1)]}
+        ok, data, text = send_body(body)
+        err = None
+        if not ok:
+            err = text
+        elif not isinstance(data, dict) or not isinstance(data.get("results"), dict):
+            err = "no results in the answer"
+        else:
+            err = result_error(data["results"].get("A"))
+        if err:
+            failed += 1
+            rows.append(f"# window {clean(name)} failed: {clean(err)}")
+            continue
+        for labels, pts in series_of(data["results"].get("A")):
+            vals = [float(v) for _, v in pts]
+            stats.setdefault(labels_key(labels), {})[name] = {
+                "min": min(vals) if vals else None, "p50": percentile(vals, 50), "p95": percentile(vals, 95),
+                "max": max(vals) if vals else None, "mean": sum(vals) / len(vals) if vals else None,
+                "n": len(vals)}
+    print(f"# expr: {clean(a.expr)}")
+    print(f"# step {step_s}s")
+    for name, off in offs:
+        print(f"# window {clean(name)}: {iso(f_s - off)} .. {iso(t_s - off)}")
+    for line in rows:
+        print(line)
+    print("series\twindow\tmin\tp50\tp95\tmax\tmean\tpoints")
+    for key in sorted(stats):
+        for name, _ in offs:
+            s = stats[key].get(name)
+            if s:
+                print(f"{clean(key)}\t{clean(name)}\t" + "\t".join(num(s[c]) for c in ("min", "p50", "p95", "max", "mean"))
+                      + f"\t{s['n']}")
+            else:
+                print(f"{clean(key)}\t{clean(name)}\t(no data)")
+        before = [stats[key][n]["p95"] for n, _ in offs[1:] if n in stats[key] and stats[key][n]["p95"]]
+        cur = stats[key].get("now", {}).get("p95")
+        if before and cur is not None:
+            print(f"{clean(key)}\tp95 now / median p95 before\t{num(cur / percentile(before, 50))}x")
+    return 1 if failed else 0
+
+
+# --- sweep --------------------------------------------------------------------------------------------
+
+CHECKS_MAX = 30
+PLACEHOLDER_RE = re.compile(r"\$\{([^}]*)\}")
+PLACEHOLDERS = ("SELECTOR", "WINDOW", "HOST")
+FLAG_RE = re.compile(r"^(>=|<=|>|<)(-?\d+(\.\d+)?([eE][+-]?\d+)?)$")
+CHECK_KEYS = {"name", "expr", "flag"}
+FILE_KEYS = {"checks", "replace_default_checks", "disable_default_checks"}
+DEFAULT_CHECKS = [
+    {"name": "up min", "flag": "<1",
+     "expr": "min by (${HOST}) (min_over_time(up{${SELECTOR}}[${WINDOW}]))"},
+    {"name": "load1 max / cpu", "flag": ">2",
+     "expr": "max by (${HOST}) (max_over_time(node_load1{${SELECTOR}}[${WINDOW}])) / "
+             "count by (${HOST}) (node_cpu_seconds_total{${SELECTOR},mode=\"idle\"})"},
+    {"name": "memory used max", "flag": ">0.9",
+     "expr": "max by (${HOST}) (max_over_time((1 - node_memory_MemAvailable_bytes{${SELECTOR}} / "
+             "node_memory_MemTotal_bytes{${SELECTOR}})[${WINDOW}:5m]))"},
+    {"name": "iowait max", "flag": ">0.2",
+     "expr": "max by (${HOST}) (max_over_time((avg by (${HOST}) (rate(node_cpu_seconds_total"
+             "{${SELECTOR},mode=\"iowait\"}[5m])))[${WINDOW}:5m]))"},
+    {"name": "reboots", "flag": ">0",
+     "expr": "sum by (${HOST}) (changes(node_boot_time_seconds{${SELECTOR}}[${WINDOW}]))"},
+    {"name": "network errors", "flag": ">0",
+     "expr": "sum by (${HOST}) (increase(node_network_transmit_errs_total{${SELECTOR}}[${WINDOW}]) + "
+             "increase(node_network_receive_errs_total{${SELECTOR}}[${WINDOW}]))"},
+]
+
+
+def check_placeholders(expr, where):
+    """Only ${SELECTOR}, ${WINDOW} and ${HOST} are placeholders; any other ${...} is a usage error."""
+    for m in PLACEHOLDER_RE.finditer(expr):
+        if m.group(1) not in PLACEHOLDERS:
+            die(f"{where}: unknown placeholder ${{{m.group(1)}}} (only ${{SELECTOR}}, ${{WINDOW}} and ${{HOST}})")
+
+
+def substitute(expr, values):
+    """Replaces exactly the three tokens, in one pass: other text (such as a HOST in a name) is kept."""
+    return PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], expr)
+
+
+def load_checks(path):
+    """The checks of a sweep: the defaults changed by the file, validated (a usage error names the problem)."""
+    checks = list(DEFAULT_CHECKS)
+    if path is None:
+        return checks
+    cfg = read_json(path)
+    if not isinstance(cfg, dict):
+        die(f"{path}: the file is a JSON object")
+    for k in cfg:
+        if k not in FILE_KEYS:
+            die(f"{path}: unknown key {k!r} (use checks, replace_default_checks, disable_default_checks)")
+    if not isinstance(cfg.get("replace_default_checks", False), bool):
+        die(f"{path}: replace_default_checks is true or false")
+    extra = cfg.get("checks", [])
+    if not isinstance(extra, list) or len(extra) > CHECKS_MAX:
+        die(f"{path}: checks is a list of at most {CHECKS_MAX} checks")
+    skip = cfg.get("disable_default_checks", [])
+    if not isinstance(skip, list) or not all(isinstance(s, str) for s in skip):
+        die(f"{path}: disable_default_checks is a list of default check names")
+    known = [c["name"] for c in DEFAULT_CHECKS]
+    for s in skip:
+        if s not in known:
+            die(f"{path}: disable_default_checks names {s!r}, which is no default check ({', '.join(known)})")
+    checks = [] if cfg.get("replace_default_checks") else [c for c in checks if c["name"] not in skip]
+    names = {c["name"] for c in checks}
+    for i, c in enumerate(extra):
+        where = f"{path}: checks[{i}]"
+        if not isinstance(c, dict):
+            die(f"{where} is an object with name, expr and optional flag")
+        for k in c:
+            if k not in CHECK_KEYS:
+                die(f"{where}: unknown key {k!r} (use name, expr, flag)")
+        name, expr, flag = c.get("name"), c.get("expr"), c.get("flag")
+        if not isinstance(name, str) or not 1 <= len(name) <= 60 or not name.isprintable():
+            die(f"{where}: name is 1 to 60 printable characters")
+        if name in names:
+            die(f"{where}: the check name {name!r} is used twice")
+        if not isinstance(expr, str) or not expr.strip() or len(expr) > 2000:
+            die(f"{where} ({name}): expr is a PromQL expression of at most 2000 characters")
+        if flag is not None and (not isinstance(flag, str) or not FLAG_RE.match(flag)):
+            die(f"{where} ({name}): flag is >, >=, < or <= and a number, such as >=300")
+        check_placeholders(expr, f"{where} ({name})")
+        names.add(name)
+        checks.append({"name": name, "expr": expr, **({"flag": flag} if flag is not None else {})})
+    return checks
+
+
+def flagged(v, rule):
+    m = FLAG_RE.match(rule or "")
+    if v is None or not m:
+        return False
+    x = float(m.group(2))
+    return {">=": v >= x, "<=": v <= x, ">": v > x, "<": v < x}[m.group(1)]
+
+
+def short_host(h):
+    """Host name without port and domain (an IPv4 address is kept whole)."""
+    h = re.sub(r":\d+$", "", h)
+    return h if re.fullmatch(r"[\d.]+", h) else h.split(".")[0]
+
+
+def cmd_sweep(a):
+    if not UID_RE.match(a.ds):
+        die("a data source UID has only letters, digits, - and _")
+    sel = a.selector.strip()
+    if not sel or CTRL.search(sel):
+        die("--selector is the label matchers inside the braces, such as 'job=\"node\"'")
+    if not LABEL_RE.match(a.host_label):
+        die("--host-label is a label name")
+    trend_s = parse_step(a.trend)
+    if a.last:
+        if a.frm or a.to:
+            die("use --last or --from and --to, not both")
+        t_s = dt.datetime.now(dt.timezone.utc).timestamp()
+        f_s = t_s - parse_step(a.last)
+    elif a.frm and a.to:
+        f_s = norm_time(a.frm)[1]
+        t_s = norm_time(a.to)[1]
+    else:
+        die("give --from and --to, or --last")
+    if t_s <= f_s:
+        die("--to is not after --from")
+    window = f"{int(t_s - f_s)}s"
+    values = {"SELECTOR": sel, "WINDOW": window, "HOST": a.host_label}
+    checks = load_checks(a.checks)
+    host = a.host_label
+    queries, names = [], {}
+    for i, c in enumerate(checks):
+        check_placeholders(c["expr"], c["name"])
+        ref = f"C{i}"
+        names[ref] = c
+        queries.append(prom_query(ref, a.ds, substitute(c["expr"], values)))
+    fs = f"{{{sel},{FS_EXCL}}}"
+    by = "by (device, mountpoint, fstype)"
+    for ref, e in (("FSIZE", f"max {by} (node_filesystem_size_bytes{fs})"),
+                   ("FFREE", f"min {by} (node_filesystem_avail_bytes{fs})"),
+                   ("FMIN", f"min {by} (min_over_time(node_filesystem_avail_bytes{fs}[{window}]))"),
+                   ("FAGO", f"min {by} (node_filesystem_avail_bytes{fs} offset {a.trend})")):
+        queries.append(prom_query(ref, a.ds, e))
+    if a.show_queries and not a.json:
+        print(f"# window {iso(f_s)} .. {iso(t_s)} (instant queries at --to)")
+        for q in queries:
+            print(f"#   {q['refId']}{' (' + clean(names[q['refId']]['name']) + ')' if q['refId'] in names else ''}: "
+                  f"{clean(q['expr'])}")
+    ok, data, text = send_body({"from": ms(f_s), "to": ms(t_s), "queries": queries})
+    results = data.get("results") if ok and isinstance(data, dict) else None
+    if not isinstance(results, dict):
+        print(f"# ERROR request: {clean(text if not ok else 'no results in the answer')[:400]} "
+              "(a bad expression fails the whole request: try --show-queries)")
+        return 1
+
+    table, hosts, errors = {}, set(), []
+    for ref, c in names.items():
+        err = result_error(results.get(ref))
+        if err:
+            errors.append(f"{c['name']}: {err[:200]}")
+            continue
+        for labels, pts in series_of(results.get(ref)):
+            h = clean(labels.get(host, "(all)"))
+            hosts.add(h)
+            table.setdefault(c["name"], {})[h] = pts[-1][1] if pts else None
+
+    def by_dev(ref):
+        err = result_error(results.get(ref))
+        if err:
+            errors.append(f"filesystems {ref}: {err[:200]}")
+        return {(l.get("device"), l.get("mountpoint")): (p[-1][1] if p else None, l.get("fstype"))
+                for l, p in series_of(results.get(ref))}
+    size, free, fmin, ago = (by_dev(r) for r in ("FSIZE", "FFREE", "FMIN", "FAGO"))
+    fsrows, seen = [], set()
+    for (dev, mp), (sz, fstype) in sorted(size.items(), key=lambda kv: -(kv[1][0] or 0)):
+        # a network filesystem mounted on several hosts is one row: keyed by mountpoint, type and size
+        key = (mp, fstype, round(sz or 0, -9)) if fstype in NETFS else (dev, mp)
+        if key in seen or not sz:
+            continue
+        seen.add(key)
+        fr = free.get((dev, mp), (None,))[0]
+        mn = fmin.get((dev, mp), (None,))[0]
+        ag = ago.get((dev, mp), (None,))[0]
+        per_day = (ag - fr) / (trend_s / 86400) if ag is not None and fr is not None else None
+        days = fr / per_day if per_day and per_day > 0 else None
+        pct = 100 * fr / sz if fr is not None else None
+        fsrows.append({"mountpoint": clean(mp), "fstype": clean(fstype), "size_gb": sz / 1e9,
+                       "free_now_gb": fr / 1e9 if fr is not None else None, "free_pct": pct,
+                       "min_free_in_window_gb": mn / 1e9 if mn is not None else None,
+                       "gb_per_day": per_day / 1e9 if per_day is not None else None,
+                       "days_to_full": days,
+                       "flag": bool((pct is not None and pct < 10) or (days is not None and days < 30))})
+    errors = [clean(e) for e in errors]
+    if a.json:
+        out = {"window": [iso(f_s), iso(t_s)], "checks": table, "filesystems": fsrows, "errors": errors}
+        if a.show_queries:
+            out["queries"] = {q["refId"]: clean(q["expr"]) for q in queries}
+        print(json.dumps(out, indent=1))
+        return 1 if errors else 0
+    hl = sorted(hosts)
+    short = [short_host(h) for h in hl]
+    if len(set(short)) != len(short):
+        short = [re.sub(r":\d+$", "", h) for h in hl]
+    print(f"# sweep {iso(f_s)} .. {iso(t_s)}  (! = crosses the flag)")
+    print("check\tflag\t" + "\t".join(short))
+    for c in checks:
+        row = table.get(c["name"], {})
+        cells = [("!" if flagged(row.get(h), c.get("flag")) else "") + num(row.get(h)) for h in hl]
+        print(f"{clean(c['name'])}\t{clean(c.get('flag', ''))}\t" + "\t".join(cells))
+    print(f"\n# filesystems (one row each; trend over {a.trend}, linear)")
+    print("mountpoint\tfstype\tsize GB\tfree now GB\tfree %\tmin free GB\tGB/day used\tdays to full")
+    for r in fsrows:
+        print(f"{'!' if r['flag'] else ''}{r['mountpoint']}\t{r['fstype']}\t{num(r['size_gb'])}\t"
+              f"{num(r['free_now_gb'])}\t{num(r['free_pct'])}\t{num(r['min_free_in_window_gb'])}\t"
+              f"{num(r['gb_per_day'])}\t{num(r['days_to_full'])}")
+    for e in errors:
+        print(f"# ERROR {e}")
+    return 1 if errors else 0
+
+
+
+def main():
+    global ACCOUNT
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--account", help="Grafana account: letter or connection id")
+    ap = argparse.ArgumentParser(prog="grafana-prom", description=__doc__.split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("compare", parents=[common],
+                       help="one PromQL expression over a window and the same window days earlier")
+    p.add_argument("--ds", required=True, help="Prometheus or Mimir data source UID")
+    p.add_argument("--from", dest="frm", required=True)
+    p.add_argument("--to", required=True)
+    p.add_argument("--offsets", default="1d,7d", help="how far back the other windows are (default 1d,7d; at most 5)")
+    p.add_argument("--step", help="resolution (default: fitted to the window)")
+    p.add_argument("expr")
+    p.set_defaults(fn=cmd_compare)
+
+    p = sub.add_parser("sweep", parents=[common],
+                       help="host health checks and filesystem days-to-full over a window, in one request")
+    p.add_argument("--ds", required=True, help="Prometheus or Mimir data source UID")
+    p.add_argument("--selector", required=True, help="label matchers, such as 'job=\"node\",instance=~\"web.*\"'")
+    p.add_argument("--from", dest="frm")
+    p.add_argument("--to")
+    p.add_argument("--last", help="instead of --from and --to: the window ending now, such as 12h")
+    p.add_argument("--host-label", default="instance", help="label that names a host (default instance)")
+    p.add_argument("--checks", help="JSON file with more checks (see the grafana-prometheus skill)")
+    p.add_argument("--trend", default="7d", help="period of the filesystem trend (default 7d)")
+    p.add_argument("--show-queries", action="store_true", help="print the window and every expression sent")
+    p.add_argument("--json", action="store_true", help="print JSON instead of tables")
+    p.set_defaults(fn=cmd_sweep)
+
+    a = ap.parse_args()
+    ACCOUNT = getattr(a, "account", None)
+    sys.exit(a.fn(a))
+
+
+if __name__ == "__main__":
+    main()
