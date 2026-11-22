@@ -149,6 +149,197 @@ async fn agent_urls_are_never_previewed_by_the_server() {
     }
 }
 
+/// FIX-219 (D-460), both directions on the pinned server.
+///
+/// Inbound: a post `@<alice> see ~<open> ~<private-with-alice> ~<private-without-alice>` goes through
+/// the integration's `handle_post` (channel and user lookups, the `~name` resolution and the
+/// private-channel membership rule) and the event the core receives carries the user and the two
+/// channels the author may see, with handles and labels; the third channel stays typed text.
+/// Outbound: an agent body `ping @<alice> in ~<open>` is posted unchanged and Alice's
+/// `mention_count` rises.
+#[tokio::test]
+async fn mentions_resolve_inbound_and_stay_live_outbound() {
+    use aurora_connector_mattermost::integ::{Integ, Settings};
+    use aurora_connector_sdk::{CoreClient, IntegrationHandle, RetryPolicy, spawn_event_poster};
+    use aurora_protocol::connector::{
+        EventsRequest, EventsResponse, Integration, MentionKind, MessagePosted, SharedBot,
+    };
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+
+    let Some(e) = env() else {
+        eprintln!("skipped: AURORA_MM_URL is not set (bash scripts/mattermost/setup.sh up)");
+        return;
+    };
+    let stamp = format!(
+        "{}-{}",
+        std::process::id(),
+        aurora_connector_mattermost::events::now_ms()
+    );
+    let make = async |suffix: &str, kind: &str, members: &[&str]| -> (String, String) {
+        let name = format!("fix219-{suffix}-{stamp}");
+        let ch =
+            e.mm.post(
+                &e.admin,
+                "/channels",
+                &json!({"team_id": e.team, "name": name, "display_name": format!("Display {suffix}"), "type": kind}),
+            )
+            .await
+            .expect("channel");
+        let id = ch["id"].as_str().expect("channel id").to_owned();
+        for u in members {
+            e.mm.post(
+                &e.admin,
+                &format!("/channels/{id}/members"),
+                &json!({"user_id": u}),
+            )
+            .await
+            .expect("member");
+        }
+        (id, name)
+    };
+    let (open_id, open) = make("open", "O", &[&e.alice, &e.bob, &e.bot_id]).await;
+    let (_, mine) = make("mine", "P", &[&e.alice, &e.bot_id]).await;
+    let (_, hidden) = make("hidden", "P", &[&e.bob, &e.bot_id]).await;
+    let alice =
+        e.mm.get_q(&e.admin, &format!("/users/{}", e.alice), &[])
+            .await
+            .expect("alice");
+    let alice_name = alice["username"].as_str().expect("username").to_owned();
+
+    struct AcceptAll;
+    impl Respond for AcceptAll {
+        fn respond(&self, req: &Request) -> ResponseTemplate {
+            let ev: EventsRequest = serde_json::from_slice(&req.body).unwrap();
+            ResponseTemplate::new(200).set_body_json(EventsResponse {
+                accepted: ev.events.iter().map(|e| e.event_id.clone()).collect(),
+                duplicates: vec![],
+                rejected: vec![],
+            })
+        }
+    }
+    let core = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/connector/events"))
+        .respond_with(AcceptAll)
+        .mount(&core)
+        .await;
+    let client = std::sync::Arc::new(
+        CoreClient::new(&core.uri(), "aun_test", RetryPolicy::default()).unwrap(),
+    );
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let sink = spawn_event_poster(client, rx);
+    let url = std::env::var("AURORA_MM_URL").unwrap();
+    let id = uuid::Uuid::from_u128(219);
+    let integration = Integration {
+        id,
+        org_id: uuid::Uuid::nil(),
+        tenant_ref: format!("mm.test/{}", e.team),
+        tenant_label: "T".into(),
+        config: json!({"server_url": url}),
+        credentials: json!({"bot_token": e.bot, "admin_token": e.admin}),
+        credentials_version: 1,
+        shared_bot: Some(SharedBot {
+            platform_user_ref: e.bot_id.clone(),
+            handle: "aurora-bot".into(),
+            display_name: "Aurora".into(),
+        }),
+        status: "active".into(),
+    };
+    let integ = Integ::from_config(
+        &integration,
+        &[],
+        &Default::default(),
+        sink,
+        IntegrationHandle::new(id),
+        Settings {
+            public_url: None,
+            hmac_key: b"k".to_vec(),
+            catchup_window: Duration::from_secs(60),
+            api_url: None,
+            token_check: Duration::from_secs(3600),
+            capabilities: None,
+            test_control: false,
+            net: NetPolicy::allow_all(),
+        },
+    )
+    .expect("integ");
+    let post = aurora_connector_mattermost::events::MmPost {
+        id: "p219".into(),
+        channel_id: open_id.clone(),
+        user_id: e.alice.clone(),
+        message: format!("@{alice_name} see ~{open} ~{mine} ~{hidden}"),
+        create_at: aurora_connector_mattermost::events::now_ms(),
+        ..Default::default()
+    };
+    integ.handle_post(&post).await;
+    let mut got: Option<MessagePosted> = None;
+    assert!(
+        until(async || {
+            for r in core.received_requests().await.unwrap() {
+                if let Ok(req) = serde_json::from_slice::<EventsRequest>(&r.body) {
+                    for ev in req.events {
+                        if let Ok(m) = serde_json::from_value::<MessagePosted>(ev.payload) {
+                            got = Some(m);
+                        }
+                    }
+                }
+            }
+            got.is_some()
+        })
+        .await,
+        "no message.posted reached the core"
+    );
+    let m = got.unwrap();
+    assert!(m.text.contains(&format!("~{hidden}")), "{}", m.text);
+    assert!(
+        m.text.contains(&format!("<#space:{open_id}>")),
+        "{}",
+        m.text
+    );
+    let handles: Vec<&str> = m
+        .mentions
+        .iter()
+        .filter_map(|x| x.handle.as_deref())
+        .collect();
+    assert!(
+        handles.contains(&format!("@{alice_name}").as_str()),
+        "{handles:?}"
+    );
+    assert!(
+        handles.contains(&format!("~{open}").as_str()),
+        "{handles:?}"
+    );
+    assert!(
+        handles.contains(&format!("~{mine}").as_str()),
+        "{handles:?}"
+    );
+    assert!(!handles.iter().any(|h| h.contains(&hidden)), "{handles:?}");
+    let spaces: Vec<_> = m
+        .mentions
+        .iter()
+        .filter(|x| x.kind == MentionKind::Space)
+        .collect();
+    assert_eq!(spaces.len(), 2);
+    assert!(
+        spaces
+            .iter()
+            .any(|s| s.label.as_deref() == Some("Display open"))
+    );
+    drop(tx);
+
+    // Outbound: the agent's `@handle` and `~channel` stay as written and notify.
+    let cache = NameCache::default();
+    let before = mention_count(&e, &open_id, &e.alice).await;
+    let body = format!("ping @{alice_name} in ~{open}");
+    let posted = post_as_agent(&e, &open_id, &cache, &body).await;
+    assert_eq!(posted, [body]);
+    assert!(
+        until(async || mention_count(&e, &open_id, &e.alice).await > before).await,
+        "Alice's mention_count did not rise"
+    );
+}
+
 async fn post_one(e: &Env, ch: &str, message: &str) -> String {
     let v =
         e.mm.post(

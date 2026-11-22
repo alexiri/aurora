@@ -136,6 +136,18 @@ integration config.
   replica); `email_verified` only when the API states it for that user, which
   Mattermost 11.7 does not for other users, so it is normally absent (S-15); files from `file_ids`
   (metadata via `/api/v4/files/{id}/info`).
+- (phase 5, FIX-219, D-460, C-1146) **Mentions.** `@username` of a known user or bot becomes
+  `<@user:ID>` / `<@bot:ID>` with `handle: "@<username>"` and `label` = the author block's
+  display-name rule. `~channel-name` at a word start (not after an alphanumeric or `_ . - ~`,
+  not `~~`) becomes `<#space:ID>` with `kind: "space"`, `handle: "~<name>"` and `label` = the
+  channel's display name, when the channel resolves: `GET /api/v4/teams/{team}/channels/name/{name}`
+  (the integration's team only, at most 10 distinct names per message, answers cached one
+  minute, negative ones included). An open channel (`O`) resolves; a private channel (`P`) only
+  when the message's author is a member (`GET /api/v4/channels/{id}/members/{author}`: 200 is a
+  member, 404 is not, anything else counts as not a member, cached one minute); deleted, `D`
+  and `G` channels and other teams' channels never do. Whatever does not resolve stays typed
+  text with no mention, so nobody learns the display name of a channel they cannot see. A lookup
+  that fails never fails the event.
 
 ## Rendering
 
@@ -148,7 +160,10 @@ integration config.
   (the core's `<@here>` aside) and **group mentions** — in every spelling the
   server reads as one (mentions table below), inside formatted text too, by
   wrapping the word in inline code; code spans, fenced blocks, indented code and
-  HTML code are never altered and never notify. One user's `@username` passes.
+  HTML code are never altered and never notify. One user's `@username` passes, and so does
+  an agent's `~channel` (Mattermost renders a channel link); the agent writes both as the
+  inbound `[Mentioned: …]` line shows them (FIX-219, D-460(d); proved by
+  `connectors/mattermost/tests/mentions_e2e.rs`).
   Implemented by `render::defuse` (a parser-based pass) and `mentions::resolve`
   (which `@name`s are users and which are groups: `POST /users/usernames`, then
   `GET /groups?q=` — cached a minute; a server without the groups feature answers

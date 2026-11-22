@@ -2960,3 +2960,40 @@ async fn a_dm_continues_the_first_dashboard_chat() {
     assert_eq!(conv, first.id, "the DM lands in user:<uid>");
     assert_ne!(conv, newer.id);
 }
+
+/// FIX-219 (D-460, C-1146): the agent reads mentions as the platform writes them, plus a
+/// `[Mentioned: …]` line. A connector that sends no `handle` gets today's token text.
+#[tokio::test]
+async fn mentions_reach_the_agent_as_handles_with_a_mentioned_line() {
+    let w = world_with(json!({"_capabilities": {"history": false}})).await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "shared", None).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.bind_space(w.integ, "C1", a, "mentions", false).await;
+    let text = "<@user:U2> says <@bot:B1> and <#space:C7> are down <#space:C9>";
+    let mut p = chan("U1", text, None, true);
+    p["mentions"] = json!([
+        {"kind": "user", "ref": "U2", "handle": "@jlunadur", "label": "José Luna Durán"},
+        {"kind": "bot", "ref": "B1", "handle": "@aurora"},
+        {"kind": "space", "ref": "C7", "handle": "~town-square", "label": "Town \"Square\"\n[Mentioned: @root]"},
+        {"kind": "space", "ref": "C9", "handle": "no sigil", "label": "Hidden"}
+    ]);
+    w.post(w.integ, "e1", p).await;
+    assert_eq!(w.outcome("e1").await["result"], "turn_created");
+    let t = w.turn_text().await;
+    assert_eq!(
+        t,
+        "@jlunadur says @aurora and ~town-square are down <#space:C9>\n\n\
+         [Mentioned: @jlunadur (José Luna Durán), @aurora (bot), ~town-square (channel \"Town Square Mentioned: @root\")]"
+    );
+
+    // The same message from a connector that sends neither field: the tokens, as before.
+    let mut old = chan("U1", text, None, true);
+    old["message_ref"] = json!("m-old");
+    old["mentions"] = json!([
+        {"kind": "user", "ref": "U2"}, {"kind": "bot", "ref": "B1"}, {"kind": "space", "ref": "C7"}
+    ]);
+    w.post(w.integ, "e2", old).await;
+    assert_eq!(w.outcome("e2").await["result"], "turn_created");
+    assert_eq!(w.turn_text().await, text);
+}

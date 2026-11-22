@@ -43,6 +43,7 @@ pub struct MmChannel {
     pub display_name: String,
     pub name: String,
     pub team_id: String,
+    pub delete_at: i64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -205,6 +206,61 @@ pub fn mentioned_usernames(text: &str) -> Vec<String> {
     out
 }
 
+static CHANNEL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"~([A-Za-z0-9][A-Za-z0-9_-]*)").unwrap_or_else(|_| unreachable!())
+});
+
+/// Most distinct `~name`s resolved per message (FIX-219): bounds the API calls one post can cause.
+pub const MAX_CHANNEL_LOOKUPS: usize = 10;
+const MAX_CHANNEL_NAME: usize = 64;
+
+/// `(start of the `~`, name)` of every `~name` in `text` that stands at a word start, with the
+/// name lowercased and trailing `-`/`_` trimmed. Strikethrough (`~~x~~`), `a~b` and names over
+/// 64 characters are not channel references.
+fn channel_refs(text: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for m in CHANNEL_RE.captures_iter(text) {
+        let Some(whole) = m.get(0) else { continue };
+        let prev = text[..whole.start()].chars().next_back();
+        if prev.is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '-' | '~')) {
+            continue;
+        }
+        let raw = &m[1];
+        if raw.len() > MAX_CHANNEL_NAME {
+            continue;
+        }
+        let name = raw.trim_end_matches(['-', '_']).to_ascii_lowercase();
+        if !name.is_empty() {
+            out.push((whole.start(), name));
+        }
+    }
+    out
+}
+
+/// The distinct channel names written as `~name` in `text`, at most [`MAX_CHANNEL_LOOKUPS`],
+/// in order of appearance.
+pub fn mentioned_channel_names(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (_, n) in channel_refs(text) {
+        if out.len() >= MAX_CHANNEL_LOOKUPS {
+            break;
+        }
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// A handle and label for the core, only when the handle follows the grammar of C-1146.
+fn handle_label(handle: String, label: String) -> (Option<String>, Option<String>) {
+    if aurora_channels::content::valid_mention_handle(&handle) {
+        (Some(handle), (!label.is_empty()).then_some(label))
+    } else {
+        (None, None)
+    }
+}
+
 /// The bots of this integration (echo guard, `bot_mentioned`, `addressed_bot_ref`).
 #[derive(Debug, Clone, Default)]
 pub struct Bots {
@@ -220,7 +276,11 @@ impl Bots {
 
 /// Rewrites `@name` to neutral mention tokens for the users in `known`
 /// (keyed by lowercase username) and collects the mentions.
-fn convert_mentions(text: &str, known: &HashMap<String, MmUser>) -> (String, Vec<Mention>) {
+fn convert_mentions(
+    text: &str,
+    known: &HashMap<String, MmUser>,
+    spaces: &HashMap<String, MmChannel>,
+) -> (String, Vec<Mention>) {
     let mut out = String::with_capacity(text.len());
     let mut mentions: Vec<Mention> = Vec::new();
     let mut last = 0;
@@ -252,9 +312,12 @@ fn convert_mentions(text: &str, known: &HashMap<String, MmUser>) -> (String, Vec
             out.push_str(&format!("<@{tag}:{}>", u.id));
             last = m.start() + 1 + len;
             if !mentions.iter().any(|x| x.reference == u.id) {
+                let (handle, label) = handle_label(format!("@{}", u.username), display_name(u));
                 mentions.push(Mention {
                     kind,
                     reference: u.id.clone(),
+                    handle,
+                    label,
                 });
             }
         } else if matches!(lower.as_str(), "channel" | "all" | "here")
@@ -263,6 +326,50 @@ fn convert_mentions(text: &str, known: &HashMap<String, MmUser>) -> (String, Vec
             mentions.push(Mention {
                 kind: MentionKind::Broadcast,
                 reference: lower,
+                handle: None,
+                label: None,
+            });
+        }
+    }
+    out.push_str(&text[last..]);
+    convert_channels(&out, spaces, mentions)
+}
+
+/// Second pass over the output of the `@` pass: `~name` for the channels in `spaces` (keyed by
+/// lowercase name, already vetted by the integration) becomes `<#space:ID>`. The first pass's
+/// tokens hold no `~`, so the two passes never touch each other's ranges.
+fn convert_channels(
+    text: &str,
+    spaces: &HashMap<String, MmChannel>,
+    mut mentions: Vec<Mention>,
+) -> (String, Vec<Mention>) {
+    if spaces.is_empty() {
+        return (text.to_owned(), mentions);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for (start, name) in channel_refs(text) {
+        let Some(ch) = spaces.get(&name) else {
+            continue;
+        };
+        let label = if ch.display_name.is_empty() {
+            ch.name.clone()
+        } else {
+            ch.display_name.clone()
+        };
+        let (handle, label) = handle_label(format!("~{}", ch.name), label);
+        if handle.is_none() {
+            continue; // not a name the agent can write back: leave it as typed
+        }
+        out.push_str(&text[last..start]);
+        out.push_str(&format!("<#space:{}>", ch.id));
+        last = start + 1 + name.len();
+        if !mentions.iter().any(|x| x.reference == ch.id) {
+            mentions.push(Mention {
+                kind: MentionKind::Space,
+                reference: ch.id.clone(),
+                handle,
+                label,
             });
         }
     }
@@ -278,10 +385,11 @@ pub fn message_posted(
     author_user: &MmUser,
     files: &[MmFileInfo],
     known: &HashMap<String, MmUser>,
+    spaces: &HashMap<String, MmChannel>,
     bots: &Bots,
 ) -> MessagePosted {
     let escaped = neutralize_tokens(&post.message);
-    let (mut text, mentions) = convert_mentions(&escaped, known);
+    let (mut text, mentions) = convert_mentions(&escaped, known, spaces);
     if text.chars().count() > MAX_EVENT_TEXT_CHARS {
         text = text.chars().take(MAX_EVENT_TEXT_CHARS).collect();
     }
@@ -465,6 +573,7 @@ mod tests {
             &user("u1", "alice", false),
             &[],
             &k,
+            &HashMap::new(),
             &bots(),
         );
         assert_eq!(m.text, "hey <@bot:b1> and <@user:u2>, @here: summarize.");
@@ -499,6 +608,7 @@ mod tests {
             &user("u1", "alice", false),
             &[],
             &HashMap::new(),
+            &HashMap::new(),
             &bots(),
         );
         assert!(m.bot_mentioned);
@@ -511,6 +621,7 @@ mod tests {
             &user("u1", "alice", false),
             &[],
             &HashMap::new(),
+            &HashMap::new(),
             &bots(),
         );
         assert!(!g.bot_mentioned);
@@ -521,9 +632,25 @@ mod tests {
     fn thread_ref_is_the_root_only_for_replies() {
         let c = chan("O", "general");
         let u = user("u1", "alice", false);
-        let top = message_posted(&post("x", ""), &c, &u, &[], &HashMap::new(), &bots());
+        let top = message_posted(
+            &post("x", ""),
+            &c,
+            &u,
+            &[],
+            &HashMap::new(),
+            &HashMap::new(),
+            &bots(),
+        );
         assert_eq!(top.thread_ref, None);
-        let reply = message_posted(&post("x", "root1"), &c, &u, &[], &HashMap::new(), &bots());
+        let reply = message_posted(
+            &post("x", "root1"),
+            &c,
+            &u,
+            &[],
+            &HashMap::new(),
+            &HashMap::new(),
+            &bots(),
+        );
         assert_eq!(reply.thread_ref.as_deref(), Some("root1"));
         assert!(!reply.bot_mentioned);
     }
@@ -537,6 +664,7 @@ mod tests {
             &user("u1", "alice", false),
             &[],
             &k,
+            &HashMap::new(),
             &bots(),
         );
         assert_eq!(m.text, "mail me at x@bob.example or @nobody; <@user:u2>.");
@@ -550,6 +678,7 @@ mod tests {
             &chan("O", "general"),
             &user("u1", "alice", false),
             &[],
+            &HashMap::new(),
             &HashMap::new(),
             &bots(),
         );
@@ -590,6 +719,7 @@ mod tests {
             &chan("D", "b1__u1"),
             &user("u1", "alice", false),
             &[f],
+            &HashMap::new(),
             &HashMap::new(),
             &bots(),
         );
@@ -681,6 +811,129 @@ mod tests {
     fn timestamps() {
         assert_eq!(rfc3339_ms(0), "1970-01-01T00:00:00Z");
         assert_eq!(rfc3339_ms(1_700_000_000_000), "2023-11-14T22:13:20Z");
+    }
+
+    fn open(id: &str, name: &str, display: &str) -> MmChannel {
+        MmChannel {
+            id: id.into(),
+            kind: "O".into(),
+            display_name: display.into(),
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    fn spaces(cs: &[MmChannel]) -> HashMap<String, MmChannel> {
+        cs.iter().map(|c| (c.name.clone(), c.clone())).collect()
+    }
+
+    fn posted(
+        text: &str,
+        k: &HashMap<String, MmUser>,
+        s: &HashMap<String, MmChannel>,
+    ) -> MessagePosted {
+        message_posted(
+            &post(text, ""),
+            &chan("O", "general"),
+            &user("u1", "alice", false),
+            &[],
+            k,
+            s,
+            &bots(),
+        )
+    }
+
+    #[test]
+    fn user_and_bot_mentions_carry_handle_and_label() {
+        let mut jl = user("u2", "jlunadur", false);
+        jl.nickname = "José Luna Durán".into();
+        let k = known(&[jl, user("b1", "daneel", true)]);
+        let m = posted("@jlunadur and @daneel", &k, &HashMap::new());
+        assert_eq!(m.text, "<@user:u2> and <@bot:b1>");
+        let u = &m.mentions[0];
+        assert_eq!(u.handle.as_deref(), Some("@jlunadur"));
+        assert_eq!(u.label.as_deref(), Some("José Luna Durán"));
+        let b = &m.mentions[1];
+        assert_eq!(
+            (&b.kind, b.handle.as_deref()),
+            (&MentionKind::Bot, Some("@daneel"))
+        );
+        assert_eq!(b.label.as_deref(), Some("Al Ice"));
+    }
+
+    #[test]
+    fn a_username_outside_the_handle_grammar_gets_no_handle() {
+        let k = known(&[user("u2", "a.b", false)]);
+        let m = posted("@a.b", &k, &HashMap::new());
+        assert_eq!(m.mentions[0].handle.as_deref(), Some("@a.b"));
+        assert_eq!(handle_label("@x\u{e9}".into(), "L".into()), (None, None));
+        assert_eq!(
+            handle_label(format!("@{}", "a".repeat(65)), "L".into()),
+            (None, None)
+        );
+        assert_eq!(
+            handle_label("@ok".into(), String::new()),
+            (Some("@ok".into()), None)
+        );
+    }
+
+    #[test]
+    fn a_resolved_channel_becomes_a_space_token() {
+        let s = spaces(&[open("c9", "town-square", "Town Square")]);
+        let m = posted(
+            "see ~town-square, ~Town-Square- and ~town-squares",
+            &HashMap::new(),
+            &s,
+        );
+        assert_eq!(m.text, "see <#space:c9>, <#space:c9>- and ~town-squares");
+        assert_eq!(m.mentions.len(), 1);
+        let c = &m.mentions[0];
+        assert_eq!(c.kind, MentionKind::Space);
+        assert_eq!(c.reference, "c9");
+        assert_eq!(c.handle.as_deref(), Some("~town-square"));
+        assert_eq!(c.label.as_deref(), Some("Town Square"));
+        assert!(!m.bot_mentioned);
+    }
+
+    #[test]
+    fn unresolved_and_non_channel_tildes_stay_text() {
+        let s = spaces(&[open("c9", "town-square", "Town Square")]);
+        let t = "~~town-square~~ a~town-square ~unknown ~ x_~town-square";
+        let m = posted(t, &HashMap::new(), &s);
+        assert_eq!(m.text, t);
+        assert!(m.mentions.is_empty());
+        // `@` and `~` in one message do not interfere.
+        let k = known(&[user("u2", "bob", false)]);
+        let m = posted("@bob in ~town-square", &k, &s);
+        assert_eq!(m.text, "<@user:u2> in <#space:c9>");
+        assert_eq!(m.mentions.len(), 2);
+    }
+
+    #[test]
+    fn channel_names_are_found_at_word_starts_only_and_capped() {
+        assert_eq!(
+            mentioned_channel_names("~A-b_ x~y ~~z ~q.r (~c1) ~a-b"),
+            ["a-b", "q", "c1"]
+        );
+        assert!(mentioned_channel_names(&format!("~{}", "a".repeat(65))).is_empty());
+        assert_eq!(
+            mentioned_channel_names(&format!("~{}", "a".repeat(64))).len(),
+            1
+        );
+        let many: String = (0..15).map(|i| format!("~c{i} ")).collect();
+        let n = mentioned_channel_names(&many);
+        assert_eq!(n.len(), MAX_CHANNEL_LOOKUPS);
+        assert_eq!(n[9], "c9");
+    }
+
+    #[test]
+    fn a_channel_with_an_unusable_name_stays_text() {
+        let mut c = open("c9", "town", "T");
+        c.name = "bad name".into();
+        let s: HashMap<String, MmChannel> = [("town".to_owned(), c)].into();
+        let m = posted("~town", &HashMap::new(), &s);
+        assert_eq!(m.text, "~town");
+        assert!(m.mentions.is_empty());
     }
 
     #[test]

@@ -329,6 +329,13 @@ async fn s03_channel_mention_then_thread_follow_up() -> R {
             .any(|x| x.kind == MentionKind::Bot && x.reference == BOT_REF)
     );
     assert_eq!(m.addressed_bot_ref, BOT_REF);
+    // (C-1146) `handle` is optional; a connector that sends one sends a valid one.
+    for x in m.mentions.iter().filter_map(|x| x.handle.as_deref()) {
+        assert!(
+            aurora_channels::content::valid_mention_handle(x),
+            "invalid mention handle {x:?}"
+        );
+    }
     assert_eq!(m.thread_ref, None, "top-level message has no thread yet");
 
     // The core answers in the thread rooted at the mention.

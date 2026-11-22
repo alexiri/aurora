@@ -12,6 +12,7 @@
 //! * the dashboard "notice" for owners is the pending reach grant itself plus an audit entry;
 //!   the card DM is raised through [`crate::domains::channels::hooks`].
 mod events;
+mod mention_text;
 mod message;
 pub mod send;
 pub(crate) mod speaker;
