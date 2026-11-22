@@ -8,6 +8,8 @@
   grafana-query run BODY.json [--columns a,b,c]
   grafana-query frames RESULT.json [--columns a,b,c]
 
+Output options of promql, logql, run and frames: --wide (one table per refId for single-series
+frames), --max-rows N (1 to 5000, default 200). With --instant, --from may be left out.
 Times (T): epoch milliseconds, RFC 3339 (converted), or now / now-6h / now-30m / now-7d.
 Every request goes through `aurora-agent call grafana ...`; nothing else touches the network and no
 credential is read or printed. Several Grafana accounts: --account A (letter or connection id).
@@ -24,13 +26,17 @@ import sys
 import tempfile
 
 POINTS_MAX = 11000  # Prometheus refuses more points than this per series
-ROWS_MAX = 200  # rows printed per frame
+ROWS_MAX = 200  # rows printed per frame unless --max-rows says otherwise
+ROWS_LIMIT = 5000  # most --max-rows takes
+MAX_ROWS = ROWS_MAX
+WIDE = False
 TIMEOUT = 300
 UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 COLUMNS_MAX = 50  # most names in --columns
 COLUMN_NAME_MAX = 100
+INSTANT_BACK_S = 300  # an instant query without a usable --from sends from = to - 5 minutes
 FIELDS_LISTED = 40  # field names shown when a --columns name matches nothing
 COLUMNS_HELP = ("print only these fields (comma-separated) plus the time field; a name matches a field "
                 "of that name or one ending with .NAME")
@@ -162,6 +168,56 @@ def keep_field(f, columns):
     return any(name == c or name.endswith("." + c) for c in columns)
 
 
+def field_label(f):
+    """The printed name of a field. A time field keeps its name. A data source may give a display
+    name (config.displayNameFromDS, OpenSearch: `<term> Count`, `<term> Sum <field>`): when the
+    field is called Value (or has no name) that alone is the name, otherwise `name{labels} [display]`."""
+    name = str(f.get("name", ""))
+    if f.get("type") == "time":
+        return clean(name)
+    shown = name
+    label = ",".join(f"{k}={v}" for k, v in sorted((f.get("labels") or {}).items()))
+    if label:
+        shown += "{" + label + "}"
+    config = f.get("config")
+    display = config.get("displayNameFromDS") if isinstance(config, dict) else None
+    if display not in (None, ""):
+        shown = str(display) if name in ("", "Value") else f"{shown} [{display}]"
+    return clean(shown)
+
+
+def cut_note(n):
+    return f"... {n - MAX_ROWS} more rows not shown ({n} in all)"
+
+
+def is_series_frame(frame):
+    """True for a frame that is exactly one time field and one value field."""
+    fields = (frame.get("schema") or {}).get("fields") or []
+    vals = (frame.get("data") or {}).get("values") or []
+    return (len(fields) == 2 and len(vals) == 2 and fields[0].get("type") == "time"
+            and fields[1].get("type") != "time")
+
+
+def print_wide(frames):
+    """One table for single-series frames: Time and one column per series, one row per distinct time."""
+    names = [field_label(fr["schema"]["fields"][1]) for fr in frames]
+    by_time = {}
+    for k, fr in enumerate(frames):
+        ts, vs = fr["data"]["values"]
+        for i, t in enumerate(ts):
+            if i < len(vs) and vs[i] is not None:
+                by_time.setdefault(t, {})[k] = fmt_value(vs[i], fr["schema"]["fields"][1].get("type"))
+            else:
+                by_time.setdefault(t, {})
+    print(f"## wide {len(frames)} series")
+    print("\t".join(["Time"] + names))
+    times = sorted(t for t in by_time if isinstance(t, (int, float)))
+    for t in times[:MAX_ROWS]:
+        print("\t".join([fmt_value(t, "time")] + [by_time[t].get(k, "-") for k in range(len(frames))]))
+    if len(times) > MAX_ROWS:
+        print(cut_note(len(times)))
+
+
 def print_frame(frame, columns=None):
     schema = frame.get("schema") or {}
     fields = schema.get("fields") or []
@@ -173,11 +229,7 @@ def print_frame(frame, columns=None):
         missing = [c for c in columns
                    if not any(str(f.get("name", "")) == c or str(f.get("name", "")).endswith("." + c)
                               for f in fields)]
-    names = []
-    for j in keep:
-        f = fields[j] if j < len(fields) else {}
-        label = ",".join(f"{k}={v}" for k, v in sorted((f.get("labels") or {}).items()))
-        names.append(clean(f.get("name", "")) + (f"{{{clean(label)}}}" if label else ""))
+    names = [field_label(fields[j] if j < len(fields) else {}) for j in keep]
     title = schema.get("name") or ""
     print(f"## frame {clean(title)}".rstrip())
     if columns and fields and missing:
@@ -187,15 +239,15 @@ def print_frame(frame, columns=None):
         print(line.replace("\n", " ").replace("\t", " "))
     print("\t".join(names))
     n = max((len(c) for c in cols), default=0)
-    for i in range(min(n, ROWS_MAX)):
+    for i in range(min(n, MAX_ROWS)):
         row = []
         for j in keep:
             c = cols[j]
             ftype = fields[j].get("type") if j < len(fields) else None
             row.append(fmt_value(c[i] if i < len(c) else None, ftype))
         print("\t".join(row))
-    if n > ROWS_MAX:
-        print(f"... {n - ROWS_MAX} more rows not shown ({n} in all)")
+    if n > MAX_ROWS:
+        print(cut_note(n))
 
 
 def print_results(results, columns=None):
@@ -209,22 +261,33 @@ def print_results(results, columns=None):
               + (f" (errorSource {clean(r['errorSource'])})" if r.get("errorSource") else ""))
         if err or (isinstance(status, int) and status >= 400):
             bad += 1
-        for frame in r.get("frames") or []:
+        frames = [fr for fr in r.get("frames") or [] if isinstance(fr, dict)]
+        if WIDE:
+            wide = [fr for fr in frames if is_series_frame(fr)]
+            if wide:
+                print_wide(wide)
+            frames = [fr for fr in frames if not is_series_frame(fr)]
+        for frame in frames:
             print_frame(frame, columns)
     return bad
+
+
+def send_body(body):
+    """One query_datasources call with this body. Returns (ok, parsed JSON or None, text)."""
+    path = mktemp(".json")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(body, f)
+        return agent("query_datasources", body=path)
+    finally:
+        os.unlink(path)
 
 
 def run_body(body, columns=None):
     """Sends a ds/query body. On a failure of several queries, retries each refId alone, because
     Grafana answers HTTP 400 for the whole request when any refId failed and aurora-agent keeps
     only the first lines of such an answer."""
-    path = mktemp(".json")
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(body, f)
-        ok, data, text = agent("query_datasources", body=path)
-    finally:
-        os.unlink(path)
+    ok, data, text = send_body(body)
     if ok:
         if not isinstance(data, dict) or not isinstance(data.get("results"), dict):
             print(f"# no results in the answer: {clean(json.dumps(data)[:300])}")
@@ -340,8 +403,15 @@ def cmd_promql(a, kind="prometheus"):
             die("an expression is empty")
     if not UID_RE.match(a.ds):
         die("a data source UID has only letters, digits, - and _")
-    f, f_s = norm_time(a.frm)
+    apply_output(a)
+    if a.frm is None and not a.instant:
+        die("a range query needs --from")
     t, t_s = norm_time(a.to)
+    f, f_s = norm_time(a.frm) if a.frm is not None else (None, None)
+    if a.instant and (f_s is None or f_s >= t_s):
+        # an instant query needs only --to; Grafana wants a from before the to
+        f_s = t_s - INSTANT_BACK_S
+        f, t = str(int(round(f_s * 1000))), str(int(round(t_s * 1000)))
     window = (t_s - f_s) if f_s is not None and t_s is not None else None
     if window is not None and window <= 0:
         die("--to is not after --from")
@@ -391,7 +461,19 @@ def read_json(path):
         die(f"{path}: {e}")
 
 
+def apply_output(a):
+    """--wide and --max-rows (1 to ROWS_LIMIT)."""
+    global MAX_ROWS, WIDE
+    WIDE = bool(getattr(a, "wide", False))
+    n = getattr(a, "max_rows", None)
+    if n is not None:
+        if not 1 <= n <= ROWS_LIMIT:
+            die(f"--max-rows takes a number from 1 to {ROWS_LIMIT}")
+        MAX_ROWS = n
+
+
 def cmd_run(a):
+    apply_output(a)
     body = read_json(a.body)
     if not isinstance(body, dict) or not isinstance(body.get("queries"), list) or not body["queries"]:
         die("the body needs a non-empty queries list (and from and to)")
@@ -402,6 +484,7 @@ def cmd_run(a):
 
 
 def cmd_frames(a):
+    apply_output(a)
     columns = parse_columns(a.columns) if a.columns is not None else None
     data = read_json(a.result)
     results = data.get("results") if isinstance(data, dict) else None
@@ -414,6 +497,11 @@ def main():
     global ACCOUNT
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--account", help="Grafana account: letter or connection id")
+    output = argparse.ArgumentParser(add_help=False)
+    output.add_argument("--wide", action="store_true",
+                        help="one table per refId for frames of one time and one value field")
+    output.add_argument("--max-rows", type=int, metavar="N",
+                        help=f"rows printed per frame or table, 1 to {ROWS_LIMIT} (default {ROWS_MAX})")
     ap = argparse.ArgumentParser(prog="grafana-query", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -426,23 +514,24 @@ def main():
     p.set_defaults(fn=cmd_panels)
 
     for name, fn, extra in (("promql", cmd_promql, "Prometheus or Mimir"), ("logql", cmd_logql, "Loki")):
-        p = sub.add_parser(name, parents=[common], help=f"{extra} queries, one refId per expression")
+        p = sub.add_parser(name, parents=[common, output], help=f"{extra} queries, one refId per expression")
         p.add_argument("--ds", required=True, help="data source UID")
-        p.add_argument("--from", dest="frm", required=True)
+        p.add_argument("--from", dest="frm", help="start (required unless --instant)")
         p.add_argument("--to", required=True)
         p.add_argument("--step", help="resolution, such as 30s or 5m (range queries)")
-        p.add_argument("--instant", action="store_true", help="one point per series at --to")
+        p.add_argument("--instant", action="store_true",
+                       help="one point per series at --to (--from may be left out)")
         if name == "logql":
             p.add_argument("--limit", type=int, default=100, help="most log lines (default 100)")
         p.add_argument("expr", nargs="+")
         p.set_defaults(fn=fn)
 
-    p = sub.add_parser("run", parents=[common], help="send a ds/query body file (OpenSearch, SQL, anything)")
+    p = sub.add_parser("run", parents=[common, output], help="send a ds/query body file (OpenSearch, SQL, anything)")
     p.add_argument("body")
     p.add_argument("--columns", help=COLUMNS_HELP)
     p.set_defaults(fn=cmd_run)
 
-    p = sub.add_parser("frames", help="print a saved ds/query answer")
+    p = sub.add_parser("frames", parents=[output], help="print a saved ds/query answer")
     p.add_argument("result")
     p.add_argument("--columns", help=COLUMNS_HELP)
     p.set_defaults(fn=cmd_frames)

@@ -14,7 +14,11 @@ S="$SKILLS_DIR/grafana-query/scripts/grafana-query"
 "$S" promql --ds <uid> --from now-6h --to now --step 5m 'sum(rate(http_requests_total[5m]))'
 ```
 
-`--help` on each subcommand. Several Grafana accounts: `--account <letter>`. Checked against
+`--help` on each subcommand. Several Grafana accounts: `--account <letter>`. Output options of
+`promql`, `logql`, `run` and `frames`: `--wide` (one table per refId, a `Time` column and one column
+per series) and `--max-rows N` (1 to 5000, default 200 per frame). `--instant` needs only `--to`.
+OpenSearch queries from flags: `grafana-opensearch` (`grafana-os`). Window comparison and health
+sweep: `grafana-prometheus` (`grafana-prom compare`, `sweep`). Checked against
 Grafana v13.3.1 (`pkg/api/ds_query.go`, `pkg/services/query/query.go`) and, for the Prometheus and
 Loki query models, Grafana v12.3.0, the last release that has them in its source tree.
 
@@ -23,11 +27,10 @@ Loki query models, Grafana v12.3.0, the last release that has them in its source
 `query_datasources` is `POST /api/ds/query`, the route Grafana's own UI uses for every data source.
 It is a read here (it runs as the service account under the Viewer role). The data source **proxy**
 tools (`prometheus_*`, `loki_*`, `GET /api/datasources/proxy/uid/<uid>/…`) forward to the backend's
-own address, and a backend that redirects (http to https, or a path) answers Grafana's proxy with a
-`3xx` that Grafana passes through unchanged. `aurora-agent` never follows redirects (the new host is
-not this connection's), so on such an instance the proxy tools never work, while `ds/query` does.
-Seen on one instance (HTTP 308 with a `Location` on the backend host). Use `ds/query` first. The proxy is useful only for what `ds/query` cannot do (series, labels,
-label values, rules), and on a redirecting instance those paths return 3xx too. Use these instead:
+own address, and a backend that redirects (http to https, or a path) answers with a `3xx` that
+`aurora-agent` never follows (the new host is not this connection's): on such an instance (seen once,
+HTTP 308) the proxy tools never work, while `ds/query` does. Use `ds/query` first; the proxy only
+adds series, labels, label values and rules, and those paths return 3xx there too. Use these instead:
 
 - Metric names: an instant query `count by (__name__) ({<selector>, __name__=~"<prefix>.*"})`, such
   as `"$S" promql --ds <uid> --from now-1h --to now --instant 'count by (__name__) ({job="x", __name__=~"http_.*"})'`.
@@ -77,6 +80,9 @@ Send it with `aurora-agent call grafana query_datasources --body @body.json --ou
   **Prometheus refuses more than 11,000 points per series**; the script refuses first and names a
   step that fits.
 - Batch refIds that share a window in one request.
+- **Times for evidence.** Convert the person's window to absolute UTC once (the sandbox runs in UTC,
+  the person's time zone may not) and use RFC 3339 times (`2026-11-20T13:00:00Z`) in every query
+  that goes into a report, never `now-12h`: it could not be re-run with the same answer.
 
 ### Prometheus and Mimir
 
@@ -94,7 +100,8 @@ metric queries) or `instant` (a metric query at `to`). Script: `logql … [--lim
 
 ### OpenSearch and Elasticsearch
 
-See `grafana-opensearch` (body format, aggregations, raw documents, quirks).
+Use `grafana-os` and see `grafana-opensearch` (the flags, body format, aggregations, raw documents,
+quirks).
 
 ### SQL
 
@@ -112,6 +119,14 @@ long-format frame has one column per field (several value columns, one row per `
 script prints, for each refId, `# <refId> <status>` (and the error), then per frame a header with
 its labels or field names and tab-separated rows with times in RFC 3339 UTC; `"$S" frames q.json`
 prints a saved answer.
+
+**Column names.** A field is printed as `name{labels}`. A data source may give it a display name
+(`config.displayNameFromDS`; OpenSearch: `<term> Count`, `<term> Sum <field>`): for a field called
+`Value` that is the column name, otherwise it follows as `name{labels} [display name]`.
+
+**Never quote a count from cut output.** Rows over `--max-rows` are cut with
+`... N more rows not shown (M in all)`: use M. A `terms` answer with exactly `size` buckets is only a
+lower bound: write "at least N", or raise `size`.
 
 For documents (`raw_data`), `--columns a,b,c` on `run` or `frames` prints only those fields (plus
 the time field). Use it: access-log documents have dozens of fields.

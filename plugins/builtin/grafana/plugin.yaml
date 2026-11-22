@@ -1,6 +1,6 @@
 package:
   id: grafana
-  version: 1.3.0
+  version: 1.4.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
