@@ -15,6 +15,10 @@ them (C-1132). This brief puts them in front of agents and admins:
 - the words "agent guide" and "recipe" leave the code, docs and API.
 
 Same Rust lane as P5-APPSKILL-1, on its branch; **both merge together** after the SEC-150 review.
+**P5-SKILLDIR (D-454, C-1140, `alexiri/skills-dir`) goes first**: it sets `SKILLS_DIR` in every agent
+environment and edits `services/aurora-supervisor/src/instructions.rs`, which this brief also edits.
+Rebase on it; `app.md` names skills as `$SKILLS_DIR/<name>/SKILL.md`, the same path the instruction
+file's Skills section uses.
 
 ## Decisions that bind this brief
 

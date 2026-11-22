@@ -22,7 +22,7 @@ The owner can then trim their library to the personal parts, or remove it.
 
 ## Order and lanes
 
-- After P5-APPSKILL-1/-2 have merged. One small lane (Sonnet). Size S–M. It edits only
+- After P5-APPSKILL-1/-2 and P5-SKILLDIR have merged. One small lane (Sonnet). Size S–M. It edits only
   `plugins/builtin/indico/**` and adds one test script, so it can run beside P5-APPSKILL-3.
 
 ## Read first
@@ -61,8 +61,10 @@ The owner can then trim their library to the personal parts, or remove it.
      rooms (Openlab, coffee areas), the annual closure, CodiMD, Europe/Zurich. Instead: the host is the
      account's (from `app.md`; `aurora-agent call` adds it), times are the server's local time, a room
      whose comments say it is not a meeting room is skipped, and links go to `https://<host>/…`;
-   - harness paths (`~/.agents/skills/…`): a script finds its own and its sibling skills' folders from
-     `$(dirname "$0")`; a `SKILL.md` refers to "this skill's folder" (its path is in `app.md`).
+   - harness paths (`~/.agents/skills/…`): use **`$SKILLS_DIR`** (P5-SKILLDIR, D-454, C-1140: the
+     absolute skills folder, set by the supervisor in every agent environment). A `SKILL.md` says to run
+     `"$SKILLS_DIR/indico-meeting-prep/scripts/doc2text"`; a script reaches a sibling skill the same way,
+     and falls back to `$(dirname "$0")/../..` only when `SKILLS_DIR` is unset.
 3. **Scripts**: bash or `python3 -I` with the standard library only (the sandbox image has `python3`,
    `jq`, `ripgrep`; `doc2text` may use `pypdf` or `pdftotext` when present and says so when neither is),
    committed executable (`git add --chmod=+x`), no network access except through `aurora-agent call
