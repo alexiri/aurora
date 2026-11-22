@@ -3,8 +3,8 @@
 > **Status: proposal (2026-11-22).** No D-, C-, SEC- or migration numbers are taken (the spec batch takes
 > them from PROGRESS's next-free note).
 >
-> **Owner answers, 2026-11-22 (D-468):** the recommendations of Q-P6-MIX-1..5 and 7..10 are accepted as
-> written in the table below. **Q-P6-MIX-6 is open.**
+> **Owner answers, 2026-11-22 (D-468):** the recommendations of Q-P6-MIX-1..10 are all accepted as
+> written in the table below. No question is open.
 
 ## Goal
 
@@ -142,7 +142,7 @@ that speak only OpenAI (Azure OpenAI, plain vLLM), and `codex` use Anthropic.
   **P6-MIX-2** (supervisor router and adapters, conformance; M–L), **P6-MIX-3** (web pickers and readiness
   lines; M), **P6-MIX-4** (Part 2 translation; M–L).
 
-## Open questions for the owner
+## Questions for the owner (all answered 2026-11-22, D-468)
 
 | # | Question | Recommendation |
 |---|---|---|
