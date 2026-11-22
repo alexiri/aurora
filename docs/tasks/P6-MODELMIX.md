@@ -1,7 +1,10 @@
 # P6-MODELMIX: An agent's model sizes from more than one key — **proposal, spec batch (Opus) later — phase 6**
 
 > **Status: proposal (2026-11-22).** No D-, C-, SEC- or migration numbers are taken (the spec batch takes
-> them from PROGRESS's next-free note). Questions Q-P6-MIX-1..10 are open, each with a recommendation.
+> them from PROGRESS's next-free note).
+>
+> **Owner answers, 2026-11-22 (D-468):** the recommendations of Q-P6-MIX-1..5 and 7..10 are accepted as
+> written in the table below. **Q-P6-MIX-6 is open.**
 
 ## Goal
 
