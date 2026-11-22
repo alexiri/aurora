@@ -22,7 +22,8 @@
 //! by Pi and delivered after the in-flight tool result and before the next model call. Sent while
 //! idle Pi would start a run instead, so the adapter refuses a steer between turns itself and never
 //! sends it. Abort sends the RPC `abort` and waits for `agent_settled { aborted: true }`.
-//! `background_tool` is `false`.
+//! `background_tool` is `false` (FIX-225: tested, no RPC command backgrounds a running tool). The steer
+//! is covered by the `steerable` case of `pi_conforms_against_the_mock_upstream_of_every_dialect_it_declares`.
 //!
 //! No credential is ever rendered: `models.json` holds a `$NAME` reference to the placeholder
 //! variable (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY` = `aurora-placeholder`), the per-session proxy

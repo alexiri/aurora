@@ -180,12 +180,133 @@ async fn no_init_before_message_proceeds_after_timeout() {
     assert!(matches!(ev.last(), Some(HarnessEvent::Done { .. })));
 }
 
+/// A scripted child that holds the turn's first message (a running tool) and ends its run when a
+/// second user line arrives: with the echo `--replay-user-messages` gives it (`echo`), or without
+/// (the run ended before it took the line: the CLI would run it as a turn of its own).
+struct SteerMock {
+    echo: bool,
+    killed: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl Launcher for SteerMock {
+    async fn launch(&self, _spec: LaunchSpec) -> Result<ChildIo, HarnessError> {
+        let (in_tx, mut in_rx) = mpsc::channel::<String>(8);
+        let (out_tx, out_rx) = mpsc::channel::<String>(64);
+        let (echo, tx) = (self.echo, out_tx.clone());
+        tokio::spawn(async move {
+            let mut first = true;
+            while let Some(msg) = in_rx.recv().await {
+                if std::mem::take(&mut first) {
+                    continue; // the turn's own message: the run is now in a long tool call
+                }
+                let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+                let text = v["message"]["content"][0]["text"].as_str().unwrap();
+                if echo {
+                    let line = serde_json::json!({"type": "user", "isReplay": true,
+                        "message": {"role": "user", "content": [{"type": "text", "text": text}]}});
+                    let _ = tx.send(line.to_string()).await;
+                }
+                for l in REPLY.lines().filter(|l| !l.contains("\"init\"")) {
+                    let _ = tx.send(l.to_owned()).await;
+                }
+            }
+        });
+        let killed = self.killed.clone();
+        Ok(ChildIo {
+            stdin: in_tx,
+            lines: out_rx,
+            kill: Box::new(move || {
+                killed.store(true, Ordering::SeqCst);
+                drop(out_tx);
+            }),
+        })
+    }
+}
+
+fn steer_input(id: Uuid, label: &str) -> SteerInput {
+    SteerInput {
+        followup_id: id,
+        text: "more".into(),
+        speaker_label: label.into(),
+    }
+}
+
+/// (FIX-225) A steer written during a run is accepted, joins on the CLI's echo of the line, and
+/// the run still ends with exactly one terminal event.
 #[tokio::test]
-async fn steer_refused_and_background_unsupported_and_caps() {
+async fn claude_code_steer_during_a_run_joins_on_the_echo_and_the_run_ends_once() {
+    let killed = Arc::new(AtomicBool::new(false));
+    let a = ClaudeCodeAdapter::with_launcher(Arc::new(SteerMock {
+        echo: true,
+        killed: killed.clone(),
+    }))
+    .hold_timeout(Duration::from_millis(50));
+    let mut s = a.start_session(opts(None)).await.unwrap();
+    let rx = s.run_turn(turn("hi")).await.unwrap();
+    // The door opens once the turn's own message is queued ahead of any steer.
+    let id = Uuid::now_v7();
+    let ack = loop {
+        let st = s.steer(steer_input(id, "Ann")).await.unwrap();
+        if st == SteerAck::Accepted {
+            break st;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(ack, SteerAck::Accepted);
+    let ev = collect(rx).await;
+    assert!(
+        ev.contains(&HarnessEvent::MessageJoined { followup_id: id }),
+        "{ev:?}"
+    );
+    assert_eq!(ev.iter().filter(|e| e.is_terminal()).count(), 1, "{ev:?}");
+    assert!(matches!(ev.last(), Some(HarnessEvent::Done { .. })));
+    assert!(
+        !killed.load(Ordering::SeqCst),
+        "an echoed steer is no stray"
+    );
+    // between turns the same call refuses, whatever the CLI would do with the line
+    assert_eq!(
+        s.steer(steer_input(Uuid::now_v7(), "")).await.unwrap(),
+        SteerAck::Refused
+    );
+}
+
+/// (FIX-225) A steer the run ended without taking is never joined, never replayed, and the CLI
+/// that would run it as a turn of its own is killed (the next turn resumes the session).
+#[tokio::test]
+async fn claude_code_steer_the_run_did_not_take_is_not_joined_and_the_child_is_killed() {
+    let killed = Arc::new(AtomicBool::new(false));
+    let a = ClaudeCodeAdapter::with_launcher(Arc::new(SteerMock {
+        echo: false,
+        killed: killed.clone(),
+    }))
+    .hold_timeout(Duration::from_millis(50));
+    let mut s = a.start_session(opts(None)).await.unwrap();
+    let rx = s.run_turn(turn("hi")).await.unwrap();
+    let id = Uuid::now_v7();
+    loop {
+        if s.steer(steer_input(id, "")).await.unwrap() == SteerAck::Accepted {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let ev = collect(rx).await;
+    assert!(
+        !ev.iter()
+            .any(|e| matches!(e, HarnessEvent::MessageJoined { .. })),
+        "{ev:?}"
+    );
+    assert_eq!(ev.iter().filter(|e| e.is_terminal()).count(), 1, "{ev:?}");
+    assert!(killed.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn steer_refused_between_turns_background_unsupported_and_caps() {
     let a = ClaudeCodeAdapter::with_launcher(Arc::new(Mock::new(None, REPLY)));
     let caps = a.capabilities();
     assert!(caps.resume && caps.tool_events && caps.thinking_deltas && caps.platform_tools);
-    assert!(!caps.steer && !caps.background_tool);
+    assert!(caps.steer && !caps.background_tool);
     assert_eq!(
         caps.dialects,
         [

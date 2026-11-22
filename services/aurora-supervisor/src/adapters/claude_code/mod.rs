@@ -15,8 +15,13 @@
 //! `result` line (see [`stream`] for the mapping). Abort kills the child; the next turn restarts it
 //! with `--resume <session id>`. `release` kills the idle child and keeps the session id.
 //!
-//! `steer` is `false` (not verified against the pinned version): follow-ups become separate turns
-//! and `steer()` always refuses. `background_tool` is `false`.
+//! `steer` is `true` (FIX-225, probed against 2.1.318 and 2.1.319): a second user line written to
+//! stdin during a run is handed to the model at the next tool boundary and the run goes on to its
+//! single `result`; `--replay-user-messages` makes the CLI echo each user line it takes, which is
+//! the join. The same line to an idle CLI would start a run, so `steer()` refuses between turns and
+//! the turn's end kills a CLI still holding an unechoed steer (see [`Pump::close_to_steers`]).
+//! `background_tool` is `false`: the stream-json mode has no interface that moves a running tool to
+//! the background (`docs/12 §Turn controls by harness`).
 //!
 //! The first turn on a fresh child is held until `system/init` lists the `aurora` MCP server as
 //! connected with its tools; if the CLI emits no init before the first message, the message is sent
@@ -96,7 +101,7 @@ impl HarnessAdapter for ClaudeCodeAdapter {
     fn capabilities(&self) -> HarnessCapabilities {
         HarnessCapabilities {
             resume: true,
-            steer: false,
+            steer: true,
             background_tool: false,
             thinking_deltas: true,
             tool_events: true,
@@ -199,19 +204,29 @@ fn purge_claude_files(roots: &[std::path::PathBuf], session_ref: &str) -> std::i
 struct Live {
     stdin: mpsc::Sender<String>,
     lines: Arc<Mutex<mpsc::Receiver<String>>>,
-    kill: Option<Box<dyn FnOnce() + Send>>,
+    kill: KillSlot,
     ready: Arc<AtomicBool>,
     dead: Arc<AtomicBool>,
     /// The CLI's per-model usage report is cumulative for this child (P5-MODELS-2).
     usage_base: stream::Baseline,
+    /// (FIX-225) Steers handed to this child and not yet echoed.
+    steers: stream::Steers,
+}
+
+type KillSlot = Arc<StdMutex<Option<Box<dyn FnOnce() + Send>>>>;
+
+/// Kills the child once and marks it dead (the next turn starts a new one with `--resume`).
+fn kill_child(dead: &AtomicBool, kill: &KillSlot) {
+    dead.store(true, Ordering::SeqCst);
+    let k = kill.lock().ok().and_then(|mut k| k.take());
+    if let Some(k) = k {
+        k();
+    }
 }
 
 impl Live {
     fn kill(&mut self) {
-        self.dead.store(true, Ordering::SeqCst);
-        if let Some(k) = self.kill.take() {
-            k();
-        }
+        kill_child(&self.dead, &self.kill);
     }
 }
 
@@ -243,10 +258,11 @@ impl ClaudeSession {
         self.live = Some(Live {
             stdin,
             lines: Arc::new(Mutex::new(lines)),
-            kill: Some(kill),
+            kill: Arc::new(StdMutex::new(Some(kill))),
             ready: Arc::default(),
             dead: Arc::default(),
             usage_base: Arc::default(),
+            steers: Arc::default(),
         });
         Ok(())
     }
@@ -263,6 +279,8 @@ struct Pump {
     hold_timeout: Duration,
     user_line: String,
     usage_base: stream::Baseline,
+    steers: stream::Steers,
+    kill: KillSlot,
 }
 
 fn err(code: &str, message: &str) -> HarnessEvent {
@@ -277,7 +295,7 @@ impl Pump {
     async fn drive(&self) -> HarnessEvent {
         let aborted = || err("aborted", "turn aborted");
         let mut lines = self.lines.lock().await;
-        let mut mapper = StreamMapper::with_baseline(self.usage_base.clone());
+        let mut mapper = StreamMapper::with_baseline(self.usage_base.clone(), self.steers.clone());
         if !self.ready.load(Ordering::SeqCst) {
             let started = Instant::now();
             let mut deadline = started + self.hold_timeout.min(INIT_GRACE);
@@ -318,6 +336,11 @@ impl Pump {
         if self.stdin.send(self.user_line.clone()).await.is_err() {
             return self.exited();
         }
+        // The CLI has the turn's own message in its stdin queue ahead of any steer: from here on a
+        // steer is taken as a message of the run (a steer sent before it would be the run's first).
+        if let Ok(mut s) = self.steers.lock() {
+            s.accepting = true;
+        }
         loop {
             let line = tokio::select! {
                 biased;
@@ -344,6 +367,25 @@ impl Pump {
             if let Some(t) = m.terminal {
                 return t;
             }
+        }
+    }
+
+    /// Closes the door to steers when the turn ends. A steer written to the CLI and not echoed by
+    /// now would start a run of its own after this turn's `result` (probed: the CLI runs a user line
+    /// that reaches an idle session as a new turn), so the child is killed: the steer is lost (the
+    /// supervisor reports it `missed`, the follow-up runs as the next turn) and the next turn
+    /// restarts the CLI with `--resume`.
+    fn close_to_steers(&self) {
+        let stray = self
+            .steers
+            .lock()
+            .map(|mut s| {
+                s.accepting = false;
+                std::mem::take(&mut s.pending)
+            })
+            .unwrap_or_default();
+        if !stray.is_empty() {
+            kill_child(&self.dead, &self.kill);
         }
     }
 
@@ -398,18 +440,57 @@ impl HarnessSession for ClaudeSession {
             hold_timeout: self.hold_timeout,
             user_line: config::user_message_line(&config::render_turn(&input)),
             usage_base: live.usage_base.clone(),
+            steers: live.steers.clone(),
+            kill: live.kill.clone(),
         };
         let running = self.running.clone();
         tokio::spawn(async move {
             let end = pump.drive().await;
+            pump.close_to_steers();
             running.store(false, Ordering::SeqCst);
             let _ = tx.send(end).await;
         });
         Ok(rx)
     }
 
-    async fn steer(&mut self, _input: SteerInput) -> Result<SteerAck, HarnessError> {
-        Ok(SteerAck::Refused)
+    /// A second stream-json user line written during a run is taken by the CLI at the next tool
+    /// boundary (probed with 2.1.318 and 2.1.319, `claude_code_steer_*` tests) and echoed
+    /// (`--replay-user-messages`); the echo is the join (`MessageJoined`). The run still ends with
+    /// its single `result`. Refused between turns: the same line to an idle CLI would start a run.
+    async fn steer(&mut self, input: SteerInput) -> Result<SteerAck, HarnessError> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Ok(SteerAck::Refused);
+        }
+        let Some(live) = &self.live else {
+            return Ok(SteerAck::Refused);
+        };
+        let text = config::render_steer(&input);
+        // Registered before it is written, so its echo can never be missed; the door is checked in
+        // the same critical section as the registration, so a turn that just ended is never handed
+        // one (the turn's end takes the same lock and kills the child if one is still pending).
+        let registered = live.steers.lock().is_ok_and(|mut s| {
+            if s.accepting {
+                s.pending.push((input.followup_id, text.clone()));
+                true
+            } else {
+                false
+            }
+        });
+        if !registered {
+            return Ok(SteerAck::Refused);
+        }
+        if live
+            .stdin
+            .send(config::user_message_line(&text))
+            .await
+            .is_err()
+        {
+            if let Ok(mut s) = live.steers.lock() {
+                s.pending.retain(|(id, _)| *id != input.followup_id);
+            }
+            return Ok(SteerAck::Refused);
+        }
+        Ok(SteerAck::Accepted)
     }
 
     async fn background_running_tool(&mut self) -> Result<SendNowOutcome, HarnessError> {
