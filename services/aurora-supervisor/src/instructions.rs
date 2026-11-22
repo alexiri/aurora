@@ -126,9 +126,18 @@ pub struct ToolFamily {
     pub tools: Vec<String>,
 }
 
+/// A tool name safe to print inside backticks: 1–64 characters of `[a-z0-9_]`.
+fn tool_name_printable(t: &str) -> bool {
+    (1..=64).contains(&t.len())
+        && t.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
 /// (P5-GUIDE-7, C-654) The *platform tools* fragment of `24 §10b`: a fixed paragraph, then one
-/// line per family with its verbs (the tool names without the family prefix). The supervisor's own
-/// `process_*` tools join as the `processes` family.
+/// line per family with its tools' full names in backticks, exactly the `<name>` that
+/// `aurora-agent describe aurora <name>` and `call aurora <name>` take (FIX-226). Names outside
+/// 1–64 `[a-z0-9_]` are skipped (the inputs are data; a backtick would break the line). The
+/// supervisor's own `process_*` tools join as the `processes` family.
 fn platform_tools_fragment(p: &PlatformToolsInfo) -> String {
     let mut o = String::from(
         "## Platform tools\n\nBesides the tools you see, Aurora gives you these, which you call from \
@@ -147,21 +156,20 @@ its arguments, `aurora-agent call aurora <name> key=value …` runs it and print
         if f.tools.is_empty() {
             continue;
         }
-        let verbs: Vec<&str> = f
+        let names: Vec<String> = f
             .tools
             .iter()
-            .map(|t| {
-                let stripped = t
-                    .strip_prefix(f.name.trim_end_matches('s'))
-                    .and_then(|r| r.strip_prefix('_'));
-                stripped.unwrap_or(t.as_str())
-            })
+            .filter(|t| tool_name_printable(t))
+            .map(|t| format!("`{t}`"))
             .collect();
+        if names.is_empty() {
+            continue;
+        }
         let _ = writeln!(
             o,
             "- {} ({}): {}",
             inline(&f.name, NAME_MAX),
-            inline(&verbs.join(", "), 200),
+            names.join(", "),
             inline(&f.purpose, 200)
         );
     }
@@ -722,10 +730,12 @@ mod tests {
         i.platform_tools = Some(tool_families());
         let on = render_with(&i, true, SKILLS);
         assert!(on.contains("## Platform tools"));
-        assert!(on.contains("- memory (save, get, list, search): what you remember"));
-        assert!(on.contains("- schedules (create, list): "));
+        assert!(on.contains(
+            "- memory (`memory_save`, `memory_get`, `memory_list`, `memory_search`): what you remember"
+        ));
+        assert!(on.contains("- schedules (`schedule_create`, `schedule_list`): "));
         assert!(
-            on.contains("- processes ("),
+            on.contains("- processes (`process_start`, "),
             "the supervisor's local family joins"
         );
         assert!(
@@ -749,6 +759,78 @@ mod tests {
         let frag = platform_tools_fragment(&tool_families());
         eprintln!("platform tools fragment: {} chars", frag.chars().count());
         assert!(frag.chars().count() < 2_000, "{}", frag.chars().count());
+    }
+
+    /// (FIX-226) Names outside `[a-z0-9_]{1,64}` are skipped; a family with none is omitted.
+    #[test]
+    fn platform_tools_skip_names_outside_the_grammar() {
+        let long = "a".repeat(65);
+        let p = PlatformToolsInfo {
+            mode: "on_demand".into(),
+            families: vec![
+                ToolFamily {
+                    name: "memory".into(),
+                    purpose: "notes".into(),
+                    tools: vec![
+                        "memory_save".into(),
+                        "bad`name".into(),
+                        "Has Space".into(),
+                        String::new(),
+                        long.clone(),
+                        "memory_get".into(),
+                    ],
+                },
+                ToolFamily {
+                    name: "broken".into(),
+                    purpose: "nothing printable".into(),
+                    tools: vec!["bad`name".into(), "Has Space".into(), String::new(), long],
+                },
+            ],
+        };
+        let f = platform_tools_fragment(&p);
+        assert!(
+            f.contains("- memory (`memory_save`, `memory_get`): notes\n"),
+            "{f}"
+        );
+        assert!(!f.contains("- broken"), "{f}");
+        assert!(!f.contains("Has Space") && !f.contains("bad"), "{f}");
+    }
+
+    /// (FIX-226) Every name the index prints is one the platform call path looks up: the
+    /// `describe`/`call` target finds tools by exact name, so a printed name must be found.
+    #[test]
+    fn every_printed_tool_name_is_accepted_by_the_platform_target() {
+        use aurora_protocol::tools::ToolDescriptor;
+        let mut p = tool_families();
+        let desc = |n: &str| ToolDescriptor {
+            name: n.to_owned(),
+            description: Some("x".into()),
+            input_schema: serde_json::json!({"type": "object"}),
+            family: None,
+            exposure: None,
+        };
+        // The registry's side: all the tools the families name, plus the supervisor's local ones.
+        let mut registry: Vec<ToolDescriptor> = p
+            .families
+            .iter()
+            .flat_map(|f| f.tools.iter().map(|t| desc(t)))
+            .collect();
+        registry.extend(crate::process::ProcessManager::local_descriptors());
+        p.mode = "on_demand".into();
+        let frag = platform_tools_fragment(&p);
+        let mut printed = 0;
+        for line in frag.lines().filter(|l| l.starts_with("- ")) {
+            let inner = line.split_once(" (").unwrap().1.split_once("):").unwrap().0;
+            for name in inner.split(", ") {
+                let name = name.trim_matches('`');
+                assert!(
+                    crate::agent_cli::platform::describe(&registry, name).is_ok(),
+                    "the index prints {name:?} but the platform target rejects it"
+                );
+                printed += 1;
+            }
+        }
+        assert!(printed >= 7, "{frag}");
     }
 
     /// With the 23 built-in apps and long notes the fragment stays small: the notes are not in it.
