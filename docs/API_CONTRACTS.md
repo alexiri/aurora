@@ -2778,7 +2778,6 @@ Rule: `docs/tasks/P6-TEMPLATES.md` (design), `docs/25-agent-templates.md` (the p
   - `POST /v1/channel-links/confirm { token, platform_user_ref, agent_id? }` (C-36): `agent_id` applies the same rule in the **same transaction** as the link (audit `channel_presence.attach` with `via = "link"`). When it is refused (422 `agent_not_reachable`) the whole confirm is refused, no link, presence or default is written, and the token is **not** consumed. Without `agent_id` the confirm is unchanged.
   - Shared helper: `presences::attach_shared_tx` is the one insert of a shared presence (C-34 attach, the PUT and the confirm). No right is widened: the attach goes through `can_use`, the organization match and the integration's capability check, all on the server.
   - Direct-message "not set up" reply (`13 §5` step 3): see D-461(c); no API change.
-||||||| 70850a76
 - C-1148 **Locked memories: data and routes** (P6-MEMLOCK Part A, D-463, D-464; one migration, next free number when placed; `03 §memories`, `05`).
   - `memories` gains `locked boolean not null default false`, `locked_at timestamptz null` and `locked_by uuid null` (FK→users, `on delete set null`). `locked_at` and `locked_by` are set when `locked` becomes true and cleared when it becomes false; `locked_by` is null for an API key without a user, and for a person who was later deleted. No index.
   - `Memory` gains `locked: bool`, `locked_at: string|null` and `locked_by: { id, display_name } | null`.
