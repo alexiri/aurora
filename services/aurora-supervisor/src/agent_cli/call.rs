@@ -469,7 +469,7 @@ async fn call_doc(
         Some(h) => format!("https://{h}"),
         None => account.base_url.clone().ok_or_else(|| {
             usage(format!(
-                "account {} has no known host; read .aurora/apps/{}/guide.md",
+                "account {} has no known host; read .aurora/apps/{}/app.md",
                 account.letter, doc.app.id
             ))
         })?,

@@ -412,6 +412,88 @@
       ],
       "items": "$",
       "tool": "list_annotations"
+    },
+    {
+      "id": "query_datasources",
+      "method": "POST",
+      "path": "/api/ds/query",
+      "summary": "Run queries on any data source through Grafana (read only); answer is data frames per refId",
+      "tags": ["query"],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          { "name": "from", "required": true, "type": "string", "description": "Start: epoch milliseconds, or Grafana date math such as now-6h; the grafana-query script also converts RFC 3339 to epoch milliseconds" },
+          { "name": "to", "required": true, "type": "string", "description": "End, same forms as from; now for the present" },
+          { "name": "queries", "required": true, "type": "array", "description": "Use --body @file. Each: refId, datasource {uid,type}, expr, range or instant, rawSql, intervalMs, maxDataPoints. See the grafana-query skill" }
+        ]
+      },
+      "tool": "query_datasources"
+    },
+    {
+      "id": "create_annotation",
+      "method": "POST",
+      "path": "/api/annotations",
+      "summary": "Add an annotation, on one dashboard or for the whole organization",
+      "tags": ["annotations"],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          { "name": "text", "required": true, "type": "string", "description": "What happened" },
+          { "name": "tags", "type": "array", "description": "Tags, e.g. tags:='[\"deploy\"]'" },
+          { "name": "time", "type": "integer", "description": "Start, Unix milliseconds (default now)" },
+          { "name": "timeEnd", "type": "integer", "description": "End, Unix milliseconds, for a region" },
+          { "name": "dashboardUID", "type": "string", "description": "Pin it to this dashboard; with panelId to one panel; without it the annotation is organization-wide" },
+          { "name": "panelId", "type": "integer", "description": "Panel id inside dashboardUID" }
+        ]
+      },
+      "tool": "create_annotation"
+    },
+    {
+      "id": "update_dashboard",
+      "method": "POST",
+      "path": "/api/dashboards/db",
+      "summary": "Create a dashboard or save a new version of one (read it first; keep uid, version and folder)",
+      "tags": ["dashboards"],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          { "name": "dashboard", "required": true, "type": "string", "description": "The dashboard model, a JSON object: pass as dashboard:=<json> or use --body @file" },
+          { "name": "folderUid", "type": "string", "description": "Folder to save it in; leaving it out moves an existing dashboard to the top level" },
+          { "name": "message", "type": "string", "description": "Version message" },
+          { "name": "overwrite", "type": "boolean", "default": false, "description": "Keep false: a 412 means someone saved in between, read again" }
+        ]
+      },
+      "tool": "update_dashboard"
+    },
+    {
+      "id": "create_silence",
+      "method": "POST",
+      "path": "/api/alertmanager/grafana/api/v2/silences",
+      "summary": "Silence matching alerts for a time, or change a silence (send its id)",
+      "tags": ["alerting"],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          { "name": "matchers", "required": true, "type": "array", "description": "matchers:='[{\"name\":\"alertname\",\"value\":\"HighErrors\",\"isRegex\":false,\"isEqual\":true}]'" },
+          { "name": "startsAt", "required": true, "type": "string", "description": "RFC 3339, UTC, e.g. 2026-11-20T14:00:00Z" },
+          { "name": "endsAt", "required": true, "type": "string", "description": "RFC 3339, UTC" },
+          { "name": "createdBy", "required": true, "type": "string", "description": "Who or what created it" },
+          { "name": "comment", "required": true, "type": "string", "description": "Why" },
+          { "name": "id", "type": "string", "description": "Send an existing silence's id to change it" }
+        ]
+      },
+      "tool": "create_silence"
+    },
+    {
+      "id": "delete_silence",
+      "method": "DELETE",
+      "path": "/api/alertmanager/grafana/api/v2/silence/{id}",
+      "summary": "End a silence",
+      "tags": ["alerting"],
+      "params": [
+        { "name": "id", "in": "path", "required": true, "type": "string", "description": "Silence id from list_silences" }
+      ],
+      "tool": "delete_silence"
     }
   ]
 }

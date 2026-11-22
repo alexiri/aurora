@@ -22,7 +22,8 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_plugins, upload_plugin))
         .routes(routes!(get_plugin, delete_plugin))
-        .routes(routes!(get_agent_guide_file))
+        .routes(routes!(get_app_skill_file))
+        .routes(routes!(get_operations_file))
         .routes(routes!(approve_plugin))
         .routes(routes!(reject_plugin))
         .routes(routes!(disable_plugin))
@@ -135,27 +136,17 @@ async fn get_plugin(
     Ok(Json(service::to_detail_dto(&s, row).await?))
 }
 
-/// One agent guide file of a package: what agents that use the app can read (instance
-/// administrators). Third-party text, served as a plain-text download, never rendered.
-#[utoipa::path(get, path = "/admin/plugins/{id}/agent-guides/{app_id}/{file}",
-    operation_id = "adminGetPluginAgentGuideFile", tag = "plugins",
-    params(("id" = Uuid, Path, description = "Package row id"),
-        ("app_id" = String, Path, description = "App id of the package"),
-        ("file" = String, Path, description = "File name listed in the app's guide")),
-    responses((status = 200, content_type = "text/plain", body = String),
-        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
-    security(("session" = [])))]
-async fn get_agent_guide_file(
-    _c: InstanceAdmin,
-    State(s): State<AppState>,
-    Path((id, app_id, file)): Path<(Uuid, String, String)>,
-) -> Result<Response, ApiError> {
-    let row = service::get_row(&s, id).await?;
-    let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
-    let bytes = service::guide_file(&mut conn, &row, &app_id, &file).await?;
-    // The name is one of the listed files (a validated grammar), so it needs no quoting rules.
-    let disposition = format!("attachment; filename=\"{file}\"");
-    Ok((
+#[derive(serde::Deserialize, utoipa::IntoParams)]
+struct SkillFileQuery {
+    /// Path inside the skill; absent = `SKILL.md` as shipped.
+    path: Option<String>,
+}
+
+fn plain_text(bytes: Vec<u8>, filename: &str) -> Response {
+    // The file name is built from validated grammars (skill name, path, operations file), so it
+    // needs no quoting rules.
+    let disposition = format!("attachment; filename=\"{filename}\"");
+    (
         [
             (CONTENT_TYPE, "text/plain; charset=utf-8".to_owned()),
             (X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
@@ -164,7 +155,65 @@ async fn get_agent_guide_file(
         ],
         bytes,
     )
-        .into_response())
+        .into_response()
+}
+
+/// One file of an app skill of a package (C-1136, instance administrators): third-party text,
+/// served as a plain-text download, never rendered.
+#[utoipa::path(get, path = "/admin/plugins/{id}/apps/{app_id}/skills/{name}/file",
+    operation_id = "adminGetPluginAppSkillFile", tag = "plugins",
+    params(("id" = Uuid, Path, description = "Package row id"),
+        ("app_id" = String, Path, description = "App id of the package"),
+        ("name" = String, Path, description = "Skill name"), SkillFileQuery),
+    responses((status = 200, content_type = "text/plain", body = String),
+        (status = 400, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn get_app_skill_file(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path((id, app_id, name)): Path<(Uuid, String, String)>,
+    Query(q): Query<SkillFileQuery>,
+) -> Result<Response, ApiError> {
+    if let Some(p) = &q.path
+        && !aurora_registry::skill_format::path_ok(p)
+        && p != "SKILL.md"
+    {
+        return Err(ApiError::invalid_request(
+            "Invalid skill file path.",
+            vec![aurora_core::FieldError::new(
+                "/path",
+                "not a skill file path",
+            )],
+        ));
+    }
+    let row = service::get_row(&s, id).await?;
+    let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
+    let bytes = service::skill_file(&mut conn, &row, &app_id, &name, q.path.as_deref()).await?;
+    let file = q
+        .path
+        .as_deref()
+        .map_or("SKILL.md", |p| p.rsplit('/').next().unwrap_or(p));
+    Ok(plain_text(bytes, file))
+}
+
+/// The operations file of an app of a package (C-1136, instance administrators), as plain text.
+#[utoipa::path(get, path = "/admin/plugins/{id}/apps/{app_id}/operations",
+    operation_id = "adminGetPluginOperationsFile", tag = "plugins",
+    params(("id" = Uuid, Path, description = "Package row id"),
+        ("app_id" = String, Path, description = "App id of the package")),
+    responses((status = 200, content_type = "text/plain", body = String),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn get_operations_file(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path((id, app_id)): Path<(Uuid, String)>,
+) -> Result<Response, ApiError> {
+    let row = service::get_row(&s, id).await?;
+    let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
+    let bytes = service::operations_file(&mut conn, &row, &app_id).await?;
+    Ok(plain_text(bytes, "operations.json"))
 }
 
 /// List trusted signing keys, including revoked ones.

@@ -231,10 +231,10 @@ tokens), group → workspace access bindings, group identities in policy
   directory sync`, `01` (trust boundary 11), `02 §Limits`, `18 §SCIM`. Not in phase 4:
   SCIM `roles`, Bulk, enterprise extension, ETags, filters beyond `eq`, nested groups.
 
-## Phase 5 — App guides and tools on demand
+## Phase 5 — Apps for agents: skills, the app folder and tools on demand
 
 **Specified (P5-GUIDE-1..7, owner 2026-11-13 and 2026-11-15, D-170..D-172, D-295..D-298, SEC-91,
-SEC-117..SEC-120, C-640..C-657); `24-app-guides.md` is normative.** The owner asked whether to
+SEC-117..SEC-120, C-640..C-657); `24-apps-for-agents.md` is normative.** The owner asked whether to
 adopt Code Mode (and the Rust gateway Skarn). It does not apply as such: apps are not MCP tools,
 and agents already run code against app APIs in their sandbox (D-170). What is built is the part
 that transfers, extended on 2026-11-15 toward Code Mode's *search* and *execute* verbs:
@@ -388,6 +388,11 @@ by the owner 2026-11-15, D-318), see *S3-compatible blob store* under §Other la
     agent export plus `template.yaml` and `helpers/`; the publisher guide is `25-agent-templates.md`.
   - Not in this version: organization repositories, evals, policy rules, `core` skill references. Briefs
     P6-TPL-1..6.
+- **Locked memories — specified (`docs/tasks/P6-MEMLOCK.md`; owner, 2026-11-22, D-463, D-464, C-1148..C-1151,
+  SEC-151).** A person locks a memory on the agent's Memory page. The agent can still read it and is told it is
+  locked, but cannot change or delete it, through its tools or by editing the file; people still can. Locked memories
+  count toward the cap, travel in the export and can arrive locked from a template. They are built just before the
+  agent templates.
 - *(The P6-MODELS proposal moved to phase 5 by the owner, D-302(f); see §The harness chooses models
   above.)*
 

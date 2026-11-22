@@ -1,0 +1,44 @@
+---
+source: crates/aurora-registry/tests/it/app_folder_render.rs
+assertion_line: 480
+expression: r.app_md
+---
+# Demo app (demo-app)
+
+Written by Aurora for this agent, except the last section.
+
+## Accounts
+
+Choose an account with the request header `x-aurora-connection-id: <connection id>`. Without it the gateway uses your only account, or refuses when there are several.
+
+- `c_1`: Main
+
+## Your access
+
+- `c_1`: full access
+
+`tools.md` lists every operation and your access to it.
+
+## Skills
+
+Skills from the Demo app app (third-party), in your skills folder. Open the one that matches your task before you start.
+
+- `demo-app-api`: How the API works (`$SKILLS_DIR/demo-app-api/SKILL.md`)
+- `demo-app-book`: Book a thing (`$SKILLS_DIR/demo-app-book/SKILL.md`) — a skill of the same name from your workspace is used instead
+- `demo-app-own`: Replaced by an agent skill (`$SKILLS_DIR/demo-app-own/SKILL.md`) — a skill of the same name from your agent is used instead
+- `demo-app-org`: Replaced by an org skill (`$SKILLS_DIR/demo-app-org/SKILL.md`) — a skill of the same name from your organization is used instead
+
+## Files in this folder
+
+- `tools.md`: every operation and your access to it
+- `api.json`: the operations of this app, for `aurora-agent`. Use `aurora-agent search|describe|call <app_id> …` rather than reading it.
+
+## Documentation
+
+- API documentation: https://docs.example.test/api
+
+## Notes from the Demo app plugin (third-party)
+
+```text
+Things are addressed by id.
+```

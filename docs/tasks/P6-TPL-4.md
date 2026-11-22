@@ -45,7 +45,7 @@ Read first:
   - each skill (use-it-when, body, files with sizes, the text of text files, "binary, <size>" otherwise, Executable);
   - **helper files** (the same file view; executables always as text);
   - **skill references** (kind, library repository with branch and folder, skill name, why, and the C-1114 sentence);
-  - memories;
+  - memories (a locked one marked "Locked: <Agent> can read it but not change it", C-1151);
   - automations (cadence in words, and the cron in Technical details);
   - apps (name or "Not installed here", level in words or the tool lists by tool name, the why);
   - inputs.
@@ -89,7 +89,8 @@ for org owners and admins only; others get `WhoCan`.
     - for an optional entry, a skip ("Skip — <Agent> won't use <app>").
   - **Review**:
     - the summary sentences of C-986 for what <Agent> will be able to do;
-    - the instructions, skills, helper files and memories, in full, as plain text, folded per part;
+    - the instructions, skills, helper files and memories, in full, as plain text, folded per part (locked memories
+      marked as in the admin review, C-1151);
     - **Skills from libraries**: each available reference with its library (label and repository), its content at the
       commit, as plain text and folded, and for optional ones a switch "Add <skill>" (on by default);
     - unavailable optional references as "Not added: needs the skill library <repo>";
@@ -177,7 +178,8 @@ Production specs are updated by reading, and listed in the completion report.
   from the contracts before those merge, and finish after. One web lane.
 
 ## Numbers
-D-435, D-436, D-456, D-457, D-458, C-1114..C-1117, C-1142, C-1143, SEC-146. No migration.
+D-435, D-436, D-456, D-457, D-458, D-463(d), C-1114..C-1117, C-1142, C-1143, C-1151 (review mark), SEC-146. No
+migration.
 
 ## Suggested agent/model and reason
 `nextjs-developer` (Sonnet). Several new screens on existing primitives (the library dialogs among them), and one

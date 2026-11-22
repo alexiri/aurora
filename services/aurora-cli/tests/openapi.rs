@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! (P5-GUIDE-5, C-650) `aurora plugin import-openapi`: golden output, determinism, the limits and
-//! their drop report, the order of the skeleton, hostile documents, and the output pasted into a
+//! (P5-GUIDE-5, C-650; C-1138) `aurora plugin import-openapi`: golden output (the operations file and
+//! the skeleton; no reference files, no `guide:` entries), determinism, the limits and their drop report, the order of the skeleton, hostile documents, and the output pasted into a
 //! package that `validate` accepts.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -72,10 +72,9 @@ fn read(d: &Path, app: &str, o: &Output) -> Imported {
     }
 }
 
-/// The package the output is pasted into: the scaffold's connection and host, the printed `guide:`
-/// entries and `tools:` skeleton.
+/// The package the output is pasted into: the scaffold's connection and host, the printed
+/// `operations:` key and `tools:` skeleton.
 fn compose(app: &str, stdout: &str) -> String {
-    let mut guide = Vec::new();
     let mut tools = Vec::new();
     let mut section = "";
     let mut operations = String::new();
@@ -87,25 +86,24 @@ fn compose(app: &str, stdout: &str) -> String {
             operations = format!("\n      {l}");
             continue;
         }
-        if l == "guide:" {
-            section = "guide";
-        } else if l == "tools:" {
+        assert!(
+            l != "guide:" && !l.contains("file:"),
+            "no guide entries: {l}"
+        );
+        if l == "tools:" {
             section = "tools";
         } else if l.is_empty() {
             section = "";
         }
-        match section {
-            "guide" => guide.push(format!("      {l}")),
-            "tools" => tools.push(format!("    {l}")),
-            _ => {}
+        if section == "tools" {
+            tools.push(format!("    {l}"));
         }
     }
     format!(
         "package: {{ id: {app}, version: 0.1.0, contract: 1, min_core: 0.1.0, publisher: example, name: {app} }}\n\
-apps:\n  - about: {{ id: {app}, name: {app} }}\n    credentials: [ {{ name: api_token, secret: true }} ]\n    connect:\n      - id: api_key\n        kind: fields\n        fields: [ {{ name: api_token, label: API token, type: secret, required: true }} ]\n    hosts:\n      - match: {{ host: api.example.com }}\n        inject:\n          - bearer: \"{{credentials.api_token}}\"\n{}\n    agent:\n      summary: \"Imported.\"\n      instructions: \"Imported.\"{}\n{}\n",
+apps:\n  - about: {{ id: {app}, name: {app} }}\n    credentials: [ {{ name: api_token, secret: true }} ]\n    connect:\n      - id: api_key\n        kind: fields\n        fields: [ {{ name: api_token, label: API token, type: secret, required: true }} ]\n    hosts:\n      - match: {{ host: api.example.com }}\n        inject:\n          - bearer: \"{{credentials.api_token}}\"\n{}\n    agent:\n      summary: \"Imported.\"\n      instructions: \"Imported.\"{}\n",
         tools.join("\n"),
-        operations,
-        guide.join("\n")
+        operations
     )
 }
 
@@ -115,8 +113,6 @@ fn validates_when_pasted(file: &Path, app: &str) -> Imported {
     let o = aurora(&["plugin", "new", app, "--dir", s(&d)]);
     assert!(o.status.success());
     let pkg = d.join(app);
-    // The scaffold's own guide file is not part of the pasted manifest.
-    let _ = std::fs::remove_file(pkg.join("agent").join(app).join("api.md"));
     let o = import_in(file, app, &pkg);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let got = read(&pkg, app, &o);
@@ -233,8 +229,7 @@ fn a_large_document_drops_detail_reports_it_and_stays_within_every_limit() {
     let o = import_in(&f, "large", &d.join("p1"));
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let a = read(&d.join("p1"), "large", &o);
-    assert!(a.stderr.contains("import-openapi: dropped"), "{}", a.stderr);
-    // (C-656) The operations file has its own limit and is not a guide file.
+    // (C-656) The operations file has its own limit; nothing else is written (C-1138).
     let ops = a.files.get("operations.json").expect("operations.json");
     assert!(ops.len() <= 512 * 1024, "{}", ops.len());
     assert!(
@@ -242,23 +237,14 @@ fn a_large_document_drops_detail_reports_it_and_stays_within_every_limit() {
         "{}",
         a.stderr
     );
-    let guide_files: Vec<&String> = a
-        .files
-        .iter()
-        .filter(|(n, _)| *n != "operations.json")
-        .map(|(_, c)| c)
-        .collect();
-    assert!(guide_files.len() <= 24, "{}", guide_files.len());
-    assert!(guide_files.iter().all(|c| c.len() <= 64 * 1024));
-    assert!(guide_files.iter().map(|c| c.len()).sum::<usize>() <= 256 * 1024);
-    // Every operation is still in the index.
-    let index: String = a
-        .files
-        .iter()
-        .filter(|(n, _)| n.starts_with("operations"))
-        .map(|(_, c)| c.as_str())
-        .collect();
-    assert_eq!(index.matches("\n- POST ").count(), 12 * 125);
+    assert_eq!(
+        a.files.len(),
+        1,
+        "only operations.json: {:?}",
+        a.files.keys()
+    );
+    // Every operation is still in it.
+    assert_eq!(aurora_registry::operations::count(ops.as_bytes()), 12 * 125);
     // Deterministic, and it validates once pasted (the skeleton has 1 500 tools).
     let o2 = import_in(&f, "large", &d.join("p2"));
     let b = read(&d.join("p2"), "large", &o2);
@@ -296,7 +282,7 @@ fn bad_inputs_exit_non_zero_with_one_line_reasons() {
 }
 
 /// HTML, backticks, control characters, a heading smuggled into a summary, a 5 000-character
-/// summary: the files stay text on their lines, pass `agent_guide_not_text` and validate.
+/// summary: the files stay text on their lines, pass the operations-file text rule and validate.
 #[test]
 fn hostile_strings_stay_inside_their_lines() {
     let d = tmp();

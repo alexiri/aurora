@@ -630,16 +630,19 @@ async fn one_sentry_app_takes_over_the_region_and_self_hosted_connections() {
     sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools) VALUES ($1,$2,$3,$4,'custom','{get_issue,list_issues}','{update_issue}')")
         .bind(Uuid::now_v7()).bind(ws).bind(agent).bind(c_us).execute(p).await.unwrap();
 
-    // (P5-GUIDE-4) The shipped package lists an agent guide file: it travels in the archive.
+    // (P5-APPSKILL-1) The shipped package carries its skill: it travels in the archive.
     let notes = std::fs::read(format!(
-        "{}/../../plugins/builtin/sentry/agent/sentry/api-notes.md",
+        "{}/../../plugins/builtin/sentry/skills/sentry/sentry-api-notes/SKILL.md",
         env!("CARGO_MANIFEST_DIR")
     ))
     .unwrap();
     let v2 = a
-        .upload_with(&shipped, &[("agent/sentry/api-notes.md", notes.as_slice())])
+        .upload_with(
+            &shipped,
+            &[("skills/sentry/sentry-api-notes/SKILL.md", notes.as_slice())],
+        )
         .await;
-    assert_eq!(v2["version"], "2.3.1", "{v2}");
+    assert_eq!(v2["version"], "2.4.0", "{v2}");
     if v2["status"] == "pending_approval" {
         let (st, b) = a.act(&v2["id"], "approve").await;
         assert_eq!(st, 200, "{b}");
@@ -682,7 +685,7 @@ async fn one_sentry_app_takes_over_the_region_and_self_hosted_connections() {
         (
             "sentry".to_owned(),
             "sentry".to_owned(),
-            "2.3.1".to_owned(),
+            "2.4.0".to_owned(),
             Some("token".to_owned()),
             "active".to_owned(),
             inst,
@@ -746,14 +749,14 @@ async fn one_sentry_app_takes_over_the_region_and_self_hosted_connections() {
 
     // Rerunning the step is a no-op (the presets are refreshed, not duplicated).
     let stored: Value = sqlx::query_scalar(
-        "SELECT manifest FROM plugin_packages WHERE package_id = 'sentry' AND version = '2.3.1'",
+        "SELECT manifest FROM plugin_packages WHERE package_id = 'sentry' AND version = '2.4.0'",
     )
     .fetch_one(p)
     .await
     .unwrap();
     let manifest: Manifest = serde_json::from_value(stored).unwrap();
     let mut tx = p.begin().await.unwrap();
-    let again = supersede::apply(&mut tx, &manifest, "2.3.1").await.unwrap();
+    let again = supersede::apply(&mut tx, &manifest, "2.4.0").await.unwrap();
     tx.commit().await.unwrap();
     assert!(again.is_empty(), "{again:?}");
     assert_eq!(again.presets, 2);

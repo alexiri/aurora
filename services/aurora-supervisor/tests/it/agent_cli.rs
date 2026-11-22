@@ -746,11 +746,11 @@ async fn a_catalogue_entry_needs_an_explicit_path_and_an_unlisted_app_is_a_usage
     assert!(o.err.contains("explicit --path"), "{}", o.err);
     let o = agent_cli::execute(&s.env, &s.apps, call("nope", &["x"])).await;
     assert_eq!(o.code, 2);
-    // A database app (a folder without api.json) says so and points to guide.md.
+    // A database app (a folder without api.json) says so and points to app.md.
     std::fs::create_dir_all(s.apps.join("dbapp")).unwrap();
     let o = agent_cli::execute(&s.env, &s.apps, call("dbapp", &["x"])).await;
     assert_eq!(o.code, 2);
-    assert!(o.err.contains("guide.md"), "{}", o.err);
+    assert!(o.err.contains("app.md"), "{}", o.err);
 }
 
 #[tokio::test]

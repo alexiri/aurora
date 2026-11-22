@@ -2,10 +2,10 @@
 //! offline; validation, compilation and fixture runs reuse the registry and gateway code.
 
 mod cmds;
-mod guide;
 mod hooktest;
 mod openapi;
 mod pack;
+mod preview;
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -86,9 +86,10 @@ pub enum PluginCmd {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Render what an agent would find in `.aurora/apps/<app_id>/` for a sample account:
-    /// `guide.md`, `tools.md`, the recipes and the reference files (docs/24 §10).
-    Guide {
+    /// Render what an agent would get for a sample account: the files Aurora writes in
+    /// `apps/<app_id>/` and the app's skills as projected into the skills folder, provenance
+    /// line and modes included (docs/24 §10).
+    Preview {
         /// Package archive or source directory.
         #[arg(default_value = ".")]
         package: PathBuf,
@@ -99,13 +100,12 @@ pub enum PluginCmd {
         /// approval.
         #[arg(long, default_value = "custom", value_parser = ["full", "custom"])]
         access: String,
-        /// Write `<out>/<app_id>/<file>` instead of printing to stdout.
+        /// Write `<out>/apps/<app_id>/<file>` and `<out>/skills/<name>/…` instead of printing.
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// Read a local OpenAPI 3.0/3.1 document and write `agent/<app>/operations.md` and
-    /// `ops-<tag>.md` reference files; print the `guide:` entries and a `tools:` skeleton
-    /// (docs/24 §10). Offline and deterministic.
+    /// Read a local OpenAPI 3.0/3.1 document, write `agent/<app>/operations.json` and print a
+    /// `tools:` skeleton (docs/24 §10). Offline and deterministic.
     ImportOpenapi {
         /// The OpenAPI document (JSON or YAML).
         file: PathBuf,
@@ -160,12 +160,12 @@ pub fn run(cmd: PluginCmd) -> Result<i32> {
         ),
         PluginCmd::Sign { package, key, out } => cmds::sign(&package, &key, out),
         PluginCmd::Keygen { out } => cmds::keygen(&out),
-        PluginCmd::Guide {
+        PluginCmd::Preview {
             package,
             app,
             access,
             out,
-        } => guide::guide(&package, app.as_deref(), &access, out.as_deref()),
+        } => preview::preview(&package, app.as_deref(), &access, out.as_deref()),
         PluginCmd::ImportOpenapi {
             file,
             app,

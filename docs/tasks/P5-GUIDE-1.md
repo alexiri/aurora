@@ -2,7 +2,7 @@
 
 First task of "app guides and tools on demand". (Written as the first addon-related task of
 phase 5; P5-ASRC merged and P5-CERN-ADDONS ran first, D-298.) Normative spec:
-`docs/24-app-guides.md` (§3, §4, §5, §8, §10); contracts C-640, C-641, C-642, C-646, C-647,
+`docs/24-apps-for-agents.md` (§3, §4, §5, §8, §10); contracts C-640, C-641, C-642, C-646, C-647,
 C-649; decisions D-170, D-171, **D-295**; SEC-117, SEC-91. Read `24` fully and `09 §2`, `§3.4
 agent`, `§6`, `§9`; nothing else is needed.
 

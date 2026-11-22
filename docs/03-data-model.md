@@ -522,7 +522,7 @@ the configuration's locked keys, D-238(a)).
 | Column | Type | Notes |
 |---|---|---|
 | digest | text pk | sha256 of the bytes |
-| kind | text CHECK in (`hooks_wasm`,`icon`,`icon_dark`,`setup_guide`,`archive`) | (phase 5, P5-GUIDE-1, C-642) gains `agent_guide`: one row per agent guide file (`24 §4`), keyed like every blob by the sha256 of its bytes. Because the key is the digest alone, a guide file whose bytes equal an existing blob keeps that row's kind: guide files are read **by digest only** |
+| kind | text CHECK in (`hooks_wasm`,`icon`,`icon_dark`,`setup_guide`,`archive`,`agent_file`) | (phase 5, P5-GUIDE-1, C-642; P5-APPSKILL-1, C-1132) `agent_file` (migration `20261201000272`, replaces `agent_guide`; rows moved with it): one row per agent file of a package that an agent can read through the home, the operations file, each `SKILL.md` and each skill file under `skills/<app_id>/<name>/` (`24 §4`), keyed like every blob by the sha256 of its bytes. Because the key is the digest alone, a file whose bytes equal an existing blob keeps that row's kind: agent files are read **by digest only** |
 | content | bytea not null | |
 
 ### `host_claim_decisions`
@@ -1755,6 +1755,17 @@ Three migrations. P6-TPL-2 creates the four template tables. P6-TPL-6 creates `a
 | `agent_template_parts` | table | `(agent_id, kind, key)` pk. `kind` is one of `instructions`, `skill`, `helpers`, `library_skill`; `content_sha256` is the hash of what was last written from the template; FK agent (cascade) | 6 (P6-TPL-3) |
 
 The gateway role has no access to any of these tables.
+
+#### `memories` (locked memories; phase 6, P6-MEMLOCK, D-463, D-464, C-1148, SEC-151)
+One migration (P6-MEMLOCK Part A, next free number when placed); the rows move into `§memories` when it lands.
+
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| locked | boolean not null default false | the agent cannot save or delete this memory (409 `memory_locked`); people can; counts toward `MEMORY_MAX_PER_AGENT` | 6 (P6-MEMLOCK) |
+| locked_at | timestamptz null | set when `locked` becomes true, cleared when false | 6 (P6-MEMLOCK) |
+| locked_by | uuid null FK→users (set null) | the person who locked it; null for a key without a user | 6 (P6-MEMLOCK) |
+
+A lock writes no `memory_revisions` row (it is not a content change); it is audited (`memory.lock` / `memory.unlock`).
 
 #### `secrets` (additional LLM providers; phase 5, D-138)
 | Planned column | Type | Notes | Phase |

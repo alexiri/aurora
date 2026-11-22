@@ -9,13 +9,13 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use aurora_core::limits;
-use aurora_core::sanitize::{is_stripped, one_line};
+use aurora_registry::skill_format;
 use sha2::{Digest, Sha256};
 
 use crate::domains::skills::service as skills;
 
 /// More files than this in one skill directory is refused (bounds the blob reads of an add).
-pub const FILES_PER_SKILL_MAX: usize = 50;
+pub use aurora_registry::skill_format::FILES_PER_SKILL_MAX;
 
 /// One entry of a commit's tree under the library path (git's own ids and modes).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -383,139 +383,7 @@ pub fn assemble(path: &str, entries: &[TreeEntry]) -> Vec<Candidate> {
 
 // ---- SKILL.md and the stored form -----------------------------------------------------------
 
-/// Control and format characters (bidi, zero-width, …) are removed from repository text before it
-/// can become part of what an agent is told; CRLF becomes LF. Everything else, including
-/// indentation, is kept exactly.
-#[must_use]
-pub fn clean_text(s: &str) -> String {
-    s.replace("\r\n", "\n")
-        .chars()
-        .filter(|c| !is_stripped(*c))
-        .collect()
-}
-
-/// The two keys that matter; every other key is ignored (and, with anchors refused, bounded by the
-/// file size).
-#[derive(serde::Deserialize)]
-struct Frontmatter {
-    name: Option<serde_yaml::Value>,
-    description: Option<serde_yaml::Value>,
-}
-
-/// Whether any YAML token starts with `&` (anchor) or `*` (alias): at the start of a line (after
-/// block-sequence dashes), after `:`/`,`/`[`/`{` and spaces. Conservative on purpose: a plain
-/// scalar that merely *contains* `*emphasis*` is fine, one that *starts* with `*` is an alias.
-fn has_anchor_or_alias(fm: &str) -> bool {
-    fm.lines().any(|line| {
-        let mut l = line.trim_start();
-        while let Some(r) = l.strip_prefix("- ") {
-            l = r.trim_start();
-        }
-        // A token can start here, or after an indicator (`: `, `,`, `[`, `{`, `? `) outside quotes.
-        let chars: Vec<char> = l.chars().collect();
-        let mut quote: Option<char> = None;
-        let mut token_start = true;
-        let mut flow = false;
-        for (i, &ch) in chars.iter().enumerate() {
-            if let Some(q) = quote {
-                if ch == q {
-                    quote = None;
-                }
-                continue;
-            }
-            let next_blank = chars.get(i + 1).is_none_or(|n| matches!(n, ' ' | '\t'));
-            match ch {
-                '&' | '*' if token_start => return true,
-                '"' | '\'' if token_start => quote = Some(ch),
-                ' ' | '\t' => continue,
-                '[' | '{' if token_start => flow = true,
-                '[' | '{' => {}
-                ':' | '?' if next_blank => {
-                    token_start = true;
-                    continue;
-                }
-                ',' if flow => {
-                    token_start = true;
-                    continue;
-                }
-                _ => {}
-            }
-            token_start = false;
-            if matches!(ch, '[' | '{') {
-                // a flow collection opens a value position
-                token_start = true;
-            }
-        }
-        false
-    })
-}
-
-/// `(description, body)` of a `SKILL.md`: YAML frontmatter with a single-line `description`
-/// (and optionally a `name` equal to the directory name), then the body. Failures are fixed,
-/// sanitized texts.
-pub fn parse_skill_md(raw: &[u8], dir: &str) -> Result<(String, String), String> {
-    let text = std::str::from_utf8(raw).map_err(|_| "SKILL.md is not valid UTF-8".to_owned())?;
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let text = text.replace("\r\n", "\n");
-    let Some(rest) = text.strip_prefix("---\n") else {
-        return Err("SKILL.md needs YAML frontmatter with a description".into());
-    };
-    let mut offset = 0;
-    let mut end = None;
-    for line in rest.split_inclusive('\n') {
-        if line.trim_end_matches('\n') == "---" {
-            end = Some((offset, offset + line.len()));
-            break;
-        }
-        offset += line.len();
-    }
-    let Some((fm_end, body_start)) = end else {
-        return Err("SKILL.md frontmatter is not closed with ---".into());
-    };
-    // (FIX-096) Anchors and aliases are refused before the parser sees them: nested aliases
-    // multiply (the parser bounds jumps, not the product), and repository text is untrusted.
-    if has_anchor_or_alias(&rest[..fm_end]) {
-        return Err("SKILL.md frontmatter must not use YAML anchors or aliases".into());
-    }
-    let fm: Frontmatter = match serde_yaml::from_str::<serde_yaml::Value>(&rest[..fm_end]) {
-        Ok(serde_yaml::Value::Mapping(m)) => serde_yaml::from_value(serde_yaml::Value::Mapping(m))
-            .map_err(|_| "SKILL.md frontmatter is not valid YAML".to_owned())?,
-        Ok(_) => return Err("SKILL.md frontmatter must be a mapping".into()),
-        Err(_) => return Err("SKILL.md frontmatter is not valid YAML".into()),
-    };
-    if let Some(n) = &fm.name {
-        match n.as_str() {
-            Some(n) if n == dir => {}
-            _ => return Err("the frontmatter name must equal the directory name".into()),
-        }
-    }
-    let desc = fm
-        .description
-        .as_ref()
-        .and_then(serde_yaml::Value::as_str)
-        .ok_or_else(|| "SKILL.md frontmatter needs a description".to_owned())?;
-    let desc = clean_text(desc);
-    if desc.trim().is_empty() {
-        return Err("the description must not be empty".into());
-    }
-    if desc.chars().count() > limits::SKILL_DESCRIPTION_MAX {
-        return Err(format!(
-            "the description is longer than {} characters",
-            limits::SKILL_DESCRIPTION_MAX
-        ));
-    }
-    // A description is one line in the projected frontmatter.
-    let description = one_line(&desc, limits::SKILL_DESCRIPTION_MAX);
-    let body = clean_text(&rest[body_start..]);
-    let body = body.trim_start_matches('\n').to_owned();
-    if body.chars().count() > limits::SKILL_BODY_MAX {
-        return Err(format!(
-            "the body is longer than {} characters",
-            limits::SKILL_BODY_MAX
-        ));
-    }
-    Ok((description, body))
-}
+pub use aurora_registry::skill_format::{clean_text, parse_skill_md};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedFile {
@@ -652,58 +520,14 @@ pub fn finish(
     skills::validate_name(&name)
         .map_err(|_| invalid("the directory name is not a valid skill name"))?;
     // (FIX-096, SEC-83) The same rules the refresh applied, again: an approval re-validates what
-    // the stored proposal says, never trusting its JSON.
-    if description.trim().is_empty() {
-        return Err(invalid("the description must not be empty"));
-    }
-    if description.chars().count() > limits::SKILL_DESCRIPTION_MAX {
-        return Err(invalid(format!(
-            "the description is longer than {} characters",
-            limits::SKILL_DESCRIPTION_MAX
-        )));
-    }
-    if description.contains(['\n', '\r']) || clean_text(&description) != description {
-        return Err(invalid("the description must be one line of plain text"));
-    }
-    if body.chars().count() > limits::SKILL_BODY_MAX {
-        return Err(invalid(format!(
-            "the body is longer than {} characters",
-            limits::SKILL_BODY_MAX
-        )));
-    }
-    if clean_text(&body) != body {
-        return Err(invalid("the body has control characters"));
-    }
-    if files.len() > FILES_PER_SKILL_MAX {
-        return Err(invalid(format!("more than {FILES_PER_SKILL_MAX} files")));
-    }
-    let mut seen = std::collections::BTreeSet::new();
-    for f in &files {
-        if skills::validate_path(&f.path).is_err() {
-            return Err(invalid(format!("an unsupported file path ({})", f.path)));
-        }
-        if !seen.insert(f.path.as_str()) {
-            return Err(invalid(format!("a file appears twice ({})", f.path)));
-        }
-        if f.content.len() > limits::LIBRARY_FILE_MAX {
-            return Err(invalid(format!(
-                "a file is larger than {} bytes ({})",
-                limits::LIBRARY_FILE_MAX,
-                f.path
-            )));
-        }
-    }
-    let size = body.chars().count()
-        + files
-            .iter()
-            .map(|f| skills::content_size(&f.content))
-            .sum::<usize>();
-    if size > limits::SKILL_TOTAL_MAX {
-        return Err(invalid(format!(
-            "the body and files total more than {} characters",
-            limits::SKILL_TOTAL_MAX
-        )));
-    }
+    // the stored proposal says, never trusting its JSON. The rules are the shared validator's
+    // (P5-APPSKILL-1), the same ones a package skill passes.
+    let refs: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|f| (f.path.as_str(), f.content.as_slice()))
+        .collect();
+    let size = skill_format::check_content(&description, &body, &refs, limits::LIBRARY_FILE_MAX)
+        .map_err(|e| invalid(e.message))?;
     let content_sha256 = content_sha256(&description, &body, &files);
     Ok(LoadedSkill {
         name,

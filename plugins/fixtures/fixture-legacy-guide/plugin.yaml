@@ -1,0 +1,51 @@
+package:
+  id: fixture-legacy-guide
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Fixture Legacy Guide
+  description: "P5-APPSKILL-1 fixture, a package in the old format (agent.guide): valid, one agent_guide_ignored warning, nothing of the guide reaches an agent"
+apps:
+  - about:
+      id: guide-demo
+      name: Guide demo
+      description: Rooms service with an agent guide
+      category: testing
+      api_docs: https://docs.guide.example.test/api
+      web_hosts: [app.guide.example.test]
+    credentials:
+      - { name: api_token, secret: true }
+    connect:
+      - id: api_key
+        kind: fields
+        fields:
+          - { name: api_token, label: API token, type: secret, store: credentials, required: true }
+    hosts:
+      - match: { host: api.guide.example.test }
+        inject:
+          - bearer: "{credentials.api_token}"
+    token:
+      kind: static
+    tools:
+      read:
+        items:
+          - { id: list_rooms, name: List rooms, description: Rooms of a building, host: api.guide.example.test, path: /v1/rooms, methods: [GET] }
+          - { id: get_room, name: Get a room, description: One room with its bookings, host: api.guide.example.test, path: "/v1/rooms/*", methods: [GET] }
+      write:
+        items:
+          - { id: book_room, name: Book a room, description: Reserve a room for a time slot, host: api.guide.example.test, path: "/v1/rooms/*/bookings", methods: [POST] }
+    approvals:
+      book_room:
+        title: Book a room
+        fields:
+          - { label: Room, source: path, segment: 3 }
+    agent:
+      summary: "Room search and booking."
+      operations: operations.json
+      instructions: |
+        Rooms are addressed by numeric id. Send JSON bodies.
+      guide:
+        - { file: book-free-room.md, title: "Find a free room and book it", kind: recipe }
+        - { file: api.md, title: "REST conventions, pagination, errors" }
+        - { file: codes.tsv, title: "Building codes" }

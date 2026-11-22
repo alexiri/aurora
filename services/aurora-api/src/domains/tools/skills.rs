@@ -1,6 +1,7 @@
 //! Skill tools (docs/12 Phase 0 catalogue): `skill_list/get/create/update/delete`. Agent tier
 //! only: an agent edits its own skills; organization skills are readable, never writable.
 use super::registry::{PlatformTool, ToolCallContext, ToolContext, ToolError};
+use crate::domains::skills::app_skills::{self, AppSkill};
 use crate::domains::skills::service::Owner;
 use crate::domains::skills::{NewSkill, Patch, SkillView, service};
 use aurora_core::{ApiError, limits};
@@ -34,6 +35,16 @@ fn fail(e: ApiError) -> ToolError {
         tracing::error!(error = %e.message(), "skill tool error");
         ToolError::Failed("internal error".into())
     }
+}
+
+/// (C-1133) An app skill as `skill_list` and `skill_get` show it: tier `app`, never editable.
+fn app_summary(s: &AppSkill) -> Value {
+    json!({"name": s.skill.name, "tier": "app", "scope": "app", "app_id": s.app_id,
+        "description": s.skill.description, "enabled": true,
+        "files": s.skill.files.iter().map(|f| json!({"path": f.path, "size": f.size,
+            "executable": f.executable})).collect::<Vec<_>>(),
+        "total_size": s.skill.size + s.skill.files.iter().map(|f| f.size).sum::<u64>(),
+        "source": Value::Null, "shadows": json!([])})
 }
 
 fn summary(v: &SkillView) -> Value {
@@ -120,9 +131,9 @@ impl PlatformTool for List {
         "skills"
     }
     fn description(&self, _: &ToolContext) -> String {
-        "List the skills you receive (your own, your workspace's and the organization's; the \
-         workspace and organization ones are read-only for you) with their tier and the tiers \
-         your own skills shadow, plus your own disabled skills."
+        "List the skills you receive (your own, your workspace's, the organization's and the \
+         skills of your apps; all but your own are read-only for you) with their tier and the \
+         tiers your own skills shadow, plus your own disabled skills."
             .into()
     }
     fn input_schema(&self) -> Value {
@@ -168,6 +179,13 @@ impl PlatformTool for List {
                 skills.push(s);
             }
         }
+        // The lowest tier: the skills of the apps the agent can use (never one a higher tier holds).
+        let apps = app_skills::effective_of(&ctx.state, &agent, &eff)
+            .await
+            .map_err(fail)?;
+        for a in &apps.items {
+            skills.push(app_summary(a));
+        }
         skills.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
         out(json!({"skills": skills}))
     }
@@ -192,8 +210,8 @@ impl PlatformTool for Get {
         "skills"
     }
     fn description(&self, _: &ToolContext) -> String {
-        "Read a skill from the set you receive (agent > workspace > organization): body and \
-         file list, or one text file when `path` is given."
+        "Read a skill from the set you receive (agent > workspace > organization > app): body \
+         and file list, or one text file when `path` is given."
             .into()
     }
     fn input_schema(&self) -> Value {
@@ -216,14 +234,51 @@ impl PlatformTool for Get {
             Ok(v) => v,
             Err(e) if e.status() == http::StatusCode::NOT_FOUND => {
                 let agent = agent_of(ctx).await?;
-                service::effective(pool, &agent)
+                let eff = service::effective(pool, &agent).await.map_err(fail)?;
+                let apps = app_skills::effective_of(&ctx.state, &agent, &eff)
                     .await
-                    .map_err(fail)?
-                    .items
-                    .into_iter()
-                    .find(|i| i.view.row.name == a.name)
-                    .map(|i| i.view)
-                    .ok_or_else(|| ToolError::Failed("Skill not found.".into()))?
+                    .map_err(fail)?;
+                match eff.items.into_iter().find(|i| i.view.row.name == a.name) {
+                    Some(i) => i.view,
+                    None => {
+                        // (C-1133) The lowest tier: an app skill, read from its stored blobs.
+                        let sk = apps
+                            .items
+                            .iter()
+                            .find(|s| s.skill.name == a.name)
+                            .ok_or_else(|| ToolError::Failed("Skill not found.".into()))?;
+                        let mut conn = pool
+                            .acquire()
+                            .await
+                            .map_err(|e| fail(aurora_db::DbError::from(e).into()))?;
+                        if let Some(p) = a.path {
+                            let f =
+                                sk.skill.files.iter().find(|f| f.path == p).ok_or_else(|| {
+                                    ToolError::Failed("Skill file not found.".into())
+                                })?;
+                            let bytes =
+                                aurora_db::repo::plugins::get_agent_blob(&mut *conn, &f.sha256)
+                                    .await
+                                    .map_err(|e| fail(e.into()))?
+                                    .ok_or_else(|| {
+                                        ToolError::Failed("Skill file not found.".into())
+                                    })?;
+                            let content = String::from_utf8(bytes)
+                                .map_err(|_| ToolError::Failed("Skill file is not text.".into()))?;
+                            return out(
+                                json!({"name": sk.skill.name, "path": p, "content": content}),
+                            );
+                        }
+                        let mut s = app_summary(sk);
+                        s["body"] = json!(
+                            app_skills::body(&mut conn, sk)
+                                .await
+                                .map_err(fail)?
+                                .unwrap_or_default()
+                        );
+                        return out(s);
+                    }
+                }
             }
             Err(e) => return Err(fail(e)),
         };

@@ -1,7 +1,7 @@
 # P5-GUIDE-6: `aurora-agent` — operations file, `api.json`, one in-sandbox command (app targets) (owner, 2026-11-15)
 
 Sixth task of "app guides and tools on demand": the *search* and *execute* half of Code Mode.
-Normative spec: `docs/24-app-guides.md` §3.1 (`operations`), §3.5, §4, §5.4, §6 (the `agent_cli`
+Normative spec: `docs/24-apps-for-agents.md` §3.1 (`operations`), §3.5, §4, §5.4, §6 (the `agent_cli`
 sentences), §8, §10 (item 4 of the import), §10a (the command, *App targets*), §11 (SEC-118,
 SEC-120). Contracts **C-651, C-652, C-653, C-656**, and the amended C-640 (incl. the reserved app
 id `aurora`), C-641, C-643, C-645, C-648, C-649. Decision **D-296**. Read `24` fully, `09 §3.4

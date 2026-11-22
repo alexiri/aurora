@@ -1,6 +1,6 @@
 package:
   id: sentry
-  version: 2.3.1
+  version: 2.4.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -108,5 +108,3 @@ apps:
         or a self-hosted server); paths end with a slash. Aurora adds the token; never ask for or
         write one, and never send this connection's requests to another host: a token only works
         on the host of its organization's region. Send JSON bodies for changes.
-      guide:
-        - { file: api-notes.md, title: "API notes: common requests, organizations, pagination" }

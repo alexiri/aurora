@@ -438,14 +438,12 @@ pub const PACKAGE_SETUP_GUIDE_MAX: usize = 64 * KIB;
 pub const AGENT_SNIPPET_MAX: usize = 2_000;
 /// (phase 5, P5-GUIDE-1, `docs/24 §8`) `agent.summary`, one line.
 pub const AGENT_SUMMARY_MAX: usize = 160;
-/// Guide files per app.
-pub const AGENT_GUIDE_FILES_MAX: usize = 24;
-/// One guide file (UTF-8 bytes).
-pub const AGENT_GUIDE_FILE_MAX: usize = 64 * KIB;
-/// All guide files of one app.
-pub const AGENT_GUIDE_APP_MAX: usize = 256 * KIB;
-/// Reference files and recipes projected into one agent's home (P5-GUIDE-2).
-pub const AGENT_GUIDE_SYNC_MAX: usize = 2 * 1024 * KIB;
+/// (P5-APPSKILL-1, C-1130, `docs/24 §8`) Skills one app ships.
+pub const APP_SKILLS_MAX: usize = 16;
+/// `SKILL.md` and files of all skills of one app (UTF-8 bytes).
+pub const APP_SKILLS_APP_MAX: usize = 256 * KIB;
+/// App skills projected into one agent's home (P5-APPSKILL-2, C-1134).
+pub const APP_SKILLS_SYNC_MAX: usize = 2 * 1024 * KIB;
 /// (P5-GUIDE-6, `docs/24 §8`) Operations in one operations file.
 pub const AGENT_OPERATIONS_MAX: usize = 2_000;
 /// One operations file (UTF-8 bytes).

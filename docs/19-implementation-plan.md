@@ -218,7 +218,7 @@ Phases 3 and 4 start once phases 1 and 2 are done.
 
 Multi-arch (arm64) images, OPS-022, were deferred here (owner, 2026-11-07) and then cancelled
 (owner, 2026-11-15, D-318: not needed; images stay amd64 only). Dependabot, OPS-021, and the Slack connector (owner, 2026-11-08, D-78; the Slack connector moved on to phase 6, D-285).
-App guides and tools on demand, P5-GUIDE-1..8 (owner, 2026-11-13 and 2026-11-15, D-170..D-172,
+Apps for agents (app guides, since D-453 app skills) and tools on demand, P5-GUIDE-1..8 (owner, 2026-11-13 and 2026-11-15, D-170..D-172,
 D-295..D-298; `24`, `21 §Phase 5 — App guides and tools on demand`): P5-GUIDE-1 is the first
 addon-related task of the phase, before addon sources (P5-ASRC) and the CERN addons.
 
@@ -236,7 +236,8 @@ templates** (owner 2026-11-21 and 2026-11-22: ready-made agents from template re
 repository, templates kept as source and packaged by the repository's CI) that an instance admin adds and
 reviews, created with the person's own accounts and access, with library skills by reference and helper
 files, Save as template; specified, D-435, D-436, D-456, D-457, SEC-146, `docs/tasks/P6-TEMPLATES.md`, briefs
-P6-TPL-1..6). The org tree and
+P6-TPL-1..6), preceded by **locked memories** (owner 2026-11-22: a person locks a memory so the agent can
+read it but not change or delete it; D-463, D-464, SEC-151, `docs/tasks/P6-MEMLOCK.md`). The org tree and
 limits items are proposals with open questions (`Q-P6-ORG-*`, `Q-P6-LIM-*`); the spec batches run
 when the owner starts phase 6. See `21 §Phase 6`. (The third proposal, "the harness chooses models",
 was moved to phase 5 by the owner on 2026-11-15, D-302(f), and is specified as P5-MODELS-1..3,

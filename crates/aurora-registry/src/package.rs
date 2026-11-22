@@ -1,6 +1,6 @@
 //! Package archive reader (09 §2): in-memory gunzip + untar with size
 //! accounting, path rules, required files and asset checks.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 
 use aurora_core::limits::{
@@ -44,10 +44,14 @@ impl Default for Limits {
 }
 
 /// A fully-read, structurally valid package. `files` excludes `SIGNATURE`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Package {
     pub files: BTreeMap<String, Vec<u8>>,
     pub signature: Option<Vec<u8>>,
+    /// (P5-APPSKILL-1, C-1131) Paths under `skills/` whose tar mode has the owner-execute bit.
+    /// Covered by the canonical digest ([`crate::digest::digest`]); a bit anywhere else is
+    /// ignored (not recorded) so it can neither matter nor change a digest.
+    pub executable: BTreeSet<String>,
 }
 
 /// Counts decompressed bytes so a cap hit is reported as oversize, not corruption.
@@ -76,11 +80,18 @@ fn allowed_path(p: &str) -> bool {
         return true;
     }
     // (P5-GUIDE-1, C-640) `agent/<app_id>/<file>`: exactly that depth; the name grammars and the
-    // listed-iff-present rule are the linter's (`validate::agent_guide_rules`).
+    // listed-iff-present rule are the linter's (`validate::agent_rules`).
     if let Some(rest) = p.strip_prefix(AGENT_DIR) {
         return rest
             .split_once('/')
             .is_some_and(|(app, file)| !app.is_empty() && !file.is_empty() && !file.contains('/'));
+    }
+    // (P5-APPSKILL-1, C-1130) `skills/<app_id>/<name>/<path>`: at least a file below the skill
+    // folder; the name, path, depth and size rules are the shared validator's (`skill_format`),
+    // run by the linter.
+    if let Some(rest) = p.strip_prefix(SKILLS_DIR) {
+        let segs: Vec<&str> = rest.split('/').collect();
+        return segs.len() >= 3 && segs.iter().all(|s| !s.is_empty());
     }
     // (P5-WEBHOOK-1, C-909) `presets/<file>.json`: one level; the name grammar and the listed-iff-
     // present rule are the linter's (`webhook`).
@@ -94,6 +105,9 @@ fn allowed_path(p: &str) -> bool {
 
 /// Archive directory of the agent guide files (`agent/<app_id>/<file>`).
 pub const AGENT_DIR: &str = "agent/";
+
+/// (P5-APPSKILL-1, C-1130) Archive directory of the app skills (`skills/<app_id>/<name>/<path>`).
+pub const SKILLS_DIR: &str = "skills/";
 
 /// Returns a violation when the path is unsafe (absolute, traversal, ...).
 fn path_safety(p: &str) -> Option<Violation> {
@@ -132,6 +146,7 @@ impl Package {
         let mut archive = tar::Archive::new(gz);
         let mut out = Vec::new();
         let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        let mut executable = BTreeSet::new();
         let mut signature = None;
         let mut total: u64 = 0;
         let entries = match archive.entries() {
@@ -157,7 +172,11 @@ impl Package {
                 let agent_dir = d == "agent"
                     || d.strip_prefix(AGENT_DIR)
                         .is_some_and(|app| !app.is_empty() && !app.contains('/'));
-                if !matches!(d, "assets" | "docs" | "tests" | "presets") && !agent_dir {
+                let skills_dir = d == "skills" || d.starts_with(SKILLS_DIR);
+                if !matches!(d, "assets" | "docs" | "tests" | "presets")
+                    && !agent_dir
+                    && !skills_dir
+                {
                     out.push(v("path_unknown", &name, "path not allowed in a package"));
                 }
                 continue;
@@ -201,6 +220,9 @@ impl Package {
                 out.push(v("archive_corrupt", &name, e.to_string()));
                 break;
             }
+            if name.starts_with(SKILLS_DIR) && entry.header().mode().is_ok_and(|m| m & 0o100 != 0) {
+                executable.insert(name.clone());
+            }
             let dup = if name == SIGNATURE {
                 signature.replace(buf).is_some()
             } else {
@@ -221,7 +243,11 @@ impl Package {
         if !out.is_empty() {
             return Err(out);
         }
-        let pkg = Self { files, signature };
+        let pkg = Self {
+            files,
+            signature,
+            executable,
+        };
         let mut out = Vec::new();
         for req in [MANIFEST, ICON, GUIDE] {
             if !pkg.files.contains_key(req) {

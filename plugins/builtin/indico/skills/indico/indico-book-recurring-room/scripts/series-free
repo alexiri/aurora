@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Usage: series-free FIRST_DATE LAST_DATE START END CAPACITY INTERVAL_WEEKS [BUILDING ...]
+#   e.g. series-free 2026-12-01 2027-03-30 14:30 15:30 10 1 31 513
+# Checks every occurrence of a weekly series (FIRST_DATE, +INTERVAL weeks, ... <= LAST_DATE)
+# with one room search per date (no building filter), joined with the cached room list.
+# Output: per room (best 15), how many dates it is free, and the dates it is NOT free.
+# Rooms free on none of the dates are not listed. With several Indico accounts set INDICO_ACCOUNT
+# to the account letter or connection id. Requests go through aurora-agent only.
+set -euo pipefail
+MAX_DATES=60
+
+usage() { sed -n '2,3s/^# //p' "$0" >&2; exit 2; }
+[ $# -ge 6 ] || usage
+first=$1; last=$2; s=$3; e=$4; cap=$5; iv=$6; shift 6
+date_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; time_re='^[0-9]{2}:[0-9]{2}$'
+[[ $first =~ $date_re && $last =~ $date_re ]] || { echo "dates must be YYYY-MM-DD" >&2; usage; }
+[[ $s =~ $time_re && $e =~ $time_re ]] || { echo "times must be HH:MM" >&2; usage; }
+[[ $cap =~ ^[1-9][0-9]*$ ]] || { echo "CAPACITY must be a positive number" >&2; usage; }
+[[ $iv =~ ^[1-9][0-9]*$ ]] || { echo "INTERVAL_WEEKS must be 1 or more" >&2; usage; }
+[[ $first < $last || $first == "$last" ]] || { echo "FIRST_DATE is after LAST_DATE" >&2; exit 2; }
+for x in "$first" "$last"; do
+  date -d "$x" +%F >/dev/null 2>&1 || { echo "not a date: $x" >&2; exit 2; }
+done
+
+dates=()
+d=$first
+while [[ $d < $last || $d == "$last" ]]; do
+  dates+=("$d")
+  if [ "${#dates[@]}" -gt "$MAX_DATES" ]; then
+    echo "more than $MAX_DATES dates: split the series or use a larger interval" >&2; exit 2
+  fi
+  d=$(date -d "$d + $((7 * iv)) days" +%F)
+done
+
+acct=()
+tag=default
+if [ -n "${INDICO_ACCOUNT:-}" ]; then
+  acct=(--account "$INDICO_ACCOUNT")
+  tag=$(printf '%s' "$INDICO_ACCOUNT" | tr -c 'A-Za-z0-9' '_')
+fi
+
+blds=$(printf '%s\n' "$@" | jq -R 'select(length > 0)' | jq -sc .)
+dir="${TMPDIR:-/tmp}/aurora-agent"
+mkdir -p -m 700 "$dir"
+cache="$dir/indico-rooms-$tag-$(date +%F).json"
+if [ ! -s "$cache" ]; then
+  t=$(mktemp "$dir/rooms.XXXXXX")
+  if aurora-agent call indico list_all_rooms "${acct[@]}" --raw > "$t"; then
+    mv "$t" "$cache"
+  else
+    rm -f "$t"
+    echo "series-free: could not read the room list (scope read:everything needed)" >&2
+    exit 1
+  fi
+fi
+tmp=$(mktemp -d "$dir/series.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+
+for d in "${dates[@]}"; do
+  aurora-agent call indico search_rooms "${acct[@]}" capacity="$cap" \
+    start_dt="${d}T${s}:00" end_dt="${d}T${e}:00" repeat_frequency=NEVER --raw |
+    jq -c --arg d "$d" '
+      if (.rooms | type) == "array" then {date: $d, free: .rooms}
+      else error("search for \($d) gave no room list: \(tostring | .[0:200])") end' >> "$tmp/days.jsonl"
+done
+
+jq -rs --slurpfile r "$cache" --argjson b "$blds" '
+  . as $days | ($days|length) as $n
+  | [$r[0][] | select(($b|length)==0 or (.building as $x | $b | index($x)))
+     | . as $room
+     | {id, name:.full_name, cap:.capacity, conf:.reservations_need_confirmation,
+        busy:[$days[] | select(.free | index($room.id) | not) | .date]}
+     | .free = ($n - (.busy|length))
+     | select(.free > 0)]
+  | sort_by(-.free, .conf, .cap)
+  | "dates checked: \($n) (\($days[0].date) .. \($days[-1].date))",
+    (if length == 0 then "no room in these buildings is free on any of the dates" else empty end),
+    (.[:15][] | "\(.id)\t\(.name)\tcap \(.cap)\t\(if .conf then "NEEDS-CONFIRMATION" else "direct" end)\tfree \(.free)/\($n)\tbusy: \(if .busy == [] then "-" else (.busy|join(",")) end)")
+' "$tmp/days.jsonl"

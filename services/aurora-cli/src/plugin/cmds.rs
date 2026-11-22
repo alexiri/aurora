@@ -2,7 +2,7 @@ use super::pack;
 use anyhow::{Context, Result, anyhow, bail};
 use aurora_policy::HostPattern;
 use aurora_registry::snapshot::{
-    ActivePackage, compile_with_guides as compile_snapshot, guide_digests,
+    ActivePackage, agent_files, compile_with_agent_files as compile_snapshot,
 };
 use aurora_registry::validate::{ValidationContext, package as validate_package};
 use aurora_registry::{Package, TrustStore, TrustedKey, Violation};
@@ -54,14 +54,23 @@ pub fn new(id: &str, dir: &Path, publisher: &str) -> Result<i32> {
         )
         .as_bytes(),
     )?;
-    std::fs::create_dir_all(root.join("agent").join(id))?;
-    w(
-        &format!("agent/{id}/api.md"),
-        format!(
-            "# {id} API\n\nThis file says what is in it on its first screen.\n\n## Endpoints\n\n- `GET /v1/items`: list items.\n- `POST /v1/items/<id>/close`: close an item.\n"
-        )
-        .as_bytes(),
-    )?;
+    // (P5-APPSKILL-1, C-1138) A starter skill. A skill is named `<app id>` or `<app id>-…`, and a
+    // skill name has no underscore, so an app id with one cannot ship skills: none is scaffolded.
+    if id.contains('_') {
+        eprintln!(
+            "note: `{id}` has an underscore, which a skill name cannot have: no skill was scaffolded (see docs/24)"
+        );
+    } else {
+        let skill = format!("{id}-example");
+        std::fs::create_dir_all(root.join("skills").join(id).join(&skill))?;
+        w(
+            &format!("skills/{id}/{skill}/SKILL.md"),
+            format!(
+                "---\nname: {skill}\ndescription: List the open items and close one. Use when the task is about {id} items.\n---\n\n# Listing and closing items\n\n1. `GET /v1/items` lists items; each has a numeric `id`.\n2. `POST /v1/items/<id>/close` closes one. It may need approval.\n\nPut a script a task needs in `scripts/` next to this file and commit it executable.\n"
+            )
+            .as_bytes(),
+        )?;
+    }
     w(
         "tests/basic.yaml",
         format!(include_str!("templates/basic.yaml"), id = id).as_bytes(),
@@ -139,6 +148,11 @@ fn url_host(url: &str) -> Result<String> {
     Ok(host.to_owned())
 }
 
+/// The package validator without signature or key checks (`aurora plugin preview`).
+pub(super) fn lint_unsigned(pkg: &Package) -> Result<Vec<Violation>> {
+    lint(pkg, &[], true, &Reserved::default(), CORE_VERSION)
+}
+
 fn lint(
     pkg: &Package,
     pubkeys: &[PathBuf],
@@ -178,7 +192,7 @@ pub fn validate(
     // (P5-UX-13, C-939) Findings that do not reject the package, such as a tool without a description.
     let warnings = pkg
         .manifest(core)
-        .map(|m| aurora_registry::validate::warnings(&m))
+        .map(|m| aurora_registry::validate::package_warnings(&m, &pkg))
         .unwrap_or_default();
     println!(
         "{}",
@@ -215,11 +229,11 @@ fn hex(b: &[u8]) -> String {
 
 fn compiled(pkg: &Package, core: &str) -> Result<aurora_registry::snapshot::CompiledSnapshot> {
     let a = active(pkg, core)?;
-    let guides = std::collections::BTreeMap::from([(
+    let files = std::collections::BTreeMap::from([(
         a.manifest.package.id.clone(),
-        guide_digests(&a.manifest, pkg),
+        agent_files(&a.manifest, pkg),
     )]);
-    compile_snapshot(&[a], &[], &[], CONTRACT, &guides).map_err(|e| anyhow!("compile: {e}"))
+    compile_snapshot(&[a], &[], &[], CONTRACT, &files).map_err(|e| anyhow!("compile: {e}"))
 }
 
 pub fn compile(path: &Path) -> Result<i32> {
@@ -332,13 +346,16 @@ pub fn docs(path: &Path, format: &str) -> Result<i32> {
             or_none(&hosts)
         ));
     }
-    // (P5-GUIDE-1, docs/24 §10) The agent guide of each app: summary, essentials, file list.
+    // (P5-APPSKILL-1, C-1138, docs/24 §10) What agents get from each app: summary, essentials and
+    // the skills (name, description, scripts marked).
+    let files = aurora_registry::snapshot::agent_files(&m, &pkg);
     for a in &m.apps {
+        let skills = files.skills.get(&a.about.id);
         let Some(ag) = &a.agent else { continue };
-        if ag.summary.is_none() && ag.guide.is_empty() && ag.instructions.trim().is_empty() {
+        if ag.summary.is_none() && skills.is_none() && ag.instructions.trim().is_empty() {
             continue;
         }
-        md.push_str(&format!("\n\n## Agent guide: `{}`\n\n", a.about.id));
+        md.push_str(&format!("\n\n## For agents: `{}`\n\n", a.about.id));
         if let Some(s) = &ag.summary {
             md.push_str(&format!("Summary: {s}\n\n"));
         }
@@ -348,9 +365,14 @@ pub fn docs(path: &Path, format: &str) -> Result<i32> {
                 ag.instructions.trim_end()
             ));
         }
-        for g in &ag.guide {
-            let kind = if g.is_recipe() { "recipe" } else { "reference" };
-            md.push_str(&format!("- `{}` ({kind}): {}\n", g.file, g.title));
+        for s in skills.into_iter().flatten() {
+            let scripts = s.files.iter().filter(|f| f.executable).count();
+            let note = if scripts > 0 {
+                format!(" ({scripts} script{})", if scripts == 1 { "" } else { "s" })
+            } else {
+                String::new()
+            };
+            md.push_str(&format!("- skill `{}`{note}: {}\n", s.name, s.description));
         }
     }
     if format == "html" {

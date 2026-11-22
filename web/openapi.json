@@ -3998,99 +3998,6 @@
         ]
       }
     },
-    "/v1/admin/plugins/{id}/agent-guides/{app_id}/{file}": {
-      "get": {
-        "tags": [
-          "plugins"
-        ],
-        "summary": "One agent guide file of a package: what agents that use the app can read (instance\nadministrators). Third-party text, served as a plain-text download, never rendered.",
-        "operationId": "adminGetPluginAgentGuideFile",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Package row id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "app_id",
-            "in": "path",
-            "description": "App id of the package",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "file",
-            "in": "path",
-            "description": "File name listed in the app's guide",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthenticated: no credential, or an invalid or expired one",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too many requests: the per-principal rate limit",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ]
-      }
-    },
     "/v1/admin/plugins/{id}/approve": {
       "post": {
         "tags": [
@@ -4159,6 +4066,204 @@
             }
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/plugins/{id}/apps/{app_id}/operations": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "The operations file of an app of a package (C-1136, instance administrators), as plain text.",
+        "operationId": "adminGetPluginOperationsFile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Package row id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "app_id",
+            "in": "path",
+            "description": "App id of the package",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/plugins/{id}/apps/{app_id}/skills/{name}/file": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "One file of an app skill of a package (C-1136, instance administrators): third-party text,\nserved as a plain-text download, never rendered.",
+        "operationId": "adminGetPluginAppSkillFile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Package row id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "app_id",
+            "in": "path",
+            "description": "App id of the package",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Skill name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Path inside the skill; absent = `SKILL.md` as shipped.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -44571,6 +44676,26 @@
           }
         }
       },
+      "AppRef": {
+        "type": "object",
+        "description": "(P5-APPSKILL-2, C-1133) The app a skill comes from.",
+        "required": [
+          "app_id",
+          "name",
+          "version"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "AppRestrictions": {
         "type": "object",
         "description": "(phase 4, P4-GRANTS, D-123, C-410) The app's manifest restrictions, so clients can explain\nthem: `custom_only` (no `full` grants) and `block_untooled` (requests matching no catalogue\ntool are blocked). Both `false` for an app without `grants`.",
@@ -50015,6 +50140,114 @@
           }
         }
       },
+      "EffectiveBody": {
+        "type": "object",
+        "description": "A skill as the effective set shows it: the fields of [`Skill`], with the ones an app skill has\nno value for nullable (`id`, `org_id`, the timestamps).",
+        "required": [
+          "tier",
+          "scope",
+          "name",
+          "description",
+          "body",
+          "enabled",
+          "files",
+          "total_size"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillFile"
+            }
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Null for an app skill."
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "overridden_in": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/OverriddenAgent"
+            }
+          },
+          "scope": {
+            "type": "string",
+            "description": "`agent` | `workspace` | `organization` | `app`."
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkillSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tier": {
+            "type": "string",
+            "description": "`agent` | `workspace` | `org` | `app`."
+          },
+          "total_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "EffectiveByo": {
         "type": "object",
         "description": "(phase 2, RFE-025) Effective org-level BYO controls (instance ∩ org); the workspace layer is\napplied per workspace/agent.",
@@ -50241,6 +50474,17 @@
           "shadows"
         ],
         "properties": {
+          "app": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppRef",
+                "description": "The app of an app skill; null for the other tiers."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "enabled": {
             "type": "boolean",
             "description": "Always true: a disabled skill never wins."
@@ -50250,10 +50494,10 @@
             "items": {
               "$ref": "#/components/schemas/TierRef"
             },
-            "description": "Every lower-tier skill of this name (enabled or not)."
+            "description": "Every lower-tier skill of this name (enabled or not), app skills included."
           },
           "skill": {
-            "$ref": "#/components/schemas/Skill"
+            "$ref": "#/components/schemas/EffectiveBody"
           },
           "tier": {
             "type": "string"
@@ -59868,12 +60112,12 @@
                 "created_at"
               ],
               "properties": {
-                "agent_guides": {
+                "agent": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/PluginAgentGuide"
+                    "$ref": "#/components/schemas/PluginAgent"
                   },
-                  "description": "(P5-GUIDE-2, C-648) What agents that use each app can read: one entry per app, in manifest\norder. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive for the digests);\nempty in lists and in the responses of the lifecycle routes."
+                  "description": "(P5-APPSKILL-2, C-1136) What agents that use each app get from the package: one entry per\napp, in manifest order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive\nfor the digests); empty in lists and in the responses of the lifecycle routes."
                 },
                 "approved_at": {
                   "type": [
@@ -62877,13 +63121,13 @@
         },
         "additionalProperties": false
       },
-      "PluginAgentGuide": {
+      "PluginAgent": {
         "type": "object",
-        "description": "(P5-GUIDE-2, C-648) The agent guide of one app of a package (`docs/24 §9`).",
+        "description": "(C-1136) What agents of one app get from a package (`docs/24 §9`).",
         "required": [
           "app_id",
           "instructions",
-          "files"
+          "skills"
         ],
         "properties": {
           "app_id": {
@@ -62892,19 +63136,13 @@
           "changed": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/PluginGuideChanged",
+                "$ref": "#/components/schemas/PluginAgentChanged",
                 "description": "Against the active version of the same package; `null` when there is none or this is it."
               },
               {
                 "type": "null"
               }
             ]
-          },
-          "files": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PluginGuideFile"
-            }
           },
           "instructions": {
             "type": "string",
@@ -62913,19 +63151,172 @@
           "operations": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/PluginGuideOperations",
-                "description": "The operations file (P5-GUIDE-6); `null` until then."
+                "$ref": "#/components/schemas/PluginAgentOperations",
+                "description": "The operations file; `null` without one."
               },
               {
                 "type": "null"
               }
             ]
           },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginAgentSkill"
+            },
+            "description": "The app's skills, by name. Scripts are marked by `executable` on their files."
+          },
           "summary": {
             "type": [
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PluginAgentChanged": {
+        "type": "object",
+        "required": [
+          "summary",
+          "instructions",
+          "operations",
+          "skills"
+        ],
+        "properties": {
+          "instructions": {
+            "type": "boolean"
+          },
+          "operations": {
+            "type": "boolean"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginAgentSkillChange"
+            }
+          },
+          "summary": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PluginAgentFileChange": {
+        "type": "object",
+        "required": [
+          "path",
+          "change"
+        ],
+        "properties": {
+          "change": {
+            "type": "string",
+            "description": "`added` | `changed` | `removed` | `mode` (the executable bit differs; listed next to `changed` when the content changed too)."
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "PluginAgentOperations": {
+        "type": "object",
+        "required": [
+          "file",
+          "size",
+          "sha256",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "file": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "PluginAgentSkill": {
+        "type": "object",
+        "description": "An app skill: `size` is `SKILL.md` and every file together in bytes; `files` lists `SKILL.md`\nfirst, then the other files by path.",
+        "required": [
+          "name",
+          "description",
+          "size",
+          "files"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginAgentSkillFile"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "PluginAgentSkillChange": {
+        "type": "object",
+        "required": [
+          "name",
+          "change",
+          "files"
+        ],
+        "properties": {
+          "change": {
+            "type": "string",
+            "description": "`added` | `changed` | `removed`."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginAgentFileChange"
+            }
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PluginAgentSkillFile": {
+        "type": "object",
+        "required": [
+          "path",
+          "size",
+          "sha256",
+          "executable"
+        ],
+        "properties": {
+          "executable": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -62970,105 +63361,6 @@
           }
         ],
         "description": "`POST /v1/admin/plugins/{id}/approve` response (C-341): the package plus the number of\nconnections the activation flipped to `reauth_required`."
-      },
-      "PluginGuideChanged": {
-        "type": "object",
-        "required": [
-          "summary",
-          "instructions",
-          "operations",
-          "files"
-        ],
-        "properties": {
-          "files": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PluginGuideFileChange"
-            }
-          },
-          "instructions": {
-            "type": "boolean"
-          },
-          "operations": {
-            "type": "boolean"
-          },
-          "summary": {
-            "type": "boolean"
-          }
-        }
-      },
-      "PluginGuideFile": {
-        "type": "object",
-        "required": [
-          "file",
-          "title",
-          "kind",
-          "size",
-          "sha256"
-        ],
-        "properties": {
-          "file": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string",
-            "description": "`reference` | `recipe`."
-          },
-          "sha256": {
-            "type": "string"
-          },
-          "size": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "title": {
-            "type": "string"
-          }
-        }
-      },
-      "PluginGuideFileChange": {
-        "type": "object",
-        "required": [
-          "file",
-          "change"
-        ],
-        "properties": {
-          "change": {
-            "type": "string",
-            "description": "`added` | `changed` | `removed`."
-          },
-          "file": {
-            "type": "string"
-          }
-        }
-      },
-      "PluginGuideOperations": {
-        "type": "object",
-        "required": [
-          "file",
-          "size",
-          "sha256",
-          "count"
-        ],
-        "properties": {
-          "count": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "file": {
-            "type": "string"
-          },
-          "sha256": {
-            "type": "string"
-          },
-          "size": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
       },
       "PluginHostClaim": {
         "type": "object",
@@ -63194,12 +63486,12 @@
           "created_at"
         ],
         "properties": {
-          "agent_guides": {
+          "agent": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/PluginAgentGuide"
+              "$ref": "#/components/schemas/PluginAgent"
             },
-            "description": "(P5-GUIDE-2, C-648) What agents that use each app can read: one entry per app, in manifest\norder. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive for the digests);\nempty in lists and in the responses of the lifecycle routes."
+            "description": "(P5-APPSKILL-2, C-1136) What agents that use each app get from the package: one entry per\napp, in manifest order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive\nfor the digests); empty in lists and in the responses of the lifecycle routes."
           },
           "approved_at": {
             "type": [
@@ -68415,6 +68707,17 @@
           "enabled"
         ],
         "properties": {
+          "app": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppRef",
+                "description": "The app of an app skill; null for the other tiers."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -68430,7 +68733,7 @@
             ]
           },
           "skill": {
-            "$ref": "#/components/schemas/Skill"
+            "$ref": "#/components/schemas/EffectiveBody"
           },
           "tier": {
             "type": "string"
@@ -70654,17 +70957,28 @@
       },
       "TierRef": {
         "type": "object",
+        "description": "A tier (or app) that holds or wins a name. `id` is null for an app skill.",
         "required": [
-          "id",
           "tier"
         ],
         "properties": {
+          "app_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app, when `tier` is `app`."
+          },
           "id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid"
           },
           "tier": {
-            "type": "string"
+            "type": "string",
+            "description": "`agent` | `workspace` | `org` | `app`."
           }
         }
       },

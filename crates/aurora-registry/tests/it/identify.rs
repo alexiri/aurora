@@ -57,7 +57,7 @@ fn atlassian_path_prefixes_cover_whole_segments_only() {
         env!("CARGO_MANIFEST_DIR")
     );
     let mut m = Manifest::parse(&std::fs::read_to_string(&path).unwrap(), "9.9.9").unwrap();
-    // The agent guides are digested from the stored archive; identification never reads them.
+    // The agent files are digested from the stored archive; identification never reads them.
     for a in &mut m.apps {
         a.agent = None;
     }

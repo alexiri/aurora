@@ -123,29 +123,93 @@ impl From<SkillView> for Skill {
     }
 }
 
+/// A tier (or app) that holds or wins a name. `id` is null for an app skill.
 #[derive(Serialize, ToSchema, Clone)]
 pub struct TierRef {
-    pub id: Uuid,
+    pub id: Option<Uuid>,
+    /// `agent` | `workspace` | `org` | `app`.
     pub tier: &'static str,
+    /// The app, when `tier` is `app`.
+    pub app_id: Option<String>,
+}
+
+/// (P5-APPSKILL-2, C-1133) The app a skill comes from.
+#[derive(Serialize, ToSchema, Clone)]
+pub struct AppRef {
+    pub app_id: String,
+    pub name: String,
+    pub version: String,
+}
+
+/// A skill as the effective set shows it: the fields of [`Skill`], with the ones an app skill has
+/// no value for nullable (`id`, `org_id`, the timestamps).
+#[derive(Serialize, ToSchema)]
+pub struct EffectiveBody {
+    /// Null for an app skill.
+    pub id: Option<Uuid>,
+    /// `agent` | `workspace` | `org` | `app`.
+    pub tier: &'static str,
+    /// `agent` | `workspace` | `organization` | `app`.
+    pub scope: &'static str,
+    pub agent_id: Option<Uuid>,
+    pub workspace_id: Option<Uuid>,
+    pub org_id: Option<Uuid>,
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    pub enabled: bool,
+    pub files: Vec<SkillFile>,
+    pub total_size: usize,
+    pub overridden_in: Option<Vec<OverriddenAgent>>,
+    pub source: Option<SkillSource>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+impl From<Skill> for EffectiveBody {
+    fn from(s: Skill) -> Self {
+        Self {
+            id: Some(s.id),
+            tier: s.tier,
+            scope: s.scope,
+            agent_id: s.agent_id,
+            workspace_id: s.workspace_id,
+            org_id: Some(s.org_id),
+            name: s.name,
+            description: s.description,
+            body: s.body,
+            enabled: s.enabled,
+            files: s.files,
+            total_size: s.total_size,
+            overridden_in: s.overridden_in,
+            source: s.source,
+            updated_at: Some(s.updated_at),
+            created_at: Some(s.created_at),
+        }
+    }
 }
 
 #[derive(Serialize, ToSchema)]
 pub struct EffectiveSkill {
-    pub skill: Skill,
+    pub skill: EffectiveBody,
     pub tier: &'static str,
     /// Always true: a disabled skill never wins.
     pub enabled: bool,
-    /// Every lower-tier skill of this name (enabled or not).
+    /// Every lower-tier skill of this name (enabled or not), app skills included.
     pub shadows: Vec<TierRef>,
+    /// The app of an app skill; null for the other tiers.
+    pub app: Option<AppRef>,
 }
 
 #[derive(Serialize, ToSchema)]
 pub struct ShadowedSkill {
-    pub skill: Skill,
+    pub skill: EffectiveBody,
     pub tier: &'static str,
     pub enabled: bool,
     /// The winner of this name; null for a disabled skill whose name has no enabled skill.
     pub shadowed_by: Option<TierRef>,
+    /// The app of an app skill; null for the other tiers.
+    pub app: Option<AppRef>,
 }
 
 #[derive(Serialize, ToSchema)]

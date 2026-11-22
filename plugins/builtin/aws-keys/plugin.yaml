@@ -1,6 +1,6 @@
 package:
   id: aws-keys
-  version: 2.3.0
+  version: 2.4.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -208,5 +208,3 @@ apps:
         What you can do is limited by the IAM policy of the keys or the role. S3 uses path-style
         URLs; EC2 sends Action/Version as a POST body (Describe* allowed, everything else held for
         approval); only STS GetCallerIdentity works. A request to another region is refused by AWS.
-      guide:
-        - { file: requests.md, title: "Endpoints, S3, EC2 and STS requests, errors" }

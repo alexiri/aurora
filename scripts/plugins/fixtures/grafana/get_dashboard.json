@@ -1,0 +1,27 @@
+{
+  "meta": {"folderUid": "ops"},
+  "dashboard": {
+    "uid": "api-overview",
+    "title": "API overview",
+    "templating": {"list": [
+      {"name": "datasource", "type": "datasource", "current": {"text": "Main Prometheus", "value": "prom-main"}},
+      {"name": "job", "type": "query", "current": {"text": "api", "value": "api"}}
+    ]},
+    "panels": [
+      {"id": 1, "type": "timeseries", "title": "Request rate",
+       "datasource": {"type": "prometheus", "uid": "${datasource}"},
+       "targets": [{"refId": "A", "expr": "sum(rate(http_requests_total{job=\"$job\"}[5m]))"}]},
+      {"id": 2, "type": "row", "title": "Logs row", "panels": [
+        {"id": 3, "type": "table", "title": "Errors by host",
+         "datasource": {"type": "grafana-opensearch-datasource", "uid": "os-logs"},
+         "targets": [{"refId": "A", "query": "level:error", "timeField": "@timestamp",
+                      "metrics": [{"id": "1", "type": "count"}],
+                      "bucketAggs": [{"id": "2", "type": "terms", "field": "host.keyword"},
+                                     {"id": "3", "type": "date_histogram", "field": "@timestamp"}]}]},
+        {"id": 4, "type": "stat", "title": "Rows in table",
+         "datasource": "${datasource}",
+         "targets": [{"refId": "A", "datasource": {"type": "postgres", "uid": "pg-reports"}, "rawSql": "SELECT count(*) FROM deployments"}]}
+      ]}
+    ]
+  }
+}

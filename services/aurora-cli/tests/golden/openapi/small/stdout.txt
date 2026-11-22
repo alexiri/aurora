@@ -1,9 +1,5 @@
-# Add under apps[].agent in plugin.yaml (summary is required with a guide):
+# Add under apps[].agent in plugin.yaml (summary is required with an operations file):
 operations: operations.json
-guide:
-  - { file: operations.md, title: "Operation index: every operation, grouped by tag" }
-  - { file: ops-other.md, title: "Operations: other" }
-  - { file: ops-widgets.md, title: "Operations: widgets" }
 
 # Catalogue skeleton for apps[]: review overlaps, approvals and `params` classifiers.
 tools:

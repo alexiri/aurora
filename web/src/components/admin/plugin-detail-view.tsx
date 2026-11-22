@@ -27,14 +27,14 @@ import {
   type PluginPackage,
 } from "@/lib/api/plugins";
 
-import { AgentGuideSection, packageHasGuide } from "./agent-guide-section";
+import { AGENT_CONTENT_ID, AgentContentSection, SkillsChangedLine, packageHasAgentContent } from "./agent-content-section";
 import { ViolationList, packageName, statusTone } from "./plugins-view";
 
 // "impact" joins the mandatory review of a pending major upgrade (RFE-022, 09 §10).
 // "conversions" joins it when the version converts agent grants (P4-GRANTS, D-123, 09 §10).
-// "guide" joins it when the package ships agent guide text (P5-GUIDE-3, 24 §9): agents read it, so approving
+// "agents" joins it when the package ships text or skills for agents (C-1139, 24 §9): agents read it, so approving
 // means having seen it; it is one more section to expand, not a second confirmation.
-type Section = "hooks" | "egress" | "context" | "claims" | "impact" | "conversions" | "guide";
+type Section = "hooks" | "egress" | "context" | "claims" | "impact" | "conversions" | "agents";
 
 // Why a version waits for an instance admin although it may look like a routine upgrade (FIX-107).
 const REASON_TEXT: Record<string, string> = {
@@ -129,7 +129,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
   const impact = plugin.impact ?? null;
   const majorImpact = impact !== null && (impact.major_upgrade || impact.connections_needing_reauth > 0);
   const converting = impact !== null && (impact.grants_to_convert ?? 0) > 0;
-  const hasGuide = packageHasGuide(plugin);
+  const hasAgentContent = packageHasAgentContent(plugin);
 
   const doUninstall = (force: boolean) =>
     uninstall.mutate(force, {
@@ -175,6 +175,8 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
       />
       {/* (P5-REFINE-18 #8, admin-7) The tile, what the app does in plain sentences, and the decision, before any machinery. */}
       <Card className="space-y-4" aria-label="Summary">
+        {/* (C-1139) A pending version says above Approve when its skills for agents changed. */}
+        {pending ? <SkillsChangedLine plugin={plugin} /> : null}
         <div className="flex flex-wrap items-center gap-3">
           <AppIcon appId={plugin.apps[0]?.app_id ?? plugin.package_id} name={appName} hasIcon={Boolean(plugin.apps[0])} />
           <div className="min-w-0 flex-1 basis-48">
@@ -416,11 +418,11 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
       </div>
       </TechnicalDetails>
 
-      {hasGuide ? (
-        <div className="space-y-2">
-          <h2 className="font-display text-base font-semibold text-ink">Agent guide</h2>
-          <Collapsible id="guide" title="What agents can read" open={opened.has("guide")} onToggle={onToggle}>
-            <AgentGuideSection plugin={plugin} />
+      {hasAgentContent ? (
+        <div className="scroll-mt-4 space-y-2" id={AGENT_CONTENT_ID}>
+          <h2 className="font-display text-base font-semibold text-ink">For agents</h2>
+          <Collapsible id="agents" title="What agents get" open={opened.has("agents")} onToggle={onToggle}>
+            <AgentContentSection plugin={plugin} />
           </Collapsible>
         </div>
       ) : null}

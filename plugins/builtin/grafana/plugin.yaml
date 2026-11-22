@@ -1,17 +1,17 @@
 package:
   id: grafana
-  version: 1.0.0
+  version: 1.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
   name: Grafana
-  description: Dashboards, folders, annotations and alerting on your own Grafana server, and Prometheus, Mimir and Loki queries through Grafana's data source proxy, connected with a service account token; saving dashboards, annotations, silences and unified queries are approved
+  description: Dashboards, folders, annotations and alerting on your own Grafana server, and queries on Prometheus, Mimir, Loki, OpenSearch, Elasticsearch and SQL data sources through Grafana's query API, connected with a service account token; saving dashboards, annotations and silences are approved
   homepage: https://grafana.com
 apps:
   - about:
       id: grafana
       name: Grafana
-      description: Search dashboards, read panels and alerts, and run Prometheus, Mimir and Loki queries through your Grafana server; annotate, save dashboards and silence alerts when you allow it
+      description: Search dashboards, read panels and alerts, and query Prometheus, Mimir, Loki, OpenSearch, Elasticsearch and SQL data sources through your Grafana server; annotate, save dashboards and silence alerts when you allow it
       summary: Dashboards, metrics, logs and alerts on your Grafana server.
       first_prompt: "Which Grafana alerts are firing right now, and since when?"
       category: monitoring
@@ -20,7 +20,7 @@ apps:
       api_docs: https://grafana.com/docs/grafana/latest/developer-resources/api-reference/http-api/api-legacy/
       api_spec: https://raw.githubusercontent.com/grafana/grafana/main/public/openapi3.json
       connect_note:
-        text: "An administrator registers your Grafana server first (Self-hosted apps). Create a service account in Grafana (Administration, Users and access, Service accounts) and add a token. The service account's role and the folder and data source permissions decide what agents can see: Viewer is enough to read and query, Editor is needed to save dashboards, add annotations and silence alerts. A service account belongs to one Grafana organization."
+        text: "An administrator registers your Grafana server first (Self-hosted apps). Create a service account in Grafana (Administration, Users and access, Service accounts) and add a token. The service account's role and the folder and data source permissions decide what agents can see: Viewer is enough to read and query, Editor is needed to save dashboards, add annotations and silence alerts. A service account belongs to one Grafana organization. Queries run as the service account, and data sources should use read-only database users (Grafana's advice for SQL data sources): a query on a SQL or InfluxDB data source whose database user can write could change data."
         url: https://grafana.com/docs/grafana/latest/administration/service-accounts/
     instances:
       label: Grafana server
@@ -108,13 +108,16 @@ apps:
           - { id: list_silences, description: "Lists silences in Grafana's Alertmanager.", name: List silences, host: "{instance}", path: /api/alertmanager/grafana/api/v2/silences, methods: [GET] }
           # Annotations.
           - { id: list_annotations, description: "Lists annotations (deployments, incidents, notes) in a time range.", name: List annotations, host: "{instance}", path: /api/annotations, methods: [GET] }
+          # Grafana's own UI reads Prometheus, Loki, OpenSearch and SQL data through this POST, and
+          # Grafana grants it to the Viewer role (D-462). It runs a read query; see the data source
+          # note in the connect text for the one case where a query could change data.
+          - { id: query_datasources, description: "Runs queries on any data source through Grafana (Prometheus, Mimir, Loki, OpenSearch, Elasticsearch, SQL); only reads.", name: Run a data source query, host: "{instance}", path: /api/ds/query, methods: [POST] }
       write:
         items:
           - { id: create_annotation, description: "Adds an annotation to Grafana, on one dashboard or for the whole organization.", name: Add an annotation, host: "{instance}", path: /api/annotations, methods: [POST] }
           - { id: update_dashboard, description: "Creates a dashboard or saves a new version of one.", name: Save a dashboard, host: "{instance}", path: /api/dashboards/db, methods: [POST] }
           - { id: create_silence, description: "Silences matching alerts in Grafana's Alertmanager for a time, or changes a silence.", name: Silence alerts, host: "{instance}", path: /api/alertmanager/grafana/api/v2/silences, methods: [POST] }
           - { id: delete_silence, description: "Ends a silence in Grafana's Alertmanager.", name: End a silence, host: "{instance}", path: "/api/alertmanager/grafana/api/v2/silence/*", methods: [DELETE] }
-          - { id: query_datasources, description: "Runs queries on any data source through Grafana. It only reads, but it is a POST, so it is held for approval.", name: Run a data source query (read only), host: "{instance}", path: /api/ds/query, methods: [POST] }
     approvals:
       create_annotation:
         title: add an annotation
@@ -149,7 +152,7 @@ apps:
         fields:
           - { label: Silence, source: path, segment: 7 }
       query_datasources:
-        title: run a data source query (read only)
+        title: run a data source query
         fields:
           - { label: Data source UIDs, source: body, steps: [ { json: "/queries/*/datasource/uid" } ] }
           - { label: Expression, source: body, steps: [ { json: /queries/0/expr } ] }
@@ -158,14 +161,12 @@ apps:
           - { label: From, source: body, steps: [ { json: /from } ] }
           - { label: To, source: body, steps: [ { json: /to } ] }
     agent:
-      summary: "Grafana dashboards, Prometheus/Mimir metrics, Loki logs and alerts: find a dashboard, run a query, see what fires."
+      summary: "Grafana dashboards, queries on Prometheus, Mimir, Loki, OpenSearch and SQL data sources, and alerts: find a dashboard, run a query, see what fires."
       instructions: |
-        The base URL is the account's address plus /api; Aurora adds the token, so send none and
-        never send this connection's requests to another host. Find a data source UID in a
-        dashboard's panels (or /api/datasources), then query Prometheus, Mimir or Loki with GET
-        through /api/datasources/proxy/uid/<uid>/… (only the paths in tools.md work). Keep time
-        ranges and step small, and use aurora-agent so large results are saved, not printed.
+        Aurora adds the token: send none, and never send this connection's requests to another
+        host. Query any data source with query_datasources (POST /api/ds/query); read the
+        grafana-query skill first and use its script. Find a data source UID with
+        list_datasources or in a dashboard's panels. The data source proxy GET tools (prometheus_*,
+        loki_*) are a fallback: a 3xx from them means use query_datasources. Keep time ranges and
+        steps small; send only read statements.
       operations: operations.json
-      guide:
-        - { file: investigate-a-spike.md, title: "Find out why a metric jumped", kind: recipe }
-        - { file: api-notes.md, title: "API notes: search, dashboards, data source UIDs, proxy paths, alerting, annotations, errors" }

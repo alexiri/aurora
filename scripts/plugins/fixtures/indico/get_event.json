@@ -1,0 +1,44 @@
+{
+  "results": [
+    {
+      "id": "4242",
+      "title": "Weekly team meeting",
+      "category": "Team Meetings",
+      "url": "https://indico.example.org/event/4242/",
+      "startDate": {"date": "2026-11-24", "time": "14:30:00", "tz": "Europe/Zurich"},
+      "endDate": {"date": "2026-11-24", "time": "16:00:00", "tz": "Europe/Zurich"},
+      "roomFullname": "10/R-001",
+      "location": "Main site",
+      "chairs": [{"fullName": "Pat Chair"}],
+      "description": "<p>Agenda and notes: <a href=\"https://notes.example.org/abc\">notes</a></p><ul><li>Welcome</li><li>Reports</li></ul>",
+      "note": {"html": "<p>Decision: ship on Friday.</p>"},
+      "folders": [
+        {"id": 900, "attachments": [
+          {"id": 901, "title": "Agenda", "filename": "agenda.pdf", "content_type": "application/pdf", "size": 20480,
+           "download_url": "https://indico.example.org/event/4242/attachments/900/901/agenda.pdf"}
+        ]}
+      ],
+      "contributions": [
+        {
+          "title": "Late item", "duration": 10, "startDate": null,
+          "speakers": [], "folders": []
+        },
+        {
+          "title": "Status of the upgrade", "duration": 20,
+          "startDate": {"date": "2026-11-24", "time": "14:35:00", "tz": "Europe/Zurich"},
+          "speakers": [{"fullName": "Sam Speaker"}],
+          "description": "<p>What changed since last week.</p>",
+          "note": {"html": "<p>Action: Sam to update the plan.</p>"},
+          "folders": [
+            {"id": 910, "attachments": [
+              {"id": 911, "title": "Slides", "filename": "status.pptx", "size": 51200,
+               "content_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+               "download_url": "https://indico.example.org/event/4242/attachments/910/911/status.pptx"},
+              {"id": 912, "title": "Recording", "type": "link", "link_url": "https://video.example.org/r/1"}
+            ]}
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -45,14 +45,14 @@ pub fn list_apps(apps: &[AppFolder]) -> String {
             Ok(d) => {
                 let ops = d.operations.len();
                 o.push_str(&format!(
-                    "{} — {} · accounts: {} · {} operation{}, {} recipe{}\n",
+                    "{} — {} · accounts: {} · {} operation{}, {} skill{}\n",
                     oneline(&d.app.id, 48),
                     oneline(&d.app.name, 60),
                     accounts_cell(d),
                     ops,
                     if ops == 1 { "" } else { "s" },
-                    d.recipes.len(),
-                    if d.recipes.len() == 1 { "" } else { "s" },
+                    d.skills.len(),
+                    if d.skills.len() == 1 { "" } else { "s" },
                 ));
             }
             Err(e) => o.push_str(&format!("{} — {}\n", oneline(&a.id, 48), oneline(e, 120))),
@@ -61,7 +61,7 @@ pub fn list_apps(apps: &[AppFolder]) -> String {
     bound(&o)
 }
 
-/// `list <app>`: its operations and recipes.
+/// `list <app>`: its operations and skills.
 #[must_use]
 pub fn list_app(doc: &ApiDoc) -> String {
     let mut o = format!(
@@ -83,11 +83,11 @@ pub fn list_app(doc: &ApiDoc) -> String {
             access_cell(doc, op)
         ));
     }
-    for r in &doc.recipes {
+    for s in &doc.skills {
         o.push_str(&format!(
-            "recipe {} — {}\n",
-            oneline(&r.file, 64),
-            oneline(&r.title, SUMMARY_MAX)
+            "skill {} — {}\n",
+            oneline(&s.name, 64),
+            oneline(&s.description, SUMMARY_MAX)
         ));
     }
     // A long list is cut by lines, never mid-line; the agent narrows with `search`.
@@ -128,7 +128,7 @@ pub(super) fn score(terms: &[String], weighted: &[(&str, u32)]) -> u32 {
     total
 }
 
-/// `search`: ranks operations, catalogue entries and recipes across apps (or one).
+/// `search`: ranks operations, catalogue entries and app skills across apps (or one).
 #[must_use]
 pub fn search(apps: &[AppFolder], words: &[String], only: Option<&str>, limit: usize) -> String {
     search_with(apps, &[], words, only, limit)
@@ -203,18 +203,19 @@ pub fn search_with(
                 ));
             }
         }
-        for r in &d.recipes {
-            let s = score(&terms, &[(&r.title, 5), (&r.file, 3)]);
+        // (C-1135) Skill names weigh 5, descriptions 3.
+        for sk in &d.skills {
+            let s = score(&terms, &[(&sk.name, 5), (&sk.description, 3)]);
             if s > 0 {
                 hits.push((
                     s,
                     d.app.id.clone(),
-                    format!("~{}", r.file),
+                    format!("~{}", sk.name),
                     format!(
-                        "{} recipe {} — {}",
+                        "{} skill {} — {}",
                         oneline(&d.app.id, 48),
-                        oneline(&r.file, 64),
-                        oneline(&r.title, SUMMARY_MAX)
+                        oneline(&sk.name, 64),
+                        oneline(&sk.description, SUMMARY_MAX)
                     ),
                 ));
             }
@@ -396,7 +397,7 @@ fn describe_with(doc: &ApiDoc, op: &Operation, desc_max: usize) -> String {
 }
 
 /// `describe <app> <name>`: an operation (descriptions are dropped first when it would exceed the
-/// bound), or a recipe.
+/// bound), or a skill.
 pub fn describe(doc: &ApiDoc, name: &str) -> Result<String, String> {
     if let Some(op) = doc.operation(name) {
         for desc_max in [160, 60, 0] {
@@ -407,14 +408,13 @@ pub fn describe(doc: &ApiDoc, name: &str) -> Result<String, String> {
         }
         return Ok(bound(&describe_with(doc, op, 0)));
     }
-    if let Some(r) = doc.recipes.iter().find(|r| r.file == name) {
+    if let Some(sk) = doc.skills.iter().find(|s| s.name == name) {
         return Ok(format!(
-            "{} recipe {} — {}\nRead it: /workspace/.aurora/apps/{}/{}\n",
+            "{} skill {} — {}\nRead it: /workspace/{}\n",
             oneline(&doc.app.id, 48),
-            oneline(&r.file, 64),
-            oneline(&r.title, 120),
-            oneline(&doc.app.id, 48),
-            oneline(&r.file, 64)
+            oneline(&sk.name, 64),
+            oneline(&sk.description, 120),
+            oneline(&sk.path, 120),
         ));
     }
     let near: Vec<&str> = doc
@@ -425,7 +425,7 @@ pub fn describe(doc: &ApiDoc, name: &str) -> Result<String, String> {
         .take(5)
         .collect();
     Err(format!(
-        "{}: no operation or recipe named {:?}{}",
+        "{}: no operation or skill named {:?}{}",
         doc.app.id,
         oneline(name, 64),
         if near.is_empty() {
@@ -465,7 +465,8 @@ mod tests {
                "summary": "Events", "tags": [], "params": [], "body": null, "pagination": null,
                "items": null, "tool": "list_events", "access": {"A": "approval"}, "source": "catalogue"}
             ],
-            "recipes": [{"file": "book-free-room.md", "title": "Find a free room and book it"}],
+            "skills": [{"name": "indico-book-free-room", "description": "Find a free room and book it", "path": ".claude/skills/indico-book-free-room/SKILL.md"}],
+            "recipes": [],
             "untooled": {"A": "blocked"}
         });
         vec![
@@ -475,7 +476,7 @@ mod tests {
             },
             AppFolder {
                 id: "dbapp".into(),
-                api: Err("no api.json for this app; read .aurora/apps/dbapp/guide.md".into()),
+                api: Err("no api.json for this app; read .aurora/apps/dbapp/app.md".into()),
             },
         ]
     }
@@ -488,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn search_ranks_names_above_summaries_and_includes_recipes() {
+    fn search_ranks_names_above_summaries_and_includes_skills() {
         let f = fixture();
         let s = search(&f, &["book".into(), "room".into()], None, 15);
         insta::assert_snapshot!("search_book_room", &s);
@@ -518,9 +519,9 @@ mod tests {
                 .contains("explicit --path")
         );
         assert!(
-            describe(d, "book-free-room.md")
+            describe(d, "indico-book-free-room")
                 .unwrap()
-                .contains("Read it:")
+                .contains("Read it: /workspace/.claude/skills/indico-book-free-room/SKILL.md")
         );
         assert!(
             describe(d, "book")

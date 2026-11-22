@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""doc2text FILE [MAX_CHARS] - print the text of a PDF, PPTX or DOCX (default 20000 characters).
+
+PDF: pypdf if installed, else poppler's pdftotext; with neither it says so and exits 1.
+PPTX/DOCX: read directly from the zip (standard library only); PPTX includes speaker notes.
+Anything else that is not a known binary format is printed as text.
+"""
+import posixpath
+import re
+import shutil
+import subprocess
+import sys
+import zipfile
+import xml.etree.ElementTree as ET
+
+MEMBER_MAX = 20 * 1024 * 1024  # refuse zip members that unpack to more than this
+A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+
+
+def read_member(z, name):
+    info = z.getinfo(name)
+    if info.file_size > MEMBER_MAX:
+        raise ValueError(f"{name} unpacks to {info.file_size} bytes, too large")
+    return z.read(name)
+
+
+def paragraphs(root, para_tag, text_tag):
+    out = []
+    for p in root.iter(para_tag):
+        t = "".join(x.text or "" for x in p.iter(text_tag)).strip()
+        if t:
+            out.append(t)
+    return out
+
+
+def rels(z, part):
+    """{rId: target path} of a part's relationships, targets resolved against the part's folder."""
+    d, f = posixpath.split(part)
+    name = posixpath.join(d, "_rels", f + ".rels")
+    if name not in z.namelist():
+        return {}, {}
+    root = ET.fromstring(read_member(z, name))
+    by_id, by_type = {}, {}
+    for r in root.iter(REL + "Relationship"):
+        target = posixpath.normpath(posixpath.join(d, r.get("Target", "")))
+        by_id[r.get("Id")] = target
+        by_type.setdefault(r.get("Type", "").rsplit("/", 1)[-1], target)
+    return by_id, by_type
+
+
+def pptx(z):
+    names = set(z.namelist())
+    slides = []
+    if "ppt/presentation.xml" in names:
+        by_id, _ = rels(z, "ppt/presentation.xml")
+        pres = ET.fromstring(read_member(z, "ppt/presentation.xml"))
+        slides = [by_id.get(s.get(R + "id")) for s in pres.iter(P + "sldId")]
+        slides = [s for s in slides if s in names]
+    if not slides:  # fall back to file numbering
+        slides = sorted((n for n in names if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)),
+                        key=lambda n: int(re.search(r"(\d+)\.xml$", n).group(1)))
+    out = []
+    for i, s in enumerate(slides, 1):
+        text = paragraphs(ET.fromstring(read_member(z, s)), A + "p", A + "t")
+        _, by_type = rels(z, s)
+        notes = by_type.get("notesSlide")
+        if notes in names:
+            n = paragraphs(ET.fromstring(read_member(z, notes)), A + "p", A + "t")
+            n = [t for t in n if not t.isdigit()]  # drop the slide-number placeholder
+            if n:
+                text.append("[notes] " + " ".join(n))
+        out.append(f"--- slide {i}\n" + "\n".join(text))
+    return out
+
+
+def docx(z):
+    root = ET.fromstring(read_member(z, "word/document.xml"))
+    return ["\n".join(paragraphs(root, W + "p", W + "t"))]
+
+
+def pdf(path):
+    try:
+        import pypdf
+    except ImportError:
+        pypdf = None
+    if pypdf:
+        reader = pypdf.PdfReader(path)
+        return [f"--- page {i}\n{pg.extract_text() or ''}" for i, pg in enumerate(reader.pages, 1)]
+    if shutil.which("pdftotext"):
+        r = subprocess.run(["pdftotext", "-layout", path, "-"], capture_output=True, text=True,
+                           errors="replace", timeout=120)
+        if r.returncode == 0:
+            pages = r.stdout.split("\f")
+            if pages and not pages[-1].strip():
+                pages.pop()
+            return [f"--- page {i}\n{t}" for i, t in enumerate(pages, 1)]
+    sys.exit("doc2text: cannot read PDF, neither pypdf nor pdftotext is installed here; "
+             "use the PPTX or DOCX version if there is one, or say the PDF could not be read")
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    path = sys.argv[1]
+    limit = int(sys.argv[2]) if len(sys.argv) > 2 else 20000
+    with open(path, "rb") as f:
+        head = f.read(8)
+    if head.startswith(b"%PDF"):
+        out = pdf(path)
+    elif head.startswith(b"PK"):
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+            if "word/document.xml" in names:
+                out = docx(z)
+            elif any(n.startswith("ppt/") for n in names):
+                out = pptx(z)
+            else:
+                sys.exit("doc2text: a zip file that is neither PPTX nor DOCX")
+    elif head.startswith(b"\xd0\xcf\x11\xe0"):
+        sys.exit("doc2text: old binary Office format (.ppt/.doc) is not supported; look for a PDF")
+    else:
+        with open(path, errors="replace") as f:
+            out = [f.read(limit + 1)]
+    text = "\n".join(out)
+    print(text[:limit])
+    if len(text) > limit:
+        print(f"\n[doc2text: cut at {limit} of {len(text)} characters]")
+
+
+if __name__ == "__main__":
+    main()

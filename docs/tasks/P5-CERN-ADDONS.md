@@ -224,7 +224,7 @@ fixtures for unknown `search_id` and oversized responses.
 ## Dependencies / coordination
 
 - Depends on: P5-ASRC (format doc + ingestion + admin UI).
-- (owner, 2026-11-13) Also depends on **P5-GUIDE-1** (`docs/24-app-guides.md`): both addons are
+- (owner, 2026-11-13) Also depends on **P5-GUIDE-1** (`docs/24-apps-for-agents.md`): both addons are
   written in the agent-guide shape from the start. Each app has an `agent.summary`, keeps
   `agent.instructions` to the essentials (what Aurora adds, what never to send), and ships its
   API notes as guide files in `agent/<app_id>/` (`cern-phonebook`: the LDAP attributes exposed,

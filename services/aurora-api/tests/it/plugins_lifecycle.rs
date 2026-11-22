@@ -34,6 +34,16 @@ impl Admin<'_> {
 
     /// [`Self::upload`] with extra package files (`tests/*.yaml` fixtures of `params` tools).
     pub(crate) async fn upload_with(&self, y: &str, files: &[(&str, &[u8])]) -> Value {
+        self.upload_with_exec(y, files, &[]).await
+    }
+
+    /// [`Self::upload_with`] with the executable bit set on `exec` (paths under `skills/`, C-1131).
+    pub(crate) async fn upload_with_exec(
+        &self,
+        y: &str,
+        files: &[(&str, &[u8])],
+        exec: &[&str],
+    ) -> Value {
         let boundary = "XBOUNDARYX";
         let mut body = format!(
             "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p.aurora-plugin\"\r\nContent-Type: application/gzip\r\n\r\n"
@@ -41,7 +51,7 @@ impl Admin<'_> {
         .into_bytes();
         let mut b = PackageBuilder::new(y);
         for (p, d) in files {
-            b.set_file(p, d);
+            b.set_file_exec(p, d, exec.contains(p));
         }
         b.sign(&self.key, &PackageBuilder::key_id(&self.key));
         body.extend_from_slice(&b.build().unwrap());

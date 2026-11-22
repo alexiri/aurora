@@ -30,6 +30,8 @@ struct Raw {
     ty: EntryType,
     data: Vec<u8>,
     link: Option<String>,
+    /// (C-1131) Tar mode `0755` instead of `0644`; meaningful under `skills/` only.
+    exec: bool,
 }
 
 pub struct PackageBuilder {
@@ -58,6 +60,15 @@ impl PackageBuilder {
         self
     }
 
+    /// Insert or replace a regular file and set its executable bit (tar mode `0755`).
+    pub fn set_file_exec(&mut self, path: &str, data: &[u8], exec: bool) -> &mut Self {
+        self.set_file(path, data);
+        if let Some(e) = self.entries.iter_mut().find(|e| e.path == path) {
+            e.exec = exec;
+        }
+        self
+    }
+
     pub fn remove_file(&mut self, path: &str) -> &mut Self {
         self.entries.retain(|e| e.path != path);
         self
@@ -70,6 +81,7 @@ impl PackageBuilder {
             ty,
             data: data.to_vec(),
             link: None,
+            exec: false,
         });
         self
     }
@@ -80,6 +92,7 @@ impl PackageBuilder {
             ty: EntryType::Symlink,
             data: Vec::new(),
             link: Some(target.to_owned()),
+            exec: false,
         });
         self
     }
@@ -87,16 +100,16 @@ impl PackageBuilder {
     /// Sign the *current* regular-file contents; later `set_file` calls
     /// therefore invalidate the signature (tamper tests).
     pub fn sign(&mut self, key: &SigningKey, key_id: &str) -> &mut Self {
-        let mut pkg = Package {
-            files: Default::default(),
-            signature: None,
-        };
+        let mut pkg = Package::default();
         for e in self
             .entries
             .iter()
             .filter(|e| e.path != "SIGNATURE" && matches!(e.ty, EntryType::Regular))
         {
             pkg.files.insert(e.path.clone(), e.data.clone());
+            if e.exec {
+                pkg.executable.insert(e.path.clone());
+            }
         }
         let sig = ed25519_dalek::Signer::sign(key, &digest(&pkg)).to_bytes();
         let text = format!("{MAGIC}\n{key_id}\n{}\n", STANDARD.encode(sig));
@@ -125,7 +138,7 @@ impl PackageBuilder {
                 dst.copy_from_slice(name.get(..n).unwrap_or_default());
             }
             h.set_entry_type(e.ty);
-            h.set_mode(0o644);
+            h.set_mode(if e.exec { 0o755 } else { 0o644 });
             h.set_size(e.data.len() as u64);
             if let Some(l) = &e.link {
                 h.set_link_name(l)?;

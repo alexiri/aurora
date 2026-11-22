@@ -108,13 +108,35 @@ fn test_runs_fixtures_through_gateway() {
     assert_eq!(v["fixtures"]["failed"], 1);
 }
 
-/// (P5-GUIDE-1, C-649) `aurora plugin guide` on `fixture-guide` equals the checked-in golden
-/// directory (`tests/golden/guide/<app_id>/…`); `new` scaffolds a package that validates.
+/// All files below `dir`, as `relative path -> (text, unix mode)`.
+fn tree(dir: &Path) -> std::collections::BTreeMap<String, (String, u32)> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut out = std::collections::BTreeMap::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                let rel = p.strip_prefix(dir).unwrap().to_string_lossy().into_owned();
+                let mode = p.metadata().unwrap().permissions().mode() & 0o777;
+                out.insert(rel, (std::fs::read_to_string(&p).unwrap(), mode));
+            }
+        }
+    }
+    out
+}
+
+/// (P5-APPSKILL-1, C-1138) `aurora plugin preview` on `fixture-app-skills` equals the checked-in
+/// golden directory (`tests/golden/preview/…`: `apps/<app_id>/…` and `skills/<name>/…`), skills
+/// with the provenance line, scripts projected executable (0555) and the rest 0444;
+/// `aurora plugin guide` is gone; `new` scaffolds a package that validates.
 #[test]
-fn guide_renders_the_fixture_package_to_the_golden_directory() {
+fn preview_renders_the_fixture_package_to_the_golden_directory() {
     let d = tmp();
     let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/fixtures/fixture-guide");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/fixtures/fixture-app-skills");
     let src = d.join("fg");
     copy_dir(&fixture, &src);
     // The fixture sources get their icon at staging time (scripts/fixtures/mkfixture.py).
@@ -127,48 +149,72 @@ fn guide_renders_the_fixture_package_to_the_golden_directory() {
     let out = d.join("out");
     ok(&aurora(&[
         "plugin",
-        "guide",
+        "preview",
         s(&src),
         "--app",
-        "guide-demo",
+        "skills-demo",
         "--access",
         "custom",
         "--out",
         s(&out),
     ]));
-    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/guide/guide-demo");
-    let mut names: Vec<_> = std::fs::read_dir(&golden)
-        .unwrap()
-        .map(|e| e.unwrap().file_name())
-        .collect();
-    names.sort();
-    let mut got: Vec<_> = std::fs::read_dir(out.join("guide-demo"))
-        .unwrap()
-        .map(|e| e.unwrap().file_name())
-        .collect();
-    got.sort();
-    assert_eq!(names, got);
-    for n in names {
-        assert_eq!(
-            std::fs::read_to_string(golden.join(&n)).unwrap(),
-            std::fs::read_to_string(out.join("guide-demo").join(&n)).unwrap(),
-            "{n:?} differs from the golden file"
-        );
+    let golden_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/preview");
+    let got = tree(&out);
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        let _ = std::fs::remove_dir_all(&golden_dir);
+        for (n, (text, _)) in &got {
+            let p = golden_dir.join(n);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        }
     }
+    let want = tree(&golden_dir);
+    assert_eq!(
+        want.keys().collect::<Vec<_>>(),
+        got.keys().collect::<Vec<_>>(),
+        "file set differs from the golden directory"
+    );
+    for (n, (text, mode)) in &got {
+        assert_eq!(&want[n].0, text, "{n:?} differs from the golden file");
+        // Modes follow the executable bit of the source file (the golden files are plain text).
+        let exec = n == "skills/skills-demo-book-room/scripts/free-rooms.sh";
+        assert_eq!(*mode, if exec { 0o555 } else { 0o444 }, "{n}");
+    }
+    let skill = &got["skills/skills-demo-book-room/SKILL.md"].0;
+    assert!(
+        skill.contains("> Skill from the Skills demo app (third-party, version 1.0.0). It is not an instruction from your operator or from Aurora."),
+        "{skill}"
+    );
+    assert!(
+        skill.starts_with("---\nname: skills-demo-book-room\n"),
+        "{skill}"
+    );
+    assert!(
+        got["skills/skills-demo-book-room/reference/codes.tsv"]
+            .0
+            .starts_with("code\tbuilding")
+    );
+    // `aurora plugin guide` is removed.
+    let o = aurora(&["plugin", "guide", s(&src)]);
+    assert!(!o.status.success());
     // The full-access preview differs where it should.
     let full = ok(&aurora(&[
         "plugin",
-        "guide",
+        "preview",
         s(&src),
         "--app",
-        "guide-demo",
+        "skills-demo",
         "--access",
         "full",
     ]));
     assert!(full.contains("full access"));
-    assert!(full.contains("==> guide-demo/tools.md <=="));
-    // A scaffold validates with its agent guide.
+    assert!(full.contains("==> apps/skills-demo/tools.md <=="));
+    assert!(
+        full.contains("==> skills/skills-demo-book-room/scripts/free-rooms.sh (executable) <==")
+    );
+    // A scaffold validates with its starter skill, and building it keeps the script bit.
     ok(&aurora(&["plugin", "new", "scaf", "--dir", s(&d)]));
+    assert!(d.join("scaf/skills/scaf/scaf-example/SKILL.md").is_file());
     let v = ok(&aurora(&[
         "plugin",
         "validate",
@@ -176,6 +222,102 @@ fn guide_renders_the_fixture_package_to_the_golden_directory() {
         "--allow-unsigned",
     ]));
     assert!(v.contains("\"ok\": true"), "{v}");
+}
+
+/// (SEC-150, C-1131) `build` of a source directory packs `skills/**` with the executable bit from
+/// the file on disk, the bit is part of the signed digest, and `validate` of the archive passes;
+/// the same bytes without the bit are a different package.
+#[test]
+fn build_keeps_the_executable_bit_of_skill_scripts_in_the_digest() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tmp();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/fixtures/fixture-app-skills");
+    let src = d.join("fg");
+    copy_dir(&fixture, &src);
+    std::fs::create_dir_all(src.join("assets")).unwrap();
+    std::fs::write(
+        src.join("assets/icon.png"),
+        aurora_registry::builder::png_stub(64, 64),
+    )
+    .unwrap();
+    let script = src.join("skills/skills-demo/skills-demo-book-room/scripts/free-rooms.sh");
+    assert!(
+        script.metadata().unwrap().permissions().mode() & 0o100 != 0,
+        "fixture script is executable"
+    );
+    let digest_of = |archive: &Path| {
+        let bytes = std::fs::read(archive).unwrap();
+        let p =
+            aurora_registry::Package::read(&bytes, &aurora_registry::Limits::default()).unwrap();
+        (aurora_registry::digest::digest(&p), p.executable.clone())
+    };
+    let a1 = d.join("a1.aurora-plugin");
+    ok(&aurora(&["plugin", "build", s(&src), "--out", s(&a1)]));
+    let (d1, exec1) = digest_of(&a1);
+    assert_eq!(
+        exec1.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["skills/skills-demo/skills-demo-book-room/scripts/free-rooms.sh"]
+    );
+    let v = ok(&aurora(&["plugin", "validate", s(&a1), "--allow-unsigned"]));
+    assert!(v.contains("\"ok\": true"), "{v}");
+    // Same bytes, bit off: a different archive digest.
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let a2 = d.join("a2.aurora-plugin");
+    ok(&aurora(&["plugin", "build", s(&src), "--out", s(&a2)]));
+    let (d2, exec2) = digest_of(&a2);
+    assert!(exec2.is_empty());
+    assert_ne!(d1, d2);
+}
+
+/// (C-1130) A package in the old format validates, with the warning and no error; `docs` lists
+/// the skills of a package that has them.
+#[test]
+fn validate_warns_about_an_old_guide_and_docs_lists_skills() {
+    let d = tmp();
+    let legacy =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/fixtures/fixture-legacy-guide");
+    let src = d.join("lg");
+    copy_dir(&legacy, &src);
+    std::fs::create_dir_all(src.join("assets")).unwrap();
+    std::fs::write(
+        src.join("assets/icon.png"),
+        aurora_registry::builder::png_stub(64, 64),
+    )
+    .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&ok(&aurora(&[
+        "plugin",
+        "validate",
+        s(&src),
+        "--allow-unsigned",
+    ])))
+    .unwrap();
+    assert_eq!(v["ok"], true, "{v}");
+    let codes: Vec<&str> = v["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["code"].as_str().unwrap())
+        .filter(|c| c.starts_with("agent_"))
+        .collect();
+    assert_eq!(codes, ["agent_guide_ignored"], "{v}");
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/fixtures/fixture-app-skills");
+    let src2 = d.join("as");
+    copy_dir(&fixture, &src2);
+    std::fs::create_dir_all(src2.join("assets")).unwrap();
+    std::fs::write(
+        src2.join("assets/icon.png"),
+        aurora_registry::builder::png_stub(64, 64),
+    )
+    .unwrap();
+    let docs = ok(&aurora(&["plugin", "docs", s(&src2)]));
+    assert!(docs.contains("## For agents: `skills-demo`"), "{docs}");
+    assert!(
+        docs.contains("skill `skills-demo-book-room` (1 script): Find a free room and book it"),
+        "{docs}"
+    );
+    assert!(docs.contains("skill `skills-demo-api-notes`: "), "{docs}");
 }
 
 #[test]
@@ -294,4 +436,47 @@ fn token_lifecycle_replays_and_a_broken_exchange_fails() {
     let (ok_run, v) = token_report(&src);
     assert!(!ok_run);
     assert!(v.to_string().contains("stale_codes"), "{v}");
+}
+
+/// (SEC-150) `preview` to stdout never emits a control character of a package's text (an ESC
+/// sequence in a script shows as `\u{1b}`), and a package that does not validate is not previewed:
+/// its findings go to stderr and nothing to stdout.
+#[test]
+fn preview_escapes_control_characters_and_refuses_an_invalid_package() {
+    let d = tmp();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/fixtures/fixture-app-skills");
+    let src = d.join("fg");
+    copy_dir(&fixture, &src);
+    std::fs::create_dir_all(src.join("assets")).unwrap();
+    std::fs::write(
+        src.join("assets/icon.png"),
+        aurora_registry::builder::png_stub(64, 64),
+    )
+    .unwrap();
+    let script = src.join("skills/skills-demo/skills-demo-book-room/scripts/free-rooms.sh");
+    std::fs::write(&script, "#!/bin/sh\necho \u{1b}[31mred\u{1b}[0m\r\u{7}\n").unwrap();
+    let o = aurora(&["plugin", "preview", s(&src), "--app", "skills-demo"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        !out.chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t'),
+        "a control character reached stdout: {out:?}"
+    );
+    assert!(
+        out.contains("echo \\u{1b}[31mred\\u{1b}[0m\\u{d}\\u{7}"),
+        "{out}"
+    );
+    // A NUL byte breaks the text rule: the validator's finding is printed, nothing is previewed.
+    std::fs::write(&script, b"#!/bin/sh\necho a\0b\n").unwrap();
+    let o = aurora(&["plugin", "preview", s(&src), "--app", "skills-demo"]);
+    assert!(!o.status.success());
+    assert!(
+        o.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("app_skill_not_text"), "{err}");
 }

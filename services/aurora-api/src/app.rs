@@ -116,9 +116,9 @@ pub struct AppState {
     pub sse_keepalive: std::time::Duration,
     /// How often open SSE streams re-validate their principal (besides revocation NOTIFYs).
     pub stream_recheck: std::time::Duration,
-    /// (phase 5, P5-GUIDE-2) Reference-file budget of one home sync, `AGENT_GUIDE_SYNC_MAX`; a
-    /// field only so tests can lower it ([`AppState::with_guide_sync_max`]).
-    pub guide_sync_max: usize,
+    /// (phase 5, P5-APPSKILL-1, C-1134) App-skill budget of one home sync, `APP_SKILLS_SYNC_MAX`; a
+    /// field only so tests can lower it ([`AppState::with_app_skills_sync_max`]).
+    pub app_skills_sync_max: usize,
 }
 
 /// The encryption keyring of the configuration.
@@ -259,7 +259,7 @@ impl AppState {
             push,
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
             stream_recheck: crate::http::auth::STREAM_RECHECK,
-            guide_sync_max: aurora_core::limits::AGENT_GUIDE_SYNC_MAX,
+            app_skills_sync_max: aurora_core::limits::APP_SKILLS_SYNC_MAX,
         };
         state.install_live_secrets();
         state.install_live_governance();
@@ -562,8 +562,8 @@ impl AppState {
 
     /// Override the agent-guide reference budget of one home sync (tests).
     #[must_use]
-    pub fn with_guide_sync_max(mut self, n: usize) -> Self {
-        self.guide_sync_max = n;
+    pub fn with_app_skills_sync_max(mut self, n: usize) -> Self {
+        self.app_skills_sync_max = n;
         self
     }
 

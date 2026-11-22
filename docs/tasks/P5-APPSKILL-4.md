@@ -112,3 +112,80 @@ in the same commit; never skip or loosen.
 
 The six skills with their sizes, what was dropped as personal or CERN-only (one line each), the
 operations added, the test's output, and anything in the owner's skills that could not be made generic.
+
+**Done (package `indico` 1.5.0 → 1.6.0), worker lane `p5-package`, Sonnet.**
+
+### Skills (`plugins/builtin/indico/skills/indico/`, bytes of SKILL.md plus scripts)
+
+| Skill | Bytes | Scripts (git mode 100755) |
+|---|---|---|
+| `indico-find-and-book-room` (replaces `indico-book-free-room`) | 8,620 | `scripts/free-rooms` |
+| `indico-book-recurring-room` | 8,795 | `scripts/series-free` |
+| `indico-meeting-prep` | 15,379 | `scripts/event-brief`, `scripts/doc2text` |
+| `indico-search-talks-and-files` | 3,650 | uses meeting-prep's through `"$SKILLS_DIR/indico-meeting-prep/scripts/…"` |
+| `indico-category-events` (replaces `indico-find-category-events`, export-API details merged) | 2,306 | none |
+| `indico-api-families` (updated: optional `building`, series search, calendar, cancel one date, search `type`) | 4,112 | none |
+
+All far under `SKILL_TOTAL_MAX`. Scripts take the account from `INDICO_ACCOUNT` (passed as `--account`), reach
+`aurora-agent` only, and use the operation ids (no `--path`).
+
+### Dropped as personal or CERN-only
+
+- Name, login (`airibarr`), both e-mail addresses, "connected as …": the login is asked for or read from the person's
+  earlier bookings when Indico shows it.
+- The favourite-category id list: read with `list_favorite_categories` (`read:everything`); examples use ids 12/13.
+- indico.cern.ch, maps.cern.ch, the CERN Phonebook lookup, `~/.agents/skills/…` paths (now `$SKILLS_DIR`),
+  CodiMD, Openlab, coffee-area names, the annual-closure date range (now "ask whether to skip closed days"),
+  building numbers as defaults (examples only), Europe/Zurich as a default (an example value for `tz` only, plus
+  "the server's local time"), the calendar-invite and phonebook cross-references.
+- `pip install --user pypdf` in `doc2text`'s error (the sandbox may have no network): it now says a PDF reader is missing.
+
+### Operations added to `agent/indico/operations.json`
+
+`search`, `search_categories`, `list_favorite_categories`, `list_category_events`, `search_events`, `get_event`,
+`get_event_file`, `get_booking_calendar`, `cancel_booking_occurrence`; `search_rooms` changed (`building` optional,
+`repeat_interval`, no `items`, the answer is an object). Every id maps to its catalogue tool. The linter allows a path
+parameter only as a whole segment, so the export paths take `categories=12.json`, `event=1234.json`,
+`term=ichep.json`, `attachment=77.bin` (stated in each parameter's description).
+
+### Tests and checks (all run with `/home/alex/orca/workspaces/aurora/heavy.sh p5-package` where heavy)
+
+- `bash scripts/plugins/indico_skills_test.sh`: 42 checks pass (joined and sorted free rooms, building filter, one search
+  without `building`, room list read once, series matrix with busy dates, every-other-week, 60-date cap, event-brief sections
+  and `get_event_file` arguments, `doc2text` on a PPTX and a DOCX built in the test, old `.doc` and a PDF without a reader
+  refused, no direct network use in the scripts). Fixtures are made up, in `scripts/plugins/fixtures/indico/` (shapes of
+  Indico 3.3's answers; no real names, ids or addresses). Wired as a CI step after the built-in checks (`.github/workflows/ci.yml`).
+- `shellcheck` is not installed on this machine: the two bash scripts were not shellchecked here (CI/owner to run
+  it); `python3 -I -m py_compile`-style syntax check passes on both Python scripts.
+- Tests updated in the same commit: `crates/aurora-registry/tests/it/builtin_versions.rs` (1.6.0),
+  `services/aurora-api/tests/it/plugins_upgrade.rs` (skill paths and 1.6.0). The `indico-book-free-room` names left in
+  `services/aurora-supervisor/src/agent_cli/` are synthetic fixtures of the CLI's own tests, not the package.
+- `rg -n -i "airibarr|iribarren|alex|cern\.ch|codimd|phonebook|openlab|~/\.agents" plugins/builtin/indico/skills`: no match.
+  `Europe/Zurich` appears twice, as the example `tz` value.
+
+### Could not be made generic
+
+- `book_room` needs the person's Indico login and Indico does not expose it through `/api/user/`: the skill says to ask
+  (or look in earlier bookings), it cannot be automatic.
+- "Is not a meeting room" is read from room `comments`; there is no structured field, so it relies on the text.
+- The owner's "agenda in CodiMD can't be read" note became a generic "an external notes tool that needs a sign-in".
+
+### Security notes (for the Orchestrator's review)
+
+- Every request in the four scripts is `aurora-agent call indico <operation> …` (bash arrays and `subprocess` argument lists,
+  no shell string, no `eval`, no `curl`/`requests`); the test greps for that. No credential is read from a file or the
+  environment; the only environment input is `INDICO_ACCOUNT` (passed as `--account`) and `TMPDIR`.
+- Writes only under `${TMPDIR:-/tmp}/aurora-agent/` (created 0700): the room-list cache (written through `mktemp` then
+  `mv`) and a `mktemp -d` working directory removed on exit. No script writes elsewhere.
+- Quoting: values go to `aurora-agent` as separate array elements; dates, times, capacity and the event id are validated
+  by regex first (`free-rooms`, `series-free`, `event-brief`), and buildings reach `jq` through `--argjson`
+  built by `jq -R`. A meeting title or reason never reaches a script: it is only in the SKILL.md examples, quoted.
+  `doc2text` reads a local file and caps zip members at 20 MiB.
+- Package lint and preview (run on this commit): `bash scripts/plugins/check-builtin.sh grafana indico` (validate, test,
+  fixture coverage, scopes, docs; the packages are unsigned, so `aurora plugin validate` alone reports only
+  `signature_missing`, no warning): `ok indico`. `aurora plugin preview plugins/builtin/indico --access custom` shows the
+  six skills in `app.md` and as projected, the three scripts' entries marked `(executable)`; `git ls-files -s` shows `100755`
+  for all four scripts. `bash scripts/guards/run-all.sh` passes (including `no-integration-names` and `no-live-tokens`);
+  `python3 scripts/extract-schema.py --check` is up to date; `cargo test -p aurora-registry --test it builtin_versions`:
+  4 passed. Not run (no database on this lane): `services/aurora-api` `plugins_upgrade` (edited consistently: skill paths
+  and 1.6.0).

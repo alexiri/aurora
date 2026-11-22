@@ -1,6 +1,6 @@
 # P5-GUIDE-5: `aurora plugin import-openapi` — reference files and a catalogue skeleton from an OpenAPI document (owner, 2026-11-13)
 
-Fifth task of "app guides on demand". Normative spec: `docs/24-app-guides.md` §10; contract
+Fifth task of "app guides on demand". Normative spec: `docs/24-apps-for-agents.md` §10; contract
 **C-650**; decision D-172(a). Depends on **P5-GUIDE-1**. CLI only. **Not** ordered before the
 addon tasks: it is needed before the first large-API app (Zoom, OpenStack, OpenSearch, or any
 third-party addon with hundreds of operations).

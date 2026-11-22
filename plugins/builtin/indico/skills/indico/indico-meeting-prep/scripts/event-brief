@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""event-brief EVENT_ID - header, description, links, agenda, minutes and attachments of an
+Indico event, from the export API (/export/event/<id>.json detail=contributions).
+
+Every file attachment is printed with the arguments that download it through the gateway:
+  aurora-agent call indico get_event_file <the arguments shown> --out /tmp/f.bin
+Set INDICO_ACCOUNT (account letter or connection id) when several Indico accounts are connected.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+from html.parser import HTMLParser
+
+ABSTRACT_MAX = 600
+BLOCK = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "table"}
+
+
+class Text(HTMLParser):
+    """HTML to plain text; collects link targets."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.links = [], []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in BLOCK:
+            self.parts.append("\n")
+        if tag == "li":
+            self.parts.append("- ")
+        if tag == "a":
+            href = dict(attrs).get("href")
+            if href and href.startswith(("http://", "https://")) and href not in self.links:
+                self.links.append(href)
+
+    def handle_endtag(self, tag):
+        if tag in BLOCK and tag != "li":  # the next <li> or the list's end starts the new line
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    def text(self):
+        t = re.sub(r"[ \t\r\f\v]+", " ", "".join(self.parts))
+        t = re.sub(r" *\n *", "\n", t)
+        return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+def html_text(s):
+    p = Text()
+    p.feed(s or "")
+    p.close()
+    text = p.text()
+    for url in re.findall(r"https?://[^\s<>\"')]+", text):  # bare URLs in the text
+        if url not in p.links:
+            p.links.append(url)
+    return text, p.links
+
+
+def call(operation, *args):
+    """One request through aurora-agent (argument list, no shell). INDICO_ACCOUNT picks the account."""
+    account = os.environ.get("INDICO_ACCOUNT")
+    cmd = ["aurora-agent", "call", "indico", operation, *args]
+    if account:
+        cmd += ["--account", account]
+    r = subprocess.run(cmd + ["--raw"], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"event-brief: aurora-agent failed ({r.returncode}): {r.stderr.strip()[:500]}")
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        sys.exit(f"event-brief: not JSON: {r.stdout[:500]}")
+
+
+def when(d):
+    if not d:
+        return ""
+    return f"{d.get('date', '')} {(d.get('time') or '')[:5]}".strip()
+
+
+def people(lst):
+    return ", ".join(p.get("fullName") or p.get("name") or "?" for p in (lst or []))
+
+
+def attachments(event_id, folders, indent=""):
+    lines = []
+    for folder in folders or []:
+        for a in folder.get("attachments") or []:
+            title = a.get("title") or a.get("filename") or "?"
+            if a.get("type") == "link" or a.get("link_url"):
+                lines.append(f"{indent}- [link] {title}: {a.get('link_url') or a.get('download_url', '')}")
+                continue
+            url = a.get("download_url") or ""
+            m = re.search(r"/attachments/(\d+)/(\d+)/", url)
+            fid, aid = (m.group(1), m.group(2)) if m else (folder.get("id"), a.get("id"))
+            path = f"get_event_file event={event_id} folder={fid} attachment={aid}.bin" if fid and aid else "(no ids)"
+            kind = a.get("content_type") or ""
+            size = f", {a['size'] // 1024} KiB" if isinstance(a.get("size"), int) else ""
+            lines.append(f"{indent}- {title} [{a.get('filename', '')}{', ' + kind if kind else ''}{size}]"
+                         f" -> {path}")
+    return lines
+
+
+def main():
+    if len(sys.argv) != 2 or not sys.argv[1].isdigit():
+        sys.exit("usage: event-brief EVENT_ID")
+    eid = sys.argv[1]
+    data = call("get_event", f"event={eid}.json", "detail=contributions")
+    results = data.get("results") if isinstance(data, dict) else None
+    if not results:
+        sys.exit(f"event-brief: no event {eid} (or no access): {json.dumps(data)[:300]}")
+    ev = results[0]
+
+    out = [f"# {ev.get('title', '')}",
+           f"When: {when(ev.get('startDate'))} - {when(ev.get('endDate'))} {(ev.get('startDate') or {}).get('tz', '')}",
+           f"Where: {ev.get('roomFullname') or ev.get('room') or '-'}"
+           f"{' (' + ev['location'] + ')' if ev.get('location') else ''}",
+           f"Category: {ev.get('category', '')}",
+           f"Chairs: {people(ev.get('chairs')) or '-'}",
+           f"URL: {ev.get('url', '')}"]
+
+    desc, links = html_text(ev.get("description"))
+    if desc:
+        out += ["", "## Description", desc]
+    if links:
+        out += ["", "## Links in the description"] + [f"- {u}" for u in links]
+
+    contribs = ev.get("contributions") or []
+    contribs.sort(key=lambda c: (c.get("startDate") is None, when(c.get("startDate"))))
+    with_material = 0
+    agenda = []
+    for c in contribs:
+        files = attachments(eid, c.get("folders"), "    ")
+        if files:
+            with_material += 1
+        dur = f" ({c['duration']} min)" if c.get("duration") else ""
+        start = (c.get("startDate") or {}).get("time", "")[:5] or "unscheduled"
+        agenda.append(f"- {start} {c.get('title', '')}{dur} - {people(c.get('speakers')) or 'no speaker'}")
+        abstract, _ = html_text(c.get("description"))
+        if abstract:
+            short = abstract.replace("\n", " ")
+            agenda.append(f"    {short[:ABSTRACT_MAX]}{'...' if len(short) > ABSTRACT_MAX else ''}")
+        agenda += files
+        note, _ = html_text((c.get("note") or {}).get("html"))
+        if note:
+            agenda.append("    [minutes] " + note.replace("\n", "\n    "))
+    if contribs:
+        out += ["", f"## Agenda ({len(contribs)} items, material on {with_material})"] + agenda
+
+    note, _ = html_text((ev.get("note") or {}).get("html"))
+    out += ["", "## Minutes", note or "(none in Indico)"]
+
+    files = attachments(eid, ev.get("folders"))
+    out += ["", "## Event attachments"] + (files or ["(none)"])
+    print("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()

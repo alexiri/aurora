@@ -2925,11 +2925,11 @@ enabled = true
     st.finish().await;
 }
 
-/// The checked-in `fixture-guide` package (with its operations file) installed on a fresh stack,
+/// The checked-in `fixture-app-skills` package (with its operations file and skills) installed on a fresh stack,
 /// one workspace connection of its app and a custom grant to Daneel: `list_rooms` allowed,
 /// `book_room` asking, `get_room` blocked. Returns the stack, the instance admin's client and the
 /// grant's URL (a `delete` of it revokes).
-async fn install_fixture_guide() -> (Stack, Api, String) {
+async fn install_fixture_app_skills() -> (Stack, Api, String) {
     let (st, owner) = fx(Opts::default()).await;
     let email = "owner@e2e.test";
     sqlx::query(
@@ -2943,21 +2943,24 @@ async fn install_fixture_guide() -> (Stack, Api, String) {
 
     // The checked-in fixture package, signed with a key the instance is told to trust.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../plugins/fixtures/fixture-guide");
+        .join("../../plugins/fixtures/fixture-app-skills");
     let read = |p: &str| std::fs::read(dir.join(p)).unwrap_or_else(|e| panic!("{p}: {e}"));
     let mut b = aurora_registry::builder::PackageBuilder::new(
         &String::from_utf8(read("plugin.yaml")).unwrap(),
     );
+    b.set_file(
+        "agent/skills-demo/operations.json",
+        &read("agent/skills-demo/operations.json"),
+    );
+    // The skills travel in the archive with the executable bit of the checked-in script (C-1131).
     for f in [
-        "book-free-room.md",
-        "api.md",
-        "codes.tsv",
-        "operations.json",
+        "skills-demo-book-room/SKILL.md",
+        "skills-demo-book-room/reference/codes.tsv",
+        "skills-demo-book-room/scripts/free-rooms.sh",
+        "skills-demo-api-notes/SKILL.md",
     ] {
-        b.set_file(
-            &format!("agent/guide-demo/{f}"),
-            &read(&format!("agent/guide-demo/{f}")),
-        );
+        let rel = format!("skills/skills-demo/{f}");
+        b.set_file_exec(&rel, &read(&rel), f.ends_with(".sh"));
     }
     let key = aurora_crypto::generate_signing_key().unwrap();
     let key_id = aurora_registry::builder::PackageBuilder::key_id(&key);
@@ -2965,7 +2968,7 @@ async fn install_fixture_guide() -> (Stack, Api, String) {
     let (s, v) = admin
         .post(
             "/v1/admin/trusted-keys",
-            json!({"publisher": "fixtures", "name": "e2e-guide", "public_key": key_id}),
+            json!({"publisher": "fixtures", "name": "e2e-skills", "public_key": key_id}),
         )
         .await;
     assert_eq!(s, 201, "trusted key: {v}");
@@ -2983,9 +2986,9 @@ async fn install_fixture_guide() -> (Stack, Api, String) {
     // A connection of the app and a custom grant to Daneel.
     let (s, c) = admin
         .post(
-            "/v1/apps/guide-demo/connect",
+            "/v1/apps/skills-demo/connect",
             json!({"scope": "workspace", "workspace_id": admin.ws, "method_id": "api_key",
-                   "fields": {"api_token": "tok-guide-e2e"}}),
+                   "fields": {"api_token": "tok-skills-e2e"}}),
         )
         .await;
     assert_eq!(s, 200, "connect: {c}");
@@ -3001,16 +3004,18 @@ async fn install_fixture_guide() -> (Stack, Api, String) {
     (st, admin, grant)
 }
 
-/// (P5-GUIDE-2, C-643, D-295, SEC-117) A hosted agent granted `fixture-guide` under a custom grant
-/// has `.aurora/apps/guide-demo/` projected into its real sandbox (generated files and the
-/// package's own, read-only), the instruction file lists the app as one index line with none of the
-/// package's notes, and revoking the grant removes the folder at the next sync.
+/// (P5-GUIDE-2, P5-APPSKILL-2, C-643, C-1134, SEC-117, SEC-150) A hosted agent granted
+/// `fixture-app-skills` under a custom grant has `.aurora/apps/skills-demo/` projected into its
+/// real sandbox (the generated files, read-only) and the app's skills in its skills folder (a script
+/// `0555`, the other files `0444`, the provenance line in `SKILL.md`); the instruction file lists
+/// the app as one index line with none of the package's notes, and revoking the grant removes the
+/// folder and the skills at the next sync.
 #[tokio::test]
-async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_revoke() {
+async fn s14_app_folder_and_skills_are_projected_into_the_sandbox_and_removed_on_revoke() {
     if !enabled() {
         return;
     }
-    let (st, admin, grant) = install_fixture_guide().await;
+    let (st, admin, grant) = install_fixture_app_skills().await;
 
     // The sandbox boots with the folder (a turn makes sure the sync was applied).
     let conv = admin.direct().await;
@@ -3018,7 +3023,7 @@ async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_rev
     let cs = containers();
     assert_eq!(cs.len(), 1, "{cs:?}");
     let c = cs[0].as_str();
-    let root = "/workspace/.aurora/apps/guide-demo";
+    let root = "/workspace/.aurora/apps/skills-demo";
     let ls = || {
         exec_in(
             c,
@@ -3029,14 +3034,13 @@ async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_rev
     let present = eventually(60, || ls().0 == 0).await;
     let (_, listing) = ls();
     assert!(present, "no folder: {listing}\n{}", st.log_tails());
-    // Directories 0555, files 0444 (C-643), the generated files and the package's own.
+    // Directories 0555, files 0444 (C-643), the generated files only: the app's skills are in the
+    // skills folder (C-1134).
     for want in [
-        "555 /workspace/.aurora/apps/guide-demo",
-        "444 /workspace/.aurora/apps/guide-demo/guide.md",
-        "444 /workspace/.aurora/apps/guide-demo/tools.md",
-        "444 /workspace/.aurora/apps/guide-demo/book-free-room.md",
-        "444 /workspace/.aurora/apps/guide-demo/api.md",
-        "444 /workspace/.aurora/apps/guide-demo/codes.tsv",
+        "555 /workspace/.aurora/apps/skills-demo",
+        "444 /workspace/.aurora/apps/skills-demo/app.md",
+        "444 /workspace/.aurora/apps/skills-demo/api.json",
+        "444 /workspace/.aurora/apps/skills-demo/tools.md",
     ] {
         assert!(
             listing.lines().any(|l| l == want),
@@ -3053,27 +3057,63 @@ async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_rev
     assert!(access("list_rooms", "[allowed]"), "{tools}");
     assert!(access("book_room", "[approval]"), "{tools}");
     assert!(access("get_room", "[blocked]"), "{tools}");
-    // The recipe carries the third-party procedure header; the credential is nowhere.
-    let (_, recipe) = exec_in(c, &format!("head -3 {root}/book-free-room.md"));
-    assert!(recipe.to_lowercase().contains("procedure"), "{recipe}");
+    // The app's skills: the harness skills folder, `SKILL.md` with the third-party provenance line,
+    // a script executable and read-only (0555), the rest 0444 (C-1134, SEC-150).
+    let skills = "/workspace/.claude/skills/skills-demo-book-room";
+    let (rc, listing) = exec_in(
+        c,
+        &format!(
+            "stat -c '%a %n' {skills}/SKILL.md {skills}/reference/codes.tsv {skills}/scripts/free-rooms.sh"
+        ),
+    );
+    assert_eq!(rc, 0, "{listing}\n{}", st.log_tails());
+    for want in [
+        format!("444 {skills}/SKILL.md"),
+        format!("444 {skills}/reference/codes.tsv"),
+        format!("555 {skills}/scripts/free-rooms.sh"),
+    ] {
+        assert!(
+            listing.lines().any(|l| l == want),
+            "missing `{want}` in:\n{listing}"
+        );
+    }
+    let (_, head) = exec_in(c, &format!("head -8 {skills}/SKILL.md"));
+    assert!(
+        head.contains("> Skill from the Skills demo app (third-party, version 1.0.0)."),
+        "{head}"
+    );
+    let (_, app_md) = exec_in(c, &format!("cat {root}/app.md"));
+    assert!(
+        app_md.contains("`$SKILLS_DIR/skills-demo-book-room/SKILL.md`"),
+        "{app_md}"
+    );
+    // The script runs in the sandbox with the agent's own access: it is just a file.
+    let (rc, out) = exec_in(
+        c,
+        &format!("echo '{{\"id\": 7}}' | {skills}/scripts/free-rooms.sh 40"),
+    );
+    assert_eq!(rc, 0, "{out}");
+    assert!(out.contains("rooms of building 40"), "{out}");
     let (_, leak) = exec_in(
         c,
-        "grep -rIl 'tok-guide-e2e' /workspace/.aurora 2>/dev/null | wc -l",
+        "grep -rIl 'tok-skills-e2e' /workspace/.aurora 2>/dev/null | wc -l",
     );
     assert_eq!(leak.trim(), "0", "the credential reached the home");
     // The instruction file: one index line for the app, none of the package's notes.
     let (_, instr) = exec_in(c, "cat /workspace/AGENTS.md");
     assert!(
-        instr.contains("guide-demo") && instr.contains(".aurora/apps/"),
+        instr.contains("skills-demo") && instr.contains(".aurora/apps/"),
         "{instr}"
     );
     assert!(
         !instr.contains("Rooms are addressed by numeric id"),
         "notes inlined: {instr}"
     );
-    // Nothing writable: the agent cannot edit a guide file.
-    let (rc, _) = exec_in(c, &format!("echo x >> {root}/guide.md"));
-    assert_ne!(rc, 0, "a guide file is writable");
+    // Nothing writable: the agent cannot edit a generated file or an app skill.
+    let (rc, _) = exec_in(c, &format!("echo x >> {root}/app.md"));
+    assert_ne!(rc, 0, "app.md is writable");
+    let (rc, _) = exec_in(c, &format!("echo x >> {skills}/SKILL.md"));
+    assert_ne!(rc, 0, "an app skill is writable");
 
     // Revoke: the folder goes at the next sync.
     let (s, _) = admin.delete(&grant).await;
@@ -3081,6 +3121,8 @@ async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_rev
     run_turn(&st, &admin, &conv, "[[say: again]]").await;
     let gone = eventually(60, || ls().0 != 0).await;
     let (_, after) = ls();
+    let (rc, _) = exec_in(c, &format!("test -e {skills}"));
+    assert_ne!(rc, 0, "the app skills survived the revoke");
     assert!(
         gone,
         "the folder survived the revoke: {after}\n{}",
@@ -3088,7 +3130,7 @@ async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_rev
     );
     let (_, instr) = exec_in(c, "cat /workspace/AGENTS.md");
     assert!(
-        !instr.contains("guide-demo"),
+        !instr.contains("skills-demo"),
         "the app is still in the instruction file: {instr}"
     );
     st.finish().await;
@@ -3108,33 +3150,33 @@ async fn s43_aurora_agent_calls_are_decided_by_the_gateway_like_raw_requests() {
     if !enabled() {
         return;
     }
-    let (st, admin, grant) = install_fixture_guide().await;
+    let (st, admin, grant) = install_fixture_app_skills().await;
     let conn = grant.rsplit('/').next().unwrap().to_owned();
     let conv = admin.direct().await;
     run_turn(&st, &admin, &conv, "[[say: warm]]").await;
     let cs = containers();
     assert_eq!(cs.len(), 1, "{cs:?}");
     let c = cs[0].clone();
-    let api_json = "/workspace/.aurora/apps/guide-demo/api.json";
+    let api_json = "/workspace/.aurora/apps/skills-demo/api.json";
     let present = eventually(60, || exec_in(&c, &format!("test -r {api_json}")).0 == 0).await;
     assert!(present, "no api.json\n{}", st.log_tails());
 
     // The command exists, and reads the file: list, describe.
     let (rc, out) = exec_in(&c, "aurora-agent list 2>&1");
     assert_eq!(rc, 0, "{out}");
-    assert!(out.contains("guide-demo"), "{out}");
-    let (rc, out) = exec_in(&c, "aurora-agent list guide-demo 2>&1");
+    assert!(out.contains("skills-demo"), "{out}");
+    let (rc, out) = exec_in(&c, "aurora-agent list skills-demo 2>&1");
     assert_eq!(rc, 0, "{out}");
     assert!(
         out.contains("list_rooms") && out.contains("book_room"),
         "{out}"
     );
-    let (rc, out) = exec_in(&c, "aurora-agent describe guide-demo get_room 2>&1");
+    let (rc, out) = exec_in(&c, "aurora-agent describe skills-demo get_room 2>&1");
     assert_eq!(rc, 0, "{out}");
     assert!(out.contains("get_room"), "{out}");
 
     // Blocked by the grant: exit 3, and the gateway's own refusal is what a raw request gets.
-    let (rc, out) = exec_in(&c, "aurora-agent call guide-demo get_room id=1 2>&1");
+    let (rc, out) = exec_in(&c, "aurora-agent call skills-demo get_room id=1 2>&1");
     assert_eq!(rc, 3, "a blocked operation exits 3: {out}");
     let (_, raw) = exec_in(
         &c,
@@ -3159,7 +3201,7 @@ async fn s43_aurora_agent_calls_are_decided_by_the_gateway_like_raw_requests() {
         tokio::task::spawn_blocking(move || {
             exec_in(
                 &c,
-                "timeout 60 aurora-agent call guide-demo book_room id=1 start=2030-01-01T10:00 2>&1",
+                "timeout 60 aurora-agent call skills-demo book_room id=1 start=2030-01-01T10:00 2>&1",
             )
         })
     };
@@ -3187,7 +3229,7 @@ async fn s43_aurora_agent_calls_are_decided_by_the_gateway_like_raw_requests() {
     // `resolution_failed`, not the 403 of a policy refusal.
     let (rc, out) = exec_in(
         &c,
-        "aurora-agent call guide-demo list_rooms building=40 2>&1",
+        "aurora-agent call skills-demo list_rooms building=40 2>&1",
     );
     assert!(
         out.contains("resolution_failed") && !out.contains("blocked"),
@@ -3264,7 +3306,7 @@ async fn s43_aurora_agent_calls_are_decided_by_the_gateway_like_raw_requests() {
     // SEC-120: nothing it writes lands under the managed roots.
     let (rc, out) = exec_in(
         &c,
-        "aurora-agent call guide-demo list_rooms building=40 --out /workspace/.aurora/x.json 2>&1",
+        "aurora-agent call skills-demo list_rooms building=40 --out /workspace/.aurora/x.json 2>&1",
     );
     assert_eq!(rc, 2, "{out}");
     st.finish().await;
