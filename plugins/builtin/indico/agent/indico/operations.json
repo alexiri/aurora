@@ -13,16 +13,16 @@
       "id": "search_rooms",
       "method": "GET",
       "path": "/rooms/api/rooms/search",
-      "summary": "Rooms free in a building for a time slot (ids only)",
+      "summary": "Rooms free for a time slot or a series (answer: rooms = free ids, total counts busy ones too)",
       "tags": ["rooms"],
       "params": [
-        { "name": "building", "in": "query", "required": true, "type": "string", "description": "Building number, e.g. 40" },
-        { "name": "capacity", "in": "query", "type": "integer", "description": "Minimum number of people" },
-        { "name": "start_dt", "in": "query", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM:SS, server local time" },
-        { "name": "end_dt", "in": "query", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM:SS, same day as start_dt" },
-        { "name": "repeat_frequency", "in": "query", "required": true, "type": "string", "enum": ["NEVER", "DAY", "WEEK", "MONTH"], "default": "NEVER", "description": "Always NEVER, or busy rooms come back too" }
+        { "name": "building", "in": "query", "type": "string", "description": "One building number; leave it out to search every building and filter the room list yourself" },
+        { "name": "capacity", "in": "query", "type": "integer", "description": "Minimum number of people (capacity >= N)" },
+        { "name": "start_dt", "in": "query", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM:SS, server local time; for a series the first date and start time" },
+        { "name": "end_dt", "in": "query", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM:SS; same day as start_dt for NEVER, the LAST date and end time for a series" },
+        { "name": "repeat_frequency", "in": "query", "required": true, "type": "string", "enum": ["NEVER", "DAY", "WEEK", "MONTH"], "default": "NEVER", "description": "NEVER for one slot (else busy rooms come back too), WEEK to check a whole weekly series" },
+        { "name": "repeat_interval", "in": "query", "type": "integer", "description": "Every N weeks/days/months, with repeat_frequency other than NEVER" }
       ],
-      "items": "$",
       "tool": "search_rooms"
     },
     {
@@ -121,6 +121,118 @@
         { "name": "id", "in": "path", "required": true, "type": "integer", "description": "Booking id" }
       ],
       "tool": "cancel_booking"
+    },
+    {
+      "id": "cancel_booking_occurrence",
+      "method": "POST",
+      "path": "/rooms/api/bookings/{id}/{date}/cancel",
+      "summary": "Cancel one date of a recurring room booking",
+      "tags": ["bookings"],
+      "params": [
+        { "name": "id", "in": "path", "required": true, "type": "integer", "description": "Booking id" },
+        { "name": "date", "in": "path", "required": true, "type": "string", "description": "The occurrence, YYYY-MM-DD" }
+      ],
+      "tool": "cancel_booking_occurrence"
+    },
+    {
+      "id": "get_booking_calendar",
+      "method": "GET",
+      "path": "/rooms/api/calendar",
+      "summary": "Room bookings of a date range for ALL rooms (large; ignores building and room filters)",
+      "tags": ["bookings"],
+      "params": [
+        { "name": "start_date", "in": "query", "required": true, "type": "string", "description": "YYYY-MM-DD" },
+        { "name": "end_date", "in": "query", "required": true, "type": "string", "description": "YYYY-MM-DD; about 2 MB per month, use one day" }
+      ],
+      "tool": "get_booking_calendar"
+    },
+    {
+      "id": "list_category_events",
+      "method": "GET",
+      "path": "/export/categ/{categories}",
+      "summary": "Events of one or more categories in a date range (export API)",
+      "tags": ["events"],
+      "params": [
+        { "name": "categories", "in": "path", "required": true, "type": "string", "description": "Category id(s) joined with - and ending in .json, e.g. 12.json or 12-13.json" },
+        { "name": "from", "in": "query", "type": "string", "description": "First day, YYYY-MM-DD" },
+        { "name": "to", "in": "query", "type": "string", "description": "Last day, YYYY-MM-DD" },
+        { "name": "detail", "in": "query", "type": "string", "enum": ["events", "contributions", "subcontributions", "sessions"], "description": "How much of each event" },
+        { "name": "type", "in": "query", "type": "string", "description": "Event type, e.g. meeting" },
+        { "name": "limit", "in": "query", "type": "integer", "description": "At most this many events" }
+      ],
+      "tool": "list_category_events"
+    },
+    {
+      "id": "search_events",
+      "method": "GET",
+      "path": "/export/event/search/{term}",
+      "summary": "Events whose title matches a word (export API)",
+      "tags": ["events"],
+      "params": [
+        { "name": "term", "in": "path", "required": true, "type": "string", "description": "The search term followed by .json, e.g. ichep.json" }
+      ],
+      "tool": "search_events"
+    },
+    {
+      "id": "get_event",
+      "method": "GET",
+      "path": "/export/event/{event}",
+      "summary": "One event; detail=contributions adds the agenda, speakers, attachments and minutes (export API)",
+      "tags": ["events"],
+      "params": [
+        { "name": "event", "in": "path", "required": true, "type": "string", "description": "The event id followed by .json, e.g. 1234.json" },
+        { "name": "detail", "in": "query", "type": "string", "enum": ["events", "contributions", "subcontributions", "sessions"], "description": "How much of the event; contributions for the agenda" }
+      ],
+      "tool": "get_event"
+    },
+    {
+      "id": "get_event_file",
+      "method": "GET",
+      "path": "/export/event/{event}/material/{folder}/{attachment}",
+      "summary": "Download one attached file of an event (save it with --out)",
+      "tags": ["events"],
+      "params": [
+        { "name": "event", "in": "path", "required": true, "type": "integer", "description": "Event id" },
+        { "name": "folder", "in": "path", "required": true, "type": "integer", "description": "Attachment folder id (event-brief prints it)" },
+        { "name": "attachment", "in": "path", "required": true, "type": "string", "description": "The attachment id followed by .bin, e.g. 77.bin" }
+      ],
+      "tool": "get_event_file"
+    },
+    {
+      "id": "search",
+      "method": "GET",
+      "path": "/search/api/search",
+      "summary": "Search events, contributions, files, minutes and categories (type is required)",
+      "tags": ["search"],
+      "params": [
+        { "name": "q", "in": "query", "required": true, "type": "string", "description": "Search words" },
+        { "name": "type", "in": "query", "required": true, "type": "string", "enum": ["event", "contribution", "attachment", "event_note", "category"], "description": "What to find; without it Indico answers 422" },
+        { "name": "category_id", "in": "query", "type": "integer", "description": "Only inside this category" },
+        { "name": "person_name", "in": "query", "type": "string", "description": "Speaker, author or uploader" },
+        { "name": "start_range", "in": "query", "type": "string", "description": "e.g. [2026-01-01 TO 2026-11-21], or [* TO 2025-01-01]" },
+        { "name": "sort", "in": "query", "type": "string", "description": "mostrecent for newest first; default is relevance" },
+        { "name": "page", "in": "query", "type": "integer", "description": "10 results per page" }
+      ],
+      "tool": "search"
+    },
+    {
+      "id": "search_categories",
+      "method": "GET",
+      "path": "/category/search",
+      "summary": "Find a category by name",
+      "tags": ["search"],
+      "params": [
+        { "name": "q", "in": "query", "required": true, "type": "string", "description": "Part of the category name" }
+      ],
+      "tool": "search_categories"
+    },
+    {
+      "id": "list_favorite_categories",
+      "method": "GET",
+      "path": "/user/api/favorites/categories",
+      "summary": "Your favorite categories (id and title)",
+      "tags": ["favorites"],
+      "tool": "list_favorite_categories"
     }
   ]
 }

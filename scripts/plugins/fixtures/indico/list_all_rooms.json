@@ -1,0 +1,7 @@
+[
+  {"id": 11, "full_name": "10/R-001", "building": "10", "capacity": 12, "reservations_need_confirmation": false, "comments": "Projector and  video conferencing"},
+  {"id": 12, "full_name": "10/R-002", "building": "10", "capacity": 30, "reservations_need_confirmation": true, "comments": "Pre-booking only"},
+  {"id": 13, "full_name": "20/S-010", "building": "20", "capacity": 10, "reservations_need_confirmation": false, "comments": null},
+  {"id": 14, "full_name": "20/S-011", "building": "20", "capacity": 20, "reservations_need_confirmation": false, "comments": "NOT A MEETING ROOM: coffee area"},
+  {"id": 15, "full_name": "30/B-100", "building": "30", "capacity": 8, "reservations_need_confirmation": false, "comments": ""}
+]
