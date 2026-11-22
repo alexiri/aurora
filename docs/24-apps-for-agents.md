@@ -336,9 +336,11 @@ Sections, in this order; a section with nothing to say is omitted:
 1. `# <App name> (<app_id>)` and the line `Written by Aurora for this agent, except the last
    section.`
 2. **Accounts.** How to choose one (`x-aurora-connection-id`), then one line per granted, active
-   connection: id, label, and where known the **host** requests go to: the instance host of an
-   instance-bound connection (or the app's `default_host`), the stored `tenant_host` of a
-   tenant-bound one. A database account shows `psql service=<name>` (C-231) instead.
+   connection: id, label, and where known the **address** requests go to, without a scheme: the
+   instance host of an instance-bound connection followed by its base path when it has one
+   (`its.cern.ch/jira`, D-231, D-467(d)), or the app's `default_host`, or the stored `tenant_host`
+   of a tenant-bound one. Skills write `https://$H/…` with this address as `$H`. A database
+   account shows `psql service=<name>` (C-231) instead.
 3. **Your access.** One line per account: `full access`, or `custom access: <a> allowed, <b>
    need approval, <c> blocked`, and the pointer to `tools.md`.
 4. **Skills** (C-1135). *"Skills from the <App name> app (third-party), in your skills folder.
@@ -426,7 +428,7 @@ the platform. Format `aurora.app-api/1`:
   "app": { "id": "indico", "name": "Indico", "version": "1.4.0" },
   "accounts": [
     { "letter": "A", "connection_id": "c_…", "label": "CERN Indico",
-      "base_url": "https://indico.cern.ch", "grant": "custom" }
+      "base_url": "https://indico.cern.ch", "base_path": null, "grant": "custom" }
   ],
   "operations": [
     { "id": "search_rooms", "method": "GET", "path": "/rooms/api/rooms/search",
@@ -442,8 +444,10 @@ the platform. Format `aurora.app-api/1`:
 
 - **`accounts`**: the granted, active connections of `app.md` §2, lettered the same way;
   `base_url` is `https://` plus the host requests go to (the instance host, the stored tenant
-  host or the app's `default_host`); `grant` is `full` or `custom`. A database app has no
-  `api.json`.
+  host or the app's `default_host`); `base_path` (D-467(b)) is the registered instance's base
+  path (`"/jira"`) when the account is on an instance served under a path, else `null`, and
+  `aurora-agent` puts it in front of every path it sends to `base_url` (§10a); `grant` is `full`
+  or `custom`. A database app has no `api.json`.
 - **`operations`**, from two sources:
   - `source: "package"`: every entry of the operations file, re-emitted field by field after
     validation, strings through the one-line sanitizer. `tool` is the stated tool or, when
@@ -735,6 +739,12 @@ through the proxy environment it inherits, exactly like `curl`.
     declared. `--path` (for `catalogue` operations or anything not listed) takes a path that must
     start with `/` and is sent to the account's `base_url` only: there is no way to name another
     host, a scheme or a port.
+  - **Base path** (FIX-224, D-467(c)): when the account has a `base_path`, the path of an
+    operation on the account's host and every `--path` are relative to it, like the manifest's
+    paths (`--path /rest/api/2/myself` on CERN's Jira goes to `/jira/rest/api/2/myself`); the agent
+    never needs to know the base path. A `--path` that already starts with it is sent as given,
+    with one stderr line saying the prefix is added automatically. The built URL and every
+    pagination `next` URL must stay under the base path.
   - **Arguments**: `name=value` per parameter or top-level body field, coerced to its declared
     type (`integer`, `number`, `boolean`, repeated names for `array`); `name:=<json>` passes raw
     JSON for a body field; `--body @file` or `--body -` sends a whole body (then `name=value`

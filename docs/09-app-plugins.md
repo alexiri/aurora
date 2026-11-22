@@ -669,7 +669,11 @@ that sends content to people outside the workspace (mail, calendar invitations, 
 pages) lists every recipient and shows a clamped preview of the content; packages use a
 `summarize` hook where a template cannot.** Link
 templates may use `{request.host}`, `{path.N}`, `{query.name}`, `{field.Label}`
-and must resolve to https on a host in `hosts` or `about.web_hosts`.
+and must resolve to https on a host in `hosts` or `about.web_hosts`, or on the held request's own
+host (FIX-224, D-467(e)). For a request to a registered instance with a base path,
+`{request.host}` in a link is the host followed by the base path (`its.cern.ch/jira`), so
+`https://{request.host}/browse/{path.5}` stays right under `/jira`; `{path.N}` counts from the app
+path (D-231(c)).
 
 #### `agent` (what the agent is told / gets in its environment)
 ```yaml
