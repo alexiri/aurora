@@ -107,7 +107,12 @@ fn raw_refs(line: &str) -> usize {
         from = end;
         let before = &line[..at];
         let after = &line[end..];
-        if before.ends_with("effective_") || before.ends_with("::") || before.ends_with("fn ") {
+        // `effective_workspace_access` and `own_workspace_access` (FIX-230) are the views.
+        if before.ends_with("effective_")
+            || before.ends_with("own_")
+            || before.ends_with("::")
+            || before.ends_with("fn ")
+        {
             continue;
         }
         let next = after.chars().next();
@@ -176,6 +181,7 @@ fn the_scanner_counts_tables_and_ignores_functions_actions_and_the_view() {
     assert_eq!(raw_refs("FROM workspace_access wa"), 1);
     assert_eq!(raw_refs("JOIN group_workspace_access b ON"), 1);
     assert_eq!(raw_refs("FROM effective_workspace_access ew"), 0);
+    assert_eq!(raw_refs("JOIN own_workspace_access ea ON"), 0);
     assert_eq!(raw_refs("authz::workspace_access(&s.pool, u, ws)"), 0);
     assert_eq!(raw_refs("event(&c, \"workspace_access.set\")"), 0);
     assert_eq!(raw_refs("// reads workspace_access"), 0);

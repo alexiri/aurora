@@ -3075,3 +3075,279 @@ async fn mentions_reach_the_agent_as_handles_with_a_mentioned_line() {
     assert_eq!(w.outcome("e2").await["result"], "turn_created");
     assert_eq!(w.turn_text().await, text);
 }
+
+// ------------------------------------------------------------------ FIX-230 (D-473): own agents
+
+/// The owner's case: an org admin `admin` with agent `daneel` in their own workspace "Alex", and
+/// a member's agent `daneel` in the world's workspace "Team", both on the shared bot. Returns
+/// `(admin, admins_agent, members_agent)`; the admin is linked as `U1`.
+async fn fix230_world(w: &W) -> (Uuid, Uuid, Uuid) {
+    let admin = w.h.user("admin230@x.io", false).await;
+    w.h.member(w.org, admin, "admin", "active").await;
+    let alex = w.h.workspace(w.org).await;
+    sqlx::query("UPDATE workspaces SET name='Alex' WHERE id=$1")
+        .bind(alex)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE workspaces SET name='Team' WHERE id=$1")
+        .bind(w.ws)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    w.h.bind_ws(alex, admin, "owner").await;
+    let mine = w.h.hosted_agent(w.org, alex, "daneel").await;
+    let theirs = w.agent("daneel").await;
+    w.presence(w.integ, mine, "shared", None).await;
+    w.presence(w.integ, theirs, "shared", None).await;
+    w.link(w.integ, "U1", admin).await;
+    (admin, mine, theirs)
+}
+
+async fn last_turn_agent(w: &W) -> Uuid {
+    sqlx::query_scalar("SELECT agent_id FROM turns ORDER BY created_at DESC LIMIT 1")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+}
+
+/// FIX-230 (D-473(a)(b)(c)): an org admin DMing the shared bot reaches their own agent with no
+/// picker; a stale DM default pointing at another member's agent is ignored (not deleted); a
+/// thread already linked to another member's agent keeps working (authorization is unchanged).
+#[tokio::test]
+async fn an_org_admin_dm_goes_to_their_own_agent_never_to_another_members() {
+    let w = world().await;
+    let (admin, mine, theirs) = fix230_world(&w).await;
+    w.post(w.integ, "e1", dm("U1", "one", "B1")).await;
+    assert_eq!(w.outcome("e1").await["result"], "turn_created");
+    assert_eq!(last_turn_agent(&w).await, mine);
+    assert_eq!(w.count("SELECT count(*) FROM channel_ops WHERE kind='message.post' AND payload::text LIKE '%\"select\"%'").await, 0);
+
+    // A stale DM default on the other member's agent is ignored, and kept.
+    w.finish("done", Some("ok"), None).await;
+    sqlx::query(
+        "INSERT INTO dm_defaults (integration_id, platform_user_ref, agent_id) VALUES ($1,'U1',$2)",
+    )
+    .bind(w.integ)
+    .bind(theirs)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    w.post(w.integ, "e2", dm("U1", "two", "B1")).await;
+    assert_eq!(w.outcome("e2").await["result"], "turn_created");
+    assert_eq!(last_turn_agent(&w).await, mine);
+    assert_eq!(w.count("SELECT count(*) FROM dm_defaults").await, 1);
+    w.finish("done", Some("ok"), None).await;
+
+    // A thread linked to the other member's agent (made while the admin was in that workspace in
+    // their own right) still routes there once they are not: authorization stays `can_use`.
+    w.h.bind_ws(w.ws, admin, "member").await;
+    let mut p = dm("U1", "first", "B1");
+    p["thread_ref"] = json!("T9");
+    w.post(w.integ, "e3", p.clone()).await;
+    assert_eq!(last_turn_agent(&w).await, theirs);
+    w.finish("done", Some("ok"), None).await;
+    sqlx::query("DELETE FROM workspace_access WHERE workspace_id=$1 AND user_id=$2")
+        .bind(w.ws)
+        .bind(admin)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    p["message_ref"] = json!("m2");
+    w.post(w.integ, "e4", p).await;
+    assert_eq!(w.outcome("e4").await["result"], "turn_created");
+    assert_eq!(last_turn_agent(&w).await, theirs);
+}
+
+/// FIX-230: with no own agent on the bot, an org admin is told "not set up" and never routed to
+/// another member's agent. The reply depends on whether they still have an own agent in the org,
+/// and names no other member's agent or workspace.
+#[tokio::test]
+async fn an_org_admin_without_an_attached_own_agent_gets_the_not_set_up_reply() {
+    let w = world().await;
+    let (_admin, mine, _theirs) = fix230_world(&w).await;
+    sqlx::query("UPDATE channel_presences SET status='disabled' WHERE agent_id=$1")
+        .bind(mine)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let admin2 = w.h.user("admin2-230@x.io", false).await;
+    w.h.member(w.org, admin2, "admin", "active").await;
+    w.link(w.integ, "U2", admin2).await;
+    let turns = w.count("SELECT count(*) FROM turns").await;
+    let texts = || async {
+        w.ops("message.post")
+            .await
+            .iter()
+            .filter_map(|p| p["content"]["text"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+    // Still has an own agent in the org (detached): choose one on the account page.
+    w.post(w.integ, "e1", dm("U1", "hi", "B1")).await;
+    assert_eq!(w.outcome("e1").await["result"], "not_set_up");
+    let t = texts().await;
+    assert!(
+        t[0].contains("None of your agents answers direct messages here yet"),
+        "{t:?}"
+    );
+    assert!(!t[0].contains("Team"), "{t:?}");
+    // No own agent at all (only the implicit admin role): create one or ask the owners.
+    w.post(w.integ, "e2", dm("U2", "hi", "B1")).await;
+    assert_eq!(w.outcome("e2").await["result"], "not_set_up");
+    let t = texts().await;
+    assert!(t[1].contains("You don't have an agent here yet"), "{t:?}");
+    assert!(!t[1].contains("Team") && !t[1].contains("daneel"), "{t:?}");
+    assert_eq!(w.count("SELECT count(*) FROM turns").await, turns);
+}
+
+/// FIX-230 (D-473(d)): a member with two own agents gets the picker; each option reads
+/// `Name (@handle) · Workspace`, ordered by workspace name.
+#[tokio::test]
+async fn the_dm_picker_names_every_choice_with_its_workspace() {
+    let w = world().await;
+    sqlx::query("UPDATE workspaces SET name='Ops' WHERE id=$1")
+        .bind(w.ws)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let lab = w.h.workspace(w.org).await;
+    sqlx::query("UPDATE workspaces SET name='Lab' WHERE id=$1")
+        .bind(lab)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    w.h.bind_ws(lab, w.member, "member").await;
+    let rex = w.agent("rex").await;
+    let max = w.h.hosted_agent(w.org, lab, "max").await;
+    w.presence(w.integ, rex, "shared", None).await;
+    w.presence(w.integ, max, "shared", None).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "hi", "B1")).await;
+    assert_eq!(w.outcome("e1").await["result"], "picker");
+    let posts = w.ops("message.post").await;
+    let labels: Vec<String> = posts
+        .iter()
+        .filter_map(|p| p["content"]["card"]["blocks"].as_array())
+        .flatten()
+        .filter(|b| b["type"] == "select")
+        .flat_map(|b| b["options"].as_array().cloned().unwrap_or_default())
+        .filter_map(|o| o["label"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(
+        labels,
+        vec!["max (@max) · Lab", "rex (@rex) · Ops"],
+        "{posts:?}"
+    );
+}
+
+/// FIX-230 (D-473(b)): the binding picker sent to an org admin who adds the bot to a channel
+/// offers only agents of workspaces they are in in their own right.
+#[tokio::test]
+async fn the_binding_picker_offers_an_admin_only_their_own_workspaces_agents() {
+    let w = world().await;
+    let (_admin, mine, theirs) = fix230_world(&w).await;
+    let other_mine = {
+        let alex: Uuid = sqlx::query_scalar("SELECT workspace_id FROM agents WHERE id=$1")
+            .bind(mine)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+        let a = w.h.hosted_agent(w.org, alex, "nova").await;
+        w.presence(w.integ, a, "shared", None).await;
+        a
+    };
+    w.send(
+        w.integ,
+        "b1",
+        "bot.added",
+        json!({"space": {"ref": "C1", "kind": "channel", "label": "general"}, "bot_ref": "B1", "actor_ref": "U1"}),
+    )
+    .await;
+    w.run().await;
+    assert_eq!(w.outcome("b1").await["result"], "binding_requested");
+    let posts = w.ops("message.post").await;
+    let ids: Vec<String> = posts
+        .iter()
+        .filter_map(|p| p["content"]["card"]["blocks"].as_array())
+        .flatten()
+        .filter(|b| b["type"] == "select")
+        .flat_map(|b| b["options"].as_array().cloned().unwrap_or_default())
+        .filter_map(|o| o["value"].as_str().map(str::to_owned))
+        .collect();
+    assert!(
+        ids.contains(&mine.to_string()) && ids.contains(&other_mine.to_string()),
+        "{ids:?}"
+    );
+    assert!(!ids.contains(&theirs.to_string()), "{ids:?}");
+}
+
+/// FIX-230 (D-473(b)(d)): `agents` lists only the caller's own agents with their workspaces;
+/// `use <handle>` with one own match sets it, with two own matches sets nothing and names both,
+/// and with only another member's agent refuses as "can't find".
+#[tokio::test]
+async fn commands_agents_and_use_see_only_own_agents_and_name_workspaces() {
+    let w = world().await;
+    let (_admin, mine, theirs) = fix230_world(&w).await;
+    let c = |id: &'static str, n: &'static str, args: &'static str| {
+        let w = &w;
+        async move {
+            w.send(w.integ, id, "command.invoked", cmd(n, args, "U1", "dm"))
+                .await;
+            w.run().await;
+            w.ops("message.post").await.last().cloned().unwrap()
+        }
+    };
+    let extra = w.h.hosted_agent(w.org, w.ws, "other").await;
+    w.presence(w.integ, extra, "shared", None).await;
+    let p = c("c1", "agents", "").await;
+    let t = p["content"]["text"].as_str().unwrap();
+    assert!(t.contains("`daneel` (daneel · Alex)"), "{t}");
+    assert!(!t.contains("Team") && !t.contains("other"), "{t}");
+    // Another member's agent only: refused.
+    let p = c("c2", "use", "other").await;
+    assert!(
+        p["content"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("can't find")
+    );
+    assert_eq!(w.count("SELECT count(*) FROM dm_defaults").await, 0);
+    // One own match sets it (the member's `daneel` is not offered, so this is not ambiguous).
+    let p = c("c3", "use", "daneel").await;
+    assert!(p["content"]["text"].as_str().unwrap().contains("Done"));
+    let d: Uuid =
+        sqlx::query_scalar("SELECT agent_id FROM dm_defaults WHERE platform_user_ref='U1'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(d, mine);
+    assert_ne!(d, theirs);
+    // Two own matches: nothing is written, both are named with the account-page address.
+    let lab = w.h.workspace(w.org).await;
+    sqlx::query("UPDATE workspaces SET name='Lab' WHERE id=$1")
+        .bind(lab)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let admin: Uuid =
+        sqlx::query_scalar("SELECT user_id FROM user_links WHERE platform_user_ref='U1'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    w.h.bind_ws(lab, admin, "member").await;
+    let twin = w.h.hosted_agent(w.org, lab, "daneel").await;
+    w.presence(w.integ, twin, "shared", None).await;
+    sqlx::query("DELETE FROM dm_defaults")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let p = c("c4", "use", "daneel").await;
+    let t = p["content"]["text"].as_str().unwrap();
+    assert!(
+        t.contains("daneel · Alex") && t.contains("daneel · Lab"),
+        "{t}"
+    );
+    assert!(t.contains("http://localhost:4100/account/channels"), "{t}");
+    assert_eq!(w.count("SELECT count(*) FROM dm_defaults").await, 0);
+    assert_eq!(w.outcome("c4").await["result"], "use_ambiguous");
+}

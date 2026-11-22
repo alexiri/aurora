@@ -331,8 +331,9 @@ fn agent_not_reachable() -> ApiError {
 
 /// (FIX-220, D-461(b), C-37, C-36) The one rule for "this agent answers the person's DMs with the
 /// shared bot", enforced on the server inside the caller's transaction. The agent must exist and
-/// belong to the integration's organization (never trusted from the UI). A person who can use the
-/// agent (`can_use`) may have it attached to the shared bot when it is not yet and the integration
+/// belong to the integration's organization (never trusted from the UI). A person who has access to
+/// the agent's workspace in their own right (`own_access`, FIX-230/D-473: not an org admin's
+/// implicit owner role) may have it attached to the shared bot when it is not yet and the integration
 /// offers the shared mode: exactly the right C-34 attach already gives. A person who reaches it only
 /// through an approved person grant can choose it only when it is already attached. Anything else is
 /// 422 `agent_not_reachable`. Returns the agent and the id of the presence created, if any; the
@@ -348,7 +349,8 @@ async fn agent_choice(
         .await?
         .filter(|a| a.org_id == integ.org_id)
         .ok_or_else(agent_not_reachable)?;
-    let can_use = authz::workspace_access(&mut *conn, user, agent.workspace_id)
+    // D-473(a): "own" access (a direct or group binding), not the implicit owner role of an admin.
+    let can_use = authz::own_access(&mut *conn, user, agent.workspace_id)
         .await?
         .is_some();
     let attached = channel_presences::active_shared(&mut *conn, agent.id, integ.id)
@@ -401,7 +403,7 @@ pub async fn dm_default_options(
     };
     let handle = text("handle").unwrap_or_default();
     let display_name = text("display_name").unwrap_or_else(|| handle.clone());
-    let items = agents::list_usable_in_org(&mut *conn, integ.org_id, c.user_id, integ.id)
+    let items = agents::list_own_in_org(&mut *conn, integ.org_id, c.user_id, integ.id)
         .await?
         .into_iter()
         .map(|r| DmDefaultOption {

@@ -92,6 +92,12 @@ async fn bot_added(
         {
             if pa.mode == "shared"
                 && !allowed.contains(&pa.agent_id)
+                // FIX-230, D-473(b): offered only from workspaces the adder is in in their own
+                // right (not an org admin's implicit owner role) that they can also own.
+                && authz::own_access(pool, l.user_id, pa.workspace_id)
+                    .await
+                    .retry()?
+                    .is_some()
                 && authz::can_own(pool, l.user_id, pa.workspace_id)
                     .await
                     .retry()?

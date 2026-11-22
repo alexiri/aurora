@@ -5,7 +5,7 @@ use super::Minter;
 use crate::domains::channels::card_requests::AgentChoice;
 use aurora_channels::card::{Block, ButtonItem, ButtonStyle, Card, MAX_OPTIONS};
 use aurora_channels::{ActionKind, Decision};
-use aurora_core::ApiError;
+use aurora_core::{ApiError, sanitize};
 use aurora_db::repo::action_approvals::ActionApprovalRow;
 use aurora_db::repo::approvals::ApprovalRow;
 use aurora_protocol::vocab::BoundedString;
@@ -186,11 +186,41 @@ pub fn reach(
     ])
 }
 
+/// Longest option label the builder keeps (`sanitize::label`).
+const OPTION_LABEL_MAX: usize = 80;
+
+/// `Name (@handle) · Workspace` (FIX-230, D-473(d)). The builder bounds a label to 80 characters;
+/// the workspace part is shortened first so the name and handle stay whole when they fit.
+fn agent_option_label(name: &str, handle: &str, workspace: &str) -> String {
+    let head = format!("{} (@{})", sanitize::label(name), sanitize::label(handle));
+    let ws = sanitize::label(workspace);
+    let sep = " · ";
+    let head_len = head.chars().count();
+    let ws_len = ws.chars().count();
+    if head_len + sep.chars().count() + ws_len <= OPTION_LABEL_MAX {
+        return format!("{head}{sep}{ws}");
+    }
+    // Room left for the workspace after the head and the separator, with an ellipsis.
+    let room = OPTION_LABEL_MAX.saturating_sub(head_len + sep.chars().count());
+    if room >= 2 {
+        let kept: String = ws.chars().take(room - 1).collect();
+        format!("{head}{sep}{}…", kept.trim_end())
+    } else {
+        // No room for the workspace: the builder's own bound keeps the start of the name.
+        sanitize::label(&head)
+    }
+}
+
 fn options(agents: &[AgentChoice]) -> Vec<(String, String)> {
     agents
         .iter()
         .take(MAX_OPTIONS)
-        .map(|a| (a.label.clone(), a.agent_id.to_string()))
+        .map(|a| {
+            (
+                agent_option_label(&a.label, &a.handle, &a.workspace_name),
+                a.agent_id.to_string(),
+            )
+        })
         .collect()
 }
 
@@ -299,4 +329,35 @@ pub fn turn_controls(
         ));
     }
     blk(Block::buttons(buttons))
+}
+
+#[cfg(test)]
+mod option_label_tests {
+    use super::*;
+
+    #[test]
+    fn label_is_name_handle_workspace() {
+        assert_eq!(
+            agent_option_label("Daneel", "daneel", "Alex's workspace"),
+            "Daneel (@daneel) · Alex's workspace"
+        );
+    }
+
+    #[test]
+    fn a_long_workspace_is_shortened_and_the_name_is_kept() {
+        let ws = "W".repeat(200);
+        let l = agent_option_label("Daneel", "daneel", &ws);
+        assert!(l.starts_with("Daneel (@daneel) · W"), "{l}");
+        assert!(l.ends_with('…'), "{l}");
+        assert!(l.chars().count() <= OPTION_LABEL_MAX, "{l}");
+        // The builder's own bound keeps it unchanged.
+        assert_eq!(sanitize::label(&l), l);
+    }
+
+    #[test]
+    fn a_very_long_name_keeps_its_start() {
+        let l = agent_option_label(&"N".repeat(200), "h", "Ws");
+        assert!(l.starts_with("NNNN"), "{l}");
+        assert!(l.chars().count() <= OPTION_LABEL_MAX, "{l}");
+    }
 }

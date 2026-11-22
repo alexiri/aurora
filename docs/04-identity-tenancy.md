@@ -565,6 +565,19 @@ and everything they own. Restoring sets the row `active` again. Audit:
 source-scan guard (`aurora-db` `membership_queries`) lists every other raw reader of the
 binding tables.
 
+**Access in one's own right** (FIX-230, D-473, C-1157). The view `own_workspace_access
+(workspace_id, org_id, user_id, role)` is the single definition of the access a person holds
+themselves: an active direct binding (manual or IdP-claimed) or an active group binding (the
+strongest role), while an active org member and not suspended in the workspace. It lacks the
+implicit owner role of effective org owners and admins; `effective_workspace_access` is that
+implicit branch `UNION ALL` this view, with the same output as before (pinned by an IT against
+the old definition). `authz::own_access(user, ws)` reads it. It decides what **chat offers or
+picks by itself** (the DM agent, the `agents`/`use` commands, the link and account pages' lists
+and their server rule, the binding picker): "your agents". It never authorizes: `can_use`,
+`can_own` and every access check keep reading `effective_workspace_access`, so an admin's
+existing thread links, space bindings, `bind <handle>`, Attach and the dashboard are unchanged.
+The view joins people tables: only API code reads it, never a shared function the gateway runs.
+
 **The turn's person** (phase 5, P5-PERSON, D-402, C-1052, SEC-139). The person a turn runs
 for is its person speaker (doors `web`, `api`, `thread`), or on a schedule turn the
 schedule's creator; webhook, watch, peer, eval and system turns and creator-less schedules

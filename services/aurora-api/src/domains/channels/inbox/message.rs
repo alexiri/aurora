@@ -485,16 +485,6 @@ async fn route(
         {
             return Ok(routed(a, sender, None));
         }
-        // The author's DM default.
-        if let Some(d) = dm_defaults::get(pool, iid, &m.author.reference)
-            .await
-            .retry()?
-            && shared.iter().any(|p| p.agent_id == d.agent_id)
-            && let Some(a) = load(d.agent_id).await?
-        {
-            return Ok(routed(a, sender, None));
-        }
-        // The single agent this person can reach, else a picker.
         let sp = match *speaker {
             Some(s) => s,
             None => {
@@ -503,6 +493,29 @@ async fn route(
                 s
             }
         };
+        // The author's DM default, while it is still one of their own agents (FIX-230, D-473(c)): a
+        // default that no longer is (an admin's pick of another member's agent, a removed binding)
+        // is ignored, not deleted, and routing falls through to the own-agents rule.
+        if let Speaker::User(u) = sp
+            && let Some(d) = dm_defaults::get(pool, iid, &m.author.reference)
+                .await
+                .retry()?
+            && let Some(p) = shared.iter().find(|p| p.agent_id == d.agent_id)
+            && super::super::presences::is_own_agent(
+                pool,
+                u,
+                p.workspace_id,
+                p.agent_id,
+                iid,
+                std::slice::from_ref(&m.author.reference),
+            )
+            .await
+            .retry()?
+            && let Some(a) = load(d.agent_id).await?
+        {
+            return Ok(routed(a, sender, None));
+        }
+        // The single agent this person owns or reaches, else a picker.
         let user = match sp {
             Speaker::User(u) => u,
             Speaker::NeedsLink => {
@@ -532,15 +545,17 @@ async fn route(
             {
                 continue;
             }
-            let ok = authz::can_use(pool, user, p.workspace_id).await.retry()?
-                || reach_grants::approved_person_reach(
-                    pool,
-                    p.agent_id,
-                    iid,
-                    std::slice::from_ref(&m.author.reference),
-                )
-                .await
-                .retry()?;
+            // The person's own agents only (FIX-230, D-473): not the admin's implicit access.
+            let ok = super::super::presences::is_own_agent(
+                pool,
+                user,
+                p.workspace_id,
+                p.agent_id,
+                iid,
+                std::slice::from_ref(&m.author.reference),
+            )
+            .await
+            .retry()?;
             if ok {
                 reachable.push(*p);
             }
@@ -573,14 +588,7 @@ async fn route(
                     .await
                     .retry()?;
                 if !cards.renders_cards() {
-                    let handles: Vec<String> = many
-                        .iter()
-                        .map(|p| format!("`{}`", sanitize::label(&p.agent_handle)))
-                        .collect();
-                    let text = format!(
-                        "Which agent should answer your direct messages? Reply `use <handle>` with one of: {}.",
-                        handles.join(", ")
-                    );
+                    let text = picker_fallback_text(many);
                     send::say(
                         &mut conn,
                         ctx,
@@ -618,6 +626,26 @@ async fn route(
     }
 }
 
+/// (FIX-230, D-473(d)) The text picker for a platform without cards: every choice names its
+/// agent and workspace, `` `handle` (Name · Workspace) ``.
+fn picker_fallback_text(many: &[&PresenceAgent]) -> String {
+    let handles: Vec<String> = many
+        .iter()
+        .map(|p| {
+            format!(
+                "`{}` ({} · {})",
+                sanitize::label(&p.agent_handle),
+                sanitize::label(&p.agent_name),
+                sanitize::label(&p.workspace_name)
+            )
+        })
+        .collect();
+    format!(
+        "Which agent should answer your direct messages? Reply `use <handle>` with one of: {}.",
+        handles.join(", ")
+    )
+}
+
 /// (FIX-220, D-461(c)) The "not set up" reply to a direct message with the shared bot: no agent of
 /// the person answers there. It says what to do and never mentions `bind` (which does nothing in a
 /// DM). A person who can use an agent of the organization is sent to the account page to choose
@@ -637,7 +665,7 @@ async fn dm_not_set_up(
         return Ok(());
     }
     let base = state.config.external_url.trim_end_matches('/');
-    let usable = agents::list_usable_in_org(&state.pool, ctx.integ.org_id, user, ctx.id())
+    let usable = agents::list_own_in_org(&state.pool, ctx.integ.org_id, user, ctx.id())
         .await
         .retry()?;
     let text = if usable.is_empty() {
@@ -1129,4 +1157,32 @@ async fn receipt(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod picker_fallback_tests {
+    use super::*;
+
+    fn pa(handle: &str, name: &str, ws: &str) -> PresenceAgent {
+        PresenceAgent {
+            presence_id: Uuid::nil(),
+            mode: "shared".into(),
+            platform_user_ref: None,
+            agent_id: Uuid::nil(),
+            agent_handle: handle.into(),
+            agent_name: name.into(),
+            workspace_id: Uuid::nil(),
+            workspace_name: ws.into(),
+        }
+    }
+
+    #[test]
+    fn the_text_picker_names_each_workspace() {
+        let (a, b) = (pa("daneel", "Daneel", "Alex"), pa("rex", "Rex", "Lab"));
+        let t = picker_fallback_text(&[&a, &b]);
+        assert!(
+            t.contains("`daneel` (Daneel · Alex), `rex` (Rex · Lab)"),
+            "{t}"
+        );
+    }
 }
