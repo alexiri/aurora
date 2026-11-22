@@ -50,8 +50,10 @@ in `offset 1d`). A daily peak at the same time is not an incident; say so.
 - Annotations (deployments, incidents) in the window: `aurora-agent call grafana list_annotations
   from=<ms> to=<ms>` (Unix milliseconds), also with `dashboardUID=<uid>`.
 - Alerts that fired: `list_alert_rule_states` (filter `dashboard_uid=<uid>`) for the dashboard's
-  Grafana-managed rules, `list_alerts` for what fires now, and `GET
-  $G/api/datasources/proxy/uid/<ds uid>/api/v1/rules` (`prometheus_rules`) for the data source's own rules.
+  Grafana-managed rules, and `list_alerts` for what fires now. Alert annotations
+  (`list_annotations … type=alert`) show past state changes with their values. The data source's
+  own rules (`prometheus_rules`) go through the proxy: if it answers 3xx, report it as not
+  reachable and move on.
 - Logs around the jump: `"$S" logql --ds <loki uid> --from … --to … --limit 50 '{app="api"} |= "error"'`
   with the service's stream selector.
 

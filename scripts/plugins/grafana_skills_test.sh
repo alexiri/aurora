@@ -43,6 +43,7 @@ case "$op" in
     cp "$body" "$STUB_BODIES/body-$((n + 1)).json"
     if grep -q '"expr": "bad' "$body"; then cat "$STUB_FIX/query_error.txt" >&2; exit 1
     elif grep -q '"instant": true\|"queryType": "instant"' "$body"; then cp "$STUB_FIX/query_instant.json" "$out"
+    elif grep -q 'raw_data' "$body"; then cp "$STUB_FIX/query_raw.json" "$out"
     elif grep -q 'os-logs' "$body"; then cp "$STUB_FIX/query_opensearch.json" "$out"
     else cp "$STUB_FIX/query_range.json" "$out"; fi ;;
   *) echo "stub: no fixture for $op" >&2; exit 1 ;;
@@ -72,6 +73,7 @@ if grep -q "prom.internal\|secureJsonFields" <<<"$out"; then bad "datasources: p
 expect_eq "datasources: --type" $'loki-main\tloki\tMain Loki' "$(G datasources --type loki)"
 out=$(STUB_EMPTY=1 G datasources)
 expect_has "datasources: an empty list says so and suggests panels" "grafana-query panels" "$out"
+expect_has "datasources: an empty list explains the permissions" "depends on the token's data source permissions" "$out"
 reset; G datasources --account B >/dev/null
 expect_has "datasources: --account is passed through" "--account B" "$(cat "$STUB_LOG")"
 
@@ -169,6 +171,48 @@ echo '{"results":{"A":{"status":400,"error":"boom","errorSource":"plugin","frame
 rc=0; out=$(G frames "$WORK/err.json") || rc=$?
 expect_eq "frames: an error refId exits 1" 1 "$rc"
 expect_has "frames: error shown" "# A 400 error: boom (errorSource plugin)" "$out"
+
+# --- --columns -------------------------------------------------------------------------------------------------------
+RAW="$FIX/query_raw.json"
+out=$(G frames "$RAW")
+expect_eq "frames without --columns: every column" \
+  $'metadata.timestamp\t_id\t_index\tdata.clientip\tdata.path\tdata.user_agent\tdata.agent' "$(sed -n 3p <<<"$out")"
+out=$(G frames "$RAW" --columns clientip,path)
+expect_eq "frames --columns: time field and the two named fields" $'metadata.timestamp\tdata.clientip\tdata.path' "$(sed -n 3p <<<"$out")"
+expect_eq "frames --columns: rows have three columns" "3 3 3" \
+  "$(sed -n '4,6p' <<<"$out" | awk -F'\t' '{printf "%s%s", sep, NF; sep=" "}')"
+expect_has "frames --columns: row values" $'\t192.0.2.2\t/b' "$out"
+if grep -q "no field matches" <<<"$out"; then bad "frames --columns: a matching name printed the no-match line"; else ok "frames --columns: no no-match line when all names match"; fi
+out=$(G frames "$RAW" --columns agent)
+expect_eq "frames --columns agent: data.agent, not data.user_agent" $'metadata.timestamp\tdata.agent' "$(sed -n 3p <<<"$out")"
+out=$(G frames "$RAW" --columns ip)
+expect_eq "frames --columns ip: only the time field" "metadata.timestamp" "$(grep -v '^#\|^##' <<<"$out" | sed -n 1p)"
+expect_has "frames --columns ip: names the miss and lists the fields" "# --columns: no field matches ip; fields: metadata.timestamp, _id, _index, data.clientip" "$out"
+out=$(G frames "$RAW" --columns 'path,,clientip')
+expect_eq "frames --columns: empty names are ignored, frame order kept" $'metadata.timestamp\tdata.clientip\tdata.path' "$(sed -n 3p <<<"$out")"
+cat > "$WORK/raw.json" <<'JSON'
+{"from": "now-1h", "to": "now", "queries": [{"refId": "A", "datasource": {"uid": "os-logs", "type": "grafana-opensearch-datasource"},
+ "queryType": "lucene", "query": "*", "metrics": [{"id": "1", "type": "raw_data", "settings": {"size": "3", "order": "desc"}}]}]}
+JSON
+reset
+out=$(G run "$WORK/raw.json" --columns clientip,path)
+expect_has "run --columns: status line" "# A 200" "$out"
+expect_has "run --columns: selection applied" $'metadata.timestamp\tdata.clientip\tdata.path' "$out"
+expect_eq "run --columns: the body is sent unchanged" "$(jq -S . "$WORK/raw.json")" "$(body 1 | jq -S .)"
+out=$(G run "$WORK/raw.json")
+expect_has "run without --columns: every column" $'\tdata.user_agent\tdata.agent' "$out"
+for v in ',' ',,' ' '; do
+  rc=0; G frames "$RAW" --columns "$v" >/dev/null 2>&1 || rc=$?
+  expect_eq "--columns '$v' is a usage error" 2 "$rc"
+done
+rc=0; G run "$WORK/raw.json" --columns , >/dev/null 2>&1 || rc=$?
+expect_eq "run --columns , is a usage error" 2 "$rc"
+long=$(printf 'a%.0s' $(seq 1 101))
+rc=0; G frames "$RAW" --columns "$long" >/dev/null 2>&1 || rc=$?
+expect_eq "--columns: a name over 100 characters is a usage error" 2 "$rc"
+many=$(seq -s, 1 51)
+rc=0; G frames "$RAW" --columns "$many" >/dev/null 2>&1 || rc=$?
+expect_eq "--columns: more than 50 names is a usage error" 2 "$rc"
 
 # --- hygiene -------------------------------------------------------------------------------------------------------
 if grep -nE '\bcurl\b|\bwget\b|requests|urllib|http\.client|import socket|eval\(|exec\(|shell=True|os\.system|GRAFANA_|TOKEN|Authorization' "$SCRIPT"; then

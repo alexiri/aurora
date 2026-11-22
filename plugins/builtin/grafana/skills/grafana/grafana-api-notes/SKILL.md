@@ -22,7 +22,7 @@ and folder and data source permissions.
 | A dashboard's versions | `GET $G/api/dashboards/uid/<uid>/versions` (needs edit permission) |
 | Dashboard tags | `GET $G/api/dashboards/tags` |
 | Query any data source (Prometheus, Mimir, Loki, OpenSearch, SQL) | `POST $G/api/ds/query` = `aurora-agent call grafana query_datasources --body @body.json`; the `grafana-query` skill's script builds it |
-| Data source UIDs | `GET $G/api/datasources` (`list_datasources`, usually empty for Viewer and Editor), else a dashboard's panels (`grafana-query panels <uid>`) |
+| Data source UIDs | `GET $G/api/datasources` (`list_datasources`; try it first, it is empty under Grafana's default Viewer/Editor permissions), else a dashboard's panels (`grafana-query panels <uid>`) |
 | Prometheus/Mimir through the proxy (fallback) | `GET $G/api/datasources/proxy/uid/<ds>/api/v1/query_range?query=…&start=…&end=…&step=60s` |
 | Loki through the proxy (fallback) | `GET $G/api/datasources/proxy/uid/<ds>/loki/api/v1/query_range?query=…&limit=100` |
 | Firing alerts | `GET $G/api/alertmanager/grafana/api/v2/alerts` |
@@ -47,9 +47,10 @@ missing `folderUid` moves the dashboard to the top level), and keep `overwrite: 
 
 Queries name a data source by UID. Take it from the panel you are reading (`datasource.uid`; a
 `${…}` value is a dashboard variable, see `templating.list[].current.value`), or list them:
-`GET /api/datasources` shows only the data sources the token may **read** settings of. Grafana gives
-that permission to Admin by default, so with a Viewer or Editor token the list is usually empty or
-holds only the built-in `grafana` source, even though queries work. Grafana's browser settings
+`GET /api/datasources` shows only the data sources the token may **read** settings of. Try it first:
+some instances grant that permission to Viewer or Editor and list every source. Grafana gives it to
+Admin by default, so under the defaults the list is empty or holds only the built-in `grafana`
+source, even though queries work. Grafana's browser settings
 (`/api/frontend/settings`) do list every data source a user can query, but they also carry the
 passwords of direct-access data sources, so Aurora does not offer them. If you have no UID, run
 `grafana-query panels <dashboard uid>` on a dashboard that uses the data source, or ask the person

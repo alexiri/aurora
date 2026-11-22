@@ -26,8 +26,15 @@ tools (`prometheus_*`, `loki_*`, `GET /api/datasources/proxy/uid/<uid>/…`) for
 own address, and a backend that redirects (http to https, or a path) answers Grafana's proxy with a
 `3xx` that Grafana passes through unchanged. `aurora-agent` never follows redirects (the new host is
 not this connection's), so on such an instance the proxy tools never work, while `ds/query` does.
-Seen on one instance (HTTP 308 with a `Location` on the backend host). Use `ds/query` first; use the
-proxy only for the paths it offers that `ds/query` does not (series, labels, label values, rules).
+Seen on one instance (HTTP 308 with a `Location` on the backend host). Use `ds/query` first. The proxy is useful only for what `ds/query` cannot do (series, labels,
+label values, rules), and on a redirecting instance those paths return 3xx too. Use these instead:
+
+- Metric names: an instant query `count by (__name__) ({<selector>, __name__=~"<prefix>.*"})`, such
+  as `"$S" promql --ds <uid> --from now-1h --to now --instant 'count by (__name__) ({job="x", __name__=~"http_.*"})'`.
+- Label values: `count by (<label>) (<metric>{<selector>})`, with `--instant` the same way.
+- Label names and expressions in use: `grafana-query panels <dashboard uid>`.
+- Rules: Grafana-managed ones with `list_alert_rule_states` / `list_alert_rules`. The data
+  source's own rules (`prometheus_rules`) cannot be reached; say so as a data gap.
 
 Only read statements. Data sources should use read-only database users; a SQL or InfluxDB data
 source whose user can write could be changed by a query (D-462). Never send `INSERT`, `UPDATE`,
@@ -35,9 +42,10 @@ source whose user can write could be changed by a query (D-462). Never send `INS
 
 ## Find the data source UID
 
-1. `"$S" datasources` lists `uid  type  name` from `list_datasources`. Grafana shows that list only
-   to tokens allowed to read data source settings (Admin by default): with a Viewer or Editor token
-   it is empty or has only the built-in `grafana` source.
+1. Run `"$S" datasources` first; it lists `uid  type  name` from `list_datasources`. Whether Grafana
+   shows this list depends on the token's data source permissions: some instances list every
+   source to a Viewer or Editor token, while with Grafana's defaults the list is empty or holds only
+   the built-in `grafana` source. If it is empty, use step 2.
 2. Otherwise read a dashboard that uses the data source: `"$S" panels <dashboard uid>` prints every
    panel (rows expanded) with its data source (a `${datasource}` variable is resolved through
    `templating.list[].current`) and each target's `expr`, `query`, `rawSql`, `metrics`, `bucketAggs`
@@ -105,13 +113,16 @@ script prints, for each refId, `# <refId> <status>` (and the error), then per fr
 its labels or field names and tab-separated rows with times in RFC 3339 UTC; `"$S" frames q.json`
 prints a saved answer.
 
+For documents (`raw_data`), `--columns a,b,c` on `run` or `frames` prints only those fields (plus
+the time field). Use it: access-log documents have dozens of fields.
+
 ### Errors
 
-- Each refId has its own `status` and `error`. **When any refId fails, Grafana answers HTTP 400 for
-  the whole request** (`ds_query.go` `toJsonStreamingResponse`), and `aurora-agent` then prints only
-  the first lines of the body and saves no file, so the data of the refIds that worked is lost. The
-  script retries each refId alone in that case. By hand, send a failing batch again one refId at a
-  time.
+- Each refId has its own `status` and `error`. If any refId fails, Grafana answers HTTP 400 for
+  the whole request (`ds_query.go` `toJsonStreamingResponse`). The script handles this by retrying
+  each refId alone, so the output shows every refId that worked and the error of the one that
+  failed. By hand with `aurora-agent`, only the first lines of the body are printed and no file is
+  saved, so send a failing batch again one refId at a time.
 - `errorSource: "plugin"` marks an error the data source plugin raised (a bad query or field, a
   failing backend); `"downstream"` means the backend answered with an error. Both come with a
   message: read it, fix the query.
