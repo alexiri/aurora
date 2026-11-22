@@ -244,7 +244,7 @@ code `reserved_event_id`.
 
 | Kind | Payload |
 |------|---------|
-| `message.posted` | `{ space: { ref, kind: "dm"|"group_dm"|"channel"|"private", label }, thread_ref?, message_ref, author: { ref, kind: "person"|"bot", display_name, email?, email_verified? }, text (neutral markup), mentions: [{ kind: "user"|"bot"|"space"|"broadcast", ref }], bot_mentioned: bool, addressed_bot_ref, files: [{ ref, name, size, content_type }] }` |
+| `message.posted` | `{ space: { ref, kind: "dm"|"group_dm"|"channel"|"private", label }, thread_ref?, message_ref, author: { ref, kind: "person"|"bot", display_name, email?, email_verified? }, text (neutral markup), mentions: [{ kind: "user"|"bot"|"space"|"broadcast", ref, handle?, label? }] (handle: how the platform writes the mention, sigil included; label: the display name; phase 5, FIX-219, C-1146), bot_mentioned: bool, addressed_bot_ref, files: [{ ref, name, size, content_type }] }` |
 | `message.edited` / `message.deleted` | `{ space_ref, thread_ref?, message_ref, text? }` |
 | `bot.added` / `bot.removed` | `{ space: {ref, kind, label}, bot_ref, actor_ref? }` |
 | `action.invoked` | `{ token, clicker_ref, value?, space_ref?, message_ref? }` |
