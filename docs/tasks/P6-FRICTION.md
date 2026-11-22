@@ -1,7 +1,10 @@
 # P6-FRICTION: Agents report tool problems — **proposal, spec batch (Opus) later — phase 6**
 
 > **Status: proposal (2026-11-22).** No D-, C-, SEC- or migration numbers are taken (the spec batch takes
-> them from PROGRESS's next-free note). Questions Q-P6-FRIC-1..12 are open, each with a recommendation.
+> them from PROGRESS's next-free note).
+>
+> **Owner answers, 2026-11-22 (D-472):** the recommendations of Q-P6-FRIC-1..12 are all accepted as
+> written in the table below. No question is open.
 
 ## Goal
 
@@ -240,7 +243,7 @@ instance, not on any turn.
   the pages and settings; M–L), **P6-FRIC-4** (both: known issues in the renderer and `aurora-agent`, publish
   in the issue page; M), **P6-FRIC-5** (optional, Rust: `friction_match`; S–M).
 
-## Questions for the owner
+## Questions for the owner (all answered 2026-11-22, D-472)
 
 | # | Question | Recommendation |
 |---|---|---|

@@ -400,7 +400,8 @@ by the owner 2026-11-15, D-318), see *S3-compatible blob store* under §Other la
   problem by a deterministic fingerprint and ranked by distinct agents. Admins merge, split, mark an issue fixed in
   a version, and copy it as Markdown for the maintainer. Failed calls are counted without reports. Admin-written
   known issues go back to agents in `tools.md`, the skill and `aurora-agent`. Report text stays in the organization
-  unless it shares with instance admins, and never reaches another agent. Open questions Q-P6-FRIC-1..12.
+  unless it shares with instance admins, and never reaches another agent. **Owner answers (D-472):** every
+  recommendation accepted; Parts 1 and 2 early in phase 6, after P6-WARMPOOL Parts 1–2.
 - *(The P6-MODELS proposal moved to phase 5 by the owner, D-302(f); see §The harness chooses models
   above.)*
 
