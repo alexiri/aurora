@@ -149,6 +149,21 @@ steer, answer rule, MCP tool round-trip, correction handling. It runs in CI
 against `fake`, and against `claude-code` when an LLM endpoint is configured
 (env-gated, through a real gateway).
 
+### Turn controls by harness (FIX-225, D-469(d), C-1152)
+
+What each pinned harness supports **in the mode its adapter uses**, tested against the
+`aurora-testkit` mock upstreams. `aurora_protocol::runner::harness_turn_controls` is this
+table; a supervisor test pins every adapter's declaration to it, and the dashboard and
+chat cards show Steer / Send now from it (D-469(b), D-470).
+
+| Harness | Pinned version | `steer` | `background_tool` | Evidence | Other modes that could (not built) |
+|---|---|---|---|---|---|
+| `claude-code` | — | to be probed (FIX-225 Part A) | to be probed | — | — |
+| `codex` | — | to be probed | to be probed | — | — |
+| `goose` | — | to be probed | to be probed | — | — |
+| `opencode` | — | to be probed | to be probed | — | — |
+| `pi` | — | declared `true` (to be confirmed) | to be probed | — | — |
+
 ### Adapter `claude-code` (phase 0)
 
 - Drives the pinned Claude Code CLI in headless streaming-JSON mode, one child

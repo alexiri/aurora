@@ -970,8 +970,15 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     "Start in flight…" until the sandbox leaves `failed` and is hidden when
     the agent is frozen.
   - **Queued follow-ups.** Each queued follow-up shows above the composer as
-    a dashed row: a `QUEUED` badge, the text on one line (ellipsis), and
-    "Send now".
+    a dashed row: a `QUEUED` badge, the text on one line (ellipsis), then
+    only the buttons its `controls` allow (FIX-225, D-469, C-1154): **Steer**
+    (the harness steers) or **Send now** (it does not steer but declares
+    `background_tool`), **Edit** (its author; inline textarea with Save and
+    Discard changes) and **Cancel**. Rows come from `GET
+    /v1/conversations/{id}/followups`, so they survive a reload. Every click
+    shows its result or an inline error on the row, and a later failure
+    (`followup.steer_failed`, `turn.send_now_failed`) is shown on the row
+    (D-470: no silent controls).
   - **Composer** (`Composer`):
     - A bordered box (`line-strong`, radius 12 px) at the bottom of the
       thread.

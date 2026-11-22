@@ -686,6 +686,11 @@ bindings and reach; phase 1, RFE-009: for subjects that name a `direct`
 conversation, additionally `can_see_conversation`, so only that person or an
 owner can act); then act. **The platform never authorizes.** The card is
 then settled (`message.update`, or a new message without `edits`).
+(FIX-225, D-469(c), C-1156) A running turn's status card shows Stop, plus **Steer**
+(`followup.steer`) only when the agent's harness steers, or **Send now** only when it
+declares `background_tool` and does not steer. Every action answers the clicker with a
+visible line, also when there is nothing to do or the agent cannot do it (D-470).
+Editing and cancelling a queued message are dashboard-only.
 
 ### 5.6 Approval cards
 

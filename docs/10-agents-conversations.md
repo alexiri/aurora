@@ -207,6 +207,13 @@ first, or the harness cannot steer, or the steer is reported *missed*, the
 follow-up is **promoted**: its row becomes `promoted` and a new `queued` turn
 is created with its text (one promotion per follow-up, fenced by
 `promoted_at`).
+  (FIX-225, D-469, C-1153) **A follow-up waits for a person**: the engine emits
+  `turn.message` only for a follow-up someone asked to steer (`steer_requested_at`,
+  **Steer**) or a platform-made approval-resume follow-up (door `system`). Until then it
+  can be **edited** (its author) or **cancelled** (`status = cancelled`, never promoted);
+  untouched, it runs as the next turn. A steer the harness misses or refuses sets
+  `steer_error` and the durable `followup.steer_failed`; the follow-up then runs next.
+  Routes and authority: C-1154, C-1155, SEC-152.
 - **Approval resume follow-up** (phase 5 (D-138, moved from phase 4), RFE-011b, `07 §Park and resume`): when a parked
   approval is approved or denied the API creates, in the origin conversation, a **system
   follow-up**: a `joining` row steered into the origin turn if it is still running and the
@@ -227,6 +234,10 @@ is created with its text (one promotion per follow-up, fenced by
 - **Send now** (`POST /v1/turns/{id}/send-now`): sets
 `send_now_requested_at`; delivered as `turn.send_now` (harness moves the
 blocking tool to the background if it declares `background_tool`).
+(FIX-225, C-1156) Refused up front (409 `send_now_unsupported`) when the harness lacks
+`background_tool` or steers (then **Steer** applies); an answer of `nothing_running` or
+`unsupported` is shown as the durable `turn.send_now_failed`. No control is ever
+silent (D-470).
 - **Abort** (`POST /v1/turns/{id}/abort`): sets `abort_requested_at`; queued
 turns become `aborted` immediately; dispatched/running ones get
 `turn.abort` and end `aborted` on the terminal event (or by stall recovery).
@@ -386,6 +397,8 @@ generically.
 | `correction`                                                 | yes     | `{ turn_id, message_id, action: "retract"|"replace", text? }`                       |
 | `message.joined`                                             | yes     | `{ turn_id, followup_id }`                                                          |
 | `message.sent_now`                                           | yes     | `{ turn_id }`                                                                       |
+| `followup.steer_requested` / `.steer_failed` / `.edited` / `.cancelled` | yes | `{ followup_id }`; `.steer_failed` also `{ reason: "missed"\|"refused" }`, `.edited` `{ text }`, `.cancelled` `{ by_label }` (FIX-225, C-1153, C-1155) |
+| `turn.send_now_failed`                                       | yes     | `{ turn_id, outcome: "nothing_running"\|"unsupported" }` (FIX-225, C-1156)          |
 | `approval.pending` / `approval.decided` / `approval.expired` | yes     | `{ approval_id, summary, decision?, decided_by_label?, via? }`; (phase 5 (D-138, moved from phase 4), RFE-011b) `approval.pending` also `{ expires_at, parked }`, `approval.decided` for a parked approval `{ resume_expires_at }`, `approval.expired` `{ reason: "deadline" \| "resume_window" }` |
 | `action_approval.pending` / `.decided`                       | yes     | `{ id, summary, decision? }`                                                        |
 | `attachment`                                                 | yes     | `{ turn_id, attachment_id, filename, size, caption? }` (agent `send_file`)          |

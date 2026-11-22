@@ -1731,6 +1731,14 @@ headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
 
+#### `turns` follow-up controls (phase 5, FIX-225, D-469, C-1153..C-1155; migration `20261201000275`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| steer_requested_at | timestamptz null | follow-ups: a person asked to steer it (**Steer**); due-work arm 7 steers only such rows, or door `system` | 5 (FIX-225) |
+| steer_error | text null CHECK in (`missed`,`refused`) | follow-ups: the harness did not take the steer; the row then runs as the next turn | 5 (FIX-225) |
+| edited_at | timestamptz null | follow-ups: last edit by its author | 5 (FIX-225) |
+| status | (existing column) | CHECK gains **`cancelled`** (`followup` rows only; never promoted) | 5 (FIX-225) |
+
 #### `attachments` (S3 blob backend; phase 6, D-318)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
