@@ -510,7 +510,7 @@ fn capabilities_are_declared_and_equal_the_protocol_table() {
         c.dialects,
         ["anthropic_messages", "openai_responses", "openai_chat"]
     );
-    assert_eq!(c.skills_dir.as_deref(), Some(".agents/skills"));
+    assert_eq!(c.skills_dir, ".agents/skills");
     assert_eq!(c.instruction_files, ["AGENTS.md"]);
     assert_eq!(
         c.model_roles,

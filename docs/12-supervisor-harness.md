@@ -92,7 +92,7 @@ pub struct HarnessCapabilities {
     pub tool_events: bool,
     pub platform_tools: bool,     // connects to the MCP bridge
     pub dialects: Vec<Dialect>,   // LLM API dialects it can speak (08)
-    pub skills_dir: Option<RelPath>,       // home-relative, e.g. ".claude/skills"
+    pub skills_dir: RelPath,               // required (P5-SKILLDIR, D-454): home-relative, e.g. ".claude/skills"; exported as SKILLS_DIR
     pub instruction_files: Vec<RelPath>,   // e.g. ["CLAUDE.md", "AGENTS.md"]
     pub model_roles: Vec<ModelRole>,       // (phase 5, P5-MODELS-1, D-303) roles it can map: large/medium/small; [] = none
 }
@@ -312,8 +312,8 @@ specified here is the contract.
   `background_tool = false`; dialects `[openai_responses, openai_chat]`;
   `instruction_files = ["AGENTS.md"]` (the platform preamble, brief and capability
   fragments are rendered there only; `CLAUDE.md` is rendered for `claude-code` only);
-  `skills_dir` = the pinned version's skills directory when it has one, else none (skills
-  are then listed in `AGENTS.md`).
+  `skills_dir = ".codex/skills/aurora"` (since P4-HAR; required, D-454: skills are never
+  listed in `AGENTS.md` instead).
 - **State.** `CODEX_HOME` points into the agent's home (`~/.codex`); sessions live there
   and are what `purge_session` deletes (idempotent: exactly the rollout files named
   `rollout-<timestamp>-<id>.jsonl` of one session id). Codex keeps its rollouts and its
@@ -826,6 +826,10 @@ The home (`/workspace`) holds:
    attachments), (phase 5, P5-GUIDE-2) `.aurora/apps/<app_id>/` (the agent guide of each
    connected app: `guide.md`, `tools.md` and the package's reference files, 0444 in 0555
    directories; `24 §5`, `§7`).
+   (P5-SKILLDIR, D-454, C-1140) The skills folder is exported as `SKILLS_DIR`
+   (`<home>/<skills_dir>`, absolute, no trailing slash) to the harness process, `process_start`
+   processes, terminal shells and SSH execs (`§Process manager`, `§Terminal`, `§SSH channels`);
+   the projection itself is unchanged.
 3. **Ephemeral** `/run/aurora`: CA, tools socket, boot-time stubs outside home.
 
 ### Sync protocol
@@ -925,7 +929,8 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
 ## Process manager
 
 - Background processes run in their own process group as uid 1000 with the
-  container env (machine proxy); stdout/stderr interleaved into a ring buffer
+  container env (machine proxy) plus `SKILLS_DIR` (P5-SKILLDIR, D-454: the adapter's skills
+  folder, set last so an image value does not win); stdout/stderr interleaved into a ring buffer
   (`PROCESS_TAIL`); busy = output within 60 s or CPU > 5 % over 30 s.
 - `process.state` frames on change (debounced 2 s).
 - Watches are evaluated in memory; a fired watch sends `watch.fired`.
@@ -989,7 +994,9 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   (SIGHUP), then after a short grace kills its process group (SIGKILL): a shell that ignores
   HUP does not outlive its terminal. The environment is the container environment **minus every `AURORA_*`
   variable** and minus the boot document: no platform credential, no token, no supervisor
-  handle ever appears in a terminal's environment (SEC-01/SEC-34 posture) — the shell has
+  handle ever appears in a terminal's environment (SEC-01/SEC-34 posture). (P5-SKILLDIR, D-454)
+  `SKILLS_DIR` is added after the sweep, beside `TERM` (the adapter's skills folder; the `AURORA_*`
+  sweep has no exception, which is why the name has no prefix) — the shell has
   exactly the privilege a `process_start` command already has, in a PTY.
 - **`PATH` and interactive defaults (FIX-138).** One `PATH` for both shells, a turn and the
   terminal: `/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin` (the image's
@@ -1136,7 +1143,8 @@ treats both identically.
   `tty.term` (≤ 64 printable ASCII characters, else `xterm-256color`) and the client's `env`
   requests that the terminator accepted — only `LANG` and `LC_*`, at most `SSH_ENV_VARS_MAX` (16) of
   ≤ 256 bytes each; any other name (and every `AURORA_*` name) is dropped by the terminator and
-  again by the supervisor.
+  again by the supervisor. (P5-SKILLDIR, D-454) `SKILLS_DIR` is added after the sweep with the
+  adapter's skills folder; it is not an accepted name, so a client cannot override it.
 - **Pipes and status.** Without `tty`, stdout travels as `0x02` data and stderr as `0x03` data
   (supervisor → runner only); with `tty` both are the PTY's output (`0x02`). `exec.eof` from the
   runner closes the child's stdin (the client's `EOF`). When the child exits the supervisor drains

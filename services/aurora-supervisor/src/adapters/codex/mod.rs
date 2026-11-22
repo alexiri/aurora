@@ -134,7 +134,7 @@ impl HarnessAdapter for CodexAdapter {
             dialects: vec!["openai_responses".into()],
             // A subdirectory of Codex's own skills dir: the read-only projection stays away from
             // the `.system` skills Codex seeds beside it.
-            skills_dir: Some(".codex/skills/aurora".into()),
+            skills_dir: ".codex/skills/aurora".into(),
             instruction_files: vec!["AGENTS.md".into()],
             // (P5-MODELS-1, D-303) Codex picks no model per task: roles are received and ignored.
             model_roles: vec![],

@@ -17,11 +17,23 @@ pub struct HarnessCapabilities {
     pub tool_events: bool,
     pub platform_tools: bool,
     pub dialects: Vec<String>,
-    pub skills_dir: Option<String>,
+    /// (P5-SKILLDIR, D-454) The harness's skills folder, relative to the home root. Required:
+    /// every adapter declares one; `SKILLS_DIR` is built from it ([`skills_dir_abs`]).
+    pub skills_dir: String,
     pub instruction_files: Vec<String>,
     /// (P5-MODELS-1, D-303, C-877) The roles the adapter maps (`large`/`medium`/`small`); `[]` = none.
     /// Equal to `aurora_protocol::runner::harness_model_roles(id)` (the API's `/v1/harnesses` reads that).
     pub model_roles: Vec<String>,
+}
+
+/// (P5-SKILLDIR, D-454, C-1140) The value of `SKILLS_DIR`: `<home>/<the adapter's skills_dir>`,
+/// absolute, no trailing slash.
+pub fn skills_dir_abs(home: &Path, skills_dir: &str) -> String {
+    let p = home.join(skills_dir).to_string_lossy().into_owned();
+    match p.trim_end_matches('/') {
+        "" => "/".to_owned(),
+        t => t.to_owned(),
+    }
 }
 
 impl HarnessCapabilities {
@@ -258,4 +270,39 @@ pub trait HarnessSession: Send {
     async fn abort(&mut self) -> Result<(), HarnessError>;
     /// Let go without ending; a later start with the same ref resumes.
     async fn release(self: Box<Self>) -> Result<(), HarnessError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::{
+        claude_code::ClaudeCodeAdapter, codex::CodexAdapter, goose::GooseAdapter,
+        opencode::OpenCodeAdapter, pi::PiAdapter,
+    };
+
+    /// (P5-SKILLDIR, D-454) `SKILLS_DIR` is `<home>/<skills_dir>`, absolute, no trailing slash,
+    /// for each of the five adapters.
+    #[test]
+    fn skills_dir_is_the_home_joined_with_each_adapters_folder() {
+        let home = Path::new("/workspace");
+        let cases: [(&dyn HarnessAdapter, &str); 5] = [
+            (&ClaudeCodeAdapter::default(), "/workspace/.claude/skills"),
+            (&CodexAdapter::default(), "/workspace/.codex/skills/aurora"),
+            (&GooseAdapter::default(), "/workspace/.agents/skills"),
+            (&OpenCodeAdapter::default(), "/workspace/.agents/skills"),
+            (&PiAdapter::default(), "/workspace/.agents/skills"),
+        ];
+        for (a, want) in cases {
+            assert_eq!(
+                skills_dir_abs(home, &a.capabilities().skills_dir),
+                want,
+                "{}",
+                a.id()
+            );
+        }
+        assert_eq!(
+            skills_dir_abs(Path::new("/workspace/"), ".x/skills/"),
+            "/workspace/.x/skills"
+        );
+    }
 }

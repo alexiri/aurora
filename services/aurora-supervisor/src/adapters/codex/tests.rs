@@ -126,7 +126,7 @@ async fn capabilities_are_the_codex_contract() {
     assert!(!c.steer && !c.background_tool);
     assert_eq!(c.dialects, ["openai_responses"]);
     assert_eq!(c.instruction_files, ["AGENTS.md"]);
-    assert_eq!(c.skills_dir.as_deref(), Some(".codex/skills/aurora"));
+    assert_eq!(c.skills_dir, ".codex/skills/aurora");
     assert_eq!(CodexAdapter::default().id(), "codex");
 }
 

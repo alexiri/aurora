@@ -83,8 +83,24 @@ pub(crate) enum DataOutcome {
     Full,
 }
 
+/// (P5-SKILLDIR, D-454) The environment Aurora adds to a terminal or SSH child on top of the
+/// client's accepted `LANG`/`LC_*`: `SKILLS_DIR`, set last so nothing overrides it. It is not in
+/// the accepted-name list, so a client cannot set it, and the `AURORA_*` sweep has no exception.
+pub(crate) fn with_skills_dir(
+    client: &std::collections::BTreeMap<String, String>,
+    skills_dir: Option<&str>,
+) -> std::collections::BTreeMap<String, String> {
+    let mut env = client.clone();
+    if let Some(s) = skills_dir {
+        env.insert("SKILLS_DIR".to_owned(), s.to_owned());
+    }
+    env
+}
+
 /// The live execs of one supervisor.
 pub(crate) struct ExecTable {
+    /// (P5-SKILLDIR) `SKILLS_DIR` for every child (absolute); `None` in tests that do not set it.
+    skills_dir: Option<String>,
     live: HashMap<u32, Live>,
     sftp_server: std::path::PathBuf,
     shells: ShellPaths,
@@ -98,8 +114,10 @@ impl ExecTable {
         sftp_server: std::path::PathBuf,
         shells: ShellPaths,
         bootstrap: std::path::PathBuf,
+        skills_dir: Option<String>,
     ) -> Self {
         Self {
+            skills_dir,
             live: HashMap::new(),
             sftp_server,
             shells,
@@ -219,6 +237,7 @@ impl ExecTable {
             },
             _ => return Err(ExecRefuseReason::Unsupported),
         };
+        let env = with_skills_dir(&o.env, self.skills_dir.as_deref());
         let (data_tx, data_rx) = mpsc::channel(DATA_QUEUE);
         let credit = Arc::new(Credit::default());
         let (abort, resize) = if let Some(tty) = &o.tty {
@@ -246,7 +265,7 @@ impl ExecTable {
                 tty.cols,
                 tty.rows,
                 term,
-                &o.env,
+                &env,
             ) {
                 Ok(p) => p,
                 Err(e) => {
@@ -267,7 +286,7 @@ impl ExecTable {
             ));
             (task.abort_handle(), Some(resize_tx))
         } else {
-            let proc = match ExecProc::spawn(&program, &args, is_shell, uid, cwd, &o.env) {
+            let proc = match ExecProc::spawn(&program, &args, is_shell, uid, cwd, &env) {
                 Ok(p) => p,
                 Err(e) => {
                     // The OS's error kind only, never anything about the session's bytes.

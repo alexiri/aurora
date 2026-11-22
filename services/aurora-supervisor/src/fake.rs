@@ -41,7 +41,7 @@ impl HarnessAdapter for FakeHarness {
             tool_events: true,
             platform_tools: false,
             dialects: vec!["anthropic_messages".into()],
-            skills_dir: Some(".claude/skills".into()),
+            skills_dir: ".claude/skills".into(),
             instruction_files: vec!["AGENTS.md".into()],
             model_roles: vec![],
         }

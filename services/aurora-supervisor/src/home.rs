@@ -563,7 +563,11 @@ impl HomeProjector {
         {
             tracing::warn!(error = %e, "servers.json not written");
         }
-        let text = render_with(&inputs, self.cfg.agent_cli);
+        // (P5-SKILLDIR, C-1140) The same absolute folder as `SKILLS_DIR`.
+        let skills_path = self
+            .skills_prefix()
+            .map(|p| crate::harness::skills_dir_abs(&self.cfg.root, &p.to_string_lossy()));
+        let text = render_with(&inputs, self.cfg.agent_cli, skills_path.as_deref());
         for name in &self.cfg.instruction_files {
             let Some(rel) = clean_rel(name) else {
                 tracing::warn!("instruction file name refused");

@@ -1,0 +1,7 @@
+---
+source: services/aurora-supervisor/src/instructions.rs
+expression: t
+---
+## Skills
+
+Skills are read-only folders in /workspace/.agents/skills (also $SKILLS_DIR in every shell); list and read them with the skill tools. A skill's own files are under /workspace/.agents/skills/<skill name>/; run its scripts as "$SKILLS_DIR/<skill name>/scripts/<file>".

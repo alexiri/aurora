@@ -201,7 +201,7 @@ impl Supervisor {
         let home = Arc::new(StdMutex::new(HomeCtl {
             projector: HomeProjector::new(HomeConfig {
                 root: cfg.working_dir.clone(),
-                skills_dir: caps.skills_dir.clone(),
+                skills_dir: Some(caps.skills_dir.clone()),
                 instruction_files: caps.instruction_files.clone(),
                 pg: cfg.pg,
                 // (C-653) A supervisor-local fact, computed once at start: the wrapper is there.
@@ -212,6 +212,12 @@ impl Supervisor {
             harvester: Harvester::new(&cfg.working_dir),
         }));
         let mut process = cfg.process.clone();
+        // (P5-SKILLDIR, D-454) Set last, so it wins over an image or profile value.
+        process.env.retain(|(k, _)| k != "SKILLS_DIR");
+        process.env.push((
+            "SKILLS_DIR".into(),
+            crate::harness::skills_dir_abs(&cfg.working_dir, &caps.skills_dir),
+        ));
         if cfg.pg.is_some() {
             process.env.extend(crate::pg::env(&cfg.working_dir));
         }
@@ -877,6 +883,13 @@ impl Supervisor {
         // Set only for harness processes: the terminal, SSH and `process_start` environments are
         // built elsewhere and strip `AURORA_*`.
         env.push(("AURORA_SESSION".into(), d.conversation_id.to_string()));
+        // (P5-SKILLDIR, D-454, C-1140) The skills folder, the same name on every harness; last
+        // so it wins over an image or profile value.
+        env.retain(|(k, _)| k != "SKILLS_DIR");
+        env.push((
+            "SKILLS_DIR".into(),
+            crate::harness::skills_dir_abs(&self.cfg.working_dir, &self.caps.skills_dir),
+        ));
         let core_only = self
             .home
             .lock()

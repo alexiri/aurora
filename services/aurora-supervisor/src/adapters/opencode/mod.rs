@@ -114,7 +114,7 @@ impl HarnessAdapter for OpenCodeAdapter {
             platform_tools: true,
             dialects: config::DIALECTS.iter().map(|d| (*d).to_owned()).collect(),
             // The project's and the home's `.agents/skills`, with `AGENTS.md` as the instructions.
-            skills_dir: Some(".agents/skills".into()),
+            skills_dir: ".agents/skills".into(),
             instruction_files: vec!["AGENTS.md".into()],
             // `roles.small` -> `small_model`, `subagent_role` -> `agent.general.model`.
             model_roles: aurora_protocol::runner::harness_model_roles(ID)

@@ -102,7 +102,7 @@ impl HarnessAdapter for ClaudeCodeAdapter {
             tool_events: true,
             platform_tools: true,
             dialects: config::DIALECTS.iter().map(|d| (*d).to_owned()).collect(),
-            skills_dir: Some(".claude/skills".into()),
+            skills_dir: ".claude/skills".into(),
             instruction_files: vec!["CLAUDE.md".into(), "AGENTS.md".into()],
             model_roles: aurora_protocol::runner::harness_model_roles("claude-code")
                 .iter()

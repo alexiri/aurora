@@ -27,6 +27,9 @@ use tokio::sync::mpsc;
 
 const T: Duration = Duration::from_secs(10);
 
+/// (P5-SKILLDIR) The `SKILLS_DIR` the rig's engine hands every shell.
+const SKILLS_DIR_VALUE: &str = "/workspace/.codex/skills/aurora";
+
 /// The bootstrap executable for the rig: the built `aurora-supervisor` binary (the test
 /// process is a libtest binary, not the supervisor — the bootstrap re-exec must be the
 /// real one, which understands `pty_exec::SUBCOMMAND`).
@@ -78,13 +81,15 @@ pub(crate) fn rig_with_shells(
         inbound: pty_in_rx,
         epoch: epoch_rx,
     };
-    let handle = PtyEngine::spawn_with_shells(
+    let handle = PtyEngine::spawn_with_harness_env(
         ends,
         enabled,
         None,
         home.to_path_buf(),
         bootstrap_exe(),
         shells,
+        None,
+        Some(SKILLS_DIR_VALUE.to_owned()),
     );
     Rig {
         handle,
@@ -356,6 +361,12 @@ async fn probe_env_assertions() {
     // NUL-separated, so the entry boundary check is exact).
     assert!(env.contains("TERM=xterm-256color"), "{env}");
     assert!(env.split('\0').any(|l| l.starts_with("PATH=")), "{env}");
+    // (P5-SKILLDIR, D-454) `SKILLS_DIR` is there, with the adapter's value, beside the sweep.
+    assert!(
+        env.split('\0')
+            .any(|l| l == format!("SKILLS_DIR={SKILLS_DIR_VALUE}")),
+        "{env}"
+    );
 }
 
 /// The FIX-054 probe: the shell has a **controlling terminal** — the `pty_exec` bootstrap

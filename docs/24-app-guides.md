@@ -884,8 +884,9 @@ matter.
 - **Effective-policy access** in `tools.md` (§5.2), **digest-based skipping** of unchanged files
   in the home sync, **compression of command output**, **guides for BYO agents** (they have no
   projected home; an export route can come later), a guide route for members.
-- Guides as harness **skills**: rejected (D-171). Skills are harness-specific (`codex` may have
-  no skills directory), their loading is decided by the harness from a description line, and
+- Guides as harness **skills**: rejected (D-171). Skills are harness-specific (the folder
+  differs per harness; the old note that `codex` may have none is wrong, it has had
+  `.codex/skills/aurora` since P4-HAR, and D-454 gives every harness `$SKILLS_DIR`), their loading is decided by the harness from a description line, and
   account lists and access must not depend on that. The folder works for every harness; recipes
   (D-295) are the package's skills in that folder.
 - **Binding platform-tool calls to the calling process** (SEC-119): not changed here.
