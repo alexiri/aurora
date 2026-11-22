@@ -172,6 +172,46 @@ pub async fn list_for_org<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (FIX-220, C-1147) An agent of an organization the person can use, for the DM-default choice.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UsableAgentRow {
+    pub agent_id: Uuid,
+    pub name: String,
+    pub handle: String,
+    pub workspace_id: Uuid,
+    pub workspace_name: String,
+    /// The agent has an active shared presence on the integration.
+    pub attached: bool,
+}
+
+/// (FIX-220, C-1147) Agents of `org` whose workspace `user` can use (`effective_workspace_access`,
+/// the `can_use` rule), sorted by workspace name, then agent name; `attached` says whether the agent
+/// already has an active shared presence on `integration`. One query, no per-workspace loop. Reads
+/// no people table, so it also runs under the gateway's role.
+pub async fn list_usable_in_org<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    user: Uuid,
+    integration: Uuid,
+) -> Result<Vec<UsableAgentRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT a.id AS agent_id, a.name, a.handle, w.id AS workspace_id, w.name AS workspace_name,
+                EXISTS (SELECT 1 FROM channel_presences p
+                         WHERE p.agent_id = a.id AND p.integration_id = $3
+                           AND p.mode = 'shared' AND p.status = 'active') AS attached
+           FROM agents a
+           JOIN workspaces w ON w.id = a.workspace_id
+           JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $2
+          WHERE a.org_id = $1 AND w.org_id = $1
+          ORDER BY lower(w.name), w.id, lower(a.name), a.id",
+    )
+    .bind(org)
+    .bind(user)
+    .bind(integration)
+    .fetch_all(exec)
+    .await?)
+}
+
 pub struct NewAgent<'a> {
     pub id: Uuid,
     pub org_id: Uuid,

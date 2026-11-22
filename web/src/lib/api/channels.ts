@@ -31,6 +31,7 @@ export const channelKeys = {
   myLinks: ["me", "channel-links"] as const,
   myPlatforms: ["me", "chat-platforms"] as const,
   dmDefaults: ["me", "dm-defaults"] as const,
+  dmDefaultOptions: (integration: string) => ["me", "dm-default-options", integration] as const,
 };
 
 export function useIntegrations(orgId: string | undefined) {
@@ -245,10 +246,29 @@ export function useChannelLinkPreview(token: string | null, enabled: boolean) {
 export function useConfirmChannelLink() {
   const qc = useQueryClient();
   return useMutation({
-    // The request repeats the platform user the page showed; the server refuses a mismatch.
-    mutationFn: (v: { token: string; platform_user_ref: string }) =>
+    // The request repeats the platform user the page showed; the server refuses a mismatch. `agent_id` (FIX-220,
+    // C-1147) is the agent that answers the person's direct messages; the server checks it and attaches it.
+    mutationFn: (v: { token: string; platform_user_ref: string; agent_id?: string }) =>
       unwrap(api.POST("/v1/channel-links/confirm", { body: v })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.myLinks }),
+    onSuccess: () => Promise.all([
+      qc.invalidateQueries({ queryKey: channelKeys.myLinks }),
+      qc.invalidateQueries({ queryKey: channelKeys.dmDefaults }),
+      qc.invalidateQueries({ queryKey: ["me", "dm-default-options"] }),
+    ]),
+  });
+}
+
+/**
+ * (FIX-220, C-1147) The agents of an integration's organization the person can use, and the shared bot; `shared_bot`
+ * is `null` when the integration offers no shared mode.
+ */
+export function useDmDefaultOptions(integrationId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: channelKeys.dmDefaultOptions(integrationId ?? ""),
+    queryFn: () =>
+      unwrap(api.GET("/v1/me/dm-default-options", { params: { query: { integration_id: integrationId! } } })),
+    enabled: enabled && !!integrationId,
+    retry: false,
   });
 }
 
@@ -261,5 +281,10 @@ export function useDmDefaults() {
 }
 
 export function useSetDmDefault() {
-  return useInvalidatingMutation((body: S["SetDmDefaultRequest"]) => unwrap(api.PUT("/v1/me/dm-defaults", { body })), channelKeys.dmDefaults);
+  // The PUT may attach the agent to the shared bot (C-1147), so the options' `attached` flags change too.
+  return useInvalidatingMutation(
+    (body: S["SetDmDefaultRequest"]) => unwrap(api.PUT("/v1/me/dm-defaults", { body })),
+    channelKeys.dmDefaults,
+    ["me", "dm-default-options"],
+  );
 }

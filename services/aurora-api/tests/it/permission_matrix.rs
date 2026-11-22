@@ -1361,6 +1361,7 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/channel-links/confirm", G::Auth, true),
     r("GET", "/v1/me/dm-defaults", G::Auth, true),
     r("PUT", "/v1/me/dm-defaults", G::Auth, true),
+    r("GET", "/v1/me/dm-default-options", G::Auth, true),
     r("GET", "/v1/agents/{agent}/reach", G::WsUse, false),
     r("POST", "/v1/reach-grants/{id}/decision", G::WsOwn, false),
 ];

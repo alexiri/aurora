@@ -1471,7 +1471,7 @@ guide links, ladder rows and the organization's accounts.
 `/auth/cli` (approve a CLI login: shows the user code, workspace
 picker), `/join` (invitation preview + accept), `/link/channel` (confirm a chat
 platform account link; from phase 1 it shows the platform account and email hint
-and requires an explicit confirm, RFE-001), `/oauth/bridge` (fragment-callback bridge for app
+and requires an explicit confirm, RFE-001; (FIX-220, D-461) with a shared bot it also asks which agent answers the person's direct messages to the bot, one preselected, "Decide later", or "You don't have an agent yet" with a link to create one; the success text names the agent), `/oauth/bridge` (fragment-callback bridge for app
 connects), `/setup-error` (missing required configuration reported by
 `/v1/instance`).
 
@@ -1489,6 +1489,11 @@ key is judged as it is typed: one `ssh-ed25519 <base64>` line is valid; anything
 supported. Create one with ssh-keygen -t ed25519."; a private key says "That's a private key. Paste the public key
 (the file ending in .pub)." and is never sent; **Add key** stays disabled until valid (the server stays authoritative).
 **Chat platforms** naming the platform and the bot waits for a member-readable read (C-1089).
+(FIX-220, D-461(d), C-1147) **Chat platforms › Linked chat accounts**: each link's "Agent that answers direct messages"
+select (`GET /v1/me/dm-default-options?integration_id=`) lists only the agents of **that integration's organization** the
+person can use, as `Name (@handle) · Workspace`, with " · will be added to @<bot>" on an agent that is not on the shared
+bot yet; one line under it says "Choosing an agent that isn't on @<bot> yet adds it there." Choosing one saves through
+`PUT /v1/me/dm-defaults`, which attaches it (one transaction). With no shared bot the select is disabled and says so.
 
 Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 (personal workspace keys), (phase 5) SSH keys, chat platform links, DM defaults, delete account

@@ -551,7 +551,7 @@ async fn route(
                 None => Ok(Route::Stop(ignored("agent_gone"))),
             },
             [] => {
-                not_set_up(event_id, state, ctx, m, &sender, reply_thread).await?;
+                dm_not_set_up(event_id, state, ctx, m, &sender, reply_thread, user).await?;
                 Ok(Route::Stop(outcome("not_set_up")))
             }
             many => {
@@ -618,7 +618,54 @@ async fn route(
     }
 }
 
-/// "Not set up" reply naming who can set the space (or the DM) up.
+/// (FIX-220, D-461(c)) The "not set up" reply to a direct message with the shared bot: no agent of
+/// the person answers there. It says what to do and never mentions `bind` (which does nothing in a
+/// DM). A person who can use an agent of the organization is sent to the account page to choose
+/// one; a person who can use none is told to create one or ask the owners. At most one reply per
+/// person and integration per 10 minutes (`13 §5.9`), the refusal notice's throttle.
+async fn dm_not_set_up(
+    event_id: &str,
+    state: &AppState,
+    ctx: &send::Ctx,
+    m: &MessagePosted,
+    sender: &Sender,
+    thread: &str,
+    user: Uuid,
+) -> Result<(), InboxError> {
+    // The nil agent id keys "per person and integration" in the refusal throttle's map.
+    if !speaker::refusal_due(ctx.id(), Uuid::nil(), &m.author.reference) {
+        return Ok(());
+    }
+    let base = state.config.external_url.trim_end_matches('/');
+    let usable = agents::list_usable_in_org(&state.pool, ctx.integ.org_id, user, ctx.id())
+        .await
+        .retry()?;
+    let text = if usable.is_empty() {
+        let who = speaker::owner_names(state, ctx).await?;
+        format!(
+            "You don't have an agent here yet. Create one in Aurora ({base}), or ask {who} to add you to a workspace that has one."
+        )
+    } else {
+        format!(
+            "None of your agents answers direct messages here yet. Choose one: {base}/account/channels"
+        )
+    };
+    let mut conn = state.pool.acquire().await.retry()?;
+    send::say(
+        &mut conn,
+        ctx,
+        sender,
+        &m.space.reference,
+        thread,
+        &text,
+        format!("notsetup:{}", event_id),
+    )
+    .await
+    .retry()?;
+    Ok(())
+}
+
+/// "Not set up" reply naming who can set the space up (a channel, where `bind <handle>` works).
 async fn not_set_up(
     event_id: &str,
     state: &AppState,

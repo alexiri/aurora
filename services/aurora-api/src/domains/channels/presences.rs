@@ -267,24 +267,8 @@ pub async fn attach(
                     "The integration has no shared bot.",
                 ));
             }
-            let bot = integ.shared_bot.as_ref();
-            let handle = bot.and_then(|b| b.get("handle")).and_then(Value::as_str);
             let mut tx = s.pool.begin().await.map_err(DbError::from)?;
-            repo::insert(
-                &mut *tx,
-                &NewPresence {
-                    id,
-                    agent_id,
-                    integration_id: integ.id,
-                    mode: "shared",
-                    status: "active",
-                    platform_user_ref: None,
-                    handle,
-                },
-            )
-            .await
-            .map_err(map_insert)?;
-            memory::bump_agent_sync(&mut tx, agent_id).await?;
+            attach_shared_tx(&mut tx, &integ, agent_id, id).await?;
             tx.commit().await.map_err(DbError::from)?;
         }
         PresenceMode::Dedicated => {
@@ -354,6 +338,78 @@ pub async fn attach(
         .await?
         .ok_or_else(|| ApiError::internal("Presence vanished."))?;
     Ok(view(&row))
+}
+
+/// (FIX-220, C-34, C-37, C-36) The shared attach, inside the caller's transaction: checks the
+/// integration has a shared bot, inserts the active shared presence `id` and bumps the agent's sync
+/// version. The caller has already checked who may attach (`can_use`) and that the agent belongs to
+/// the integration's organization; it commits, then writes the `channel_presence.attach` audit row
+/// ([`audit_shared_attach`]).
+pub(super) async fn attach_shared_tx(
+    tx: &mut PgConnection,
+    integ: &integ_repo::IntegrationRow,
+    agent_id: Uuid,
+    id: Uuid,
+) -> Result<(), ApiError> {
+    let Some(bot) = integ.shared_bot.as_ref() else {
+        return Err(ApiError::unprocessable(
+            "no_shared_bot",
+            "The integration has no shared bot.",
+        ));
+    };
+    let handle = bot.get("handle").and_then(Value::as_str);
+    repo::insert(
+        &mut *tx,
+        &NewPresence {
+            id,
+            agent_id,
+            integration_id: integ.id,
+            mode: "shared",
+            status: "active",
+            platform_user_ref: None,
+            handle,
+        },
+    )
+    .await
+    .map_err(map_insert)?;
+    memory::bump_agent_sync(tx, agent_id).await?;
+    Ok(())
+}
+
+/// Whether the integration offers the shared mode right now: active, connector active,
+/// `presence_shared` on and a shared bot configured (the C-39 rule).
+pub(super) async fn offers_shared(
+    conn: &mut PgConnection,
+    integ: &integ_repo::IntegrationRow,
+) -> Result<bool, ApiError> {
+    if integ.status != "active" {
+        return Ok(false);
+    }
+    let connector = connectors::get(&mut *conn, &integ.connector_id).await?;
+    let active = connector.as_ref().is_some_and(|r| r.status == "active");
+    let manifest = connector
+        .as_ref()
+        .and_then(crate::domains::connectors::effective_manifest_ref);
+    Ok(offered_modes(manifest, integ, active).contains(&PresenceMode::Shared))
+}
+
+/// The audit row of a shared attach that came through the DM default or the sign-in link.
+pub(super) fn audit_shared_attach(
+    s: &AppState,
+    c: &Caller,
+    agent: &agents::AgentRow,
+    id: Uuid,
+    integration: Uuid,
+    via: &str,
+) {
+    audit_presence(
+        s,
+        c,
+        agent,
+        "channel_presence.attach",
+        id,
+        json!({"integration_id": integration, "mode": "shared", "via": via}),
+    );
 }
 
 fn map_insert(e: DbError) -> ApiError {

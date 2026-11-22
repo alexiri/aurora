@@ -4059,6 +4059,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/dm-default-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Agents the caller may choose to answer their DMs with an integration's shared bot (C-1147). */
+        get: operations["listDmDefaultOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/dm-defaults": {
         parameters: {
             query?: never;
@@ -4068,7 +4085,10 @@ export interface paths {
         };
         /** DM defaults for every platform user linked to the caller. */
         get: operations["listDmDefaults"];
-        /** Set the agent that answers the caller's DMs with an integration's shared bot (C-37). */
+        /**
+         * Set the agent that answers the caller's DMs with an integration's shared bot (C-37). An agent
+         *     the caller can use that is not on the shared bot yet is attached there (C-1147).
+         */
         put: operations["setDmDefault"];
         post?: never;
         delete?: never;
@@ -8339,6 +8359,14 @@ export interface components {
         };
         ConfirmLinkRequest: {
             /**
+             * Format: uuid
+             * @description (FIX-220, C-36) The agent that answers the person's DMs with the shared bot. Same rule as
+             *     `PUT /me/dm-defaults`, in the same transaction as the link: an agent of the integration's
+             *     organization the person can use; one not on the shared bot yet is attached there. When it
+             *     is refused (422 `agent_not_reachable`) nothing is linked and the token stays usable.
+             */
+            agent_id?: string | null;
+            /**
              * @description The platform user the confirm page showed (`LinkPreview.platform_user_ref`); the request is
              *     refused (422 `link_reference_mismatch`) when it is not the token's chat account.
              */
@@ -9314,6 +9342,32 @@ export interface components {
         };
         DmDefaultList: {
             items: components["schemas"]["DmDefault"][];
+        };
+        /** @description One agent the caller may choose to answer their DMs with the shared bot (C-1147). */
+        DmDefaultOption: {
+            /** Format: uuid */
+            agent_id: string;
+            /**
+             * @description The agent already has an active shared presence on the integration; choosing one that does
+             *     not attaches it.
+             */
+            attached: boolean;
+            handle: string;
+            name: string;
+            /** Format: uuid */
+            workspace_id: string;
+            workspace_name: string;
+        };
+        /** @description `GET /me/dm-default-options?integration_id=` (FIX-220, C-1147). */
+        DmDefaultOptions: {
+            items: components["schemas"]["DmDefaultOption"][];
+            /**
+             * Format: uuid
+             * @description The integration's organization (the sign-in link page links to that organization's
+             *     workspaces when the person has no agent yet).
+             */
+            org_id: string;
+            shared_bot?: components["schemas"]["SharedBotRef"] | null;
         };
         DraftRequest: {
             default_action: components["schemas"]["DefaultAction"];
@@ -15159,6 +15213,11 @@ export interface components {
             tier: string;
         };
         SharedBotInfo: {
+            display_name: string;
+            handle: string;
+        };
+        /** @description The shared bot of an integration, as the DM-default choice names it (FIX-220, C-1147). */
+        SharedBotRef: {
             display_name: string;
             handle: string;
         };
@@ -33527,6 +33586,61 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listDmDefaultOptions: {
+        parameters: {
+            query: {
+                integration_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DmDefaultOptions"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
