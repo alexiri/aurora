@@ -51,9 +51,15 @@ Time	Value{host.keyword=host-1}
 - A query whose **first metric** has type `raw_data` or `raw_document` returns documents, with no
   `bucketAggs`: `"metrics": [{"id": "1", "type": "raw_data", "settings": {"size": "50", "order": "desc"}}]`
   (`lucene_handler.go`: such a query is processed as a document query, newest first with
-  `order: "desc"`, `size` default 500). The time range still applies. `logs` is the same idea as a
-  logs query (newest first, `settings.size`). Each document is a row of the frame, one column per field.
+  `order: "desc"`, `size` default 500). The time range still applies. Each document is a row of the frame, one column per field.
+  `raw_document` is the same, but each row is a single JSON column holding the whole document.
+  Do not use `logs` through `ds/query`: Grafana's Explore sends it as a separate logs request, and
+  on the instances tested (plugin 2.x) a `logs` metric fails with `invalid query, missing metrics
+  and aggregations`. Use `raw_data` instead.
 - Keep `size` small (50 to 200).
+- `raw_data` returns every field of the document as a column (30 or more on a typical access-log
+  index), and the plugin offers no field selection. Keep `size` small and pick columns when
+  printing: `grafana-query run body.json --columns clientip,path,status` (see `grafana-query`).
 
 ## Quirks
 
@@ -61,8 +67,9 @@ Time	Value{host.keyword=host-1}
   (`models.go`). The error for any other value reads `invalid queryType: "…", expected Lucene or PPL`
   with a capital L (`query_request.go`), which is misleading: write `lucene` in lowercase.
 - **A count needs a bucket aggregation.** With no `bucketAggs`, only `raw_data`, `raw_document` and
-  `logs` metrics are valid; anything else fails with `invalid query, missing metrics and
-  aggregations` (`lucene_handler.go` `processQuery`).
+  `logs` metrics are valid in the plugin source; anything else fails with `invalid query, missing
+  metrics and aggregations` (`lucene_handler.go` `processQuery`). `logs` fails the same way through
+  `ds/query` (see Raw documents), so use `raw_data` for documents.
 - **A total over a window is the sum of every `date_histogram` bucket**: a count with a
   `date_histogram` returns one point per bucket, not one number. A 12 h window with `interval: 12h`
   gives two buckets; add the values of every row. For totals per term, group by `terms` alone
@@ -70,11 +77,12 @@ Time	Value{host.keyword=host-1}
 - **`orderBy` of a `terms` aggregation.** Use `_count` (or `_key`/`_term`). A numeric `orderBy` is
   only honoured when it is the `id` of one of the query's metrics (a `count` metric maps to
   `_count`); a number matching no metric sends no ordering, and OpenSearch's default (document
-  count, descending) applies (`addTermsAgg`). Seen on one instance: an `orderBy` by metric id came
-  back in term order.
-- **`cardinality` on an IP field** returned 0 or null on one instance (**seen on one instance**). Count
-  distinct IPs with a `terms` aggregation on the field with a large `size` and count the buckets
-  (mind `search.max_buckets`; the plugin's default `terms` size is 500 when none is given).
+  count, descending) applies (`addTermsAgg`). Seen once: an `orderBy` by metric id came back in term
+  order. A later test on the same instance (a `sum` metric, `orderBy: "1"`) sorted correctly, so
+  check the order of the rows rather than assume either way.
+- **`cardinality` on an IP field** returned 0 or null once, and worked on the same instance and
+  field a day later. If it comes back 0 or null, count the buckets of a `terms` aggregation
+  instead (mind `search.max_buckets`; the plugin's default `terms` size is 500).
 - **`sum` of a missing field returns 0**, not an error (**seen on one instance**; OpenSearch's
   behaviour for a field that is not in the index): check the field name in a panel first.
 - A `terms` with a large `size` and a fine `date_histogram` multiplies the buckets; widen the interval

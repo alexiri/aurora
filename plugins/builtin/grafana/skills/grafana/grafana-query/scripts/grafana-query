@@ -5,8 +5,8 @@
   grafana-query panels DASHBOARD_UID
   grafana-query promql --ds UID --from T --to T [--step 5m | --instant] EXPR [EXPR ...]
   grafana-query logql  --ds UID --from T --to T [--step 5m | --instant] [--limit N] EXPR [EXPR ...]
-  grafana-query run BODY.json
-  grafana-query frames RESULT.json
+  grafana-query run BODY.json [--columns a,b,c]
+  grafana-query frames RESULT.json [--columns a,b,c]
 
 Times (T): epoch milliseconds, RFC 3339 (converted), or now / now-6h / now-30m / now-7d.
 Every request goes through `aurora-agent call grafana ...`; nothing else touches the network and no
@@ -29,6 +29,11 @@ TIMEOUT = 300
 UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+COLUMNS_MAX = 50  # most names in --columns
+COLUMN_NAME_MAX = 100
+FIELDS_LISTED = 40  # field names shown when a --columns name matches nothing
+COLUMNS_HELP = ("print only these fields (comma-separated) plus the time field; a name matches a field "
+                "of that name or one ending with .NAME")
 ACCOUNT = None
 
 
@@ -139,21 +144,53 @@ def fmt_value(v, ftype):
     return clean(v).replace("\t", " ").replace("\n", "\\n")
 
 
-def print_frame(frame):
+def parse_columns(s):
+    """--columns value to a list of names; empty names are ignored, no usable name is a usage error."""
+    names = [n.strip() for n in s.split(",") if n.strip()]
+    if not names:
+        die("--columns needs at least one field name, such as --columns clientip,path")
+    if len(names) > COLUMNS_MAX or any(len(n) > COLUMN_NAME_MAX for n in names):
+        die(f"--columns takes at most {COLUMNS_MAX} names of at most {COLUMN_NAME_MAX} characters")
+    return names
+
+
+def keep_field(f, columns):
+    """True for time fields and for fields named like a column or ending with '.' and that name."""
+    if f.get("type") == "time":
+        return True
+    name = str(f.get("name", ""))
+    return any(name == c or name.endswith("." + c) for c in columns)
+
+
+def print_frame(frame, columns=None):
     schema = frame.get("schema") or {}
     fields = schema.get("fields") or []
     cols = (frame.get("data") or {}).get("values") or []
+    keep = list(range(len(cols)))
+    missing = []
+    if columns:
+        keep = [j for j in keep if j < len(fields) and keep_field(fields[j], columns)]
+        missing = [c for c in columns
+                   if not any(str(f.get("name", "")) == c or str(f.get("name", "")).endswith("." + c)
+                              for f in fields)]
     names = []
-    for f in fields:
+    for j in keep:
+        f = fields[j] if j < len(fields) else {}
         label = ",".join(f"{k}={v}" for k, v in sorted((f.get("labels") or {}).items()))
         names.append(clean(f.get("name", "")) + (f"{{{clean(label)}}}" if label else ""))
     title = schema.get("name") or ""
     print(f"## frame {clean(title)}".rstrip())
+    if columns and fields and missing:
+        listed = ", ".join(str(f.get("name", "")) for f in fields[:FIELDS_LISTED])
+        more = f", … ({len(fields)} in all)" if len(fields) > FIELDS_LISTED else ""
+        line = clean(f"# --columns: no field matches {', '.join(missing)}; fields: {listed}{more}")
+        print(line.replace("\n", " ").replace("\t", " "))
     print("\t".join(names))
     n = max((len(c) for c in cols), default=0)
     for i in range(min(n, ROWS_MAX)):
         row = []
-        for j, c in enumerate(cols):
+        for j in keep:
+            c = cols[j]
             ftype = fields[j].get("type") if j < len(fields) else None
             row.append(fmt_value(c[i] if i < len(c) else None, ftype))
         print("\t".join(row))
@@ -161,7 +198,7 @@ def print_frame(frame):
         print(f"... {n - ROWS_MAX} more rows not shown ({n} in all)")
 
 
-def print_results(results):
+def print_results(results, columns=None):
     """Prints every refId; returns the number of refIds with an error."""
     bad = 0
     for ref in sorted(results):
@@ -173,11 +210,11 @@ def print_results(results):
         if err or (isinstance(status, int) and status >= 400):
             bad += 1
         for frame in r.get("frames") or []:
-            print_frame(frame)
+            print_frame(frame, columns)
     return bad
 
 
-def run_body(body):
+def run_body(body, columns=None):
     """Sends a ds/query body. On a failure of several queries, retries each refId alone, because
     Grafana answers HTTP 400 for the whole request when any refId failed and aurora-agent keeps
     only the first lines of such an answer."""
@@ -192,7 +229,7 @@ def run_body(body):
         if not isinstance(data, dict) or not isinstance(data.get("results"), dict):
             print(f"# no results in the answer: {clean(json.dumps(data)[:300])}")
             return 1
-        return 1 if print_results(data["results"]) else 0
+        return 1 if print_results(data["results"], columns) else 0
     queries = body.get("queries") or []
     if len(queries) < 2:
         print(f"# {clean(queries[0].get('refId', 'A') if queries else 'A')} failed: {clean(text)}")
@@ -200,7 +237,7 @@ def run_body(body):
     print("# the request failed as a whole; trying each refId alone")
     bad = 0
     for q in queries:
-        bad += run_body({**body, "queries": [q]})
+        bad += run_body({**body, "queries": [q]}, columns)
     return 1 if bad else 0
 
 
@@ -214,8 +251,8 @@ def cmd_datasources(a):
     if a.type:
         rows = [d for d in rows if d.get("type") == a.type]
     if not rows:
-        print("no data sources listed: Grafana shows this list only to tokens allowed to read data "
-              "source settings (Viewer and Editor usually are not). Use `grafana-query panels "
+        print("no data sources listed: whether Grafana shows this list depends on the token's data "
+              "source permissions, and under Grafana's defaults it is empty. Use `grafana-query panels "
               "<dashboard uid>` to find the UIDs a dashboard queries.")
         return 0
     for d in rows:
@@ -361,15 +398,16 @@ def cmd_run(a):
     refs = [q.get("refId", "A") for q in body["queries"] if isinstance(q, dict)]
     if len(refs) != len(set(refs)):
         die("every query needs its own refId")
-    return run_body(body)
+    return run_body(body, parse_columns(a.columns) if a.columns is not None else None)
 
 
 def cmd_frames(a):
+    columns = parse_columns(a.columns) if a.columns is not None else None
     data = read_json(a.result)
     results = data.get("results") if isinstance(data, dict) else None
     if not isinstance(results, dict):
         die("no results in that file")
-    return 1 if print_results(results) else 0
+    return 1 if print_results(results, columns) else 0
 
 
 def main():
@@ -401,10 +439,12 @@ def main():
 
     p = sub.add_parser("run", parents=[common], help="send a ds/query body file (OpenSearch, SQL, anything)")
     p.add_argument("body")
+    p.add_argument("--columns", help=COLUMNS_HELP)
     p.set_defaults(fn=cmd_run)
 
     p = sub.add_parser("frames", help="print a saved ds/query answer")
     p.add_argument("result")
+    p.add_argument("--columns", help=COLUMNS_HELP)
     p.set_defaults(fn=cmd_frames)
 
     a = ap.parse_args()

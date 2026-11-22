@@ -1,0 +1,26 @@
+{
+  "results": {
+    "A": {
+      "status": 200,
+      "frames": [
+        {
+          "schema": {"refId": "A", "name": "A",
+                     "fields": [{"name": "metadata.timestamp", "type": "time"},
+                                {"name": "_id", "type": "string"},
+                                {"name": "_index", "type": "string"},
+                                {"name": "data.clientip", "type": "string"},
+                                {"name": "data.path", "type": "string"},
+                                {"name": "data.user_agent", "type": "string"},
+                                {"name": "data.agent", "type": "string"}]},
+          "data": {"values": [[1763643600000, 1763643660000, 1763643720000],
+                              ["id1", "id2", "id3"],
+                              ["logs-2026.11.20", "logs-2026.11.20", "logs-2026.11.20"],
+                              ["192.0.2.1", "192.0.2.2", "192.0.2.3"],
+                              ["/a", "/b", "/c"],
+                              ["curl/8", "Mozilla/5.0", "curl/8"],
+                              ["bot-1", "bot-2", "bot-3"]]}
+        }
+      ]
+    }
+  }
+}
