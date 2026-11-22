@@ -147,7 +147,7 @@ pub(crate) async fn mount_runner_api(api: &MockServer, sandbox: Uuid, boot: Uuid
 
 /// [`mount_runner_api`] whose redemption answer carries the person's chosen `shell`
 /// (FIX-138; absent = the field is left out, as an API without a choice does).
-async fn mount_runner_api_with_shell(
+pub(crate) async fn mount_runner_api_with_shell(
     api: &MockServer,
     sandbox: Uuid,
     boot: Uuid,

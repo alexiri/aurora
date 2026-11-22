@@ -2017,6 +2017,17 @@ grant value never reaches the browser and is never stored; terminal bytes are ne
 anywhere — the table holds the open's metadata only. The gateway database role gets nothing on
 this table.
 
+### `terminal_shell_preferences` (FIX-218, D-459, C-1145; migration `20261201000273`; the person's shell per agent)
+| Column | Type | Notes |
+|---|---|---|
+| user_id | uuid FK→users (cascade) | pk part; the person the choice belongs to |
+| agent_id | uuid FK→agents (cascade) | pk part; the choice is per agent (the scope the browser's `localStorage` had) |
+| shell | text not null check `bash`/`zsh` | the closed enum; the supervisor maps it to a fixed binary, never a path |
+
+`updated_at` (timestamptz not null default now(), set by the `PUT`) is implicit per §Conventions. One writer: `PUT /v1/agents/{agent}/terminal/shell`. Readers: the web terminal's open when `?shell=` is
+absent, and the SSH grant's redemption (the session's own person and agent). No row means `bash`. The row
+dies with the person or the agent (cascade). API-only: the gateway database role gets nothing.
+
 ### `file_stream_grants` (single-use Files grants, phase 5, P5-FILES-1, D-316, SEC-125, C-901; migration `20261201000241`)
 | Column | Type | Notes |
 |---|---|---|

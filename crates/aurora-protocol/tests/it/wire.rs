@@ -630,3 +630,23 @@ fn file_in_roundtrip_and_validation() -> R {
     }
     Ok(())
 }
+
+/// FIX-218 (D-459): `ExecOpen.shell` is optional; an older runner's frame (no field) still
+/// parses and re-serializes without it, and a chosen shell round-trips as its lowercase name.
+#[test]
+fn exec_open_shell_is_optional_and_back_compatible() -> R {
+    let old: ExecOpen = rt(json!({"pty_id": 1, "window": 65536, "mode": "shell", "env": {}}))?;
+    assert_eq!(old.shell, None);
+    let zsh: ExecOpen = rt(json!({
+        "pty_id": 2, "window": 65536, "mode": "exec", "command": "true", "shell": "zsh", "env": {}
+    }))?;
+    assert_eq!(zsh.shell, Some(PtyShell::Zsh));
+    assert!(
+        serde_json::from_value::<ExecOpen>(json!({
+            "pty_id": 3, "window": 1, "mode": "shell", "shell": "/bin/evil", "env": {}
+        }))
+        .is_err(),
+        "a path is not a shell"
+    );
+    Ok(())
+}

@@ -886,6 +886,10 @@ pub struct ExecOpen {
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tty: Option<ExecTty>,
+    /// (FIX-218, D-459) The person's chosen shell for `shell`/`exec` (absent = bash; an older
+    /// runner omits it). A closed enum the supervisor maps to a fixed path, never a path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<PtyShell>,
     /// Only `LANG` and `LC_*` names are ever honoured.
     #[serde(default)]
     pub env: BTreeMap<String, String>,

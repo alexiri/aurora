@@ -426,3 +426,19 @@ async fn an_auy_grant_never_opens_an_ssh_exec() {
         "an exec.open from a terminal leg reached the supervisor"
     );
 }
+
+/// (FIX-218, D-459) An SSH leg's `exec.open` carries the shell of the redeemed grant (the
+/// person's stored choice); a grant without one leaves the field out (bash by default).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_ssh_leg_exec_open_carries_the_bindings_shell() {
+    for (grant_shell, want) in [(Some("zsh"), Some("zsh")), (None, None)] {
+        let api = MockServer::start().await;
+        let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+        crate::terminal_streams::mount_runner_api_with_shell(&api, sandbox, boot, grant_shell)
+            .await;
+        let (ch, st, _server, _s1, _s2) = rig(&api).await;
+        let mut sup = connect_supervisor(ch).await;
+        let (_c, _id, body) = open_leg_with(&mut sup, st, SHELL).await;
+        assert_eq!(body.get("shell").and_then(Value::as_str), want, "{body}");
+    }
+}

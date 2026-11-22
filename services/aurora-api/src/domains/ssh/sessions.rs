@@ -781,6 +781,11 @@ pub(crate) async fn redeem(
     }
     // A frozen agent is 423 `frozen` on every route (C-1041), not `not_current`.
     crate::domains::freeze::service::ensure_agent_active_pool(s, a.id).await?;
+    // (FIX-218, D-459) The shell the session's own person chose for this agent (no row = bash).
+    let shell = aurora_db::repo::terminal_shell::for_ssh_session(&s.pool, g.session_id, a.id)
+        .await?
+        .and_then(|v| aurora_protocol::runner::PtyShell::parse(&v))
+        .unwrap_or_default();
     Ok(aurora_protocol::runner::PreviewStreamOpenResponse {
         sandbox_id: g.sandbox_id,
         boot_id: g.boot_id,
@@ -789,7 +794,7 @@ pub(crate) async fn redeem(
         window: aurora_core::limits::TERMINAL_STREAM_WINDOW as u32,
         idle_secs: s.config.ssh.idle_timeout_secs as u32,
         max_lifetime_secs: SSH_MAX_LIFETIME.as_secs() as u32,
-        shell: None,
+        shell: Some(shell),
         models: None,
     })
 }

@@ -47,6 +47,20 @@ fn script(dir: &Path, body: &str) -> PathBuf {
 }
 
 fn rig(cwd: &Path, enabled: bool, sftp: PathBuf) -> Rig {
+    rig_with_shells(
+        cwd,
+        enabled,
+        sftp,
+        aurora_supervisor::pty::ShellPaths::default(),
+    )
+}
+
+fn rig_with_shells(
+    cwd: &Path,
+    enabled: bool,
+    sftp: PathBuf,
+    shells: aurora_supervisor::pty::ShellPaths,
+) -> Rig {
     let (out_tx, out_rx) = mpsc::channel(1024);
     let (in_tx, in_rx) = mpsc::unbounded_channel();
     let (epoch_tx, epoch_rx) = tokio::sync::watch::channel(0u64);
@@ -61,7 +75,7 @@ fn rig(cwd: &Path, enabled: bool, sftp: PathBuf) -> Rig {
         None,
         cwd.to_path_buf(),
         bootstrap_exe(),
-        aurora_supervisor::pty::ShellPaths::default(),
+        shells,
         None,
         sftp,
         Some(SKILLS_DIR_VALUE.into()),
@@ -81,6 +95,7 @@ fn open_frame(id: u32, window: u32, mode: ExecMode) -> ExecOpen {
         mode,
         command: None,
         tty: None,
+        shell: None,
         env: BTreeMap::new(),
     }
 }

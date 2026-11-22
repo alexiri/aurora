@@ -37,7 +37,6 @@ import {
   pasteInto,
   readClipboardText,
 } from "./terminal-clipboard";
-import { readShell } from "./terminal-shell";
 
 // The vendored, version-named Ghostty WASM (sha256 recorded in scripts/guards/ghostty-wasm.sha256) (`web/public`, served same-origin as
 // `application/wasm`; the CSP's `'wasm-unsafe-eval'` in script-src is what lets it compile —
@@ -350,9 +349,9 @@ export function TerminalPane({
           ? { kind: "connecting" }
           : { kind: "reconnecting", attempt: attemptRef.current, max: wakingRef.current ? MAX_WAKE_ATTEMPTS : MAX_ATTEMPTS },
       );
-      // The shell is chosen on the Computer page (D-246) and read at each connect, so a change applies to the next
-      // session only. bash is the server's default, so only zsh names itself (`?shell=` is an enumeration, 422 otherwise).
-      ws = new WebSocket(`/v1/agents/${agentId}/terminal${readShell(agentId) === "zsh" ? "?shell=zsh" : ""}`);
+      // The shell is chosen on the Computer page (D-246) and stored on the server per person and agent (D-459): the
+      // server applies it when `?shell=` is absent, so a change applies to the next session only.
+      ws = new WebSocket(`/v1/agents/${agentId}/terminal`);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 

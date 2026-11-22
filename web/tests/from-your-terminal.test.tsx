@@ -41,6 +41,8 @@ function serve(ssh: boolean) {
     "GET /v1/me": () => json(200, { user: { id: "u1", display_name: "Ada", email: "a@b.c", is_instance_admin: false }, memberships: [] }),
     "GET /v1/instance": () => json(200, { version: "0", features: { hosted: true, previews: false, terminal: true, ssh } }),
     "GET /v1/workspaces/w1/api-keys": () => json(200, { items: [], next_cursor: null }),
+    // (FIX-218, C-1145) The Terminal card's shell preference.
+    "GET /v1/agents/a1/terminal/shell": () => json(200, { shell: "bash", stored: false }),
   };
   vi.stubGlobal(
     "fetch",

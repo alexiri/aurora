@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { Altitude } from "@/components/ui/altitude";
@@ -14,7 +14,9 @@ import { Segmented } from "@/components/ui/segmented";
 import { askSentence } from "@/lib/who-can";
 import { useSandbox, useStartFailures } from "@/lib/api/conversations";
 import type { SandboxStartAttempt, StartLogEntry } from "@/lib/api/conversations";
+import { errorMessage } from "@/lib/api/errors";
 import { useInstance, useMe, useOrg, useResolve } from "@/lib/api/queries";
+import { useSaveTerminalShell, useTerminalShell } from "@/lib/api/terminal-shell";
 import { useParams } from "next/navigation";
 import { UsageCard } from "@/components/usage/usage-card";
 import { ShareDialog } from "@/components/agents/previews-tab";
@@ -23,35 +25,45 @@ import { COMPUTER_WORD, label } from "@/lib/labels";
 import { TechnicalDetails } from "@/components/ui/technical-details";
 
 import { computerOf } from "./computer-state";
-import { readShell, SHELL_OPTIONS, writeShell, type Shell } from "./terminal-shell";
+import { SHELL_OPTIONS, takeLegacyShell, type Shell } from "./terminal-shell";
 
 /**
- * (FIX-138, D-246) The terminal's shell, on the Computer page rather than above the pane (owner 2026-11-14). Still
- * remembered per browser and agent, so it applies at once and to the next terminal session only.
+ * (FIX-138, D-246; FIX-218, D-459, C-1145) The shell a new terminal session or SSH connection starts, on the Computer page
+ * (owner 2026-11-14). Stored on the server per person and agent, saved on change; an open terminal keeps its shell until
+ * you reconnect. The old per-browser `localStorage` value moves once: a remembered `zsh` is saved when the server has
+ * nothing stored, and the key is removed either way.
  */
 function TerminalShellSection({ agentId }: { agentId: string }) {
-  // Lazy initial read: the agent page renders its pages client-side only (inside its agent query), so no hydration mismatch.
-  const [shell, setShell] = useState<Shell>(() => readShell(agentId));
-  const [unsaved, setUnsaved] = useState(false);
+  const pref = useTerminalShell(agentId);
+  const save = useSaveTerminalShell(agentId);
+  const moved = useRef(false);
+  const serverStored = pref.data?.stored;
+  const { mutate: saveShell } = save;
+  useEffect(() => {
+    if (serverStored === undefined || moved.current) return;
+    moved.current = true;
+    const legacy = takeLegacyShell(agentId);
+    if (legacy === "zsh" && !serverStored) saveShell("zsh");
+  }, [agentId, serverStored, saveShell]);
+  // What the person just picked shows at once; the saved value (or bash) otherwise.
+  const shell: Shell = (save.isPending ? save.variables : pref.data?.shell) === "zsh" ? "zsh" : "bash";
   return (
     <Section
       id="terminal-shell"
       title="Terminal"
-      description="The shell a new terminal session starts. Remembered in this browser; an open terminal keeps its shell until you reconnect."
+      description="The shell a new terminal session starts. An open terminal keeps its shell until you reconnect."
       card
     >
-      <Segmented<Shell>
-        label="Shell"
-        value={shell}
-        options={SHELL_OPTIONS}
-        onChange={(s) => {
-          setShell(s);
-          setUnsaved(!writeShell(agentId, s));
-        }}
-      />
-      {unsaved ? (
-        <p role="status" className="mt-2 text-xs text-muted">
-          This browser blocks storage, so the choice was not remembered; terminals start bash.
+      <Segmented<Shell> label="Shell" value={shell} options={SHELL_OPTIONS} disabled={pref.isPending} onChange={(s) => save.mutate(s)} />
+      <p className="mt-2 text-xs text-muted">Also used when you connect with SSH.</p>
+      {save.isError ? (
+        <p role="alert" className="mt-2 text-xs text-danger-ink">
+          {errorMessage(save.error)}
+        </p>
+      ) : null}
+      {pref.isError ? (
+        <p role="alert" className="mt-2 text-xs text-danger-ink">
+          {errorMessage(pref.error)}
         </p>
       ) : null}
     </Section>

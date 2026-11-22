@@ -1254,3 +1254,54 @@ async fn ssh_runner_registration_answers_ssh_enabled_only_for_a_runner_with_it()
     assert_eq!(s, 200, "{v}");
     assert!(v["config"].get("ssh_enabled").is_none(), "{v}");
 }
+
+/// (FIX-218, D-459) The redemption answer carries the shell the session's own person chose for
+/// this agent: bash when no row exists, the stored value otherwise; another person's row (or
+/// another agent's) never applies.
+#[tokio::test]
+async fn ssh_sessions_redemption_carries_the_session_persons_shell() {
+    let s = setup("running").await;
+    let id = open_ok(&s).await;
+    let (_, g) = grant(&s, id, "shell").await;
+    let (st, b) = redeem(&s, g["grant"].as_str().unwrap(), "ssh").await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["shell"], "bash", "no row = bash: {b}");
+
+    let user: Uuid = sqlx::query_scalar("SELECT user_id FROM ssh_sessions WHERE id = $1")
+        .bind(id)
+        .fetch_one(s.r.h.pool())
+        .await
+        .unwrap();
+    let other_user = s.r.h.user("someone-else@x.io", false).await;
+    let other_agent = s.r.agent("ssh-other", false).await;
+    for (u, a, sh) in [(other_user, s.agent, "zsh"), (user, other_agent, "zsh")] {
+        sqlx::query(
+            "INSERT INTO terminal_shell_preferences (user_id, agent_id, shell) VALUES ($1,$2,$3)",
+        )
+        .bind(u)
+        .bind(a)
+        .bind(sh)
+        .execute(s.r.h.pool())
+        .await
+        .unwrap();
+    }
+    let (_, g) = grant(&s, id, "exec").await;
+    let (_, b) = redeem(&s, g["grant"].as_str().unwrap(), "ssh").await;
+    assert_eq!(
+        b["shell"], "bash",
+        "not this person's or not this agent's: {b}"
+    );
+
+    sqlx::query(
+        "INSERT INTO terminal_shell_preferences (user_id, agent_id, shell) VALUES ($1,$2,'zsh')",
+    )
+    .bind(user)
+    .bind(s.agent)
+    .execute(s.r.h.pool())
+    .await
+    .unwrap();
+    let (_, g) = grant(&s, id, "shell").await;
+    let (st, b) = redeem(&s, g["grant"].as_str().unwrap(), "ssh").await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["shell"], "zsh", "{b}");
+}

@@ -266,3 +266,131 @@ async fn a_tty_child_holds_no_master_descriptor() {
     );
     assert!(text.contains("/dev/pts/"), "{text}");
 }
+
+/// A stand-in shell that prints its argv and `$SHELL` (stdin is not read).
+fn arg_standin(dir: &Path, name: &str, tag: &str) -> PathBuf {
+    let p = dir.join(name);
+    std::fs::write(
+        &p,
+        format!("#!/bin/sh\necho \"{tag}_ARGS=$*\"\necho \"{tag}_SHELL=$SHELL\"\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+fn standin_paths(dir: &Path, bash: bool, zsh: bool) -> aurora_supervisor::pty::ShellPaths {
+    aurora_supervisor::pty::ShellPaths {
+        bash: if bash {
+            arg_standin(dir, "bash", "BASH")
+        } else {
+            dir.join("no-bash")
+        },
+        zsh: if zsh {
+            arg_standin(dir, "zsh", "ZSH")
+        } else {
+            dir.join("no-zsh")
+        },
+        sh: PathBuf::from("/bin/sh"),
+    }
+}
+
+/// (FIX-218, D-459) `shell` mode runs the chosen shell as a login shell (`-l`), with and without
+/// a tty; absent means bash; `SHELL` is the binary run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shell_mode_runs_the_chosen_shell_as_a_login_shell() {
+    use aurora_protocol::runner::PtyShell;
+    let d = TempDir::new();
+    let mut r = rig_with_shells(
+        d.path(),
+        true,
+        d.path().join("absent"),
+        standin_paths(d.path(), true, true),
+    );
+    for (id, shell, with_tty, tag) in [
+        (1u32, Some(PtyShell::Zsh), false, "ZSH"),
+        (2, Some(PtyShell::Bash), false, "BASH"),
+        (3, None, false, "BASH"),
+        (4, Some(PtyShell::Zsh), true, "ZSH"),
+        (5, None, true, "BASH"),
+    ] {
+        let mut o = open_frame(id, 65_536, ExecMode::Shell);
+        o.shell = shell;
+        if with_tty {
+            o.tty = tty("xterm", 80, 24);
+        }
+        r.open(o);
+        r.frame_of("exec.opened").await;
+        let (so, _, _) = r.drain(id).await;
+        let text = String::from_utf8_lossy(&so).replace('\r', "");
+        assert!(
+            text.contains(&format!("{tag}_ARGS=-l\n")),
+            "id {id}: {text}"
+        );
+        let want = format!("{tag}_SHELL={}/", d.path().display());
+        assert!(text.contains(&want), "id {id}: {text}");
+        assert!(!text.contains("not installed"), "no notice: {text}");
+    }
+}
+
+/// `exec` mode: `<shell> -c <command>` without `-l`, the command one argument.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_mode_runs_the_chosen_shell_with_dash_c_and_no_login() {
+    use aurora_protocol::runner::PtyShell;
+    let d = TempDir::new();
+    let mut r = rig_with_shells(
+        d.path(),
+        true,
+        d.path().join("absent"),
+        standin_paths(d.path(), true, true),
+    );
+    for (id, shell, tag) in [(1u32, Some(PtyShell::Zsh), "ZSH"), (2, None, "BASH")] {
+        let mut o = exec_frame(id, "echo a; echo 'b c'");
+        o.shell = shell;
+        r.open(o);
+        r.frame_of("exec.opened").await;
+        let (so, _, _) = r.drain(id).await;
+        let text = String::from_utf8_lossy(&so);
+        assert!(
+            text.contains(&format!("{tag}_ARGS=-c echo a; echo 'b c'\n")),
+            "{text}"
+        );
+    }
+}
+
+/// Zsh missing falls back to bash; the notice appears on a tty `shell` session only (a pipe
+/// session and `exec` keep stdout clean).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_fallback_notice_is_for_a_tty_shell_session_only() {
+    use aurora_protocol::runner::PtyShell;
+    let d = TempDir::new();
+    let mut r = rig_with_shells(
+        d.path(),
+        true,
+        d.path().join("absent"),
+        standin_paths(d.path(), true, false),
+    );
+    let notice = "zsh is not installed";
+    for (id, mode, with_tty, want_notice) in [
+        (1u32, ExecMode::Shell, true, true),
+        (2, ExecMode::Shell, false, false),
+        (3, ExecMode::Exec, false, false),
+        (4, ExecMode::Exec, true, false),
+    ] {
+        let mut o = if mode == ExecMode::Exec {
+            exec_frame(id, "true")
+        } else {
+            open_frame(id, 65_536, ExecMode::Shell)
+        };
+        o.shell = Some(PtyShell::Zsh);
+        if with_tty {
+            o.tty = tty("xterm", 80, 24);
+        }
+        r.open(o);
+        r.frame_of("exec.opened").await;
+        let (so, _, _) = r.drain(id).await;
+        let text = String::from_utf8_lossy(&so);
+        assert!(text.contains("BASH_ARGS="), "id {id}: {text}");
+        assert_eq!(text.contains(notice), want_notice, "id {id}: {text}");
+    }
+}

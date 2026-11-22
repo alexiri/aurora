@@ -74,6 +74,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "shell": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PtyShell"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "(FIX-218, D-459) The person's chosen shell for `shell`/`exec` (absent = bash; an older\nrunner omits it). A closed enum the supervisor maps to a fixed path, never a path."
+        },
         "tty": {
           "anyOf": [
             {

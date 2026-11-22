@@ -2107,6 +2107,83 @@ async fn k9_ssh_journey() {
         "{err}"
     );
 
+    // 2b. (FIX-218, D-459) The shell is a login shell with the image's defaults, and it is the person's chosen one.
+    // bash: the aliases and the image prompt, with a tty and without one; a remote command is not a login shell.
+    let (rc, out, err) = run_client(
+        id.command("ssh", &["-tt"], &[]),
+        b"alias ll; echo PS1=$PS1; exit 0\n",
+        60,
+    )
+    .await;
+    assert_eq!(rc, 0, "{err}");
+    assert!(
+        out.contains("alias ll='ls -l'") && out.contains(r"PS1=\[\e[1;32m\]\u@\h"),
+        "login bash has the image defaults: {out}"
+    );
+    let (rc, out, err) =
+        run_client(id.command("ssh", &["-T"], &[]), b"alias ll; exit 0\n", 60).await;
+    assert_eq!(rc, 0, "{err}");
+    assert!(
+        out.contains("alias ll='ls -l'"),
+        "a login shell without a tty too: {out}"
+    );
+    let (_, out, _) = run_client(id.command("ssh", &[], &["type ll"]), b"", 60).await;
+    assert!(
+        !out.contains("aliased"),
+        "`ssh host cmd` is not a login shell, so no alias: {out}"
+    );
+    // A person's own ~/.bashrc is read when the home has no profile file (the web terminal reads it the same way).
+    let (rc, _, err) = run_client(
+        id.command("ssh", &[], &["echo \"alias e2e_rc='true'\" > ~/.bashrc"]),
+        b"",
+        60,
+    )
+    .await;
+    assert_eq!(rc, 0, "{err}");
+    let (rc, out, err) = run_client(
+        id.command("ssh", &["-tt"], &[]),
+        b"alias e2e_rc; exit 0\n",
+        60,
+    )
+    .await;
+    assert_eq!(rc, 0, "{err}");
+    assert!(
+        out.contains("alias e2e_rc='true'"),
+        "~/.bashrc is read: {out}"
+    );
+    let _ = run_client(id.command("ssh", &[], &["rm -f ~/.bashrc"]), b"", 60).await;
+    // zsh: chosen through the API (stored per person and agent), the next SSH shell is zsh with its defaults.
+    let (s, v) = api
+        .put(
+            &format!("/v1/agents/{}/terminal/shell", id.agent),
+            json!({"shell": "zsh"}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (rc, out, err) = run_client(
+        id.command("ssh", &["-tt"], &[]),
+        b"echo ZV=$ZSH_VERSION; alias ll; exit 0\n",
+        60,
+    )
+    .await;
+    assert_eq!(rc, 0, "{err}");
+    // The tty echoes the typed line (`ZV=$ZSH_VERSION`); the answer is a line `ZV=<digits>`.
+    assert!(
+        out.lines().any(|l| l
+            .trim()
+            .strip_prefix("ZV=")
+            .is_some_and(|v| v.starts_with(|c: char| c.is_ascii_digit())))
+            && out.contains("ll="),
+        "zsh with its defaults: {out}"
+    );
+    let (s, v) = api
+        .put(
+            &format!("/v1/agents/{}/terminal/shell", id.agent),
+            json!({"shell": "bash"}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
     // 3. sftp put/get and scp (SFTP mode and `-O`) of a 5 MiB file: the digests match.
     let blob = noise(5 * 1024 * 1024, 99);
     let want = sha_hex(&blob);

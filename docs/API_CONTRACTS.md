@@ -2758,6 +2758,14 @@ Rule: `docs/tasks/P6-TEMPLATES.md` (design), `docs/25-agent-templates.md` (the p
     - `packages.url` is the matching download URL.
   - **Any other CI** works if it publishes, at the rendered `packages.url`, the bytes that `aurora template pack` writes, and never replaces them. Aurora checks the package against the repository (C-1108). So a CI that packs something else only makes that version `invalid` (`source_mismatch`); it can never ship content that differs from the repository.
   - A test in P6-TPL-1 runs the workflow's shell logic against a local fixture: a fake `gh` that records calls, a repository folder with two templates, one already released unchanged, one released and changed, and one new.
+- C-1145 **The person's shell preference** (FIX-218, D-459; migration `20261201000273`, `03 §terminal_shell_preferences`). The shell (`bash` or `zsh`) a person's web terminal and SSH sessions start on an agent, stored on the server per person and agent.
+  - `GET /v1/agents/{agent}/terminal/shell` answers `200 { "shell": "bash" | "zsh", "stored": bool }`. With nothing saved it answers `bash` with `stored: false`.
+  - `PUT /v1/agents/{agent}/terminal/shell` takes `{ "shell": "bash" | "zsh" }` and answers `200 { shell, stored: true }`. Any other value (a path, another shell, a different case) is 422 `invalid_shell`; nothing is stored.
+  - Both need the session cookie (an API key or no cookie is 401), `can_use` of the agent's workspace (404 or 403 as for the terminal) and a hosted agent (BYO is 422 `terminal_not_supported`). The terminal feature switch and the freeze gate do not apply: the choice is also used by SSH, and a frozen agent's setting stays readable and writable. A person reads and writes only their own row.
+  - The terminal WebSocket's `?shell=` (C-616, FIX-138) stays as an explicit override; when it is absent the stored preference applies, else `bash`. The dashboard's terminal pane no longer sends it.
+  - The SSH grant redemption (`POST /v1/runner/preview-streams/open`, `kind: "ssh"`, C-796) answers `shell`: the stored preference of the session's own person for the grant's agent, `bash` when there is no row. The runner copies it into `exec.open.shell` (`16 §W20`, optional, absent = bash).
+  - The value is a closed enum end to end: the table CHECK, `PtyShell` in the API and the protocol, and the supervisor's fixed binary paths. A client never supplies a path.
+  - The row is removed with the person or the agent (FK cascade). One writer: the `PUT`.
 
 ## Shared schemas
 

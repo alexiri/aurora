@@ -1357,6 +1357,11 @@
       "payload",
       "scope"
     ],
+    "terminal_shell_preferences": [
+      "agent_id",
+      "shell",
+      "user_id"
+    ],
     "terminal_stream_grants": [
       "agent_id",
       "boot_id",
@@ -2971,6 +2976,11 @@
       "computed_at": "timestamptz not null",
       "payload": "jsonb not null",
       "scope": "text not null"
+    },
+    "terminal_shell_preferences": {
+      "agent_id": "uuid",
+      "shell": "text not null",
+      "user_id": "uuid"
     },
     "terminal_stream_grants": {
       "agent_id": "uuid not null",

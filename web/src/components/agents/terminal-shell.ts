@@ -1,6 +1,7 @@
 /**
- * (FIX-138, D-246) The shell a new terminal session starts: bash (default) or zsh, remembered per browser and agent.
- * Chosen on the agent's Computer page; read by the terminal pane (tab and standalone window) at each connect.
+ * (FIX-138, D-246; FIX-218, D-459) The shell a new terminal session or SSH connection starts: bash (default) or zsh. Chosen
+ * on the agent's Computer page and stored on the server per person and agent (`/v1/agents/{agent}/terminal/shell`), so the
+ * web terminal and SSH both use it and it follows the person across browsers.
  */
 export type Shell = "bash" | "zsh";
 
@@ -9,23 +10,19 @@ export const SHELL_OPTIONS: { value: Shell; label: string }[] = [
   { value: "zsh", label: "zsh" },
 ];
 
-const shellKey = (agentId: string) => `aurora.terminal.shell.${agentId}`;
+const legacyKey = (agentId: string) => `aurora.terminal.shell.${agentId}`;
 
-/** The remembered shell; bash when nothing is stored or `localStorage` is unavailable (SSR, blocked storage). */
-export function readShell(agentId: string): Shell {
+/**
+ * The one-time move off `localStorage` (FIX-218): returns what this browser remembered for the agent (`zsh`, or `null`
+ * for bash or nothing) and always removes the old key, so it is read at most once.
+ */
+export function takeLegacyShell(agentId: string): Shell | null {
   try {
-    return window.localStorage.getItem(shellKey(agentId)) === "zsh" ? "zsh" : "bash";
+    const value = window.localStorage.getItem(legacyKey(agentId));
+    if (value === null) return null;
+    window.localStorage.removeItem(legacyKey(agentId));
+    return value === "zsh" ? "zsh" : null;
   } catch {
-    return "bash";
-  }
-}
-
-/** Remembers the shell for this browser; returns false when it could not be stored. */
-export function writeShell(agentId: string, shell: Shell): boolean {
-  try {
-    window.localStorage.setItem(shellKey(agentId), shell);
-    return true;
-  } catch {
-    return false;
+    return null;
   }
 }

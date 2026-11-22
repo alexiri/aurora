@@ -77,6 +77,7 @@ pub mod space_bindings;
 pub mod ssh;
 pub mod ssh_sessions;
 pub mod terminal_grants;
+pub mod terminal_shell;
 pub mod thread_links;
 pub mod timeline;
 pub mod tool_identity;

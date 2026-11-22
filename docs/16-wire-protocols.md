@@ -663,7 +663,8 @@ guarded transition makes a second close, a sweep close or a heartbeat revocation
 **Leg 1, terminator → runner.** `GET /v1/preview-stream` on the runner's stream listener, `Authorization:
 Bearer auz_…` — the prefix selects the kind, as `auy_` does. The runner redeems the grant (`POST
 /v1/runner/preview-streams/open { kind: "ssh", grant }` → `{ sandbox_id, boot_id, window, idle_secs,
-max_lifetime_secs }`; 403 `grant_invalid`; 423 `frozen` when the agent is frozen (C-1041); 409
+max_lifetime_secs, shell }` (FIX-218, D-459: `shell` is the session's person's stored choice for this
+agent, `bash` when none; the runner copies it into leg 2's `exec.open`); 403 `grant_invalid`; 423 `frozen` when the agent is frozen (C-1041); 409
 `not_current` when the boot is stale, `ssh.enabled` off or the grant's session no longer open and
 lease-current), checks it holds the
 sandbox's channel for that boot (404 `not_here`), and completes the handshake (101). The terminator's
@@ -692,7 +693,7 @@ interleaved round-robin, credit with `pty.credit` exactly as W19):
 
 | Direction | Frame | Body |
 |---|---|---|
-| runner → supervisor | `exec.open` | `{ pty_id: u32, window: bytes, mode: "shell"\|"exec"\|"sftp", command?: string, tty?: { term, cols: u16, rows: u16 }, env: { name: value } }` |
+| runner → supervisor | `exec.open` | `{ pty_id: u32, window: bytes, mode: "shell"\|"exec"\|"sftp", command?: string, tty?: { term, cols: u16, rows: u16 }, shell?: "bash"\|"zsh", env: { name: value } }` — (FIX-218, D-459) `shell` is the person's enumerated choice, set by the runner from the SSH grant's redemption answer (`PreviewStreamOpenResponse.shell`) for `shell`/`exec`; absent = bash (an older runner omits it); never a path |
 | supervisor → runner | `exec.opened` / `exec.refused` | `{ pty_id, window }` / `{ pty_id, reason: "disabled"\|"limit"\|"unsupported"\|"error" }` |
 | runner → supervisor | `pty.resize` | as W19 (only for an exec with `tty`) |
 | runner → supervisor | `exec.eof` | `{ pty_id }` — close the child's stdin |

@@ -1925,10 +1925,14 @@ every other topic is owners/admins and is not listed for a member.)
     **Terminal** card of the **Computer** page, under the Computer state card, shown only where
     the Terminal page exists (owner 2026-11-14: moved off the Terminal page, which only names
     where it is chosen; it applies at once),
-    remembered per browser and agent (`localStorage` key `aurora.terminal.shell.<agent id>`; a
-    server-side preference would need a table for one enum). It applies to the next session — the
-    open one keeps running — and travels as `?shell=zsh` on the WebSocket (`05`; bash is the
-    default and sends no query). If the image lacks the chosen shell the pane prints the
+    (FIX-218, D-459, C-1145) **stored on the server per person and agent** (`GET`/`PUT
+    /v1/agents/{agent}/terminal/shell`), so it follows the person across browsers and applies to
+    the web terminal **and SSH**; the control saves on change and shows a failed save inline, and
+    a line under it reads "Also used when you connect with SSH." The old per-browser value
+    (`localStorage` key `aurora.terminal.shell.<agent id>`) moves once: a remembered `zsh` is saved
+    when the server has nothing stored for this agent, and the key is removed in every case. It
+    applies to the next session — the open one keeps running. The pane and its pop-out send no
+    `?shell=`: the server applies the stored value (`05`). If the image lacks the chosen shell the pane prints the
     supervisor's one-line fallback notice (`12 §Terminal`).
     (FIX-138 item 1b, D-247) `claude` and `codex` typed in the pane run the image's wrappers
     (`12 §Terminal`): they reach the LLM through the gateway with the placeholder credential and
@@ -2016,7 +2020,9 @@ every other topic is owners/admins and is not listed for a member.)
        (`SHA256:…`) and one sentence: "Check that ssh shows this fingerprint the first time you
        connect, or add the line above to `~/.ssh/known_hosts`." No live terminator → a `Notice`
        "SSH is enabled but no SSH server is running; ask your administrator."
-    3. **What works**: interactive shell, remote commands, `sftp` and `scp`; port forwarding, agent
+    3. **What works**: "An interactive shell (bash or zsh, as chosen on the Computer page), remote
+       commands, sftp and scp." The shell is a login shell with the same aliases, prompt and
+       colours as the web terminal (D-459); port forwarding, agent
        forwarding and X11 are not available (use **Previews** for web apps). Sessions end after 10
        minutes without activity or after 4 hours, and when you lose access to the agent.
     4. **Open sessions on this agent** (P4-SSH-2): the caller's own, or everyone's for `can_own`
