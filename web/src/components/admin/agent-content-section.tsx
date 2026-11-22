@@ -164,6 +164,11 @@ function AppAgent({ plugin, agent }: { plugin: PluginPackage; agent: PluginAgent
                         {sc ? changeBadge(sc.change as Change, false) : null}
                         {scripts > 0 ? <Badge>{scripts === 1 ? "Script" : `${scripts} scripts`}</Badge> : null}
                         <span className="mt-0.5 block break-words text-xs font-normal text-ink-2">{s.description}</span>
+                        {s.claimed_by ? (
+                          <span className="mt-0.5 block text-xs font-normal text-muted" data-testid={`agent-skill-claimed-${s.name}`}>
+                            Not given to agents: the name belongs to the {s.claimed_by.app_name} app
+                          </span>
+                        ) : null}
                       </>
                     }
                   >

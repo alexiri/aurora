@@ -19,10 +19,19 @@ fn pkg_of(files: &[(String, Vec<u8>)]) -> Package {
 
 /// Codes of the agent and skill rules for `files` (full archive paths).
 fn lint_y(y: &str, files: &[(String, Vec<u8>)]) -> Vec<&'static str> {
+    lint_with(y, files, &[])
+}
+
+/// Same, with the apps of other active packages: `(app id, package id)`.
+fn lint_with(y: &str, files: &[(String, Vec<u8>)], others: &[(&str, &str)]) -> Vec<&'static str> {
     let m = Manifest::parse(y, "99.0.0").unwrap();
     let pkg = pkg_of(files);
+    let others: std::collections::HashMap<String, String> = others
+        .iter()
+        .map(|(a, p)| ((*a).to_owned(), (*p).to_owned()))
+        .collect();
     let mut v = aurora_registry::validate::manifest(&m);
-    archive_rules(&m, &pkg, &mut v);
+    archive_rules(&m, &pkg, &others, &mut v);
     let mut codes: Vec<&'static str> = v
         .iter()
         .map(|x| x.code)
@@ -152,6 +161,63 @@ fn the_longest_matching_app_id_owns_the_skill() {
         skill_md("jira-x", "d", "b").into_bytes(),
     )];
     assert!(lint_y(y, &plain).is_empty());
+}
+
+/// (FIX-221, D-465) A skill name never starts with the id of an app of another active package.
+#[test]
+fn a_skill_named_with_another_apps_id_is_refused() {
+    let y = yaml(TOOLS, AGENT, "");
+    let long = vec![md("demo-app-x-thing")];
+    // another active package owns `demo-app-x`: refused, at the skill's path
+    let others = [("demo-app-x", "other")];
+    assert_eq!(
+        lint_with(&y, &long, &others),
+        ["app_skill_name_claimed"],
+        "the other app owns the prefix"
+    );
+    // with no `demo-app-x` active the same package is valid
+    assert!(lint_with(&y, &long, &[]).is_empty());
+    // a name equal to the other app's id is refused too
+    assert_eq!(
+        lint_with(&y, &[md("demo-app-x")], &others),
+        ["app_skill_name_claimed"]
+    );
+    // an upgrade of the package that owns `demo-app-x` itself (same package id `demo`) is not
+    // refused by its own old version
+    assert!(lint_with(&y, &long, &[("demo-app-x", "demo")]).is_empty());
+    // only a `-` boundary counts: `demo-app-xy` does not start with `demo-app-x-`
+    assert!(lint_with(&y, &[md("demo-app-xy")], &others).is_empty());
+    // the package's own skills are untouched by other apps that do not prefix them
+    assert!(lint_with(&y, &[md(N), md("demo-app")], &[("demo", "other")]).is_empty());
+    // a chain of other apps: the longest id owns the name, and the message names it and its package
+    let chain = [
+        ("demo-app-x", "p1"),
+        ("demo-app-x-y", "p2"),
+        ("demo", "p3"),
+    ];
+    assert_eq!(
+        lint_with(&y, &[md("demo-app-x-y-z")], &chain),
+        ["app_skill_name_claimed"]
+    );
+    let m = Manifest::parse(&y, "99.0.0").unwrap();
+    let pkg = pkg_of(&[md("demo-app-x-y-z")]);
+    let others: std::collections::HashMap<String, String> = chain
+        .iter()
+        .map(|(a, p)| ((*a).to_owned(), (*p).to_owned()))
+        .collect();
+    let mut v = Vec::new();
+    archive_rules(&m, &pkg, &others, &mut v);
+    let v: Vec<_> = v
+        .iter()
+        .filter(|x| x.code == "app_skill_name_claimed")
+        .collect();
+    assert_eq!(v.len(), 1);
+    assert!(
+        v[0].message.contains("`demo-app-x-y`") && v[0].message.contains("`p2`"),
+        "{}",
+        v[0].message
+    );
+    assert_eq!(v[0].path, "skills/demo-app/demo-app-x-y-z");
 }
 
 #[test]

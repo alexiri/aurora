@@ -788,7 +788,8 @@ connection with a grant, the app available to its organization and workspace), f
 registry snapshot; they are read-only for the agent, count toward no budget, and carry a
 third-party provenance line in the projected `SKILL.md`. An enabled skill of any other tier with
 the same name shadows an app skill (a disabled one does not veto); between two apps the one whose id
-is the longest prefix of the name wins. `GET /v1/agents/{agent}/skills/effective` and the agent
+is the longest prefix of the name wins. An app skill whose name another app of the snapshot owns
+(that app's id is a longer prefix; D-465) is given to no agent. `GET /v1/agents/{agent}/skills/effective` and the agent
 tools `skill_list` / `skill_get` show them with `tier: "app"`; `skill_create`, `skill_update` and
 `skill_delete` touch the agent tier only.
 

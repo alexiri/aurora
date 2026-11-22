@@ -51,6 +51,22 @@ def run(aurora, *args, timeout=300):
     return p.returncode, p.stdout, p.stderr
 
 
+BUILTIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plugins", "builtin")
+
+
+def other_app_ids(pdir, manifest):
+    """App ids of every built-in package except this one (and not ids this package declares)."""
+    own = {a["about"]["id"] for a in manifest.get("apps") or []}
+    ids = set()
+    for d in sorted(os.listdir(BUILTIN_DIR)):
+        path = os.path.join(BUILTIN_DIR, d, "plugin.yaml")
+        if not os.path.isfile(path) or os.path.samefile(os.path.join(BUILTIN_DIR, d), pdir):
+            continue
+        with open(path) as f:
+            ids.update(a["about"]["id"] for a in (yaml.safe_load(f).get("apps") or []))
+    return sorted(ids - own)
+
+
 def check_package(aurora, pdir):
     # Build the archive once (`aurora plugin build` compiles hooks/ to hooks.wasm for a package
     # with hooks), then run every check on that archive: what is checked is what ships.
@@ -87,14 +103,18 @@ def check_archive(aurora, pdir, archive):
             f"{'non-empty' if hooks else 'empty'}")
         return errs
 
-    # 1. validate (unsigned allowed: the release pipeline signs)
-    rc, out, _ = run(aurora, "validate", archive, "--allow-unsigned")
+    # 1. validate (unsigned allowed: the release pipeline signs). FIX-221, D-465: a skill name is
+    # checked against the app ids of every other built-in, so no built-in claims another's prefix.
+    others = []
+    for o in other_app_ids(pdir, manifest):
+        others += ["--other-app-id", o]
+    rc, out, _ = run(aurora, "validate", archive, "--allow-unsigned", *others)
     if rc != 0:
         err(f"aurora plugin validate failed:\n{out}")
         return errs
 
     # 2. test
-    rc, out, serr = run(aurora, "test", archive)
+    rc, out, serr = run(aurora, "test", archive, *others)
     try:
         report = json.loads(out)
     except ValueError:

@@ -5,7 +5,7 @@
 //! applies to a skill-library skill. `agent.guide` and every file under `agent/<app_id>/` other
 //! than the operations file are *ignored* (a warning, [`ignored_warnings`], never an error): an
 //! old package still ingests and is served, and nothing of them reaches an agent.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use aurora_core::limits::{
     AGENT_SUMMARY_MAX, APP_SKILLS_APP_MAX, APP_SKILLS_MAX, LIBRARY_FILE_MAX,
@@ -120,8 +120,27 @@ struct SkillFiles<'a> {
 /// under `agent/<app_id>/` belongs to an app of the package; every skill under
 /// `skills/<app_id>/<name>/` passes the shared skill validator plus the package rules (name
 /// prefix, text only, per-app counts and sizes).
-pub fn archive_rules(m: &Manifest, pkg: &Package, out: &mut Vec<Violation>) {
+///
+/// (FIX-221, D-465) `others` maps the app ids of the other active packages to their package id;
+/// a skill whose longest-prefix owner is one of those is `app_skill_name_claimed`. Ids this same
+/// package owns (its own old version, on an upgrade) and ids of its own apps are not "other".
+pub fn archive_rules(
+    m: &Manifest,
+    pkg: &Package,
+    others: &HashMap<String, String>,
+    out: &mut Vec<Violation>,
+) {
     let app_ids: BTreeSet<&str> = m.apps.iter().map(|a| a.about.id.as_str()).collect();
+    let foreign: BTreeMap<&str, &str> = others
+        .iter()
+        .filter(|(id, owner)| **owner != m.package.id && !app_ids.contains(id.as_str()))
+        .map(|(id, owner)| (id.as_str(), owner.as_str()))
+        .collect();
+    let all_ids: BTreeSet<&str> = app_ids
+        .iter()
+        .copied()
+        .chain(foreign.keys().copied())
+        .collect();
     let operations_of = |app: &str, file: &str| {
         m.apps
             .iter()
@@ -221,7 +240,17 @@ pub fn archive_rules(m: &Manifest, pkg: &Package, out: &mut Vec<Violation>) {
                 "the aurora- prefix is reserved",
             )),
             Ok(()) => {
-                if owner_app(&app_ids, name) != Some(*app) {
+                let owner = owner_app(&all_ids, name);
+                if let Some(o) = owner.filter(|o| foreign.contains_key(o)) {
+                    out.push(Violation::new(
+                        "app_skill_name_claimed",
+                        at.clone(),
+                        format!(
+                            "`{name}` starts with the id of the app `{o}` (package `{}`); a skill of `{app}` must be named `{app}` or `{app}-…` and not start with another app's id",
+                            foreign[o]
+                        ),
+                    ));
+                } else if owner != Some(*app) {
                     out.push(Violation::new(
                         "app_skill_name",
                         at.clone(),

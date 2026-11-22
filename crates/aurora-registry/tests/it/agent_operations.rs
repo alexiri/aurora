@@ -22,7 +22,7 @@ fn lint(y: &str, ops: &str) -> Vec<&'static str> {
     let m = Manifest::parse(y, "99.0.0").unwrap();
     let pkg = package(&[("operations.json", ops.as_bytes())]);
     let mut v = aurora_registry::validate::manifest(&m);
-    archive_rules(&m, &pkg, &mut v);
+    archive_rules(&m, &pkg, &std::collections::HashMap::new(), &mut v);
     let mut codes: Vec<&'static str> = v
         .iter()
         .map(|x| x.code)
@@ -266,7 +266,12 @@ fn the_operations_file_is_named_and_present() {
     assert!(lint(&y, &one(&op(""))).contains(&"agent_summary_required"));
     let m = Manifest::parse(&yaml(TOOLS, AGENT_OPS, ""), "99.0.0").unwrap();
     let mut v = Vec::new();
-    archive_rules(&m, &package(&[]), &mut v);
+    archive_rules(
+        &m,
+        &package(&[]),
+        &std::collections::HashMap::new(),
+        &mut v,
+    );
     assert!(v.iter().any(|x| x.code == "agent_operations_missing_file"));
 }
 

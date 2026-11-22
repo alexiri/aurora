@@ -149,7 +149,18 @@ The archive (`09 §2`) may contain regular files (no symlink, no hard link) at t
   `<app_id>` or starts with `<app_id>-`, **and** whose longest matching app id among the
   package's apps is `<app_id>` itself: in a package with `jira` and `jira-dc`, `jira-dc-x`
   belongs under `skills/jira-dc/` (`app_skill_name`). Names are therefore unique across the
-  package, and a skill's app is derived from its name.
+  package, and a skill's app is derived from its name. **Another package's app id is not a
+  prefix of the name either** (FIX-221, D-465): the owner is the longest id among the package's
+  apps **and the apps of every other active package**; when that owner is an app of another
+  package, the package is refused with `app_skill_name_claimed` ("`microsoft-365-reset-password`
+  starts with the id of the app `microsoft-365` (package `microsoft-365`)"). The package's own
+  active version is not "another package" (an upgrade is not refused by its old version). The
+  offline `aurora plugin validate` knows only the package's own apps unless told the others with
+  `--other-app-id` (repeatable); `scripts/plugins/check-builtin.sh` passes every other built-in's
+  app ids, so no built-in claims another's prefix. An app installed **later** can still make an
+  existing skill's name claimed: the ingest of that later package is not refused, the skill is
+  left out of the one candidate list (§ below) and never reaches an agent, and the admin view of
+  the shipping package says "Not given to agents: the name belongs to the <App> app".
 - **`agent/<app_id>/<operations file>`**, the file named by `agent.operations` (§3.5). Every
   other file under `agent/<app_id>/` is an old guide file: accepted, ignored (`agent_guide_ignored`).
   `<app_id>` MUST still be an app of this package (`agent_unknown_app`); the operations file
@@ -470,7 +481,10 @@ organization > app**. The app skills of an agent are those of every app its home
 connection with a grant, the app available to the organization and workspace), from the active
 snapshot. A name held by an **enabled** skill of any other tier shadows the app skill (a disabled
 skill does not veto). Two app skills of one name (apps of different packages whose ids overlap):
-the app whose id is the longest prefix of the name wins and the other is shadowed by it. One merge
+the app whose id is the longest prefix of the name wins and the other is shadowed by it. Before the
+merge, the candidate list (`app_skills::candidates`) leaves out every app skill whose name another
+app of the snapshot owns (longest-prefix owner over **all** apps of the snapshot, not only the
+agent's; FIX-221, D-465(c)), so such a skill is shown to no agent. One merge
 function (`domains::skills::app_skills::merge`) is called by the effective-skills route, the agent
 skill tools and the home projection, so what the agent is told and what it can read cannot drift.
 `GET /v1/agents/{agent}/skills/effective` lists app skills with `tier: "app"`, an `app` object and

@@ -1076,7 +1076,9 @@ if any of:
   `agent_unknown_app`, and the `agent_operations_*` rules of `24 §3.5`); **skills**, through the
   shared skill validator: a skill of an app the package does not contain (`app_skill_unknown_app`),
   a name that is not the app id or prefixed by it, is `aurora`-reserved or belongs to a longer
-  app id (`app_skill_name`), a `SKILL.md` without valid frontmatter (`app_skill_frontmatter`), a
+  app id (`app_skill_name`), a name the longest-prefix app of which is an app of **another active
+  package** (`app_skill_name_claimed`, FIX-221, D-465; the offline CLI checks the package's own
+  apps and the ids given with `--other-app-id`), a `SKILL.md` without valid frontmatter (`app_skill_frontmatter`), a
   body or a skill over its size limit (`app_skill_body_too_large`, `app_skill_too_large`), a file
   path outside the grammar, too deep, or with a `skill.md` segment (`app_skill_path`), too many
   files or a file over 64 KiB (`app_skill_too_many_files`, `app_skill_file_too_large`), a file

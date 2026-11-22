@@ -196,6 +196,17 @@ pub struct PluginAgentSkill {
     pub description: String,
     pub size: u64,
     pub files: Vec<PluginAgentSkillFile>,
+    /// (FIX-221, D-465(d)) Present only when no agent gets this skill because the name belongs to
+    /// an app of another package (it was installed after this one).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed_by: Option<PluginAgentSkillClaim>,
+}
+
+/// The app that owns a skill's name.
+#[derive(Serialize, ToSchema)]
+pub struct PluginAgentSkillClaim {
+    pub app_id: String,
+    pub app_name: String,
 }
 
 #[derive(Serialize, ToSchema)]
