@@ -352,6 +352,19 @@ describe("inline approval (RFE-012)", () => {
   });
 });
 
+describe("cancelled queued message (FIX-225, C-1102)", () => {
+  it("names the person with personName, never an address", () => {
+    st.events = [
+      e(1, "turn.queued", { turn_id: "t1", speaker_label: "Ann", text: "go" }),
+      e(2, "followup.cancelled", { turn_id: "t1", followup_id: "f1", by: { id: "u1", display_name: "dave@example.test" } }),
+    ];
+    mock();
+    pane();
+    expect(screen.getByText("Dave cancelled a queued message.")).toBeTruthy();
+    expect(screen.queryByText(/dave@example/)).toBeNull();
+  });
+});
+
 describe("composer", () => {
   it("Enter sends and Shift+Enter does not; Send is disabled while empty", async () => {
     const calls = mock({ "POST /v1/conversations/c1/messages": () => json(202, { turn: { id: "t1" }, followup: null }) });

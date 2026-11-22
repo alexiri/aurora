@@ -236,6 +236,32 @@
       "type": "object"
     },
     {
+      "description": "(FIX-225, C-1156) Steer every waiting follow-up of the turn the clicker may steer.",
+      "properties": {
+        "data": {
+          "properties": {
+            "turn_id": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "turn_id"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "const": "followup.steer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
       "properties": {
         "data": {
           "properties": {

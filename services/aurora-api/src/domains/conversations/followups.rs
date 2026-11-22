@@ -278,7 +278,8 @@ pub async fn cancel(state: &AppState, c: &Caller, id: Uuid) -> Result<Followup, 
         row.conversation_id,
         row.parent_turn_id,
         "followup.cancelled",
-        &json!({"followup_id": row.id, "by_label": by_label}),
+        // The canceller as a person (`{ id, display_name }`, C-1102): the dashboard shows them with `personName`.
+        &json!({"followup_id": row.id, "by": {"id": c.user_id, "display_name": by_label}}),
     )
     .await?;
     let followup = view(state, &mut tx, c, row).await?;

@@ -465,7 +465,10 @@ async fn only_the_author_edits_and_anyone_who_may_stop_cancels() {
     .fetch_one(w.r.h.pool())
     .await
     .unwrap();
-    assert_eq!(cancelled, json!({"followup_id": f, "by_label": "U"}));
+    assert_eq!(
+        cancelled,
+        json!({"followup_id": f, "by": {"id": w.b.id, "display_name": "U"}})
+    );
 }
 
 #[tokio::test]
@@ -1024,7 +1027,15 @@ async fn double_click_steer_across_connections_hands_over_exactly_one_message() 
     let w = world(false).await;
     let f = w.followup(&w.a, "once only").await;
     let (a, b, c) = tokio::join!(w.steer(&w.a, f), w.steer(&w.a, f), w.steered());
-    assert_eq!((a.0, b.0), (202, 202));
+    // A click that lands after the engine already handed the message over is refused (409): one outcome
+    // per click, never an error of another kind, and at least the first click asked.
+    let ok = |s: u16| s == 202 || s == 409;
+    assert!(
+        ok(a.0) && ok(b.0) && (a.0 == 202 || b.0 == 202),
+        "{} {}",
+        a.0,
+        b.0
+    );
     let rest = w.steered().await;
     assert_eq!(
         c.len() + rest.len(),

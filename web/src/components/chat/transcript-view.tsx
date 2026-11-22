@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { buildRows, dayLabel } from "@/lib/chat/layout";
+import { personName } from "@/lib/workspace-name";
 import { activeTurnId, type TranscriptState } from "@/lib/chat/transcript";
 
 import { AccessRequestCard } from "./access-request-card";
@@ -15,11 +16,14 @@ const s = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /** (FIX-225, D-470) The system line of a follow-up or send-now event: what happened, in words, never a code. */
 function systemLine(type: string, p: Record<string, unknown>): string {
+  // (C-1102) The canceller is a person `{ id, display_name }`; an address is never shown, `personName` makes a name of it.
+  const who = p.by && typeof p.by === "object" ? (p.by as Record<string, unknown>) : null;
+  const by = who && typeof who.display_name === "string" ? personName(who.display_name) : "";
   switch (type) {
     case "message.joined":
       return "Follow-up joined the running turn.";
     case "followup.cancelled":
-      return s(p.by_label) ? `${s(p.by_label)} cancelled a queued message.` : "A queued message was cancelled.";
+      return by ? `${by} cancelled a queued message.` : "A queued message was cancelled.";
     case "followup.steer_failed":
       return s(p.reason) === "refused"
         ? "A queued message couldn't be steered in (the agent can't take messages right now). It runs after the current turn."
