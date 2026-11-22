@@ -46,7 +46,8 @@ Read first:
      note for P6-TPL-4 to switch). It is prefilled with C-1118's outline, filled in with the agent's name. Save is
      refused while the outline's placeholder lines are unchanged ("Say what <Agent> is for, so people can decide
      whether to use it").
-   - The other fields and checklist are exactly C-1118's: memories unticked by default with its sentence; helper files
+   - The other fields and checklist are exactly C-1118's: memories unticked by default with its sentence (a ticked
+     locked memory keeps `locked: true`, through the export's memory writer from P6-MEMLOCK Part B; C-1151); helper files
      ticked when there are any; Why required per app; Required per app; the id follows the name until edited and is
      checked against the C-1141 rule; the version is a semver.
    - One line lists what is left out: "<n> organization or workspace skills are not included", "<n> one-time
@@ -107,13 +108,13 @@ Production specs are updated by reading, and listed in the completion report.
 - **Owns:** `web/src/lib/export/agent-template.ts` (new); the Save as template dialog and its tests; the golden
   fixture and its Rust test; the two doc paragraphs. The Export and Import code is read, not changed. A small export
   of a helper is fine, and so is an executable-bit option in `zip.ts` that leaves export bytes unchanged.
-- Starts after P6-TPL-1 is merged. The helper part needs P6-TPL-6's routes: mock them from C-1143 until it merges,
+- Starts after P6-TPL-1 and P6-MEMLOCK Part B are merged. The helper part needs P6-TPL-6's routes: mock them from C-1143 until it merges,
   then finish. It can run beside P6-TPL-2 (no shared files).
 - If P6-TPL-4 runs at the same time, it owns the Manage page's new Template section. Keep this change inside the
   Export and import part.
 
 ## Numbers
-D-435, D-436, D-456, D-457, D-458, C-1118, C-1119, C-1141, C-1142, SEC-146. No migration.
+D-435, D-436, D-456, D-457, D-458, D-463(d), C-1118, C-1119, C-1141, C-1142, C-1151, SEC-146. No migration.
 
 ## Suggested agent/model and reason
 `nextjs-developer` (Sonnet). A dialog and a pure file builder on the existing export code. The cross-check with the

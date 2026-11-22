@@ -1756,6 +1756,17 @@ Three migrations. P6-TPL-2 creates the four template tables. P6-TPL-6 creates `a
 
 The gateway role has no access to any of these tables.
 
+#### `memories` (locked memories; phase 6, P6-MEMLOCK, D-463, D-464, C-1148, SEC-151)
+One migration (P6-MEMLOCK Part A, next free number when placed); the rows move into `§memories` when it lands.
+
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| locked | boolean not null default false | the agent cannot save or delete this memory (409 `memory_locked`); people can; counts toward `MEMORY_MAX_PER_AGENT` | 6 (P6-MEMLOCK) |
+| locked_at | timestamptz null | set when `locked` becomes true, cleared when false | 6 (P6-MEMLOCK) |
+| locked_by | uuid null FK→users (set null) | the person who locked it; null for a key without a user | 6 (P6-MEMLOCK) |
+
+A lock writes no `memory_revisions` row (it is not a content change); it is audited (`memory.lock` / `memory.unlock`).
+
 #### `secrets` (additional LLM providers; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

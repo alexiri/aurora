@@ -28,8 +28,10 @@ This is the single implementation of C-1141, C-1103 (parsing), C-1104 and C-1142
 CLI and P6-TPL-5's test must not re-implement any of it. It may depend on `aurora-core`, for the limits and the C-1123
 address parser.
 - **Model:**
-  - `TemplateContent`: meta from `template.yaml`; agent fields; instructions; memories; skills with files and
-    executable bits; skill references; helpers; automations; avatar bytes.
+  - `TemplateContent`: meta from `template.yaml`; agent fields; instructions; memories (each with `locked`: the
+    optional front-matter boolean, default false, any other value `template_field` at `memory/<key>.md#/locked`;
+    part of `content_sha256`; C-1151, D-463(d)); skills with files and executable bits; skill references; helpers;
+    automations; avatar bytes. Add a locked memory to the example repository and the `25` format section.
   - `TemplateMeta`, `InputDecl`, `AppEntry` (`App { app, required, level, tools?, why }` or
     `AnyOf { any_of, required, level, why }`), `SkillRef` (`Library { url, ref, path, skill, required, why }` with the
     address normalized by C-1123, or `Organization { name, required, why }`).
@@ -172,12 +174,13 @@ Reading repositories, downloads, storage, routes, approval and the poll job (P6-
 - **Owns:** `crates/aurora-template/**` (new; the workspace `Cargo.toml` members line is the only edit there);
   `crates/aurora-core/src/limits.rs` (the `TEMPLATE_*` constants only); `services/aurora-cli` (the `template`
   subcommand); `docs/25-agent-templates.md`; `templates/examples/**`; the `02 §Limits` rows; the reading-list links.
-- This is the first P6-TEMPLATES brief. P6-TPL-2, P6-TPL-5 and P6-TPL-6 start after it merges.
+- This is the first P6-TEMPLATES brief. It starts after P6-MEMLOCK Part A is merged (D-463(e): locked memories land
+  just before templates). P6-TPL-2, P6-TPL-5 and P6-TPL-6 start after it merges.
 - `Cargo.lock` changes only by the new member. No new external crate: ask before adding one.
 
 ## Numbers
-D-435, D-436, D-456, D-457, D-458, C-1103..C-1105, C-1113 (constants), C-1141, C-1142 (format), C-1144, SEC-146. No
-migration.
+D-435, D-436, D-456, D-457, D-458, D-463(d), C-1103..C-1105, C-1113 (constants), C-1141, C-1142 (format), C-1144,
+C-1151 (format), SEC-146. No migration.
 
 ## Suggested agent/model and reason
 `rust-developer` (Sonnet). It is a self-contained parser and validator with adversarial unit tests; zip handling and

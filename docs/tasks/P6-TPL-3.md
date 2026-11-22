@@ -37,7 +37,8 @@ and `agent_template_parts` of C-1112 (with its four kinds). Move them out of `03
   - skill create;
   - the library add path's write step;
   - `agent_helpers::replace_all` (C-1143, P6-TPL-6);
-  - memory save;
+  - memory save (a template memory with `locked: true` is created locked, `locked_by` the caller, through P6-MEMLOCK's
+    create path; C-1151);
   - schedule create;
   - webhook create;
   - **the one grant writer** (`via: "template"`).
@@ -94,7 +95,8 @@ A separate reviewer reviews against SEC-146:
 
 ## Acceptance criteria
 - [ ] API tests for a full creation from the service-monitor example: the agent; its skills; the library skill (from
-  a fixture library added to the organization, pinned at the commit, read-only); the helper files; memories;
+  a fixture library added to the organization, pinned at the commit, read-only); the helper files; memories (the
+  example's locked one created locked);
   schedules on and off as chosen; a paused webhook with its secret shown once; grants with `via: "template"` and their
   audit rows; starter grants; provenance rows for all four kinds.
 - [ ] Each refusal of C-1111:
@@ -137,8 +139,8 @@ A separate reviewer reviews against SEC-146:
   you refactor, so no other lane edits them at the same time.
 
 ## Numbers
-D-435, D-436, D-456, D-457, C-1111, C-1112, C-1113, C-1142 (adding), C-1143 (writer), SEC-146. Migration: next free
-when placed.
+D-435, D-436, D-456, D-457, D-463(d), C-1111, C-1112, C-1113, C-1142 (adding), C-1143 (writer), C-1151 (create),
+SEC-146. Migration: next free when placed.
 
 ## Suggested agent/model and reason
 `rust-developer` (Sonnet). It is one transactional route over many existing writers, plus a diff and hash state
