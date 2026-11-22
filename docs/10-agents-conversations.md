@@ -397,7 +397,7 @@ generically.
 | `correction`                                                 | yes     | `{ turn_id, message_id, action: "retract"|"replace", text? }`                       |
 | `message.joined`                                             | yes     | `{ turn_id, followup_id }`                                                          |
 | `message.sent_now`                                           | yes     | `{ turn_id }`                                                                       |
-| `followup.steer_requested` / `.steer_failed` / `.edited` / `.cancelled` | yes | `{ followup_id }`; `.steer_failed` also `{ reason: "missed"\|"refused" }`, `.edited` `{ text }`, `.cancelled` `{ by_label }` (FIX-225, C-1153, C-1155) |
+| `followup.steer_requested` / `.steer_failed` / `.edited` / `.cancelled` | yes | `{ followup_id }`; `.steer_failed` also `{ reason: "missed"\|"refused" }`, `.edited` `{ text }`, `.cancelled` `{ by: { id, display_name } }` (C-1102) (FIX-225, C-1153, C-1155) |
 | `turn.send_now_failed`                                       | yes     | `{ turn_id, outcome: "nothing_running"\|"unsupported" }` (FIX-225, C-1156)          |
 | `approval.pending` / `approval.decided` / `approval.expired` | yes     | `{ approval_id, summary, decision?, decided_by_label?, via? }`; (phase 5 (D-138, moved from phase 4), RFE-011b) `approval.pending` also `{ expires_at, parked }`, `approval.decided` for a parked approval `{ resume_expires_at }`, `approval.expired` `{ reason: "deadline" \| "resume_window" }` |
 | `action_approval.pending` / `.decided`                       | yes     | `{ id, summary, decision? }`                                                        |
