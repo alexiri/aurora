@@ -365,11 +365,17 @@ impl HomeProjector {
             .collect();
 
         let skills_root = self.skills_prefix().map(|s| root.join(s));
-        if let Some(s) = &skills_root {
+        if let (Some(rel), Some(s)) = (self.skills_prefix(), &skills_root) {
+            // (SEC-150) The agent's uid owns the home: a link in any component from the home down
+            // to the skills root, or anywhere inside it, would let the supervisor's chmod, mkdir
+            // and rename write outside the managed tree. Links are removed (never followed) first.
+            clear_link_chain(&root, &rel);
+            unlink_tree_symlinks(s);
             set_dirs(s, 0o755);
         }
         let apps_root = root.join(APPS_DIR);
-        unlink_symlinks(&apps_root);
+        clear_link_chain(&root, Path::new(APPS_DIR));
+        unlink_tree_symlinks(&apps_root);
         set_dirs(&apps_root, 0o755);
 
         // Install.
@@ -394,6 +400,10 @@ impl HomeProjector {
                 0o444
             };
             if let Some(p) = dst.parent() {
+                // Every managed destination: no link in the chain from the home down.
+                if let Ok(rp) = p.strip_prefix(&root) {
+                    clear_link_chain(&root, rp);
+                }
                 fs::create_dir_all(p)?;
             }
             fs::set_permissions(&src, fs::Permissions::from_mode(mode))?;
@@ -576,21 +586,34 @@ impl HomeProjector {
     }
 }
 
-/// The agent's uid owns `.aurora`: a symlink put where Aurora keeps a folder is removed before
-/// anything is written through it (the root and each app folder; files inside are replaced by
-/// rename, which does not follow a link at the destination).
-fn unlink_symlinks(apps_root: &Path) {
-    let is_link = |p: &Path| fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
-    if is_link(apps_root) {
-        let _ = fs::remove_file(apps_root);
+/// Removes a symlink found at any component of `rel` below `root` (`rel` is relative and clean):
+/// `root/.claude` as a link, then `root/.claude/skills`, and so on. A real directory or a missing
+/// component is left alone. The link is unlinked, its target never touched.
+fn clear_link_chain(root: &Path, rel: &Path) {
+    let mut p = root.to_path_buf();
+    for c in rel.components() {
+        p.push(c);
+        if fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
+            let _ = fs::remove_file(&p);
+        }
+    }
+}
+
+/// Removes every symlink under `dir` (and `dir` itself when it is one), without following any.
+/// The agent's uid owns these folders: a link put where Aurora keeps a folder or a file must not
+/// be written, chmodded or renamed through.
+fn unlink_tree_symlinks(dir: &Path) {
+    if fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
+        let _ = fs::remove_file(dir);
         return;
     }
-    let Ok(rd) = fs::read_dir(apps_root) else {
-        return;
-    };
+    let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.filter_map(Result::ok) {
-        if is_link(&e.path()) {
+        let Ok(t) = e.file_type() else { continue };
+        if t.is_symlink() {
             let _ = fs::remove_file(e.path());
+        } else if t.is_dir() {
+            unlink_tree_symlinks(&e.path());
         }
     }
 }

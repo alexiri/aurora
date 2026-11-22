@@ -437,3 +437,46 @@ fn token_lifecycle_replays_and_a_broken_exchange_fails() {
     assert!(!ok_run);
     assert!(v.to_string().contains("stale_codes"), "{v}");
 }
+
+/// (SEC-150) `preview` to stdout never emits a control character of a package's text (an ESC
+/// sequence in a script shows as `\u{1b}`), and a package that does not validate is not previewed:
+/// its findings go to stderr and nothing to stdout.
+#[test]
+fn preview_escapes_control_characters_and_refuses_an_invalid_package() {
+    let d = tmp();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/fixtures/fixture-app-skills");
+    let src = d.join("fg");
+    copy_dir(&fixture, &src);
+    std::fs::create_dir_all(src.join("assets")).unwrap();
+    std::fs::write(
+        src.join("assets/icon.png"),
+        aurora_registry::builder::png_stub(64, 64),
+    )
+    .unwrap();
+    let script = src.join("skills/skills-demo/skills-demo-book-room/scripts/free-rooms.sh");
+    std::fs::write(&script, "#!/bin/sh\necho \u{1b}[31mred\u{1b}[0m\r\u{7}\n").unwrap();
+    let o = aurora(&["plugin", "preview", s(&src), "--app", "skills-demo"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        !out.chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t'),
+        "a control character reached stdout: {out:?}"
+    );
+    assert!(
+        out.contains("echo \\u{1b}[31mred\\u{1b}[0m\\u{d}\\u{7}"),
+        "{out}"
+    );
+    // A NUL byte breaks the text rule: the validator's finding is printed, nothing is previewed.
+    std::fs::write(&script, b"#!/bin/sh\necho a\0b\n").unwrap();
+    let o = aurora(&["plugin", "preview", s(&src), "--app", "skills-demo"]);
+    assert!(!o.status.success());
+    assert!(
+        o.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("app_skill_not_text"), "{err}");
+}

@@ -13405,7 +13405,7 @@ export interface components {
             summary: boolean;
         };
         PluginAgentFileChange: {
-            /** @description `added` | `changed` | `removed` | `mode` (only the executable bit changed). */
+            /** @description `added` | `changed` | `removed` | `mode` (the executable bit differs; listed next to `changed` when the content changed too). */
             change: string;
             path: string;
         };

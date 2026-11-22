@@ -176,8 +176,33 @@ fn set_mode(_p: &Path, _exec: bool) -> Result<()> {
     Ok(())
 }
 
+/// Text for a terminal: every control character but LF and TAB (ESC, CR, NUL, C1, …) is shown as
+/// an escape (`\x1b`), so a package's script cannot drive the operator's terminal.
+fn terminal_safe(s: &str) -> String {
+    use std::fmt::Write as _;
+    let mut o = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() && c != '\n' && c != '\t' {
+            let _ = write!(o, "\\u{{{:x}}}", c as u32);
+        } else {
+            o.push(c);
+        }
+    }
+    o
+}
+
 pub fn preview(path: &Path, app: Option<&str>, access: &str, out: Option<&Path>) -> Result<i32> {
     let pkg = pack::load(path)?;
+    // The validator first: a package that breaks a rule is not previewed (its findings are printed
+    // to stderr, escaped), so what is shown below is what an accepted package gives agents.
+    let findings = cmds::lint_unsigned(&pkg)?;
+    if !findings.is_empty() {
+        for v in &findings {
+            eprintln!("{}", terminal_safe(&v.to_string()));
+        }
+        eprintln!("preview: the package does not validate; fix the findings above first");
+        return Ok(1);
+    }
     let manifest = pkg.manifest(cmds::CORE_VERSION).map_err(|v| {
         anyhow!(
             "manifest invalid: {}",
@@ -220,9 +245,9 @@ pub fn preview(path: &Path, app: Option<&str>, access: &str, out: Option<&Path>)
                 }
                 None => println!(
                     "==> {}{} <==\n{}",
-                    f.path,
+                    terminal_safe(&f.path),
                     if f.exec { " (executable)" } else { "" },
-                    f.text
+                    terminal_safe(&f.text)
                 ),
             }
         }

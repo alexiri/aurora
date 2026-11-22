@@ -168,6 +168,22 @@ async fn an_invalid_package_stores_no_agent_blob() {
         .await;
     assert_eq!(v["status"], "invalid", "{v}");
     assert!(blob_kind(&h, &hex(&md)).await.is_none());
+    // The detail still answers 200 (no archive is stored for it), with the lint result and no
+    // agent files, so the admin can read why it was refused.
+    let (s, d) = a
+        .json(
+            Method::GET,
+            &format!("/v1/admin/plugins/{}", v["id"].as_str().unwrap()),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{d}");
+    assert_eq!(d["status"], "invalid");
+    assert!(
+        d["violations"].as_array().is_some_and(|x| !x.is_empty()),
+        "{d}"
+    );
+    assert_eq!(d["agent"][0]["skills"], json!([]));
 }
 
 /// (SEC-150) A skill that breaks a rule of the shared validator makes the package `invalid` with
@@ -217,6 +233,23 @@ async fn a_package_that_breaks_a_skill_rule_is_invalid_with_the_code() {
         for (_, c) in &files {
             assert!(blob_kind(&h, &hex(c)).await.is_none(), "{code}");
         }
+        // And the admin can open it: the detail carries the violation, not a 500.
+        let (s, d) = a
+            .json(
+                Method::GET,
+                &format!("/v1/admin/plugins/{}", v["id"].as_str().unwrap()),
+                None,
+            )
+            .await;
+        assert_eq!(s, 200, "{code}: {d}");
+        assert!(
+            d["violations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|x| x["code"] == code),
+            "{code}: {d}"
+        );
     }
 }
 
@@ -464,4 +497,37 @@ async fn a_new_version_reports_what_changed_and_audits_it() {
     assert_eq!(v["status"], "active", "{v}");
     let meta = wait_audit_meta(&h, "plugin.activate", v["id"].as_str().unwrap()).await;
     assert!(meta.get("agent_changed").is_none(), "{meta}");
+}
+
+/// A script whose content and executable bit both change is reported twice, `changed` and `mode`,
+/// so the review says it became executable even though its text changed too (C-1136).
+#[tokio::test]
+async fn a_file_that_changes_content_and_becomes_a_script_shows_both() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let md = skill_md("gdemo-app-steps", "Do the thing", "# Steps\n");
+    let v1 = a
+        .upload_with(
+            &yaml("api.gdemo.example", ""),
+            &[(SKILL, &md), (SCRIPT, b"echo one\n")],
+        )
+        .await;
+    let (s, p) = a.act(&v1["id"], "approve").await;
+    assert_eq!(s, 200, "{p}");
+    let v = a
+        .upload_with_exec(
+            &v2_yaml(),
+            &[(SKILL, &md), (SCRIPT, b"echo two\n")],
+            &[SCRIPT],
+        )
+        .await;
+    assert_eq!(v["status"], "pending_approval", "{v}");
+    let d = a.status(&v["id"]).await;
+    assert_eq!(
+        d["agent"][0]["changed"]["skills"][0]["files"],
+        json!([
+            {"path": "scripts/run.sh", "change": "changed"},
+            {"path": "scripts/run.sh", "change": "mode"},
+        ])
+    );
 }

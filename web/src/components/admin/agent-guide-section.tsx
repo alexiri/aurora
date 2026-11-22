@@ -53,7 +53,7 @@ function FileList({
 }: {
   heading: string;
   rows: Row[];
-  changes: Map<string, Change>;
+  changes: Map<string, Change[]>;
   selected: string | null;
   onSelect: (row: Row) => void;
 }) {
@@ -77,7 +77,9 @@ function FileList({
               {r.extra ? `${r.extra}, ` : ""}
               {formatBytes(r.size)}
             </span>
-            <ChangeBadge change={changes.get(r.id)} />
+            {(changes.get(r.id) ?? []).map((c) => (
+              <ChangeBadge key={c} change={c} />
+            ))}
           </li>
         ))}
       </ul>
@@ -89,11 +91,12 @@ function AppAgent({ plugin, agent }: { plugin: PluginPackage; agent: PluginAgent
   const [sel, setSel] = useState<Row | null>(null);
   const name = plugin.apps.find((a) => a.app_id === agent.app_id)?.name ?? agent.app_id;
   const changed = agent.changed ?? null;
-  const changes = new Map<string, Change>();
+  const changes = new Map<string, Change[]>();
   const removed: string[] = [];
   for (const s of changed?.skills ?? []) {
     for (const f of s.files) {
-      changes.set(`${s.name}/${f.path}`, f.change as Change);
+      const key = `${s.name}/${f.path}`;
+      changes.set(key, [...(changes.get(key) ?? []), f.change as Change]);
       if (f.change === "removed") removed.push(`${s.name}/${f.path}`);
     }
   }

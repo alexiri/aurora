@@ -225,7 +225,7 @@ pub struct PluginAgentSkillChange {
 #[derive(Serialize, ToSchema)]
 pub struct PluginAgentFileChange {
     pub path: String,
-    /// `added` | `changed` | `removed` | `mode` (only the executable bit changed).
+    /// `added` | `changed` | `removed` | `mode` (the executable bit differs; listed next to `changed` when the content changed too).
     pub change: String,
 }
 

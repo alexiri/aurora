@@ -97,10 +97,14 @@ pub async fn agent_view(conn: &mut PgConnection, r: &PackageRow) -> Result<Agent
         .map_err(|e| ApiError::internal(format!("stored manifest unreadable: {e}")))?;
     let has_agent = manifest.apps.iter().any(|a| a.agent.is_some());
     let mut files = AgentFiles::default();
-    if has_agent {
-        let bytes = plugins::get_blob(&mut *conn, &r.digest, "archive")
-            .await?
-            .ok_or_else(|| ApiError::internal("Package archive blob is missing."))?;
+    // An `invalid` package stores no archive (ingest keeps none): the detail still answers, with
+    // the manifest and no agent files, so the admin can read why it was refused.
+    let archive = if has_agent && r.status != "invalid" {
+        plugins::get_blob(&mut *conn, &r.digest, "archive").await?
+    } else {
+        None
+    };
+    if let Some(bytes) = archive {
         let pkg = Package::read(&bytes, &Limits::default())
             .map_err(|_| ApiError::internal("Stored package archive is unreadable."))?;
         files = agent_files(&manifest, &pkg);
@@ -119,8 +123,8 @@ fn skill_files(s: &SkillEntry) -> Vec<(&str, &str, bool)> {
         .collect()
 }
 
-/// How one skill changed (`None` = the same). A file whose only difference is the executable bit
-/// is `mode`.
+/// How one skill changed (`None` = the same). A file whose executable bit differs has a `mode`
+/// entry, next to a `changed` one when its content changed too (C-1136).
 fn skill_change(
     old: Option<&SkillEntry>,
     new: Option<&SkillEntry>,
@@ -155,18 +159,23 @@ fn skill_change(
                         path: (*p).to_owned(),
                         change: "added".into(),
                     }),
-                    Some((_, oh, ox)) if oh != h => {
-                        let _ = ox;
-                        files.push(PluginAgentFileChange {
-                            path: (*p).to_owned(),
-                            change: "changed".into(),
-                        });
+                    Some((_, oh, ox)) => {
+                        // A file whose content and executable bit both changed is listed twice
+                        // (`changed` and `mode`), so the review says it became (or stopped being) a
+                        // script even when its text changed too.
+                        if oh != h {
+                            files.push(PluginAgentFileChange {
+                                path: (*p).to_owned(),
+                                change: "changed".into(),
+                            });
+                        }
+                        if ox != x {
+                            files.push(PluginAgentFileChange {
+                                path: (*p).to_owned(),
+                                change: "mode".into(),
+                            });
+                        }
                     }
-                    Some((_, _, ox)) if ox != x => files.push(PluginAgentFileChange {
-                        path: (*p).to_owned(),
-                        change: "mode".into(),
-                    }),
-                    Some(_) => {}
                 }
             }
             for (p, _, _) in &of {

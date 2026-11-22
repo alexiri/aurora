@@ -148,6 +148,11 @@ fn url_host(url: &str) -> Result<String> {
     Ok(host.to_owned())
 }
 
+/// The package validator without signature or key checks (`aurora plugin preview`).
+pub(super) fn lint_unsigned(pkg: &Package) -> Result<Vec<Violation>> {
+    lint(pkg, &[], true, &Reserved::default(), CORE_VERSION)
+}
+
 fn lint(
     pkg: &Package,
     pubkeys: &[PathBuf],

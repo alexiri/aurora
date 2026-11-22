@@ -602,7 +602,7 @@ index of a large API is the operations file, searched with `aurora-agent` (§10a
   the active version of the same package: `null` when there is none, else `{ summary: bool,
   instructions: bool, operations: bool, skills: [{ name, change: "added"|"changed"|"removed",
   files: [{ path, change: "added"|"changed"|"removed"|"mode" }] }] }`; `mode` means only the
-  executable bit changed.
+  executable bit differs (listed next to `changed` when the content changed too).
 - `GET /v1/admin/plugins/{id}/apps/{app_id}/skills/{name}/file?path=<path>` (instance admins;
   `path` absent = `SKILL.md` as shipped) and `GET /v1/admin/plugins/{id}/apps/{app_id}/operations`
   return the file as `text/plain; charset=utf-8` with `X-Content-Type-Options: nosniff`,

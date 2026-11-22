@@ -1084,3 +1084,104 @@ fn the_aurora_agent_sentences_follow_the_agent_cli_flag() {
     assert!(!without.contains("aurora-agent"), "{without}");
     assert!(without.contains("`tools.md` lists every operation"));
 }
+
+/// (SEC-150) The agent's uid owns the home, and app skills land at predictable names under the
+/// skills folder. A symlink the agent puts at the skills root, at a parent of it (`.claude`) or at
+/// one skill folder must never be written, chmodded or renamed through: after the sync nothing is
+/// in the outside directory (and its mode is unchanged) and the skills are in real directories.
+fn link_attack(replace: impl Fn(&Path, &Path)) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let d = TempDir::new();
+    let outside = TempDir::new();
+    let root = d.path();
+    let out = outside.path();
+    fs::set_permissions(out, fs::Permissions::from_mode(0o700)).unwrap();
+    let skills = [
+        (".claude/skills/demo/SKILL.md", "v1"),
+        (".claude/skills/demo/scripts/run.sh", "echo"),
+    ];
+    let mut p = projector(root);
+    apply_all(&mut p, &generation(1, &skills, &[]));
+    p.commit(1).unwrap();
+    // Now the agent swaps a directory of the managed path for a link to somewhere else.
+    replace(root, out);
+    let skills2 = [
+        (".claude/skills/demo/SKILL.md", "v2"),
+        (".claude/skills/demo/scripts/run.sh", "echo 2"),
+        (".claude/skills/other/SKILL.md", "other"),
+    ];
+    apply_all(&mut p, &generation(2, &skills2, &[]));
+    p.commit(2).unwrap();
+    assert_eq!(
+        fs::read_dir(out).unwrap().count(),
+        0,
+        "something was written outside the home"
+    );
+    assert_eq!(mode(out), 0o700, "the outside directory was chmodded");
+    // The skills are real directories, all the way down, with the new content.
+    for rel in [
+        ".claude",
+        ".claude/skills",
+        ".claude/skills/demo",
+        ".claude/skills/other",
+    ] {
+        let m = fs::symlink_metadata(root.join(rel)).unwrap();
+        assert!(m.file_type().is_dir(), "{rel} is not a real directory");
+    }
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/skills/demo/SKILL.md")).unwrap(),
+        "v2"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/skills/other/SKILL.md")).unwrap(),
+        "other"
+    );
+}
+
+#[test]
+fn a_skill_folder_replaced_by_a_symlink_is_not_written_through() {
+    link_attack(|root, out| {
+        let p = root.join(".claude/skills/demo");
+        make_writable(&root.join(".claude/skills"));
+        fs::remove_dir_all(&p).unwrap();
+        std::os::unix::fs::symlink(out, &p).unwrap();
+    });
+}
+
+#[test]
+fn the_skills_root_replaced_by_a_symlink_is_not_written_through() {
+    link_attack(|root, out| {
+        let p = root.join(".claude/skills");
+        make_writable(&root.join(".claude"));
+        make_writable(&p);
+        fs::remove_dir_all(&p).unwrap();
+        std::os::unix::fs::symlink(out, &p).unwrap();
+    });
+}
+
+#[test]
+fn a_parent_of_the_skills_root_replaced_by_a_symlink_is_not_written_through() {
+    link_attack(|root, out| {
+        let p = root.join(".claude");
+        make_writable(&p);
+        make_writable(&p.join("skills"));
+        fs::remove_dir_all(&p).unwrap();
+        std::os::unix::fs::symlink(out, &p).unwrap();
+    });
+}
+
+/// The projection makes its folders read-only; the agent's uid owns the parent and replaces them.
+fn make_writable(p: &Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+    fn walk(p: &Path) {
+        let _ = fs::set_permissions(p, fs::Permissions::from_mode(0o755));
+        if let Ok(rd) = fs::read_dir(p) {
+            for e in rd.flatten() {
+                if e.file_type().is_ok_and(|t| t.is_dir()) {
+                    walk(&e.path());
+                }
+            }
+        }
+    }
+    walk(p);
+}

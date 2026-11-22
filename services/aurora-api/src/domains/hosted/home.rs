@@ -683,6 +683,28 @@ async fn render_inputs(
     ))
 }
 
+/// The files of an app skill that may be projected, `None` when its name is refused. The shared
+/// rules (`skill_format::check_name`, `path_ok`) run again here because the projected path is
+/// built from the snapshot's name and file paths; a bad file is skipped with a warning.
+fn projectable(sk: &AppSkill) -> Option<Vec<&aurora_registry::snapshot::SkillFileEntry>> {
+    if aurora_registry::skill_format::check_name(&sk.skill.name).is_err() {
+        return None;
+    }
+    Some(
+        sk.skill
+            .files
+            .iter()
+            .filter(|f| {
+                let ok = aurora_registry::skill_format::path_ok(&f.path);
+                if !ok {
+                    tracing::warn!(app = %sk.app_id, skill = %sk.skill.name, "app skill file path refused; not projected");
+                }
+                ok
+            })
+            .collect(),
+    )
+}
+
 /// Home-relative root of the app folders (C-643).
 const APPS_ROOT: &str = ".aurora/apps";
 
@@ -760,6 +782,12 @@ pub async fn render(
             app_entries.push(json!({"path": path, "content": content}));
         }
         for sk in &f.skills {
+            // (SEC-150) Defence in depth: the snapshot's names and paths were validated at ingest, but
+            // the projected path is built from them, so the shared rules run again here.
+            let Some(files) = projectable(sk) else {
+                tracing::warn!(app = %sk.app_id, "app skill name refused; not projected");
+                continue;
+            };
             let Some(md) = agent_bytes(conn, &sk.skill.sha256).await? else {
                 tracing::warn!(app = %sk.app_id, skill = %sk.skill.name, "app skill blob missing; not projected");
                 continue;
@@ -776,7 +804,7 @@ pub async fn render(
             let path = format!("{skills_root}/{}/SKILL.md", sk.skill.name);
             manifest.push(json!({"path": path}));
             skill_entries.push(json!({"path": path, "content": text}));
-            for file in &sk.skill.files {
+            for file in files {
                 let Some(bytes) = agent_bytes(conn, &file.sha256).await? else {
                     tracing::warn!(app = %sk.app_id, skill = %sk.skill.name, file = %file.path, "app skill file blob missing; not projected");
                     continue;
@@ -998,6 +1026,55 @@ pub(crate) fn fit_render_inputs(v: &mut Value, max: usize) -> bool {
 #[cfg(test)]
 mod name_tests {
     use super::*;
+
+    fn skill(name: &str, paths: &[&str]) -> AppSkill {
+        AppSkill {
+            app_id: "a".into(),
+            app_name: "A".into(),
+            version: "1".into(),
+            skill: aurora_registry::snapshot::SkillEntry {
+                name: name.into(),
+                description: "d".into(),
+                sha256: "0".into(),
+                size: 1,
+                files: paths
+                    .iter()
+                    .map(|p| aurora_registry::snapshot::SkillFileEntry {
+                        path: (*p).into(),
+                        sha256: "0".into(),
+                        size: 1,
+                        executable: false,
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    /// (SEC-150) A hand-built snapshot entry with a traversal name or path is not projected: the
+    /// shared name and path rules run again where the projected path is built.
+    #[test]
+    fn a_snapshot_entry_with_a_bad_name_or_path_is_not_projected() {
+        for bad in ["..", "a/b", "../x", "Aurora-x", "aurora", "A B", ""] {
+            assert!(projectable(&skill(bad, &[])).is_none(), "{bad:?}");
+        }
+        let ok = skill(
+            "a-x",
+            &[
+                "scripts/run.sh",
+                "../escape.sh",
+                "/abs",
+                "a/../b",
+                "skill.md",
+                "a//b",
+            ],
+        );
+        let files: Vec<&str> = projectable(&ok)
+            .unwrap()
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect();
+        assert_eq!(files, ["scripts/run.sh"]);
+    }
 
     /// (P5-GUIDE-7, C-654) `render_inputs.platform_tools` over the real registry: core tools stay
     /// out of the families, every on-demand tool is in exactly one family with a purpose, and the
