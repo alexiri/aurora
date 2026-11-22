@@ -35,6 +35,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(preview_link))
         .routes(routes!(confirm_link))
         .routes(routes!(list_dm_defaults, set_dm_default))
+        .routes(routes!(dm_default_options))
         .routes(routes!(list_reach))
         .routes(routes!(decide_reach))
 }
@@ -449,7 +450,24 @@ async fn list_dm_defaults(
     }))
 }
 
-/// Set the agent that answers the caller's DMs with an integration's shared bot (C-37).
+/// Agents the caller may choose to answer their DMs with an integration's shared bot (C-1147).
+#[utoipa::path(get, path = "/me/dm-default-options", operation_id = "listDmDefaultOptions", tag = "channels",
+    params(DmDefaultOptionsParams),
+    responses((status = 200, body = DmDefaultOptions), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn dm_default_options(
+    c: SessionCaller,
+    State(s): State<AppState>,
+    Query(p): Query<DmDefaultOptionsParams>,
+) -> Result<Json<DmDefaultOptions>, ApiError> {
+    Ok(Json(
+        links::dm_default_options(&s, &c, p.integration_id).await?,
+    ))
+}
+
+/// Set the agent that answers the caller's DMs with an integration's shared bot (C-37). An agent
+/// the caller can use that is not on the shared bot yet is attached there (C-1147).
 #[utoipa::path(put, path = "/me/dm-defaults", operation_id = "setDmDefault", tag = "channels",
     request_body = SetDmDefaultRequest,
     responses((status = 200, body = DmDefault), (status = 404, body = ErrorEnvelope),

@@ -525,7 +525,15 @@ idempotent). Steps:
    - **shared** bot in a DM: an existing thread link for `(space, thread_ref)`
      → that agent; else the author's DM default; else, if the author can reach
      exactly one agent with a shared presence here → it; else post an agent
-     picker card (`dm_default.choose`) and stop;
+     picker card (`dm_default.choose`) and stop. When the author can reach
+     **none** (FIX-220, D-461(c)) the reply says what to do and never mentions
+     `bind` (which does nothing in a DM): a person who can use at least one agent
+     of the organization gets "None of your agents answers direct messages here
+     yet. Choose one: `<external_url>/account/channels`"; a person who can use
+     none gets "You don't have an agent here yet. Create one in Aurora
+     (`<external_url>`), or ask {owners} to add you to a workspace that has
+     one." At most one such reply per person and integration per 10 minutes
+     (the outcome stays `not_set_up`);
    - **shared** bot in a channel: the active space binding → its agent; none →
      if the bot was mentioned, reply that the space is not set up and name who
      can set it up (owners of workspaces with shared presences on this
@@ -774,6 +782,19 @@ phase 1 (RFE-001) the sign-in link is the default and only automatic path**:
   an active member of the integration's org (else 403 `not_org_member`; the
   link-request is not consumed). The token is single use and expires after 30
   min.
+  (FIX-220, D-461, C-1147) When the integration has a shared bot with the
+  shared mode on, the same page also asks **which agent answers the person's
+  direct messages to the shared bot**: the agents of the integration's
+  organization the person can use (`GET /v1/me/dm-default-options`), one
+  preselected when there is exactly one, "Decide later" always available, and
+  with none a line "You don't have an agent yet" and a link to create one. The
+  choice goes in the confirm (`agent_id`); the server checks the organization
+  and `can_use`, attaches the agent to the shared bot when it is not yet
+  (audit `channel_presence.attach`, `via: "link"`) and sets the DM default, all
+  in the transaction of the link. A refused choice refuses the confirm and the
+  token stays usable. People linked by verified e-mail never see the page: their
+  first direct message gets the reply of §5.1 step 3, which leads to the account
+  page.
 - **Verified-email auto-link** (opt-in): the org-admin setting
   `channel_integrations.config.verified_email_autolink` (boolean, default
   `false`). Setting it `true` requires the `email_verified` capability for the

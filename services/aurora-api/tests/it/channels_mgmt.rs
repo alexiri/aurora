@@ -307,6 +307,13 @@ impl W {
         self.h.hosted_agent(self.org, self.ws, handle).await
     }
 
+    async fn count(&self, sql: &str) -> i64 {
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .fetch_one(self.h.pool())
+            .await
+            .unwrap()
+    }
+
     async fn sync_gen(&self, agent: Uuid) -> i64 {
         sqlx::query_scalar("SELECT home_sync_generation FROM agents WHERE id=$1")
             .bind(agent)
@@ -1741,13 +1748,21 @@ async fn dm_defaults_require_reachable_agent() {
         .call(&w.wsmember, Method::GET, "/v1/me/dm-defaults", None)
         .await;
     assert_eq!(v["items"][0]["agent_id"], json!(agent));
-    // No active shared presence.
+    // (FIX-220) A usable agent with no shared presence yet is attached by the PUT itself.
+    assert_eq!(attached_count(&w, no_presence).await, 0);
     let (s, v) = put(&w.wsmember, no_presence).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["agent_id"], json!(no_presence));
+    assert_eq!(attached_count(&w, no_presence).await, 1);
+    // A person without can_use on an unattached agent's workspace cannot attach it by choosing it.
+    let unusable = w.agent("a3").await;
+    let (s, v) = put(&w.plain, unusable).await;
     assert_eq!(
         (s, v["error"]["code"].as_str()),
         (422, Some("agent_not_reachable")),
         "{v}"
     );
+    assert_eq!(attached_count(&w, unusable).await, 0);
     // A person without can_use on the agent's workspace...
     let (s, v) = put(&w.plain, agent).await;
     assert_eq!(
@@ -1786,6 +1801,236 @@ async fn dm_defaults_require_reachable_agent() {
             .await
             .unwrap();
     assert_eq!(n, 0);
+}
+
+async fn attached_count(w: &W, agent: Uuid) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM channel_presences WHERE agent_id=$1 AND mode='shared' AND status='active'",
+    )
+    .bind(agent)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap()
+}
+
+async fn attach_audits(w: &W, agent: Uuid, via: &str) -> i64 {
+    // The audit row is best-effort and asynchronous: poll, bounded.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action='channel_presence.attach'
+               AND workspace_id=(SELECT workspace_id FROM agents WHERE id=$1)
+               AND metadata->>'via'=$2",
+        )
+        .bind(agent)
+        .bind(via)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+        if n > 0 || Instant::now() > deadline {
+            return n;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// An agent of another organization (with its own workspace), as a foreign-org probe.
+async fn foreign_agent(w: &W) -> Uuid {
+    let org2 = w.h.org().await;
+    let ws2 = w.h.workspace(org2).await;
+    w.h.hosted_agent(org2, ws2, "foreign").await
+}
+
+/// FIX-220 (C-1147): the agents the caller may choose to answer their DMs.
+#[tokio::test]
+async fn dm_default_options_lists_usable_agents_of_the_integrations_org() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let attached = w.agent("a1").await;
+    let unattached = w.agent("a2").await;
+    let _foreign = foreign_agent(&w).await;
+    w.attach(&w.owner, attached, integ, "shared").await;
+    let uri = format!("/v1/me/dm-default-options?integration_id={integ}");
+    let (s, v) = w.call(&w.wsmember, Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["shared_bot"]["handle"], "daneel", "{v}");
+    let items = v["items"].as_array().unwrap();
+    // Only the org's agents; the foreign org's agent never shows.
+    let ids: Vec<&str> = items
+        .iter()
+        .map(|i| i["agent_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 2, "{v}");
+    for (a, flag) in [(attached, true), (unattached, false)] {
+        let i = items
+            .iter()
+            .find(|i| i["agent_id"] == json!(a))
+            .unwrap_or_else(|| panic!("{a} missing: {v}"));
+        assert_eq!(i["attached"], flag, "{i}");
+        assert_eq!(i["workspace_id"], json!(w.ws));
+        assert!(
+            i["workspace_name"].is_string() && i["name"].is_string() && i["handle"].is_string()
+        );
+    }
+    // A member of the org with no access to the workspace sees no agents of it.
+    let (s, v) = w.call(&w.plain, Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"], json!([]));
+    assert!(v["shared_bot"].is_object());
+    // A non-member gets the preview's error; an unknown integration is a 404 too.
+    assert_eq!(w.call(&w.outsider, Method::GET, &uri, None).await.0, 404);
+    let unknown = format!(
+        "/v1/me/dm-default-options?integration_id={}",
+        Uuid::now_v7()
+    );
+    assert_eq!(
+        w.call(&w.wsmember, Method::GET, &unknown, None).await.0,
+        404
+    );
+    // Shared mode off (the integration's own narrowing): no bot, no items.
+    sqlx::query("UPDATE channel_integrations SET config = jsonb_set(config, '{_capabilities}', '{\"presence_shared\": false}') WHERE id=$1")
+        .bind(integ)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = w.call(&w.wsmember, Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["shared_bot"], json!(null));
+    assert_eq!(v["items"], json!([]));
+    // No shared bot at all.
+    sqlx::query("UPDATE channel_integrations SET config = config - '_capabilities', shared_bot = NULL WHERE id=$1")
+        .bind(integ)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = w.call(&w.wsmember, Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["shared_bot"], json!(null));
+    assert_eq!(v["items"], json!([]));
+}
+
+/// FIX-220: the PUT refuses a foreign-org agent and one the person cannot use, and does not
+/// attach anything when it refuses.
+#[tokio::test]
+async fn dm_default_put_enforces_org_and_can_use_on_the_server() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let foreign = foreign_agent(&w).await;
+    let unusable = w.agent("a1").await;
+    w.call(
+        &w.admin,
+        Method::POST,
+        &format!("/v1/channel-integrations/{integ}/user-links"),
+        Some(json!({"platform_user_ref": "U-2", "user_id": w.users.plain})),
+    )
+    .await;
+    for agent in [foreign, unusable] {
+        let (s, v) = w
+            .call(
+                &w.plain,
+                Method::PUT,
+                "/v1/me/dm-defaults",
+                Some(json!({"integration_id": integ, "agent_id": agent})),
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("agent_not_reachable")),
+            "{v}"
+        );
+        assert_eq!(attached_count(&w, agent).await, 0);
+    }
+    assert_eq!(
+        w.count("SELECT count(*) FROM dm_defaults").await,
+        0,
+        "no default left behind"
+    );
+}
+
+/// FIX-220 (C-36): confirm with an `agent_id` links, attaches and sets the default in one
+/// transaction; a refused choice refuses the whole confirm and the token stays usable.
+#[tokio::test]
+async fn confirm_with_agent_attaches_and_sets_the_default_in_one_transaction() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let mine = w.agent("a1").await;
+    let foreign = foreign_agent(&w).await;
+    let confirm = |who: &str, token: &str, platform: &str, agent: Option<Uuid>| {
+        let (who, token, platform) = (who.to_owned(), token.to_owned(), platform.to_owned());
+        let w = &w;
+        async move {
+            let mut body = json!({"token": token, "platform_user_ref": platform});
+            if let Some(a) = agent {
+                body["agent_id"] = json!(a);
+            }
+            w.call(&who, Method::POST, "/v1/channel-links/confirm", Some(body))
+                .await
+        }
+    };
+    let links = || async {
+        w.count("SELECT count(*) FROM user_links WHERE platform_user_ref='U-9'")
+            .await
+    };
+    let tok = link_url(&w, integ, "U-9").await;
+    // A foreign-org agent: refused, nothing linked, nothing attached, the token is not consumed.
+    let (s, v) = confirm(&w.wsmember, &tok, "U-9", Some(foreign)).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("agent_not_reachable")),
+        "{v}"
+    );
+    assert_eq!((links().await, attached_count(&w, foreign).await), (0, 0));
+    // An agent the person cannot use (the `plain` member has no workspace access): refused too.
+    let (s, v) = confirm(&w.plain, &tok, "U-9", Some(mine)).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("agent_not_reachable")),
+        "{v}"
+    );
+    assert_eq!((links().await, attached_count(&w, mine).await), (0, 0));
+    assert_eq!(
+        w.count("SELECT count(*) FROM link_requests WHERE used_at IS NOT NULL")
+            .await,
+        0
+    );
+    // The same token now works with a usable, unattached agent.
+    let (s, v) = confirm(&w.wsmember, &tok, "U-9", Some(mine)).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(links().await, 1);
+    assert_eq!(attached_count(&w, mine).await, 1);
+    let d: Option<Uuid> = sqlx::query_scalar(
+        "SELECT agent_id FROM dm_defaults WHERE integration_id=$1 AND platform_user_ref='U-9'",
+    )
+    .bind(integ)
+    .fetch_optional(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(d, Some(mine));
+    assert_eq!(attach_audits(&w, mine, "link").await, 1);
+    assert_eq!(w.count("SELECT count(*) FROM channel_presences").await, 1);
+    // Used.
+    assert_eq!(confirm(&w.wsmember, &tok, "U-9", Some(mine)).await.0, 410);
+    // Without an agent the confirm is as before: no presence, no default.
+    let t2 = link_url(&w, integ, "U-8").await;
+    let (s, v) = confirm(&w.plain, &t2, "U-8", None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        w.count("SELECT count(*) FROM dm_defaults WHERE platform_user_ref='U-8'")
+            .await,
+        0
+    );
+    // The PUT's attach is audited as `dm_default`.
+    let other = w.agent("a2").await;
+    let (s, v) = w
+        .call(
+            &w.wsmember,
+            Method::PUT,
+            "/v1/me/dm-defaults",
+            Some(json!({"integration_id": integ, "agent_id": other})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(attach_audits(&w, other, "dm_default").await, 1);
 }
 
 // ------------------------------------------------------------------------ reach

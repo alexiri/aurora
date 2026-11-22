@@ -38,6 +38,13 @@ async function mockSend(page: Page, over: { tokens?: unknown[]; sends?: unknown[
     route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
   await page.route("**/v1/me/channel-links", (route) => reply(route, { items: [LINK] }));
   await page.route("**/v1/me/dm-defaults", (route) => reply(route, { items: [] }));
+  // (FIX-220, C-1147) The DM select lists the integration's agents.
+  await page.route("**/v1/me/dm-default-options**", (route) =>
+    reply(route, {
+      org_id: "00000000-0000-4000-8000-0000000000aa",
+      shared_bot: { handle: "daneel", display_name: "Daneel" },
+      items: [{ agent_id: "00000000-0000-4000-8000-0000000000c1", name: "Daneel", handle: "daneel", workspace_id: "00000000-0000-4000-8000-0000000000f1", workspace_name: "Main", attached: true }],
+    }));
   await page.route("**/v1/me/user-tokens", (route) => reply(route, { tokens: over.tokens ?? TOKENS }));
   await page.route("**/v1/me/user-token-approvals**", (route) => reply(route, { items: over.sends ?? [SEND] }));
 }

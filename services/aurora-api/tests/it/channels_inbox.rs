@@ -647,6 +647,84 @@ async fn shared_dm_thread_link_wins_over_default() {
     assert_eq!(agents, vec![a, a]);
 }
 
+/// FIX-220 (D-461(c)): the direct-message "not set up" reply says what to do and never mentions
+/// `bind`; it is throttled; and confirming the link with the agent chosen makes the next DM route
+/// to it (the owner's journey at the inbox level).
+#[tokio::test]
+async fn dm_not_set_up_reply_links_to_the_account_page_and_the_confirm_fixes_it() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    // `a` is usable by `member` (workspace approver) but not attached to the shared bot.
+    w.link(w.integ, "U1", w.member).await;
+    w.link(w.integ, "U2", w.outsider).await;
+    let texts = || async {
+        w.ops("message.post")
+            .await
+            .iter()
+            .filter_map(|p| p["content"]["text"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+
+    // A person who can use an agent of the organization is told to choose one.
+    w.post(w.integ, "e1", dm("U1", "hi", "B1")).await;
+    assert_eq!(w.outcome("e1").await["result"], "not_set_up");
+    let t = texts().await;
+    assert_eq!(t.len(), 1, "{t:?}");
+    assert!(
+        t[0].contains("None of your agents answers direct messages here yet")
+            && t[0].contains("http://localhost:4100/account/channels"),
+        "{}",
+        t[0]
+    );
+    assert!(!t[0].contains("bind") && !t[0].contains("rex"), "{}", t[0]);
+    // A second message within 10 minutes gets no reply (the outcome stays not_set_up).
+    w.post(w.integ, "e2", dm("U1", "hello?", "B1")).await;
+    assert_eq!(w.outcome("e2").await["result"], "not_set_up");
+    assert_eq!(texts().await.len(), 1);
+
+    // A person who can use none is told to create one or ask the owners.
+    w.post(w.integ, "e3", dm("U2", "hi", "B1")).await;
+    assert_eq!(w.outcome("e3").await["result"], "not_set_up");
+    let t = texts().await;
+    assert_eq!(t.len(), 2, "{t:?}");
+    assert!(
+        t[1].contains("You don't have an agent here yet")
+            && t[1].contains("http://localhost:4100")
+            && !t[1].contains("bind")
+            && !t[1].contains("rex"),
+        "{}",
+        t[1]
+    );
+
+    // The link page's confirm with the agent chosen attaches it and sets the default...
+    let token = "aui_fix220journey";
+    sqlx::query("INSERT INTO link_requests (id, integration_id, platform_user_ref, token_hash, expires_at) VALUES ($1,$2,'U1',$3, now() + interval '30 minutes')")
+        .bind(Uuid::now_v7())
+        .bind(w.integ)
+        .bind(&aurora_core::token::hash(token)[..])
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let c = cookie(&w.h.good_session(w.member).await.1);
+    let (s, _, v) =
+        w.h.send(
+            Method::POST,
+            "/v1/channel-links/confirm",
+            &hd(&c),
+            Some(json!({"token": token, "platform_user_ref": "U1", "agent_id": a})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // ...so the next DM goes to the agent.
+    w.post(w.integ, "e4", dm("U1", "again", "B1")).await;
+    assert_eq!(w.outcome("e4").await["result"], "turn_created");
+    let routed: Vec<Uuid> = sqlx::query_scalar("SELECT agent_id FROM turns")
+        .fetch_all(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(routed, vec![a]);
+}
+
 #[tokio::test]
 async fn channel_binding_and_unbound_mention() {
     let w = world().await;
