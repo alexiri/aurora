@@ -367,6 +367,27 @@ by the owner 2026-11-15, D-318), see *S3-compatible blob store* under §Other la
   (`sandbox-min` on the minimal base, D-377). **Owner answers (D-379):** the first keystroke, on by
   default, measurement and warm-on-intent together at the beginning of phase 6, pre-created homes or a
   generic pool only after the measurements.
+- **Agent templates — specified (`docs/tasks/P6-TEMPLATES.md`; owner, 2026-11-21 and 2026-11-22, D-435,
+  D-436, D-456, D-457, C-1103..C-1119, C-1141..C-1144, SEC-146).**
+  - **The repository.** An instance admin adds a template repository by its https git address, with an optional
+    branch, folder and read-only token, as for a skill library (no signing key, D-435(b)). The repository keeps
+    templates as source, one directory per template. Its CI (a standard GitHub Actions workflow; a GitLab sketch)
+    checks every pull request, and publishes `<id>-<version>.zip` as a release asset when a version is raised.
+  - **Ingest and review.** Aurora reads the branch head and downloads each new version's package. It accepts the
+    package only if its content is exactly the repository's. Every version then waits until the admin has read and
+    approved that exact content. **The previous version keeps working** meanwhile, and through every failure.
+    Organization owners can turn templates off.
+  - **Creating an agent.** Anyone who can create agents picks a template under **More templates…**. They fill its
+    inputs, choose an account and confirm the access for each app (preselected, capped by limits; `any_of`
+    alternatives), and choose the optional library skills. One transaction creates the agent with its skills, its
+    library skills (by reference, from libraries the organization has), its helper files (projected read-only at
+    `.aurora/helpers/`), memories, schedules and paused webhooks.
+  - **Afterwards.** The agent is then ordinary. Newer versions are offered part by part, with a diff (instructions,
+    skills, helper files, library references), and nothing changes until the person applies one.
+  - **Save as template** writes a template zip from an agent, ready to unzip into a repository. The format is the
+    agent export plus `template.yaml` and `helpers/`; the publisher guide is `25-agent-templates.md`.
+  - Not in this version: organization repositories, evals, policy rules, `core` skill references. Briefs
+    P6-TPL-1..6.
 - *(The P6-MODELS proposal moved to phase 5 by the owner, D-302(f); see §The harness chooses models
   above.)*
 
