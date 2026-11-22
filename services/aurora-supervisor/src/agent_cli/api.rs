@@ -44,6 +44,10 @@ pub struct Account {
     pub label: String,
     #[serde(default)]
     pub base_url: Option<String>,
+    /// (D-467) The instance base path (`/sub`) put before every path sent to the account; absent
+    /// in a file from an older registry.
+    #[serde(default)]
+    pub base_path: Option<String>,
     #[serde(default)]
     pub grant: String,
 }

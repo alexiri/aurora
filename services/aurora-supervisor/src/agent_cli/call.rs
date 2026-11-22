@@ -369,6 +369,44 @@ fn origin_ok(first: &Url, next: &Url) -> bool {
     first.origin() == next.origin() && next.fragment().is_none()
 }
 
+/// (D-467) `path` is the base path itself or lies under it (`/sub`, `/sub/x`; not `/subX`).
+fn under_base(base_path: &str, path: &str) -> bool {
+    base_path.is_empty()
+        || path == base_path
+        || path
+            .strip_prefix(base_path)
+            .is_some_and(|r| r.starts_with('/'))
+}
+
+/// (D-467) The same rules as `aurora_registry::instance::normalize_base_path` (D-231(a)), kept
+/// local because the supervisor does not depend on `aurora-registry`, and stricter on one point:
+/// the file must carry the normalized form, so no trailing `/`. Empty means no base path.
+fn check_base_path(raw: &str) -> Result<(), ()> {
+    if raw.is_empty() {
+        return Ok(());
+    }
+    let Some(rest) = raw.strip_prefix('/') else {
+        return Err(());
+    };
+    let segs: Vec<&str> = rest.split('/').collect();
+    if raw.chars().count() > 128 || segs.len() > 8 {
+        return Err(());
+    }
+    for s in segs {
+        if s.is_empty()
+            || s.chars().count() > 64
+            || s == "."
+            || s == ".."
+            || !s
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'~' | b'-'))
+        {
+            return Err(());
+        }
+    }
+    Ok(())
+}
+
 /// Runs `call` for an app target.
 pub async fn call_app(
     env: &Env,
@@ -445,7 +483,14 @@ async fn call_doc(
         .map(read_body)
         .transpose()
         .map_err(usage)?;
-    let built = match (&opts.path, op) {
+    let base_path = account.base_path.clone().unwrap_or_default();
+    if check_base_path(&base_path).is_err() {
+        return Err(usage(format!(
+            "account {} has an invalid base path; read .aurora/apps/{}/app.md",
+            account.letter, doc.app.id
+        )));
+    }
+    let mut built = match (&opts.path, op) {
         (Some(p), o) => {
             let method = opts
                 .method
@@ -462,10 +507,28 @@ async fn call_doc(
         }
         (None, None) => unreachable!("checked above"),
     };
-    let host_base = match op
+    // (D-467) The account's base path goes in front of what the manifest or `--path` names, except
+    // for an operation with its own static host (not on the instance). A `--path` that already
+    // starts with it is sent as given, with a hint.
+    let own_host = op
         .and_then(|o| o.host.as_deref())
-        .filter(|_| opts.path.is_none())
-    {
+        .filter(|_| opts.path.is_none());
+    let mut hint = String::new();
+    if own_host.is_none() && !base_path.is_empty() {
+        if opts.path.is_some() && under_base(&base_path, &built.path) {
+            hint = format!(
+                "aurora-agent adds the account's base path {base_path} to --path itself; write --path {} next time\n",
+                built
+                    .path
+                    .strip_prefix(&base_path)
+                    .filter(|r| !r.is_empty())
+                    .unwrap_or("/")
+            );
+        } else {
+            built.path = format!("{base_path}{}", built.path);
+        }
+    }
+    let host_base = match own_host {
         Some(h) => format!("https://{h}"),
         None => account.base_url.clone().ok_or_else(|| {
             usage(format!(
@@ -478,6 +541,8 @@ async fn call_doc(
     if base.path() != "/" || base.query().is_some() || !matches!(base.scheme(), "https" | "http") {
         return Err(usage(format!("host {host_base:?} is not a plain origin")));
     }
+    // (D-467) Every URL sent stays under the account's base path (not for an operation's own host).
+    let within = |u: &Url| own_host.is_some() || under_base(&base_path, u.path());
     let out_path = match &opts.out {
         Some(p) => Some(files::check_out(p, &env.cwd, &env.protected).map_err(usage)?),
         None => None,
@@ -503,9 +568,9 @@ async fn call_doc(
             request::query_string(q)
         ))
         .map_err(|e| usage(format!("url: {e}")))?;
-        if !origin_ok(&base, &u) {
+        if !origin_ok(&base, &u) || !within(&u) {
             return Err(usage(
-                "the request would leave the account's host; refused".into(),
+                "the request would leave the account's address; refused".into(),
             ));
         }
         Ok(u)
@@ -546,9 +611,13 @@ async fn call_doc(
                     Pagination::LinkHeader => {
                         if let Some(l) = &page.link_next {
                             match url.join(l) {
-                                Ok(n) if origin_ok(&base, &n) => {
+                                Ok(n) if origin_ok(&base, &n) && within(&n) => {
                                     next = Some((n, work.query.clone()))
                                 }
+                                Ok(n) if origin_ok(&base, &n) => notes.push(
+                                    "a next link outside the account's base path was not followed"
+                                        .into(),
+                                ),
                                 Ok(_) => notes
                                     .push("a next link to another origin was not followed".into()),
                                 Err(_) => notes.push("a next link was not a URL".into()),
@@ -664,7 +733,7 @@ async fn call_doc(
         return Ok(Outcome {
             code: EXIT_OK,
             out: bytes,
-            err: String::new(),
+            err: hint,
         });
     }
     let ext = files::extension(&first.content_type, json_ok);
@@ -692,7 +761,9 @@ async fn call_doc(
         more,
         notes: &notes,
     };
-    Ok(Outcome::ok(preview::render(&summary, &bytes)))
+    let mut done = Outcome::ok(preview::render(&summary, &bytes));
+    done.err = hint;
+    Ok(done)
 }
 
 #[cfg(test)]

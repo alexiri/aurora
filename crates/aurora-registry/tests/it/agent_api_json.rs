@@ -25,6 +25,7 @@ fn acct(id: &str, host: Option<&str>, access: GrantAccess) -> AppAccount {
         id: id.into(),
         label: format!("Label {id}"),
         host: host.map(Into::into),
+        base_path: None,
         service: None,
         access,
         webhook: None,
@@ -66,6 +67,35 @@ fn package_operations_map_to_the_catalogue_by_the_gateways_matcher() {
         ),
     ];
     insta::assert_snapshot!("api_json_two_accounts", api(Some(OPS), &a));
+}
+
+/// (D-467) The instance base path is its own key; `base_url` stays the bare origin. An account
+/// without one, a webhook account and one that gives a path with no host carry `null`.
+#[test]
+fn an_instance_accounts_base_path_is_its_own_key() {
+    let with = AppAccount {
+        base_path: Some("/jira".into()),
+        ..acct("c_1", Some("its.cern.test"), GrantAccess::Full)
+    };
+    let plain = acct("c_2", Some("its.cern.test"), GrantAccess::Full);
+    let no_host = AppAccount {
+        base_path: Some("/x".into()),
+        ..acct("c_3", None, GrantAccess::Full)
+    };
+    let hook = AppAccount {
+        base_path: Some("/x".into()),
+        ..webhook_acct("c_4", "Ops", "", all_slots())
+    };
+    let v = webhook_api(&[with, plain, no_host, hook]);
+    let a = &v["accounts"];
+    assert_eq!(a[0]["base_url"], "https://its.cern.test");
+    assert_eq!(a[0]["base_path"], "/jira");
+    assert_eq!(a[1]["base_url"], "https://its.cern.test");
+    assert!(a[1]["base_path"].is_null());
+    assert!(a[2]["base_path"].is_null());
+    assert!(a[3]["base_path"].is_null());
+    // The key is always present, so an older reader and a newer one see the same shape.
+    assert!(a[1].as_object().unwrap().contains_key("base_path"));
 }
 
 #[test]

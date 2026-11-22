@@ -51,6 +51,7 @@ fn sample_account(app: &AppEntry, snap: &Snapshot, access: &str) -> AppAccount {
         id: SAMPLE_ID.to_owned(),
         label: "Sample account".to_owned(),
         host,
+        base_path: None,
         service: app.database.as_ref().map(|_| "sample".to_owned()),
         access,
         webhook: None,

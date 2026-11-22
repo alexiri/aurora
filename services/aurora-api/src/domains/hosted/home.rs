@@ -306,10 +306,17 @@ async fn folder_of(
                 .clone()
                 .or_else(|| c.tenant_host.clone())
                 .or_else(|| app.instances.as_ref().and_then(|i| i.default_host.clone()));
+            // (D-467) Only an instance host carries a base path (the rule of the address below).
+            let base_path = c
+                .instance_host
+                .as_ref()
+                .and(c.instance_base_path.clone())
+                .filter(|p| !p.is_empty());
             AppAccount {
                 id: c.connection_id.to_string(),
                 label: c.label.clone(),
                 host,
+                base_path,
                 service: databases
                     .iter()
                     .find(|d| d["connection_id"] == json!(c.connection_id))

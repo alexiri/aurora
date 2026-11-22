@@ -1030,3 +1030,222 @@ fn agent_cli_is_the_wrapper_being_executable() {
     assert!(agent_cli::agent_cli_available(&w));
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ---- (D-467) an account under a base path: the command adds it ----
+
+fn with_base_path(mut doc: Value, base_path: Value) -> Value {
+    doc["accounts"][0]["base_path"] = base_path;
+    doc
+}
+
+fn jira_ops() -> Value {
+    json!([
+        op(
+            "search_issues",
+            "GET",
+            "/rest/api/2/search",
+            json!({"params": [{"name": "jql", "in": "query", "required": true, "type": "string"}]})
+        ),
+        op(
+            "list_all",
+            "GET",
+            "/rest/api/2/list",
+            json!({"pagination": {"style": "link_header"}, "items": "$"})
+        ),
+    ])
+}
+
+#[tokio::test]
+async fn an_operation_and_a_path_go_under_the_accounts_base_path() {
+    let m = mock(|_, _| Resp::json(200, &json!({"ok": true}))).await;
+    let s = sandbox("basepath");
+    write_api(
+        &s.apps,
+        "demo",
+        &with_base_path(api_doc(m.port, 1, jira_ops()), json!("/jira")),
+    );
+    let o = agent_cli::execute(&s.env, &s.apps, call("demo", &["search_issues", "jql=x"])).await;
+    assert_eq!(o.code, 0, "{}", o.err);
+    assert_eq!(m.seen()[0].target, "/jira/rest/api/2/search?jql=x");
+    assert!(o.err.is_empty(), "no hint for an operation: {}", o.err);
+
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        set!(call("demo", &[]), path = Some("/rest/api/2/myself".into())),
+    )
+    .await;
+    assert_eq!(o.code, 0, "{}", o.err);
+    assert_eq!(m.seen()[1].target, "/jira/rest/api/2/myself");
+    assert!(o.err.is_empty(), "no hint for a short --path: {}", o.err);
+
+    // An old memory (`--path /jira/...`) is sent once, with the hint.
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        set!(
+            call("demo", &[]),
+            path = Some("/jira/rest/api/2/myself".into())
+        ),
+    )
+    .await;
+    assert_eq!(o.code, 0, "{}", o.err);
+    assert_eq!(m.seen()[2].target, "/jira/rest/api/2/myself");
+    assert!(
+        o.err.contains("adds the account's base path /jira")
+            && o.err.contains("--path /rest/api/2/myself"),
+        "{}",
+        o.err
+    );
+
+    // `/jiraX` is not under `/jira`: it is prefixed like any other path.
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        set!(call("demo", &[]), path = Some("/jiraX/y".into())),
+    )
+    .await;
+    assert_eq!(o.code, 0, "{}", o.err);
+    assert_eq!(m.seen()[3].target, "/jira/jiraX/y");
+}
+
+#[tokio::test]
+async fn the_base_path_cannot_be_escaped_or_replaced_by_path() {
+    let m = mock(|_, _| Resp::json(200, &json!({}))).await;
+    let s = sandbox("basepathesc");
+    write_api(
+        &s.apps,
+        "demo",
+        &with_base_path(api_doc(m.port, 1, jira_ops()), json!("/jira")),
+    );
+    for bad in [
+        "../x",
+        "/../x",
+        "/jira/../x",
+        "//evil.test/x",
+        "http://evil.test/x",
+        "/%2e%2e/x",
+        "/jira/%2e%2e/x",
+        "/a/%2E%2e/x",
+    ] {
+        let o = agent_cli::execute(
+            &s.env,
+            &s.apps,
+            set!(call("demo", &[]), path = Some(bad.into())),
+        )
+        .await;
+        assert_eq!(o.code, 2, "{bad}: {}", o.err);
+    }
+    assert!(m.seen().is_empty(), "something was sent for a refused path");
+}
+
+#[tokio::test]
+async fn a_next_link_outside_the_base_path_is_not_followed() {
+    let m = mock(|r, port| {
+        let mut x = Resp::json(200, &json!([{"id": 1}]));
+        if r.target.contains("page2") {
+            x = Resp::json(200, &json!([{"id": 2}]));
+        } else {
+            // First page: next link under the base path (followed), the second page links outside it.
+            x.headers.push((
+                "link".into(),
+                format!("<http://127.0.0.1:{port}/jira/rest/api/2/list?page2=1>; rel=\"next\""),
+            ));
+        }
+        x
+    })
+    .await;
+    let s = sandbox("basepathnext");
+    write_api(
+        &s.apps,
+        "demo",
+        &with_base_path(api_doc(m.port, 1, jira_ops()), json!("/jira")),
+    );
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        set!(call("demo", &["list_all"]), all = true),
+    )
+    .await;
+    assert_eq!(o.code, 0, "{}", o.err);
+    let seen = m.seen();
+    assert_eq!(seen.len(), 2, "a next link under the base path is followed");
+    assert_eq!(seen[1].target, "/jira/rest/api/2/list?page2=1");
+
+    // A next link on the same origin but outside `/jira` (and one that only shares the prefix) is refused.
+    for outside in ["/rest/api/2/list?page2=1", "/jiraX/rest", "/jira/../admin"] {
+        let outside = outside.to_owned();
+        let m2 = mock(move |_, port| {
+            let mut x = Resp::json(200, &json!([{"id": 1}]));
+            x.headers.push((
+                "link".into(),
+                format!("<http://127.0.0.1:{port}{outside}>; rel=\"next\""),
+            ));
+            x
+        })
+        .await;
+        write_api(
+            &s.apps,
+            "demo",
+            &with_base_path(api_doc(m2.port, 1, jira_ops()), json!("/jira")),
+        );
+        let o = agent_cli::execute(
+            &s.env,
+            &s.apps,
+            set!(call("demo", &["list_all"]), all = true),
+        )
+        .await;
+        assert_eq!(o.code, 0, "{}", o.err);
+        assert!(
+            text(&o).contains("outside the account's base path was not followed"),
+            "{}",
+            text(&o)
+        );
+        assert_eq!(m2.seen().len(), 1, "followed a link outside the base path");
+    }
+}
+
+#[tokio::test]
+async fn an_account_without_a_base_path_is_unchanged_and_an_invalid_one_sends_nothing() {
+    let m = mock(|_, _| Resp::json(200, &json!({"ok": true}))).await;
+    let s = sandbox("basepathnone");
+    // An old file: no `base_path` key at all.
+    write_api(&s.apps, "demo", &api_doc(m.port, 1, jira_ops()));
+    let o = agent_cli::execute(&s.env, &s.apps, call("demo", &["search_issues", "jql=x"])).await;
+    assert_eq!(o.code, 0, "{}", o.err);
+    assert_eq!(m.seen()[0].target, "/rest/api/2/search?jql=x");
+    // A null one too.
+    write_api(
+        &s.apps,
+        "demo",
+        &with_base_path(api_doc(m.port, 1, jira_ops()), Value::Null),
+    );
+    let o = agent_cli::execute(&s.env, &s.apps, call("demo", &["search_issues", "jql=y"])).await;
+    assert_eq!(o.code, 0, "{}", o.err);
+    assert_eq!(m.seen()[1].target, "/rest/api/2/search?jql=y");
+
+    for bad in [
+        "/../x",
+        "jira",
+        "/jira/",
+        "/a//b",
+        "/a b",
+        "//evil.test",
+        "/%2e%2e",
+    ] {
+        write_api(
+            &s.apps,
+            "demo",
+            &with_base_path(api_doc(m.port, 1, jira_ops()), json!(bad)),
+        );
+        let o =
+            agent_cli::execute(&s.env, &s.apps, call("demo", &["search_issues", "jql=z"])).await;
+        assert_eq!(o.code, 2, "{bad}: {}", o.err);
+        assert!(o.err.contains("invalid base path"), "{bad}: {}", o.err);
+    }
+    assert_eq!(
+        m.seen().len(),
+        2,
+        "something was sent for an invalid base path"
+    );
+}

@@ -27,6 +27,8 @@ use uuid::Uuid;
 pub struct SummaryRequest<'a> {
     pub method: &'a str,
     pub host: &'a str,
+    /// (D-467) The matched self-hosted registration's base path; `None` for any other request.
+    pub base_path: Option<&'a str>,
     /// Redacted, without query.
     pub path: &'a str,
     pub query: Option<&'a str>,
@@ -109,6 +111,7 @@ pub fn build_summary(
             a,
             &template::Input {
                 host: r.host,
+                base_path: r.base_path,
                 path: r.path,
                 query: r.query,
                 header: r.header,

@@ -417,7 +417,9 @@ async fn approval_summary_path_segments_count_from_the_app_path_under_a_base_pat
         // App-path segments: 1 rest, 2 api, 3 2, 4 issue, 5 <key>. Under `/jira` the full path has one more.
         "approvals": {"comment": {
             "title": "Comment on an issue",
-            "fields": [{"label": "Issue", "source": "path", "segment": 5}]
+            "fields": [{"label": "Issue", "source": "path", "segment": 5}],
+            // (D-467) What Jira DC declares: the request's host, which carries the base path.
+            "link": "https://{request.host}/browse/{path.5}"
         }},
         "agent": null, "database": null
     });
@@ -477,6 +479,13 @@ async fn approval_summary_path_segments_count_from_the_app_path_under_a_base_pat
     };
     // `{path.5}` is the issue key (app path), not `issue` (full path, where the base path is segment 1).
     assert_eq!(summary["fields"][0]["value"], "KEY-7", "{summary}");
+    // (D-467) `{request.host}` carries the registration's base path, and the link is kept although
+    // the instance host is in no `hosts` entry of the snapshot (the request's own host is accepted).
+    // `{request.host}` is the host without the port.
+    assert_eq!(
+        summary["link"], "https://localhost/jira/browse/KEY-7",
+        "{summary}"
+    );
     // The approval's own display keeps the full path.
     assert_eq!(path, "/jira/rest/api/2/issue/KEY-7/comment");
     decide(&env.pool, id, "denied", env.w.ws).await;
