@@ -2,6 +2,7 @@
 //! Truth lives here; sandboxes hold a read-only projection (hosted/home.rs). (Phase 4, P4-GSL)
 //! A skill may come from a git skill library: pinned, read-only, updated only by a person
 //! (`library`).
+pub mod app_skills;
 pub mod dto;
 pub mod library;
 mod routes;

@@ -152,7 +152,7 @@ admin UI's Add dialog ("format documentation").
 
 - Depends on: nothing in flight; the fixture repo e2e shares the format doc with P5-CERN-ADDONS
   (P5-CERN-ADDONS depends on this task's format doc + ingestion).
-- (owner, 2026-11-13) Ordered **after P5-GUIDE-1** (`docs/24-app-guides.md`, app guides on
+- (owner, 2026-11-13) Ordered **after P5-GUIDE-1** (`docs/24-apps-for-agents.md`, app guides on
   demand). Consequences for this task: `docs/22-addon-repos.md` lists the agent guide among the
   `plugin.yaml` fields that matter for addons (`agent.summary`, `agent.instructions` as the
   essentials, `agent.guide[]` with the files of `agent/<app_id>/`), points to `24 §3` for the

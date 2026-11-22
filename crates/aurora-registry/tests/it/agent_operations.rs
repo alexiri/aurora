@@ -5,7 +5,7 @@
 use aurora_registry::validate::agent_rules::archive_rules;
 use aurora_registry::{Manifest, Package};
 
-use super::agent_guide::{TOOLS, snapshot_of, yaml};
+use super::agent_files::{TOOLS, snapshot_of, yaml};
 
 const AGENT_OPS: &str =
     "    agent:\n      summary: \"Things.\"\n      operations: operations.json\n";

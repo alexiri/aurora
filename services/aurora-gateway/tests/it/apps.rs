@@ -2120,7 +2120,7 @@ async fn grafana_full_grant_blocks_untooled_proxy_requests() {
     let mut m = aurora_registry::Manifest::parse(&std::fs::read_to_string(&path).unwrap(), "9.9.9")
         .unwrap();
     assert!(m.apps[0].grants.block_untooled, "grafana blocks untooled");
-    // The agent guide's files are digested from the stored archive; the gateway never reads them.
+    // The agent files are digested from the stored archive; the gateway never reads them.
     m.apps[0].agent = None;
     let p = aurora_registry::snapshot::ActivePackage {
         manifest: m,

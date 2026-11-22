@@ -390,6 +390,9 @@ pub struct SkillRow {
     pub name: String,
     pub description: String,
     pub body: String,
+    /// `agent` | `workspace` | `org`: the tier that won the name (C-1133 needs it for the app skills
+    /// it shadows).
+    pub tier: String,
 }
 
 /// Effective skills of an agent (RFE-020): the highest *enabled* tier per name wins,
@@ -401,7 +404,10 @@ pub async fn skills(
     agent: Uuid,
 ) -> Result<Vec<SkillRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT DISTINCT ON (name) id, name, description, body FROM skills
+        "SELECT DISTINCT ON (name) id, name, description, body,
+                (CASE WHEN agent_id IS NOT NULL THEN 'agent'
+                      WHEN workspace_id IS NOT NULL THEN 'workspace' ELSE 'org' END) AS tier
+         FROM skills
          WHERE enabled AND org_id = $1
            AND (agent_id = $3 OR workspace_id = $2 OR (agent_id IS NULL AND workspace_id IS NULL))
          ORDER BY name, (CASE WHEN agent_id IS NOT NULL THEN 0
@@ -1361,7 +1367,7 @@ pub struct HomeAppConn {
     pub instance_host: Option<String>,
     /// (FIX-145, D-231) The registered instance's base path.
     pub instance_base_path: Option<String>,
-    /// (P5-GUIDE-2, D-171(d)) The grant row the agent guide's access lines are read from:
+    /// (P5-GUIDE-2, D-171(d)) The grant row the app folder's access lines are read from:
     /// `full` or `custom`, and the custom lists.
     pub grant_mode: String,
     pub allow_tools: Vec<String>,

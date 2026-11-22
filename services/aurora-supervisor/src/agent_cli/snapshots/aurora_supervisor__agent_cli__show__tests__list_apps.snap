@@ -1,6 +1,7 @@
 ---
 source: services/aurora-supervisor/src/agent_cli/show.rs
+assertion_line: 487
 expression: list_apps(&f)
 ---
-indico — Indico · accounts: A=CERN Indico · 3 operations, 1 recipe
-dbapp — no api.json for this app; read .aurora/apps/dbapp/guide.md
+indico — Indico · accounts: A=CERN Indico · 3 operations, 1 skill
+dbapp — no api.json for this app; read .aurora/apps/dbapp/app.md

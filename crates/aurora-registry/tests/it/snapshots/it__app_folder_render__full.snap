@@ -1,9 +1,9 @@
 ---
-source: crates/aurora-registry/tests/it/agent_guide_render.rs
-assertion_line: 114
+source: crates/aurora-registry/tests/it/app_folder_render.rs
+assertion_line: 60
 expression: both(&r)
 ---
-=== guide.md ===
+=== app.md ===
 # Demo app (demo-app)
 
 Written by Aurora for this agent, except the last section.
@@ -12,7 +12,7 @@ Written by Aurora for this agent, except the last section.
 
 Choose an account with the request header `x-aurora-connection-id: <connection id>`. Without it the gateway uses your only account, or refuses when there are several.
 
-- `c_1`: Main
+- `c_1`: Main (host api.example.test)
 
 ## Your access
 
@@ -45,11 +45,11 @@ workspace and organization policy can be stricter than this list, never looser.
 - A: `c_1` Main (full access)
 
 ## Read
-- `list_things` GET /v1/things: List things. All things. [unavailable]
-- `get_thing` GET /v1/things/*: Get a thing. [unavailable]
+- `list_things` GET /v1/things: List things. All things. [allowed]
+- `get_thing` GET /v1/things/*: Get a thing. [allowed]
 
 ## Write
-- `make_thing` POST /v1/things: Make a thing. [unavailable]
+- `make_thing` POST /v1/things: Make a thing. [allowed]
 
 ## Requests that match no operation above
 [allowed]

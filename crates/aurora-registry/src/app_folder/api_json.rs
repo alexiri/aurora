@@ -10,7 +10,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::{
-    GrantAccess, GuideAccount, NAME_MAX, catalogue, letter, lost, tool_access, untooled_access,
+    AppAccount, GrantAccess, NAME_MAX, catalogue, letter, lost, tool_access, untooled_access,
 };
 use crate::identify::identify_tool_in;
 use crate::manifest::INSTANCE_HOST;
@@ -26,7 +26,10 @@ struct Doc {
     app: AppOut,
     accounts: Vec<AccountOut>,
     operations: Vec<OpOut>,
-    recipes: Vec<RecipeOut>,
+    /// (C-1135) The projected, winning app skills of this app; `path` is home-relative.
+    skills: Vec<SkillOut>,
+    /// Kept one release so an older `aurora-agent` parses the file; always `[]` (C-1135).
+    recipes: Vec<()>,
     untooled: BTreeMap<String, &'static str>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     truncated: bool,
@@ -49,9 +52,10 @@ struct AccountOut {
 }
 
 #[derive(Serialize)]
-struct RecipeOut {
-    file: String,
-    title: String,
+struct SkillOut {
+    name: String,
+    description: String,
+    path: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -206,7 +210,7 @@ fn sole_static_host(app: &AppEntry) -> Option<String> {
 
 /// The catalogue tool the gateway's own matcher selects for the operation (C-652). The host is
 /// the operation's, else the first account's, else the app's default host, else its only host.
-fn computed_tool(app: &AppEntry, op: &Operation, accounts: &[GuideAccount]) -> Option<String> {
+fn computed_tool(app: &AppEntry, op: &Operation, accounts: &[AppAccount]) -> Option<String> {
     let instance = app.instances.is_some();
     let host: String = match op.host.as_deref() {
         Some(h) if h != INSTANCE_HOST => h.to_owned(),
@@ -288,7 +292,7 @@ pub(super) fn slug(name: &str) -> String {
 
 /// The operation ids of the webhook accounts, `send_<slug>` with `_2`, `_3`… for duplicates, in
 /// account order (`None` for an account that is not a webhook).
-pub(super) fn webhook_ids(accounts: &[GuideAccount]) -> Vec<Option<String>> {
+pub(super) fn webhook_ids(accounts: &[AppAccount]) -> Vec<Option<String>> {
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     accounts
         .iter()
@@ -331,7 +335,7 @@ fn slot_type_word(t: aurora_webhook::SlotType) -> &'static str {
 }
 
 fn webhook_operations(
-    accounts: &[GuideAccount],
+    accounts: &[AppAccount],
     letters: &[String],
     access_of: &dyn Fn(&str) -> BTreeMap<String, &'static str>,
 ) -> Vec<OpOut> {
@@ -407,12 +411,11 @@ fn webhook_operations(
 pub(super) fn render(
     app: &AppEntry,
     lost_hosts: &[&HostEntry],
-    accounts: &[GuideAccount],
+    accounts: &[AppAccount],
     package_version: &str,
-    reference_available: bool,
+    skills: &super::AppSkills,
     operations: Option<&OperationsFile>,
 ) -> Option<String> {
-    let _ = reference_available; // P5-APPSKILL-2 replaces it with the skills of this app
     if app.database.is_some() {
         return None;
     }
@@ -507,7 +510,7 @@ pub(super) fn render(
         });
     }
     // (C-1135) `recipes` stays in the file, always empty, for an `aurora-agent` one release older.
-    let recipes: Vec<RecipeOut> = Vec::new();
+    let recipes: Vec<()> = Vec::new();
     let mut doc = Doc {
         format: FORMAT,
         app: AppOut {
@@ -537,6 +540,24 @@ pub(super) fn render(
             })
             .collect(),
         operations: ops,
+        skills: if skills.left_out {
+            Vec::new()
+        } else {
+            skills
+                .lines
+                .iter()
+                .filter(|l| l.shadowed_by.is_none())
+                .map(|l| SkillOut {
+                    name: inline(&l.name, 64),
+                    description: inline(&l.description, 200),
+                    path: format!(
+                        "{}/{}/SKILL.md",
+                        inline(skills.skills_dir.trim_end_matches('/'), 64),
+                        inline(&l.name, 64)
+                    ),
+                })
+                .collect()
+        },
         recipes,
         untooled,
         truncated: false,

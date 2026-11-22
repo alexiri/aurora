@@ -1,6 +1,6 @@
 # P5-GUIDE-2: Agent guides — home sync, supervisor projection, instruction file, admin API (owner, 2026-11-13)
 
-Second task of "app guides on demand". Normative spec: `docs/24-app-guides.md` (§5.3, §6, §7,
+Second task of "app guides on demand". Normative spec: `docs/24-apps-for-agents.md` (§5.3, §6, §7,
 §9, §11); contracts C-643, C-644, C-645, C-648; decisions D-171, **D-295**; SEC-117, SEC-91.
 Also read `12 §Home projection` and `10 §Agent instructions`. Depends on **P5-GUIDE-1** (renderer,
 guide blobs, snapshot keys, limits).

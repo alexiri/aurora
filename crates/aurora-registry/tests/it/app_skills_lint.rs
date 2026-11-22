@@ -5,7 +5,7 @@
 use aurora_registry::validate::agent_rules::archive_rules;
 use aurora_registry::{Manifest, Package};
 
-use super::agent_guide::{AGENT, LEGACY_AGENT, TOOLS, skill_md, yaml};
+use super::agent_files::{AGENT, LEGACY_AGENT, TOOLS, skill_md, yaml};
 
 const APP: &str = "demo-app";
 

@@ -14,6 +14,13 @@ Choose an account with the request header `x-aurora-connection-id: <connection i
 
 `tools.md` lists every operation and your access to it.
 
+## Skills
+
+Skills from the Skills demo app (third-party), in your skills folder. Open the one that matches your task before you start.
+
+- `skills-demo-api-notes`: How the rooms API is addressed, paginated and what its errors mean; read before the first request (`$SKILLS_DIR/skills-demo-api-notes/SKILL.md`)
+- `skills-demo-book-room`: Find a free room and book it (`$SKILLS_DIR/skills-demo-book-room/SKILL.md`)
+
 ## Files in this folder
 
 - `tools.md`: every operation and your access to it

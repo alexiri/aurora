@@ -1,4 +1,4 @@
-//! (P5-GUIDE-1, `docs/24`) Agent guides: compatibility of existing snapshots, the linter matrix,
+//! (P5-GUIDE-1, P5-APPSKILL-1, `docs/24`) What a package gives agents: compatibility of existing snapshots, the linter matrix,
 //! snapshot shape and the renderer.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use std::fmt::Write as _;
@@ -41,7 +41,7 @@ pub const LEGACY_AGENT: &str = "    agent:
       instructions: |
         Things are addressed by id.
       guide:
-        - { file: make-and-check.md, title: \"Make a thing and check it\", kind: recipe }
+        - { file: make-and-check.md, title: \"Make a thing and check it\", kind: reference }
         - { file: api.md, title: \"API conventions\" }
         - { file: codes.tsv, title: \"Codes\" }
 ";
@@ -221,8 +221,8 @@ fn hash_of(yaml: &str) -> Option<String> {
     Some(compile(&[p], &[], &[], 1).ok()?.hash)
 }
 
-/// The compiled snapshot of every built-in and fixture package that does not use the agent guide
-/// keys hashes exactly as before P5-GUIDE-1 (golden file `agent_guide_hashes.txt`;
+/// The compiled snapshot of every built-in and fixture package that does not use the agent
+/// keys hashes exactly as before P5-GUIDE-1 (golden file `agent_files_hashes.txt`;
 /// `UPDATE_HASHES=1` rewrites it).
 #[test]
 fn snapshots_of_packages_without_a_guide_keep_their_hash() {
@@ -252,7 +252,7 @@ fn snapshots_of_packages_without_a_guide_keep_their_hash() {
     for l in &lines {
         let _ = writeln!(got, "{l}");
     }
-    let golden = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/it/agent_guide_hashes.txt");
+    let golden = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/it/agent_files_hashes.txt");
     if std::env::var_os("UPDATE_HASHES").is_some() {
         std::fs::write(&golden, &got).unwrap();
     }

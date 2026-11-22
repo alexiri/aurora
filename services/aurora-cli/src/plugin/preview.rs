@@ -5,8 +5,8 @@
 
 use super::{cmds, pack};
 use anyhow::{Context, Result, anyhow, bail};
-use aurora_registry::agent_guide::{
-    GrantAccess, GuideAccount, project_skill_md, render_with_operations,
+use aurora_registry::app_folder::{
+    AppAccount, AppSkills, GrantAccess, SkillLine, project_skill_md, render_with_operations,
 };
 use aurora_registry::snapshot::{
     AppEntry, ClaimStatus, HostEntry, Snapshot, agent_files, compile_with_agent_files,
@@ -14,10 +14,13 @@ use aurora_registry::snapshot::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+/// The skills folder the preview shows (the claude-code one; a real home uses the harness's).
+const SAMPLE_SKILLS_DIR: &str = ".claude/skills";
+
 /// Sample connection id printed in the preview.
 const SAMPLE_ID: &str = "c_sample";
 
-fn sample_account(app: &AppEntry, snap: &Snapshot, access: &str) -> GuideAccount {
+fn sample_account(app: &AppEntry, snap: &Snapshot, access: &str) -> AppAccount {
     let access = if access == "full" {
         GrantAccess::Full
     } else {
@@ -44,7 +47,7 @@ fn sample_account(app: &AppEntry, snap: &Snapshot, access: &str) -> GuideAccount
                 .find(|h| h.app_id == app.app_id)
                 .map(|h| h.host.clone())
         });
-    GuideAccount {
+    AppAccount {
         id: SAMPLE_ID.to_owned(),
         label: "Sample account".to_owned(),
         host,
@@ -90,12 +93,35 @@ fn files_of(
         }
         None => None,
     };
-    let r = render_with_operations(app, &lost, &[account], version, true, operations.as_ref());
+    // The sample agent has no skills of its own, so every app skill is projected (the claude-code
+    // folder stands for the harness).
+    let skills = AppSkills {
+        lines: app
+            .agent
+            .iter()
+            .flat_map(|a| &a.skills)
+            .map(|s| SkillLine {
+                name: s.name.clone(),
+                description: s.description.clone(),
+                shadowed_by: None,
+            })
+            .collect(),
+        left_out: false,
+        skills_dir: SAMPLE_SKILLS_DIR.to_owned(),
+    };
+    let r = render_with_operations(
+        app,
+        &lost,
+        &[account],
+        version,
+        &skills,
+        operations.as_ref(),
+    );
     let apps_dir = format!("apps/{}", app.app_id);
     let mut out = vec![
         Out {
-            path: format!("{apps_dir}/guide.md"),
-            text: r.guide_md,
+            path: format!("{apps_dir}/app.md"),
+            text: r.app_md,
             exec: false,
         },
         Out {

@@ -7,7 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crate::common::*;
-use crate::home_agent_guides::{RawGet, wait_audit_meta};
+use crate::home_app_skills::{RawGet, wait_audit_meta};
 use crate::plugins_lifecycle::setup;
 use aurora_db::repo::plugins;
 use http::Method;
@@ -228,7 +228,7 @@ async fn the_admin_routes_serve_the_skills() {
     let a = setup(&h).await;
     let md = skill_md("gdemo-app-steps", "Do the thing", "# Steps\n");
     let script: &[u8] = b"#!/bin/sh\necho hi\n";
-    let ops = crate::home_agent_guides::OPERATIONS_JSON;
+    let ops = crate::home_app_skills::OPERATIONS_JSON;
     let y = yaml(
         "api.gdemo.example",
         "      operations: operations.json\n    tools:\n      read:\n        items:\n          - { id: list_things, name: List things, host: api.gdemo.example, path: /things, methods: [GET] }\n      write:\n        items:\n          - { id: create_thing, name: Create a thing, host: api.gdemo.example, path: /things, methods: [POST] }\n",

@@ -7595,6 +7595,12 @@ export interface components {
             state: components["schemas"]["ReadinessState"];
             who_can?: components["schemas"]["WhoCan"] | null;
         };
+        /** @description (P5-APPSKILL-2, C-1133) The app a skill comes from. */
+        AppRef: {
+            app_id: string;
+            name: string;
+            version: string;
+        };
         /**
          * @description (phase 4, P4-GRANTS, D-123, C-410) The app's manifest restrictions, so clients can explain
          *     them: `custom_only` (no `full` grants) and `block_untooled` (requests matching no catalogue
@@ -9336,6 +9342,39 @@ export interface components {
             max_age_days: components["schemas"]["Sourced_Option_u32"];
         };
         /**
+         * @description A skill as the effective set shows it: the fields of [`Skill`], with the ones an app skill has
+         *     no value for nullable (`id`, `org_id`, the timestamps).
+         */
+        EffectiveBody: {
+            /** Format: uuid */
+            agent_id?: string | null;
+            body: string;
+            /** Format: date-time */
+            created_at?: string | null;
+            description: string;
+            enabled: boolean;
+            files: components["schemas"]["SkillFile"][];
+            /**
+             * Format: uuid
+             * @description Null for an app skill.
+             */
+            id?: string | null;
+            name: string;
+            /** Format: uuid */
+            org_id?: string | null;
+            overridden_in?: components["schemas"]["OverriddenAgent"][] | null;
+            /** @description `agent` | `workspace` | `organization` | `app`. */
+            scope: string;
+            source?: components["schemas"]["SkillSource"] | null;
+            /** @description `agent` | `workspace` | `org` | `app`. */
+            tier: string;
+            total_size: number;
+            /** Format: date-time */
+            updated_at?: string | null;
+            /** Format: uuid */
+            workspace_id?: string | null;
+        };
+        /**
          * @description (phase 2, RFE-025) Effective org-level BYO controls (instance ∩ org); the workspace layer is
          *     applied per workspace/agent.
          */
@@ -9406,11 +9445,12 @@ export interface components {
             source: string;
         };
         EffectiveSkill: {
+            app?: components["schemas"]["AppRef"] | null;
             /** @description Always true: a disabled skill never wins. */
             enabled: boolean;
-            /** @description Every lower-tier skill of this name (enabled or not). */
+            /** @description Every lower-tier skill of this name (enabled or not), app skills included. */
             shadows: components["schemas"]["TierRef"][];
-            skill: components["schemas"]["Skill"];
+            skill: components["schemas"]["EffectiveBody"];
             tier: string;
         };
         EffectiveSkills: {
@@ -15160,9 +15200,10 @@ export interface components {
             values: string[];
         };
         ShadowedSkill: {
+            app?: components["schemas"]["AppRef"] | null;
             enabled: boolean;
             shadowed_by?: components["schemas"]["TierRef"] | null;
-            skill: components["schemas"]["Skill"];
+            skill: components["schemas"]["EffectiveBody"];
             tier: string;
         };
         SharedBotInfo: {
@@ -15821,9 +15862,13 @@ export interface components {
             id: string;
             store: Record<string, never>;
         };
+        /** @description A tier (or app) that holds or wins a name. `id` is null for an app skill. */
         TierRef: {
+            /** @description The app, when `tier` is `app`. */
+            app_id?: string | null;
             /** Format: uuid */
-            id: string;
+            id?: string | null;
+            /** @description `agent` | `workspace` | `org` | `app`. */
             tier: string;
         };
         /** @description One row of an agent's timeline (C-1083). */

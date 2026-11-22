@@ -157,7 +157,7 @@ async fn the_folder_matches_the_render_inputs_and_the_manifest() {
     let app = &ri["apps"][0];
     assert_eq!(app["app_id"], "gdemo-app");
     assert_eq!(app["summary"], "Things, lists and creating them.");
-    assert_eq!(app["guide_path"], format!("{ROOT}/guide.md"));
+    assert_eq!(app["guide_path"], format!("{ROOT}/app.md"));
     // The four fields of before are untouched (a supervisor that predates the guides renders as before).
     assert_eq!(app["name"], "Demo App");
     assert_eq!(app["snippet"], "Be careful.");
@@ -172,7 +172,7 @@ async fn the_folder_matches_the_render_inputs_and_the_manifest() {
         names,
         [
             ".aurora/apps/gdemo-app/api.json",
-            ".aurora/apps/gdemo-app/guide.md",
+            ".aurora/apps/gdemo-app/app.md",
             ".aurora/apps/gdemo-app/tools.md",
         ]
     );
@@ -192,7 +192,7 @@ async fn the_folder_matches_the_render_inputs_and_the_manifest() {
         assert!(serde_json::to_vec(s).unwrap().len() <= MAX_HOME_SYNC_PART);
     }
 
-    let guide = &f[&format!("{ROOT}/guide.md")];
+    let guide = &f[&format!("{ROOT}/app.md")];
     assert!(
         guide.contains(&w.conn.to_string()) && guide.contains("work account"),
         "{guide}"
@@ -201,7 +201,7 @@ async fn the_folder_matches_the_render_inputs_and_the_manifest() {
     // No guide file of the old format is projected, whatever the package carried (D-453).
     assert!(
         f.keys()
-            .all(|k| !k.ends_with(".md") || k.ends_with("/guide.md") || k.ends_with("/tools.md"))
+            .all(|k| !k.ends_with(".md") || k.ends_with("/app.md") || k.ends_with("/tools.md"))
     );
     let tools = &f[&format!("{ROOT}/tools.md")];
     assert!(
@@ -315,7 +315,7 @@ async fn grant_changes_move_the_generation_and_the_folder() {
         "a new snapshot bumps the generation"
     );
     let f = folder(&parts(&h, w.agent).await);
-    assert!(f[&format!("{ROOT}/guide.md")].contains("Be careful, v2."));
+    assert!(f[&format!("{ROOT}/app.md")].contains("Be careful, v2."));
 
     // Disconnect: the account leaves.
     let before = generation(&h, w.agent).await;
@@ -405,11 +405,11 @@ pub(crate) const OPERATIONS_JSON: &[u8] = br#"{
 
 /// (P5-GUIDE-6, C-652) An app with an operations file gets `api.json` in its folder: valid JSON of
 /// the format, the operations mapped to the catalogue tools by the gateway's matcher, the account
-/// with its host-derived `base_url`, listed in the manifest and named in `guide.md`; the operations
+/// with its host-derived `base_url`, listed in the manifest and named in `app.md`; the operations
 /// file itself is not projected; no credential reference is in it; an app without an operations
 /// file has no `api.json`.
 #[tokio::test]
-async fn api_json_is_projected_beside_the_guide() {
+async fn api_json_is_projected_beside_app_md() {
     let h = Harness::new().await;
     let a = setup(&h).await;
     let y = yaml("Things, lists and creating them.", "Be careful.").replace(
@@ -461,7 +461,7 @@ async fn api_json_is_projected_beside_the_guide() {
         api["accounts"][0]["base_url"], "https://api.gdemo.example",
         "{api}"
     );
-    assert!(f[&format!("{ROOT}/guide.md")].contains("api.json"));
+    assert!(f[&format!("{ROOT}/app.md")].contains("api.json"));
     // SEC-117 again: the credential reference is nowhere in the file.
     assert!(!f[&path].contains(CREDENTIAL_REF));
     // (An app without operations has no `api.json`: the folder listing of

@@ -44428,6 +44428,26 @@
           }
         }
       },
+      "AppRef": {
+        "type": "object",
+        "description": "(P5-APPSKILL-2, C-1133) The app a skill comes from.",
+        "required": [
+          "app_id",
+          "name",
+          "version"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "AppRestrictions": {
         "type": "object",
         "description": "(phase 4, P4-GRANTS, D-123, C-410) The app's manifest restrictions, so clients can explain\nthem: `custom_only` (no `full` grants) and `block_untooled` (requests matching no catalogue\ntool are blocked). Both `false` for an app without `grants`.",
@@ -49797,6 +49817,114 @@
           }
         }
       },
+      "EffectiveBody": {
+        "type": "object",
+        "description": "A skill as the effective set shows it: the fields of [`Skill`], with the ones an app skill has\nno value for nullable (`id`, `org_id`, the timestamps).",
+        "required": [
+          "tier",
+          "scope",
+          "name",
+          "description",
+          "body",
+          "enabled",
+          "files",
+          "total_size"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillFile"
+            }
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Null for an app skill."
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "overridden_in": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/OverriddenAgent"
+            }
+          },
+          "scope": {
+            "type": "string",
+            "description": "`agent` | `workspace` | `organization` | `app`."
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkillSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tier": {
+            "type": "string",
+            "description": "`agent` | `workspace` | `org` | `app`."
+          },
+          "total_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "EffectiveByo": {
         "type": "object",
         "description": "(phase 2, RFE-025) Effective org-level BYO controls (instance ∩ org); the workspace layer is\napplied per workspace/agent.",
@@ -50023,6 +50151,17 @@
           "shadows"
         ],
         "properties": {
+          "app": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppRef",
+                "description": "The app of an app skill; null for the other tiers."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "enabled": {
             "type": "boolean",
             "description": "Always true: a disabled skill never wins."
@@ -50032,10 +50171,10 @@
             "items": {
               "$ref": "#/components/schemas/TierRef"
             },
-            "description": "Every lower-tier skill of this name (enabled or not)."
+            "description": "Every lower-tier skill of this name (enabled or not), app skills included."
           },
           "skill": {
-            "$ref": "#/components/schemas/Skill"
+            "$ref": "#/components/schemas/EffectiveBody"
           },
           "tier": {
             "type": "string"
@@ -68232,6 +68371,17 @@
           "enabled"
         ],
         "properties": {
+          "app": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppRef",
+                "description": "The app of an app skill; null for the other tiers."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -68247,7 +68397,7 @@
             ]
           },
           "skill": {
-            "$ref": "#/components/schemas/Skill"
+            "$ref": "#/components/schemas/EffectiveBody"
           },
           "tier": {
             "type": "string"
@@ -70436,17 +70586,28 @@
       },
       "TierRef": {
         "type": "object",
+        "description": "A tier (or app) that holds or wins a name. `id` is null for an app skill.",
         "required": [
-          "id",
           "tier"
         ],
         "properties": {
+          "app_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app, when `tier` is `app`."
+          },
           "id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid"
           },
           "tier": {
-            "type": "string"
+            "type": "string",
+            "description": "`agent` | `workspace` | `org` | `app`."
           }
         }
       },

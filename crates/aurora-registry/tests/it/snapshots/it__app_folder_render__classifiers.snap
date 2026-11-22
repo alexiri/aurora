@@ -1,5 +1,5 @@
 ---
-source: crates/aurora-registry/tests/it/agent_guide_render.rs
+source: crates/aurora-registry/tests/it/app_folder_render.rs
 expression: r.tools_md
 ---
 # Demo app: operations and your access

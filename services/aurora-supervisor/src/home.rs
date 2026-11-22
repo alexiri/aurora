@@ -139,18 +139,11 @@ fn app_id_ok(s: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || *c == b'_')
 }
 
-/// File name grammar of C-640: `[a-z0-9][a-z0-9_-]{0,47}.(md|txt|json|yaml|tsv|csv)`. The files
-/// Aurora writes (`guide.md`, `tools.md`, `api.json`) match it.
+/// (C-1134) The only files of an app folder: the ones Aurora writes. Package-shipped files are not
+/// here any more (an app's skills go to the skills folder). `guide.md` is the pre-P5-APPSKILL name of
+/// `app.md`: an API one release older still sends it, so the sync commits instead of being refused.
 fn app_file_ok(s: &str) -> bool {
-    let Some((stem, ext)) = s.rsplit_once('.') else {
-        return false;
-    };
-    let b = stem.as_bytes();
-    (1..=48).contains(&b.len())
-        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
-        && b.iter()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || *c == b'_')
-        && matches!(ext, "md" | "txt" | "json" | "yaml" | "tsv" | "csv")
+    matches!(s, "app.md" | "tools.md" | "api.json" | "guide.md")
 }
 
 /// Exactly `.aurora/apps/<id>/<name>`, nothing deeper, both segments in their grammars.

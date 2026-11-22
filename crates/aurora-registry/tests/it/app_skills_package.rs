@@ -12,7 +12,7 @@ use aurora_registry::{Limits, Package, TrustStore};
 use sha2::{Digest, Sha256};
 use tar::EntryType;
 
-use super::agent_guide::{AGENT, TOOLS, skill_md, yaml};
+use super::agent_files::{AGENT, TOOLS, skill_md, yaml};
 
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()

@@ -1,9 +1,9 @@
 ---
-source: crates/aurora-registry/tests/it/agent_guide_render.rs
-assertion_line: 72
+source: crates/aurora-registry/tests/it/app_folder_render.rs
+assertion_line: 206
 expression: both(&r)
 ---
-=== guide.md ===
+=== app.md ===
 # Demo app (demo-app)
 
 Written by Aurora for this agent, except the last section.
@@ -12,28 +12,21 @@ Written by Aurora for this agent, except the last section.
 
 Choose an account with the request header `x-aurora-connection-id: <connection id>`. Without it the gateway uses your only account, or refuses when there are several.
 
-- `c_1`: Main
+- `c`: L
 
 ## Your access
 
-- `c_1`: custom access: 1 allowed, 1 need approval, 1 blocked
+- `c`: full access
 
 `tools.md` lists every operation and your access to it.
 
 ## Files in this folder
 
 - `tools.md`: every operation and your access to it
-- `api.json`: the operations of this app, for `aurora-agent`. Use `aurora-agent search|describe|call <app_id> …` rather than reading it.
 
 ## Documentation
 
 - API documentation: https://docs.example.test/api
-
-## Notes from the Demo app plugin (third-party)
-
-```text
-Things are addressed by id.
-```
 
 === tools.md ===
 # Demo app: operations and your access
@@ -42,14 +35,9 @@ Written by Aurora from the app's catalogue and your grants. The gateway decides 
 workspace and organization policy can be stricter than this list, never looser.
 
 ## Accounts
-- A: `c_1` Main (custom access)
+- A: `c` L (full access)
 
-## Read
-- `list_things` GET /v1/things: List things. All things. [allowed]
-- `get_thing` GET /v1/things/*: Get a thing. [blocked]
-
-## Write
-- `make_thing` POST /v1/things: Make a thing. [approval]
+This app has no catalogue operations.
 
 ## Requests that match no operation above
-[blocked]
+[allowed]

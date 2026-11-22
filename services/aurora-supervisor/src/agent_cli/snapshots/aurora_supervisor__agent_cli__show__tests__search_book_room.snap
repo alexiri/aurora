@@ -1,7 +1,8 @@
 ---
 source: services/aurora-supervisor/src/agent_cli/show.rs
+assertion_line: 495
 expression: "&s"
 ---
 indico book_room POST /rooms/api/rooms/{id}/book — Book a room [blocked]
-indico recipe book-free-room.md — Find a free room and book it
+indico skill indico-book-free-room — Find a free room and book it
 indico search_rooms GET /rooms/api/rooms/search — Rooms free in a building for a time slot [allowed]

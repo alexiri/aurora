@@ -5,6 +5,8 @@ use crate::common::*;
 use crate::runner_rig::{Booted, Rig, rig};
 use http::Method;
 
+#[path = "skills_app.rs"]
+mod app_tier;
 #[path = "skills_library.rs"]
 mod library_tier;
 #[path = "skills_workspace.rs"]

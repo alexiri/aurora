@@ -679,21 +679,27 @@ fn app_folders_are_installed_read_only_refused_when_malformed_and_pruned() {
     let root = d.path();
     let mut p = projector(root);
     let good = [
-        (".aurora/apps/gitlab/guide.md", "guide"),
+        (".aurora/apps/gitlab/app.md", "guide"),
         (".aurora/apps/gitlab/tools.md", "tools"),
         (".aurora/apps/gitlab/api.json", "{}"),
-        (".aurora/apps/gitlab/rest-api_v4.md", "ref"),
-        (".aurora/apps/indico/guide.md", "indico"),
+        (".aurora/apps/indico/app.md", "indico"),
+        // The pre-P5-APPSKILL name of `app.md`: an API one release older still sends it.
+        (".aurora/apps/legacy/guide.md", "legacy"),
     ];
     let bad = [
-        ".aurora/apps/gitlab/deeper/guide.md",
-        ".aurora/apps/Bad/guide.md",
-        ".aurora/apps/a/guide.md",
+        ".aurora/apps/gitlab/deeper/app.md",
+        ".aurora/apps/Bad/app.md",
+        ".aurora/apps/a/app.md",
         ".aurora/apps/gitlab/Guide.md",
         ".aurora/apps/gitlab/script.sh",
+        // (C-1134) Package-shipped reference files are not projected here any more: only the files
+        // Aurora writes are accepted.
+        ".aurora/apps/gitlab/rest-api_v4.md",
+        ".aurora/apps/gitlab/recipe.md",
+        ".aurora/apps/gitlab/data.json",
         ".aurora/apps/gitlab/.hidden.md",
         ".aurora/apps/../escape.md",
-        ".aurora/apps/guide.md",
+        ".aurora/apps/app.md",
         ".aurora/apps/gitlab",
         "/etc/passwd",
         ".aurora/tools.json",
@@ -726,11 +732,11 @@ fn app_folders_are_installed_read_only_refused_when_malformed_and_pruned() {
 
     // Generation 2 keeps one app, changes a file: the other folder is gone, the changed file is
     // replaced even though it is read-only.
-    let g = apps_generation(2, &[(".aurora/apps/gitlab/guide.md", "guide v2")], &[]);
+    let g = apps_generation(2, &[(".aurora/apps/gitlab/app.md", "guide v2")], &[]);
     apply_all(&mut p, &g);
     p.commit(2).unwrap();
     assert_eq!(
-        fs::read_to_string(root.join(".aurora/apps/gitlab/guide.md")).unwrap(),
+        fs::read_to_string(root.join(".aurora/apps/gitlab/app.md")).unwrap(),
         "guide v2"
     );
     assert!(!root.join(".aurora/apps/gitlab/tools.md").exists());
@@ -779,7 +785,7 @@ fn app_paths_and_other_roots_do_not_cross_part_kinds() {
         0,
         6,
         "skills",
-        json!([{"path": ".aurora/apps/x1/guide.md", "content": "via skills"}]),
+        json!([{"path": ".aurora/apps/x1/app.md", "content": "via skills"}]),
     );
     g[1] = part(
         2,
@@ -804,12 +810,12 @@ fn a_symlinked_app_folder_is_replaced_not_followed() {
     let mut p = projector(root);
     apply_all(
         &mut p,
-        &apps_generation(1, &[(".aurora/apps/gitlab/guide.md", "guide")], &[]),
+        &apps_generation(1, &[(".aurora/apps/gitlab/app.md", "guide")], &[]),
     );
     p.commit(1).unwrap();
-    assert!(!elsewhere.path().join("guide.md").exists());
+    assert!(!elsewhere.path().join("app.md").exists());
     assert_eq!(
-        fs::read_to_string(root.join(".aurora/apps/gitlab/guide.md")).unwrap(),
+        fs::read_to_string(root.join(".aurora/apps/gitlab/app.md")).unwrap(),
         "guide"
     );
     assert!(
@@ -830,7 +836,7 @@ fn a_sync_that_changes_only_the_folders_keeps_the_instruction_files() {
     let mut p = projector(root);
     let tools = json!([{"name": "memory_save"}]);
     let mk = |g: u64, guide: &str| {
-        let mut parts = apps_generation(g, &[(".aurora/apps/gitlab/guide.md", guide)], &[]);
+        let mut parts = apps_generation(g, &[(".aurora/apps/gitlab/app.md", guide)], &[]);
         parts.insert(1, part(g, 1, 5, "tools", tools.clone()));
         let n = u32::try_from(parts.len()).unwrap();
         for (i, s) in parts.iter_mut().enumerate() {
@@ -851,7 +857,7 @@ fn a_sync_that_changes_only_the_folders_keeps_the_instruction_files() {
         ri_before
     );
     assert_eq!(
-        fs::read_to_string(root.join(".aurora/apps/gitlab/guide.md")).unwrap(),
+        fs::read_to_string(root.join(".aurora/apps/gitlab/app.md")).unwrap(),
         "two"
     );
     assert!(root.join(".aurora/tools.json").exists());
@@ -1060,7 +1066,7 @@ fn the_aurora_agent_sentences_follow_the_agent_cli_flag() {
             json!([
                 {"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}},
                 {"apps": [{"name": "Demo", "accounts": [], "docs_links": [], "app_id": "demo",
-                           "summary": "Things.", "guide_path": ".aurora/apps/demo/guide.md"}]}
+                           "summary": "Things.", "guide_path": ".aurora/apps/demo/app.md"}]}
             ]),
         );
         apply_all(&mut p, &parts);

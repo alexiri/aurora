@@ -18,8 +18,9 @@ pub struct ApiDoc {
     pub accounts: Vec<Account>,
     #[serde(default)]
     pub operations: Vec<Operation>,
+    /// (C-1135) The app's projected skills; `recipes` of an older file is no longer read.
     #[serde(default)]
-    pub recipes: Vec<Recipe>,
+    pub skills: Vec<Skill>,
     #[serde(default)]
     pub untooled: BTreeMap<String, String>,
     #[serde(default)]
@@ -47,11 +48,14 @@ pub struct Account {
     pub grant: String,
 }
 
+/// A skill of the app in the agent's skills folder (C-1135): `path` is home-relative.
 #[derive(Debug, Clone, Deserialize)]
-pub struct Recipe {
-    pub file: String,
+pub struct Skill {
+    pub name: String,
     #[serde(default)]
-    pub title: String,
+    pub description: String,
+    #[serde(default)]
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -177,7 +181,7 @@ pub struct AppFolder {
 }
 
 /// Reads every `<apps_dir>/<id>/api.json` (sorted by id). A folder without the file is listed with
-/// an error saying so (a database app, an older API): the caller points to `guide.md`.
+/// an error saying so (a database app, an older API): the caller points to `app.md`.
 #[must_use]
 pub fn load_all(apps_dir: &Path) -> Vec<AppFolder> {
     let Ok(rd) = std::fs::read_dir(apps_dir) else {
@@ -195,10 +199,73 @@ pub fn load_all(apps_dir: &Path) -> Vec<AppFolder> {
             let api = match std::fs::read(&p) {
                 Ok(b) => ApiDoc::parse(&b),
                 Err(_) => Err(format!(
-                    "no api.json for this app; read .aurora/apps/{id}/guide.md"
+                    "no api.json for this app; read .aurora/apps/{id}/app.md"
                 )),
             };
             AppFolder { id, api }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (C-1135) The `ApiDoc` of the release before P5-APPSKILL-2, as it was (it read `recipes` and
+    /// knew nothing of `skills`). The new `api.json` must still parse with it: an `aurora-agent` one
+    /// release older keeps working against a newer API.
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct OldApiDoc {
+        format: String,
+        app: AppInfo,
+        #[serde(default)]
+        accounts: Vec<Account>,
+        #[serde(default)]
+        operations: Vec<Operation>,
+        #[serde(default)]
+        recipes: Vec<OldRecipe>,
+        #[serde(default)]
+        untooled: BTreeMap<String, String>,
+        #[serde(default)]
+        truncated: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct OldRecipe {
+        file: String,
+        #[serde(default)]
+        title: String,
+    }
+
+    fn new_json() -> serde_json::Value {
+        serde_json::json!({
+            "format": "aurora.app-api/1",
+            "app": {"id": "indico", "name": "Indico", "version": "1"},
+            "accounts": [], "operations": [],
+            "skills": [{"name": "indico-book", "description": "Book a room",
+                        "path": ".claude/skills/indico-book/SKILL.md"}],
+            "recipes": [], "untooled": {}
+        })
+    }
+
+    #[test]
+    fn the_new_api_json_parses_with_the_previous_releases_struct_and_with_this_one() {
+        let bytes = new_json().to_string().into_bytes();
+        let old: OldApiDoc = serde_json::from_slice(&bytes).unwrap();
+        assert!(old.recipes.is_empty(), "{old:?}");
+        let new = ApiDoc::parse(&bytes).unwrap();
+        assert_eq!(new.skills.len(), 1);
+        assert_eq!(new.skills[0].name, "indico-book");
+        assert_eq!(new.skills[0].path, ".claude/skills/indico-book/SKILL.md");
+        // A file of the previous release (recipes, no skills) still parses here: no skills, no crash.
+        let prev = serde_json::json!({
+            "format": "aurora.app-api/1",
+            "app": {"id": "x", "name": "X", "version": "1"},
+            "recipes": [{"file": "a.md", "title": "A"}]
+        });
+        let doc = ApiDoc::parse(prev.to_string().as_bytes()).unwrap();
+        assert!(doc.skills.is_empty());
+    }
 }

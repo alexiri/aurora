@@ -1,6 +1,6 @@
 ---
 source: crates/aurora-registry/tests/it/agent_api_json.rs
-assertion_line: 60
+assertion_line: 61
 expression: "api(Some(OPS), &a)"
 ---
 {
@@ -139,6 +139,7 @@ expression: "api(Some(OPS), &a)"
     }
   ],
   "recipes": [],
+  "skills": [],
   "untooled": {
     "A": "allowed",
     "B": "blocked"

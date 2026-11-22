@@ -35,7 +35,7 @@ build of this branch projects neither guides nor app skills.
 
 ## Read first
 
-- `docs/24-app-guides.md` §3, §4, §10, §12 (what is being replaced), `docs/09-app-plugins.md` §2 (archive,
+- `docs/24-apps-for-agents.md` §3, §4, §10, §12 (what is being replaced), `docs/09-app-plugins.md` §2 (archive,
   canonical digest), §6, §9, §10 (:1408), §12; `docs/10-agents-conversations.md` §Skills (:865) and the
   library rules (:960–975); `docs/22-addon-repos.md` :82–105.
 - `docs/API_CONTRACTS.md` **C-1130..C-1132, C-1138** (and C-640..C-642, C-649, C-650 they amend);

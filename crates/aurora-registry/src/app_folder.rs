@@ -1,8 +1,8 @@
-//! (P5-GUIDE-1, `docs/24 §5`, C-646, C-647) The agent guide renderer: the two files Aurora writes
-//! into an app's folder in the agent's home, `guide.md` and `tools.md`.
+//! (P5-GUIDE-1, P5-APPSKILL-2, `docs/24 §5`, C-646, C-647, C-1135) The app folder renderer: the files
+//! Aurora writes into an app's folder in the agent's home, `app.md`, `tools.md` and `api.json`.
 //!
 //! A **pure function** (no I/O, no database type): the API calls it for the home sync and
-//! `aurora plugin guide` calls it for authors, so an author previews exactly what an agent will
+//! `aurora plugin preview` calls it for authors, so an author previews exactly what an agent will
 //! read. Every string that comes from a package, a connection label or a host is untrusted: it
 //! goes through the one-line sanitizer ([`aurora_core::sanitize::inline`]) or, for the essentials,
 //! a code fence longer than any backtick run it holds ([`aurora_core::sanitize::fenced`]). Text
@@ -31,7 +31,7 @@ const FIELD_MAX: usize = 200;
 
 /// One account of the agent on the app: a granted, active connection.
 #[derive(Debug, Clone, PartialEq)]
-pub struct GuideAccount {
+pub struct AppAccount {
     pub id: String,
     pub label: String,
     /// Where requests go: the instance host, the tenant host or the app's default host.
@@ -40,14 +40,14 @@ pub struct GuideAccount {
     pub service: Option<String>,
     pub access: GrantAccess,
     /// (P5-WEBHOOK-3, C-911) The webhook of a send-mode connection: what the agent may know of it.
-    pub webhook: Option<GuideWebhook>,
+    pub webhook: Option<AppWebhook>,
 }
 
 /// (P5-WEBHOOK-3, C-911) The render input of one send-mode account: the name, the person's note,
 /// the method and the typed slots. **Never** the template, the headers, the URL or any secret
 /// value: this type has no field for them (a test serializes it and checks the keys).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct GuideWebhook {
+pub struct AppWebhook {
     pub name: String,
     pub description: String,
     pub method: String,
@@ -86,10 +86,49 @@ impl Access {
     }
 }
 
+/// Which tier's skill of the same name the agent uses instead of an app skill (C-1133).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShadowTier {
+    Agent,
+    Workspace,
+    Organization,
+}
+
+impl ShadowTier {
+    fn word(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::Workspace => "workspace",
+            Self::Organization => "organization",
+        }
+    }
+}
+
+/// One skill of the app as the agent's home sees it (`description` and `name` are third-party and
+/// pass the one-line sanitizer on the way out).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillLine {
+    pub name: String,
+    pub description: String,
+    /// `Some` when another tier's skill of the name is used instead (this one is not projected).
+    pub shadowed_by: Option<ShadowTier>,
+}
+
+/// The app's skills for one agent (C-1133, C-1134): what `app.md` lists and `api.json` carries.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppSkills {
+    /// In name order.
+    pub lines: Vec<SkillLine>,
+    /// The home-sync budget left this app's skills out (`APP_SKILLS_SYNC_MAX`): `app.md` says so.
+    pub left_out: bool,
+    /// The harness skills folder relative to the home, for the `path` of `api.json` skills.
+    pub skills_dir: String,
+}
+
 /// The generated files of one app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rendered {
-    pub guide_md: String,
+    pub app_md: String,
     pub tools_md: String,
     /// (P5-GUIDE-6, C-652) `None` for a database app or an app with no operation at all.
     pub api_json: Option<String>,
@@ -264,7 +303,7 @@ fn grant_word(g: &GrantAccess) -> &'static str {
 /// (P5-WEBHOOK-3, C-911) One section per webhook account: its note, its slots and the `curl`
 /// example to its `base_url` (the fallback without `aurora-agent`). Only what the render input
 /// holds: never the template, headers, URL or secret values.
-fn webhooks_md(o: &mut String, accounts: &[GuideAccount]) {
+fn webhooks_md(o: &mut String, accounts: &[AppAccount]) {
     let ids = api_json::webhook_ids(accounts);
     for (i, (a, id)) in accounts.iter().zip(ids).enumerate() {
         let (Some(w), Some(id)) = (&a.webhook, id) else {
@@ -339,7 +378,7 @@ fn webhooks_md(o: &mut String, accounts: &[GuideAccount]) {
     }
 }
 
-fn tools_md(app: &AppEntry, lost_hosts: &[&HostEntry], accounts: &[GuideAccount]) -> String {
+fn tools_md(app: &AppEntry, lost_hosts: &[&HostEntry], accounts: &[AppAccount]) -> String {
     let name = inline(&app.about.name, NAME_MAX);
     let mut o = format!(
         "# {name}: operations and your access\n\nWritten by Aurora from the app's catalogue and your grants. The gateway decides every request;\nworkspace and organization policy can be stricter than this list, never looser.\n"
@@ -433,7 +472,7 @@ fn tools_md(app: &AppEntry, lost_hosts: &[&HostEntry], accounts: &[GuideAccount]
     o
 }
 
-fn counts(app: &AppEntry, lost_hosts: &[&HostEntry], a: &GuideAccount) -> [usize; 4] {
+fn counts(app: &AppEntry, lost_hosts: &[&HostEntry], a: &AppAccount) -> [usize; 4] {
     let (read, write) = catalogue(app);
     let mut n = [0usize; 4];
     for t in read.iter().chain(&write) {
@@ -447,11 +486,11 @@ fn counts(app: &AppEntry, lost_hosts: &[&HostEntry], a: &GuideAccount) -> [usize
     n
 }
 
-fn guide_md(
+fn app_md(
     app: &AppEntry,
     lost_hosts: &[&HostEntry],
-    accounts: &[GuideAccount],
-    reference_available: bool,
+    accounts: &[AppAccount],
+    skills: &AppSkills,
     has_api_json: bool,
 ) -> String {
     let name = inline(&app.about.name, NAME_MAX);
@@ -498,8 +537,31 @@ fn guide_md(
         o.push_str("\n`tools.md` lists every operation and your access to it.\n");
     }
     let name_tp = inline(&app.about.name, NAME_MAX);
-    // (P5-APPSKILL-1) Guide files and recipes are gone; P5-APPSKILL-2 lists the app skills here.
-    let _ = reference_available;
+    if skills.left_out {
+        let _ = write!(
+            o,
+            "\n## Skills\n\nThe skills of the {name_tp} app (third-party) were left out of your skills folder: they did not fit in what one sync can carry.\n"
+        );
+    } else if !skills.lines.is_empty() {
+        let _ = write!(
+            o,
+            "\n## Skills\n\nSkills from the {name_tp} app (third-party), in your skills folder. Open the one that matches your task before you start.\n\n"
+        );
+        for l in &skills.lines {
+            let name = inline(&l.name, 64);
+            let by = l.shadowed_by.map_or_else(String::new, |t| {
+                format!(
+                    " — a skill of the same name from your {} is used instead",
+                    t.word()
+                )
+            });
+            let _ = writeln!(
+                o,
+                "- `{name}`: {} (`$SKILLS_DIR/{name}/SKILL.md`){by}",
+                inline(&l.description, DESCRIPTION_MAX)
+            );
+        }
+    }
     o.push_str(
         "\n## Files in this folder\n\n- `tools.md`: every operation and your access to it\n",
     );
@@ -533,33 +595,25 @@ fn guide_md(
     o
 }
 
-/// Render `guide.md` and `tools.md` of one app for one agent (C-646, C-647).
+/// Render `app.md`, `tools.md` and `api.json` of one app for one agent (C-646, C-647, C-1135).
 ///
 /// * `lost_hosts`: the snapshot's host entries of this app whose claim is `lost` (`09 §7`); a tool
 ///   on such a host is `unavailable`.
 /// * `accounts`: the agent's granted, active connections, in the order the letters `A`, `B`, … are
 ///   given.
-/// * `reference_available`: false when the home-sync budget left this app's reference files and
-///   recipes out (`24 §7`); `guide.md` then says so instead of listing them.
+/// * `skills`: the app's skills for this agent (C-1133); `app.md` lists them, `api.json` carries the
+///   ones that are projected.
 ///
-/// `package_version` is not printed in the generated files; it is the version the projected files
-/// carry in [`reference_header`], kept in the signature so callers have one place to pass it.
+/// `package_version` is printed in `api.json` only.
 #[must_use]
 pub fn render(
     app: &AppEntry,
     lost_hosts: &[&HostEntry],
-    accounts: &[GuideAccount],
+    accounts: &[AppAccount],
     package_version: &str,
-    reference_available: bool,
+    skills: &AppSkills,
 ) -> Rendered {
-    render_with_operations(
-        app,
-        lost_hosts,
-        accounts,
-        package_version,
-        reference_available,
-        None,
-    )
+    render_with_operations(app, lost_hosts, accounts, package_version, skills, None)
 }
 
 /// [`render`] with the app's parsed operations file (C-652): `api.json` then carries the package
@@ -568,9 +622,9 @@ pub fn render(
 pub fn render_with_operations(
     app: &AppEntry,
     lost_hosts: &[&HostEntry],
-    accounts: &[GuideAccount],
+    accounts: &[AppAccount],
     package_version: &str,
-    reference_available: bool,
+    skills: &AppSkills,
     operations: Option<&crate::operations::OperationsFile>,
 ) -> Rendered {
     let api_json = api_json::render(
@@ -578,17 +632,11 @@ pub fn render_with_operations(
         lost_hosts,
         accounts,
         package_version,
-        reference_available,
+        skills,
         operations,
     );
     Rendered {
-        guide_md: guide_md(
-            app,
-            lost_hosts,
-            accounts,
-            reference_available,
-            api_json.is_some(),
-        ),
+        app_md: app_md(app, lost_hosts, accounts, skills, api_json.is_some()),
         tools_md: tools_md(app, lost_hosts, accounts),
         api_json,
     }
