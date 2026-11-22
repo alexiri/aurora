@@ -266,12 +266,7 @@ fn the_operations_file_is_named_and_present() {
     assert!(lint(&y, &one(&op(""))).contains(&"agent_summary_required"));
     let m = Manifest::parse(&yaml(TOOLS, AGENT_OPS, ""), "99.0.0").unwrap();
     let mut v = Vec::new();
-    archive_rules(
-        &m,
-        &package(&[]),
-        &std::collections::HashMap::new(),
-        &mut v,
-    );
+    archive_rules(&m, &package(&[]), &std::collections::HashMap::new(), &mut v);
     assert!(v.iter().any(|x| x.code == "agent_operations_missing_file"));
 }
 

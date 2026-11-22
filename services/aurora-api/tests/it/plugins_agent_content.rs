@@ -283,7 +283,10 @@ async fn ingest_refuses_a_skill_named_with_another_active_apps_id() {
     assert_eq!(claim.len(), 1, "{}", v["violations"]);
     assert_eq!(claim[0]["path"], "skills/gdemo-app/gdemo-app-x-thing");
     let msg = claim[0]["message"].as_str().unwrap();
-    assert!(msg.contains("`gdemo-app-x`") && msg.contains("`gowner`"), "{msg}");
+    assert!(
+        msg.contains("`gdemo-app-x`") && msg.contains("`gowner`"),
+        "{msg}"
+    );
     assert!(blob_kind(&h, &hex(&md2)).await.is_none());
 }
 

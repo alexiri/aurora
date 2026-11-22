@@ -190,11 +190,7 @@ fn a_skill_named_with_another_apps_id_is_refused() {
     // the package's own skills are untouched by other apps that do not prefix them
     assert!(lint_with(&y, &[md(N), md("demo-app")], &[("demo", "other")]).is_empty());
     // a chain of other apps: the longest id owns the name, and the message names it and its package
-    let chain = [
-        ("demo-app-x", "p1"),
-        ("demo-app-x-y", "p2"),
-        ("demo", "p3"),
-    ];
+    let chain = [("demo-app-x", "p1"), ("demo-app-x-y", "p2"), ("demo", "p3")];
     assert_eq!(
         lint_with(&y, &[md("demo-app-x-y-z")], &chain),
         ["app_skill_name_claimed"]
