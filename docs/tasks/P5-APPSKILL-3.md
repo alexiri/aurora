@@ -73,7 +73,7 @@ fixtures for `PluginPackage` and effective skills.
 
 ## Out of scope
 
-- Hiding app skills per organization (Q-APPSKILL-1); editing an app skill (never: change the package).
+- Hiding app skills per organization (never: owner, D-455; the view offers no switch); editing an app skill (never: change the package).
 
 ## Completion report
 

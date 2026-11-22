@@ -156,7 +156,7 @@ Known callers: `crates/aurora-registry/tests/it/{agent_guide,agent_guide_lint,ag
 - Delivering skills to agents, the tier, `app.md`, `api.json`, `aurora-agent`, the admin API and audit
   (P5-APPSKILL-2); the dashboard (P5-APPSKILL-3); new Indico content (P5-APPSKILL-4).
 - Binary skill files (the projection sends text only).
-- An organization switch to hide an app's skills (open question Q-APPSKILL-1).
+- An organization switch to hide an app's skills: never (owner, D-455).
 
 ## Completion report
 
